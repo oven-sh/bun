@@ -14,21 +14,16 @@ const TYPESCRIPT_INDEX_FILES: [&[u8]; 6] = [
     b"src/index.tsx",
     b"src/index.mts",
 ];
-const JAVASCRIPT_INDEX_FILES: [&[u8]; 4] = [
-    b"index.js",
-    b"index.mjs",
-    b"src/index.js",
-    b"src/index.mjs",
-];
+const JAVASCRIPT_INDEX_FILES: [&[u8]; 4] =
+    [b"index.js", b"index.mjs", b"src/index.js", b"src/index.mjs"];
 
 pub(super) fn find_entry_points(
     directory: &[u8],
     package_json: Option<&Expr>,
     outdir: &[u8],
 ) -> Vec<Box<[u8]>> {
-    let find_source = |written: &[u8]| {
-        find_file(directory, written).filter(|path| !is_inside(outdir, path))
-    };
+    let find_source =
+        |written: &[u8]| find_file(directory, written).filter(|path| !is_inside(outdir, path));
 
     let mut targets = Vec::new();
     if let Some(exports) = package_json.and_then(|root| root.get(b"exports")) {
@@ -81,7 +76,7 @@ fn is_typescript(path: &[u8]) -> bool {
 
 fn find_file(directory: &[u8], written: &[u8]) -> Option<Box<[u8]>> {
     let absolute_path = join_abs_string_checked::<Auto>(directory, &[written])?;
-    if absolute_path.contains(&0) {
+    if bun_core::strings::contains_char(absolute_path, 0) {
         return None;
     }
     let absolute_path = bun_core::ZBox::from_bytes(absolute_path);

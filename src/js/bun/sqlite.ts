@@ -33,11 +33,10 @@ interface DatabaseOptions {
   strict?: boolean;
 }
 
-let internalFieldTuple: $Node.SQLChangesTuple;
-
-function initializeSQL() {
-  ({ 0: SQL, 1: internalFieldTuple } = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor"));
-}
+const { 0: SQL, 1: internalFieldTuple }: { 0: CppSQL; 1: $Node.SQLChangesTuple } = $cpp(
+  "JSSQLStatement.cpp",
+  "createJSSQLStatementConstructor",
+);
 
 function createChangesObject(): Changes {
   return {
@@ -129,8 +128,6 @@ interface TransactionFunction<A extends any[], T> {
   immediate: (...args: A) => T;
   exclusive: (...args: A) => T;
 }
-
-let SQL: CppSQL;
 
 function booleanOption(options, key: string, fallback = false): boolean {
   const value = options[key];
@@ -374,7 +371,7 @@ class Database implements SqliteTypes.Database {
           }
         }
 
-        this.#handle = Database.#deserialize(filenameGiven, deserializeFlags);
+        this.#handle = SQL.deserialize(filenameGiven, deserializeFlags);
         this.filename = ":memory:";
 
         return;
@@ -417,10 +414,6 @@ class Database implements SqliteTypes.Database {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
 
-    if (!SQL) {
-      initializeSQL();
-    }
-
     this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
     this.filename = filename;
   }
@@ -449,14 +442,6 @@ class Database implements SqliteTypes.Database {
     return SQL.serialize(this.#handle, optionalName || "main");
   }
 
-  static #deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, deserializeFlags: number) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
-    return SQL.deserialize(serialized, deserializeFlags);
-  }
-
   static deserialize(
     serialized: NodeJS.TypedArray | ArrayBufferLike,
     options: boolean | { readonly?: boolean; strict?: boolean; safeIntegers?: boolean } = false,
@@ -482,10 +467,6 @@ class Database implements SqliteTypes.Database {
   }
 
   static setCustomSQLite(path) {
-    if (!SQL) {
-      initializeSQL();
-    }
-
     return SQL.setCustomSQLite(path);
   }
 
@@ -602,7 +583,7 @@ class Database implements SqliteTypes.Database {
     }
 
     const cache = this.#queryCache;
-    let stmt = cache.$get(query);
+    let stmt: Statement<any> | undefined = cache.$get(query);
     if (stmt !== undefined) {
       // LRU: re-insert so the most recently used key is last
       cache.$delete(query);

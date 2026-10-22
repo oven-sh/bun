@@ -12,7 +12,7 @@ export const WEBKIT_VERSION = "87ee10da087b63e011bd1ada64d1814a850a4395";
  *
  * **prebuilt** (CI and every profile but the `-local` ones): Download tarball
  *   from oven-sh/WebKit releases. Tarball name encodes {os, arch, musl,
- *   debug|lto, asan, assertions} — each is a separate ABI — and coverage. ASAN MUST match bun's setting:
+ *   debug|lto, asan, assertions} — each is a separate ABI — and coverage and hardened. ASAN MUST match bun's setting:
  *   WTF::Vector layout changes with ASAN (see WTF/Vector.h:682), so mixing →
  *   silent memory corruption.
  *
@@ -69,6 +69,7 @@ function prebuiltSuffix(cfg: Config): string {
     if (cfg.assertions) s += "-assertions";
     if (cfg.fuzzilli) s += "-coverage";
   }
+  if (cfg.hardened) s += "-hardened";
   return s;
 }
 
@@ -1747,6 +1748,20 @@ function forwardingSource(wk: WebKitBuild, program: string, source: string): str
 }
 
 /**
+ * Where mimalloc overrides `operator new` it reports out of memory through a
+ * function bun's runtime defines (deps/mimalloc.ts, MI_NEW_OOM). These programs
+ * link the same mimalloc without that runtime.
+ */
+function outOfMemoryHook(wk: WebKitBuild, program: string): string {
+  const source = join(wk.B, "programs", program, "OutOfMemory.cpp");
+  writeIfChanged(
+    source,
+    `#include <cstdlib>\nextern "C" [[noreturn]] void Bun__outOfMemory();\nvoid Bun__outOfMemory() { std::abort(); }\n`,
+  );
+  return source;
+}
+
+/**
  * WebKit's own executables worth having beside a local build
  * (shell/CMakeLists.txt): the `jsc` shell; `testFFI`, JSC's bun:ffi C++/ABI
  * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; `testb3`,
@@ -1768,7 +1783,10 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
   const shared = new Set([...embedder, ...shell]);
   const program = (name: string, sources: string[], ldflags: string[]): JSCProgram => ({
     name,
-    sources: sources.map(s => (shared.has(s) ? forwardingSource(wk, name, s) : join(wk.JSC, s))),
+    sources: [
+      ...sources.map(s => (shared.has(s) ? forwardingSource(wk, name, s) : join(wk.JSC, s))),
+      outOfMemoryHook(wk, name),
+    ],
     cxxflags: groupCompileFlags(cfg, wk.W, {
       includes: jsc.includes,
       cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],

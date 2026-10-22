@@ -66,12 +66,9 @@ fn convert_defines<'s>(
                 path: define_path(&entry.parts, arena, atoms),
                 value,
             }),
-            Err(error) => report_not_data(
-                log,
-                &entry.parts.join(&b'.'),
-                "the --define value",
-                error,
-            ),
+            Err(error) => {
+                report_not_data(log, &entry.parts.join(&b'.'), "the --define value", error)
+            }
         }
     }
     defines
@@ -124,7 +121,7 @@ fn define_value<'s>(
         }
         Data::EIdentifier(_) => match data.original_name.as_deref() {
             Some(name) if !name.is_empty() => {
-                let path = name.split(|byte| *byte == b'.');
+                let path = bun_core::strings::split(name, b".");
                 Ok(DefineValue::GlobalPath(intern_slice(path, arena, atoms)))
             }
             Some(_) | None => Err(NotData::Expression),
@@ -186,7 +183,7 @@ fn dropped_call_paths<'s>(
     let mut paths: Vec<Vec<&[u8]>> = dropped
         .iter()
         .filter(|item| !item.is_empty())
-        .map(|item| item.split(|byte| *byte == b'.').collect())
+        .map(|item| bun_core::strings::split(item, b".").collect())
         .collect();
     paths.sort_unstable();
     paths.dedup();
@@ -233,8 +230,14 @@ mod tests {
         scratch: &Arena,
     ) -> Box<DefineTable> {
         let input = api::StringMap {
-            keys: entries.iter().map(|entry| Box::from(entry.0.as_bytes())).collect(),
-            values: entries.iter().map(|entry| Box::from(entry.1.as_bytes())).collect(),
+            keys: entries
+                .iter()
+                .map(|entry| Box::from(entry.0.as_bytes()))
+                .collect(),
+            values: entries
+                .iter()
+                .map(|entry| Box::from(entry.1.as_bytes()))
+                .collect(),
         };
         defines_from_transform_options(
             &mut Log::default(),
@@ -290,7 +293,11 @@ mod tests {
             DefineRoot::Global(name) => vec![atoms.bytes(name).to_vec()],
             DefineRoot::ImportMeta => vec![b"import".to_vec(), b"meta".to_vec()],
         };
-        parts.extend(path.members.iter().map(|member| atoms.bytes(*member).to_vec()));
+        parts.extend(
+            path.members
+                .iter()
+                .map(|member| atoms.bytes(*member).to_vec()),
+        );
         parts
     }
 
@@ -322,9 +329,8 @@ mod tests {
         let options = fold(&USER_DEFINES, &[], session.arena(), &atoms);
 
         let number = |value| Some(DefineValue::Constant(Constant::Number(value)));
-        let string = |text: &[u8]| {
-            Some(DefineValue::Constant(Constant::String(atoms.intern(text))))
-        };
+        let string =
+            |text: &[u8]| Some(DefineValue::Constant(Constant::String(atoms.intern(text))));
         assert_eq!(global_value(&options, &atoms, b"LEVEL"), number(41.0));
         assert_eq!(global_value(&options, &atoms, b"NAME"), string(b"n"));
         let flags = [(atoms.intern(b"a"), DataValue::Boolean(true))];
@@ -344,11 +350,17 @@ mod tests {
         );
 
         let meta = [atoms.intern(b"env"), atoms.intern(b"X")];
-        assert_eq!(find_define(&options, DefineRoot::ImportMeta, &meta), number(1.0));
+        assert_eq!(
+            find_define(&options, DefineRoot::ImportMeta, &meta),
+            number(1.0)
+        );
 
         let process = DefineRoot::Global(atoms.intern(b"process"));
         let node_env = [atoms.intern(b"env"), atoms.intern(b"NODE_ENV")];
-        assert_eq!(find_define(&options, process, &node_env), string(b"staging"));
+        assert_eq!(
+            find_define(&options, process, &node_env),
+            string(b"staging")
+        );
         let bun_env = [atoms.intern(b"env"), atoms.intern(b"BUN_ENV")];
         assert!(find_define(&options, process, &bun_env).is_some());
     }
@@ -365,14 +377,20 @@ mod tests {
         assert_eq!(global_value(&options, &atoms, b"window"), None);
         assert_eq!(global_value(&options, &atoms, b"console"), None);
         let tools = DefineRoot::Global(atoms.intern(b"tools"));
-        assert_eq!(find_define(&options, tools, &[atoms.intern(b"trace")]), None);
+        assert_eq!(
+            find_define(&options, tools, &[atoms.intern(b"trace")]),
+            None
+        );
 
         let dropped_calls: Vec<Vec<u8>> = options
             .dropped_calls
             .iter()
             .map(|path| path_parts(path, &atoms).join(&b'.'))
             .collect();
-        assert_eq!(dropped_calls, [&b"console"[..], b"debugger", b"tools.trace"]);
+        assert_eq!(
+            dropped_calls,
+            [&b"console"[..], b"debugger", b"tools.trace"]
+        );
     }
 
     #[test]
@@ -404,7 +422,9 @@ mod tests {
                     value: call.data,
                     ..Default::default()
                 };
-                table.insert(b"config.BAD", unusable).expect("the table grows");
+                table
+                    .insert(b"config.BAD", unusable)
+                    .expect("the table grows");
                 options.define = table;
             },
             session.arena(),
@@ -435,7 +455,10 @@ mod tests {
             session.arena(),
             &atoms,
         );
-        assert_eq!(options.features, [atoms.intern(b"FIRST"), atoms.intern(b"SECOND")]);
+        assert_eq!(
+            options.features,
+            [atoms.intern(b"FIRST"), atoms.intern(b"SECOND")]
+        );
     }
 
     #[test]

@@ -34,7 +34,7 @@ const enum PooledConnectionFlags {
 export type { PooledConnection };
 
 /// What the native connections of both drivers have.
-type NativeConnection = $ZigGeneratedClasses.MySQLConnection;
+type NativeConnection = $Bindgen.MySQLConnection;
 
 /// A driver ignores the trailing arguments it does not take.
 export type NativeCreateConnection<ConnectionHandle> = (

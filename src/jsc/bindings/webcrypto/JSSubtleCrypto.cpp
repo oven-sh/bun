@@ -19,7 +19,6 @@
 */
 
 #include "config.h"
-#include "RemovableFeatures.h"
 #include "wtf/Forward.h"
 
 #if ENABLE(WEB_CRYPTO)

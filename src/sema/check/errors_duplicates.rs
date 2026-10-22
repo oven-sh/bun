@@ -186,7 +186,7 @@ impl Checker<'_, '_> {
 
     /// `GetErrorRangeForNode(GetNameOfDeclaration(decl) ?? decl)`. An unnamed function or class uses its first token.
     /// `export default e` uses the whole statement unless `e` is an identifier.
-    pub(super) fn range_of_declaration_name(&self, file: FileId, decl: Decl) -> Option<(u32, u32)> {
+    fn range_of_declaration_name(&self, file: FileId, decl: Decl) -> Option<(u32, u32)> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let start = match decl {
             Decl::Fn(it) if hir[it].name.is_none() => match bound.fns[it.idx()].owner {

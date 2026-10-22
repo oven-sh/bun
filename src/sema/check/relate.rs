@@ -7910,7 +7910,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// goes on with the intersection that `apparent_type` has left unchanged, so that `this` in its
     /// members is that intersection, with its aliases. A tuple has no slot for `this`.
     fn printed_source(&mut self, source: TypeId) -> TypeId {
-        if self.has_only_own_apparent_types(source) {
+        if self.is_intersection(source) && self.apparent_type(source) == source {
             self.apparent_type_of_intersection(source)
         } else {
             source

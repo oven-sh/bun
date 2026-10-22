@@ -1,7 +1,4 @@
-// The calls of built-ins that do nothing a program can see when nobody uses their result, and what their operands have to be for
-// that. The engine decides it for a call in the IR from the capability, the heaps, `throws`, `runsOnlyOperandCode` and the uses of an
-// overload, with the types that flow has proven. The front end judges a statement by its syntax, before any type is known, so the
-// same columns are turned here into what an operand has to look like. Nothing is listed by name.
+// The calls of built-ins that do nothing a program can see when nobody uses their result, and what their operands have to be for that.
 import type { Atom } from "./build-types.ts";
 import { parameterAt, takes } from "./dispatch.ts";
 import { GeneratorError } from "./declarations.ts";
@@ -12,11 +9,7 @@ import type { Conversion, OperandUse, Protocol } from "./vocabulary.ts";
 export const operandKinds = ["Undefined", "Null", "Boolean", "Number", "String", "Symbol", "BigInt", "NotPassed"] as const;
 export type OperandKind = (typeof operandKinds)[number];
 
-// None: the entry converts an object, iterates over it or calls it, or takes none.
-// Literal: an object or array literal of the statement itself, whose properties are data under written names. The entry lists its
-// keys, reads its values or changes it, and nobody else has it.
-// ArrayLiteral: an array literal without holes and spread elements. ArrayLiteralOfLiterals: and each element is a Literal.
-// Any: the entry looks at what the object is, or keeps it in its result.
+// What kind of object an entry may be given for its call to be removable: none, a literal of the statement itself, an array literal, or any.
 export const objectDemands = ["None", "Literal", "ArrayLiteral", "ArrayLiteralOfLiterals", "Any"] as const;
 export type ObjectDemand = (typeof objectDemands)[number];
 
@@ -193,8 +186,7 @@ class Derivation {
     };
   }
 
-  // The first overload that takes the operands of a call is the one that describes it. So the operands that an earlier overload takes are taken
-  // out of the demands, at one position: the earlier overload then never takes what meets them.
+  // The first overload that takes the operands of a call is the one that describes it.
   #excludeOperandsOf(earlier: ModelOverload, positions: readonly Position[], hasRest: boolean): boolean {
     const argumentCount = positions.filter(({ operand }) => operand.operand !== "Receiver").length;
     if (!hasRest && earlier.parameters.slice(argumentCount).some(parameter => !takes(parameter, "NotPassed"))) return true;

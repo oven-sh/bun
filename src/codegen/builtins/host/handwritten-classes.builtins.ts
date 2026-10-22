@@ -1,6 +1,6 @@
 import * as b from "bun-builtins-table";
 import { prototypeMembersOf, classes as sinkNames } from "../../generate-jssink.ts";
-import { methodReturning } from "../collect-classes.ts";
+import { methodReturning } from "../collect-bindgen.ts";
 
 const externalState = ["ExternalState"];
 const objectOrUndefined = b.union(b.object, b.undefined);

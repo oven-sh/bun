@@ -107,7 +107,7 @@ function wrapStoreRun(store: Store, data: unknown, next: () => unknown, transfor
 
 class ActiveChannel {
   _subscribers: Subscription[] | undefined;
-  name: ChannelName;
+  name!: ChannelName;
   _stores: Map<Store, Transform | undefined> | undefined;
 
   subscribe(subscription: Subscription) {

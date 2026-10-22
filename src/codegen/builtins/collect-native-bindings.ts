@@ -2,7 +2,7 @@ import type { NativeCall } from "../builtins-manifest-model.ts";
 import { createdFunctionList, nativeCallList } from "../generate-js2native.ts";
 import type { Problems, Source, SourcedDeclaration } from "./declarations.ts";
 import { pathOfNativeBinding } from "./paths.ts";
-import type { NativeCallKind } from "./vocabulary.ts";
+import type { BuiltinPath, NativeCallKind } from "./vocabulary.ts";
 
 interface NativeMacro {
   kind: NativeCallKind;
@@ -61,6 +61,7 @@ function collectCreatedFunctions(): SourcedDeclaration[] {
 export function collectNativeBindings(
   calls: readonly NativeCall[],
   isLeftOutOfTable: (schemaFileName: string) => boolean,
+  constructorBindings: ReadonlySet<BuiltinPath>,
   problems: Problems,
 ): SourcedDeclaration[] {
   const distinct = findDistinctCalls(calls);
@@ -72,7 +73,9 @@ export function collectNativeBindings(
       file,
       symbol,
       hostNumber: macro === "bindgen" && isLeftOutOfTable(file) ? null : id,
-      answersFunction: nativeMacros[macro].answersFunction,
+      answersFunction:
+        nativeMacros[macro].answersFunction &&
+        !constructorBindings.has(pathOfNativeBinding(nativeMacros[macro].kind, file, symbol)),
     },
     source: callSites,
   }));

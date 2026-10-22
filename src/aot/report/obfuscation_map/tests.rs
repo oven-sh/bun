@@ -59,9 +59,9 @@ fn decode_fields(segment: &[u8]) -> Vec<i32> {
 fn decode_sites(mappings: &[u8]) -> Vec<(usize, Vec<i32>)> {
     let mut original = [0; 4];
     let mut sites = Vec::new();
-    for (function, line) in mappings.split(|&byte| byte == b';').enumerate() {
+    for (function, line) in bun_core::strings::split(mappings, b";").enumerate() {
         let mut site = 0;
-        let segments = line.split(|&byte| byte == b',');
+        let segments = bun_core::strings::split(line, b",");
         for segment in segments.filter(|segment| !segment.is_empty()) {
             let deltas = decode_fields(segment);
             site += deltas[0];

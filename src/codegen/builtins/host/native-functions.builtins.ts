@@ -30,8 +30,7 @@ const listsCertificates = {
   implementation: b.hostCall,
 } satisfies b.FunctionField;
 
-// Until the program has made a Bun.ModuleGraph they answer at once. After that they walk the frames from the operand down, by
-// `storage` and `previous`, and run no code.
+// Until the program has made a Bun.ModuleGraph they answer at once.
 const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =>
   ({
     args: { frame: b.any.optional },
@@ -42,8 +41,7 @@ const looksForModuleGraph = (returns: b.TableType, uses: readonly b.UseSpec[]) =
     implementation: b.hostCall,
   }) satisfies b.FunctionField;
 
-// Functions on which the host puts members that have no entry yet: fetch.preconnect, Bun.inspect.custom, process.hrtime.bigint ..
-// Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
+// Functions on which the host puts members that have no entry yet: fetch.preconnect, Bun.inspect.custom, process.hrtime.bigint .. Bun.$ and Bun.sql are callable objects of classes of the library, and require.resolve inherits `paths` from an object of its own.
 const functionsWithUndeclaredMembers = [
   "%ModuleRequire%.resolve",
   "Bun.$",

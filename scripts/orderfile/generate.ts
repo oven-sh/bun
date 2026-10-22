@@ -120,7 +120,6 @@ interface Workload {
   /** Run on a pseudo-terminal rather than pipes (see ptyrun.c). */
   tty?: boolean;
   env?: Record<string, string>;
-  aot?: boolean;
 }
 
 /** Many small workloads, run several at a time and reported as one line. */
@@ -743,38 +742,23 @@ function codeRanges(fd: number, path: string): CodeRange[] {
  * link-time addresses. The starts are addresses in the profile, and a
  * breakpoint planted at one of them in any other build lands mid-instruction.
  * Stripping and `bun build --compile` both leave the code as it was.
- * `bun build --compile --aot` leaves out what the program cannot reach: what
- * stays keeps its address, in several ranges, with a few pages rewritten where
- * something was cut out of them, and the compiled program is a range of its own
- * behind the profile's.
  */
 export function sameCode(profile: string, exe: string): boolean {
   const [a, b] = [openSync(profile, "r"), openSync(exe, "r")];
   try {
     const [ours, theirs] = [codeRanges(a, profile), codeRanges(b, exe)];
-    const endOf = (range: CodeRange) => range.address + BigInt(range.size);
-    const page = 4096;
-    let [compared, rewritten] = [0, 0];
-    for (const other of theirs) {
-      const range = ours.find(range => range.address <= other.address && endOf(other) <= endOf(range));
-      if (!range) {
-        if (ours.some(range => other.address < endOf(range) && range.address < endOf(other))) return false;
-        continue;
-      }
-      const from = range.offset + Number(other.address - range.address);
+    if (ours.length !== theirs.length) return false;
+    for (const [i, range] of ours.entries()) {
+      const other = theirs[i]!;
+      if (range.address !== other.address || range.size !== other.size) return false;
       const step = 1 << 22;
-      for (let done = 0; done < other.size; done += step) {
-        const size = Math.min(step, other.size - done);
-        const [expected, found] = [readAt(a, from + done, size), readAt(b, other.offset + done, size)];
-        if (expected.length !== size || found.length !== size) return false;
-        compared += Math.ceil(size / page);
-        if (expected.equals(found)) continue;
-        for (let at = 0; at < size; at += page) {
-          if (!expected.subarray(at, at + page).equals(found.subarray(at, at + page))) rewritten++;
-        }
+      for (let done = 0; done < range.size; done += step) {
+        const size = Math.min(step, range.size - done);
+        const bytes = readAt(a, range.offset + done, size);
+        if (bytes.length !== size || !bytes.equals(readAt(b, other.offset + done, size))) return false;
       }
     }
-    return compared > 0 && rewritten * 100 <= compared;
+    return true;
   } finally {
     closeSync(a);
     closeSync(b);
@@ -842,12 +826,11 @@ export function readFeatures(path: string): { names: string[]; required: string[
  * with one feature selected, so what the order file takes from a run is that
  * feature's code and whatever earlier runs had not already entered.
  */
-function appWorkloads(bunProfile: string, scratch: string, aot = false): WorkloadGroup {
+function appWorkloads(bunProfile: string, scratch: string): WorkloadGroup {
   const source = join(here, "app");
-  const suffix = aot ? "-aot" : "";
-  const tree = join(scratch, `app${suffix}`);
-  const data = join(scratch, `app-data${suffix}`);
-  const temp = join(scratch, `app-tmp${suffix}`);
+  const tree = join(scratch, "app");
+  const data = join(scratch, "app-data");
+  const temp = join(scratch, "app-tmp");
   mkdirSync(data);
   mkdirSync(temp);
   // What the local TLS server presents and its clients pin, and a second CA for a client's trust store.
@@ -858,18 +841,20 @@ function appWorkloads(bunProfile: string, scratch: string, aot = false): Workloa
 
   const scaffold = runCommand([bunProfile, join(source, "scaffold.js"), tree], { label: "app scaffold" });
   if (scaffold.status !== 0) throw new Error(`could not write the app workloads' source\n${scaffold.stderr}`);
-  const exe = join(scratch, `orderfile-app${suffix}`);
+  const exe = join(scratch, "orderfile-app");
   const embedded = readdirSync(join(tree, "src", "rt")).map(file => join("src", "rt", file));
   const build = runCommand(
     [
       bunProfile,
       "build",
       "--compile",
-      ...(aot ? ["--aot"] : ["--bytecode", "--splitting"]),
+      "--bytecode",
+      "--splitting",
       "--format=esm",
       "--target=bun",
+      "--minify",
       // A long-running application raises the JIT thresholds while it starts and lowers them once it is up (tui.js).
-      ...(aot ? [] : ["--minify", "--compile-jit-policy=4"]),
+      "--compile-jit-policy=4",
       // Defines handed to the executable's runtime transpiler are parsed on every start.
       `--compile-exec-argv=--define=ORDERFILE_APP:true --define=ORDERFILE_TRACED:true --define=process.env.ORDERFILE_MODE:"compiled"`,
       join("src", "main.js"),
@@ -877,7 +862,7 @@ function appWorkloads(bunProfile: string, scratch: string, aot = false): Workloa
       "--outfile",
       exe,
     ],
-    { cwd: tree, label: `bun build --compile${aot ? " --aot" : ""} (app workloads)`, timeout: WORKLOAD_TIMEOUT_MS },
+    { cwd: tree, label: "bun build --compile (app workloads)", timeout: WORKLOAD_TIMEOUT_MS },
   );
   if (build.status !== 0) throw new Error(`could not compile the app workloads\n${build.stdout}${build.stderr}`);
   if (!sameCode(bunProfile, exe)) {
@@ -886,10 +871,10 @@ function appWorkloads(bunProfile: string, scratch: string, aot = false): Workloa
 
   const features = readFeatures(join(source, "features.txt"));
   const env = { ORDERFILE_APP_DATA: data, TMPDIR: temp, TERM: "xterm-256color" };
-  const name = (feature: string) => `app${suffix} ${feature}`;
+  const name = (feature: string) => `app ${feature}`;
   return {
-    group: `app${suffix}`,
-    required: ["startup", ...(aot ? [] : features.required)].map(name),
+    group: "app",
+    required: ["startup", ...features.required].map(name),
     workloads: ["startup", ...features.names].map(feature => ({
       name: name(feature),
       exe,
@@ -900,30 +885,8 @@ function appWorkloads(bunProfile: string, scratch: string, aot = false): Workloa
       // The terminal features read keys; everything else ignores its stdin.
       ...(feature.startsWith("tui_") ? { input: "hello\r" } : {}),
       env: { ...env, ORDERFILE_FEATURES: feature },
-      aot,
     })),
   };
-}
-
-const supportsAOT =
-  (process.platform === "linux" && process.arch === "x64") || (process.platform === "darwin" && process.arch === "arm64");
-
-function aotWorkloads(bunProfile: string, scratch: string, sources: string[]): Workload[] {
-  if (!supportsAOT) return [];
-  return sources.map(source => {
-    const exe = join(scratch, `orderfile-aot-${basename(source).replace(/\.[jt]s$/, "")}`);
-    const label = `bun build --compile --aot ${basename(source)}`;
-    const build = runCommand([bunProfile, "build", "--compile", "--aot", source, "--outfile", exe], {
-      cwd: dirname(source),
-      label,
-      timeout: WORKLOAD_TIMEOUT_MS,
-    });
-    if (build.status !== 0) throw new Error(`${label} failed\n${build.stdout}${build.stderr}`);
-    if (!sameCode(bunProfile, exe)) {
-      throw new Error(`${label} did not leave ${basename(bunProfile)}'s code where the symbols say it is`);
-    }
-    return { name: `${basename(source)} (--aot)`, exe, args: [], aot: true };
-  });
 }
 
 /** The longest of a group's runs takes ~15 s under trace (the app's idle feature waits 11.5 s). */
@@ -1083,21 +1046,6 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       `const greet = (name: string): string => \`hi \${name}\`;\nconsole.log(greet("world"));\n`,
     );
     writeFileSync(
-      join(fixtures, "tsconfig.json"),
-      JSON.stringify({
-        compilerOptions: {
-          target: "esnext",
-          module: "preserve",
-          moduleResolution: "bundler",
-          typeRoots: [resolve(here, "..", "..", "packages")],
-          types: ["bun-types"],
-          allowJs: true,
-          strict: true,
-          noEmit: true,
-        },
-      }) + "\n",
-    );
-    writeFileSync(
       join(fixtures, "server.js"),
       `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });\n` +
         `for (let i = 0; i < 50; i++) await (await fetch(\`http://localhost:\${server.port}/\`)).text();\n` +
@@ -1110,6 +1058,16 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     // Reads stdin, writes stdout, drives readline — run once on a pipe and once
     // on a terminal.
     copyFileSync(join(here, "cli-fixture.js"), join(fixtures, "cli.js"));
+
+    // `bun check`, `bun lint` and `bun fmt` share no code with the runtime's startup, so nothing above reaches them.
+    const project = join(fixtures, "project");
+    mkdirSync(project);
+    copyFileSync(join(here, "check-fixture.ts"), join(project, "index.ts"));
+    writeFileSync(
+      join(project, "tsconfig.json"),
+      `{ "compilerOptions": { "strict": true, "noEmit": true, "target": "esnext", "module": "esnext", ` +
+        `"lib": ["esnext", "dom"], "types": [] } }\n`,
+    );
 
     // `bun install`, offline: the one dependency is a tarball packed by the binary
     // we are about to trace, so a slow registry cannot cost a release its order
@@ -1135,12 +1093,14 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     );
     const installEnv = { BUN_INSTALL_CACHE_DIR: join(scratch, "install-cache") };
 
+    // `bun lint` is a command in canary builds only. A release build would look for a script of that name.
+    const revision = runCommand([bunProfile, "--revision"], { label: "bun --revision" });
+    const hasLint = revision.stdout.includes("canary");
+
     await checkpoint(interrupted);
     const steps: (Workload | WorkloadGroup)[] = [
       { name: "bun -e", args: ["-e", "console.log(1)"] },
-      ...aotWorkloads(bunProfile, scratch, [join(fixtures, "hello.ts"), join(fixtures, "server.js")]),
       ...(windows ? [] : [appWorkloads(bunProfile, scratch)]),
-      ...(supportsAOT ? [appWorkloads(bunProfile, scratch, true)] : []),
       { name: "bun hello.ts", args: [join(fixtures, "hello.ts")] },
       { name: "bun server.js", args: [join(fixtures, "server.js")] },
       { name: "bun test", args: ["test", join(fixtures, "tests", "example.test.ts")] },
@@ -1154,6 +1114,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
         tty: true,
         env: { TERM: "xterm-256color" },
       },
+      { name: "bun check", args: ["check"], cwd: project },
+      ...(hasLint ? [{ name: "bun lint", args: ["lint"], cwd: project }] : []),
+      { name: "bun fmt", args: ["fmt"], cwd: project },
     ];
 
     // ── Hints first ───────────────────────────────────────────────────────────
@@ -1196,14 +1159,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       return { cmd, options, out };
     };
     let traces = 0;
-    const enteredByAOT = new Set<number>();
-    const enteredByOthers = new Set<number>();
-    const emit = (addresses: number[], aot: boolean | undefined) => {
+    const emit = (addresses: number[]) => {
       traces++;
-      for (const address of addresses) {
-        tracedAddresses.add(address);
-        (aot ? enteredByAOT : enteredByOthers).add(address);
-      }
+      for (const address of addresses) tracedAddresses.add(address);
       return appendNames(order, seen, symbols, addresses);
     };
 
@@ -1213,7 +1171,7 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
         const { cmd, options, out } = launch(step);
         const r = runCommand(cmd, { ...options, timeout: WORKLOAD_TIMEOUT_MS });
         if (r.status !== 0) throw new Error(`workload "${step.name}" exited ${r.status}\n${r.stderr}`);
-        const { added, unresolved } = emit(readTrace(out, step.name), step.aot);
+        const { added, unresolved } = emit(readTrace(out, step.name));
         const note = unresolved ? ` (${unresolved} unresolved)` : "";
         log(`  ${step.name.padEnd(21)} +${added} functions${note}`);
         continue;
@@ -1244,9 +1202,9 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       let added = 0;
       let unresolved = 0;
       let resolved = 0;
-      for (const [i, trace] of results.entries()) {
+      for (const trace of results) {
         if (!trace) continue;
-        const result = emit(trace, step.workloads[i]!.aot);
+        const result = emit(trace);
         added += result.added;
         unresolved += result.unresolved;
         resolved += trace.length - result.unresolved;
@@ -1283,17 +1241,6 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
       `# ${order.length} functions from ${traces} workloads${hinted ? ` and ${hinted} hinted` : ""}.`,
     ];
     await checkpoint(interrupted);
-    const run = new Map<string, number>();
-    for (const [address, names] of symbols) {
-      const place = enteredByOthers.has(address) ? (enteredByAOT.has(address) ? 1 : 2) : 0;
-      for (const name of names) run.set(name, place);
-    }
-    const traced = order.splice(hinted);
-    for (const place of [0, 1, 2]) {
-      for (const name of traced) {
-        if (run.get(name) === place) order.push(name);
-      }
-    }
     writeFileSync(outPath, header.join("\n") + "\n" + order.join("\n") + "\n");
     return { count: order.length, outPath };
   });

@@ -94,9 +94,17 @@ pub(crate) fn capacity(input: &CompiledProgramInput<'_>) -> usize {
             entry_point_overhead + entry_point.source_path.len() + entry_point.module_path.len()
         })
         .sum();
-    let package_names: usize =
-        input.package_names.iter().map(|name| PACKAGE_NAME_SIZE + name.path.len()).sum();
-    input.image.len() + input.image_alignment + RECORD_SIZE + entry_points + size_of::<u32>() + package_names
+    let package_names: usize = input
+        .package_names
+        .iter()
+        .map(|name| PACKAGE_NAME_SIZE + name.path.len())
+        .sum();
+    input.image.len()
+        + input.image_alignment
+        + RECORD_SIZE
+        + entry_points
+        + size_of::<u32>()
+        + package_names
 }
 
 pub(crate) fn append_image(
@@ -158,7 +166,12 @@ pub(crate) fn append_record(
             module_id: entry_point.module_id.0,
             source_path: paths[index].source_path,
         };
-        entries.push((record, entry_point.source_path, paths[index].module_path, index));
+        entries.push((
+            record,
+            entry_point.source_path,
+            paths[index].module_path,
+            index,
+        ));
     }
     entries.sort_unstable_by_key(|(record, ..)| record.file_index);
     if !entries.is_sorted_by(|(a, ..), (b, ..)| a.file_index < b.file_index) {
@@ -169,7 +182,9 @@ pub(crate) fn append_record(
         compare_source_paths(entries[a as usize].1, entries[b as usize].1).then(a.cmp(&b))
     });
     let records: Vec<CompiledEntryPointRecord> = entries.iter().map(|entry| entry.0).collect();
-    let module_paths = entries.iter().flat_map(|entry| [entry.2.offset, entry.2.length]);
+    let module_paths = entries
+        .iter()
+        .flat_map(|entry| [entry.2.offset, entry.2.length]);
     let module_paths: Vec<u32> = module_paths.collect();
     let mut places = vec![NO_ENTRY_POINT; entries.len()];
     for (place, entry) in (0..).zip(&entries) {
@@ -206,7 +221,12 @@ fn encode_package_names(names: &[CompiledPackageNameInput<'_>], places: &[u32]) 
     let mut bytes = u32::try_from(names.len()).ok()?.to_le_bytes().to_vec();
     for name in &names {
         let length = u32::try_from(name.path.len()).ok()?;
-        let words = [length, place_of(name.required)?, place_of(name.imported)?, u32::from(name.hides_other_paths)];
+        let words = [
+            length,
+            place_of(name.required)?,
+            place_of(name.imported)?,
+            u32::from(name.hides_other_paths),
+        ];
         bytes.extend(words.into_iter().flat_map(u32::to_le_bytes));
     }
     for name in &names {
@@ -230,7 +250,9 @@ fn read_package_names(
         index => ((index as usize) < entry_point_count).then_some(Some(index)),
     };
     let mut names = Vec::with_capacity(count);
-    for [length, required, imported, hides_other_paths] in records.as_chunks::<4>().0.as_chunks::<4>().0 {
+    for [length, required, imported, hides_other_paths] in
+        records.as_chunks::<4>().0.as_chunks::<4>().0
+    {
         let path = payload.bytes(path_at, u32::from_le_bytes(*length) as usize)?;
         path_at += path.len();
         names.push(CompiledPackageName {
@@ -305,7 +327,12 @@ fn try_read(
     let mut entry_points: Vec<CompiledEntryPoint> = Vec::with_capacity(entry_point_count);
     let mut lowest_file_index: usize = 0;
     let module_paths = module_paths.as_chunks::<4>().0.as_chunks::<2>().0;
-    for (bytes, [offset, length]) in entries.as_chunks::<RECORD_SIZE>().0.iter().zip(module_paths) {
+    for (bytes, [offset, length]) in entries
+        .as_chunks::<RECORD_SIZE>()
+        .0
+        .iter()
+        .zip(module_paths)
+    {
         // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
         let record: CompiledEntryPointRecord = unsafe { read_unaligned(bytes.as_ptr().cast()) };
         let module_path = StringPointer {
@@ -389,7 +416,9 @@ fn is_normalized_posix_path(name: &[u8]) -> bool {
         return false;
     };
     let rest = rest.strip_suffix(b"/").unwrap_or(rest);
-    rest.is_empty() || rest.split(|&byte| byte == b'/').all(|component| !matches!(component, b"" | b"." | b".."))
+    rest.is_empty()
+        || bun_core::strings::split(rest, b"/")
+            .all(|component| !matches!(component, b"" | b"." | b".."))
 }
 
 /// `name` as a key of `files` and `dirs`: absolute, normalized, posix-separated, without trailing separators.
@@ -503,8 +532,16 @@ impl StandaloneModuleGraph {
     }
 
     fn find_common_start_of_source_paths(&self, program: &CompiledProgram) -> Option<Box<[u8]>> {
-        let source_paths = program.entry_points.iter().map(|entry_point| entry_point.source_path);
-        let files = self.files.keys().iter().map(|key| &key[..]).filter(|key| !is_bun_standalone_file_path(key));
+        let source_paths = program
+            .entry_points
+            .iter()
+            .map(|entry_point| entry_point.source_path);
+        let files = self
+            .files
+            .keys()
+            .iter()
+            .map(|key| &key[..])
+            .filter(|key| !is_bun_standalone_file_path(key));
         source_paths
             .chain(files)
             .reduce(|common, path| {
@@ -539,7 +576,8 @@ impl StandaloneModuleGraph {
             return false;
         };
         let mut buffer = path_buffer_pool::get();
-        absolute_key(path, &mut buffer).is_some_and(|key| self.is_near_source_paths(program, key.as_bytes()))
+        absolute_key(path, &mut buffer)
+            .is_some_and(|key| self.is_near_source_paths(program, key.as_bytes()))
     }
 
     /// For a path the disk does not have.
@@ -582,14 +620,17 @@ impl StandaloneModuleGraph {
         let Some(program) = self.compiled_program.as_ref() else {
             return false;
         };
-        file.loader == bun_ast::Loader::File && program.preserves_source_paths != is_bun_standalone_file_path(name)
+        file.loader == bun_ast::Loader::File
+            && program.preserves_source_paths != is_bun_standalone_file_path(name)
     }
 
     pub fn find_asset_under_root(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        self.files.get(name).filter(|file| self.is_asset_of_compiled_program(name, file))
+        self.files
+            .get(name)
+            .filter(|file| self.is_asset_of_compiled_program(name, file))
     }
 
     pub fn find_at_source_path(&self, name: &[u8]) -> Option<&File> {
@@ -600,9 +641,12 @@ impl StandaloneModuleGraph {
         let mut buffer = path_buffer_pool::get();
         let key = absolute_key(name, &mut buffer)?;
         let file_index = self.files.get_index(key.as_bytes())?;
-        // The file of an entry point is empty: its text is on the disk or nowhere. But one that is embedded, a native addon, has its bytes under the same name.
-        let is_entry_point = program.entry_point_by_file_index(u32::try_from(file_index).ok()?).is_some();
-        if is_entry_point && self.files.values()[file_index].contents.as_bytes().is_empty() {
+        // The file of an entry point is empty: its text is on the disk or nowhere. But one that is embedded, a native addon or an asset, has its bytes
+        // and its loader under the same name, and an asset may be an empty file.
+        let is_entry_point = program
+            .entry_point_by_file_index(u32::try_from(file_index).ok()?)
+            .is_some();
+        if is_entry_point && self.files.values()[file_index].loader.is_javascript_like() {
             return None;
         }
         // As for a directory, the disk wins: the file may have been written since the build, and the program may write it.
@@ -621,7 +665,9 @@ impl StandaloneModuleGraph {
         }
         let program = self.compiled_program.as_ref()?;
         let key = absolute_key(name, buffer)?;
-        if !self.is_near_source_paths(program, key.as_bytes()) || !self.dirs.contains_key(key.as_bytes()) {
+        if !self.is_near_source_paths(program, key.as_bytes())
+            || !self.dirs.contains_key(key.as_bytes())
+        {
             return None;
         }
         let is_on_disk = matches!(bun_sys::directory_exists_at(Fd::cwd(), key), Ok(true));
@@ -745,7 +791,10 @@ pub(crate) mod tests {
         let length = bytes.len();
         let (program, record_end) = read_back(bytes, record_at).unwrap();
         assert_eq!(record_end, length);
-        let paths = program.entry_points.iter().map(|entry| (entry.module_id, entry.module_path));
+        let paths = program
+            .entry_points
+            .iter()
+            .map(|entry| (entry.module_id, entry.module_path));
         let expected: [(u32, &[u8]); 2] = [(11, b"/$bunfs/root/c.mjs"), (10, b"/$bunfs/root/b.ts")];
         assert!(paths.eq(expected));
     }
@@ -795,7 +844,12 @@ pub(crate) mod tests {
             hides_other_paths,
         };
         let names = [
-            name(&b"/$bunfs/root/node_modules/both/feature"[..], None, Some(1), false),
+            name(
+                &b"/$bunfs/root/node_modules/both/feature"[..],
+                None,
+                Some(1),
+                false,
+            ),
             name(b"/$bunfs/root/node_modules/both", Some(2), Some(1), true),
         ];
         let mut input = program(&IMAGE, ALIGNMENT, &entry_points, false);
@@ -811,29 +865,60 @@ pub(crate) mod tests {
             rewritten_extensions: &|_, _| &[],
         };
         let find = |specifier: &[u8], is_require| {
-            program.resolve_package(b"/$bunfs/root/", b"/$bunfs/root/lib/", specifier, is_require, &search)
+            program.resolve_package(
+                b"/$bunfs/root/",
+                b"/$bunfs/root/lib/",
+                specifier,
+                is_require,
+                &search,
+            )
         };
-        assert_eq!(find(b"both", true), Some(&b"/$bunfs/root/node_modules/both/common.cjs"[..]));
-        assert_eq!(find(b"both", false), Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..]));
-        assert_eq!(find(b"both/feature", false), Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..]));
+        assert_eq!(
+            find(b"both", true),
+            Some(&b"/$bunfs/root/node_modules/both/common.cjs"[..])
+        );
+        assert_eq!(
+            find(b"both", false),
+            Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..])
+        );
+        assert_eq!(
+            find(b"both/feature", false),
+            Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..])
+        );
         assert_eq!(find(b"both/feature", true), None);
         assert_eq!(find(b"other", true), None);
 
-        let names_at = bytes.len() - names.iter().map(|name| PACKAGE_NAME_SIZE + name.path.len()).sum::<usize>();
+        let names_at = bytes.len()
+            - names
+                .iter()
+                .map(|name| PACKAGE_NAME_SIZE + name.path.len())
+                .sum::<usize>();
         let mut out_of_range = bytes.clone();
         patch(&mut out_of_range, names_at + 4, 3);
         assert_eq!(read_back(out_of_range, record_at).err(), Some(CORRUPTED));
         let mut too_many = bytes.clone();
         patch(&mut too_many, names_at - 4, 3);
         assert_eq!(read_back(too_many, record_at).err(), Some(CORRUPTED));
-        assert_eq!(read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(), Some(CORRUPTED));
+        assert_eq!(
+            read_back(bytes[..bytes.len() - 1].to_vec(), record_at).err(),
+            Some(CORRUPTED)
+        );
 
-        let twice = [name(&b"/a"[..], Some(0), None, false), name(b"/a", None, Some(0), false)];
+        let twice = [
+            name(&b"/a"[..], Some(0), None, false),
+            name(b"/a", None, Some(0), false),
+        ];
         input.package_names = &twice;
-        assert_eq!(write(&input, &[Some(2), Some(0), Some(1)], 0).err(), Some(CORRUPTED));
+        assert_eq!(
+            write(&input, &[Some(2), Some(0), Some(1)], 0).err(),
+            Some(CORRUPTED)
+        );
         let no_such_entry_point = [name(&b"/a"[..], Some(3), None, false)];
         input.package_names = &no_such_entry_point;
-        assert_eq!(write(&input, &[Some(2), Some(0), Some(1)], 0).err(), Some(CORRUPTED));
+        assert_eq!(
+            write(&input, &[Some(2), Some(0), Some(1)], 0).err(),
+            Some(CORRUPTED)
+        );
     }
 
     #[test]
@@ -868,7 +953,11 @@ pub(crate) mod tests {
             &[Some(0), Some(1), Some(2)],
         ];
         for file_indices in bad_file_indices {
-            assert_eq!(write(&input, file_indices, 0).err(), Some(CORRUPTED), "{file_indices:?}");
+            assert_eq!(
+                write(&input, file_indices, 0).err(),
+                Some(CORRUPTED),
+                "{file_indices:?}"
+            );
         }
     }
 
@@ -978,7 +1067,12 @@ pub(crate) mod tests {
         use_request: impl FnOnce(&GraphRequest<'_>) -> R,
     ) -> R {
         let entry_point_indices = [Some(0), Some(1)];
-        with_entry_point_indices(folder, preserves_source_paths, entry_point_indices, use_request)
+        with_entry_point_indices(
+            folder,
+            preserves_source_paths,
+            entry_point_indices,
+            use_request,
+        )
     }
 
     /// `entry_point_indices` are those of the files `main.js` and `plugins/a.js`.
@@ -1054,13 +1148,40 @@ pub(crate) mod tests {
             (b"/a/../b/", b"/b"),
             (b"/..", b""),
         ] {
-            assert_eq!(key(name).as_deref(), Some(expected), "{}", String::from_utf8_lossy(name));
+            assert_eq!(
+                key(name).as_deref(),
+                Some(expected),
+                "{}",
+                String::from_utf8_lossy(name)
+            );
         }
         for normalized in [&b"/"[..], b"/a", b"/a/", b"/a/b.c/.d/..e/..."] {
-            assert!(is_normalized_posix_path(normalized), "{}", String::from_utf8_lossy(normalized));
+            assert!(
+                is_normalized_posix_path(normalized),
+                "{}",
+                String::from_utf8_lossy(normalized)
+            );
         }
-        for other in [&b""[..], b"a", b"a/b", b"./a", b"//", b"/a//", b"//a", b"/a//b", b"/a/./b", b"/a/.", b"/a/..", b"/.", b"/.."] {
-            assert!(!is_normalized_posix_path(other), "{}", String::from_utf8_lossy(other));
+        for other in [
+            &b""[..],
+            b"a",
+            b"a/b",
+            b"./a",
+            b"//",
+            b"/a//",
+            b"//a",
+            b"/a//b",
+            b"/a/./b",
+            b"/a/.",
+            b"/a/..",
+            b"/.",
+            b"/..",
+        ] {
+            assert!(
+                !is_normalized_posix_path(other),
+                "{}",
+                String::from_utf8_lossy(other)
+            );
         }
     }
 
@@ -1129,18 +1250,32 @@ pub(crate) mod tests {
         let folder = TemporaryFolder::create("far-away");
         for preserves_source_paths in [true, false] {
             let graph = with_request(&folder, preserves_source_paths, read_graph);
-            for near in ["plugins/a.js", "plugins", "plugins/", "plugins/../plugins/a.js", "plugins/a.js/b"] {
+            for near in [
+                "plugins/a.js",
+                "plugins",
+                "plugins/",
+                "plugins/../plugins/a.js",
+                "plugins/a.js/b",
+            ] {
                 assert!(graph.may_answer_for(&folder.join(near)), "{near}");
             }
             // A directory above them all is listed as one.
             let mut above = &folder.0[..];
-            while let Some(at) = above.iter().rposition(|&byte| byte == b'/') {
+            while let Some(at) = bun_core::strings::last_index_of_char(above, b'/') {
                 above = &above[..at];
                 assert!(graph.may_answer_for(if above.is_empty() { b"/" } else { above }));
             }
-            for far in [&b"/no-such-root/plugins/a.js"[..], b"/no-such-root", b"/proc/self/none"] {
+            for far in [
+                &b"/no-such-root/plugins/a.js"[..],
+                b"/no-such-root",
+                b"/proc/self/none",
+            ] {
                 assert!(!graph.may_answer_for(far));
-                assert!(graph.stat(far).is_none() && graph.source_path_kind(far).is_none() && !graph.owns_directory(far));
+                assert!(
+                    graph.stat(far).is_none()
+                        && graph.source_path_kind(far).is_none()
+                        && !graph.owns_directory(far)
+                );
             }
             assert!(graph.may_answer_for(&in_virtual_root("anything")));
         }

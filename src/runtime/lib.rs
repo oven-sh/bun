@@ -52,11 +52,11 @@ pub(crate) mod shell;
 #[path = "api.rs"]
 pub(crate) mod api;
 pub(crate) mod checker_queries_testing;
-#[cfg(debug_assertions)]
-pub(crate) mod class_ref_test;
 pub(crate) mod code_resolver_testing;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
+#[cfg(debug_assertions)]
+pub(crate) mod imported_class_test;
 pub(crate) mod ipc;
 pub(crate) mod ipc_host;
 pub(crate) mod jsc_hooks;
@@ -70,7 +70,6 @@ pub(crate) mod run_main;
 pub(crate) mod timer;
 
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
-pub(crate) mod generated_classes; // include!()s ${BUN_CODEGEN_DIR}/generated_classes.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
 pub(crate) mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
 pub(crate) mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs

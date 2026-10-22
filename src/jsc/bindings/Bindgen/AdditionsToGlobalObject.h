@@ -20,7 +20,7 @@ struct AdditionsToGlobalObject {
             visitor.append(structure);
     }
 
-    // By index into Tables::classes.
+    // By `classIndex`.
     JSC::LazyClassStructure m_classes[Counts::numberOfClasses];
     // What an object with every member of a returned dictionary has, made when the first is returned.
     JSC::WriteBarrier<JSC::Structure> m_returnedDictionaryStructures[Counts::numberOfReturnedDictionaries];

@@ -56,13 +56,12 @@ export function serialize(message: unknown, handle: unknown, options: unknown) {
  * @param {(handle: Handle) => void} emit
  * @returns {void}
  */
-export function parseHandle(
-  target: $ZigGeneratedClasses.Subprocess | null,
-  serialized: $Node.SerializedIPCHandle,
-  fd: number,
-) {
-  const emit: (target: $ZigGeneratedClasses.Subprocess | null, message: unknown, handle: object) => void =
-    $newRustFunction("ipc.rs", "emitHandleIPCMessage", 3);
+export function parseHandle(target: $Bindgen.Subprocess | null, serialized: $Node.SerializedIPCHandle, fd: number) {
+  const emit: (target: $Bindgen.Subprocess | null, message: unknown, handle: object) => void = $newRustFunction(
+    "ipc.rs",
+    "emitHandleIPCMessage",
+    3,
+  );
   const net = require("node:net");
   // const dgram = require("node:dgram");
   switch (serialized.type) {

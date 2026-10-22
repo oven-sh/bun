@@ -154,8 +154,7 @@ export class TableType {
     return this.#with({ refused: unionOf([this.parameter.refused, ...refused.map(type => type.spec)]) });
   }
 
-  // With b.propagated: inside this type the entry raises no error about the operand. Inside what it accepts and outside this type it throws by a step
-  // of its own: a negative length, a length above what the engine ever allocates.
+  // With b.propagated: inside this type the entry raises no error about the operand.
   admitting(admitted: TableType): TableType {
     return this.#with({ admitted: admitted.spec });
   }
@@ -353,8 +352,7 @@ export const result: PlaceSpec = { place: "Result" };
 export const nativeMemory: PlaceSpec = { place: "NativeMemory" };
 export const resultSlot = (slotName: SlotName): PlaceSpec => ({ place: "ResultSlot", slot: slotName });
 export const resultField = (field: string | number): PlaceSpec => ({ place: "ResultField", field });
-// For a record that stores into the field: the field holds what the records of the overload store there and nothing else,
-// whatever its type allows. Without the word the field may also hold any value of its type.
+// For a record that stores into the field: the field holds what the records of the overload store there and nothing else, whatever its type allows.
 export const resultFieldHoldingOnlyWhatIsStored = (field: string | number): PlaceSpec => ({
   place: "ResultField",
   field,
@@ -374,8 +372,7 @@ export const anyKey: KeySpec = { key: "Any" };
 export const inspected: readonly UseSpec[] = [];
 export const everything: UseSpec = { use: "Everything" };
 export const retained: UseSpec = { use: "Retains", in: nativeMemory };
-// An operand that a function of the host reads, calls, keeps and passes on like any native code, and does not change. It is handed to
-// native code and nothing else is said here: what native code does with all it holds is described in one place.
+// An operand that a function of the host reads, calls, keeps and passes on like any native code, and does not change.
 export const handedOver: readonly UseSpec[] = [retained];
 export const returned: UseSpec = { use: "Returns" };
 export const movesElements: UseSpec = { use: "MovesElements" };
@@ -390,11 +387,9 @@ export const becomesLengthOfReceiver: UseSpec = { use: "Role", role: "BecomesLen
 // The new array has a hole wherever this operand has one in the part that is copied.
 export const copiesHolesToResult: UseSpec = { use: "Role", role: "CopiesHolesToResult" };
 export const membersOnlyInspected: UseSpec = { use: "Role", role: "MembersAreOnlyInspected" };
-// Native code tests that a value is an object before it reads or calls a member of it, by name or to iterate over it:
-// `(404).status` and `"OK"[Symbol.iterator]` are never looked up.
+// Native code tests that a value is an object before it reads or calls a member of it, by name or to iterate over it: `(404).status` and `"OK"[Symbol.iterator]` are never looked up.
 export const membersOfObjectsOnly: UseSpec = { use: "Role", role: "MembersAreOfObjectsOnly" };
-// Native code tests that a value it means to call is callable, and keeps it. It converts a function to a primitive only
-// where it has read it under one of the names of `named(..)`: `port: f` is converted, `fetch: f` and a route are not.
+// Native code tests that a value it means to call is callable, and keeps it.
 export const functionsConvertedUnderNamesOnly: UseSpec = { use: "Role", role: "FunctionsAreConvertedUnderNamesOnly" };
 export const ownPropertyTraps: readonly UseSpec[] = [
   { use: "Runs", protocols: ["OwnKeys"] },
@@ -483,8 +478,7 @@ export const optionBag = (names: readonly string[]): UseSpec[] => [runsTransitiv
 // The language turns a primitive given for the options into an object and reads its members. Bun's natives do not.
 export const hostOptionBag = (names: readonly string[]): UseSpec[] => [...optionBag(names), membersOfObjectsOnly];
 
-// What console.log's formatter does with a value, which Bun.inspect and the messages of some errors share. It prints what a custom
-// inspect function returns.
+// What console.log's formatter does with a value, which Bun.inspect and the messages of some errors share.
 export const printedByFormatter = (...otherMembers: readonly string[]): UseSpec =>
   runsTransitively(
     "OwnKeys",
@@ -573,8 +567,7 @@ export const memberStoredIn = (path: MemberPath, place: PlaceLike): UseSpec => (
   path,
   in: placeOf(place),
 });
-// Native code makes the value and keeps it there. Every entry that hands it to JavaScript takes it from that place, so
-// the analysis sees one object where the program sees one.
+// Native code makes the value and keeps it there.
 export const createdIn = (value: TableType, place: PlaceLike): UseSpec => ({
   use: "Creates",
   value: value.spec,
@@ -586,8 +579,7 @@ export const returnedFrom = (cell: string): UseSpec => ({ use: "ReturnsKept", ce
 export const functionIn = (file: string, name: string): FunctionRef => ({ file, name });
 export const generic: ImplementationSpec = { how: "Generic" };
 export const hostCall: ImplementationSpec & { how: "HostCall" } = { how: "HostCall" };
-// The getter has no function object until somebody asks for its descriptor. Compiled code enters the native function
-// itself, which takes the realm, the receiver and the name of the property.
+// The getter has no function object until somebody asks for its descriptor.
 export const customGetterCall = (symbol: string): ImplementationSpec & { how: "HostCall" } => ({
   how: "HostCall",
   customGetter: symbol,
@@ -648,11 +640,7 @@ export const whenObjectNobodyKnowsIsWritten: ConditionSpec = { objectNobodyKnows
 // The target of a build decides which of the types it is: every run of an executable sees the same one.
 export type TypeByPlatform = Readonly<Record<TargetPlatform, TableType>>;
 
-// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number, no SyntaxError for a text, no TypeError for the
-// state of an object. It throws what an operation on an operand throws, which `uses` lists: the code that the operand runs, and a store, a definition,
-// a deletion or a change of integrity that the operand refuses. Beside that there is only lack of memory: a result whose size follows from the sizes
-// of the operands is too large, or a nesting is too deep for the stack. A result whose size is a number among the operands fails by rule: `throws: true`.
-// A call of such an entry whose result nobody uses is removed where the operands are proven to run no code and to refuse nothing.
+// With operands that it admits (.admitting(), or else all that it accepts) the entry has no step of its own that throws: no RangeError for a number, no SyntaxError for a text, no TypeError for the state of an object.
 export const propagated = "Propagated";
 
 export interface SignatureOptions extends SignatureColumns {
@@ -693,9 +681,7 @@ export interface OwnSlotOptions {
   after: readonly string[];
 }
 
-// An own data property that the constructor of a class defines. An instance whose Structure is the one those definitions
-// lead to holds it at a known place, and any other instance is read by name. A store keeps the Structure, so the type
-// is that of whatever a program may store there.
+// An own data property that the constructor of a class defines.
 export const ownSlot = (holds: TableType, { structure, after }: OwnSlotOptions): GetterField => ({
   getter: holds,
   capability: "js",
@@ -747,8 +733,7 @@ function textsByTarget(texts: TextByTarget): TargetTextSpec[] {
   return [...byPlatform, ...byArchitecture];
 }
 
-// A text that the target of a build decides: every run of an executable reads the same one. One text is the same for
-// all targets, and otherwise there is one for each platform or one for each architecture.
+// A text that the target of a build decides: every run of an executable reads the same one.
 export function constantString(value: string | TextByTarget): ConstantField {
   const texts =
     typeof value === "string"
@@ -1127,10 +1112,7 @@ export interface NamespaceOptions extends EntryColumns {
   scope?: Scope;
   isGlobalObject?: boolean;
   listsAllMembers?: boolean;
-  /**
-   * Native code that was not handed the object looks up these names on it and no other, and it stores to none. So it finds what
-   * a program puts under one of them, on the object or above it, and nothing else that a program puts there.
-   */
+  /** Native code that was not handed the object looks up these names on it and no other, and it stores to none. */
   namesReadByNativeCode?: readonly string[];
   /** Those of them whose value native code only tests, for being true or for being callable. It neither keeps nor calls it. */
   namesOnlyInspectedByNativeCode?: readonly string[];
@@ -1285,8 +1267,7 @@ export interface HostCallOptions {
   result?: readonly HostUseSpec[];
 }
 
-// What native code does with a value that it got hold of by itself: an export that it read from a module of the library, the
-// object of a function of the library, what a call of its own answered. A value has a list of these.
+// What native code does with a value that it got hold of by itself: an export that it read from a module of the library, the object of a function of the library, what a call of its own answered.
 export const inspectedByHost: HostUseSpec = { read: "Inspected" };
 export const dropped: readonly HostUseSpec[] = [];
 // The entries and records that name the cell say what becomes of it from there.
@@ -1321,17 +1302,13 @@ export interface HostObjectOptions {
   fields?: Readonly<Record<string, PlaceLike | readonly PlaceLike[]>>;
   /** What native code puts under every other name and index that it may define. Without it the object has the listed fields alone. */
   otherNames?: PlaceLike | readonly PlaceLike[];
-  /**
-   * Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make.
-   * A row with b.whenObjectNobodyKnowsIsWritten on an entry that answers the object speaks of a value that is no string, number or boolean.
-   */
+  /** Of whatever is stored or defined under any key the object keeps a string, which code that the stored value names may make. */
   keepsStringsOfStoredValues?: boolean;
   /** By the index of an internal field: what native code does with what code of the library stores there. */
   internalFields?: Readonly<Record<number, readonly HostUseSpec[]>>;
 }
 
-// An object that native code makes by itself and hands to code of the library or of the program. It lies in the native cell,
-// and whoever passes it names the cell. One object stands for all that native code makes there.
+// An object that native code makes by itself and hands to code of the library or of the program.
 export const hostObject = (cell: string, options: HostObjectOptions): Declaration[] => {
   const valuesOf = (values: PlaceLike | readonly PlaceLike[]) =>
     (Array.isArray(values) ? (values as readonly PlaceLike[]) : [values as PlaceLike]).map(hostValueOf);
@@ -1351,8 +1328,7 @@ export const hostObject = (cell: string, options: HostObjectOptions): Declaratio
   ];
 };
 
-// A function that native code makes from a host function of its own and hands to code of the library, which has no other way
-// to it. It lies in the native cell, and the signature says what a call of it does.
+// A function that native code makes from a host function of its own and hands to code of the library, which has no other way to it.
 export function hostFunction(cell: string, file: string, symbol: string, field: FunctionField | readonly FunctionField[]): Declaration[] {
   return [
     {
@@ -1377,16 +1353,14 @@ export function hostFunction(cell: string, file: string, symbol: string, field: 
   ];
 }
 
-// Classes of the host, declared or not, have a native method under the name (namesOfMethodsCallingLoads of b.startup), and a
-// call of one calls what lies in the cell.
+// Classes of the host, declared or not, have a native method under the name (namesOfMethodsCallingLoads of b.startup), and a call of one calls what lies in the cell.
 export function hostMethodCall(member: string, cell: string, options: HostCallOptions): Declaration[] {
   const use = calledByHost(options);
   assert(use.read === "Called" && use.call !== undefined);
   return [{ declares: "HostMethodCall", name: member, cell, call: use.call }];
 }
 
-// What native code passes to a member that it finds under the name on an operand and calls (b.calls). The receiver is the
-// object that has the member, and the protocol says what becomes of the answer.
+// What native code passes to a member that it finds under the name on an operand and calls (b.calls).
 export const namedMemberCall = (member: string, args: readonly PlaceLike[]): Declaration[] => [
   { declares: "NamedMemberCall", name: member, arguments: args.map(hostValueOf) },
 ];

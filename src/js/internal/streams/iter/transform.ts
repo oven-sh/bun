@@ -13,16 +13,16 @@ const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
 const { kValidatedTransform } = require("internal/streams/iter/types");
 const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib: $ZigGeneratedClasses.CompressionStreamConstructor<$ZigGeneratedClasses.NativeZlib> = $rust(
-  "node_zlib_binding.rs",
+const NativeZlib: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZlib> = $bindgen(
+  "node_zlib_binding.bind.ts",
   "NativeZlib",
 );
-const NativeBrotli: $ZigGeneratedClasses.CompressionStreamConstructor<$ZigGeneratedClasses.NativeBrotli> = $rust(
-  "node_zlib_binding.rs",
+const NativeBrotli: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeBrotli> = $bindgen(
+  "node_zlib_binding.bind.ts",
   "NativeBrotli",
 );
-const NativeZstd: $ZigGeneratedClasses.CompressionStreamConstructor<$ZigGeneratedClasses.NativeZstd> = $rust(
-  "node_zlib_binding.rs",
+const NativeZstd: $Bindgen.CompressionStreamConstructor<$Bindgen.NativeZstd> = $bindgen(
+  "node_zlib_binding.bind.ts",
   "NativeZstd",
 );
 const constants: Record<string, number> = process.binding("constants").zlib;
@@ -30,7 +30,7 @@ const constants: Record<string, number> = process.binding("constants").zlib;
 type OnError = (message: string, errno: number, code: string) => void;
 
 /** A native handle, and the input it holds on to while the thread pool reads it. */
-type Handle = $ZigGeneratedClasses.CompressionStream & { buffer?: ArrayBufferView | null };
+type Handle = $Bindgen.CompressionStream & { buffer?: ArrayBufferView | null };
 
 interface CreatedHandle {
   __proto__?: null;

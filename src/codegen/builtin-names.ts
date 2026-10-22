@@ -1,5 +1,4 @@
 // The private names of JavaScriptCore that src/js may spell `$name`, by what `@name` is to JavaScriptCore.
-// Bun's own private names are read from src/js/builtins/BunBuiltinNames.h.
 export const jscNames = {
   // JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME in bytecode/BytecodeIntrinsicRegistry.h
   intrinsic: [
@@ -71,4 +70,4 @@ export const jscNames = {
 };
 
 // Types and namespaces of src/js/*.d.ts. They have no value.
-export const typeNames = ["AnyObject", "ZigGeneratedClasses"];
+export const typeNames = ["AnyObject", "Bindgen"];

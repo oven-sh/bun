@@ -87,8 +87,10 @@ struct Hasher;
 extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
 Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
 {
-    auto utf8 = name.utf8();
-    auto bytes = byteCast<char>(utf8.span());
+    auto utf8 = name.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    auto bytes = byteCast<char>(utf8->span());
     return Bun__CryptoHasherExtern__getByName(globalObject, bytes.data(), bytes.size());
 }
 
@@ -712,6 +714,16 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     return std::nullopt;
 }
 
+std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
+{
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
+    if (bytes.size() > INT32_MAX) [[unlikely]] {
+        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
+        return std::nullopt;
+    }
+    return Vector<uint8_t>(bytes);
+}
+
 bool isStringOrBuffer(JSValue value)
 {
     if (value.isString()) {
@@ -919,6 +931,11 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
+        // BoringSSL's length parameter is an `int`.
+        if (passphraseView->byteLength() > INT_MAX) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+            return;
+        }
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 

@@ -115,8 +115,7 @@ static uint32_t nextBoolean(BodyDecoder& decoder)
     return decoder.checker().boolean(decoder.next());
 }
 
-// An operation whose words on the wire are a fixed number is decoded without a test between its words. Where a word is not valid, the words are decoded again one by one,
-// which finds the error to report.
+// An operation whose words on the wire are a fixed number is decoded without a test between its words.
 template<typename E>
 static uint32_t checkedEnumerator(uint32_t word, bool& isValid)
 {

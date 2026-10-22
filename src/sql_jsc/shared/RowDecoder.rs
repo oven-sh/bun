@@ -1,7 +1,9 @@
 use core::ffi::c_void;
 use core::ptr;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, bun_string_jsc};
+use crate::jsc::{
+    JSGlobalObject, JSValue, JsError, JsResult, MarkedArgumentBuffer, bun_string_jsc,
+};
 use crate::postgres::types::date;
 
 const INLINE_COLUMN_CAPACITY: usize = 64;
@@ -30,7 +32,11 @@ pub(crate) struct RowDecoder {
 
 impl Default for RowDecoder {
     fn default() -> Self {
-        Self { row_type: 0, plan: ptr::null_mut(), formats: Box::default() }
+        Self {
+            row_type: 0,
+            plan: ptr::null_mut(),
+            formats: Box::default(),
+        }
     }
 }
 
@@ -43,19 +49,50 @@ impl RowDecoder {
         self.row_type == row_type
     }
 
-    pub(crate) fn new(global_object: &JSGlobalObject, row_type: u32, columns: Option<&[RowColumn]>) -> Self {
+    pub(crate) fn new(
+        global_object: &JSGlobalObject,
+        row_type: u32,
+        columns: Option<&[RowColumn]>,
+    ) -> Self {
         let Some(columns) = columns.filter(|columns| !columns.is_empty()) else {
-            return Self { row_type, plan: ptr::null_mut(), formats: Box::default() };
+            return Self {
+                row_type,
+                plan: ptr::null_mut(),
+                formats: Box::default(),
+            };
         };
-        let names: Vec<Name> = columns.iter().map(|column| Name { utf8: column.name, length: column.name_length }).collect();
+        let names: Vec<Name> = columns
+            .iter()
+            .map(|column| Name {
+                utf8: column.name,
+                length: column.name_length,
+            })
+            .collect();
         // SAFETY: `names` and the bytes it points to outlive the call, and C++ copies what it retains.
-        let plan = unsafe { JSC__AOT__ObjectBuilderPlan__create(global_object, row_type, names.as_ptr(), names.len() as u32) };
-        Self { row_type, plan, formats: columns.iter().map(|column| column.format).collect() }
+        let plan = unsafe {
+            JSC__AOT__ObjectBuilderPlan__create(
+                global_object,
+                row_type,
+                names.as_ptr(),
+                names.len() as u32,
+            )
+        };
+        Self {
+            row_type,
+            plan,
+            formats: columns.iter().map(|column| column.format).collect(),
+        }
     }
 
-    pub(crate) fn append_row(&self, global_object: &JSGlobalObject, row: &[u8], rows: JSValue) -> Option<JSValue> {
+    /// `None`: nothing was appended, and the caller decodes the row itself.
+    pub(crate) fn append_row(
+        &self,
+        global_object: &JSGlobalObject,
+        row: &[u8],
+        rows: JSValue,
+    ) -> JsResult<Option<JSValue>> {
         if self.plan.is_null() || !(rows.is_empty() || rows.js_type().is_array()) {
-            return None;
+            return Ok(None);
         }
         let object = if self.formats.len() <= INLINE_COLUMN_CAPACITY {
             // The collector scans the stack, so the cells in this array need no other root.
@@ -67,33 +104,54 @@ impl RowDecoder {
                 self.create_object(global_object, row, &mut values, |boxed| roots.append(boxed))
             })
         };
-        let object = object?;
+        let Some(object) = object? else {
+            return Ok(None);
+        };
         if rows.is_empty() {
-            let array = ok_or_clear_exception(global_object, JSValue::create_empty_array(global_object, 0))?;
-            ok_or_clear_exception(global_object, array.push(global_object, object))?;
-            return Some(array);
+            let array = JSValue::create_empty_array(global_object, 0)?;
+            array.push(global_object, object)?;
+            return Ok(Some(array));
         }
-        ok_or_clear_exception(global_object, rows.push(global_object, object))?;
-        Some(rows)
+        rows.push(global_object, object)?;
+        Ok(Some(rows))
     }
 
-    fn create_object(&self, global_object: &JSGlobalObject, row: &[u8], values: &mut [FieldValue], mut root: impl FnMut(JSValue)) -> Option<JSValue> {
-        let is_decoded = decode_row(row, &self.formats, &mut |index, cell| match create_field_value(global_object, cell) {
-            Some(value) => {
-                if let FieldValue::Boxed(boxed) = value {
-                    root(boxed);
+    fn create_object(
+        &self,
+        global_object: &JSGlobalObject,
+        row: &[u8],
+        values: &mut [FieldValue],
+        mut root: impl FnMut(JSValue),
+    ) -> JsResult<Option<JSValue>> {
+        let mut thrown = None;
+        let is_decoded = decode_row(
+            row,
+            &self.formats,
+            &mut |index, cell| match create_field_value(global_object, cell) {
+                Ok(value) => {
+                    if let FieldValue::Boxed(boxed) = value {
+                        root(boxed);
+                    }
+                    values[index] = value;
+                    true
                 }
-                values[index] = value;
-                true
-            }
-            None => false,
-        });
+                Err(error) => {
+                    thrown = Some(error);
+                    false
+                }
+            },
+        );
+        if let Some(error) = thrown {
+            return Err(error);
+        }
         if !is_decoded {
-            return None;
+            return Ok(None);
         }
         // SAFETY: the plan was created with `formats.len()` names, and `values` has at least that many.
-        let object = unsafe { JSC__AOT__ObjectBuilderPlan__createObject(global_object, self.plan, values.as_ptr()) };
-        (!object.is_empty()).then_some(object)
+        let object = unsafe {
+            JSC__AOT__ObjectBuilderPlan__createObject(global_object, self.plan, values.as_ptr())
+        };
+        Ok((!object.is_empty()).then_some(object))
     }
 }
 
@@ -116,7 +174,11 @@ enum Cell<'a> {
     Date { milliseconds: f64 },
 }
 
-fn decode_row<'a>(row: &'a [u8], formats: &[WireFormat], each: &mut dyn FnMut(usize, Cell<'a>) -> bool) -> bool {
+fn decode_row<'a>(
+    row: &'a [u8],
+    formats: &[WireFormat],
+    each: &mut dyn FnMut(usize, Cell<'a>) -> bool,
+) -> bool {
     let Some((column_count, mut rest)) = row.split_first_chunk::<2>() else {
         return false;
     };
@@ -151,8 +213,12 @@ fn decode_row<'a>(row: &'a [u8], formats: &[WireFormat], each: &mut dyn FnMut(us
 fn decode_cell(format: WireFormat, bytes: &[u8]) -> Option<Cell<'_>> {
     match format {
         WireFormat::Int32 => Some(Cell::Int32(i32::from_be_bytes(bytes.try_into().ok()?))),
-        WireFormat::Float32 => Some(Cell::Number(f32::from_bits(u32::from_be_bytes(bytes.try_into().ok()?)) as f64)),
-        WireFormat::Float64 => Some(Cell::Number(f64::from_bits(u64::from_be_bytes(bytes.try_into().ok()?)))),
+        WireFormat::Float32 => Some(Cell::Number(f32::from_bits(u32::from_be_bytes(
+            bytes.try_into().ok()?,
+        )) as f64)),
+        WireFormat::Float64 => Some(Cell::Number(f64::from_bits(u64::from_be_bytes(
+            bytes.try_into().ok()?,
+        )))),
         WireFormat::Boolean => {
             let [byte] = bytes else {
                 return None;
@@ -165,37 +231,31 @@ fn decode_cell(format: WireFormat, bytes: &[u8]) -> Option<Cell<'_>> {
                 return None;
             }
             let milliseconds = date::from_binary(bytes);
-            milliseconds.is_finite().then_some(Cell::Date { milliseconds })
+            milliseconds
+                .is_finite()
+                .then_some(Cell::Date { milliseconds })
         }
     }
 }
 
-fn create_field_value(global_object: &JSGlobalObject, cell: Cell<'_>) -> Option<FieldValue> {
-    match cell {
-        Cell::Null => Some(FieldValue::Boxed(JSValue::NULL)),
-        Cell::Int32(value) => Some(FieldValue::Int32(value)),
-        Cell::Number(value) => Some(FieldValue::Double(value)),
-        Cell::Boolean(value) => Some(FieldValue::Boolean(value)),
-        Cell::Text(text) => {
-            let string = bun_string_jsc::create_utf8_for_js(global_object, text.as_bytes());
-            ok_or_clear_exception(global_object, string).map(FieldValue::Boxed)
-        }
+fn create_field_value(global_object: &JSGlobalObject, cell: Cell<'_>) -> JsResult<FieldValue> {
+    Ok(match cell {
+        Cell::Null => FieldValue::Boxed(JSValue::NULL),
+        Cell::Int32(value) => FieldValue::Int32(value),
+        Cell::Number(value) => FieldValue::Double(value),
+        Cell::Boolean(value) => FieldValue::Boolean(value),
+        Cell::Text(text) => FieldValue::Boxed(bun_string_jsc::create_utf8_for_js(
+            global_object,
+            text.as_bytes(),
+        )?),
         Cell::Date { milliseconds } => {
             let date = JSValue::from_date_number(global_object, milliseconds);
             if date.is_empty() {
-                let _ = global_object.try_take_exception();
-                return None;
+                return Err(JsError::Thrown);
             }
-            Some(FieldValue::Boxed(date))
+            FieldValue::Boxed(date)
         }
-    }
-}
-
-fn ok_or_clear_exception<T>(global_object: &JSGlobalObject, result: JsResult<T>) -> Option<T> {
-    if result.is_err() {
-        let _ = global_object.try_take_exception();
-    }
-    result.ok()
+    })
 }
 
 #[repr(C)]
@@ -206,7 +266,13 @@ struct Name {
 
 #[repr(C, u32)]
 #[derive(Clone, Copy)]
-#[cfg_attr(not(test), expect(dead_code, reason = "JSC__AOT__ObjectBuilderPlan__createObject reads the payloads"))]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "JSC__AOT__ObjectBuilderPlan__createObject reads the payloads"
+    )
+)]
 enum FieldValue {
     Boxed(JSValue),
     Int32(i32),
@@ -218,9 +284,18 @@ const _: () = assert!(size_of::<FieldValue>() == 16 && align_of::<FieldValue>() 
 
 unsafe extern "C" {
     safe fn JSC__AOT__expectedResultType(global_object: &JSGlobalObject, target: JSValue) -> u32;
-    fn JSC__AOT__ObjectBuilderPlan__create(global_object: &JSGlobalObject, expected_result_type: u32, names: *const Name, count: u32) -> *mut c_void;
+    fn JSC__AOT__ObjectBuilderPlan__create(
+        global_object: &JSGlobalObject,
+        expected_result_type: u32,
+        names: *const Name,
+        count: u32,
+    ) -> *mut c_void;
     fn JSC__AOT__ObjectBuilderPlan__destroy(plan: *mut c_void);
-    fn JSC__AOT__ObjectBuilderPlan__createObject(global_object: &JSGlobalObject, plan: *const c_void, field_values: *const FieldValue) -> JSValue;
+    fn JSC__AOT__ObjectBuilderPlan__createObject(
+        global_object: &JSGlobalObject,
+        plan: *const c_void,
+        field_values: *const FieldValue,
+    ) -> JSValue;
 }
 
 #[cfg(test)]
@@ -277,7 +352,9 @@ mod tests {
             Cell::Number(2.25),
             Cell::Boolean(true),
             Cell::Text("text"),
-            Cell::Date { milliseconds: 946_684_800_000.0 },
+            Cell::Date {
+                milliseconds: 946_684_800_000.0,
+            },
             Cell::Null,
         ];
         assert_eq!(decode_cells(&row, &formats), Some(expected));
@@ -286,14 +363,22 @@ mod tests {
     #[test]
     fn timestamp_floors_before_year_2000() {
         let row = encode_row(&[Some(&(-1i64).to_be_bytes())]);
-        let expected = vec![Cell::Date { milliseconds: 946_684_799_999.0 }];
-        assert_eq!(decode_cells(&row, &[WireFormat::TimestampMicroseconds]), Some(expected));
+        let expected = vec![Cell::Date {
+            milliseconds: 946_684_799_999.0,
+        }];
+        assert_eq!(
+            decode_cells(&row, &[WireFormat::TimestampMicroseconds]),
+            Some(expected)
+        );
     }
 
     #[test]
     fn empty_text_is_text() {
         let row = encode_row(&[Some(b"")]);
-        assert_eq!(decode_cells(&row, &[WireFormat::Text]), Some(vec![Cell::Text("")]));
+        assert_eq!(
+            decode_cells(&row, &[WireFormat::Text]),
+            Some(vec![Cell::Text("")])
+        );
     }
 
     #[test]
@@ -332,13 +417,21 @@ mod tests {
     fn rejects_infinite_timestamps() {
         for microseconds in [i64::MAX, i64::MIN] {
             let row = encode_row(&[Some(&microseconds.to_be_bytes())]);
-            assert_eq!(decode_cells(&row, &[WireFormat::TimestampMicroseconds]), None);
+            assert_eq!(
+                decode_cells(&row, &[WireFormat::TimestampMicroseconds]),
+                None
+            );
         }
     }
 
     #[test]
     fn field_value_is_tag_then_payload() {
-        let values = [FieldValue::Boxed(JSValue::NULL), FieldValue::Int32(-7), FieldValue::Double(1.5), FieldValue::Boolean(true)];
+        let values = [
+            FieldValue::Boxed(JSValue::NULL),
+            FieldValue::Int32(-7),
+            FieldValue::Double(1.5),
+            FieldValue::Boolean(true),
+        ];
         for (kind, value) in values.iter().enumerate() {
             // SAFETY: `#[repr(C, u32)]` puts the `u32` tag first.
             let tag = unsafe { *ptr::from_ref(value).cast::<u32>() };

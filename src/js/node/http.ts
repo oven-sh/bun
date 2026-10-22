@@ -113,7 +113,7 @@ function setGlobalProxyFromEnv(env: Record<string, string | undefined> = process
     throw $ERR_PROXY_INVALID_CONFIG(redactInvalidProxyUrl(httpsProxy));
   }
 
-  let originalHttpsAgent: $Node.HttpsAgent | undefined, originalHttpAgent: $Node.Agent | undefined;
+  let originalHttpsAgent: $Node.Agent | undefined, originalHttpAgent: $Node.Agent | undefined;
   if (httpProxy !== null) {
     originalHttpAgent = httpAgent.globalAgent;
     httpAgent.globalAgent = new Agent({

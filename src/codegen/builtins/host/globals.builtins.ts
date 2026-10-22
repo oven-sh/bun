@@ -124,8 +124,7 @@ const keptByNativeCode = (readMembers: readonly string[], calledMembers: readonl
   b.membersOfObjectsOnly,
 ];
 
-// Native code copies what it reads out of the options. What it keeps of them it hands back to no JavaScript, and a
-// function among them is called only the way the entry says: a handler is tested for being callable and kept.
+// Native code copies what it reads out of the options.
 const readAndKeptIn = (cell: string, readMembers: readonly string[], calledMembers: readonly string[]) => [
   b.storedIn(b.nativeCell(cell)),
   b.reachableValuesStoredIn(b.nativeCell(cell)),
@@ -326,7 +325,7 @@ const inspect = [
   },
 ] satisfies b.FunctionField[];
 
-const peek = [
+const peek: b.FunctionField[] = [
   {
     args: { promise: b.instance("Promise") },
     returns: b.union(b.operand("promise"), b.slot("promise", "value"), b.slot("promise", "reason")),
@@ -341,7 +340,7 @@ const peek = [
     uses: { value: b.inspected },
     implementation: b.generic,
   },
-] satisfies b.FunctionField[];
+];
 
 // A key of one operand is read from the other under that name, through its prototypes, so any member may be read.
 const comparedDeeply = [
@@ -596,8 +595,7 @@ const serverOptionNames = [
 ];
 
 const serverCallbackNames = pluginCallbackNames;
-// The server, the URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is
-// new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
+// The server, the URL, the method, the dispatch bits, the response, whether there is a body, the socket, whether it is new, its duplex, whether the request is HTTP/1.0, the bytes after the head, and whether the request was pipelined.
 const nodeRequestHandlerArguments = Array.from({ length: 12 }, () => b.any);
 const routeMethodNames = ["CONNECT", "DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRACE"];
 
@@ -885,7 +883,6 @@ const serverMembers = {
     uses: { this: serverState, options: serverOptions(thisServer) },
   },
   // The handler gets a request of its own and no second argument: a copy of the Request that is passed, which is told from any other object by its class.
-  // Beside a URL, method, headers and body are read from the options.
   fetch: {
     ...startedByOptions,
     args: { request: b.any.optional, options: b.any.optional },
@@ -946,8 +943,7 @@ const cachedServerGetters = {
 } satisfies Readonly<Record<string, b.TableType>>;
 
 const subprocessOptions = keptByNativeCode(subprocessOptionNames, subprocessHandlerNames);
-// A socket is one object for as long as it lives. The promise of Bun.connect is settled with it too, and nothing says
-// there which object that is, so it also counts as read back from native memory.
+// A socket is one object for as long as it lives.
 const socket = b.nativeCell(socketsCell);
 const newSocket = b.union(b.instance("TCPSocket"), b.instance("TLSSocket")).fresh;
 const receivedChunk = b.union(b.instance("Buffer"), b.instance("Uint8Array").exactly, b.instance("ArrayBuffer")).fresh;
@@ -975,22 +971,20 @@ const socketOptions = [
   ),
 ];
 
-const startsSubprocess = (returns: b.TableType) =>
-  [
-    {
-      ...startedByOptions,
-      args: { command: b.instance("Array"), options: b.any.optional },
-      returns,
-      uses: {
-        command: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
-        options: subprocessOptions,
-      },
+const startsSubprocess = (returns: b.TableType): b.FunctionField[] => [
+  {
+    ...startedByOptions,
+    args: { command: b.instance("Array"), options: b.any.optional },
+    returns,
+    uses: {
+      command: [b.readsContents(), b.runsTransitively("OwnValues", "ToPrimitive")],
+      options: subprocessOptions,
     },
-    { ...startedByOptions, args: { options: b.object }, returns, uses: { options: subprocessOptions } },
-  ] satisfies b.FunctionField[];
+  },
+  { ...startedByOptions, args: { options: b.object }, returns, uses: { options: subprocessOptions } },
+];
 
-// src/runtime/api/bun/js_bun_spawn_bindings.rs. What the child has printed is a new Buffer, the number of the descriptor that it was told to write to, or
-// undefined where the output was ignored or inherited.
+// js_bun_spawn_bindings.rs: what the child has printed is a new Buffer, the number of the descriptor it was told to write to, or undefined where the output was ignored or inherited.
 const outputOfFinishedProcess = b.union(b.instance("Buffer"), b.f64, b.undefined).fresh;
 const resultOfSpawnSync = b.layout("SpawnSyncResult", {
   exitCode: b.f64.nullable,
@@ -1004,7 +998,7 @@ const resultOfSpawnSync = b.layout("SpawnSyncResult", {
   pid: b.f64,
 });
 
-const cron = [
+const cron: b.FunctionField[] = [
   {
     ...operandCodeOnly,
     args: { schedule: b.string, handler: b.callable, options: b.any.optional },
@@ -1027,10 +1021,9 @@ const cron = [
     writes: externalState,
     implementation: b.generic,
   },
-] satisfies b.FunctionField[];
+];
 
-// The function reads the environment that `$.env` was given. Its result is a Promise of a class of its own, with
-// other members and another `then`.
+// The function reads the environment that `$.env` was given.
 const shellCommand = {
   args: { strings: b.any.optional, expressions: b.any.rest },
   returns: b.object,

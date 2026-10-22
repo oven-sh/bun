@@ -22,7 +22,7 @@ export const classes = [
 const bytesOrNothingBuffered = "number | ArrayBuffer | Uint8Array";
 const bytesWrittenNowOrLater = "number | Promise";
 
-// What `end` and `flush` of each sink return, in the grammar of parseDeclaredType in class-definitions.ts.
+// What `end` and `flush` of each sink return, in the grammar of parseDeclaredType in declared-type-checks.ts.
 const resultsBySink: Record<string, { end: string; flush: string }> = {
   ArrayBufferSink: { end: bytesOrNothingBuffered, flush: bytesOrNothingBuffered },
   FileSink: { end: bytesWrittenNowOrLater, flush: "number | boolean | undefined | Promise" },
@@ -1299,8 +1299,7 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
   for (const name of classes) {
     const rustPath = sinkPaths[name] ?? `crate::webcore::streams::${name}`;
     const JSSinkT = `crate::webcore::sink::JSSink::<${name}>`;
-    // JSSink.cpp calls the thunks that are not host functions on a live sink, and there is none once --trim has
-    // removed the sink's feature. Each records itself as a part of that feature, which cuts every call to it.
+    // JSSink.cpp calls the thunks that are not host functions on a live sink, and there is none once --trim has removed the sink's feature.
     const guard = guardOfSink(guards, name);
     const feature = guard && featureNamed(removableFeatures(), guard.feature).rustName;
     const neverInlined = (indent = "") => (feature ? `#[inline(never)]\n${indent}` : "");

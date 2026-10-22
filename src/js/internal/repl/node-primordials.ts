@@ -12,7 +12,6 @@
 const { SafeSet, SafeStringIterator, SafeArrayIterator } = require("internal/primordials");
 
 type Replacement = string | Parameters<typeof String.prototype.replace>[1];
-type AnyFunction = (this: unknown, ...args: unknown[]) => unknown;
 
 const ArrayFromFn: (this: unknown, items: Iterable<unknown> | ArrayLike<unknown>) => unknown[] = Array.from;
 const ArrayPrototypeAtFn = Array.prototype.at;

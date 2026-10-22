@@ -585,7 +585,6 @@ function mergeMembers(
     (left, right) => Number(right.source.proof === "HandWritten") - Number(left.source.proof === "HandWritten"),
   );
   // The result that the definition declares is proven or checked where the value leaves native code, whatever the operands were.
-  // So a signature written by hand that says nothing about the result has it too.
   const resultsByConstruction = new Map<CallMode, TypeSpec>();
   for (const { declaration, source } of members) {
     if (source.proof !== "ByConstruction") continue;
@@ -850,8 +849,7 @@ function entersNativeSetter(
   return takesOnlyInstances(builder, receiver, instanceClass);
 }
 
-// The native function behind the getter is known, so a read needs neither a lookup by name nor the function object that
-// a descriptor of the property would have. The function does not test its receiver.
+// The native function behind the getter is known, so a read needs neither a lookup by name nor the function object that a descriptor of the property would have.
 function callCustomGetters({ builder }: EntryContext): void {
   for (const builtin of builder.builtins) {
     const symbol = columnOf(builder, builtin, "customGetter");
@@ -943,8 +941,7 @@ function linkPrototypes({ builder, sorted }: EntryContext): void {
   }
 }
 
-// The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it.
-// aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
+// The engine and the host create a function with `length` and `name`, which the class Function declares for its instances, and with nothing else but what the table lists under it. aotBuiltinMismatches() compares the own keys of every function that it finds in the realm.
 function closeFunctions({ builder }: EntryContext): void {
   for (const builtin of builder.builtins) {
     if (builtin.kind !== "Function" && builtin.kind !== "Method") continue;

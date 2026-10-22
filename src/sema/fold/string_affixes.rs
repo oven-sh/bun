@@ -90,7 +90,8 @@ impl<'s> Folder<'_, 's> {
 
     /// Whether the "." at the head of the prefix stands for `__dirname`: the text of the program begins with the folder itself.
     pub(super) fn starts_at_own_directory(&self, argument: ExprId) -> bool {
-        self.collect_prefix(argument, Nesting::Outermost).starts_at_own_directory
+        self.collect_prefix(argument, Nesting::Outermost)
+            .starts_at_own_directory
     }
 
     fn expand(&self, e: ExprId) -> Expansion {
@@ -153,9 +154,17 @@ impl<'s> Folder<'_, 's> {
         let hir = self.hir;
         match hir.member_key(e) {
             Some((object, MemberKey::Name(name))) => {
-                matches!(hir[hir.skip_type_assertions(object)].kind, ExprKind::ImportMeta)
-                    && (name == known::meta_dir || name == known::meta_dirname)
-                    && matches!(hir[e].kind, ExprKind::Dot { chain: Chain::No, .. })
+                matches!(
+                    hir[hir.skip_type_assertions(object)].kind,
+                    ExprKind::ImportMeta
+                ) && (name == known::meta_dir || name == known::meta_dirname)
+                    && matches!(
+                        hir[e].kind,
+                        ExprKind::Dot {
+                            chain: Chain::No,
+                            ..
+                        }
+                    )
                     && !self.is_replaced_by_define(e)
                     && !self.bound.import_meta_may_be_modified()
             }
@@ -195,20 +204,28 @@ impl<'s> Folder<'_, 's> {
 
     fn expand_addition(&self, outermost: ExprId) -> Expansion {
         let addends = self.collect_addends(outermost);
-        let first_string = addends.iter().position(|&addend| self.is_surely_string(addend));
+        let first_string = addends
+            .iter()
+            .position(|&addend| self.is_surely_string(addend));
         let Some(first_string) = first_string else {
             return Expansion::Unknown;
         };
         let (leading_addends, concatenated_addends) = addends.split_at(first_string);
         let mut parts = Vec::with_capacity(concatenated_addends.len() + 1);
         if !leading_addends.is_empty() {
-            let values = leading_addends.iter().map(|&addend| self.folded(addend).value);
+            let values = leading_addends
+                .iter()
+                .map(|&addend| self.folded(addend).value);
             parts.push(match self.evaluator.add_all(values) {
                 Value::Known(sum) => Part::Known(sum),
                 Value::Unknown => Part::Unknown,
             });
         }
-        parts.extend(concatenated_addends.iter().map(|&addend| Part::Expr(addend)));
+        parts.extend(
+            concatenated_addends
+                .iter()
+                .map(|&addend| Part::Expr(addend)),
+        );
         Expansion::Parts(parts)
     }
 
@@ -253,13 +270,14 @@ impl<'s> Folder<'_, 's> {
             let mut text = Vec::new();
             self.evaluator.push_text(&mut text, value);
             // `path.resolve` begins again at an absolute path.
-            if !is_join && text.starts_with(b"/") || text.contains(&b'\\') {
+            if !is_join && text.starts_with(b"/") || bun_core::strings::contains_char(&text, b'\\')
+            {
                 return None;
             }
             if !text.is_empty() {
                 ends_with_slash = text.ends_with(b"/");
             }
-            for segment in text.split(|&byte| byte == b'/') {
+            for segment in bun_core::strings::split(&text, b"/") {
                 match segment {
                     b"" | b"." => {}
                     b".." if segments.last().is_some_and(|last| last != b"..") => {
@@ -442,7 +460,9 @@ impl<'s> Folder<'_, 's> {
             if index == 0 {
                 shared.text = prefix.text;
             } else {
-                shared.text.truncate(shared_prefix_length(&shared.text, &prefix.text));
+                shared
+                    .text
+                    .truncate(shared_prefix_length(&shared.text, &prefix.text));
             }
         }
         shared
@@ -465,7 +485,9 @@ impl<'s> Folder<'_, 's> {
         };
         let mut shared = Vec::new();
         for (index, &alternative) in alternatives.iter().enumerate() {
-            let suffix = self.collect_suffix(alternative, max_bytes, Nesting::InAlternative).text;
+            let suffix = self
+                .collect_suffix(alternative, max_bytes, Nesting::InAlternative)
+                .text;
             let compared = if index == 0 { &suffix } else { &shared };
             max_length = shared_suffix_length(compared, &suffix, max_length);
             if index == 0 {

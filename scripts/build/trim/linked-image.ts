@@ -26,7 +26,7 @@ export function imageOfParts(path: string, parts: ImagePart[], isArm64: boolean)
     }
     return data;
   };
-  let last = parts[0];
+  let last: ImagePart | undefined = parts[0];
   const partWith = (address: number, length: number) => {
     if (last === undefined || address < last.start || address + length > last.end) last = parts.find(part => part.start <= address && address + length <= part.end);
     return last;

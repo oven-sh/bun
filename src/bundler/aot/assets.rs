@@ -148,7 +148,7 @@ fn create_embedded_template(
         template.data.clone_from(&options.asset_naming);
     }
 
-    let working_directory = context.bundle().transpiler().fs().top_level_dir;
+    let working_directory = context.bundle().transpiler().fs().top_level_dir();
     let relative = relative_path(working_directory, &options.root_dir, file.path)?;
     let pathname = Fs::PathName::init(&relative);
     template.placeholder.name = pathname.base.into();

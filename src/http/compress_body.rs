@@ -87,7 +87,8 @@ pub(crate) fn compress_into(
 }
 
 /// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
-/// when the bound exceeds the shared buffer or no compressor can be allocated — caller falls back to
+/// when the bound exceeds the shared buffer, the compressor can't be allocated,
+/// or the output doesn't fit. The caller falls back to
 /// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
@@ -95,7 +96,7 @@ fn compress_libdeflate_fast(
     enc: bun_libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor, Status};
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -123,7 +124,8 @@ fn compress_libdeflate_fast(
         _ => cached,
     };
 
-    Some(compressor.compress(input, shared_buffer, enc).written)
+    let result = compressor.compress(input, shared_buffer, enc);
+    (result.status == Status::Success).then_some(result.written)
 }
 
 /// Slow path for gzip/deflate when the libdeflate one-shot bound exceeds the

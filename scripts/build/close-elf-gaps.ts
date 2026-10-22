@@ -13,8 +13,8 @@ const [programHeader, sectionHeader] = [
 ];
 const mayWrite = 2;
 
-const path = process.argv[2];
-let file = readFileSync(path);
+const path = process.argv[2]!;
+let file: Buffer = readFileSync(path);
 if (file.readUInt32BE(0) !== 0x7f454c46 || file[4] !== 2 || file[5] !== 1) throw new Error(`${path} is not a little-endian ELF64 file`);
 
 const word = (at: number) => Number(file.readBigUInt64LE(at));
@@ -25,19 +25,21 @@ const tableAt = (offsetAt: number, sizeAt: number, countAt: number) =>
 for (let index = 0; index < file.readUInt16LE(56); index++) {
   const programHeaders = tableAt(32, 54, 56);
   const sectionHeaders = tableAt(40, 58, 60);
-  const segment = programHeaders[index];
+  const segment = programHeaders[index]!;
   const [start, size] = [word(segment + programHeader.offset), word(segment + programHeader.fileSize)];
   if (file.readUInt32LE(segment + programHeader.type) !== loadable || file.readUInt32LE(segment + programHeader.flags) & mayWrite) continue;
   if (size !== word(segment + programHeader.memorySize)) continue;
 
-  const ranges = [
-    ...programHeaders.filter(header => header !== segment).map(header => [word(header + programHeader.offset), word(header + programHeader.fileSize)]),
-    ...sectionHeaders
-      .filter(header => file.readUInt32LE(header + sectionHeader.type) !== noBits)
-      .map(header => [word(header + sectionHeader.offset), word(header + sectionHeader.size)]),
-    [word(32), programHeaders.length * file.readUInt16LE(54)],
-    [word(40), sectionHeaders.length * file.readUInt16LE(58)],
-  ].filter(([, length]) => length > 0);
+  const ranges = (
+    [
+      ...programHeaders.filter(header => header !== segment).map(header => [word(header + programHeader.offset), word(header + programHeader.fileSize)]),
+      ...sectionHeaders
+        .filter(header => file.readUInt32LE(header + sectionHeader.type) !== noBits)
+        .map(header => [word(header + sectionHeader.offset), word(header + sectionHeader.size)]),
+      [word(32), programHeaders.length * file.readUInt16LE(54)],
+      [word(40), sectionHeaders.length * file.readUInt16LE(58)],
+    ] as [number, number][]
+  ).filter(([, length]) => length > 0);
   const inside = ranges.filter(([offset]) => offset >= start && offset < start + size);
   if (inside.length === 0) continue;
   const used = Math.max(...inside.map(([offset, length]) => offset + length));

@@ -109,8 +109,8 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // This is undefined if a FileSink couldn't be opened for the fd. The stream then writes through node:fs.
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
-  $assert(underlyingSink);
   return [stream, underlyingSink];
 }
 
@@ -131,7 +131,7 @@ export function getNodeWorkerStdioStream(process: NodeJS.Process, fd: number, po
 export function getStdinStream(process: NodeJS.Process, fd: number, isTTY: boolean, fdType: BunProcessStdinFdType) {
   $assert(fd === 0);
   const native: ReadableStream<Uint8Array> = Bun.stdin.stream();
-  const source: $ZigGeneratedClasses.FileInternalReadableStreamSource = native.$bunNativePtr;
+  const source: $Bindgen.FileInternalReadableStreamSource = native.$bunNativePtr;
 
   var reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
 

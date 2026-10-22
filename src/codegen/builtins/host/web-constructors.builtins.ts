@@ -1,5 +1,4 @@
-// Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads
-// one gets that object. Nothing is said of a call, of a construction or of their other members.
+// Constructors and objects of the global object and of native modules of which the table says no more than what they are: whoever reads one gets that object.
 import * as b from "bun-builtins-table";
 import { builtinModulesCell, cryptoObjectCell } from "./native-cells.ts";
 import { handedOver } from "./native-code.ts";
@@ -34,12 +33,10 @@ const constructorsBelow = {
 
 const undeclaredFunction = b.otherwiseBy(b.generic);
 
-// src/jsc/bindings/webcore/streams. Without operands a construction runs no code of the program. With them it reads the members of the sink or the transformer and of the
-// strategies, calls `start`, and keeps the rest, which native code calls as chunks come.
+// src/jsc/bindings/webcore/streams: without operands a construction runs no code of the program; with them it reads their members, calls `start` and keeps the rest.
 const streamClass = (name: string, operands: readonly string[], proto: Readonly<Record<string, b.Field>>) =>
   b.class(name, {
-    // The C++ classes of TextEncoderStream, TextDecoderStream, CompressionStream and DecompressionStream inherit from the one of TransformStream, and their instances are no
-    // instances of TransformStream: a test by that C++ class would take them for some.
+    // The C++ classes of TextEncoderStream, TextDecoderStream, CompressionStream and DecompressionStream inherit from the one of TransformStream, and their instances are no instances of TransformStream: a test by that C++ class would take them for some.
     ...(name === "TransformStream" ? {} : { instanceCppClass: b.cppClass(`JS${name}`, `streams/JS${name}.h`) }),
     types: [b.viewType(name)],
     call: { returns: b.never, capability: "heap", throws: true, implementation: b.hostCall },
@@ -106,8 +103,7 @@ const listOfStrings = b.instance("Array").holding({ element: b.string });
 // src/jsc/bindings/JSStringDecoder.cpp. A decoder keeps the bytes of a character that is not complete yet.
 const stateOfDecoder = ["ExternalState"];
 const decodersMadeByCallCell = "StringDecoder.madeByCall";
-// Nothing leads from the realm to the constructor, and it is no function with native code of its own, so a validated build takes it for native code that nothing describes:
-// its operands are said to be handed over, which costs nothing where an encoding is a string.
+// Nothing leads from the realm to the constructor, and it is no function with native code of its own, so a validated build takes it for native code that nothing describes: its operands are said to be handed over, which costs nothing where an encoding is a string.
 const encodingOfDecoder = [b.retained, b.runs("ToPrimitive")];
 const readsDecoder = (getter: b.TableType) =>
   ({
@@ -264,8 +260,7 @@ export default b.declarations(
   streamClass("TransformStream", ["transformer", "writableStrategy", "readableStrategy"], endsOfTransformStream("TransformStream")),
   streamClass("TextEncoderStream", [], { encoding: readsStream(b.string), ...endsOfTransformStream("TextEncoderStream") }),
 
-  // What the module abort-controller exports is this constructor (objectModules in collect-modules.ts), on which it puts three more members when it
-  // is loaded: src/jsc/modules/AbortControllerModuleModule.h. So nothing loads the module to find the global.
+  // What the module abort-controller exports is this constructor (objectModules in collect-modules.ts), on which it puts three more members when it is loaded: src/jsc/modules/AbortControllerModuleModule.h.
   ["AbortController", "AbortSignal"].flatMap(name => b.extend(`AbortController.${name}`, { mutability: "ChangesOnItsOwn" })),
   // JSAbortController.cpp. A controller has one signal, which native code makes with it.
   b.class("AbortController", {
@@ -340,8 +335,7 @@ export default b.declarations(
     reads: ["ExternalState"],
     implementation: b.generic,
   }),
-  // JSAbortSignal.cpp. Without a script execution context, which a realm that is shutting down lacks, they answer undefined.
-  // AbortSignal.cpp AbortSignal::abort: the new signal holds the reason as it came. No slot of the class says so yet, so native memory holds it.
+  // JSAbortSignal.cpp: without a script execution context they answer undefined. No slot of the class holds the reason yet, so native memory does.
   b.static("AbortSignal.abort", {
     args: { reason: b.any.optional },
     returns: newAbortSignal,

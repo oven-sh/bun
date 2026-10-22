@@ -29,7 +29,8 @@ pub(crate) fn trim_executable(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     let summary = trim_in_memory(global, &mut bytes, &UsedFeatures::default(), &request)?;
 
     if summary.format == Some(ExecutableFormat::MachO) {
-        bytes = sign_macho(&bytes).map_err(|error| global.throw(format_args!("{}", error.name())))?;
+        bytes =
+            sign_macho(&bytes).map_err(|error| global.throw(format_args!("{}", error.name())))?;
     }
     write_executable(out.slice(), &bytes).map_err(|error| global.throw(format_args!("{error}")))?;
 
@@ -90,8 +91,7 @@ fn trim_in_memory(
 }
 
 fn parse_feature_names(global: &JSGlobalObject, names: &[u8]) -> JsResult<Vec<Feature>> {
-    names
-        .split(|&byte| byte == b'\n')
+    bun_core::strings::split(names, b"\n")
         .filter(|name| !name.is_empty())
         .map(|name| {
             Feature::from_name(name).ok_or_else(|| {

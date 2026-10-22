@@ -234,10 +234,7 @@ fn parsed(path: &str, text: &str, test: impl for<'s> FnOnce(&Workspace<'s>, &Fil
     parsed_source(&Source::new(path, text), test);
 }
 
-fn parsed_source(
-    source: &Source<'_>,
-    test: impl for<'s> FnOnce(&Workspace<'s>, &File<'s>) + Send,
-) {
+fn parsed_source(source: &Source<'_>, test: impl for<'s> FnOnce(&Workspace<'s>, &File<'s>) + Send) {
     with_workspace(|w| {
         let hir = w.parse(source);
         test(w, &hir);
@@ -293,7 +290,10 @@ fn atom_of(kind: &ExprKind, wanted: TextKind) -> Option<Atom> {
 }
 
 fn texts<'a>(w: &'a Workspace<'_>, hir: &File<'_>, wanted: TextKind) -> Vec<&'a str> {
-    let atoms = hir.exprs.iter().filter_map(|expr| atom_of(&expr.kind, wanted));
+    let atoms = hir
+        .exprs
+        .iter()
+        .filter_map(|expr| atom_of(&expr.kind, wanted));
     atoms.map(|atom| w.text(atom)).collect()
 }
 
@@ -470,7 +470,7 @@ fn jsx_text() {
 }
 
 #[test]
-fn jsx_attribute_text() {
+fn jsx_attribute_text_is_decoded() {
     parsed("a.tsx", JSX_ATTRIBUTES, |w, hir| {
         let [element] = hir.jsx[..] else {
             panic!("{:?}", hir.jsx);
@@ -554,7 +554,7 @@ fn member_keys() {
 }
 
 #[test]
-fn template_parts() {
+fn template_parts_are_kept() {
     for &(text, expected) in TEMPLATE_PARTS {
         parsed(DEFAULT_PATH, text, |w, hir| {
             let parts = hir.template_parts(only_template(hir));
@@ -733,7 +733,11 @@ fn ill_formed_text() {
             };
             let compiled = w.parse(&Source::from_bytes(path, text));
             assert_eq!(value(&compiled), Some(b"a\xC3\xBFb".to_vec()), "{path}");
-            assert!(compiled.diagnostics.is_empty(), "{path}: {:?}", compiled.diagnostics);
+            assert!(
+                compiled.diagnostics.is_empty(),
+                "{path}: {:?}",
+                compiled.diagnostics
+            );
             let checked = w.parse_for_check(path, text);
             assert_eq!(value(&checked), Some(b"a\xFFb".to_vec()), "{path}");
         });
@@ -796,7 +800,10 @@ fn html_like_comments() {
         parsed("a.js", text, |_, hir| {
             let errors = of_class(hir, EarlyError);
             let is_invalid_character = |error: &&Diagnostic| error.code == INVALID_CHARACTER;
-            assert!(errors.iter().any(is_invalid_character), "{text}: {errors:?}");
+            assert!(
+                errors.iter().any(is_invalid_character),
+                "{text}: {errors:?}"
+            );
         });
     }
     with_workspace(|w| {

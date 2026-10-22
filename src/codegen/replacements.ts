@@ -21,7 +21,7 @@ export const numberedErrorCodes: readonly { name: string; number: number }[] = N
 ).map((name, number) => ({ name, number }));
 
 /** `$inherits<name>(` is `$inherits(<number>, `. */
-export const numberedClasses: readonly { name: string; number: number }[] = jsclasses.map(([name], number) => ({
+export const numberedClasses: readonly { name: string; number: number }[] = jsclasses.map((name, number) => ({
   name,
   number,
 }));

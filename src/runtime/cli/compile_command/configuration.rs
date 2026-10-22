@@ -150,7 +150,7 @@ fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
     let mut unreported = bun_ast::Log::init();
     let expanded = expand_entry_points(
         &this_transpiler.options.entry_points,
-        FileSystem::get().top_level_dir,
+        FileSystem::get().top_level_dir(),
         None,
         &mut unreported,
     );
@@ -163,7 +163,7 @@ fn expand_entry_patterns(this_transpiler: &mut Transpiler<'static>) {
 /// A native addon among the assets is a further entry point. Its module is the call of `process.dlopen` that starts it: a
 /// `require()` under a computed path finds that module, and the analysis sees that native code may run.
 fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'static>) {
-    let working_directory = FileSystem::get().top_level_dir;
+    let working_directory = FileSystem::get().top_level_dir();
     let mut unreported = bun_ast::Log::init();
     let mut addons: Vec<Vec<u8>> = Vec::new();
     for asset in &ctx.bundler_options.compile_assets {
@@ -179,7 +179,11 @@ fn add_addons_among_assets(ctx: &ContextData, this_transpiler: &mut Transpiler<'
     if addons.is_empty() {
         return;
     }
-    let written = this_transpiler.options.entry_points.iter().map(|path| path.to_vec());
+    let written = this_transpiler
+        .options
+        .entry_points
+        .iter()
+        .map(|path| path.to_vec());
     let all: Vec<Vec<u8>> = written.chain(addons).collect();
     if let Some(distinct) = expand_entry_points(&all, working_directory, None, &mut unreported) {
         this_transpiler.options.entry_points =
@@ -494,7 +498,11 @@ pub(super) fn request_from_context<'r>(
                     flags |= Flags::DISABLE_AUTOLOAD_TSCONFIG;
                 }
                 // An executable compiled in place looks on the disk for a name that is put together at run time, as `bun run` does: by the package.json of the package.
-                let runs_in_place = ctx.bundler_options.aot.as_ref().is_some_and(|aot| aot.runs_in_place);
+                let runs_in_place = ctx
+                    .bundler_options
+                    .aot
+                    .as_ref()
+                    .is_some_and(|aot| aot.runs_in_place);
                 if !ctx.bundler_options.compile_autoload_package_json && !runs_in_place {
                     flags |= Flags::DISABLE_AUTOLOAD_PACKAGE_JSON;
                 }

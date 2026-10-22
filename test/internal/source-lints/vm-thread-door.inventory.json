@@ -7,9 +7,6 @@
       "JsPoster"
     ]
   },
-  "src/jsc/CachedBytecode.rs": {
-    "thread spawn": 1
-  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [
@@ -102,18 +99,6 @@
       "DotenvSingleton"
     ]
   },
-  "src/runtime/cli/aot_audit.rs": {
-    "thread spawn": 5
-  },
-  "src/runtime/cli/check_command.rs": {
-    "thread spawn": 3,
-    "unsafe impl Send": [
-      "Handed<T>"
-    ]
-  },
-  "src/runtime/cli/json_schemas.rs": {
-    "thread spawn": 1
-  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -129,6 +114,11 @@
   },
   "src/runtime/cli/run_command.rs": {
     "HTTPThread::schedule": 1
+  },
+  "src/runtime/cli/run_compiled.rs": {
+    "unsafe impl Send": [
+      "SharedWatcher"
+    ]
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,

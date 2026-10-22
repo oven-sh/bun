@@ -463,26 +463,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
     (d.out, orphans)
 }
 
-/// `forEachChild` from the file down, one line per node: its depth, its `Kind`, its start.
-pub fn nodes(file: &File) -> String {
-    let mut out = String::new();
-    let mut open = vec![(Node::FILE, 0)];
-    while let Some((node, depth)) = open.pop() {
-        out.push_str(&format!(
-            "{depth} {:?} {}\n",
-            file.kind(node),
-            file.start(node)
-        ));
-        let first = open.len();
-        file.for_each_child(node, &mut |child| {
-            open.push((child, depth + 1));
-            false
-        });
-        open[first..].reverse();
-    }
-    out
-}
-
 impl Dump<'_, '_> {
     fn line(&mut self, depth: usize, label: &str, text: &str) {
         for _ in 0..depth {

@@ -31,8 +31,7 @@ const bytes = b.union(typedArrayOrBuffer, b.instance("DataView"));
 const urlText = b.union(b.primitiveValue, b.instance("URL"));
 const parsedJSON = b.union(b.plainData, b.strictNull, b.bool, b.f64, b.string);
 
-// The native constructor is handed the object before it is complete. It keeps it weakly, to find the slots for the
-// stream, and the code of an operand never sees it.
+// The native constructor is handed the object before it is complete.
 const newResponse = b.instance("Response").fresh;
 const constructedResponse = newResponse;
 const constructedRequest = b.instance("Request").fresh;
@@ -41,7 +40,6 @@ const newBlobOverSameBytes = b.union(b.instance("Blob"), b.instance("S3File")).f
 
 const newPromiseHolding = (contents: Contents) => b.instance("Promise").holding(contents).fresh;
 // The reason is what a stream of the program fails with, or an error that native code makes: one about a file has `code`, `errno`, `path` and `syscall` of its own.
-// A handler that is given to catch() or then() gets it, so it is no `never`.
 const settledWithAnyReason = (value: b.TableType) => newPromiseHolding({ value, reason: b.any });
 
 const stateRead = [b.readsContents()];
@@ -61,9 +59,7 @@ const responseOptions = [
   b.membersOfObjectsOnly,
 ];
 
-// An async generator function is called, and any other object is asked for @@asyncIterator, inside the call. The
-// iterator is kept and resumed when the body is read. Whatever is left is joined like the parts of a Blob, except that
-// an array of one Blob takes the bytes away from that Blob.
+// An async generator function is called, and any other object is asked for @@asyncIterator, inside the call.
 const bodyOfAnyKind = [
   b.retained,
   b.reachableValuesStoredIn(b.nativeMemory),
@@ -103,8 +99,7 @@ const requestOptions = [
   b.membersOfObjectsOnly,
 ];
 
-// The bytes are copied, or the native store behind them is shared. A DataView is not among these: it is asked for
-// @@asyncIterator like any other object.
+// The bytes are copied, or the native store behind them is shared.
 const copiedBody = b.union(typedArrayOrBuffer, b.instance("Blob"), b.instance("URLSearchParams"));
 
 const bodyFormsWithoutCode: readonly BodyForm[] = [
@@ -139,8 +134,7 @@ const responseConstruction = [
   },
 ] satisfies b.FunctionField[];
 
-// The members of a ResponseInit literal that compiled code has taken apart, in the order in which the functions below take them. `method` is not
-// among them: a literal that has it stays whole.
+// The members of a ResponseInit literal that compiled code has taken apart, in the order in which the functions below take them.
 const responseInitParts = ["status", "statusText", "headers"];
 const usesOfResponseInitParts = {
   status: [b.runs("ToPrimitive")],
@@ -156,7 +150,7 @@ const entryTakingResponseInitParts = (symbol: string) => {
     declaration: `extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol}(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue, JSC::EncodedJSValue);`,
     headers: [],
     parameters: [{ value: "Realm", cppType: "JSC::JSGlobalObject*" }, value, value, value, value],
-  } satisfies b.FunctionField["directEntry"];
+  } satisfies b.DirectEntrySpec;
 };
 
 // Every operand is passed.
@@ -210,8 +204,7 @@ const redirection = [
   },
 ] satisfies b.FunctionField[];
 
-// A Request that is the only object among the operands is cloned natively. Any other object, a Response too, is read by
-// name. The message of the error differs between a call without operands and a call with undefined.
+// A Request that is the only object among the operands is cloned natively.
 const requestConstruction = [
   { ...nativeOnly, args: { input: primitiveOrAbsent, init: primitiveOrAbsent }, returns: constructedRequest },
   {
@@ -283,8 +276,7 @@ const readsBlob = (settledValue: b.TableType) =>
 
 const parsedBody = { typedResultForm: { form: "ParsedBody", source: "this" } } as const;
 
-// The bytes of a stream are handed to what `FormData.from` holds, which a program can replace, and a promise that is
-// resolved with a FormData looks for `then` on a prototype that is not locked.
+// The bytes of a stream are handed to what `FormData.from` holds, which a program can replace, and a promise that is resolved with a FormData looks for `then` on a prototype that is not locked.
 const readsFormData = readsBody(b.any);
 
 const membersOfMessage = (className: string) => ({
@@ -515,8 +507,7 @@ export default b.declarations(
   b.construction("%Blob%", blobConstruction),
   declareMethods("Blob", membersOfBlob),
 
-  // What Bun.file makes of an "s3://" path, and an S3Client of a key. Its prototype object lies in front of Blob.prototype and has every member of that one once more, as functions of its own,
-  // with another `stat`, two members more and a tag of its own. Whoever makes an S3File keeps the code for S3: s3PathUses() in features-bun.builtins.ts.
+  // What Bun.file makes of an "s3://" path, and an S3Client of a key.
   b.class("%S3File%", {
     extends: "Blob",
     instanceCppClass: b.cppClass("Bun::JSS3File", "JSS3File.h"),
@@ -524,7 +515,6 @@ export default b.declarations(
     instanceStructureCppExpression: "globalObject->m_JSS3FileStructure.getConcurrently()",
     hasConstructor: false,
     proto: {
-      ...membersOfBlob,
       presign: b.otherwise,
       stat: b.otherwise,
       bucket: {

@@ -15,10 +15,8 @@
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http2Context.h>
-#include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
-#include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
@@ -423,7 +421,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
+    JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }
@@ -652,12 +650,12 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
 {
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
-        response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
+        response->uWS::template AsyncSocket<isSSL>::write(line.data(), line.length());
     }
     if (autoHeaderBits & kAutoHeaderConnKeepAlive) {
         if (autoHeaderBits & kAutoHeaderKeepAliveTimeout) {
             auto blob = keepAliveHeaderBlob(keepAliveTimeoutSecs);
-            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), (int)blob.length());
+            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), blob.length());
         } else {
             static constexpr const char ka[] = "Connection: keep-alive\r\n";
             response->uWS::template AsyncSocket<isSSL>::write(ka, sizeof(ka) - 1);
@@ -805,48 +803,12 @@ static bool tryWriteHeadAtOnce(uWS::HttpResponse<isSSL>* response, std::string_v
     return true;
 }
 
-extern "C" bool NodeHTTPServer__bytesOfChunk(EncodedJSValue encodedChunk, const uint8_t** bytes, size_t* length)
-{
-    JSValue chunk = JSValue::decode(encodedChunk);
-    std::span<const uint8_t> found;
-    if (chunk.isString()) {
-        const WTF::StringImpl* impl = asString(chunk)->tryGetValueImpl();
-        if (!impl || !impl->is8Bit() || !WTF::charactersAreAllASCII(impl->span8()))
-            return false;
-        found = byteCast<uint8_t>(impl->span8());
-    } else if (auto* view = dynamicDowncast<JSC::JSUint8Array>(chunk))
-        found = view->span();
-    else
-        return false;
-    if (found.empty())
-        return false;
-    *bytes = found.data();
-    *length = found.size();
-    return true;
-}
-
-extern "C" bool NodeHTTPServer__writeWholeResponse(bool isSSL, void* response, uint32_t statusCode, EncodedJSValue statusMessage, const char* usualStatus, size_t usualStatusLength, EncodedJSValue headers, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs, const char* body, size_t bodyLength)
+extern "C" bool NodeHTTPServer__writeWholeResponse(bool isSSL, void* response, const char* status, size_t statusLength, EncodedJSValue headers, uint32_t autoHeaderBits, uint32_t keepAliveTimeoutSecs, const char* body, size_t bodyLength)
 {
     auto* pairs = dynamicDowncast<JSC::JSArray>(JSValue::decode(headers));
     if (!pairs)
         return false;
-    std::array<char, 128> writtenStatus;
-    std::string_view statusText(usualStatus, usualStatusLength);
-    if (JSValue message = JSValue::decode(statusMessage); message.isString()) {
-        const WTF::StringImpl* impl = asString(message)->tryGetValueImpl();
-        if (!impl || !impl->is8Bit() || !impl->length() || impl->length() > writtenStatus.size() - 4)
-            return false;
-        auto text = impl->span8();
-        if (!std::ranges::all_of(text, [](Latin1Character character) { return character >= 0x20 && character <= 0x7e; }))
-            return false;
-        writtenStatus[0] = static_cast<char>('0' + statusCode / 100);
-        writtenStatus[1] = static_cast<char>('0' + statusCode / 10 % 10);
-        writtenStatus[2] = static_cast<char>('0' + statusCode % 10);
-        writtenStatus[3] = ' ';
-        memcpy(writtenStatus.data() + 4, text.data(), text.size());
-        statusText = { writtenStatus.data(), 4 + text.size() };
-    } else if (!message.isUndefinedOrNull() || statusText.empty())
-        return false;
+    std::string_view statusText(status, statusLength);
     std::string_view bodyText = bodyLength ? std::string_view(body, bodyLength) : std::string_view();
     if (isSSL)
         return tryWriteHeadAtOnce<true>(reinterpret_cast<uWS::HttpResponse<true>*>(response), statusText, pairs, autoHeaderBits, keepAliveTimeoutSecs, &bodyText);

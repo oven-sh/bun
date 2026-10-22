@@ -104,7 +104,7 @@ const checkedNumberAssertions = [
 ].join("\n");
 
 // A symbol of `$newCppFunction` is written for GeneratedJS2Native.h, which looks names up in these.
-const namespacesOfHostFunctions = ["Bun", "JSC", "WebCore"].map(namespace => `using namespace ${namespace};`).join("\n");
+const namespacesOfHostFunctions = ["Bun", "Bun::Bindgen::Generated", "JSC", "WebCore"].map(namespace => `using namespace ${namespace};`).join("\n");
 
 // The declaration of a thunk spells the types of its parameters with these.
 const headersOfDirectFunctions = ["Bindgen/ExternTraits.h", "Bindgen/IDLConvert.h"];
@@ -174,7 +174,7 @@ function formatCustomGetterBinding(overload: ModelOverload): string[] {
   return [
     formatAggregate([
       ["overload", formatId("BuiltinOverloadID", overload)],
-      ["function", `WebCore::${symbol}`],
+      ["function", symbol],
     ]),
   ];
 }
@@ -201,8 +201,7 @@ function formatHostEntryPointRecord(
   return feature === undefined ? [] : [tableEntryRecord(features, `Bun::AOTHostBindings::${table}`, feature, stub, symbol)];
 }
 
-// What stands in for a function of a removed feature throws in the realm that it takes first. A function that takes what an
-// instance wraps is not reached without the feature, which makes the instances.
+// What stands in for a function of a removed feature throws in the realm that it takes first.
 const stubOfDirectFunction = ({ parameters }: DirectEntrySpec) => (parameters[0]?.value === "Realm" ? "Throw" : "Abort");
 
 function formatAppendFunctionBinding(builtin: ModelBuiltin): string[] {
@@ -350,7 +349,7 @@ function emitHostIncludes(
     "#include <JavaScriptCore/AOTBuiltinTableBindings.h>",
     "#include <JavaScriptCore/StructureInlines.h>",
     ...(appendSymbols.length > 0 ? ["#include <JavaScriptCore/AOTStringBuilderStorage.h>"] : []),
-    ...sortUnique(["ZigGeneratedClasses.h", "ZigGlobalObject.h", ...classHeaders, ...functionHeaders]).map(
+    ...sortUnique(["ZigGlobalObject.h", ...classHeaders, ...functionHeaders]).map(
       header => `#include "${header}"`,
     ),
     "#include <type_traits>",
@@ -445,7 +444,7 @@ export function emitHostBindings(
     ),
     ...model.overloads.flatMap(overload => {
       const symbol = customGetterOf(overload);
-      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol === null ? null : `WebCore::${symbol}`, features);
+      return formatHostEntryPointRecord("customGetters", overload.builtin, symbol, features);
     }),
   ];
   const blocks = [
@@ -454,7 +453,7 @@ export function emitHostBindings(
     emitHostIncludes(classes, appendSymbols, directFunctions, nativeFunctions),
     emitExternDeclarations(appendSymbols, directFunctions, symbolsWithoutHeader.filter(symbol => !isInNamespace(symbol)), nativeCallListStamp),
     emitHostFunctionDeclarations(symbolsWithoutHeader.filter(isInNamespace)),
-    customGetters.length === 0 ? "" : `namespace WebCore {\n${customGetters.map(symbol => `JSC_DECLARE_CUSTOM_GETTER(${symbol});`).join("\n")}\n}`,
+    customGetters.map(symbol => `JSC_DECLARE_CUSTOM_GETTER(${symbol});`).join("\n"),
     "namespace Bun::AOTHostBindings {",
     `using namespace JSC::AOT;\n${namespacesOfHostFunctions}`,
     emitCallListReference(nativeCallListStamp),

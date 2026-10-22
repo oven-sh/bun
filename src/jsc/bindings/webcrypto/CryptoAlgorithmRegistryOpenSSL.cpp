@@ -24,7 +24,6 @@
  */
 
 #include "config.h"
-#include "RemovableFeatures.h"
 #include "CryptoAlgorithmRegistry.h"
 
 #if ENABLE(WEB_CRYPTO)

@@ -177,6 +177,10 @@ __attribute__((always_inline)) int us_socket_is_established(struct us_socket_t *
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
+int us_socket_ssl_send_rejected(struct us_socket_t *s) {
+    return s->ssl_send_rejected;
+}
+
 int us_socket_queued_input(struct us_socket_t *s) {
     if (s->flags.is_closed || !us_socket_is_established(s)) {
         return LIBUS_QUEUED_INPUT_NONE;
@@ -214,7 +218,7 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
         us_internal_socket_group_unlink_socket(s->group, s);
 
         us_poll_stop((struct us_poll_t *) s, s->group->loop);
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         /* Link this socket to the close-list and let it be deleted after this iteration */
         s->next = s->group->loop->data.closed_head;
@@ -322,7 +326,7 @@ static struct us_socket_t *us_internal_socket_close_and_notify(struct us_socket_
             setsockopt(us_poll_fd((struct us_poll_t *)s), SOL_SOCKET, SO_LINGER, (const char*)&l, sizeof(l));
         }
 
-        bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
+        us_internal_poll_close_fd((struct us_poll_t *) s);
 
         /* Mark the socket as closed */
         s->flags.is_closed = 1;
@@ -399,6 +403,27 @@ void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | ((s->flags.is_paused || s->read_eof) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+/* macOS can report more bytes sent than it was given (golang/go#61060). How many it took is unknown, so nothing
+ * may follow them. ECONNABORTED is a peer-gone errno, so it is never retried; the shutdown is for the writers that
+ * take any failed send for backpressure. No write may close under its caller: the writable event does. */
+static ssize_t us_internal_reject_excess_send(struct us_socket_t *s, ssize_t written, size_t length) {
+    if (written < 0 || (size_t) written <= length) {
+        return written;
+    }
+    us_internal_socket_raw_shutdown(s);
+    if (s->ssl) {
+        s->ssl_send_rejected = 1;
+    } else {
+        s->send_rejected = 1;
+    }
+    us_internal_rearm_writable(s);
+#ifdef _WIN32
+    WSASetLastError(WSAECONNABORTED);
+#endif
+    errno = ECONNABORTED;
+    return -1;
+}
+
 /* See libusockets.h: whether a zero-progress write on a writable event proves
  * the peer is gone. Only the libuv backend has to ask the kernel. */
 int us_socket_stalled_write_means_peer_gone(struct us_socket_t *s) {
@@ -418,7 +443,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
         return 0;
     }
 
-    int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    ssize_t sent = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
+    int written = us_internal_reject_excess_send(s, sent, (size_t) header_length + (size_t) payload_length);
     if (written != header_length + payload_length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -453,6 +479,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
+    s->send_rejected = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -491,7 +518,7 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -589,7 +616,7 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         return written;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     if (written < 0) {
         int fatal_send_error = us_internal_classify_failed_send(s);
         if (!fatal_send_error) {
@@ -625,7 +652,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     size_t total = 0;
     for (int i = 0; i < count; i++) total += iov[i].iov_len;
 
-    ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
+    ssize_t written = us_internal_reject_excess_send(s, bsd_writev(us_poll_fd(&s->p), iov, count), total);
     if (written != (ssize_t)total) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
@@ -643,7 +670,7 @@ int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int le
         return 0;
     }
 
-    int written = bsd_send(us_poll_fd(&s->p), data, length);
+    int written = us_internal_reject_excess_send(s, bsd_send(us_poll_fd(&s->p), data, length), length);
     int fatal = 0;
     if (written >= 0) {
         s->unclassified_send_failures = 0;
@@ -886,8 +913,10 @@ void us_socket_resume(struct us_socket_t *s) {
     if (us_poll_change(&s->p, s->group->loop, events) != 0) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
-         * end or close again, so fail it now like a failed first registration. */
+         * end or close again, so fail it like a failed first registration. Defer
+         * the close to the loop because the close handler frees state that
+         * resume's callers (uWS ending a response, a body read in JS) still use. */
         int err = LIBUS_ERR;
-        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
+        us_internal_loop_close_unresumable_socket(s->group->loop, s, err > 2 ? err : LIBUS_ECONNRESET);
     }
 }

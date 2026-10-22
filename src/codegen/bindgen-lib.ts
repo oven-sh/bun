@@ -7,8 +7,8 @@ import {
   BufferSourceType,
   type BytesOptions,
   BytesType,
+  CallableType,
   type ClassOptions,
-  ClassRefType,
   ClassType,
   type DictionaryOptions,
   DictionaryType,
@@ -20,6 +20,7 @@ import {
   ModuleDefinition,
   NamespaceDefinition,
   type NamespaceOptions,
+  RecordResultType,
   RefType,
   RestType,
   type SignatureOptions,
@@ -38,7 +39,7 @@ export const bool = new BoolType();
 /** Strict: a number that is an integer in range. `.allowBigInt`, `.loose`, `.wrap`, `.enforceRange()`, `.validateInteger()`. As a result, `b.u64.asBigInt`. */
 export const { u8, u16, i32, u32, u64, usize } = integers;
 
-/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. */
+/** Strict: only a number. `.loose` for `ToNumber`, then `.allowBigInt`. As a result, `b.f64.asDate`. */
 export const f64 = new DoubleType();
 
 /** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
@@ -46,6 +47,9 @@ export const string = new StringType();
 
 /** The JS value itself, as a `JsLocal<'a>`. `.stringObjectAsString`, `.orAbsent`. */
 export const any = new AnyType();
+
+/** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
+export const callable = new CallableType();
 
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
@@ -56,19 +60,19 @@ export const bytes = (options: BytesOptions) => new BytesType(options);
 /** The native `Blob` behind a JS `Blob`. */
 export const blob = new RefType(
   "Bun::Bindgen::IDLBlobRef",
-  "Blob",
+  "globalThis.Blob",
   "bun_jsc::webcore_types::Blob",
   "Bindgen/IDLConvertBlob.h",
-  [{ cpp: "WebCore::JSBlob" }],
-  "detached Blobs",
+  [{ cpp: "Bun::Bindgen::Generated::JSBlob" }],
+  null,
 );
-
-/** An instance of the class `name` of a `.classes.ts` file, as a `&'a` of the Rust struct it wraps. */
-export const classRef = (name: string) => new ClassRefType(name);
 
 const null_ = new UnitType("null");
 
 export const array = (element: Type) => new ArrayType(element);
+
+/** A result only: an object with a property for each `(key, value)` the body gives. */
+export const record = (value: Type) => new RecordResultType(value);
 
 /** The last argument: it and every one after it, as a `&'a [T]`. `element` is `b.any` or `b.string.local`. */
 export const rest = (element: Type) => new RestType(element);

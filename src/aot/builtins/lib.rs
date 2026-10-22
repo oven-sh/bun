@@ -1,15 +1,12 @@
 #[path = "mod.rs"]
 pub mod builtins;
-#[allow(dead_code, unreachable_pub)]
 #[rustfmt::skip]
-#[path = "../ir/generated/entries.rs"]
-pub mod entries;
-#[allow(dead_code, unreachable_pub)]
-#[rustfmt::skip]
-#[path = "../ir/generated/enums.rs"]
-pub mod enums;
+#[path = "generated.rs"]
+mod generated;
 #[path = "../ir/type_constants.rs"]
 mod type_constants;
+
+pub use generated::{entries, enums};
 
 pub mod ir {
     pub mod generated {

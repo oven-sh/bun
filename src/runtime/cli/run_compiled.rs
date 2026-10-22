@@ -12,8 +12,8 @@ use bun_threading::Guarded;
 use bun_watcher::{ChangedFilePath, WatchEvent, WatchList, Watcher, WatcherContext};
 
 use super::compile_command::{
-    CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure, print_failure,
-    print_log,
+    CompileFailure, CompileProduct, RequestOrigin, compile_from_context, exit_with_failure,
+    print_failure, print_log,
 };
 use crate::cli::command::{Context, ContextData};
 
@@ -38,7 +38,11 @@ pub(crate) enum NonFileTarget<'a> {
 pub(crate) fn is_requested(ctx: &ContextData) -> bool {
     !runs_compiled_code()
         && !ctx.bundler_options.compile
-        && ctx.bundler_options.aot.as_ref().is_some_and(|aot| aot.runs_in_place)
+        && ctx
+            .bundler_options
+            .aot
+            .as_ref()
+            .is_some_and(|aot| aot.runs_in_place)
 }
 
 #[inline]
@@ -80,11 +84,18 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         .skip(1 + bun_core::bun_options_argc())
         .collect();
     let own_count = typed.len().saturating_sub(ctx.passthrough.len());
-    let checks_only = ctx.bundler_options.aot.as_ref().is_some_and(|aot| aot.checks_only);
+    let checks_only = ctx
+        .bundler_options
+        .aot
+        .as_ref()
+        .is_some_and(|aot| aot.checks_only);
 
-    let watched = (ctx.debug.hot_reload == HotReload::Watch).then(|| WatchedFiles::start(&entry_points));
+    let watched =
+        (ctx.debug.hot_reload == HotReload::Watch).then(|| WatchedFiles::start(&entry_points));
     if let (Some(watched), Some(aot)) = (watched, ctx.bundler_options.aot.as_mut()) {
-        aot.before_read = Some(ReadListener(Arc::new(move |path: &[u8]| watched.add_read_file(path))));
+        aot.before_read = Some(ReadListener(Arc::new(move |path: &[u8]| {
+            watched.add_read_file(path)
+        })));
     }
 
     let independent_files = entry_points[..independent_count].to_vec();
@@ -107,7 +118,10 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
             Some(refused_files) => {
                 print_log(ctx.log_ref());
                 let check_result = write_check_result(&refused_files, watched);
-                let handover = Handover { flag: CHECKED_FLAG, bytes: Some(&check_result) };
+                let handover = Handover {
+                    flag: CHECKED_FLAG,
+                    bytes: Some(&check_result),
+                };
                 start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
             }
             None => {
@@ -119,7 +133,11 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
         Ok(Ok(outcome)) => outcome,
     };
     print_log(ctx.log_ref());
-    let runs_tests = ctx.bundler_options.aot.as_ref().is_some_and(|aot| aot.runs_tests);
+    let runs_tests = ctx
+        .bundler_options
+        .aot
+        .as_ref()
+        .is_some_and(|aot| aot.runs_tests);
     if checks_only && outcome.graph_bytes.is_some() {
         super::compile_options::check_runtime_conflicts(&ctx, true);
     }
@@ -128,8 +146,14 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, independent_
     }
     let check_result = watched.map(|watched| write_check_result(&[], Some(watched)));
     let handover = match &outcome.graph_bytes {
-        Some(graph_bytes) => Handover { flag: GRAPH_FLAG, bytes: Some(graph_bytes) },
-        None => Handover { flag: CHECKED_FLAG, bytes: check_result.as_deref() },
+        Some(graph_bytes) => Handover {
+            flag: GRAPH_FLAG,
+            bytes: Some(graph_bytes),
+        },
+        None => Handover {
+            flag: CHECKED_FLAG,
+            bytes: check_result.as_deref(),
+        },
     };
     start_second_process(&typed, own_count, handover, ctx.original_cwd.as_deref())
 }
@@ -158,7 +182,10 @@ impl WatcherContext for RestartOnChange {
     }
 
     fn on_error(&mut self, error: bun_sys::Error) {
-        Output::err_generic("--watch could not watch the files of the program: {}", (&error,));
+        Output::err_generic(
+            "--watch could not watch the files of the program: {}",
+            (&error,),
+        );
         Global::exit(1)
     }
 }
@@ -171,10 +198,12 @@ impl WatchedFiles {
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
         let context = Box::leak(Box::new(RestartOnChange));
-        let started = Watcher::init(context, directory).map(Box::leak).and_then(|watcher| {
-            watcher.start()?;
-            Ok(watcher)
-        });
+        let started = Watcher::init(context, directory)
+            .map(Box::leak)
+            .and_then(|watcher| {
+                watcher.start()?;
+                Ok(watcher)
+            });
         let watcher = match started {
             Ok(watcher) => watcher,
             Err(error) => {
@@ -217,7 +246,9 @@ fn decide_whether_to_clear_terminal() {
     let keeps = match bun_dotenv::instance() {
         // SAFETY: this is the main thread, the only one that has the loader.
         Some(loader) => unsafe { (*loader).has_set_no_clear_terminal_on_reload(keeps_by_default) },
-        None => (bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.get().copied()).unwrap_or(keeps_by_default),
+        None => {
+            (bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.get().copied()).unwrap_or(keeps_by_default)
+        }
     };
     CLEARS_TERMINAL.store(!keeps, Ordering::Relaxed);
 }
@@ -236,7 +267,9 @@ fn exit_or_wait_for_change(watched: Option<&'static WatchedFiles>) -> ! {
 fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> Vec<u8> {
     let mut result = refused_files.to_vec();
     result.push(0);
-    let mut paths = watched.map_or_else(Vec::new, |watched| core::mem::take(&mut *watched.paths.lock()));
+    let mut paths = watched.map_or_else(Vec::new, |watched| {
+        core::mem::take(&mut *watched.paths.lock())
+    });
     paths.sort_unstable();
     paths.dedup();
     for path in paths {
@@ -246,8 +279,15 @@ fn write_check_result(refused_files: &[u8], watched: Option<&WatchedFiles>) -> V
     result
 }
 
-fn list_refused_files(failure: &CompileFailure, independent_files: &[Box<[u8]>]) -> Option<Vec<u8>> {
-    let CompileFailure::Build { refused_entry_points: Some(refused), .. } = failure else {
+fn list_refused_files(
+    failure: &CompileFailure,
+    independent_files: &[Box<[u8]>],
+) -> Option<Vec<u8>> {
+    let CompileFailure::Build {
+        refused_entry_points: Some(refused),
+        ..
+    } = failure
+    else {
         return None;
     };
     if refused.len() >= independent_files.len() {
@@ -284,8 +324,12 @@ pub(crate) fn print_failure_and_exit(ctx: &ContextData, failure: &CompileFailure
 
 fn temporary_path(directory: &[u8]) -> ZBox {
     let mut name_buffer = [0u8; 64];
-    let name = bun_paths::fs::FileSystem::tmpname(b"bun-program", &mut name_buffer, bun_core::fast_random())
-        .expect("64 bytes hold a temporary name");
+    let name = bun_paths::fs::FileSystem::tmpname(
+        b"bun-program",
+        &mut name_buffer,
+        bun_core::fast_random(),
+    )
+    .expect("64 bytes hold a temporary name");
     ZBox::from_bytes([directory, bun_paths::SEP_STR.as_bytes(), name.as_bytes()].concat())
 }
 
@@ -306,7 +350,9 @@ fn create_deleted_file(directory: &[u8]) -> Maybe<Fd> {
 fn create_unnamed_file() -> Maybe<Fd> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     if bun_sys::can_use_memfd() {
-        if let Ok(descriptor) = bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable) {
+        if let Ok(descriptor) =
+            bun_sys::memfd_create(c"bun-compiled-program", bun_sys::MemfdFlags::Executable)
+        {
             return Ok(descriptor);
         }
     }
@@ -329,7 +375,11 @@ fn exit_write_failed(error: &bun_sys::Error) -> ! {
     Global::exit(1)
 }
 
-fn second_process_arguments(typed: &[&'static [u8]], own_count: usize, handover_flag: &[u8]) -> Vec<Vec<u8>> {
+fn second_process_arguments(
+    typed: &[&'static [u8]],
+    own_count: usize,
+    handover_flag: &[u8],
+) -> Vec<Vec<u8>> {
     let mode_flag = typed[..own_count]
         .iter()
         .position(|token| matches!(*token, b"--aot" | b"--debug-aot"));
@@ -360,10 +410,15 @@ fn start_second_process(
         Some(Err(error)) => exit_write_failed(&error),
     };
     let descriptor_text = descriptor.map(|descriptor| descriptor.native().to_string());
-    let descriptor_text = descriptor_text.as_ref().map_or(NO_DESCRIPTOR, String::as_bytes);
-    let arguments = second_process_arguments(typed, own_count, &[handover.flag, descriptor_text].concat());
+    let descriptor_text = descriptor_text
+        .as_ref()
+        .map_or(NO_DESCRIPTOR, String::as_bytes);
+    let arguments =
+        second_process_arguments(typed, own_count, &[handover.flag, descriptor_text].concat());
     let arguments: Vec<&[u8]> = arguments.iter().map(Vec::as_slice).collect();
-    if let Some(Err(error)) = original_cwd.map(|directory| bun_sys::chdir(&ZBox::from_bytes(directory))) {
+    if let Some(Err(error)) =
+        original_cwd.map(|directory| bun_sys::chdir(&ZBox::from_bytes(directory)))
+    {
         Output::err_generic("--aot could not start bun again: {}", (&error,));
         Global::exit(1)
     }
@@ -383,7 +438,12 @@ unsafe extern "system" {
 
 #[cfg(windows)]
 fn write_to_named_file(path: &bun_core::ZStr, bytes: &[u8]) -> Maybe<Fd> {
-    let file = File::from_fd(bun_sys::openat(Fd::cwd(), path, O::RDWR | O::CREAT | O::EXCL, 0o700)?);
+    let file = File::from_fd(bun_sys::openat(
+        Fd::cwd(),
+        path,
+        O::RDWR | O::CREAT | O::EXCL,
+        0o700,
+    )?);
     file.write_all(bytes)?;
     Ok(file.into_raw())
 }
@@ -395,7 +455,10 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
     let executable = match bun_core::self_exe_path() {
         Ok(executable) => executable,
         Err(error) => {
-            Output::err_generic("--aot could not start bun again: {}", (BStr::new(error.name()),));
+            Output::err_generic(
+                "--aot could not start bun again: {}",
+                (BStr::new(error.name()),),
+            );
             return 1;
         }
     };
@@ -413,14 +476,19 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
         stdout: sync::SyncStdio::Inherit,
         stdin: sync::SyncStdio::Inherit,
         windows: crate::api::bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                None, None,
+            )),
             ..Default::default()
         },
         ..Default::default()
     });
     match spawned {
         Err(error) => {
-            Output::err_generic("--aot could not start bun again: {}", (BStr::new(error.name()),));
+            Output::err_generic(
+                "--aot could not start bun again: {}",
+                (BStr::new(error.name()),),
+            );
             1
         }
         Ok(Err(error)) => {
@@ -446,7 +514,8 @@ fn start_second_process(
     original_cwd: Option<&[u8]>,
 ) -> ! {
     let Some(bytes) = handover.bytes else {
-        let arguments = second_process_arguments(typed, own_count, &[handover.flag, NO_DESCRIPTOR].concat());
+        let arguments =
+            second_process_arguments(typed, own_count, &[handover.flag, NO_DESCRIPTOR].concat());
         Output::flush();
         Global::exit(run_second_process(arguments, original_cwd))
     };
@@ -462,7 +531,11 @@ fn start_second_process(
     // SAFETY: `handle` is the open file handle this function owns until the close below.
     unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) };
     let descriptor_text = (handle as usize).to_string();
-    let arguments = second_process_arguments(typed, own_count, &[handover.flag, descriptor_text.as_bytes()].concat());
+    let arguments = second_process_arguments(
+        typed,
+        own_count,
+        &[handover.flag, descriptor_text.as_bytes()].concat(),
+    );
     Output::flush();
     let exit_code = run_second_process(arguments, original_cwd);
     let _ = bun_sys::close(descriptor);
@@ -493,7 +566,10 @@ pub(crate) fn use_graph_descriptor(text: &[u8]) {
         return;
     }
     let Some(descriptor) = parse_descriptor(text) else {
-        Output::err_generic("--aot-graph-fd: \"{}\" is not a file descriptor", (BStr::new(text),));
+        Output::err_generic(
+            "--aot-graph-fd: \"{}\" is not a file descriptor",
+            (BStr::new(text),),
+        );
         Global::exit(1)
     };
     let failure = match Graph::from_descriptor(descriptor) {
@@ -504,7 +580,10 @@ pub(crate) fn use_graph_descriptor(text: &[u8]) {
         Ok(None) => "empty",
         Err(error) => error.name(),
     };
-    Output::err_generic("--aot-graph-fd: the compiled program could not be read ({})", (failure,));
+    Output::err_generic(
+        "--aot-graph-fd: the compiled program could not be read ({})",
+        (failure,),
+    );
     Global::exit(1)
 }
 
@@ -514,7 +593,9 @@ pub(crate) fn graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph
     }
     let graph = Graph::get()?;
     // SAFETY: the singleton lives in a process-global static and is never freed.
-    Some(unsafe { &*(graph.cast_const() as *const (dyn bun_resolver::StandaloneModuleGraph + 'static)) })
+    Some(unsafe {
+        &*(graph.cast_const() as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
+    })
 }
 
 #[inline]
@@ -526,18 +607,29 @@ pub(crate) fn runs_compiled_code() -> bool {
 #[inline(never)]
 pub(crate) fn use_check_result(text: &[u8]) {
     IS_CHECKED.store(true, Ordering::Relaxed);
-    bun_core::replace_restart_arguments(|argument| argument.starts_with(CHECKED_FLAG).then_some(&b"--aot"[..]));
+    bun_core::replace_restart_arguments(|argument| {
+        argument.starts_with(CHECKED_FLAG).then_some(&b"--aot"[..])
+    });
     if text == NO_DESCRIPTOR {
         return;
     }
-    let Some(list) = parse_descriptor(text).and_then(|descriptor| read_whole_file(descriptor).ok()) else {
-        Output::err_generic("--aot-checked: \"{}\" is not a file descriptor", (BStr::new(text),));
+    let Some(list) = parse_descriptor(text).and_then(|descriptor| read_whole_file(descriptor).ok())
+    else {
+        Output::err_generic(
+            "--aot-checked: \"{}\" is not a file descriptor",
+            (BStr::new(text),),
+        );
         Global::exit(1)
     };
-    let mut paths = list.split(|&byte| byte == 0);
+    let mut paths = bun_core::strings::split(&list, b"\0");
     let refused = paths.by_ref().take_while(|path| !path.is_empty());
     let _ = REFUSED_FILES.set(refused.map(Box::from).collect());
-    let _ = FILES_OF_CHECK.set(paths.filter(|path| !path.is_empty()).map(Box::from).collect());
+    let _ = FILES_OF_CHECK.set(
+        paths
+            .filter(|path| !path.is_empty())
+            .map(Box::from)
+            .collect(),
+    );
 }
 
 pub(crate) fn watch_files_of_check(vm: &VirtualMachine) {
@@ -560,7 +652,9 @@ fn read_whole_file(descriptor: Fd) -> Maybe<Vec<u8>> {
 }
 
 pub(crate) fn is_refused(path: &[u8]) -> bool {
-    REFUSED_FILES.get().is_some_and(|files| files.iter().any(|file| &**file == path))
+    REFUSED_FILES
+        .get()
+        .is_some_and(|files| files.iter().any(|file| &**file == path))
 }
 
 #[inline]
@@ -596,7 +690,10 @@ pub(crate) extern "C" fn Bun__AOT__recordRefusedChange(
     column: u32,
 ) {
     let path = source_url.to_owned_slice();
-    let shown = bun_paths::resolve_path::relative(bun_resolver::fs::FileSystem::instance().top_level_dir, &path);
+    let shown = bun_paths::resolve_path::relative(
+        bun_resolver::fs::FileSystem::instance().top_level_dir(),
+        &path,
+    );
     let shown = bun_core::strings::replace_owned(shown, &[bun_paths::SEP], b"/");
     let text = format!(
         "{}, at {}:{line}:{column}, while {} ran",
@@ -620,7 +717,10 @@ pub(crate) fn is_second_process() -> bool {
 #[inline(never)]
 pub(crate) fn print_build_id_and_exit() -> ! {
     let Some(id) = bun_crash_handler::build_id::build_id() else {
-        Output::err_generic("--aot-build-id: this executable holds no compiled program", ());
+        Output::err_generic(
+            "--aot-build-id: this executable holds no compiled program",
+            (),
+        );
         Global::exit(1)
     };
     let _ = Output::writer().write_all(&bun_crash_handler::build_id::write_hexadecimal(&id));
@@ -653,11 +753,17 @@ fn exit_with_decoded_report(report: &[u8]) -> ! {
             "--aot-decode-crash-report: that report has no frames from this executable's compiled code",
             (),
         ),
-        DecodedReport::OtherBuild { of_report: Some(of_report), of_executable } => Output::err_generic(
+        DecodedReport::OtherBuild {
+            of_report: Some(of_report),
+            of_executable,
+        } => Output::err_generic(
             "--aot-decode-crash-report: that report is from the build whose ID starts with {}. The ID of this executable starts with {}. Only the build that crashed can read its report",
             (BStr::new(&of_report), BStr::new(&of_executable)),
         ),
-        DecodedReport::OtherBuild { of_report: None, of_executable } => Output::err_generic(
+        DecodedReport::OtherBuild {
+            of_report: None,
+            of_executable,
+        } => Output::err_generic(
             "--aot-decode-crash-report: that report names no build, so it is not from this executable, whose build ID starts with {}",
             (BStr::new(&of_executable),),
         ),
@@ -694,13 +800,23 @@ mod tests {
     }
 
     fn build_failure(refused: &[u32]) -> CompileFailure {
-        CompileFailure::Build { refused_entry_points: Some(refused.to_vec()), files_checked: 0 }
+        CompileFailure::Build {
+            refused_entry_points: Some(refused.to_vec()),
+            files_checked: 0,
+        }
     }
 
     #[test]
     fn refused_files_are_listed() {
-        let files: [Box<[u8]>; 3] = [Box::from(&b"/a"[..]), Box::from(&b"/b"[..]), Box::from(&b"/c"[..])];
-        assert_eq!(list_refused_files(&build_failure(&[0, 2]), &files), Some(b"/a\0/c\0".to_vec()));
+        let files: [Box<[u8]>; 3] = [
+            Box::from(&b"/a"[..]),
+            Box::from(&b"/b"[..]),
+            Box::from(&b"/c"[..]),
+        ];
+        assert_eq!(
+            list_refused_files(&build_failure(&[0, 2]), &files),
+            Some(b"/a\0/c\0".to_vec())
+        );
     }
 
     #[test]
@@ -720,7 +836,16 @@ mod tests {
     #[test]
     fn failure_about_whole_program_stops_every_file() {
         let files: [Box<[u8]>; 2] = [Box::from(&b"/a"[..]), Box::from(&b"/b"[..])];
-        assert_eq!(list_refused_files(&CompileFailure::Build { refused_entry_points: None, files_checked: 0 }, &files), None);
+        assert_eq!(
+            list_refused_files(
+                &CompileFailure::Build {
+                    refused_entry_points: None,
+                    files_checked: 0
+                },
+                &files
+            ),
+            None
+        );
     }
 
     #[test]
@@ -758,7 +883,14 @@ mod tests {
     #[test]
     fn descriptor_text() {
         assert!(parse_descriptor(b"7").is_some());
-        for text in [&b""[..], b"x", b"-1", b"+1", b"7x", b"99999999999999999999999"] {
+        for text in [
+            &b""[..],
+            b"x",
+            b"-1",
+            b"+1",
+            b"7x",
+            b"99999999999999999999999",
+        ] {
             assert!(parse_descriptor(text).is_none());
         }
     }
@@ -784,7 +916,8 @@ mod tests {
     fn deleted_file_leaves_directory_empty() {
         use std::os::unix::ffi::OsStrExt as _;
 
-        let directory = std::env::temp_dir().join(format!("bun-run-compiled-{}", std::process::id()));
+        let directory =
+            std::env::temp_dir().join(format!("bun-run-compiled-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let bytes = b"the compiled program";
         let file = File::from_fd(create_deleted_file(directory.as_os_str().as_bytes()).unwrap());

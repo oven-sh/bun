@@ -188,8 +188,8 @@ fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> Pac
     bun_ast::initialize_store();
     let source = bun_ast::Source::init_path_string(package_json, contents);
     let (mut log, arena) = (bun_ast::Log::init(), bun_alloc::Arena::new());
-    let root = bun_parsers::json::parse_package_json_utf8(&source, &mut log, &arena)
-        .unwrap_or_default();
+    let root =
+        bun_parsers::json::parse_package_json_utf8(&source, &mut log, &arena).unwrap_or_default();
     let string_member = |name: &[u8]| -> Option<Vec<u8>> {
         Some(root.get(name)?.as_utf8_string_literal()?.to_vec())
     };
@@ -233,7 +233,7 @@ fn find_file(directory: &[u8], path: &[u8]) -> Option<Box<[u8]>> {
     use bun_paths::platform::Auto;
     use bun_paths::resolve_path::join_abs_string_checked;
     let absolute_path = join_abs_string_checked::<Auto>(directory, &[path])?;
-    if absolute_path.contains(&0) {
+    if bun_core::strings::contains_char(absolute_path, 0) {
         return None;
     }
     let absolute_path = bun_core::ZBox::from_bytes(absolute_path);

@@ -13,7 +13,7 @@
 %MapIterator%.prototype : @@toStringTag/c next/wc
 %NodeHTTPResponse%.prototype : @@toStringTag/c abort/w aborted/a bufferedAmount/a cork/w end/w finished/a flags/a flushHeaders/w getBytesWritten/w hasBody/a headersObject/w notifyWhenReadParsed/w onabort/a ondata/a onwritable/a pause/w pauseReads/w ref/w resume/w takeRawHeaders/w takeRequestTrailers/w unref/w upgraded/a write/w writeContinue/w writeHead/w writeHeadAndEnd/w writeInformational/w
 %RegExpStringIterator%.prototype : @@toStringTag/c next/wc
-%S3File%.prototype : @@toStringTag/wc arrayBuffer/w bucket/ac bytes/w delete/w exists/w formData/w image/w json/w lastModified/a name/a presign/c size/a slice/w stat/c stream/w text/w type/a unlink/w write/w writer/w
+%S3File%.prototype : @@toStringTag/c bucket/ac presign/c stat/c
 %ServerWebSocket%.prototype : @@toStringTag/c binaryType/a close/w constructor/wc cork/w data/a getBufferedAmount/w isPaused/a isSubscribed/w pause/w ping/w pong/w publish/w publishBinary/w publishText/w readyState/a remoteAddress/a resume/w send/w sendBinary/w sendText/w subscribe/w subscriptions/a terminate/w unsubscribe/w
 %SetIterator%.prototype : @@toStringTag/c next/wc
 %StringIterator%.prototype : @@toStringTag/c next/wc

@@ -79,7 +79,9 @@ const packuments = new Map<string, Promise<Packument | number>>();
 function readPackument(name: string): Promise<Packument | number> {
   let reading = packuments.get(name);
   if (reading === undefined) {
-    reading = fetch(`${registry}/${name.replace("/", "%2f")}`).then(response => (response.ok ? response.json() : response.status));
+    reading = fetch(`${registry}/${name.replace("/", "%2f")}`).then<Packument | number>(response =>
+      response.ok ? (response.json() as Promise<Packument>) : response.status,
+    );
     packuments.set(name, reading);
   }
   return reading;

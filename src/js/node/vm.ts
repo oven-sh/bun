@@ -200,11 +200,31 @@ function runInNewContext(code: string, context?: object | symbol, options?: stri
   }
   if (typeof options === "string") {
     options = { filename: options };
-  } else {
-    options = { ...options };
   }
-  context = createContext(context, options);
+  context = createContext(context, getContextOptions(options));
+  options = { ...options };
   return createScript(code, options).runInNewContext(context, options);
+}
+
+// Reads and validates options in the same order as getContextOptions in Node's lib/vm.js.
+function getContextOptions(options) {
+  if (!options) return {};
+  const name = options.contextName;
+  const origin = options.contextOrigin;
+  const microtaskMode = options.microtaskMode;
+  if (name !== undefined) validateString(name, "options.contextName");
+  if (origin !== undefined) validateString(origin, "options.contextOrigin");
+  let codeGeneration;
+  const contextCodeGeneration = options.contextCodeGeneration;
+  if (contextCodeGeneration !== undefined) {
+    validateObject(contextCodeGeneration, "options.contextCodeGeneration");
+    const { strings, wasm } = contextCodeGeneration;
+    if (strings !== undefined) validateBoolean(strings, "options.contextCodeGeneration.strings");
+    if (wasm !== undefined) validateBoolean(wasm, "options.contextCodeGeneration.wasm");
+    codeGeneration = { strings, wasm };
+  }
+  if (microtaskMode !== undefined) validateString(microtaskMode, "options.microtaskMode");
+  return { name, origin, codeGeneration, microtaskMode, importModuleDynamically: options.importModuleDynamically };
 }
 
 function createScript(code: string, options?: ScriptOptions) {
@@ -273,6 +293,7 @@ function validateModule(module: unknown, typename = "Module") {
 let globalModuleId = 0;
 const defaultModuleName = "vm:module";
 
+// oxlint-disable-next-line typescript/no-unsafe-declaration-merging
 interface Module {
   [kLink](linker: ModuleLinker): Promise<void> | void;
 }

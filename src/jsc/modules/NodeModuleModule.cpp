@@ -3,7 +3,6 @@
 #include "NodeModuleModule.h"
 #include "CodeGenerationFromStrings.h"
 #include "BunCompiledModules.h"
-#include "RemovableFeatures.h"
 #include "ModuleGraph.h"
 #include "Path.h"
 #include "WebCoreJSBuiltins.h"
@@ -25,10 +24,11 @@
 #include "ZigGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
+#include "VectorSizeLimit.h"
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedSourcemap.h"
 
 namespace Bun {
 
@@ -370,7 +370,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 if (scope.exception())
                     return;
 
-                paths.append(Bun::toStringRef(pathStr));
+                BunString pathRef = Bun::toStringRef(pathStr);
+                if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                    pathRef.deref();
+                    throwOutOfMemoryError(lexicalGlobalObject, scope);
+                }
             });
 
             if (scope.exception()) {
@@ -621,14 +625,16 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
+    // See getBuiltinModulesObject for why this needs a top exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* cache = uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
+                          ->lazyRequireCacheObject();
     // An executable compiled ahead of time whose code never names the cache lacks the function that makes it. Whoever makes the namespace object of node:module reads every export,
     // and the import must not fail for this one: it is undefined there.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSObject* cache = Bun::globalRequireCacheObject(uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject()));
-    if (cache)
-        return cache;
-    (void)scope.tryClearException();
-    return jsUndefined();
+    if (!cache && vm.hasCompiledCode() && scope.tryClearException())
+        return jsUndefined();
+    RETURN_IF_EXCEPTION(scope, {});
+    return cache;
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
@@ -649,17 +655,10 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
         vm, globalObject->nullPrototypeObjectStructure());
 }
 
-static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
-{
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto* zigGlobalObject = globalObject;
-
-    // Return the actual SourceMap constructor from code generation
-    return zigGlobalObject->JSSourceMapConstructor();
-}
-
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
+    // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     MarkedArgumentBuffer args;
     args.ensureCapacity(countof(builtinModuleNames));
 
@@ -668,7 +667,9 @@ static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    auto* builtinModules = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    RETURN_IF_EXCEPTION(scope, {});
+    return builtinModules;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
@@ -696,9 +697,13 @@ static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)
 
 static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 {
-    return JSC::constructEmptyArray(
+    // See getBuiltinModulesObject for why this needs a top exception scope.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto* globalPaths = JSC::constructEmptyArray(
         moduleObject->globalObject(),
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    return globalPaths;
 }
 
 // Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
@@ -1011,7 +1016,7 @@ isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          DontEnum|DontDelete|PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
-SourceMap               getSourceMapFunction              PropertyCallback
+SourceMap               Bun::Bindgen::Generated::Sourcemap::getSourceMapConstructor PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
 wrapper                 nodeModuleWrapper                 CustomAccessor
@@ -1200,17 +1205,6 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
             JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
             init.set(requireESM);
-        });
-
-    globalObject->m_lazyRequireCacheObject.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
-            JSC::VM& vm = init.vm;
-            JSC::JSGlobalObject* globalObject = init.owner;
-
-            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-            JSValue result = Bun::createRequireCacheObject(globalObject, uncheckedDowncast<Zig::GlobalObject>(globalObject)->requireMap());
-            ASSERT_UNUSED(scope, !scope.exception());
-            init.set(result.toObject(globalObject));
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(

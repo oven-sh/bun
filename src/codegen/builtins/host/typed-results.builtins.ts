@@ -1,7 +1,6 @@
 import * as b from "bun-builtins-table";
 
 // The query keeps the template, the rows and the parameters until it runs.
-// The adapter then reads each row under the column names and converts the cells.
 const heldByQuery = [
   b.retained,
   b.runsTransitively("OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive", "ToJSON", b.named("length", "raw")),

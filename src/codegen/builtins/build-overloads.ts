@@ -528,8 +528,7 @@ function modesOf(
 const kindsOfFunctions: readonly BuiltinKind[] = ["Constructor", "Function", "Method"];
 const lengthOfFunction = b.int(0, 2 ** 31 - 1);
 
-// ECMAScript and WebIDL create every built-in function with a `length` that is a whole number and a `name` that is a string,
-// and every @@toStringTag that they create as a data property holds a string. What a program stores there later is a store like any other.
+// ECMAScript and WebIDL create every built-in function with a `length` that is a whole number and a `name` that is a string, and every @@toStringTag that they create as a data property holds a string.
 export function typeOfPropertyWithoutWrittenType({ name, holder }: Pick<ModelBuiltin, "name" | "holder">): TypeSpec {
   if (name.kind === "WellKnownSymbol") return name.text === "toStringTag" ? b.string.spec : b.any.spec;
   if (name.kind !== "Text" || holder === null || !kindsOfFunctions.includes(holder.kind)) return b.any.spec;

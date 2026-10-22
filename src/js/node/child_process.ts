@@ -1147,7 +1147,7 @@ function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> |
 type StdioStream = $Node.Readable | $Node.Writable | $Node.Socket;
 
 class ChildProcess extends EventEmitter {
-  #handle: $ZigGeneratedClasses.Subprocess | null | undefined;
+  #handle: $Bindgen.Subprocess | null | undefined;
   #closesNeeded = 1;
   #closesGot = 0;
 
@@ -1485,7 +1485,7 @@ class ChildProcess extends EventEmitter {
         gid: options.gid,
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
-          this.#handle = handle;
+          this.#handle = handle as unknown as $Bindgen.Subprocess;
           this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
@@ -1510,7 +1510,7 @@ class ChildProcess extends EventEmitter {
         argv0: spawnargs[0],
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
-      });
+      }) as unknown as $Bindgen.Subprocess;
       this.pid = this.#handle!.pid;
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);

@@ -189,7 +189,10 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                if (!result.tryAppend({ WTF::move(typedKey), WTF::move(typedValue) })) [[unlikely]] {
+                    throwTypeError(&lexicalGlobalObject, scope);
+                    return {};
+                }
             }
 
             return result;
@@ -278,7 +281,10 @@ private:
                     UNUSED_VARIABLE(resultMap);
 
                 // 5. Otherwise, append to result a mapping (typedKey, typedValue).
-                result.append({ WTF::move(typedKey), WTF::move(typedValue) });
+                if (!result.tryAppend({ WTF::move(typedKey), WTF::move(typedValue) })) [[unlikely]] {
+                    throwTypeError(&lexicalGlobalObject, scope);
+                    return {};
+                }
             }
         }
 

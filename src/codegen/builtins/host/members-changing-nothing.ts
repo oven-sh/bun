@@ -1,9 +1,4 @@
-// Members of host classes that do what every function of the host may do with its operands and change none of them, with what
-// test/aot/builtins/native-contract.test.ts saw of each on an instance of its class: the sets of operands it was called with, the calls
-// that returned, and what it did with an object in each position of its arguments. `taken`: a trap of the object ran in a call that
-// returned, or with all else equal the outcome differed between two objects and one of the calls returned. `refused`: no call with an
-// object there returned. In the other positions it looked at no object, and the entry does not speak for a call with an object there.
-// The test goes on calling every member and fails when one changes an operand. `getters` have no setter, `accessors` have one.
+// Members of host classes that do what every function of the host may do with its operands and change none of them, with what test/aot/builtins/native-contract.test.ts saw of each on an instance of its class: the sets of operands it was called with, the calls that returned, and what it did with an object in each position of its arguments.
 type Calls = { sets: number; returned: number };
 type Members = {
   methods: Readonly<Record<string, Calls & { taken: readonly number[]; refused: readonly number[] }>>;
@@ -136,8 +131,7 @@ export const membersChangingNothing: Readonly<Record<string, Members>> = {
   },
 };
 
-// The same for native bindings. Where a binding answers an object, the numbers are those of all its functions together, and a position
-// counts when one of them took an object there.
+// The same for native bindings.
 type Binding = Calls & { functions: number; taken: readonly number[]; refused: readonly number[] };
 
 export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {

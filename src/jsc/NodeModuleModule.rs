@@ -101,6 +101,8 @@ fn find_path_inner(
 }
 
 pub(crate) fn stat(path: &[u8]) -> i32 {
+    // Node passes the path to `uv_fs_stat` as a C string, which ends at the first NUL.
+    let path = bun_core::slice_to_nul(path);
     // PERF: `exists_at_type`
     // takes a `&ZStr`, so we copy into a NUL-terminated heap buffer here.
     let zpath = bun_core::ZBox::from_bytes(path);
@@ -212,33 +214,6 @@ pub fn find_longest_registered_extension<'a>(
         }
     }
     None
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn NodeModuleModule__usesNonDefaultLoader(
-    global: &JSGlobalObject,
-    path: &BunString,
-) -> bool {
-    let vm = global.bun_vm().as_mut();
-    if vm.commonjs_custom_extensions.len() == 0 {
-        return false;
-    }
-    let path = path.to_utf8();
-    let Some(entry) = find_longest_registered_extension(vm, path.slice()) else {
-        return false;
-    };
-    let CustomLoader::Loader(loader) = entry else {
-        return true;
-    };
-    let basename = bun_paths::basename(path.slice());
-    let default_loader =
-        strings::last_index_of_char(basename, b'.').and_then(|dot| DEFAULT_LOADERS.get(&basename[dot..]));
-    !default_loader.is_some_and(|default_loader| {
-        loader == default_loader
-            || (loader.is_javascript_like()
-                && default_loader.is_javascript_like()
-                && loader.is_typescript() == default_loader.is_typescript())
-    })
 }
 
 #[unsafe(no_mangle)]

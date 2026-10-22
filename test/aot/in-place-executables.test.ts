@@ -200,6 +200,125 @@ const text = stream => new Promise((done, fail) => {
   expect(await run(String(dir), ["./built.exe"])).toEqual(plain);
 }, 120_000);
 
+// Next.js reads `page_client-reference-manifest.js` as text and requires `page.js` beside it: one pattern names both as entry points, one folder as assets.
+test.each([
+  ["in place", ["--compile-in-place"]],
+  ["under its own root", []],
+])("a file that is both an entry point and an asset is read as it is on disk, compiled %s", async (_, flags) => {
+  const entryPoints = {
+    "entry-script.js": `exports.answer = "a script";\n`,
+    "entry-required.cjs": `exports.answer = "a CommonJS module";\n`,
+    "entry-imported.mjs": `export const answer = "an ES module";\n`,
+    "entry-typed.ts": `export const answer: string = "a typed module";\n`,
+    "deep/entry-deep.js": `exports.answer = "in a folder of the folder";\n`,
+    "entry-empty.js": "",
+    "entry-accents.js": `exports.answer = "café ☃ 😀";\n`,
+    "entry-marked.js": `﻿exports.answer = "behind a byte order mark";\n`,
+    "entry-not-utf8.js": Buffer.concat([Buffer.from(`exports.answer = "ok"; // `), Buffer.from([0xe9, 0xff, 0x0a])]),
+  };
+  const others = {
+    "imported.cjs": `exports.answer = "imported by the program";\n`,
+    "settings.json": `{ "answer":   "as it is written" }\n`,
+    "only-data.js": `made = "by text that was read";\n`,
+    "empty-data.js": "",
+  };
+  using dir = tempDir("aot-compiled-and-embedded", {
+    "app/start.cjs": `const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const vm = require("node:vm");
+const { pathToFileURL } = require("node:url");
+const imported = require("./data/imported.cjs");
+const settings = require("./data/settings.json");
+const folder = path.join(__dirname, "data");
+const hex = bytes => bytes.length + " " + Buffer.from(bytes).toString("hex");
+const ways = {
+  readFileSync: file => fs.readFileSync(file, "utf8"),
+  bytes: file => hex(fs.readFileSync(file)),
+  url: file => fs.readFileSync(pathToFileURL(file), "utf8"),
+  callback: file => new Promise((resolve, reject) => fs.readFile(file, (error, bytes) => (error ? reject(error) : resolve(hex(bytes))))),
+  promise: async file => hex(await fs.promises.readFile(file)),
+  handle: async file => {
+    const handle = await fs.promises.open(file);
+    try { return (await handle.stat()).size + " " + hex(await handle.readFile()); } finally { await handle.close(); }
+  },
+  descriptor: file => {
+    const descriptor = fs.openSync(file, "r");
+    try {
+      const buffer = Buffer.alloc(128);
+      return fs.fstatSync(descriptor).size + " " + hex(buffer.subarray(0, fs.readSync(descriptor, buffer, 0, 128, 0)));
+    } finally { fs.closeSync(descriptor); }
+  },
+  stream: file => new Promise((resolve, reject) => {
+    const chunks = [];
+    fs.createReadStream(file).on("data", chunk => chunks.push(chunk)).on("end", () => resolve(hex(Buffer.concat(chunks)))).on("error", reject);
+  }),
+  stat: file => [fs.statSync(file).size, fs.statSync(file).isFile(), fs.lstatSync(file).size].join(),
+  statPromise: async file => (await fs.promises.stat(file)).size,
+  exists: file => fs.existsSync(file),
+  access: file => fs.accessSync(file, fs.constants.R_OK),
+  realpath: file => fs.realpathSync(file) === file,
+  copy: file => {
+    const copy = path.join(os.tmpdir(), "a-copy-of-a-compiled-asset-" + process.pid);
+    fs.copyFileSync(file, copy);
+    try { return hex(fs.readFileSync(copy)); } finally { fs.unlinkSync(copy); }
+  },
+  bunFile: file => Bun.file(file).text(),
+  bunFileSize: file => Bun.file(file).size,
+  bunFileExists: file => Bun.file(file).exists(),
+  bunFileBytes: async file => hex(await Bun.file(file).bytes()),
+  response: async file => hex(await new Response(Bun.file(file)).bytes()),
+};
+(async () => {
+  for (const name of process.argv.slice(2)) {
+    for (const [way, read] of Object.entries(ways)) {
+      let answer;
+      try { answer = JSON.stringify(await read(path.join(folder, name))); } catch (error) { answer = "throws " + (error.code ?? error.name); }
+      console.log(name, way, answer);
+    }
+    if (name.includes("entry-")) console.log(name, "loaded", (await import(path.join(folder, name))).answer, /\\.c?js$/.test(name) && require(path.join(folder, name)).answer);
+  }
+  console.log(fs.readdirSync(folder, { recursive: true }).sort().join());
+  const context = {};
+  vm.runInNewContext(fs.readFileSync(path.join(folder, "only-data.js"), "utf8"), context);
+  console.log(context.made, imported.answer, settings.answer);
+})();
+`,
+    "app/data": { ...entryPoints, ...others },
+  });
+  const app = join(String(dir), "app");
+  const names = [...Object.keys(entryPoints), ...Object.keys(others)];
+  const plain = await run(app, [bunExe(), "run", "./start.cjs", ...names]);
+  expect({ ...plain, stdout: plain.stdout.split("\n").filter(line => line.includes(" throws ") || line.startsWith("by text")) }).toEqual({
+    stdout: ["by text that was read imported by the program as it is written"],
+    stderr: "",
+    exitCode: 0,
+  });
+  const built = await run(app, [bunExe(), "build", "--compile", "--aot", ...flags, "./start.cjs", "./data/**/entry-*", "--asset", "./data", "--outfile", "../built.exe"]);
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  renameSync(app, join(String(dir), "moved-away"));
+  expect(await run(String(dir), ["./built.exe", ...names])).toEqual(plain);
+}, 120_000);
+
+test("the main entry point inside an asset folder is read as it is on disk", async () => {
+  using dir = tempDir("aot-in-place-main-among-the-assets", {
+    "app/server/start.cjs": `const fs = require("node:fs");
+const path = require("node:path");
+console.log(fs.readFileSync(__filename, "utf8").length, fs.statSync(__filename).size, require.main === module, path.basename(__filename));
+console.log(fs.readdirSync(__dirname).sort().join(), fs.readFileSync(path.join(__dirname, "note.txt"), "utf8"));
+Bun.file(__filename).text().then(text => console.log(text.split("\\n")[0]));
+`,
+    "app/server/note.txt": "a note",
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./server/start.cjs"]);
+  expect({ ...plain, stdout: plain.stdout.replace(/^(\d+) \1 /, "") }).toEqual({ stdout: `true start.cjs\nnote.txt,start.cjs a note\nconst fs = require("node:fs");\n`, stderr: "", exitCode: 0 });
+  const built = await build(app, "./server/start.cjs", "--asset", "./server");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  renameSync(app, join(String(dir), "moved-away"));
+  expect(await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(plain);
+}, 120_000);
+
 test("embedded folders do not appear at the file system root", async () => {
   using dir = tempDir("aot-in-place-inner-folders", {
     "app/main.cjs": `const fs = require("node:fs");

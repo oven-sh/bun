@@ -166,7 +166,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Each Rust crate produces an rlib the link takes beside the C/C++
   // objects. Rust `include!`s codegen
-  // `.rs` outputs (written as side effects of the generate-classes /
+  // `.rs` outputs (written as side effects of the bindgen /
   // bundle-modules / generate-jssink edges), so the codegen output set
   // is forwarded to order the workspace crates after it (order-only; the
   // crates' dep-info then tracks exactly the files they read).
@@ -287,9 +287,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Unified sources: bundle the globbed .cpp into N-per-TU wrappers (see
   // unified.ts for N). Generated at configure time; depfiles track the underlying
   // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
-  // separate — those are already large single TUs (ZigGeneratedClasses.cpp
-  // is 3.3 MB) and bundling them would serialize work. Always called so
-  // stale bundles are pruned even with --unifiedSources=false.
+  // separate — those are already large single TUs and bundling them would
+  // serialize work. Always called so stale bundles are pruned even with
+  // --unifiedSources=false.
   const split = generateUnifiedSources(cfg, sources.cxx);
   const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];
@@ -589,15 +589,14 @@ export function emitPostLink(
   // The smoke test and the static scans: validations of the link
   // edge (they run whenever the executable is relinked, see postLinkChecks)
   // and, for running them by name, the `check` phony.
-  const runtimeBeingWritten = strippedExe !== undefined && isRunningRuntime(strippedExe) ? strippedExe : undefined;
   n.phony("check", [
-    ...emitSmokeTest(n, cfg, exe, exeName, runtimeBeingWritten),
-    ...emitBinaryVerify(n, cfg, exe, exeName, runtimeBeingWritten),
-    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, runtimeBeingWritten),
+    ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
+    ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
+    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
     ...emitCutProfileCheck(n, cfg, {
       exe,
       exeName,
-      strippedExe: runtimeBeingWritten,
+      strippedExe,
       warnOnly: binaryChecksWarnOnly(cfg),
     }),
   ]);
@@ -621,14 +620,6 @@ function duplicateSymbolsStamp(cfg: Config, exeName: string): string | undefined
   return cfg.nm !== undefined && !(cfg.windows && cfg.objdump === undefined)
     ? resolve(cfg.buildDir, `${exeName}.duplicate-symbols-checked`)
     : undefined;
-}
-
-function isRunningRuntime(path: string): boolean {
-  try {
-    return realpathSync(path) === realpathSync(process.execPath);
-  } catch {
-    return false;
-  }
 }
 
 function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump: string; cxxfilt: string } | undefined {

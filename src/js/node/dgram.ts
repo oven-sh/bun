@@ -155,7 +155,7 @@ const UV_ECANCELED: number = ($bindgen("node_util_binding.bind.ts", "ecanceledEr
 // request is counted until its callback runs. Only Node's own tests use it.
 const kNoTrySend = Array.prototype.indexOf.$call(process.execArgv, "--test-udp-no-try-send") !== -1;
 
-const getFdFn: (socket: $Node.UDPSocketHandle) => number = $bindgen("udp_socket.bind.ts", "getFd");
+const getFdFn = $bindgen("udp_socket.bind.ts", "getFd") as (socket: $Node.UDPSocketHandle) => number;
 // Read-only query of the process-wide DGRAM_FDS registry the native layer
 // already maintains, so bind({ fd }) can synchronously report EEXIST like
 // libuv's uv_udp_open() without keeping a second per-VM copy of the same fact.
@@ -170,7 +170,7 @@ const getSockNameFn: (fd: number) => { address: string; port: number; family: st
 
 let BlockList: $Node.BlockListConstructor | undefined;
 function isBlockList(value: unknown): value is $Node.BlockList {
-  BlockList ??= $rust("node_net_binding.rs", "BlockList") as $Node.BlockListConstructor;
+  BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor;
   return BlockList.isBlockList(value);
 }
 
@@ -625,10 +625,11 @@ function createSocket(type: string | DgramOptions, listener?: MessageListener): 
   return new Socket(type, listener);
 }
 
-const bufferSizeFn: (socket: $Node.UDPSocketHandle, size: number, isRecv: boolean) => number = $bindgen(
-  "udp_socket.bind.ts",
-  "bufferSize",
-);
+const bufferSizeFn = $bindgen("udp_socket.bind.ts", "bufferSize") as (
+  socket: $Node.UDPSocketHandle,
+  size: number,
+  isRecv: boolean,
+) => number;
 
 function bufferSize(self: $Node.DgramSocket, size: number, buffer: boolean) {
   if (size >>> 0 !== size) throw $ERR_SOCKET_BAD_BUFFER_SIZE();
@@ -986,10 +987,11 @@ function _connect(this: $Node.DgramSocket, port: number, address: string, callba
   state.handle!.lookup!(address, afterDns);
 }
 
-const connectFn: (socket: $Node.UDPSocketHandle, host: string, port: number) => void = $bindgen(
-  "udp_socket.bind.ts",
-  "connect",
-);
+const connectFn = $bindgen("udp_socket.bind.ts", "connect") as (
+  socket: $Node.UDPSocketHandle,
+  host: string,
+  port: number,
+) => void;
 
 function doConnect(
   ex: Error | null,
@@ -1030,7 +1032,7 @@ function doConnect(
   process.nextTick(() => self.emit("connect"));
 }
 
-const disconnectFn: (socket: $Node.UDPSocketHandle) => void = $bindgen("udp_socket.bind.ts", "disconnect");
+const disconnectFn = $bindgen("udp_socket.bind.ts", "disconnect") as (socket: $Node.UDPSocketHandle) => void;
 
 Socket.prototype.disconnect = function (this: $Node.DgramSocket) {
   const state = this[kStateSymbol];

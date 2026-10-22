@@ -34,7 +34,7 @@ declare global {
       isRaw: boolean;
       isTTY: boolean;
       /** On `process.stdin`, which is a native readable. */
-      $bunNativePtr?: $ZigGeneratedClasses.FileInternalReadableStreamSource;
+      $bunNativePtr?: $Bindgen.FileInternalReadableStreamSource;
       $start(): void;
       [kRawModeState]?: Uint8Array;
       ref(): this;

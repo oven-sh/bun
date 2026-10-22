@@ -3,7 +3,6 @@
 #include "BunDebugger.h"
 #include "BunCompiledModules.h"
 #include "CodeGenerationFromStrings.h"
-#include "RemovableFeatures.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>

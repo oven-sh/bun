@@ -159,7 +159,7 @@ function openCompressor(path: string, mode: number, initialize: (handle: any) =>
 
 const openFrameParser: Open = realm => {
   const handlers = new Proxy({}, { get: (_, key) => (key === "binaryType" ? "buffer" : noop), has: () => true });
-  const parser = new (bindingOf(realm, "native:Rust:h2_frame_parser.rs:H2FrameParserConstructor"))({ context: {}, settings: {}, handlers });
+  const parser = new (bindingOf(realm, "native:Bindgen:h2_frame_parser.bind.ts:H2FrameParser"))({ context: {}, settings: {}, handlers });
   return { value: parser, close: noop };
 };
 
@@ -245,14 +245,14 @@ const openers: (Open & { className?: string })[] = [
   openFileSystem,
   openWatcher("watch"),
   openWatcher("watchFile"),
-  openCompressor("native:Rust:node_zlib_binding.rs:NativeZlib", 1, handle => handle.init(15, 6, 8, 0, new Uint32Array(2), noop, undefined)),
-  openCompressor("native:Rust:node_zlib_binding.rs:NativeBrotli", 9, handle => handle.init(new Uint32Array(10), new Uint32Array(2), noop, undefined)),
-  openCompressor("native:Rust:node_zlib_binding.rs:NativeZstd", 10, handle => handle.init(new Uint32Array(10), undefined, new Uint32Array(2), noop)),
+  openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeZlib", 1, handle => handle.init(15, 6, 8, 0, new Uint32Array(2), noop, undefined)),
+  openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeBrotli", 9, handle => handle.init(new Uint32Array(10), new Uint32Array(2), noop, undefined)),
+  openCompressor("native:Bindgen:node_zlib_binding.bind.ts:NativeZstd", 10, handle => handle.init(new Uint32Array(10), undefined, new Uint32Array(2), noop)),
   openFrameParser,
   openResolver,
-  constructBinding("native:Rust:node_net_binding.rs:SocketAddress", { address: "127.0.0.1", port: 1, family: "ipv4" }),
-  constructBinding("native:Rust:node_net_binding.rs:BlockList"),
-  realm => ({ value: new (bindingOf(realm, "native:Rust:SecureContext.rs:js.getConstructor"))({}), close: noop }),
+  constructBinding("native:Bindgen:SocketAddress.bind.ts:SocketAddress", { address: "127.0.0.1", port: 1, family: "ipv4" }),
+  constructBinding("native:Bindgen:BlockList.bind.ts:BlockList"),
+  realm => ({ value: new (bindingOf(realm, "native:Bindgen:SecureContext.bind.ts:SecureContext"))({}), close: noop }),
   openRewriterValue((rewriter, handler) => rewriter.on("p", { element: handler })),
   openRewriterValue((rewriter, handler) => rewriter.on("p", { comments: handler })),
   openRewriterValue((rewriter, handler) => rewriter.on("p", { text: handler })),

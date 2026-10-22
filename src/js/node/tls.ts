@@ -3,10 +3,11 @@ const { isArrayBufferView } = require("node:util/types");
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
-const addServerName: (listener: $Node.ListenerHandle, hostname: string, tls: unknown) => void = $bindgen(
-  "Listener.bind.ts",
-  "addServerName",
-);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
+  listener: $Node.ListenerHandle,
+  hostname: string,
+  tls: unknown,
+) => void;
 // Does nothing for the handle of a cluster worker, which is no native listener.
 const setListenerSecureContext: (handle: object, context: unknown) => void = $bindgen(
   "Listener.bind.ts",
@@ -565,7 +566,7 @@ function checkServerIdentity(hostname: string, cert: $Node.PeerCertificate) {
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor") as $Node.NativeSecureContextConstructor;
+const NativeSecureContext = $bindgen("SecureContext.bind.ts", "SecureContext") as $Node.NativeSecureContextConstructor;
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only

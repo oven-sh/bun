@@ -26,9 +26,8 @@ code behind the guard relies on the type.
 
 A typed version is **the package's own published file with type annotations added and nothing else
 changed**. Erase the types and you get npm's code back: a gate proves that on every run, and the compiler
-proves it again in every build. With the earlier compiler a React update cost half the instructions (12,867 K to
-6,571 K) and a TanStack Start render 10% fewer. Not every typed version here has been written again for today's
-compiler: see [What the compiler accepts](#what-the-compiler-accepts).
+proves it again in every build. The compiler doesn't accept every typed version in this folder yet: see
+[What the compiler accepts](#what-the-compiler-accepts).
 
 ## Using one
 
@@ -112,7 +111,7 @@ count. So what is compiled is the code that `bun run` would load.
 | not erased | TypeScript syntax that emits code: an `enum`, a `namespace` that is not `declare`d, a parameter property, a decorator, an `accessor` field, JSX, `import x = require()`, `export =`. In a CommonJS file also an `export` of a type, which would make it an ES module |
 | has to be the same | everything else: each statement, name, literal and operator, in the same order |
 
-Most typed versions in this folder were written for an earlier compiler, which took more. A package that says `no` here stops the
+Most typed versions in this folder are older than this rule and change more than types. A package that says `no` here stops the
 build with the error above, until its typed version is written again: at npm's own paths, with nothing but types added.
 
 | package | `sound` | used today | why not |
@@ -140,7 +139,7 @@ see [A variable that the bundle reuses](#a-variable-that-the-bundle-reuses). `ch
   src/                                         what lay/ is generated from: the typed text + its shapes
   family.json                                  instead of lay/ and src/: this version is another one with its version string changed
 check.py      static gates; also regenerates lay/ from src/ and compares
-one_name.py   makes lay/ in format 2 from a src/ that was written for the earlier compiler, with gates of its own
+one_name.py   makes lay/ in format 2 from a src/ that changes more than types, with gates of its own
 run.py        builds and runs the test trees: typed against untyped against plain Bun
 pack.py       diffs an installed tree against a generated one and writes a <name>/<version>/ folder, in format 2
 publish.py    writes the tarballs to publish, from this folder alone

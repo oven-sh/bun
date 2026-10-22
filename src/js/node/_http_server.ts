@@ -54,7 +54,6 @@ const {
   setServerAppFlags,
   setServerMaxHeadersCount,
   getMaxHTTPHeaderSize,
-  onDataIncomingMessage,
   http1ServerPipeline,
 } = http;
 const enum NodeHTTPResponseAbortEvent {
@@ -195,10 +194,9 @@ const getBunServerAllClosedPromise: (server: $Node.NativeHTTPServer) => Promise<
   "getBunServerAllClosedPromise",
   1,
 );
-const getBunServerOpenCount: (server: $Node.NativeHTTPServer) => number = $bindgen(
-  "node_http_binding.bind.ts",
-  "getBunServerOpenCount",
-);
+const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount") as (
+  server: $Node.NativeHTTPServer,
+) => number;
 
 const kServerResponse = Symbol("ServerResponse");
 const kOptimizeEmptyRequests = Symbol("kOptimizeEmptyRequests");
@@ -1487,7 +1485,7 @@ Server.prototype[kRealListen] = function (
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
           http_res[kExchange].awaitsClose = false;
-          http_res[kExchange].isDetached = true;
+          http_res[kExchange].detachedFrom = socket;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
@@ -1501,7 +1499,7 @@ Server.prototype[kRealListen] = function (
     };
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
-      tls,
+      tls: tls as any,
       port,
       hostname: host,
       unix: socketPath,
@@ -1653,7 +1651,7 @@ function dispatchUsualRequest(
   if (!hasBody) req.complete = true;
 
   if ((exchange.flags & EXCHANGE_ENDED_CLEAN) !== 0 && detachesItself(res)) {
-    exchange.isDetached = true;
+    exchange.detachedFrom = socket;
     if (socket._httpMessage === res) {
       socket[kCloseCallback] = undefined;
       socket._httpMessage = null;
@@ -1666,7 +1664,7 @@ function dispatchUsualRequest(
   }
   if (!exchange.awaitsClose || ((res.finished || res.destroyed || !socket[kIsOpen]) && handle.finished)) {
     exchange.awaitsClose = false;
-    exchange.isDetached = true;
+    exchange.detachedFrom = socket;
     res.detachSocket(socket);
     return undefined;
   }
@@ -1865,6 +1863,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
   HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
   HTTP_PARSER_ERROR_TRAILER_CONTENT_LENGTH = 17,
+  HTTP_PARSER_ERROR_INVALID_URL = 18,
 }
 // Native callback fired when the HTTP parser rejects incoming bytes. Builds
 // the same error object Node's parser produces and routes it through
@@ -1947,6 +1946,9 @@ function onServerClientError(
       break;
     case HttpParserError.HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED:
       err = $HPE_STRICT("Parse Error: Expected LF after chunk data");
+      break;
+    case HttpParserError.HTTP_PARSER_ERROR_INVALID_URL:
+      err = $HPE_INVALID_URL("Parse Error: Invalid characters in url");
       break;
     default:
       err = $HPE_INTERNAL("Parse Error");
@@ -2190,7 +2192,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     [kStreamingEnabled] = false;
     [kBoundOnAbort]: ((event: number) => void) | null = null;
     [kKeepAliveIdleStart]: number | undefined = undefined;
-    [kPipelinedResponses]: PipelinedResponse[] | undefined = undefined;
+    [kPipelinedResponses]: $Node.PipelinedResponse[] | undefined = undefined;
     [kKeepAliveTimeoutSet] = false;
     [kSocketTimeoutTimer]: $Node.Timeout | undefined = undefined;
     [kArmedTimeout] = 0;
@@ -2877,6 +2879,15 @@ function hasInvalidTrailer(response: $Node.ServerResponse) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
+function validateStatusCode(statusCode: number) {
+  const originalStatusCode = statusCode;
+  statusCode |= 0;
+  if (statusCode < 100 || statusCode > 999) {
+    throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
+  }
+  return statusCode;
+}
+
 function _writeHead(
   statusCode: number,
   reason: string | $Node.HttpHeadersInit | null | undefined,
@@ -2884,11 +2895,7 @@ function _writeHead(
   response: $Node.ServerResponse,
   exchange: Exchange,
 ) {
-  const originalStatusCode = statusCode;
-  statusCode |= 0;
-  if (statusCode < 100 || statusCode > 999) {
-    throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
-  }
+  statusCode = validateStatusCode(statusCode);
 
   let statusMessage: string | undefined;
   if (typeof reason === "string") {
@@ -3120,6 +3127,8 @@ function ServerResponse(
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 Object.defineProperty(ServerResponse, "length", { __proto__: null, value: 2, configurable: true });
+// A response whose own statusCode was deleted sends 200, as in Node.js.
+ServerResponse.prototype.statusCode = 200;
 
 function isUnheard(res: $Node.ServerResponse, exchange: Exchange): boolean {
   const events = exchange.events;
@@ -3133,7 +3142,8 @@ function statusCodeToSend(res: $Node.ServerResponse): number {
 
 function statusMessageToSend(res: $Node.ServerResponse): string | undefined {
   const exchange = res[kExchange];
-  if ((exchange.flags & EXCHANGE_HAS_SNAPSHOT) !== 0) return exchange.statusMessage;
+  // Native code writes the status code's own message for an empty one as for none.
+  if ((exchange.flags & EXCHANGE_HAS_SNAPSHOT) !== 0) return exchange.statusMessage || undefined;
   return res.statusMessage === undefined ? undefined : res.statusMessage;
 }
 
@@ -3360,7 +3370,7 @@ function emitResponseFinish(this: $Node.ServerResponse) {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  finishResponseOnSocket(this, req, (req?.socket ?? this.socket) as any);
+  finishResponseOnSocket(this, req, (exchange.detachedFrom ?? req?.socket ?? this.socket) as any);
 }
 
 function isResumeScheduled(state: $Node.ReadableState | null | undefined) {
@@ -3381,7 +3391,7 @@ function finishResponseOnSocket(
   onResponseFinishHandleSocket(server, socket, res);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
-  if (res[kExchange].isDetached) return;
+  if (res[kExchange].detachedFrom !== null) return;
   if (socket != null) {
     res.detachSocket(socket);
     if (socket[kPipelinedResponses] !== undefined) {
@@ -3806,7 +3816,7 @@ function bufferPipelinedWrite(
 ) {
   callWriteHeadIfObservable(res, res[kExchange].headerState);
   if (res[kExchange].headerState === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
@@ -3843,7 +3853,7 @@ function bufferPipelinedEnd(
 ) {
   callWriteHeadIfObservable(res, res[kExchange].headerState, true);
   if (res[kExchange].headerState === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -4411,7 +4421,7 @@ function finishConnection(
   }
   socket[kKeepAliveIdleStart] = DateNow();
   socket[kKeepAliveTimeoutSet] = true;
-  if (!exchange.isDetached) {
+  if (exchange.detachedFrom === null) {
     if (socket._httpMessage === res) {
       socket[kCloseCallback] = undefined;
       socket._httpMessage = null;
@@ -4547,16 +4557,25 @@ function endAfterNativeThrow(
   exchange: Exchange,
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
   error: unknown,
+  countsAsSent: boolean,
 ): $Node.ServerResponse {
   const code = (error as { code?: string } | null | undefined)?.code;
   if (code === "ERR_STREAM_ALREADY_FINISHED") {
     if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
-      res._header = " ";
+      if (countsAsSent) {
+        exchange.headerState = NodeHTTPHeaderState.sent;
+        res._header = " ";
+      }
       res.finished = true;
       res.emit("prefinish");
       return res;
     }
-  } else if (code !== "ERR_HTTP_HEADERS_SENT" && code !== "ERR_INVALID_CHAR" && !(error instanceof RangeError)) {
+  } else if (
+    code !== "ERR_HTTP_HEADERS_SENT" &&
+    code !== "ERR_INVALID_CHAR" &&
+    code !== "ERR_INVALID_ARG_TYPE" &&
+    !(error instanceof RangeError)
+  ) {
     exchange.headerState = NodeHTTPHeaderState.sent;
   }
   throw error;
@@ -4579,9 +4598,13 @@ ServerResponse.prototype.end = function (
     callback = undefined;
   }
 
+  let droppedChunk = false;
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (this.finished || this.destroyed) {
     "unlikely";
-    if (chunk && this.destroyed && !this.finished) chunk = undefined;
+    // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+    droppedChunk = !!chunk && this.destroyed && !this.finished;
+    if (droppedChunk) chunk = undefined;
     if (hasServerResponseFinished(this, chunk, callback, true)) {
       return this;
     }
@@ -4616,7 +4639,7 @@ ServerResponse.prototype.end = function (
       wasHeld = true;
     }
   } else if (headerState === NodeHTTPHeaderState.none) {
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (!this._hasBody && chunk) {
     "unlikely";
@@ -4634,23 +4657,28 @@ ServerResponse.prototype.end = function (
       this._hasBody &&
       !this.hasHeader("content-length") &&
       this.req?.httpVersionMajor === 1 &&
-      this.req?.httpVersionMinor! >= 1
+      (this.req?.httpVersionMinor as number) >= 1
     ) {
       this.socket?.[kHandle]?.setResponseTrailers(trailer);
       headerState = exchange.headerState;
     }
   }
 
-  if (headerState === NodeHTTPHeaderState.none) {
+  if (headerState === NodeHTTPHeaderState.none && !droppedChunk) {
     callWriteHeadIfObservable(this, headerState, true);
     flags = exchange.flags;
   }
 
+  // Node's _implicitHeader() ran unless the chunk was dropped above, so on a socket that has gone the head counts as sent like on the normal path below.
+  const countsAsSent = !droppedChunk || headerState !== NodeHTTPHeaderState.none;
   const socket = exchange.connection;
   if (socket === null || !socket[kIsOpen]) {
     "unlikely";
     if ((handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
-      this._header = " ";
+      if (countsAsSent) {
+        exchange.headerState = NodeHTTPHeaderState.sent;
+        this._header = " ";
+      }
       this.finished = true;
       this.emit("prefinish");
       return this;
@@ -4662,7 +4690,7 @@ ServerResponse.prototype.end = function (
     const hasSnapshot = (flags & EXCHANGE_HAS_SNAPSHOT) !== 0;
     const statusCode = hasSnapshot ? exchange.statusCode : this.statusCode;
     const statusMessage = hasSnapshot
-      ? exchange.statusMessage
+      ? exchange.statusMessage || undefined
       : this.statusMessage === undefined
         ? undefined
         : this.statusMessage;
@@ -4682,7 +4710,7 @@ ServerResponse.prototype.end = function (
         keepAliveSecs,
       );
     } catch (error) {
-      return endAfterNativeThrow(this, exchange, handle, error);
+      return endAfterNativeThrow(this, exchange, handle, error, countsAsSent);
     }
     exchange.headerState = NodeHTTPHeaderState.sent;
     if (contentLength < 0) {
@@ -4815,7 +4843,7 @@ ServerResponse.prototype.write = function (
   }
 
   if (exchange.headerState === NodeHTTPHeaderState.none) {
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (!this._hasBody && chunk) {
     "unlikely";
@@ -4834,6 +4862,8 @@ ServerResponse.prototype.write = function (
     (exchange.headerBits & HEADER_CONTENT_LENGTH) !== 0 &&
     exchange.oddMask === 0 &&
     !this.strictContentLength &&
+    // Native code refuses some status messages, and this call is the one to throw. writeHead() has looked at its own.
+    (this.statusMessage === undefined || (flags & EXCHANGE_HAS_SNAPSHOT) !== 0) &&
     chunk.length * 3 < this[kHighWaterMark] &&
     ticksAreUnhooked()
   ) {
@@ -4841,8 +4871,14 @@ ServerResponse.prototype.write = function (
     if (socket !== null && socket[kIsOpen]) {
       exchange.heldChunk = chunk;
       exchange.headerState = NodeHTTPHeaderState.sent;
-      if ((flags & EXCHANGE_TICK_QUEUED) === 0) queueExchangeTick(exchange, flags | EXCHANGE_HOLDS_CHUNK);
-      else exchange.flags = flags | EXCHANGE_HOLDS_CHUNK;
+      // The head counts as sent, so what is assigned to statusCode or statusMessage from here on has no effect on the wire.
+      if ((flags & EXCHANGE_HAS_SNAPSHOT) === 0) {
+        exchange.statusCode = this.statusCode;
+        exchange.statusMessage = "";
+      }
+      const held = flags | EXCHANGE_HOLDS_CHUNK | EXCHANGE_HAS_SNAPSHOT;
+      if ((flags & EXCHANGE_TICK_QUEUED) === 0) queueExchangeTick(exchange, held);
+      else exchange.flags = held;
       return true;
     }
   }

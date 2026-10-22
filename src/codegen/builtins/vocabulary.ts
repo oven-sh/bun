@@ -29,14 +29,7 @@ export type Origin = (typeof origins)[number];
 export const scopes = ["Realm", "Module"] as const;
 export type Scope = (typeof scopes)[number];
 
-/**
- * What may become of the location that an entry stands for, the property of its holder under its name.
- * ChangesOnItsOwn: without a store of the program it may hold another value at the next read, within the type of its Get
- * overload, and it may be missing, so that a lookup goes on above the holder. Only a property or an accessor can say so: an
- * entry that is an object says which object lies there.
- * ConstantUnlessWritten: it is there from start-up and holds the same value until the program stores, defines or deletes there.
- * AlwaysLocked: start-up makes it immutable, so it holds the same value for the whole run.
- */
+/** What may become of the location that an entry stands for, the property of its holder under its name. */
 export const mutabilities = ["ChangesOnItsOwn", "ConstantUnlessWritten", "AlwaysLocked"] as const;
 export type Mutability = (typeof mutabilities)[number];
 
@@ -372,19 +365,15 @@ export type ImplementationSpec =
   | { how: "CachedGetter"; cppClass: string; member: string }
   | { how: "OwnSlot"; structure: string; after: readonly string[] };
 
-// What a C function of the host takes as one parameter in a call that compiled code makes without the function object, and the C++
-// types that the parameter can have. BuiltinDirectValue in AOTBuiltinTableBindings.h lists the same.
-// NativeObjectOfReceiver: what the receiver wraps. Receiver: the receiver itself. The others take the arguments of the call, in order.
-// Value: the value as it is. That of a cell is its address. ValueOrEmpty: the same, and nothing where the call has no such argument.
-// RestOfValues: this argument and all behind it, in the frame of the caller.
+// What a C function of the host takes as one parameter in a call that compiled code makes without the function object, and the C++ types that the parameter can have.
 const typesOfValue = ["JSC::EncodedJSValue", "JSC::JSCell*", "JSC::JSObject*", "JSC::JSString*"] as const;
 export const directValueTypes = {
   Realm: ["JSC::JSGlobalObject*"],
   NativeObjectOfReceiver: ["void*"],
-  Receiver: ["JSC::EncodedJSValue"],
+  Receiver: ["JSC::EncodedJSValue", "JSC::JSCell*"],
   Value: typesOfValue,
   ValueOrEmpty: typesOfValue,
-  RestOfValues: ["const JSC::EncodedJSValue*, size_t"],
+  RestOfValues: ["const JSC::EncodedJSValue*, size_t", "Bun::Bindgen::ExternVariadicArguments"],
   FrameOfValues: ["JSC::CallFrame*"],
   Boolean: ["bool"],
   Int32: ["int32_t"],
@@ -447,10 +436,7 @@ export interface HostCallSpec {
   result?: readonly HostUseSpec[];
 }
 
-/**
- * One thing that native code does with a value that it got hold of by itself: an export that it read from a module, the
- * object of a function of the library, what a call of its own answered.
- */
+/** One thing that native code does with a value that it got hold of by itself: an export that it read from a module, the object of a function of the library, what a call of its own answered. */
 export type HostUseSpec =
   | { read: "Inspected" }
   | { read: "Called"; call?: HostCallSpec }
@@ -503,7 +489,7 @@ export interface NativeCallerSpec extends NativeMentionSpec {
 }
 
 export interface SignatureColumns {
-  uses?: Readonly<Record<OperandName, readonly UseSpec[]>>;
+  uses?: Readonly<{ [name in OperandName]?: readonly UseSpec[] }>;
   reads?: readonly Heap[];
   writes?: readonly Heap[];
   runsOnlyOperandCode?: boolean;
@@ -535,9 +521,6 @@ export interface EntryColumns {
   deterministic?: boolean;
   requiresHolderAsThis?: boolean;
   // Makes a second realm that runs the compiled program in the VM of its caller: one whose method table has a module host.
-  // Nothing of Bun's does. Zig__GlobalObject__create alone makes such a realm, each in a new VM: the main thread's, a
-  // Worker's, the inspector's. A context of node:vm and a ShadowRealm have no module host, and Bun.ModuleGraph loads into
-  // the realm it is in.
   startsInstance?: boolean;
   privateAlias?: boolean;
   defaultExport?: boolean;
@@ -567,11 +550,7 @@ export interface EntryColumns {
   appendForm?: InlineBuiltinName;
   hostAppendSymbol?: string;
   jsonTextForm?: { argument: OperandName | number; nativeSymbol?: string; path?: BuiltinPath };
-  /**
-   * The function that does the same where the argument is an object literal that nobody else sees and that has no member but `names`.
-   * It takes the other arguments in their order and then the value under each name, undefined for a name that the literal lacks:
-   * so this entry takes an absent member and an undefined one for the same, and does not look for the names on Object.prototype.
-   */
+  /** The function that does the same where the argument is an object literal that nobody else sees and that has no member but `names`. */
   literalPartsForm?: { argument: number; names: readonly string[]; path: BuiltinPath };
   bodyBytesForm?: BuiltinPath;
   boxedCallStub?: BoxedStubName;
@@ -616,15 +595,9 @@ export interface ClassColumns {
   namesDefinedOnNewInstances?: readonly string[];
   /** What native code puts under some of those names: primitives. A name without a type may hold anything. */
   typesOfNamesDefinedOnNewInstances?: Readonly<Record<string, TypeSpec>>;
-  /**
-   * Property to static member. Where the program has stored a function under the member on the constructor of the class, or above
-   * it, native code calls that function to make the property, with the instance among the operands, and puts there what it answers.
-   */
+  /** Property to static member: native code calls the function the program stored under the member on the constructor to make the property. */
   namesMadeByStaticMembers?: Readonly<Record<string, string>>;
-  /**
-   * The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever
-   * code of its operands it runs. An overload that runs no JavaScript needs no such word.
-   */
+  /** The constructor reads `prototype` from new.target and nothing else, and it calls nothing that it finds on the new object, whatever code of its operands it runs. */
   constructorOnlyReadsPrototypeOfNewTarget?: boolean;
   instanceCppClass?: CppClassRef;
   prototypeCppExpression?: string;

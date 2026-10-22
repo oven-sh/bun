@@ -14,7 +14,7 @@ export default b.declarations(
   ),
   extendAll(["NodeQuic"], "node:quic", "%QuicEndpoint%", "%QuicSession%", "%QuicStream%"),
 
-  extendAll(["NodeHttp2", "Buffer"], ...nativeBindings("Rust", "h2_frame_parser.rs", "H2FrameParserConstructor")),
+  extendAll(["NodeHttp2", "Buffer"], ...nativeBindings("Bindgen", "h2_frame_parser.bind.ts", "H2FrameParser")),
   extendAll(["NodeHttp2"], "node:http2", "%H2FrameParser%"),
 
   extendAll(
@@ -32,17 +32,17 @@ export default b.declarations(
     ["NodeZlib"],
     "%NativeZlib%",
     ...nativeBindings("Bindgen", "node_zlib_binding.bind.ts", "crc32"),
-    ...nativeBindings("Rust", "node_zlib_binding.rs", "NativeZlib"),
+    ...nativeBindings("Bindgen", "node_zlib_binding.bind.ts", "NativeZlib"),
   ),
   extendAll(
     ["NodeZlibBrotli", "BrotliEncoder", "BrotliDecoder", "NodeZlib"],
     "%NativeBrotli%",
-    ...nativeBindings("Rust", "node_zlib_binding.rs", "NativeBrotli"),
+    ...nativeBindings("Bindgen", "node_zlib_binding.bind.ts", "NativeBrotli"),
   ),
   extendAll(
     ["NodeZlibZstd", "ZstdCompressor", "NodeZlib"],
     "%NativeZstd%",
-    ...nativeBindings("Rust", "node_zlib_binding.rs", "NativeZstd"),
+    ...nativeBindings("Bindgen", "node_zlib_binding.bind.ts", "NativeZstd"),
   ),
 
   extendAll(
@@ -148,7 +148,8 @@ export default b.declarations(
     ["NetAddresses"],
     "%BlockList%",
     "%SocketAddress%",
-    ...nativeBindings("Rust", "node_net_binding.rs", "BlockList", "SocketAddress"),
+    ...nativeBindings("Bindgen", "BlockList.bind.ts", "BlockList"),
+    ...nativeBindings("Bindgen", "SocketAddress.bind.ts", "SocketAddress"),
   ),
 
   extendAll(

@@ -1,5 +1,4 @@
-// The two objects that node:crypto takes from native code when it is evaluated: src/jsc/bindings/node/crypto/node_crypto_binding.cpp
-// and src/runtime/node/node_crypto_binding.rs. The module takes each apart at once, so whoever reads a member finds a function of the table.
+// The two objects that node:crypto takes from native code when it is evaluated: src/jsc/bindings/node/crypto/node_crypto_binding.cpp and src/runtime/node/node_crypto_binding.rs.
 import * as b from "bun-builtins-table";
 import { answers, bagOfFunctions, undeclaredClasses, undeclaredFunctions } from "./native-bags.ts";
 import { handedOver } from "./native-code.ts";

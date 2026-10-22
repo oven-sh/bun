@@ -51,7 +51,7 @@ fn lines_follow_schema_order() {
 #[test]
 fn name_resolves_to_statistic() {
     for line in lines(|_| 0) {
-        let name = line.split(|&byte| byte == b' ').next().expect("a line has a name");
+        let name = bun_core::strings::split(&line, b" ").next().expect("a line has a name");
         let name = core::str::from_utf8(name).expect("statistic names are ASCII");
         let id = StatisticId::from_name(name).expect("a declared statistic");
         assert_eq!(id.name(), name);
@@ -64,7 +64,7 @@ fn entries_are_statistics_without_position() {
         assert_eq!(entry.kind, ExplainSet::STATISTICS);
         assert_eq!(entry.position, None);
         assert!(entry.notes.is_empty());
-        assert!(!entry.text.contains(&b'\n'));
+        assert!(!bun_core::strings::contains_char(&entry.text, b'\n'));
     }
 }
 

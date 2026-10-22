@@ -28,6 +28,8 @@ static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireCommonJS);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireNativeModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireTestModule);
 
@@ -167,10 +169,6 @@ JSC::Structure* createCommonJSModuleStructure(
 // A `require.cache` object over `requireMap`: the global one, or a Bun.ModuleGraph's
 // together with one of the graph's modules (whose loader's ES modules it also lists).
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
-
-// The global `require.cache`. Null with an exception where the function that makes it throws:
-// an ahead-of-time executable has that function only if the program uses the cache.
-JSC::JSObject* globalRequireCacheObject(Zig::GlobalObject*);
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.

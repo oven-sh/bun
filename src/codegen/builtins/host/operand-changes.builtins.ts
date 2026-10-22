@@ -1,5 +1,4 @@
-// What native functions do to what they are handed: those that change it, and those that change nothing.
-// test/aot/builtins/native-contract.test.ts tells them apart.
+// What native functions do to what they are handed: those that change it, and those that change nothing. test/aot/builtins/native-contract.test.ts tells them apart.
 import * as b from "bun-builtins-table";
 import { bindingsChangingNothing, membersChangingNothing } from "./members-changing-nothing.ts";
 import { keptHandlerCell, responseHandlerCell, socketDataCell } from "./native-cells.ts";

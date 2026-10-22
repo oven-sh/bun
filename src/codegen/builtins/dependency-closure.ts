@@ -73,8 +73,7 @@ function addCallsForTexts(dependencies: RuntimeDependencies, key: string, { argu
   else for (const called of calls) known.calls.add(called);
 }
 
-// The front end has the text of the program and nothing else. A string that is written in a call is one of the texts or it is not:
-// that is the one condition it decides.
+// The front end has the text of the program and nothing else.
 function textsDecidingCall(condition: ModelCondition): Pick<CallsForTexts, "argument" | "texts"> | null {
   const { operand, isOneOf, startsWith, hasProperty } = condition;
   const asksMore =

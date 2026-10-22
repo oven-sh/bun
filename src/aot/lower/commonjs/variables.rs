@@ -306,13 +306,13 @@ fn find_path_text(
     builtin: BuiltinId,
 ) -> Option<Vec<u8>> {
     let path = file.inputs.sources.module_paths(owner).public_path;
-    if !path.starts_with(b"/") || path.contains(&b'\\') {
+    if !path.starts_with(b"/") || bun_core::strings::contains_char(path, b'\\') {
         return None;
     }
     match builtin {
         BuiltinId::ImportMetaPath => Some(path.to_vec()),
         BuiltinId::ImportMetaDir => {
-            let end = path.iter().rposition(|&byte| byte == b'/')?;
+            let end = bun_core::strings::last_index_of_char(path, b'/')?;
             Some(path[..end].to_vec())
         }
         _ => None,

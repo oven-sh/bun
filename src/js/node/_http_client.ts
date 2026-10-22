@@ -322,7 +322,7 @@ function ClientRequest(
     err.message = err.message.replace(" must be of type ", " must be one of ");
     throw err;
   }
-  this.agent = agent;
+  this.agent = agent as $Node.Agent | null | undefined;
 
   const protocol = options.protocol || defaultAgent.protocol;
   let expectedProtocol = defaultAgent.protocol;

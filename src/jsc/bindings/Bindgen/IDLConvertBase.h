@@ -15,7 +15,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericTypeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(
             &global,
@@ -28,7 +28,7 @@ struct ContextBase : Bun::IDLConversionContextBase<Derived> {
     void throwGenericRangeError(
         JSC::JSGlobalObject& global,
         JSC::ThrowScope& scope,
-        String&& message)
+        String&& message) const
     {
         Bun::throwError(&global, scope, ErrorCode::ERR_OUT_OF_RANGE, std::forward<String>(message));
     }
@@ -43,7 +43,7 @@ struct ElementOf : ContextBase<ElementOf<Parent>> {
     {
     }
 
-    auto source()
+    auto source() const
     {
         return WTF::makeString("element of "_s, m_parent.source());
     }
@@ -64,7 +64,7 @@ struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> 
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
@@ -73,32 +73,65 @@ private:
     const WTF::ASCIILiteral m_name;
 };
 
+// For a context made in the argument list of the conversion that takes it.
+template<typename Ctx>
+Ctx& asLvalue(Ctx&& ctx LIFETIME_BOUND) { return static_cast<Ctx&>(ctx); }
+
+struct NodeArgument {
+    WTF::ASCIILiteral name;
+    std::span<const WTF::ASCIILiteral> expected;
+};
+
 // A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
 struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
     using ElementContext = Detail::ElementOf<NodeArgumentContext>;
 
-    NodeArgumentContext(WTF::ASCIILiteral name, std::span<const WTF::ASCIILiteral> expected, JSC::JSValue actual)
-        : m_name(name)
-        , m_expected(expected)
+    NodeArgumentContext(const NodeArgument& argument LIFETIME_BOUND, JSC::JSValue actual)
+        : m_argument(argument)
         , m_actual(actual)
     {
     }
 
-    auto source()
+    auto source() const
+    {
+        return m_argument.name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
+    {
+        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_argument.name, m_argument.expected, m_actual);
+    }
+
+private:
+    const NodeArgument& m_argument;
+    const JSC::JSValue m_actual;
+};
+
+// A value of the wrong type throws `ERR_INVALID_ARG_TYPE` with the schema's own message, which says nothing of the value.
+struct ArgumentMessageContext : Detail::ContextBase<ArgumentMessageContext> {
+    using ElementContext = Detail::ElementOf<ArgumentMessageContext>;
+
+    consteval ArgumentMessageContext(WTF::ASCIILiteral name, WTF::ASCIILiteral message)
+        : m_name(name)
+        , m_message(message)
+    {
+    }
+
+    auto source() const
     {
         return m_name;
     }
 
     template<typename String>
-    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
-        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_name, m_expected, m_actual);
+        Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE, m_message);
     }
 
 private:
     const WTF::ASCIILiteral m_name;
-    const std::span<const WTF::ASCIILiteral> m_expected;
-    const JSC::JSValue m_actual;
+    const WTF::ASCIILiteral m_message;
 };
 
 // A value of the wrong type throws what src/runtime/node/util/validators.rs does: `The "name" property must be of type string, got number`.
@@ -114,13 +147,13 @@ struct ValidatorArgumentContext : Detail::ContextBase<ValidatorArgumentContext> 
     {
     }
 
-    auto source()
+    auto source() const
     {
         return m_name;
     }
 
     template<typename String>
-    NEVER_INLINE void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    NEVER_INLINE void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&) const
     {
         // `JSValue::type_name` in src/jsc/JSValue.rs.
         bool isArray = m_actual.isCell() && (m_actual.asCell()->type() == JSC::ArrayType || m_actual.asCell()->type() == JSC::DerivedArrayType);

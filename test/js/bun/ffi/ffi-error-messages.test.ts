@@ -1,6 +1,6 @@
 import { CString, dlopen, linkSymbols, ptr, toArrayBuffer, toBuffer } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { isMusl } from "harness";
+import { bunEnv, bunExe, isMusl } from "harness";
 
 // Not `toThrow()`: it also accepts an Error that the function returns, which is
 // what `toBuffer()` and `toArrayBuffer()` did with their TypeError before they
@@ -103,10 +103,31 @@ describe("FFI error messages", () => {
     }
   });
 
-  test.each([4000, 4094, 4095, 4096, 4097, 9000])("dlopen of a library name of %d bytes throws", length => {
-    const error = thrownBy(() => dlopen(Buffer.alloc(length, "a").toString(), { test: { args: [], returns: "int" } }));
-    expect(error?.code).toBe("ERR_DLOPEN_FAILED");
-    expect(error.message).toMatch(/Failed to open library/i);
+  // When opening the name directly fails, dlopen falls back to the name joined to the working directory.
+  test.concurrent.each([
+    ["absolute", 5000],
+    ["relative", 4090],
+    ["relative", 100_000],
+  ] as const)("dlopen with a %s %d-byte library path reports an error", async (kind, length) => {
+    const prefix = kind === "relative" ? "" : process.platform === "win32" ? "C:\\" : "/";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { dlopen } from "bun:ffi";
+        const name = ${JSON.stringify(prefix)} + Buffer.alloc(${length}, "a").toString() + ".so";
+        try {
+          dlopen(name, { f: { args: [], returns: "void" } });
+        } catch (e) {
+          console.log(e.code, e.message.slice(0, 22));
+        }`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "ERR_DLOPEN_FAILED Failed to open library\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 
   test("dlopen shows which symbol is missing when symbol not found", () => {

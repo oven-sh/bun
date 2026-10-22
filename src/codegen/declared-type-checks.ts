@@ -1,26 +1,75 @@
-// The C++ that holds a value which leaves native code to the type that its member declares (parseDeclaredType in
-// class-definitions.ts). Whoever writes it into a file includes DeclaredTypeChecks.h and the header of each class it names.
-import { parseDeclaredType, type DeclaredAlternative } from "./class-definitions.ts";
+// The types that native code declares for a value which it makes itself, and the C++ that holds the value to one.
+
+export type DeclaredAlternative =
+  | "string"
+  | "number"
+  | "int32"
+  | "bigint"
+  | "boolean"
+  | "undefined"
+  | "null"
+  | "object" /* any object, functions too */
+  | "Promise"
+  | "this" /* the receiver itself */
+  | { instance: string /* a class of a `.bind.ts` file, or one of `nativeInstances` */ };
+
+/** What `b.any.returning` takes as a word. */
+export function parseDeclaredAlternative(word: string): DeclaredAlternative {
+  switch (word) {
+    case "string":
+    case "number":
+    case "int32":
+    case "bigint":
+    case "boolean":
+    case "undefined":
+    case "null":
+    case "object":
+    case "Promise":
+    case "this":
+      return word;
+  }
+  if (!/^[A-Z][A-Za-z0-9]*(?:(?<=\d)_\d+)*$/.test(word)) throw new Error(`'${word}' is not a declared type`);
+  return { instance: word };
+}
+
+/** A union of those words, written with `|`. */
+export function parseDeclaredType(text: string): DeclaredAlternative[] {
+  const words = text.split("|").map(word => word.trim());
+  if (new Set(words).size !== words.length) throw new Error(`'${text}' is not a declared type`);
+  try {
+    return words.map(parseDeclaredAlternative);
+  } catch {
+    throw new Error(`'${text}' is not a declared type`);
+  }
+}
+
+/** As TypeScript spells it. */
+export function typeScriptOf(words: readonly string[]): string {
+  const spell = (word: string) => {
+    const alternative = parseDeclaredAlternative(word);
+    if (typeof alternative === "object") return alternative.instance === "Array" ? "unknown[]" : alternative.instance;
+    return alternative === "int32" ? "number" : alternative === "Promise" ? "Promise<unknown>" : alternative;
+  };
+  return words.map(spell).join(" | ");
+}
 
 const hasCellType = (cellType: string) => (value: string) =>
   `Bun::DeclaredTypes::hasCellType(${value}, JSC::${cellType})`;
 const inherits = (cppClass: string) => (value: string) => `${value}.inherits<${cppClass}>()`;
 
-// Classes that no `.classes.ts` file defines and that a declared type may name. `test` is the test by which the table of
-// built-ins (src/codegen/builtins) tells the instances of the class, or a narrower one. `rustType` is there for a class that
-// src/jsc/proven_return.rs can prove.
-export const nativeInstances: Record<string, { test: (value: string) => string; rustType?: string }> = {
-  AbortSignal: { test: inherits("WebCore::JSAbortSignal"), rustType: "bun_jsc::AbortSignal" },
+// Classes that no `.bind.ts` file defines and that a declared type may name.
+export const nativeInstances: Record<string, { test: (value: string) => string; header?: string }> = {
+  AbortSignal: { test: inherits("WebCore::JSAbortSignal"), header: "JSAbortSignal.h" },
   Array: { test: hasCellType("ArrayType") },
   ArrayBuffer: { test: value => `Bun::DeclaredTypes::isUnsharedArrayBuffer(${value})` },
   Buffer: { test: value => `Bun::DeclaredTypes::isBuffer(${value})` },
   Date: { test: hasCellType("JSDateType") },
   Error: { test: hasCellType("ErrorInstanceType") },
-  Headers: { test: inherits("WebCore::JSFetchHeaders"), rustType: "bun_jsc::FetchHeaders" },
+  Headers: { test: inherits("WebCore::JSFetchHeaders"), header: "JSFetchHeaders.h" },
   Promise: { test: hasCellType("JSPromiseType") },
-  ReadableStream: { test: inherits("WebCore::JSReadableStream"), rustType: "crate::webcore::ReadableStream" },
+  ReadableStream: { test: inherits("WebCore::JSReadableStream"), header: "streams/JSReadableStream.h" },
   Uint8Array: { test: hasCellType("Uint8ArrayType") },
-  URL: { test: inherits("WebCore::JSDOMURL") },
+  URL: { test: inherits("WebCore::JSDOMURL"), header: "JSDOMURL.h" },
 };
 
 const primitiveTests = {
@@ -44,7 +93,7 @@ export interface CheckedValue {
   receiver: string;
   /** The empty value stands for a pending exception, or for a cached value that is reset. */
   mayBeEmpty: boolean;
-  /** The C++ class of a class that a `.classes.ts` file defines. */
+  /** The C++ class of a class that a `.bind.ts` file defines. */
   cppClassOfGeneratedClass?: (name: string) => string | undefined;
 }
 

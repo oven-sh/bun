@@ -98,7 +98,7 @@ fn segments_below_public_root<'p>(
     written: &'p [u8],
 ) -> Option<Vec<&'p [u8]>> {
     let mut segments = split_path(base);
-    let root_segments = root.strip_suffix(b"/").unwrap_or(root).split(|&byte| byte == b'/');
+    let root_segments = bun_core::strings::split(root.strip_suffix(b"/").unwrap_or(root), b"/");
     for root_segment in root_segments {
         if segments.next() != Some(root_segment) {
             return None;
@@ -131,7 +131,10 @@ fn join_public_path(public_root: &[u8], source_dir: &[u8], specifier: &[u8]) -> 
 pub fn directories_of_importer(public_root: &[u8], source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {
     use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
     let mut segments = segments_below_public_root(public_root, source_dir, b"").unwrap_or_default();
-    for segment in segments.iter_mut().filter(|segment| **segment == PARENT_OF_ROOT) {
+    for segment in segments
+        .iter_mut()
+        .filter(|segment| **segment == PARENT_OF_ROOT)
+    {
         *segment = b"..";
     }
     let join = |count: usize| {
@@ -162,8 +165,8 @@ fn find_file(
     if found.is_some() {
         return found;
     }
-    let name_start = path.iter().rposition(|&byte| byte == b'/').map_or(0, |slash| slash + 1);
-    let dot = name_start + path[name_start..].iter().rposition(|&byte| byte == b'.')?;
+    let name_start = bun_core::strings::last_index_of_char(path, b'/').map_or(0, |slash| slash + 1);
+    let dot = name_start + bun_core::strings::last_index_of_char(&path[name_start..], b'.')?;
     let (stem, extension) = path.split_at(dot);
     let mut rewritten = (search.rewritten_extensions)(extension, path).iter();
     rewritten.find_map(|&extension| lookup(&[stem, extension].concat()))
@@ -243,9 +246,15 @@ impl CompiledProgram {
         }
     }
 
-    pub fn with_package_names(mut self, package_names: Box<[CompiledPackageName]>) -> CompiledProgram {
+    pub fn with_package_names(
+        mut self,
+        package_names: Box<[CompiledPackageName]>,
+    ) -> CompiledProgram {
         debug_assert!(package_names.is_sorted_by_key(|name| name.path));
-        let mut indices = package_names.iter().flat_map(|name| [name.required, name.imported]).flatten();
+        let mut indices = package_names
+            .iter()
+            .flat_map(|name| [name.required, name.imported])
+            .flatten();
         debug_assert!(indices.all(|index| (index as usize) < self.entry_points.len()));
         self.package_names = package_names;
         self
@@ -257,7 +266,9 @@ impl CompiledProgram {
     }
 
     pub fn entry_point_by_module_path(&self, path: &[u8]) -> Option<&CompiledEntryPoint> {
-        self.entry_points.iter().find(|entry_point| entry_point.module_path == path)
+        self.entry_points
+            .iter()
+            .find(|entry_point| entry_point.module_path == path)
     }
 
     /// The public path of the compiled module that `specifier` names when imported from `source_dir`. Nothing for a
@@ -279,14 +290,23 @@ impl CompiledProgram {
 
     /// `Some(None)`: the build wrote the name down, and loaded that way it leads to no entry point.
     fn find_package_name(&self, path: &[u8], is_require: bool) -> Option<Option<&'static [u8]>> {
-        let position = self.package_names.binary_search_by_key(&path, |name| name.path).ok()?;
+        let position = self
+            .package_names
+            .binary_search_by_key(&path, |name| name.path)
+            .ok()?;
         let name = &self.package_names[position];
-        let entry_point = if is_require { name.required } else { name.imported };
+        let entry_point = if is_require {
+            name.required
+        } else {
+            name.imported
+        };
         Some(entry_point.map(|index| self.entry_points[index as usize].module_path))
     }
 
     fn hides_other_paths(&self, package: &[u8]) -> bool {
-        let position = self.package_names.binary_search_by_key(&package, |name| name.path);
+        let position = self
+            .package_names
+            .binary_search_by_key(&package, |name| name.path);
         position.is_ok_and(|position| self.package_names[position].hides_other_paths)
     }
 
@@ -313,13 +333,20 @@ impl CompiledProgram {
         loop {
             if folders.last() != Some(&&b"node_modules"[..]) {
                 let mut segments = folders.clone();
-                push_segments(&mut segments, [&b"node_modules"[..]].into_iter().chain(split_path(specifier)));
+                push_segments(
+                    &mut segments,
+                    [&b"node_modules"[..]]
+                        .into_iter()
+                        .chain(split_path(specifier)),
+                );
                 let path = [public_root, &segments.join(&b"/"[..])].concat();
                 if let Some(listed) = self.find_package_name(&path, is_require) {
                     return listed;
                 }
                 let name_length = if specifier.starts_with(b"@") { 2 } else { 1 };
-                let package = segments.get(..folders.len() + 1 + name_length)?.join(&b"/"[..]);
+                let package = segments
+                    .get(..folders.len() + 1 + name_length)?
+                    .join(&b"/"[..]);
                 if self.hides_other_paths(&[public_root, &package[..]].concat()) {
                     return None;
                 }
@@ -520,11 +547,20 @@ mod tests {
         fn path_as_spelled() {
             assert_eq!(resolve(ROOT, b"./lib.cjs"), Some(MODULES[0]));
             assert_eq!(resolve(b"/$bunfs/root", b"./lib.cjs"), Some(MODULES[0]));
-            assert_eq!(resolve(b"/$bunfs/root/plugins/", b"../lib.cjs"), Some(MODULES[0]));
+            assert_eq!(
+                resolve(b"/$bunfs/root/plugins/", b"../lib.cjs"),
+                Some(MODULES[0])
+            );
             assert_eq!(resolve(ROOT, b"./plugins/../lib.cjs"), Some(MODULES[0]));
             assert_eq!(resolve(ROOT, b"./plugins//./first.js"), Some(MODULES[7]));
-            assert_eq!(resolve(b"/elsewhere/", b"/$bunfs/root/lib.cjs"), Some(MODULES[0]));
-            assert_eq!(resolve(ROOT, b"/$bunfs/root/plugins/../lib.cjs"), Some(MODULES[0]));
+            assert_eq!(
+                resolve(b"/elsewhere/", b"/$bunfs/root/lib.cjs"),
+                Some(MODULES[0])
+            );
+            assert_eq!(
+                resolve(ROOT, b"/$bunfs/root/plugins/../lib.cjs"),
+                Some(MODULES[0])
+            );
             assert_eq!(resolve(ROOT, b"./lib.cjs/"), Some(MODULES[0]));
         }
 
@@ -532,7 +568,10 @@ mod tests {
         fn path_on_disk_names_no_module() {
             assert_eq!(resolve(b"/project/app/", b"./lib.cjs"), None);
             assert_eq!(resolve(ROOT, b"/project/app/lib.cjs"), None);
-            assert_eq!(resolve(b"/elsewhere/", b"/project/app/../app/plugins"), None);
+            assert_eq!(
+                resolve(b"/elsewhere/", b"/project/app/../app/plugins"),
+                None
+            );
             assert_eq!(resolve(b"/", b"./lib.cjs"), None);
         }
 
@@ -542,20 +581,24 @@ mod tests {
                 (0, b"/project/lib/a.ts", b"/$bunfs/root/_.._/lib/a.ts"),
                 (1, b"/project/app/x/b.ts", b"/$bunfs/root/x/b.ts"),
             ];
-            let entry_points = entry_points.map(|(file_index, source_path, module_path)| {
-                CompiledEntryPoint {
-                    file_index,
-                    module_id: file_index,
-                    source_path,
-                    module_path,
-                }
-            });
+            let entry_points =
+                entry_points.map(
+                    |(file_index, source_path, module_path)| CompiledEntryPoint {
+                        file_index,
+                        module_id: file_index,
+                        source_path,
+                        module_path,
+                    },
+                );
             let order = Box::new([1, 0]);
             let entry_points = Box::new(entry_points);
             let program = CompiledProgram::new(b"image", None, entry_points, order, false);
             let found = program.entry_point_by_module_path(b"/$bunfs/root/x/b.ts");
             assert_eq!(found.map(|entry_point| entry_point.file_index), Some(1));
-            assert_eq!(program.entry_point_by_module_path(b"/$bunfs/root/x/b.js"), None);
+            assert_eq!(
+                program.entry_point_by_module_path(b"/$bunfs/root/x/b.js"),
+                None
+            );
         }
 
         #[test]
@@ -586,13 +629,22 @@ mod tests {
         #[test]
         fn path_above_root_directory() {
             assert_eq!(resolve(ROOT, b"../shared/util.js"), Some(MODULES[8]));
-            assert_eq!(resolve(b"/$bunfs/root/plugins/", b"../../shared/util"), Some(MODULES[8]));
-            assert_eq!(resolve(b"/$bunfs/root/_.._/shared/", b"./util.js"), Some(MODULES[8]));
+            assert_eq!(
+                resolve(b"/$bunfs/root/plugins/", b"../../shared/util"),
+                Some(MODULES[8])
+            );
+            assert_eq!(
+                resolve(b"/$bunfs/root/_.._/shared/", b"./util.js"),
+                Some(MODULES[8])
+            );
             assert_eq!(
                 resolve(b"/$bunfs/root/_.._/other/", b"../shared/util.js"),
                 Some(MODULES[8])
             );
-            assert_eq!(resolve(b"/$bunfs/root/_.._/shared/", b"../../shared/util.js"), None);
+            assert_eq!(
+                resolve(b"/$bunfs/root/_.._/shared/", b"../../shared/util.js"),
+                None
+            );
         }
 
         #[test]
@@ -646,19 +698,37 @@ mod tests {
                 let order = (0..FILES.len() as u32).collect();
                 let names: [(&[u8], Option<u32>, Option<u32>, bool); 5] = [
                     (b"/$bunfs/root/node_modules/@scope/closed", None, None, true),
-                    (b"/$bunfs/root/node_modules/@scope/closed/feature", Some(6), Some(6), false),
+                    (
+                        b"/$bunfs/root/node_modules/@scope/closed/feature",
+                        Some(6),
+                        Some(6),
+                        false,
+                    ),
                     (b"/$bunfs/root/node_modules/both", Some(4), Some(3), true),
                     (b"/$bunfs/root/node_modules/driver", Some(1), Some(1), false),
-                    (b"/$bunfs/root/node_modules/orm/node_modules/driver", Some(5), None, false),
+                    (
+                        b"/$bunfs/root/node_modules/orm/node_modules/driver",
+                        Some(5),
+                        None,
+                        false,
+                    ),
                 ];
-                let names = names.map(|(path, required, imported, hides_other_paths)| CompiledPackageName {
-                    path,
-                    required,
-                    imported,
-                    hides_other_paths,
+                let names = names.map(|(path, required, imported, hides_other_paths)| {
+                    CompiledPackageName {
+                        path,
+                        required,
+                        imported,
+                        hides_other_paths,
+                    }
                 });
-                let program = CompiledProgram::new(b"image", None, entry_points.collect(), order, preserves_source_paths)
-                    .with_package_names(Box::new(names));
+                let program = CompiledProgram::new(
+                    b"image",
+                    None,
+                    entry_points.collect(),
+                    order,
+                    preserves_source_paths,
+                )
+                .with_package_names(Box::new(names));
                 program.set_module_lookup(find_file);
                 program
             }
@@ -685,15 +755,29 @@ mod tests {
             #[test]
             fn name_of_package_leads_to_its_main_file() {
                 assert_eq!(require(ROOT, b"driver"), Some(FILES[1]));
-                assert_eq!(require(b"/$bunfs/root/lib/deep/", b"driver"), Some(FILES[1]));
-                assert_eq!(require(b"/$bunfs/root/node_modules/both/", b"driver"), Some(FILES[1]));
+                assert_eq!(
+                    require(b"/$bunfs/root/lib/deep/", b"driver"),
+                    Some(FILES[1])
+                );
+                assert_eq!(
+                    require(b"/$bunfs/root/node_modules/both/", b"driver"),
+                    Some(FILES[1])
+                );
             }
 
             #[test]
             fn nearest_folder_wins() {
-                assert_eq!(require(b"/$bunfs/root/node_modules/orm/lib/", b"driver"), Some(FILES[5]));
+                assert_eq!(
+                    require(b"/$bunfs/root/node_modules/orm/lib/", b"driver"),
+                    Some(FILES[5])
+                );
                 let program = program(false);
-                let imported = find_in(&program, b"/$bunfs/root/node_modules/orm/lib/", b"driver", false);
+                let imported = find_in(
+                    &program,
+                    b"/$bunfs/root/node_modules/orm/lib/",
+                    b"driver",
+                    false,
+                );
                 assert_eq!(imported, None);
             }
 
@@ -736,7 +820,10 @@ mod tests {
 
         #[test]
         fn program_in_place_has_no_embedded_paths() {
-            assert_eq!(resolve_in(&program_with_lookup(true), ROOT, b"./lib.cjs"), None);
+            assert_eq!(
+                resolve_in(&program_with_lookup(true), ROOT, b"./lib.cjs"),
+                None
+            );
         }
 
         #[test]

@@ -9,7 +9,7 @@ use crate::elf::{
     SHT_NOBITS, SHT_PROGBITS, read_ehdr,
 };
 use crate::elf_program_headers::{
-    PAYLOAD_SEGMENT_COUNT, PF_W, PT_BUN_RESERVED, PT_NULL, PT_PHDR, ProgramHeaderTable, bytes_at,
+    PAYLOAD_SEGMENT_COUNT, PF_W, PT_BUN_PAYLOAD, PT_BUN_RESERVED, PT_NULL, PT_PHDR, ProgramHeaderTable, bytes_at,
     read_header,
 };
 use crate::image::{
@@ -265,7 +265,7 @@ fn read_section_headers(elf: &[u8], ehdr: &Elf64_Ehdr) -> Result<Vec<Elf64_Shdr>
 pub fn reserve_payload_segments(elf: &mut [u8]) -> Result<bool, ImageError> {
     let ehdr = read_header(elf)?;
     let mut table = ProgramHeaderTable::read(elf, &ehdr)?;
-    if table.headers.iter().any(|header| header.p_type == PT_BUN_RESERVED) {
+    if table.headers.iter().any(|header| matches!(header.p_type, PT_BUN_RESERVED | PT_BUN_PAYLOAD)) {
         return Ok(true);
     }
     table.headers.retain(|header| header.p_type != PT_NULL);

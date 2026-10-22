@@ -115,7 +115,7 @@ test.skipIf(!canFilter)("bun install survives Android-style seccomp (openat2/fch
     // bin in a subdirectory so bin linking validates the parent dir with
     // openat2(RESOLVE_BENEATH), then chmods the target (fchmodat2).
     "dep/bin/dep.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
-    // What makes bun recognize Android here: the test host's kernel release string isn't Android's.
+    // This makes Bun detect Android here, because the test host's kernel release string isn't Android's.
     "system/bin/linker64": "",
   });
 

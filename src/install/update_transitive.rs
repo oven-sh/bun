@@ -73,6 +73,12 @@ impl DirectDependencies {
         redirect(lockfile, self.moved_pairs(lockfile), direct_only);
     }
 
+    /// Returns the packages that direct dependencies have moved to since the snapshot.
+    pub(crate) fn moved_to(&self, lockfile: &Lockfile) -> Vec<PackageID> {
+        let pairs = self.moved_pairs(lockfile);
+        pairs.into_iter().map(|(_, new)| new).collect()
+    }
+
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
         let packages_len = lockfile.packages.len();
         let pkg_res = lockfile.packages.items_resolution();
@@ -130,8 +136,9 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // A peer only shared `old` with a regular dependency of its owner or of the
-                    // root (`bind_served_peers`). Nothing moved if that still resolves to `old`.
+                    // A peer shares the version of a regular dependency of its owner or of the root.
+                    // If that dependency still resolves to `old`, or already resolves to `new`, only
+                    // the peer was rebound and nothing was updated.
                     || (dep.behavior.is_peer()
                         && [owner, 0].into_iter().any(|holder| {
                             (dep_slices[holder].get(deps).iter())
@@ -139,7 +146,7 @@ impl DirectDependencies {
                                 .any(|(other, &kept)| {
                                     other.name_hash == dep.name_hash
                                         && !other.behavior.is_peer()
-                                        && kept == old
+                                        && (kept == old || kept == new)
                                 })
                         }))
                 {
@@ -787,7 +794,8 @@ fn warn_patch_key_without_version(
     );
 }
 
-/// After the clean: one warning per `patchedDependencies` key that names no installed package.
+/// Runs after the lockfile is cleaned. Prints one warning per `patchedDependencies` key that
+/// doesn't match an installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::for_each_child_estree;
+use bun_lint::utils::visible::is_only_declaration;
 
 /// Enforce using a particular method signature syntax.
 pub struct MethodSignatureStyle {
@@ -19,7 +20,7 @@ const ERROR_PROPERTY: Message = Message::new(
     "Function property signature is forbidden. Use a method shorthand instead.",
 );
 
-/// What upstream's `getMethodKey` makes one string of: `key`, `[key]`, `key?`, `[key]?`.
+/// The parts that upstream's `getMethodKey` joins into one string: `key`, `[key]`, `key?`, `[key]?`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub struct MethodKey<'a> {
     text: &'a [u8],
@@ -63,7 +64,7 @@ fn append_signature(func: Func, separator: &[u8], out: &mut Vec<u8>) {
         None => &b"()"[..],
     });
     out.extend_from_slice(separator);
-    // Without a return type it is implicitly `any`.
+    // A missing return type is implicitly `any`.
     out.extend_from_slice(func.return_type().map_or(&b"any"[..], TypeNode::text));
 }
 
@@ -93,7 +94,7 @@ fn return_type_references_this_type(func: Func) -> bool {
     func.return_type().is_some_and(|ty| for_each_child_estree(ty, is_this_type).is_some())
 }
 
-/// The members of the interface or the type literal that `member` is in.
+/// Returns the members of the interface or type literal that contains `member`.
 fn siblings<'a>(member: Member<'a>) -> Option<List<'a, Member<'a>>> {
     match member.parent() {
         Node::Stmt(statement) => match statement.kind() {
@@ -116,7 +117,16 @@ impl MethodSignatureStyle {
         let (Some(func), Some(key)) = (member.func(), MethodKey::of(member)) else {
             return;
         };
-        cx.report(member, ERROR_METHOD).fix(|fixer| {
+        // Another declaration of the interface may overload this method, and two properties with the same name are an
+        // error.
+        let is_safe = || match member.parent() {
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::Interface(interface) => is_only_declaration(interface),
+                _ => true,
+            },
+            _ => true,
+        };
+        cx.report(member, ERROR_METHOD).fix_where_safe(is_safe, |fixer| {
             if return_type_references_this_type(func) || is_node_parent_module_declaration(member) {
                 return None;
             }
@@ -147,6 +157,13 @@ impl MethodSignatureStyle {
                 }
             }
             text.extend_from_slice(get_delimiter(member));
+            // Don't fix if there are comments in or between the overloads. A comment left behind would look like it
+            // describes the next member.
+            let end = fixes.iter().map(|it| it.span.end).fold(overloads.last()?.span().end, u32::max);
+            let all = Span::new(overloads.first()?.span().start, end);
+            if !fixer.keeps_comments(&fixer.replace(all, &text[..])) {
+                return None;
+            }
             fixes.push(fixer.replace(member, text));
             Some(fixes)
         });
@@ -170,10 +187,10 @@ impl MethodSignatureStyle {
             key.append_to(&mut text);
             append_signature(func, b": ", &mut text);
             text.extend_from_slice(get_delimiter(member));
-            fixer.replace(member, text)
+            Some(fixer.replace(member, text)).filter(|it| fixer.keeps_comments(it))
         };
         let report = cx.report(member, ERROR_PROPERTY);
-        // A method cannot be `readonly`, so the change is not safe.
+        // A method can't be `readonly`, so the change isn't safe.
         if member.flags().contains(Flags::READONLY) {
             report.suggest(CONVERT_TO_METHOD_SIGNATURE, fix);
         } else {

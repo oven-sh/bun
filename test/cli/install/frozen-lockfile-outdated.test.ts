@@ -318,7 +318,7 @@ describe.concurrent("--frozen-lockfile fails when", () => {
     expect(after.exitCode).toBe(0);
   });
 
-  test("and says what changed, also as bun install --production", async () => {
+  test("and prints what changed, also as bun install --production", async () => {
     const unpatched = without(root, "patchedDependencies");
     const { packageDir, lock } = await installed(unpatched);
     await writeRoot(packageDir, { ...unpatched, dependencies: without(unpatched.dependencies, "no-deps") });
@@ -447,8 +447,8 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
     }
   });
 
-  // No version before 1.5 read the package.json of a `file:` directory again, so a bun.lock that is behind one is not
-  // out of date by the user's omission. A frozen install says so and installs what is locked.
+  // No version before 1.5 read the package.json of a `file:` directory again, so a bun.lock that's behind one isn't out
+  // of date because of something the user forgot. A frozen install reports it and installs what's locked.
   test.each([
     [
       "adds a dependency",
@@ -486,7 +486,7 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
     expect(after.exitCode).toBe(0);
   });
 
-  // One install records a new bin, and does not move what the package is locked to.
+  // One install records a new bin, and doesn't change the version that the package is locked to.
   test.each([
     ["a workspace", { member: json => ({ ...json, bin: "./cli.js" }) }, '"bin": "./cli.js"'],
     ["a file: directory", { vendored: json => ({ ...json, bin: "./cli.js" }) }, '"bin": "./cli.js"'],
@@ -516,7 +516,7 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     ["an override", { dependencies: { "no-deps": "^1.0.0" }, overrides: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
     ["a prerelease that latest points at", { dependencies: { "prereleases-1": "*" } }, "prereleases-1@1.0.0-future."],
     ["a peer", { peerDependencies: { "no-deps": "^1.0.0" }, dependencies: { "no-deps": "2.0.0" } }, "no-deps@2.0.0"],
-    // It never resolved, and the root's no-deps has its name.
+    // It never resolved, and the root's no-deps has the same name.
     [
       "an optional dependency that no version satisfies",
       { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } },
@@ -610,7 +610,7 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     expect(production.exitCode).toBe(0);
   });
 
-  // An older bun, another tool or a CRLF checkout formats bun.lock differently; only what it records is compared.
+  // An older Bun, another tool or a CRLF checkout formats bun.lock differently. Only its contents are compared.
   test("a bun.lock that this version of bun would format differently", async () => {
     const { packageDir, lock } = await installed();
     const reformatted = lock.replace('  "configVersion": 1,\n', "").replaceAll("\n", "\r\n");
@@ -625,8 +625,8 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     expect(frozen.exitCode).toBe(0);
   });
 
-  // The rest are lockfiles an older bun wrote for an unedited package.json. A plain install rewrites them, but a red
-  // `bun ci` on an untouched checkout would blame an edit nobody made.
+  // The rest are lockfiles that an older Bun wrote for an unedited package.json. A plain install rewrites them, but a
+  // failing `bun ci` on an untouched checkout would blame an edit that nobody made.
 
   // bun records a name that is only in peerDependenciesMeta as a `*` optional peer. Older versions did not.
   test.each([

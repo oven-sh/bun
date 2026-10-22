@@ -1,5 +1,5 @@
-//! The global variables that a file does not declare: what the version of ECMAScript, the
-//! configuration, the libraries of TypeScript and `/* global */` comments define.
+//! The global variables that a file doesn't declare: those defined by the ECMAScript version, the config, TypeScript's
+//! libraries and `/* global */` comments.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -29,7 +29,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 const WRITABLE: u16 = 1;
-/// Of a change to an environment: the name is not in it.
+/// In a change to an environment: the name is removed from it.
 const REMOVED: u16 = 2;
 const TYPE: u8 = 1;
 const VALUE: u8 = 2;
@@ -43,7 +43,7 @@ fn name_at(id: usize) -> &'static [u8] {
     tables::NAMES.get(start..end).unwrap_or_default()
 }
 
-/// The index of `name` in the pool.
+/// `name`'s index in the pool.
 fn id_of(name: &[u8]) -> Option<usize> {
     let (mut low, mut high) = (0, tables::NAME_ENDS.len());
     while low < high {
@@ -76,12 +76,12 @@ fn variables(start: u16, len: u16) -> impl Iterator<Item = (&'static [u8], Globa
     entries(start, len).iter().copied().map(variable)
 }
 
-/// Whose environments.
+/// Whose environment tables to use.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Tables {
-    /// The `globals` package of today.
+    /// The current `globals` package.
     Today,
-    /// What ESLint 8.57.1 comes with.
+    /// The tables that ESLint 8.57.1 ships with.
     Eslint8,
     /// The crate that oxlint is built with.
     Oxlint,
@@ -90,7 +90,7 @@ pub enum Tables {
 type Rows = &'static [(&'static str, u16, u16)];
 
 impl Tables {
-    /// Where its environments are other than `ENVIRONMENTS`.
+    /// The differences between its environments and `ENVIRONMENTS`.
     fn changes(self) -> Rows {
         match self {
             Tables::Today => &[],
@@ -105,7 +105,7 @@ fn entries_of(rows: Rows, name: &[u8]) -> Option<&'static [u16]> {
     rows.get(at).map(|it| entries(it.1, it.2))
 }
 
-/// The entries of an environment with the changes to it. Both are sorted by name.
+/// An environment's entries with the changes applied. Both lists are sorted by name.
 struct Changed {
     entries: &'static [u16],
     changes: &'static [u16],
@@ -137,15 +137,15 @@ impl Iterator for Changed {
     }
 }
 
-/// The variables of an environment: `browser`, `node`, `es2021`, `jest`, `shared-node-browser`, ..
-/// Sorted by name. `None` if `whose` has no such environment.
+/// An environment's variables: `browser`, `node`, `es2021`, `jest`, `shared-node-browser`, .. Sorted by name. `None` if
+/// `env_tables` has no such environment.
 pub fn environment(
     name: &[u8],
-    whose: Tables,
+    env_tables: Tables,
 ) -> Option<impl Iterator<Item = (&'static [u8], Global)>> {
     let (known, changes) = (
         entries_of(tables::ENVIRONMENTS, name),
-        entries_of(whose.changes(), name),
+        entries_of(env_tables.changes(), name),
     );
     if known.is_none() && changes.is_none() {
         return None;
@@ -154,21 +154,21 @@ pub fn environment(
     Some(Changed { entries, changes }.map(variable))
 }
 
-/// The edition of the language whose variables are defined. ESLint 8 defines those of ES5 and leaves the others to `env`.
-fn edition_of_globals(language: &LanguageOptions) -> u32 {
+/// The ECMAScript version whose variables are defined. ESLint 8 defines those of ES5 and leaves the rest to `env`.
+fn globals_ecma_version(language: &LanguageOptions) -> u32 {
     match language.eslint_8 {
         Some(_) => 5,
         None => language.ecma_version,
     }
 }
 
-/// ESLint's `configGlobals` in the order of its keys: what each version of ECMAScript adds, what `sourceType: "commonjs"` defines,
-/// `languageOptions.globals`. One that is there already keeps its place and gets the later setting. Those of
-/// `languageOptions.globals` are in the order of their names, which is not kept from the configuration.
+/// ESLint's `configGlobals` in key order: what each ECMAScript version adds, what `sourceType: "commonjs"` defines,
+/// then `languageOptions.globals`. An existing entry keeps its position and gets the later setting. The entries of
+/// `languageOptions.globals` are sorted by name, because the config's order isn't kept.
 pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, [u8]>, Global)> {
     let mut all: Vec<(Cow<'static, [u8]>, Global)> =
         Vec::with_capacity(80 + language.globals.len());
-    // ESLint's lists are sorted without regard to case.
+    // ESLint's lists are sorted case-insensitively.
     let mut add = |start: u16, len: u16| {
         let from = all.len();
         all.extend(variables(start, len).map(|(name, setting)| (Cow::Borrowed(name), setting)));
@@ -178,7 +178,7 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
         }
     };
     let versions = tables::ECMA_VERSIONS.iter();
-    let edition = edition_of_globals(language);
+    let edition = globals_ecma_version(language);
     if versions.clone().any(|it| it.0 == edition) {
         for &(_, start, len) in versions.filter(|it| it.0 <= edition) {
             add(start, len);
@@ -197,19 +197,18 @@ pub fn config_globals_in_order(language: &LanguageOptions) -> Vec<(Cow<'static, 
     all
 }
 
-/// What a configuration says about globals, computed once from its [`LanguageOptions`].
+/// A config's settings for globals, computed once from its [`LanguageOptions`].
 #[doc(hidden)]
 #[derive(Clone, Debug, Default)]
 pub struct ConfigGlobals {
-    /// ESLint's `configGlobals`: what the version of ECMAScript and `sourceType: "commonjs"`
-    /// define, overridden by `languageOptions.globals`. Sorted by name.
+    /// ESLint's `configGlobals`: what the ECMAScript version and `sourceType: "commonjs"` define, overridden by
+    /// `languageOptions.globals`. Sorted by name.
     settings: Vec<(Cow<'static, [u8]>, Global)>,
     /// With an oxlint config: what `settings` would have for a variable if `globals` didn't turn it off. Sorted by name.
-    behind_off: Vec<(Cow<'static, [u8]>, Global)>,
-    /// For each name of the pool, two bits: whether the libraries of TypeScript define it as a
-    /// type, as a value.
+    shadowed_by_off: Vec<(Cow<'static, [u8]>, Global)>,
+    /// Two bits for each name in the pool: whether TypeScript's libraries define it as a type, and as a value.
     libs: Box<[u8]>,
-    /// The names that they define, in the order in which typescript-eslint defines them.
+    /// The names that the libraries define, in typescript-eslint's order.
     lib_order: Box<[u16]>,
 }
 
@@ -217,8 +216,8 @@ impl ConfigGlobals {
     pub(crate) fn new(language: &LanguageOptions) -> ConfigGlobals {
         let mut settings: Vec<(Cow<'static, [u8]>, Global)> =
             Vec::with_capacity(80 + language.globals.len());
-        // ESLint has no table for a version that it does not know, and then defines nothing.
-        let edition = edition_of_globals(language);
+        // ESLint has no table for a version it doesn't know, and then defines nothing.
+        let edition = globals_ecma_version(language);
         if tables::ECMA_VERSIONS.iter().any(|it| it.0 == edition) {
             for &(_, start, len) in tables::ECMA_VERSIONS.iter().filter(|it| it.0 <= edition) {
                 settings.extend(
@@ -235,32 +234,32 @@ impl ConfigGlobals {
             );
         }
         settings.extend(
-            (language.env_behind_off.iter().rev())
+            (language.shadowed_env_globals.iter().rev())
                 .chain(language.globals.iter())
                 .map(|(name, setting)| (Cow::Owned(name.to_vec()), *setting)),
         );
-        // Of two with the same name, the later one counts.
+        // If two have the same name, the later one wins.
         settings.reverse();
         crate::utils::sort::sort_by(&mut settings, |a, b| a.0.cmp(&b.0));
-        let mut behind_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
+        let mut shadowed_by_off: Vec<(Cow<'static, [u8]>, Global)> = Vec::new();
         settings.dedup_by(|dropped, kept| {
             let is_same = dropped.0 == kept.0;
             if is_same && language.is_oxlint && kept.1 == Global::Off {
-                behind_off.push(dropped.clone());
+                shadowed_by_off.push(dropped.clone());
             }
             is_same
         });
-        behind_off.dedup_by(|a, b| a.0 == b.0);
+        shadowed_by_off.dedup_by(|a, b| a.0 == b.0);
         let (libs, lib_order) = Self::libs(language);
         ConfigGlobals {
             settings,
-            behind_off,
+            shadowed_by_off,
             libs,
             lib_order,
         }
     }
 
-    /// `populateGlobalsFromLib` of typescript-eslint's scope manager.
+    /// `populateGlobalsFromLib` in typescript-eslint's scope manager.
     fn libs(language: &LanguageOptions) -> (Box<[u8]>, Box<[u16]>) {
         let mut flags = vec![0u8; tables::NAME_ENDS.len().div_ceil(4)].into_boxed_slice();
         let mut order = Vec::new();
@@ -308,12 +307,12 @@ impl ConfigGlobals {
     }
 
     /// oxlint's `env_contains_var(name)`, for a variable that `globals` turns off.
-    fn behind_off(&self, name: &[u8]) -> Option<Global> {
+    fn shadowed_by_off(&self, name: &[u8]) -> Option<Global> {
         let at = self
-            .behind_off
+            .shadowed_by_off
             .binary_search_by(|it| (*it.0).cmp(name))
             .ok()?;
-        Some(self.behind_off[at].1)
+        Some(self.shadowed_by_off[at].1)
     }
 
     /// `TYPE`, `VALUE`, or 0 if no library defines `name`.
@@ -327,7 +326,7 @@ impl ConfigGlobals {
 }
 
 impl LanguageOptions {
-    /// How many names [`Self::lib_name`] knows.
+    /// The number of names [`Self::lib_name`] knows.
     pub fn lib_name_count() -> usize {
         tables::NAME_ENDS.len()
     }
@@ -337,14 +336,14 @@ impl LanguageOptions {
         name_at(id)
     }
 
-    /// What [`Self::lib_variable_entries`] has for `name`.
+    /// The [`Self::lib_variable_entries`] entry for `name`.
     pub fn lib_variable_entry(&self, name: &[u8]) -> Option<u32> {
         let id = id_of(name)?;
         let flags = (self.config_globals().libs[id / 4] >> (id % 4 * 2)) & 3;
         (flags != 0).then_some((id as u32) << 2 | u32::from(flags))
     }
 
-    /// [`Self::lib_variables`] as numbers: that of the name `<< 2`, 1 if it is a type, 2 if it is a value.
+    /// [`Self::lib_variables`] as numbers: the name's number `<< 2`, plus 1 if it's a type and 2 if it's a value.
     pub fn lib_variable_entries(&self) -> impl Iterator<Item = u32> + '_ {
         let ConfigGlobals {
             libs, lib_order, ..
@@ -355,8 +354,8 @@ impl LanguageOptions {
         })
     }
 
-    /// What the libraries of TypeScript define, in the order in which typescript-eslint defines it: the name, whether it is a type,
-    /// whether it is a value.
+    /// The variables that TypeScript's libraries define, in typescript-eslint's order: the name, whether it's a type,
+    /// whether it's a value.
     pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {
         let ConfigGlobals {
             libs, lib_order, ..
@@ -369,69 +368,69 @@ impl LanguageOptions {
     }
 }
 
-/// A variable that `/* global */` comments of the file define, or turn off.
+/// A variable that the file's `/* global */` comments define or turn off.
 #[derive(Clone, Debug)]
 pub struct CommentGlobal {
     pub name: Box<[u8]>,
-    /// What the last comment says.
+    /// The last comment's setting.
     pub setting: Global,
-    /// The comments that name it, in order.
+    /// The comments that list it, in order.
     pub comments: Vec<Span>,
 }
 
-/// What the comments of a file say about variables.
+/// The variable settings in a file's comments.
 #[derive(Default, Debug)]
 pub(crate) struct CommentVariables {
-    /// In the order they are first named.
+    /// In the order they're first listed.
     pub(crate) globals: Vec<CommentGlobal>,
-    /// Where each is in `globals`.
+    /// Each one's index in `globals`.
     pub(crate) global_by_name: FxHashMap<Box<[u8]>, u32>,
-    /// The variables of the environments that `/* eslint-env */` comments name.
-    pub(crate) of_environments: FxHashMap<Cow<'static, [u8]>, Global>,
+    /// The variables of the environments listed in `/* eslint-env */` comments.
+    pub(crate) env_comment_globals: FxHashMap<Cow<'static, [u8]>, Global>,
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
     pub(crate) is_exported: FxHashSet<Box<[u8]>>,
 }
 
-/// A variable of the global scope that the file does not declare.
+/// A global-scope variable that the file doesn't declare.
 #[derive(Copy, Clone, Debug)]
 pub struct GlobalVariable<'f> {
     /// ESLint's `variable.writeable`.
     pub is_writable: bool,
-    /// ESLint's `variable.eslintImplicitGlobalSetting`: what it is without the comments of the
-    /// file. `None` if only a comment defines it.
+    /// ESLint's `variable.eslintImplicitGlobalSetting`: its setting without the file's comments. `None` if only a
+    /// comment defines it.
     pub implicit_setting: Option<Global>,
-    /// ESLint's `variable.eslintExplicitGlobalComments`: the `/* global */` comments that name it.
+    /// ESLint's `variable.eslintExplicitGlobalComments`: the `/* global */` comments that list it.
     pub comments: &'f [Span],
     /// typescript-eslint's `variable.isTypeVariable`.
     pub is_type: bool,
     /// typescript-eslint's `variable.isValueVariable`.
     pub is_value: bool,
-    /// A library of TypeScript defines it, whatever else does: typescript-eslint's
+    /// A TypeScript library defines it, whether or not anything else does: typescript-eslint's
     /// `variable instanceof ImplicitLibVariable`.
     pub is_in_lib: bool,
-    /// Only a library of TypeScript defines it. Then a reference resolves to it only if it asks
-    /// for what the variable is: a type, a value.
+    /// Only a TypeScript library defines it. A reference then only resolves to it if the reference's kind (type or
+    /// value) matches the variable's.
     pub is_only_in_lib: bool,
-    /// Only the types of the program of the file define it: [`File::inferred_globals`]. The same holds for a reference.
+    /// Only the types of the file's program define it: [`File::inferred_globals`]. References resolve as for
+    /// `is_only_in_lib`.
     pub is_inferred: bool,
-    /// ESLint's `variable.eslintExported`, with which `variable.eslintUsed` is set: an
-    /// `/* exported */` comment names it.
+    /// ESLint's `variable.eslintExported`, which also sets `variable.eslintUsed`: an `/* exported */` comment lists it.
     pub is_exported: bool,
 }
 
 impl GlobalVariable<'_> {
-    /// Whether a reference that is in a type (`is_type`), or not, resolves to it.
+    /// True if a reference resolves to it. `is_type` tells whether the reference is in a type.
     #[inline]
     pub fn accepts(&self, is_type: bool) -> bool {
-        let asks_what_it_is = self.is_only_in_lib || self.is_inferred;
-        !asks_what_it_is || if is_type { self.is_type } else { self.is_value }
+        let checks_reference_kind = self.is_only_in_lib || self.is_inferred;
+        !checks_reference_kind || if is_type { self.is_type } else { self.is_value }
     }
 }
 
 impl<'a> File<'a> {
-    /// Whether ESLint would parse the file with `@typescript-eslint/parser`: it is configured, or
-    /// no parser is and the file is TypeScript.
+    /// True if ESLint would parse the file with `@typescript-eslint/parser`: either it's configured, or no parser is
+    /// configured and the file is TypeScript.
     pub fn uses_typescript_parser(&self) -> bool {
         match self.language().parser {
             Parser::TypeScript => true,
@@ -440,36 +439,35 @@ impl<'a> File<'a> {
         }
     }
 
-    /// The variable `name` of the global scope, if something other than the code of the file
-    /// defines it: the version of ECMAScript, `sourceType: "commonjs"`, `languageOptions.globals`,
-    /// a `/* global */` comment, and with `@typescript-eslint/parser` the libraries of TypeScript.
-    /// `None` if nothing does, or if it is `"off"`. Where [globals are inferred](InferGlobals), the types of its program too.
+    /// The global-scope variable `name`, if something other than the file's code defines it: the ECMAScript version,
+    /// `sourceType: "commonjs"`, `languageOptions.globals`, a `/* global */` comment, and with
+    /// `@typescript-eslint/parser` TypeScript's libraries. Where [globals are inferred](InferGlobals), the types of its
+    /// program count too. `None` if nothing defines it, or if it's `"off"`.
     ///
-    /// If the file is a script that declares `name` at its top level, it is the same variable in
-    /// ESLint.
+    /// If the file is a script that declares `name` at its top level, ESLint treats both as the same variable.
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
-        // The libraries of the program are in the place of the tables.
-        let only_written = self.language().infers_globals != InferGlobals::Besides
+        // The program's libraries replace the tables.
+        let only_own_globals = self.language().infers_globals != InferGlobals::Besides
             && (self.inferred_globals())
                 .is_some_and(|it| it.checks_javascript || !self.is_javascript());
         // TypeScript knows these in JavaScript without a declaration.
-        let is_of_commonjs = || {
+        let is_commonjs_global = || {
             matches!(name, b"require" | b"module" | b"exports")
                 && self.is_javascript()
                 && !crate::utils::oxlint::has_module_syntax(self)
         };
-        // To oxlint, "off" only takes back an entry of `globals`. What an `env` defines stays defined.
-        let of_config = match config.setting(name) {
-            Some(Global::Off) => config.behind_off(name).or(Some(Global::Off)),
+        // In oxlint, "off" only cancels an entry of `globals`. What an `env` defines stays defined.
+        let config_setting = match config.setting(name) {
+            Some(Global::Off) => config.shadowed_by_off(name).or(Some(Global::Off)),
             setting => setting,
         };
-        let implicit = of_config
+        let implicit = config_setting
             .filter(|it| {
-                !only_written
+                !only_own_globals
                     || *it == Global::Off
-                    || self.language().is_written_global(name)
-                    || is_of_commonjs()
+                    || self.language().is_enabled_own_global(name)
+                    || is_commonjs_global()
             })
             .or_else(|| self.global_of_environment_in_comments(name));
         let comment = self.global_in_comments(name);
@@ -507,7 +505,7 @@ impl<'a> File<'a> {
                 implicit_setting: Some(Global::Readonly),
                 comments: &[],
                 is_type: lib & TYPE != 0,
-                // oxlint knows no libraries: `Temporal` is not defined.
+                // oxlint has no libraries, so `Temporal` isn't defined.
                 is_value: lib & VALUE != 0 && !self.language().is_oxlint,
                 is_in_lib: true,
                 is_only_in_lib: true,
@@ -528,11 +526,11 @@ impl<'a> File<'a> {
         }
     }
 
-    /// ESLint's `getNameLocationInGlobalDirectiveComment`: where `name` is in the `/* global */`
-    /// comment at `comment`.
+    /// ESLint's `getNameLocationInGlobalDirectiveComment`: the span of `name` in the `/* global */` comment at
+    /// `comment`.
     pub fn name_in_global_comment(&self, comment: Span, name: &[u8]) -> Span {
         let value = self.slice(comment.shrink(2, 2));
-        // `[\s,]name(?:$|[\s,:])`, from after the first "global".
+        // `[\s,]name(?:$|[\s,:])`, searched from after the first "global".
         let floor = strings::index_of(value, b"global").map_or(5, |at| at + 6);
         let mut from = floor;
         while let Some(found) = value

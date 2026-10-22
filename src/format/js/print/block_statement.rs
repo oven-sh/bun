@@ -29,12 +29,12 @@ pub(crate) fn write_block_statement<'a>(
     write!(f, "}");
 }
 
-/// There is nothing in it but empty statements.
+/// True if the block contains only empty statements.
 pub(crate) fn is_empty_block<'a>(block: List<'a, Stmt<'a>>) -> bool {
     block.iter().all(|it| it.tag() == StmtTag::Empty)
 }
 
-/// Whether an empty block in `parent` is written `{\n}` and not `{}`.
+/// True if an empty block in `parent` is printed as `{\n}` instead of `{}`.
 fn is_non_collapsible(parent: AstNodes<'_>, f: &Formatter<'_>) -> bool {
     match parent {
         // `function a() { {} }`: a statement in the body, not the body.

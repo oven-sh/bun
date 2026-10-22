@@ -29,18 +29,18 @@ impl Rule for NoNewNativeNonconstructor {
         let Some(name) = callee.as_ident() else {
             return;
         };
-        // For oxc `(Symbol)` is no name.
+        // oxc doesn't treat `(Symbol)` as an identifier.
         if !name.is_any(&["Symbol", "BigInt"]) || cx.language().is_oxlint && callee.is_parenthesized() {
             return;
         }
-        // typescript-eslint always has the variables, from the default library.
+        // typescript-eslint always defines these variables, from the default library.
         if ast_utils::is_global_reference(callee)
             || (!cx.is_javascript() && callee.symbol().is_none())
         {
             // oxlint points at the `new`.
             let start = e.span().start;
-            let place = if cx.language().is_oxlint { Span::new(start, start + 3) } else { callee.span() };
-            cx.report(place, NO_NEW_NONCONSTRUCTOR).data("name", name);
+            let location = if cx.language().is_oxlint { Span::new(start, start + 3) } else { callee.span() };
+            cx.report(location, NO_NEW_NONCONSTRUCTOR).data("name", name);
         }
     }
 }

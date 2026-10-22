@@ -135,7 +135,8 @@ static WAKES: AtomicU32 = AtomicU32::new(0);
 /// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
 
-/// Blocks: an event loop would run timers inside `require()`. SeqCst: write own word, read other's.
+/// Blocks the thread, because an event loop would run timers inside `require()`. Uses SeqCst
+/// because each side writes its own word and then reads the other's.
 pub(crate) struct Parked(());
 
 impl Parked {
@@ -144,7 +145,8 @@ impl Parked {
         Parked(())
     }
 
-    /// Read before the drain: a task that finishes after it ends [`Parked::wait`] at once.
+    /// Read this before draining. A task that finishes after the read then makes [`Parked::wait`]
+    /// return immediately.
     pub(crate) fn wakes(&self) -> u32 {
         WAKES.load(Ordering::SeqCst)
     }

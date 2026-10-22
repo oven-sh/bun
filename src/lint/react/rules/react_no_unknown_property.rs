@@ -30,7 +30,7 @@ const OXLINT_DATA_LOWERCASE_REQUIRED: Message =
 const OXLINT_UNKNOWN_PROP: Message = Message::new("", "Unknown property found");
 const USE_STANDARD_NAME: Message = Message::new("", "Use '{{x1}}' instead");
 
-/// The elements that an attribute is for, in the order in which oxlint lists them. The attributes are sorted.
+/// The elements each attribute is valid on, in the order oxlint lists them. Sorted by attribute.
 static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("abbr", &["td", "th"]),
     (
@@ -117,8 +117,8 @@ static ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 70] = [
     ("webkitDirectory", &["input"]),
 ];
 
-/// What upstream has in place of an entry of [`ATTRIBUTE_TAGS_MAP`], the elements in the order in which it lists them.
-/// No elements: it has no such entry.
+/// Upstream's version of the [`ATTRIBUTE_TAGS_MAP`] entries that differ, with the elements in its order. An empty list
+/// means upstream has no such entry.
 static UPSTREAM_ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 17] = [
     ("abbr", &["th", "td"]),
     (
@@ -152,8 +152,8 @@ static UPSTREAM_ATTRIBUTE_TAGS_MAP: [(&str, &[&str]); 17] = [
     ("webkitAllowFullScreen", &["iframe", "video"]),
 ];
 
-/// The names that both know. Like the two tables after it, it is sorted without regard to case, and no two of its names
-/// differ in case alone.
+/// The names that both tools recognize. Like the next two tables, it's sorted case-insensitively, and no two names
+/// differ only in case.
 static DOM_PROPERTIES_NAMES: [&str; 560] = [
     "accentHeight", "accept", "acceptCharset", "accessKey", "accumulate", "action", "additive", "alignmentBaseline",
     "allow", "alphabetic", "alt", "amplitude", "arabicForm", "as", "ascent", "async", "attributeName", "attributeType",
@@ -230,15 +230,15 @@ static DOM_PROPERTIES_NAMES: [&str; 560] = [
     "y1", "y2", "yChannelSelector", "z", "zoomAndPan",
 ];
 
-/// The names that only oxlint knows, or looks for before it looks in [`DOM_ATTRIBUTES_TO_CAMEL`]. Upstream has
-/// `hreflang` and never gets to it: it finds `hrefLang` first.
+/// The names that only oxlint recognizes, or that it looks up before [`DOM_ATTRIBUTES_TO_CAMEL`]. Upstream has
+/// `hreflang` too but never reaches it, because it finds `hrefLang` first.
 static OXLINT_NAMES: [&str; 15] = [
     "hreflang", "maskType", "onFullscreenChange", "onFullscreenChangeCapture", "onFullscreenError",
     "onFullscreenErrorCapture", "onScrollEnd", "onScrollEndCapture", "onTransitionCancel", "onTransitionCancelCapture",
     "onTransitionRun", "onTransitionRunCapture", "onTransitionStart", "onTransitionStartCapture", "rendering-intent",
 ];
 
-/// The names that only upstream knows, or looks for after it has looked in [`DOM_ATTRIBUTES_TO_CAMEL`].
+/// The names that only upstream recognizes, or that it looks up after [`DOM_ATTRIBUTES_TO_CAMEL`].
 static ESLINT_NAMES: [&str; 7] = [
     "allowTransparency", "fetchPriority", "onGotPointerCapture", "popoverTarget", "popoverTargetAction", "precedence",
     "rendering-intent",
@@ -339,7 +339,7 @@ static DOM_ATTRIBUTES_TO_CAMEL: [(&str, &str); 92] = [
     ("xml:space", "xmlSpace"),
 ];
 
-/// oxlint has not the last two.
+/// oxlint doesn't have the last two.
 const DOM_PROPERTIES_IGNORE_CASE: [&str; 7] = [
     "charset",
     "allowFullScreen",
@@ -350,20 +350,20 @@ const DOM_PROPERTIES_IGNORE_CASE: [&str; 7] = [
     "popoverTargetAction",
 ];
 
-/// What `table`, which is sorted, has for `key`.
+/// Returns the value for `key` in the sorted `table`.
 fn get<T: Copy>(table: &[(&str, T)], key: &[u8]) -> Option<T> {
     let at = table.binary_search_by(|it| it.0.as_bytes().cmp(key)).ok()?;
     table.get(at).map(|it| it.1)
 }
 
-/// The name of `table` that is `name` but for the case of its letters of ASCII.
-fn find_in_any_case(table: &[&'static str], name: &[u8]) -> Option<&'static str> {
+/// Returns the name in `table` that equals `name`, ignoring ASCII case.
+fn find_ignoring_case(table: &[&'static str], name: &[u8]) -> Option<&'static str> {
     let name = || name.iter().map(u8::to_ascii_lowercase);
     let at = table.binary_search_by(|it| it.bytes().map(|byte| byte.to_ascii_lowercase()).cmp(name())).ok()?;
     table.get(at).copied()
 }
 
-/// The elements that the attribute `name` is for, if it is not for all.
+/// Returns the elements the attribute `name` is valid on, unless it's valid on all of them.
 fn allowed_tags(name: &[u8], is_oxlint: bool) -> Option<&'static [&'static str]> {
     let tags = get(&ATTRIBUTE_TAGS_MAP, name)?;
     if is_oxlint {
@@ -372,8 +372,8 @@ fn allowed_tags(name: &[u8], is_oxlint: bool) -> Option<&'static [&'static str]>
     Some(get(&UPSTREAM_ATTRIBUTE_TAGS_MAP, name).unwrap_or(tags)).filter(|it| !it.is_empty())
 }
 
-/// Whether the React of `version` has `name`, which is in a table: upstream's `getDOMPropertyNames`.
-fn is_in_react(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
+/// True if React `version` has `name`, which is in one of the tables: upstream's `getDOMPropertyNames`.
+fn exists_in_react_version(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
     match name {
         b"allowTransparency" => version() < (16, 1, 0),
         b"precedence" => version() >= (19, 0, 0),
@@ -381,26 +381,26 @@ fn is_in_react(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
     }
 }
 
-/// Upstream's `getStandardName`: `name` itself, if it is known. `folded` is `name` in another case.
+/// Upstream's `getStandardName`. Returns `name` itself if it's a known name. `folded`: `name`, case-folded.
 fn get_standard_name(
     name: &[u8],
     folded: &[u8],
     is_oxlint: bool,
     version: &mut dyn FnMut() -> Version,
 ) -> Option<&'static str> {
-    // oxlint asks for no version.
-    let mut exists = |it: &&'static str| is_oxlint || is_in_react(it.as_bytes(), version);
-    let shared = find_in_any_case(&DOM_PROPERTIES_NAMES, folded).filter(&mut exists);
+    // oxlint doesn't check the React version.
+    let mut exists = |it: &&'static str| is_oxlint || exists_in_react_version(it.as_bytes(), version);
+    let shared = find_ignoring_case(&DOM_PROPERTIES_NAMES, folded).filter(&mut exists);
     if shared.is_some_and(|it| it.as_bytes() == name) {
         return shared;
     }
-    // Only oxlint knows `mask-type`.
+    // Only oxlint has `mask-type`.
     let camel = get(&DOM_ATTRIBUTES_TO_CAMEL, name).filter(|it| is_oxlint || *it != "maskType");
     if !is_oxlint && camel.is_some() {
         return camel;
     }
     let own: &[&'static str] = if is_oxlint { &OXLINT_NAMES } else { &ESLINT_NAMES };
-    let own = find_in_any_case(own, folded).filter(exists);
+    let own = find_ignoring_case(own, folded).filter(exists);
     if own.is_some_and(|it| it.as_bytes() == name) {
         return own;
     }
@@ -410,20 +410,20 @@ fn get_standard_name(
 /// `data-a`, `data-a-b`. Not `data-xml..` in any case, not `data-a:b`.
 fn is_valid_data_attr(name: &[u8], is_oxlint: bool) -> bool {
     name.strip_prefix(b"data-").is_some_and(|data_name| {
-        // Upstream takes `data-`.
+        // Upstream accepts a bare `data-`.
         !(is_oxlint && data_name.is_empty())
             && !data_name.get(..3).is_some_and(|it| it.eq_ignore_ascii_case(b"xml"))
             && !strings::contains_char(data_name, b':')
     })
 }
 
-/// It starts with a small letter of ASCII and has no hyphen.
+/// True if it starts with a lowercase ASCII letter and has no hyphen.
 fn matches_html_tag_conventions(tag: &[u8]) -> bool {
     tag.first().is_some_and(u8::is_ascii_lowercase) && !strings::contains_char(tag, b'-')
 }
 
-fn any_char(name: &[u8], is_it: impl Fn(char) -> bool) -> bool {
-    strings::wtf8_codepoints(name).filter_map(|it| char::from_u32(it.1)).any(is_it)
+fn any_char(name: &[u8], predicate: impl Fn(char) -> bool) -> bool {
+    strings::wtf8_codepoints(name).filter_map(|it| char::from_u32(it.1)).any(predicate)
 }
 
 impl Rule for NoUnknownProperty {
@@ -432,7 +432,7 @@ impl Rule for NoUnknownProperty {
         .has_suggestions()
         .recommended();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    /// The version of React, once it has been asked for.
+    /// The React version, computed lazily.
     type State<'a> = Option<Version>;
 
     fn new(options: &Options) -> Self {
@@ -458,13 +458,15 @@ impl Rule for NoUnknownProperty {
         let el_type = match (tag.tag(), get_identifier_name(jsx)) {
             (ExprTag::Dot, _) => return,
             (_, Some(name)) => name.bytes(),
-            // oxlint has no name for `<this>` and passes over `<a:b>`, of which upstream looks at the `data-*`.
+            // oxlint has no name for `<this>` and skips `<a:b>`. Upstream still checks the `data-*` attributes of
+            // `<a:b>`.
             (_, None) if is_oxlint => return,
             (ExprTag::This, None) => b"this".as_slice(),
             (_, None) => &b""[..],
         };
         let is_fbt = matches!(el_type, b"fbt" | b"fbs");
-        // The name of a component. `fbt` and `fbs` are something else altogether. Upstream looks at their `data-*`.
+        // Skip components. `fbt` and `fbs` aren't DOM elements either, but upstream still checks their `data-*`
+        // attributes.
         if is_oxlint {
             let starts_with_lowercase = match el_type.first() {
                 Some(first) if first.is_ascii() => first.is_ascii_lowercase(),
@@ -489,7 +491,7 @@ impl Rule for NoUnknownProperty {
             let Some((key, mut actual_name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
                 continue;
             };
-            // Upstream takes the text, which can have blanks and comments: `a : b`.
+            // Upstream uses the source text, which can contain whitespace and comments: `a : b`.
             if !is_oxlint && strings::contains_char(actual_name, b':') {
                 actual_name = file.slice(key.span(file));
             }
@@ -500,7 +502,7 @@ impl Rule for NoUnknownProperty {
                 if !self.require_data_lowercase {
                     continue;
                 }
-                // oxlint points at the name, as everywhere below, and goes by the properties of the characters.
+                // oxlint reports the name, here and everywhere below, and uses Unicode properties.
                 if is_oxlint && any_char(actual_name, char::is_uppercase) {
                     cx.report(key.span(file), OXLINT_DATA_LOWERCASE_REQUIRED)
                         .help_with(|| format!("Use '{}' instead", bstr::BStr::new(&actual_name.to_ascii_lowercase())));
@@ -511,13 +513,13 @@ impl Rule for NoUnknownProperty {
                 }
                 continue;
             }
-            // oxlint has not these two.
+            // oxlint doesn't have these two.
             let is_aria = is_valid_aria_property(actual_name)
                 || (!is_oxlint && matches!(actual_name, b"aria-colindextext" | b"aria-rowindextext"));
             if !is_valid_html_tag || is_aria {
                 continue;
             }
-            // For upstream the sign for kelvin is a `k` in another case.
+            // For upstream the Kelvin sign lowercases to `k`.
             let folded = match is_oxlint || actual_name.is_ascii() {
                 true => Cow::Borrowed(actual_name),
                 false => text::to_lower_case(actual_name),

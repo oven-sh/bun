@@ -2522,13 +2522,26 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (mut in_class, mut is_private) = (false, false);
         scan_declarations(self, &prop.source, &mut in_class, &mut is_private);
-        // `createUnionOrIntersectionProperty`: a property that several members of an intersection
-        // have is never a method.
-        let kinds = match prop.source {
-            PropSource::Intersected(..) => PropFlags::ACCESSOR,
-            _ => PropFlags::METHOD | PropFlags::ACCESSOR,
+        if !in_class {
+            return true;
+        }
+        if is_private || prop.flags.contains(PropFlags::ACCESSOR) {
+            return false;
+        }
+        if !prop.flags.contains(PropFlags::METHOD) {
+            return true;
+        }
+        let PropSource::Intersected(_, parts) = &prop.source else {
+            return false;
         };
-        !in_class || !is_private && !prop.flags.intersects(kinds)
+        // `createUnionOrIntersectionProperty`: instantiations of one member that have the same type
+        // count as that member. Any other property that several members of an intersection have is
+        // never a method.
+        !parts.split_first().is_some_and(|(single, others)| {
+            others.iter().all(|other| {
+                other.source == single.source && self.compare_properties(single, other)
+            })
+        })
     }
 
     /// `getTypeWithThisArgument`: `ty` with `this_argument` substituted for `this` in its members.

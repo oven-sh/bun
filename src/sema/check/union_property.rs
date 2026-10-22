@@ -777,7 +777,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `compareProperties(sourceProp, targetProp, compareTypesEqual)`
-    fn compare_properties(&mut self, source: &Prop<'s>, target: &Prop<'s>) -> bool {
+    pub(super) fn compare_properties(&mut self, source: &Prop, target: &Prop) -> bool {
         if source == target {
             return true;
         }

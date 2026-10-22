@@ -15267,6 +15267,45 @@ const show = [rest, pk, c];
       expect(exitCode).toBe(1);
     });
 
+    // `createUnionOrIntersectionProperty`: instantiations of one member that have the same type count as that member.
+    test("drops a method from the spread of an intersection whose constituents inherit it from one class", async () => {
+      using dir = project({
+        "a.ts": `class Base {
+  init(): this { return this; }
+  get size(): this { return this; }
+}
+class A extends Base { x = 1; }
+class B extends Base { y = 1; }
+class G<T> {
+  same(): number { return 1; }
+  differs(): T { return null as any; }
+}
+declare const v1: Base & A;
+declare const v2: A & B;
+declare const v3: G<string> & G<number>;
+declare const v4: G<string> & { same(): number };
+export const r1: never = { ...v1 };
+export const r2: never = { ...v2 };
+const s3 = { ...v3 };
+export const r3: never = null as any as keyof typeof s3;
+const s4 = { ...v4 };
+export const r4: never = null as any as keyof typeof s4;
+const { x, ...rest } = v1;
+export const r5: never = rest;
+export const ok: typeof r1 | { x: number } = { x };
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type '{ x: number; }' is not assignable to type 'never'.
+        a.ts(16,14): error TS2322: Type '{ x: number; y: number; }' is not assignable to type 'never'.
+        a.ts(18,14): error TS2322: Type '"differs"' is not assignable to type 'never'.
+        a.ts(20,14): error TS2322: Type '"same"' is not assignable to type 'never'.
+        a.ts(22,14): error TS2322: Type '{}' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 for an optional member whose initializer compares `this`", async () => {
       using dir = project({
         "a.ts": `export class C1 { x? = \`\${this}\` as const; }

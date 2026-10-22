@@ -473,10 +473,10 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
       exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
 
-      // An attempt in the body of another attempt keeps the arrow function that
-      // it finds, and the outer attempt throws it away. The parse after the
-      // outer attempt declares the parameters, reports the errors and gets the
-      // legal comments.
+      // The arrow function that an attempt finds is kept, also when the attempt
+      // runs in the body of another one. It declares the parameters, reports the
+      // errors and gets the legal comments, as the parse after a failed attempt
+      // does.
       exp("x = a ? (b) : c => [a ? (b) : T => d : e]", "x = a ? b : (c) => [a ? (b) => d : e];\n");
       exp("x = a ? (b) : T => [a ? (b) : c => d] : e", "x = a ? (b) => [a ? b : (c) => d] : e;\n");
       exp(
@@ -500,14 +500,44 @@ describe("Bun.Transpiler", () => {
         "x = a ? /*! L1 */ (b) : c => { return a ? /*! L2 */ (b) : T => { let y = 1 } : c }",
         "x = a ? b : (c) => {\n  /*! L1 */\n  return a ? (b) => {\n    /*! L2 */\n    let y = 1;\n  } : c;\n};\n",
       );
-      // The inner attempt finds no arrow function when the lexer cannot read
-      // the token after the second ":".
+      exp("x = a ? (b) : /*! L */ T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
+      exp("x = a ? <T[]>(b) : c => d : e", "x = a ? (b) => d : e;\n");
+      exp("x = a ? <T[]>(b) : c => d", "x = a ? b : (c) => d;\n");
+      // An attempt finds no arrow function when the lexer cannot read the token
+      // after the second ":".
       err("x = a ? (b) : T => a ? (b) : T => d : 'abc : e", 'Expected ";" but found ":"');
-      // An attempt that ended does not make the next attempt an inner one.
+      // What one attempt finds does not change the next one.
       exp(
         "x = a ? (b) : c => d; y = a ? (b) : T => b : e; z = a ? (b) : T => b : e",
         "x = a ? b : (c) => d;\ny = a ? (b) => b : e;\nz = a ? (b) => b : e;\n",
       );
+
+      // An attempt reports each error of its arrow function one time, and a
+      // failed attempt leaves none.
+      const errors = code => {
+        try {
+          ts.parsed(code, false, false);
+        } catch (er) {
+          return (er instanceof AggregateError ? er.errors : [er]).map(e => e.message);
+        }
+        return [];
+      };
+      expect(errors("x = a ? (b) : T => { let b } : e")).toEqual(['"b" has already been declared']);
+      expect(errors("x = a ? (b, b) : T => 1 : e")).toEqual([
+        '"b" cannot be bound multiple times in the same parameter list',
+      ]);
+      expect(errors("x = a ? (b) : T => a ? (c, c) : T => 1 : e : e")).toEqual([
+        '"c" cannot be bound multiple times in the same parameter list',
+      ]);
+      expect(errors("x = a ? (b) : T => /x/gg : e")).toEqual(['Duplicate flag "g" in regular expression']);
+      expect(errors("x = a ? (b) : T => d : 'abc")).toEqual([
+        'Expected ";" but found ":"',
+        "Unterminated string literal",
+      ]);
+      expect(errors("x = a ? (b, b) : c => 1")).toEqual([]);
+      expect(new Bun.Transpiler({ loader: "ts" }).scanImports('x = a ? (b) : T => import("m") : c')).toEqual([
+        { kind: "dynamic-import", path: "m" },
+      ]);
 
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
@@ -530,12 +560,29 @@ describe("Bun.Transpiler", () => {
       exp(`x = ${keptInDiscarded}`, `x = ${keptInDiscardedOut};\n`);
     });
 
+    it("parses an arrow function with a return type between ? and : one time", async () => {
+      // The attempt parsed the arrow function, threw that away, and the arrow
+      // function was parsed again. What a parse allocates stays until the file
+      // is done, so a large body shows the second parse.
+      const arrows = isDebug || isASAN ? 20_000 : 40_000;
+      const fixture = returnType => /* js */ `
+        const body = "[" + "(y) => y, ".repeat(${arrows}) + "0]";
+        const printed = new Bun.Transpiler({ loader: "ts" }).transformSync("x = a ? (b)${returnType} => " + body + " : e");
+        console.log(JSON.stringify({ printed: printed.length > body.length }));
+      `;
+      const [withReturnType, without] = await Promise.all([
+        runFixtureMaxRSS(fixture(" : c"), { printed: true }),
+        runFixtureMaxRSS(fixture(""), { printed: true }),
+      ]);
+      // Peak RSS over the same input without the return type. Before: 43 MB in
+      // release. After: under 1 MB.
+      expect((withReturnType - without) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 8 : 16);
+    });
+
     it("nested arrow functions with return types between ? and : take linear memory", async () => {
-      // Each arrow function here has the next one in its body. Every attempt
-      // parsed its body, threw it away, and the parse after it parsed the body
-      // again with a second parse of each arrow function in it. Depth n took
-      // n * n / 2 parses of a level, and what a parse allocates stays until
-      // the file is done.
+      // Each arrow function here has the next one in its body, and every body
+      // was parsed again for each arrow function around it. Depth n took
+      // n * n / 2 parses of a level.
       const depth = isDebug || isASAN ? 256 : 640;
       const fixture = returnType => /* js */ `
         let input = "d";
@@ -554,6 +601,38 @@ describe("Bun.Transpiler", () => {
       // Peak RSS over the same input without return types. Before: 225 MB in
       // release, 38 MB in a debug ASAN build. After: under 1 MB in both.
       expect((withReturnTypes - without) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 10 : 32);
+    });
+
+    it("emitDecoratorMetadata does not change an arrow function with a return type between ? and :", () => {
+      const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+      const plain = new Bun.Transpiler({ loader: "ts" });
+      const withMetadata = new Bun.Transpiler({ loader: "ts", tsconfig });
+      for (const code of [
+        "x = a ? (b) : T => c : d",
+        "x = a ? (b) : c => d",
+        "x = a ? async (b) : c => a ? async (b) : c => await d : e : e",
+        "x = a ? (b) : T => a ? (c, ...d) : T => [b, c, d] : e : e",
+        "x = a ? (b) : c => [a ? (b) : T => d : e]",
+        "x = a ? (b) : T => [a ? (b) : c => d] : e",
+        "x = a ? /*! L1 */ (b) : T => a ? /*! L2 */ (b) : T => { let y = 1 } : e : e; y",
+        "x = a ? (b) : T => { enum E { A = 1 } return E.A } : e",
+        'x = a ? (b) : T => import("m") : c',
+      ]) {
+        expect(withMetadata.transformSync(code)).toBe(plain.transformSync(code));
+      }
+
+      // A class with a decorator in an arrow function in an arrow function
+      expect(
+        withMetadata.transformSync("x = a ? (b) : T => a ? (c) : T => { class A { @d() p: Date } return A } : e : e"),
+      ).toContain('("design:type", typeof Date === "undefined" ? Object : Date)');
+
+      // After a failed attempt "c" is a parameter, and the import has no use.
+      const trim = new Bun.Transpiler({ loader: "ts", tsconfig, trimUnusedImports: true });
+      const decorated = "{ class K { @dec p: c } return K }";
+      expect(trim.transformSync(`import { c } from "./m"; x = a ? (b) : c => ${decorated};`)).not.toContain("./m");
+      expect(trim.transformSync(`import { c } from "./m"; x = a ? (b) : T => ${decorated} : e;`)).toContain(
+        'import { c } from "./m";',
+      );
     });
 
     it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {

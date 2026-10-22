@@ -394,11 +394,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// binary search.
     pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
 
-    /// Set while `is_type_script_arrow_return_type_after_question_and_before_colon`
-    /// parses an arrow function. The outermost attempt always restores the
-    /// parser, so nothing that is parsed while this is set stays.
-    pub(crate) in_ts_conditional_arrow_attempt: bool,
-
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -8209,12 +8204,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// dynamic imports and logs through `P::log()`, which ignores
     /// `lexer.is_log_disabled`. Lists are captured as lengths and truncated
     /// on restore; the attempt's arena allocations just become unreachable.
-    /// The legal comments waiting for the next statement are moved out
+    /// The legal comments waiting for the next statement are copied
     /// instead: a block body or `import()` drains them, so a length cannot
-    /// restore them.
+    /// restore them. They stay in the lexer for a parse that is kept.
     pub(crate) fn parser_snapshot(&mut self) -> ParserSnapshot<'a> {
-        let comments_to_preserve_before =
-            core::mem::take(&mut self.lexer.comments_to_preserve_before);
+        let comments_to_preserve_before = self
+            .lexer
+            .comments_to_preserve_before
+            .iter()
+            .map(|comment| js_ast::G::Comment {
+                loc: comment.loc,
+                text: comment.text,
+            })
+            .collect();
         let log = self.log();
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
@@ -8248,9 +8250,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Undo every parse-pass mutation made since [`Self::parser_snapshot`].
     pub(crate) fn restore_parser_snapshot(&mut self, snapshot: &mut ParserSnapshot<'a>) {
-        self.lexer.restore(&snapshot.lexer);
         self.lexer.comments_to_preserve_before =
             core::mem::take(&mut snapshot.comments_to_preserve_before);
+        self.lexer.restore(&snapshot.lexer);
 
         let log = self.log();
         log.msgs.truncate(snapshot.log_msgs_len);
@@ -9689,7 +9691,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
             ts_conditional_arrow_attempts: Vec::new(),
-            in_ts_conditional_arrow_attempt: false,
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

@@ -3118,7 +3118,9 @@ impl<'a> LinkerContext<'a> {
 
         let parts = ctx.parts[source_index as usize].as_slice();
         for (part_index, part) in parts.iter().enumerate() {
-            let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
+            let mut can_be_removed_if_unused = part.can_be_removed_if_unused
+                || (part.removable_if_namespace_reads_bind
+                    && self.part_namespace_reads_are_bound(part));
 
             if can_be_removed_if_unused && part.tag == bun_ast::PartTag::CommonjsNamedExport {
                 if self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::Cjs {
@@ -4434,6 +4436,29 @@ impl<'a> LinkerContext<'a> {
             && exports.contains(b"default")
     }
 
+    /// Every use in `part` with `symbol::Use::runs_namespace_read` prints as a binding.
+    #[cold]
+    fn part_namespace_reads_are_bound(&self, part: &Part) -> bool {
+        part.symbol_uses
+            .keys()
+            .iter()
+            .zip(part.symbol_uses.values())
+            .all(|(item, item_use)| {
+                !item_use.runs_namespace_read()
+                    || self
+                        .graph
+                        .symbols
+                        .get_const(*item)
+                        .and_then(|symbol| symbol.namespace_alias.as_ref())
+                        .is_some_and(|alias| {
+                            self.graph
+                                .import_member_bindings
+                                .get(&alias.namespace_ref)
+                                .is_some_and(|names| names.contains_key(alias.alias.slice()))
+                        })
+            })
+    }
+
     /// `const { a } = ns` where `ns` is an import namespace. The parser
     /// keeps such a part because a pattern over an arbitrary object can run
     /// getters, but the linker knows `ns` is a module namespace, so every
@@ -4498,6 +4523,21 @@ impl<'a> LinkerContext<'a> {
             // A named import that holds a namespace (`export * as`) prints as
             // an import identifier.
             bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
+            // So does a bound read off a `require()` / `import()` local.
+            bun_ast::ExprData::EDot(dot) if dot.is_import_property_use => {
+                let bun_ast::ExprData::EIdentifier(local) = dot.target.data else {
+                    return false;
+                };
+                let Some(item) = self
+                    .graph
+                    .import_member_bindings
+                    .get(&local.ref_)
+                    .and_then(|names| names.get(dot.name.slice()))
+                else {
+                    return false;
+                };
+                *item
+            }
             bun_ast::ExprData::ERequireString(require) => {
                 return require.unwrapped_id.get().is_some();
             }
@@ -4610,6 +4650,15 @@ impl<'a> LinkerContext<'a> {
             if is_call_item
                 && !self.binds_call_item(source_index, import_ref, named_import, &result)
             {
+                // A name the importee does not have reads `undefined`.
+                if self
+                    .graph
+                    .symbols
+                    .get_const(import_ref)
+                    .is_some_and(|symbol| symbol.import_item_status == ImportItemStatus::Missing)
+                {
+                    self.bind_namespace_local_read(import_ref, named_import);
+                }
                 continue;
             }
 
@@ -4621,6 +4670,9 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
+                    if is_call_item {
+                        self.bind_namespace_local_read(import_ref, named_import);
+                    }
                 }
                 MatchImportKind::Namespace => {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
@@ -4944,6 +4996,29 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
+    }
+
+    /// Lets the printer write `import_ref` in place of each read `ns.name` off a namespace local.
+    fn bind_namespace_local_read(&mut self, import_ref: Ref, named_import: &NamedImport) {
+        let Some(alias) = named_import.alias else {
+            return;
+        };
+        if self
+            .graph
+            .symbols
+            .get_const(import_ref)
+            .is_none_or(|symbol| symbol.namespace_alias.is_none())
+        {
+            return;
+        }
+        // `alias` is in the arena of the file's AST, which outlives printing.
+        self.graph
+            .import_member_bindings
+            .get_or_put_value(named_import.namespace_ref, Default::default())
+            .expect("OOM")
+            .value_ptr
+            .put_static_key(alias.slice(), import_ref)
+            .expect("OOM");
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

@@ -1041,6 +1041,9 @@ pub struct Part {
     /// don't have this flag enabled must be included.
     pub can_be_removed_if_unused: bool,
 
+    /// Removable if unused once the linker binds each use with `symbol::Use::runs_namespace_read`.
+    pub removable_if_namespace_reads_bind: bool,
+
     /// This is used for generated parts that we don't want to be present if they
     /// aren't needed. This enables tree shaking for these parts even if global
     /// tree shaking isn't enabled.
@@ -1095,6 +1098,7 @@ impl Default for Part {
             import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
+            removable_if_namespace_reads_bind: false,
             force_tree_shaking: false,
             tag: PartTag::None,
         }

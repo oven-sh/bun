@@ -372,11 +372,14 @@ pub struct Use(u32);
 
 impl Use {
     const UNSCOPED: u32 = 1 << 31;
+    const RUNS_NAMESPACE_READ: u32 = 1 << 30;
+    const FLAGS: u32 = Self::UNSCOPED | Self::RUNS_NAMESPACE_READ;
+    const MAX_COUNT: u32 = !Self::FLAGS;
 
     /// `count` uses whose scope is not on record.
     pub const fn unscoped(count: u32) -> Use {
-        Use(if count >= Self::UNSCOPED {
-            u32::MAX
+        Use(if count > Self::MAX_COUNT {
+            Self::MAX_COUNT | Self::UNSCOPED
         } else {
             count | Self::UNSCOPED
         })
@@ -384,7 +387,7 @@ impl Use {
 
     #[inline]
     pub const fn count_estimate(self) -> u32 {
-        self.0 & !Self::UNSCOPED
+        self.0 & Self::MAX_COUNT
     }
 
     #[inline]
@@ -392,21 +395,32 @@ impl Use {
         self.0 & Self::UNSCOPED != 0
     }
 
+    /// A read of this import item, off a `require()` / `import()` local, runs with the part.
+    #[inline]
+    pub const fn runs_namespace_read(self) -> bool {
+        self.0 & Self::RUNS_NAMESPACE_READ != 0
+    }
+
+    #[inline]
+    pub fn set_runs_namespace_read(&mut self) {
+        self.0 |= Self::RUNS_NAMESPACE_READ;
+    }
+
     /// The parser's `record_usage`: the use's scope is on record.
     #[inline]
     pub fn add_scoped(&mut self, count: u32) {
-        debug_assert!(self.count_estimate() + count < Self::UNSCOPED);
+        debug_assert!(self.count_estimate() + count <= Self::MAX_COUNT);
         self.0 += count;
     }
 
     #[inline]
     pub fn subtract(&mut self, count: u32) {
-        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::UNSCOPED);
+        self.0 = self.count_estimate().saturating_sub(count) | (self.0 & Self::FLAGS);
     }
 
     pub fn merge(&mut self, other: Use) {
         let count = self.count_estimate().saturating_add(other.count_estimate());
-        self.0 = count.min(Self::UNSCOPED - 1) | ((self.0 | other.0) & Self::UNSCOPED);
+        self.0 = count.min(Self::MAX_COUNT) | ((self.0 | other.0) & Self::FLAGS);
     }
 }
 

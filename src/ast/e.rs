@@ -318,6 +318,7 @@ pub struct Dot {
     /// `Part::import_symbol_property_uses` instead of as a use of the import,
     /// so the linker may bind it straight to the export it names
     /// (`LinkerGraph::import_member_bindings`).
+    /// Or `target` is a `require()` / `import()` local, and the part counts the read's import item.
     pub is_import_property_use: bool,
 }
 impl Default for Dot {

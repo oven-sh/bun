@@ -1998,7 +1998,7 @@ fn codegen_base_instruction_value(
             object, property, ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            Ok(property_access_expr(obj, property, loc, None))
+            Ok(property_load_expr(cx, obj, property, loc))
         }
         InstructionValue::PropertyStore {
             object,
@@ -3324,6 +3324,17 @@ fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
         Some(cooked) => E::TemplateContents::Cooked(E::EString::init(cooked.slice())),
         None => E::TemplateContents::Raw(q.raw),
     }
+}
+
+/// A property read. The host counts a read off a namespace local, and the copy takes its mark.
+fn property_load_expr(cx: &mut Context, obj: Expr, prop: &PropertyLiteral, loc: Loc) -> Expr {
+    let read = property_access_expr(obj, prop, loc, None);
+    if let (ExprData::EIdentifier(ns), ExprData::EDot(mut dot)) = (obj.data, read.data)
+        && cx.cg.host.namespace_local_read(ns.ref_, dot.name.slice())
+    {
+        dot.is_import_property_use = true;
+    }
+    read
 }
 
 fn property_access_expr(

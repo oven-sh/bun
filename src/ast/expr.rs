@@ -80,6 +80,15 @@ impl Expr {
         self
     }
 
+    /// See `E::Dot::is_import_property_use`.
+    pub fn is_import_property_use(&self) -> bool {
+        match &self.data {
+            Data::EDot(e) => e.is_import_property_use,
+            Data::EIndex(e) => e.is_import_property_use,
+            _ => false,
+        }
+    }
+
     #[inline]
     pub fn init_identifier(ref_: Ref, loc: Loc) -> Expr {
         Expr {

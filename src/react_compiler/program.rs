@@ -150,6 +150,12 @@ pub trait Host {
     }
 
     fn record_usage(&mut self, ref_: Ref);
+
+    /// Counts codegen's copy of a read `ns.name` off a namespace local. True if it has an item.
+    fn namespace_local_read(&mut self, _ns: Ref, _name: &[u8]) -> bool {
+        false
+    }
+
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 

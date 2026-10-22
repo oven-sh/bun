@@ -666,6 +666,13 @@ impl<'a> ImportScanner<'a> {
                         let mut value: Option<Expr> = decl.value;
                         if decl.value.is_some() {
                             while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
+                                // A marked read off `import x = require()` is the reference.
+                                if dot.is_import_property_use
+                                    && matches!(dot.target.data, js_ast::ExprData::EIdentifier(id)
+                                        if p.dynamic_import_namespace_locals.contains_key(&id.ref_))
+                                {
+                                    break;
+                                }
                                 value = Some(dot.target);
                             }
                         }

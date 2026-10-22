@@ -2650,9 +2650,63 @@ long syscall(long nr, ...) {
       root,
       { dir: join(root, "src"), hide: "x.ts", count },
     );
-    expect(stderr).toContain(`error: ${cannotRead(join(root, "src"), "EIO", "./src/x")}`);
+    // The message has the place of the import.
+    expect(stderr).toContain(
+      `error: ${cannotRead(join(root, "src"), "EIO", "./src/x")}\n    at ${join(root, "entry.ts")}:1:15`,
+    );
     expect(existsSync(join(root, "out.js"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  // The message is in the log of the file that has the import, with its
+  // place. The dev server shows only the log of each file.
+  it("Bun.build gives the failed import its place in the importer", async () => {
+    using dir = tempDir("resolver-readdir-fault-build-position", {
+      ...staleSibling,
+      "build.js": `
+        const { logs } = await Bun.build({ entrypoints: ["./entry.ts"], throw: false });
+        const place = ({ file, line, column, lineText }) => ({ file, line, column, lineText });
+        console.log(JSON.stringify(logs.map(log => ({ message: log.message, ...place(log.position ?? {}) }))));
+      `,
+    });
+    const root = realpathSync(String(dir));
+    const result = await runWithFault(["build.js"], root, { dir: join(root, "src"), hide: "x.ts" });
+    expect({ ...result, stdout: JSON.parse(result.stdout || "null") }).toEqual({
+      stdout: [
+        {
+          message: cannotRead(join(root, "src"), "EIO", "./src/x"),
+          file: join(root, "entry.ts"),
+          line: 1,
+          column: 15,
+          lineText: `import x from "./src/x";`,
+        },
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("the dev server fails the route of an import whose directory was not read", async () => {
+    using dir = tempDir("resolver-readdir-fault-dev-server", {
+      ...staleSibling,
+      "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./entry.ts"></script></body></html>`,
+      "serve.ts": `
+        const routes = { "/": (await import("./index.html")).default };
+        using server = Bun.serve({ port: 0, development: true, routes, fetch: () => new Response("") });
+        console.log((await fetch(server.url)).status);
+      `,
+    });
+    const root = realpathSync(String(dir));
+    const { stdout, stderr, exitCode } = await runWithFault(["serve.ts"], root, {
+      dir: join(root, "src"),
+      hide: "x.ts",
+    });
+    expect(stderr).toContain(
+      `error: ${cannotRead(join(root, "src"), "EIO", "./src/x")}\n    at ${join(root, "entry.ts")}:1:15`,
+    );
+    // The error page. The route is not served without the module.
+    expect(stdout).toBe("500\n");
+    expect(exitCode).toBe(0);
   });
 
   // The bundler leaves a require in a try block to the runtime when the

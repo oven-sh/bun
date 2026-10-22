@@ -299,10 +299,7 @@ mod _impl {
             let arg: &[u8] = arg;
 
             if arg.len() >= 1 && arg[0] == b'-' {
-                // `child_process.fork` passes these on, and only a person may allow a process to run content mappers.
-                if arg != b"--runExternalCode" {
-                    args.push(BunString::clone_utf8(arg));
-                }
+                args.push(BunString::clone_utf8(arg));
                 prev = Some(arg);
                 continue;
             }

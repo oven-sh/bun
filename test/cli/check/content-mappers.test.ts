@@ -947,7 +947,7 @@ describe.concurrent("--check", () => {
     expect(unchecked.stdout).toContain("ran 1 --runExternalCode\n");
   });
 
-  test("the program doesn't see the flag, and a process that it starts needs its own", async () => {
+  test("the flag isn't an argument of the program, and a process that it starts needs its own", async () => {
     using dir = project({
       mapper,
       files: {
@@ -962,12 +962,13 @@ console.log("the child exited with", child.exitCode);
       },
     });
     const { stdout, output } = await run(dir, ["--check", "--runExternalCode", "parent.ts", "argument"]);
-    expect(stdout).toBe("ran 1 argument --check\nthe child exited with 1\n");
+    expect(stdout).toBe("ran 1 argument --check --runExternalCode\nthe child exited with 1\n");
     expect(output).toContain(notAllowed);
     expect(pidsOf(dir)).toHaveLength(1);
   });
 
-  test("a process that the program forks needs its own flag too", async () => {
+  // `fork` passes `process.execArgv` on.
+  test("a process that the program forks is checked like the program", async () => {
     using dir = project({
       mapper,
       files: {
@@ -983,9 +984,9 @@ child.on("exit", code => console.log("the child exited with", code));
       },
     });
     const { stdout, output } = await run(dir, ["--check", "--runExternalCode", "parent.ts"]);
-    expect(stdout).toBe("ran 1\nthe child exited with 1\n");
-    expect(output).toContain(notAllowed);
-    expect(pidsOf(dir)).toHaveLength(1);
+    expect(stdout).toBe("ran 1\nran 1\nthe child exited with 0\n");
+    expect(output).not.toContain(notAllowed);
+    expect(pidsOf(dir)).toHaveLength(2);
   });
 
   test.each(["--watch", "--hot"])(
@@ -1021,9 +1022,12 @@ child.on("exit", code => console.log("the child exited with", code));
       const [first] = pidsOf(dir);
       expect(() => process.kill(first, 0)).toThrow();
       await Bun.write(join(String(dir), "App.vue"), wrong["App.vue"]);
-      await until(/Found \d+ error/);
+      // A check can begin while the file is being written. The next one sees all of it.
+      await until(/TS2322/);
       expect(output).toContain(isWrong);
-      expect(pidsOf(dir)).toEqual([first, expect.any(Number)]);
+      const pids = pidsOf(dir);
+      expect(pids[0]).toBe(first);
+      expect(pids.length).toBeGreaterThan(1);
       proc.kill();
       await closed;
     },

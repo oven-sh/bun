@@ -5,7 +5,7 @@
 // walker fails to create has to fail the install instead of being skipped while
 // the install reports success, and a file that cannot be installed has to fail
 // the package (as it does with the hardlink backend) rather than exit bun.
-import { beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isRoot, isWindows, readdirSorted, refusedSyscalls, tempDir } from "harness";
 import {
   chmodSync,
@@ -698,13 +698,19 @@ describe("file: folder dependencies with the hoisted linker", () => {
 // there, unlike on Linux. HFS+ and exFAT answer clonefileat that way. APFS has every operation, so `refusedSyscalls`
 // refuses one for the installing process.
 describe.skipIf(!refusedSyscalls.available)("a call that fails with ENOTSUP on macOS", () => {
+  let shimDir: ReturnType<typeof tempDir>;
+  let shim: string;
+
   beforeAll(async () => {
-    await refusedSyscalls.compile();
+    shimDir = tempDir("refuse-syscalls", {});
+    shim = await refusedSyscalls.compile(String(shimDir));
   });
+
+  afterAll(() => shimDir?.[Symbol.dispose]());
 
   /** `bun install` with the calls in `refuse` refused. `refused` has the name of the call of each refusal. */
   async function installRefusing(
-    refuse: Parameters<typeof refusedSyscalls.env>[0],
+    refuse: Parameters<typeof refusedSyscalls.env>[1],
     projectDir: string,
     args: readonly string[],
   ) {
@@ -712,7 +718,7 @@ describe.skipIf(!refusedSyscalls.available)("a call that fails with ENOTSUP on m
     await using proc = Bun.spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: projectDir,
-      env: { ...(await refusedSyscalls.env(refuse, log)), BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache") },
+      env: { ...refusedSyscalls.env(shim, refuse, log), BUN_INSTALL_CACHE_DIR: join(projectDir, ".cache") },
       stdout: "pipe",
       stderr: "pipe",
     });

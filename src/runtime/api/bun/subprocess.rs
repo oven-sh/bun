@@ -65,8 +65,6 @@ pub(crate) mod js {
     bun_jsc::codegen_cached_accessors!(
         "Subprocess";
         stdin,
-        stdout,
-        stderr,
         terminal,
         exitedPromise,
         onExitCallback,

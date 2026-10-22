@@ -184,6 +184,37 @@ describe.concurrent("process-stdio", () => {
     expect({ stdout, stderr }).toEqual({ stdout: "written\n", stderr: "callback null\n" });
     expect(exitCode).toBe(0);
   });
+
+  // process.stdout and process.stderr hand chunks to a native FileSink from
+  // their own write(). An instance _write override must still receive every
+  // chunk, and the fd none of them, as in node.
+  test("process.stdout._write and process.stderr._write overrides receive the chunks", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const seen = [];
+         for (const name of ["stdout", "stderr"]) {
+           process[name]._write = (chunk, encoding, callback) => { seen.push(name + ":" + chunk); callback(null); };
+         }
+         process.stdout.write("a");
+         process.stderr.write("b");
+         process.stdout.write("c", () => {
+           process.stdout._write = Object.getPrototypeOf(process.stdout)._write;
+           process.stdout.write(JSON.stringify(seen));
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+      stdout: ["stdout:a", "stderr:b", "stdout:c"],
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // Like Node, process.stdout/stderr put O_NONBLOCK on fd 1/2 when they are pipes or sockets. The flag lives on the shared open

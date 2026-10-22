@@ -241,6 +241,106 @@ describe("WriteStream end()", () => {
   });
 });
 
+// A WriteStream hands chunks to a native FileSink from its own write(). Node
+// routes every write() through the Writable hooks, so an instance or subclass
+// _write/_writev/_final override must receive the chunk and the fd must not.
+// Each case writes to fd 1, so a chunk that bypasses the hook shows up in
+// stdout. The child reports through stderr.
+describe.concurrent("WriteStream Writable hooks", () => {
+  async function run(source: string, stdin: "pipe" | "ignore" = "ignore") {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stdin,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr: stderr.trim(), exitCode };
+  }
+
+  test("an instance _write override receives readline output (#46172)", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { createInterface } = require("node:readline");
+       const { WriteStream } = require("node:tty");
+       let hook = 0;
+       const output = new WriteStream(1);
+       output._write = (chunk, encoding, callback) => { hook++; callback(null); };
+       const rl = createInterface({ input: process.stdin, output, terminal: true, prompt: "" });
+       rl.prompt();
+       rl.close();
+       process.stderr.write(JSON.stringify({ hook }));`,
+      "pipe",
+    );
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr)).toEqual({ hook: 5 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a subclass _write and _final receive the chunks and the end", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { WriteStream } = require("node:tty");
+       const chunks = [];
+       let final = 0;
+       class Capture extends WriteStream {
+         _write(chunk, encoding, callback) { chunks.push(chunk.toString()); callback(null); }
+         _final(callback) { final++; callback(null); }
+       }
+       const s = new Capture(1);
+       s.write("a");
+       s.write("b");
+       s.end("c", () => process.stderr.write(JSON.stringify({ chunks, final })));`,
+    );
+    expect(stdout).toBe("");
+    expect(JSON.parse(stderr)).toEqual({ chunks: ["a", "b", "c"], final: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  // A single chunk goes through _write, so "c" reaches the fd, as in node.
+  test("an instance _writev receives a corked burst", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { WriteStream } = require("node:tty");
+       const calls = [];
+       const s = new WriteStream(1);
+       s._writev = (chunks, callback) => { calls.push(chunks.map(c => c.chunk.toString())); callback(null); };
+       s.cork();
+       s.write("a");
+       s.write("b");
+       s.uncork();
+       s.write("c", () => process.stderr.write(JSON.stringify({ calls })));`,
+    );
+    expect(stdout).toBe("c");
+    expect(JSON.parse(stderr)).toEqual({ calls: [["a", "b"]] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("cork() holds writes until uncork()", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      `const { WriteStream } = require("node:tty");
+       const s = new WriteStream(1);
+       s.cork();
+       for (let i = 0; i < 4; i++) s.write("x");
+       process.nextTick(() => {
+         s.uncork();
+         s.write("y", () => process.stderr.write("done"));
+       });`,
+    );
+    expect(stdout).toBe("xxxxy");
+    expect(stderr).toBe("done");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the hooks live on the prototype, as in node", async () => {
+    const { stderr, exitCode } = await run(
+      `const { WriteStream } = require("node:tty");
+       const s = new WriteStream(1);
+       process.stderr.write(JSON.stringify(["_write", "_writev"].map(k => Object.hasOwn(s, k))));`,
+    );
+    expect(JSON.parse(stderr)).toEqual([false, false]);
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("WriteStream.prototype.getColorDepth", () => {
   const getColorDepth = (env: Record<string, string>) => WriteStream.prototype.getColorDepth.call(undefined, env);
 

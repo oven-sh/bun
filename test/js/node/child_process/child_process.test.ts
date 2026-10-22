@@ -437,6 +437,42 @@ describe("spawn()", () => {
     expect(await exited).toBe(0);
   });
 
+  // child.stdin hands chunks to a native FileSink from its own write(). An
+  // instance _write override must receive every chunk, and the child none.
+  it("child.stdin._write override receives the chunks", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `process.stdin.on("data", d => process.stdout.write(d)).on("end", () => process.exit(0))`],
+      {
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    const collect = (stream: NodeJS.ReadableStream) =>
+      new Promise<string>(resolve => {
+        let out = "";
+        stream.on("data", d => (out += d));
+        stream.on("end", () => resolve(out));
+      });
+    const stdout = collect(child.stdout!);
+    const stderr = collect(child.stderr!);
+    const exited = new Promise<number | null>(resolve => child.on("exit", resolve));
+
+    const seen: string[] = [];
+    child.stdin!._write = (chunk, encoding, callback) => {
+      seen.push(chunk.toString());
+      callback(null);
+    };
+    child.stdin!.write("a");
+    child.stdin!.write("b");
+    child.stdin!.end("c");
+
+    expect(await stderr).toBe("");
+    expect(await stdout).toBe("");
+    expect(seen).toEqual(["a", "b", "c"]);
+    expect(await exited).toBe(0);
+  });
+
   it("should allow us to timeout hanging processes", async () => {
     const child = spawn(shellExe(), ["-c", "sleep", "2"], { timeout: 3 });
     const start = performance.now();

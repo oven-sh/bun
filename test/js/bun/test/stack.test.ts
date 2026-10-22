@@ -453,10 +453,19 @@ test("the frame of a module that waits keeps the file when a collection takes th
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // On Windows the collection leaves the code of the module. The frame then has its position too.
+  const position = String.raw`(:\d+:\d+)?`;
   expect({ result: stdout && JSON.parse(stdout), stderr }).toEqual({
     result: {
-      stack: "Error: late\n    at lateError (/main.mjs:9:14)\n    at async /main.mjs",
-      callSite: { string: "async /main.mjs", isAsync: true, isNative: false, fileName: "/main.mjs" },
+      stack: expect.stringMatching(
+        new RegExp(String.raw`^Error: late\n    at lateError \(/main\.mjs:9:14\)\n    at async /main\.mjs${position}$`),
+      ),
+      callSite: {
+        string: expect.stringMatching(new RegExp(String.raw`^async /main\.mjs${position}$`)),
+        isAsync: true,
+        isNative: false,
+        fileName: "/main.mjs",
+      },
     },
     stderr: "",
   });

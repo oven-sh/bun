@@ -936,6 +936,21 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // FORCE_COLOR turns the colors of `-p` on for a pipe.
+    test.each([
+      ["a void expression", "void 0"],
+      ["an empty script", ""],
+    ])("-p dims the undefined of %s when colors are on", async (_name, script) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "repl", "-p", script],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "\x1b[2mundefined\x1b[0m\n", stderr: "", exitCode: 0 });
+    });
+
     test("-e supports TypeScript", async () => {
       const { stdout, stderr, exitCode } = await runReplWith(["-p", "const x: number = 42; x * 2"]);
       expect(stdout).toBe("84\n");

@@ -72,9 +72,6 @@ const HISTORY_FILENAME: &[u8] = b".bun_repl_history";
 // ANSI escape codes
 const CSI: &str = concat!("\x1b", "[");
 
-// Colors — Color::RESET, Color::CYAN, … resolve unchanged
-use bun_core::output::ansi as Color;
-
 /// Like `bun_core::pretty!`, but unbuffered as the other REPL prints, and colored by `use_colors`.
 macro_rules! pretty {
     ($repl:expr, $($arg:tt)*) => {{
@@ -1079,14 +1076,7 @@ impl<'a> Repl<'a> {
     }
 
     fn print_error(&self, args: Arguments<'_>) {
-        if self.use_colors {
-            let w = Output::writer();
-            let _ = w.write_all(Color::RED.as_bytes());
-            let _ = w.write_fmt(args);
-            let _ = w.write_all(Color::RESET.as_bytes());
-        } else {
-            let _ = Output::writer().write_fmt(args);
-        }
+        pretty!(self, "<red>{}<r>", args);
     }
 
     fn read_byte(&mut self) -> Option<u8> {
@@ -1302,9 +1292,9 @@ impl<'a> Repl<'a> {
 
         let ghost = self.drawn_suggestion();
         if !ghost.is_empty() {
-            self.write(Color::DIM.as_bytes());
+            self.write(bun_core::pretty_fmt!("<d>", true).as_bytes());
             self.write(ghost);
-            self.write(Color::RESET.as_bytes());
+            self.write(bun_core::pretty_fmt!("<r>", true).as_bytes());
         }
 
         let (before_cursor, after_cursor) = line.split_at(self.line_editor.cursor);
@@ -1653,11 +1643,7 @@ impl<'a> Repl<'a> {
         }
 
         if actual_result.is_undefined() {
-            if self.use_colors {
-                self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
-            } else {
-                self.print(format_args!("undefined\n"));
-            }
+            pretty!(self, "<d>undefined<r>\n");
         } else {
             self.print_formatted_value(actual_result);
         }
@@ -1687,11 +1673,7 @@ impl<'a> Repl<'a> {
         // Empty / whitespace-only script: nothing to do (matches `node -e ""`)
         if strings::trim(code, b" \t\n\r").is_empty() {
             if print_result {
-                if self.use_colors {
-                    self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
-                } else {
-                    self.print(format_args!("undefined\n"));
-                }
+                pretty!(self, "<d>undefined<r>\n");
             }
             return false;
         }
@@ -1788,11 +1770,7 @@ impl<'a> Repl<'a> {
 
         if print_result {
             if actual_result.is_undefined() {
-                if self.use_colors {
-                    self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
-                } else {
-                    self.print(format_args!("undefined\n"));
-                }
+                pretty!(self, "<d>undefined<r>\n");
             } else {
                 self.print_formatted_value(actual_result);
             }
@@ -1832,10 +1810,8 @@ impl<'a> Repl<'a> {
 
         if !result.is_undefined() {
             self.print_formatted_value(result);
-        } else if self.use_colors {
-            self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
         } else {
-            self.print(format_args!("undefined\n"));
+            pretty!(self, "<d>undefined<r>\n");
         }
 
         if let Some(vm) = self.vm {
@@ -1993,19 +1969,11 @@ impl<'a> Repl<'a> {
             self.print_error(format_args!("Failed to write to clipboard\n"));
             return Ok(());
         }
-        if self.use_colors {
-            self.print(format_args!(
-                "{}Copied {} characters to clipboard{}\n",
-                Color::DIM,
-                text.len(),
-                Color::RESET
-            ));
-        } else {
-            self.print(format_args!(
-                "Copied {} characters to clipboard\n",
-                text.len()
-            ));
-        }
+        pretty!(
+            self,
+            "<d>Copied {} characters to clipboard<r>\n",
+            text.len()
+        );
         Ok(())
     }
 

@@ -3373,6 +3373,9 @@ describe("bundler", () => {
     AssignThenThrow [1,["x"]] [2,["x"]] [2,["x"]]* THROW(other)
     AssignThenReturnInLoop ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[]]
     AssignThenReturnThenJoin [1,["x"]] [2,["x"]] [2,["x"]]* ["late",["x"]]*
+    AssignThenReturnInOneArm [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]] [4,null]
+    AssignThenReturnOrAssignInOtherArm [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]] ["else",null]
+    AssignThenReturnInTry [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]]
     ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
     CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
     AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
@@ -3559,7 +3562,7 @@ describe("bundler", () => {
             return { label, list };
           }
 
-          // In the next four the path that assigns leaves the function, so no join in the block shows that the other
+          // In the next seven the path that assigns leaves the function, so no join in the block shows that the other
           // path leaves the variable as it came in.
           function AssignThenReturn(p) {
             let label = p.count;
@@ -3605,6 +3608,54 @@ describe("bundler", () => {
             }
             list.push(p.b);
             if (p.late) label = "late";
+            return <div label={label} list={list} />;
+          }
+
+          // A path goes around the block.
+          function AssignThenReturnInOneArm(p) {
+            let label = p.count;
+            let list = null;
+            if (p.outer) {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+            }
+            return <div label={label} list={list} />;
+          }
+
+          function AssignThenReturnOrAssignInOtherArm(p) {
+            let label = p.count;
+            let list = null;
+            if (p.outer) {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+            } else {
+              label = "else";
+            }
+            return <div label={label} list={list} />;
+          }
+
+          // What the block assigns gets to the handler from the middle of the block.
+          function AssignThenReturnInTry(p) {
+            let label = p.count;
+            let list = null;
+            try {
+              list = [];
+              if (p.flag) {
+                label = p.other;
+                return <a label={label} list={list} />;
+              }
+              list.push(p.b);
+            } catch (error) {
+              if (p.flag) label = "caught";
+            }
             return <div label={label} list={list} />;
           }
 
@@ -3758,12 +3809,13 @@ describe("bundler", () => {
           const flagOff = { flag: false, x: "X", b: "b" };
           run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
           const counts = [
-            { count: 1, flag: false, b: "x", other: "other" },
-            { count: 2, flag: false, b: "x", other: "other" },
-            { count: 2, flag: false, b: "x", other: "other" },
+            { count: 1, flag: false, b: "x", other: "other", outer: true },
+            { count: 2, flag: false, b: "x", other: "other", outer: true },
+            { count: 2, flag: false, b: "x", other: "other", outer: true },
           ];
-          run(AssignThenReturn, ...counts, { count: 3, flag: true, b: "x", other: "other" });
-          run(AssignThenThrow, ...counts, { count: 3, flag: true, b: "x", other: "other" });
+          const flagged = { count: 3, flag: true, b: "x", other: "other", outer: true };
+          run(AssignThenReturn, ...counts, flagged);
+          run(AssignThenThrow, ...counts, flagged);
           run(
             AssignThenReturnInLoop,
             { initial: "i", items: none },
@@ -3771,7 +3823,10 @@ describe("bundler", () => {
             { initial: "j", items: none },
             { initial: "k", items: some },
           );
-          run(AssignThenReturnThenJoin, ...counts, { count: 2, flag: false, b: "x", other: "other", late: true });
+          run(AssignThenReturnThenJoin, ...counts, { ...counts[2], late: true });
+          run(AssignThenReturnInOneArm, ...counts, flagged, { count: 4, outer: false });
+          run(AssignThenReturnOrAssignInOtherArm, ...counts, flagged, { count: 4, outer: false });
+          run(AssignThenReturnInTry, ...counts, flagged);
           run(
             ReadThenReassign,
             { count: 1, flag: true, b: "x" },

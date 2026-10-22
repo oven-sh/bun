@@ -58,7 +58,7 @@ fn all_terminal_block_ids(terminal: &Terminal) -> visitors::Blocks {
 // Helper: get the first EvaluationOrder in a block
 // =============================================================================
 
-fn block_first_id(func: &HirFunction, block_id: BlockId) -> EvaluationOrder {
+pub(crate) fn block_first_id(func: &HirFunction, block_id: BlockId) -> EvaluationOrder {
     let block = func.body.blocks.get(&block_id).unwrap();
     if !block.instructions.is_empty() {
         func.instructions[block.instructions[0].0 as usize].id

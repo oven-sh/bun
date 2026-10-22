@@ -112,6 +112,8 @@ pub(crate) enum Source {
     Owned(Vec<u8>),
     /// Owned, NUL-terminated. Read on the worker thread.
     Path(ZBox),
+    /// What a `Bun.file(path).slice()` source becomes as a body: `.path` with the slice's window.
+    PathWindow(Box<PathWindow>),
     /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
     /// don't exist until read. We hold a Strong on the JS Blob and, at
     /// terminal time, just call its own `.bytes()` (whatever that means for
@@ -123,6 +125,24 @@ pub(crate) enum Source {
 
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
+
+/// The part of the file at `path` that a slice names: `size` bytes from `offset`.
+pub(crate) struct PathWindow {
+    path: ZBox,
+    offset: u64,
+    size: u64,
+}
+
+impl PathWindow {
+    /// The window's part of `bytes`, which are the whole file.
+    fn cut(&self, mut bytes: Vec<u8>) -> Vec<u8> {
+        let start =
+            usize::try_from(self.offset).map_or(bytes.len(), |offset| offset.min(bytes.len()));
+        bytes.drain(..start);
+        bytes.truncate(usize::try_from(self.size).unwrap_or(usize::MAX));
+        bytes
+    }
+}
 
 // These C++ helpers are
 // Image-specific (they pin/adopt typed-array storage for the off-thread
@@ -245,7 +265,7 @@ macro_rules! coerce_int {
     }};
 }
 
-/// Size cap for `.path` sources, applied at fstat time before reading
+/// Size cap for what a `.path` or `.path_window` source reads, applied at fstat time before reading
 /// anything. This is the *encoded* file, not the decoded RGBA — `maxPixels`
 /// covers the latter once we have a header. 256 MiB comfortably fits any
 /// real-world image (a 268 MP JPEG is ~80 MB) while keeping a single
@@ -316,6 +336,8 @@ impl Image {
                 Source::JsBuffer | Source::Blob(_) => 0,
                 Source::Owned(b) => b.len(),
                 Source::Path(p) => p.len(),
+                // A GC marker thread can be the caller: no read through the Box.
+                Source::PathWindow(_) => mem::size_of::<PathWindow>(),
             }
     }
 }
@@ -693,7 +715,7 @@ impl Image {
                     unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
-            Source::Path(_) | Source::Blob(_) => None,
+            Source::Path(_) | Source::PathWindow(_) | Source::Blob(_) => None,
         }
     }
 
@@ -788,7 +810,14 @@ impl Image {
             )),
             Source::Path(p) => Ok((
                 Input {
-                    path: Some(std::ptr::from_ref::<ZStr>(p.as_zstr())),
+                    path: InputPath::Whole(std::ptr::from_ref::<ZStr>(p.as_zstr())),
+                    ..Default::default()
+                },
+                Pin::NONE,
+            )),
+            Source::PathWindow(window) => Ok((
+                Input {
+                    path: InputPath::Window(std::ptr::from_ref::<PathWindow>(window)),
                     ..Default::default()
                 },
                 Pin::NONE,
@@ -1167,7 +1196,7 @@ impl Image {
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
-        // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
+        // fall back to the `.path` source (`.path_window` for a slice), which `run()` reads inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
         // the body path is made `.Locked`.
         if let Source::Blob(strong) = self.source.get() {
@@ -1184,8 +1213,20 @@ impl Image {
                 if let blob_store::Data::File(file) = &store.data {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         let p = ZBox::from_bytes(path.slice());
+                        // Only an offset proves a slice: an un-sliced `Bun.file()` caches a size as well (#4930).
+                        let offset = blob.offset.get();
+                        // An offset above `MAX_SIZE / 2` is not a place in a file: `slice(-n)` on a size that is not read yet counts back from `MAX_SIZE`.
+                        let source = if offset > 0 && offset <= crate::webcore::blob::MAX_SIZE / 2 {
+                            Source::PathWindow(Box::new(PathWindow {
+                                path: p,
+                                offset,
+                                size: blob.size.get(),
+                            }))
+                        } else {
+                            Source::Path(p)
+                        };
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
+                        self.source.set(source);
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1468,18 +1509,65 @@ pub(crate) struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
-    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
+    // Borrows `image.source` (a `.path` or a `.path_window`); the owning `Image` is
     // held via BACKREF for the task's lifetime, same as `bytes` above.
-    path: Option<*const ZStr>,
+    path: InputPath,
     /// FastTypedArray inputs are tiny and GC-movable: copied instead of pinned.
     copied: Option<Vec<u8>>,
+}
+
+/// The file the worker reads for an `Input`: none, a whole file, or a window of one.
+#[derive(Clone, Copy)]
+pub(crate) enum InputPath {
+    None,
+    Whole(*const ZStr),
+    Window(*const PathWindow),
+}
+
+// Every scheduled task holds an `Input`: the window does not grow it.
+const _: () = assert!(mem::size_of::<InputPath>() == mem::size_of::<Option<*const ZStr>>());
+
+impl InputPath {
+    /// The path to open, and the window of that file when the source is a slice.
+    fn file(&self) -> Option<(&ZStr, Option<&PathWindow>)> {
+        match *self {
+            InputPath::None => None,
+            // SAFETY: `p` borrows `image.source.path`, which outlives the task
+            // because `this_ref` is held Strong while pending_tasks > 0.
+            InputPath::Whole(p) => Some((unsafe { &*p }, None)),
+            InputPath::Window(window) => {
+                // SAFETY: as for `Whole`: `window` borrows the Box in `image.source.path_window`.
+                let window = unsafe { &*window };
+                Some((window.path.as_zstr(), Some(window)))
+            }
+        }
+    }
+}
+
+/// Reads `len` bytes of `file` from `offset`, or fewer when the file ends first.
+fn read_window(file: &sys::File, offset: u64, len: u64) -> sys::Result<Vec<u8>> {
+    let len = usize::try_from(len).expect("int cast");
+    let mut bytes: Vec<u8> = Vec::new();
+    if bytes.try_reserve_exact(len).is_err() {
+        return Err(sys::Error::oom());
+    }
+    // SAFETY: `pread_all` only writes into the spare bytes and returns how many it filled.
+    unsafe {
+        bun_core::vec::fill_spare(&mut bytes, 0, |spare| {
+            match file.pread_all(&mut spare[..len], offset) {
+                Ok(read) => (read, Ok(())),
+                Err(e) => (0, Err(e)),
+            }
+        })
+    }?;
+    Ok(bytes)
 }
 
 impl Default for Input {
     fn default() -> Self {
         Self {
             bytes: bun_ptr::RawSlice::EMPTY,
-            path: None,
+            path: InputPath::None,
             copied: None,
         }
     }
@@ -1545,10 +1633,7 @@ impl PipelineTask {
         // pinned ArrayBuffer slice (pin lives until `then()` unpins), an owned
         // buffer, or a path to read here.
         let owned_file: Option<Vec<u8>>;
-        let input: &[u8] = if let Some(p) = self.input.path {
-            // SAFETY: `p` borrows `image.source.path`, which outlives the task
-            // because `this_ref` is held Strong while pending_tasks > 0.
-            let p: &ZStr = unsafe { &*p };
+        let input: &[u8] = if let Some((p, window)) = self.input.path.file() {
             // The path string came straight from the constructor, so treat
             // it as untrusted: open + fstat first instead of `readFrom`.
             //   • !S_ISREG → ENODEV. `/dev/zero`/`/dev/urandom` would
@@ -1591,11 +1676,22 @@ impl PipelineTask {
                 });
                 return;
             }
-            if u64::try_from(st.st_size.max(0)).expect("int cast") > MAX_INPUT_FILE_BYTES {
+            let file_size = u64::try_from(st.st_size.max(0)).expect("int cast");
+            // A window that starts at or past the end of the file is empty.
+            let len = window.map_or(file_size, |w| {
+                file_size.saturating_sub(w.offset).min(w.size)
+            });
+            if len > MAX_INPUT_FILE_BYTES {
                 self.result = TaskResult::Err(codecs::Error::TooManyPixels);
                 return;
             }
-            match file.read_to_end() {
+            let read = match window {
+                // A regular file can report no size (procfs): its window is cut from a read of the whole file.
+                Some(w) if file_size == 0 => file.read_to_end().map(|bytes| w.cut(bytes)),
+                Some(w) => read_window(&file, w.offset, len),
+                None => file.read_to_end(),
+            };
+            match read {
                 Ok(bytes) => owned_file = Some(bytes),
                 Err(e) => {
                     self.result = TaskResult::IoErr(e.with_path(p.as_bytes()));

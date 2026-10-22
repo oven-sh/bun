@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import fs from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -191,6 +192,339 @@ describe("Bun.Image", () => {
     const res = new Response(new Bun.Image(Bun.file(p)).resize(2, 2).webp());
     expect(res.headers.get("content-type")).toBe("image/webp");
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
+  });
+
+  // `new Response(image)`, `new Request(url, { body: image })` and
+  // `fetch(url, { body: image })` encode inside the call. A Bun.file() source
+  // becomes a path source there, and a slice that starts past byte 0 keeps its
+  // window: the body, later bodies and every terminal read the slice.
+  describe("a slice of Bun.file() as a body", () => {
+    // Three pictures back to back. A slice of the file selects one of them.
+    const pictures = [gradientPng, cmykJpeg, cornersPng];
+    const [a, b, c] = pictures.map(picture => picture.length);
+    const threeIn = () => tempDir("image-body-window", { "three.bin": Buffer.concat(pictures) });
+    const three = (dir: string) => Bun.file(join(dir, "three.bin"));
+    const shape = async (bytes: Uint8Array) => {
+      const { format, width, height } = await new Bun.Image(bytes).metadata();
+      return `${format} ${width}x${height}`;
+    };
+    // "image/png: png 4x3" for a body.
+    const typeAndShape = async (body: Response | Request) =>
+      `${body.headers.get("content-type")}: ${await shape(await body.bytes())}`;
+    // The encoded picture of a body or of `image.blob()`, or the message of what it throws.
+    const encodedBy = async (make: () => Response | Promise<Blob>) => {
+      try {
+        const encoded = await make();
+        const type = encoded instanceof Response ? encoded.headers.get("content-type") : encoded.type;
+        const bytes = await encoded.bytes();
+        return { type, shape: await shape(bytes), sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
+      } catch (e) {
+        return { message: (e as Error).message };
+      }
+    };
+    const UNRECOGNISED = "Image: unrecognised format (expected JPEG, PNG, WebP, GIF, BMP, TIFF, HEIC or AVIF)";
+    const TOO_LONG = "Image: input exceeds maxPixels limit";
+    const jpeg = { type: "image/jpeg", shape: "jpeg 64x64" };
+    const png = { type: "image/png", shape: "png 4x3" };
+
+    test.each([
+      ["slice(a)", (file: Blob) => file.slice(a), jpeg],
+      ["slice(a, a + b)", (file: Blob) => file.slice(a, a + b), jpeg],
+      ["slice(a + b)", (file: Blob) => file.slice(a + b), png],
+      ["slice(a + b, a + b + c)", (file: Blob) => file.slice(a + b, a + b + c), png],
+      ["slice(a).slice(b)", (file: Blob) => file.slice(a).slice(b), png],
+      // The end of the window is the end of the input: libjpeg fills the rows it has no data for.
+      ["slice(a, a + b - 200)", (file: Blob) => file.slice(a, a + b - 200), jpeg],
+      ["slice(a + b, a + b + 30)", (file: Blob) => file.slice(a + b, a + b + 30), { message: "Image: decode failed" }],
+      ["slice(a, -c)", (file: Blob) => file.slice(a, -c), jpeg],
+      ["slice(a, a)", (file: Blob) => file.slice(a, a), { message: UNRECOGNISED }],
+      // A window that starts at or past the end of the file is empty.
+      ["slice(a + b + c)", (file: Blob) => file.slice(a + b + c), { message: UNRECOGNISED }],
+      ["slice(a + b + c + 10)", (file: Blob) => file.slice(a + b + c + 10), { message: UNRECOGNISED }],
+      ["slice(file.size)", (file: Blob) => file.slice(file.size), { message: UNRECOGNISED }],
+    ] as const)("new Response(image) encodes what image.blob() encodes for %s", async (_, window, expected) => {
+      using dir = threeIn();
+      const sliced = () => window(three(String(dir))).image();
+      const body = await encodedBy(() => new Response(sliced()));
+      expect(body).toMatchObject(expected);
+      expect(body).toEqual(await encodedBy(() => sliced().blob()));
+    });
+
+    test("new Request(), fetch() and a Bun.serve() response carry the slice", async () => {
+      using dir = threeIn();
+      const file = () => three(String(dir));
+      const second = file().slice(a, a + b);
+      const request = new Request("http://localhost/", { method: "POST", body: second.image() });
+      expect(await typeAndShape(request)).toBe("image/jpeg: jpeg 64x64");
+
+      using server = Bun.serve({
+        port: 0,
+        // Says what arrived, and answers with a slice of its own.
+        async fetch(received) {
+          const third = file().slice(a + b);
+          return new Response(third.image(), { headers: { "x-received": await typeAndShape(received) } });
+        },
+      });
+      const fromSecond = file().slice(a);
+      const response = await fetch(server.url, { method: "POST", body: fromSecond.image() });
+      expect({ received: response.headers.get("x-received"), answered: await typeAndShape(response) }).toEqual({
+        received: "image/jpeg: jpeg 64x64",
+        answered: "image/png: png 4x3",
+      });
+    });
+
+    test("a slice of fs.openAsBlob() as a body is the slice", async () => {
+      using dir = threeIn();
+      const blob = await fs.openAsBlob(join(String(dir), "three.bin"));
+      const sliced = () => blob.slice(a, a + b).image();
+      const body = await encodedBy(() => new Response(sliced()));
+      expect(body).toMatchObject(jpeg);
+      expect(body).toEqual(await encodedBy(() => sliced().blob()));
+    });
+
+    // /proc/self/cmdline is a regular file that reports no size. It holds the arguments of the process, each with a
+    // NUL after it. The last arguments of the child are two pictures that have only ASCII bytes, cut at each NUL.
+    test.skipIf(!isLinux)("a slice of a file that reports no size is the slice", async () => {
+      const asciiBmp = (width: number, height: number) => {
+        const stride = Math.ceil((width * 3) / 4) * 4;
+        const bmp = Buffer.alloc(54 + stride * height);
+        bmp.write("BM");
+        bmp.writeUInt32LE(bmp.length, 2);
+        bmp.writeUInt32LE(54, 10);
+        bmp.writeUInt32LE(40, 14);
+        bmp.writeInt32LE(width, 18);
+        bmp.writeInt32LE(height, 22);
+        bmp.writeUInt16LE(1, 26);
+        bmp.writeUInt16LE(24, 28);
+        for (let y = 0; y < height; y++) bmp.fill(0x20, 54 + y * stride, 54 + y * stride + width * 3);
+        return bmp;
+      };
+      const first = asciiBmp(3, 2);
+      const second = asciiBmp(2, 5);
+      const script = `
+        import fs from "node:fs";
+        const path = "/proc/self/cmdline";
+        // One NUL comes after the last argument.
+        const start = fs.readFileSync(path).length - ${first.length + second.length + 1};
+        const shape = async body => {
+          const { format, width, height } = await new Bun.Image(await body.bytes()).metadata();
+          return format + " " + width + "x" + height;
+        };
+        const sliced = (...window) => Bun.file(path).slice(...window).image();
+        console.log(JSON.stringify({
+          size: fs.statSync(path).size,
+          first: await shape(new Response(sliced(start))),
+          second: await shape(new Response(sliced(start + ${first.length}))),
+          secondToItsEnd: await shape(new Response(sliced(start + ${first.length}, start + ${first.length + second.length}))),
+          sameAsBlob: await shape(await sliced(start + ${first.length}).blob()),
+        }));
+      `;
+      const pictures = Buffer.concat([first, second]).toString("latin1").split("\0");
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, ...pictures],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        size: 0,
+        first: "png 3x2",
+        second: "png 2x5",
+        secondToItsEnd: "png 2x5",
+        sameAsBlob: "png 2x5",
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test("after a body, later bodies and terminals read the slice", async () => {
+      using dir = threeIn();
+      const img = three(String(dir))
+        .slice(a + b)
+        .image();
+      expect(await typeAndShape(new Response(img))).toBe("image/png: png 4x3");
+      expect([img.width, img.height]).toEqual([4, 3]);
+      expect(await typeAndShape(new Response(img))).toBe("image/png: png 4x3");
+      expect(await img.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await shape(await img.jpeg().bytes())).toBe("jpeg 4x3");
+    });
+
+    test("terminals pending across a body read the slice", async () => {
+      using dir = threeIn();
+      const img = three(String(dir))
+        .slice(a + b)
+        .image();
+      const metadata = img.metadata();
+      const bytes = img.png().bytes();
+      const response = new Response(img);
+      expect(await metadata).toEqual({ width: 4, height: 3, format: "png" });
+      expect(await shape(await bytes)).toBe("png 4x3");
+      expect(await typeAndShape(response)).toBe("image/png: png 4x3");
+    });
+
+    test("a body that cannot read the file still names the slice", async () => {
+      using dir = tempDir("image-body-window", {});
+      const path = join(String(dir), "three.bin");
+      const img = Bun.file(path)
+        .slice(a + b)
+        .image();
+      expect(() => new Response(img)).toThrow("ENOENT");
+      await Bun.write(path, Buffer.concat(pictures));
+      expect(await typeAndShape(new Response(img))).toBe("image/png: png 4x3");
+      expect(await shape(await img.bytes())).toBe("png 4x3");
+    });
+
+    test("each body of a slice reads the file again", async () => {
+      using dir = tempDir("image-body-window", { "two.bin": Buffer.concat([gradientPng, cornersPng]) });
+      const path = join(String(dir), "two.bin");
+      const img = Bun.file(path).slice(gradientPng.length).image();
+      expect(await typeAndShape(new Response(img))).toBe("image/png: png 4x3");
+      // Another picture behind the same offset.
+      await Bun.write(path, Buffer.concat([gradientPng, cmykJpeg]));
+      expect(await typeAndShape(new Response(img))).toBe("image/jpeg: jpeg 64x64");
+      expect(await img.metadata()).toEqual({ width: 64, height: 64, format: "jpeg" });
+    });
+
+    test("the 256 MiB cap is for the slice, not for the file", async () => {
+      using dir = tempDir("image-body-window", {});
+      const path = join(String(dir), "long.bin");
+      const cap = 256 * 1024 * 1024;
+      // One byte, the picture, then zeros to 2 bytes over the cap.
+      fs.writeFileSync(path, Buffer.concat([Buffer.alloc(1), cornersPng]));
+      fs.truncateSync(path, cap + 2);
+      const file = () => Bun.file(path);
+      const inside = file().slice(1, 1 + cornersPng.length);
+      expect(await typeAndShape(new Response(inside.image()))).toBe("image/png: png 4x3");
+      // A window of one byte over the cap is refused before the read.
+      const overCap = file().slice(1);
+      expect(() => new Response(overCap.image())).toThrow(TOO_LONG);
+      // Without a window the cap measures the file: an un-sliced body and a path string are refused, as before.
+      expect(() => new Response(file().image())).toThrow(TOO_LONG);
+      expect(() => new Response(new Bun.Image(path))).toThrow(TOO_LONG);
+      await expect(new Bun.Image(path).metadata()).rejects.toThrow(TOO_LONG);
+      // The length of a window is measured from its offset: 2 bytes are left at the cap, and they are no picture.
+      const lastBytes = file().slice(cap);
+      expect(() => new Response(lastBytes.image())).toThrow(UNRECOGNISED);
+      // A slice from byte 0 keeps no window (see "slice(0, n) ends the body at n"), so the cap measures the file.
+      const fromStart = file().slice(0, 1 + cornersPng.length);
+      expect(() => new Response(fromStart.image())).toThrow(TOO_LONG);
+    });
+
+    // The window is measured against the file at each read, and it stays the window of that Image.
+    test("a slice is empty while the file ends before it", async () => {
+      using dir = threeIn();
+      const path = join(String(dir), "three.bin");
+      const img = Bun.file(path).slice(a).image();
+      expect(await typeAndShape(new Response(img))).toBe("image/jpeg: jpeg 64x64");
+      // The file loses the bytes of the window, then gets them back.
+      fs.truncateSync(path, a);
+      expect(() => new Response(img)).toThrow(UNRECOGNISED);
+      await expect(img.metadata()).rejects.toThrow(UNRECOGNISED);
+      await Bun.write(path, Buffer.concat(pictures));
+      expect(await typeAndShape(new Response(img))).toBe("image/jpeg: jpeg 64x64");
+    });
+
+    // A Bun.file() keeps the size it read once. A slice of it ends where that size says, for a body as for image.blob().
+    test("a slice of a Bun.file() with a stale size ends at that size", async () => {
+      using dir = tempDir("image-body-window", {});
+      const path = join(String(dir), "stale.bin");
+      // Reads the size of `before`, replaces the file with `after`, and gives the body of a slice of the stale handle.
+      const staleBody = async (
+        before: readonly Uint8Array[],
+        after: readonly Uint8Array[],
+        window: (file: Blob) => Blob,
+      ) => {
+        await Bun.write(path, Buffer.concat(before));
+        const file = Bun.file(path);
+        expect(file.size).toBe(Buffer.concat(before).length);
+        await Bun.write(path, Buffer.concat(after));
+        const sliced = () => window(file).image();
+        const body = await encodedBy(() => new Response(sliced()));
+        expect(body).toEqual(await encodedBy(() => sliced().blob()));
+        return body;
+      };
+      const appended = [[gradientPng], [gradientPng, cornersPng]] as const;
+      expect(await staleBody(...appended, file => file.slice(a))).toEqual({ message: UNRECOGNISED });
+      expect(await staleBody(...appended, file => file.slice(a, a + c))).toEqual({ message: UNRECOGNISED });
+      // A longer PNG in place of the tail is cut short.
+      const longer = [
+        [gradientPng, cornersPng],
+        [gradientPng, gradientPng],
+      ] as const;
+      expect(await staleBody(...longer, file => file.slice(a))).toEqual({ message: "Image: decode failed" });
+      // A JPEG that is cut short decodes with no error: libjpeg fills the rows it has no data for.
+      const cut = [
+        [gradientPng, cmykJpeg.subarray(0, b - 200)],
+        [gradientPng, cmykJpeg],
+      ] as const;
+      const cutBody = await staleBody(...cut, file => file.slice(a));
+      expect(cutBody).toMatchObject(jpeg);
+      const fresh = Bun.file(path).slice(a);
+      expect(cutBody).not.toEqual(await encodedBy(() => new Response(fresh.image())));
+    });
+
+    // A size at offset 0 can be the cached size of an un-sliced Bun.file(), so these read the file to its end.
+    test("an un-sliced Bun.file() with a stale size is still served whole", async () => {
+      using dir = tempDir("image-body-window", { "grown.png": Buffer.from(cornersPng) });
+      const later = join(String(dir), "later.png");
+      const missing = Bun.file(later);
+      expect(await missing.exists()).toBe(false);
+      await Bun.write(later, gradientPng);
+      expect(await typeAndShape(new Response(missing.image()))).toBe("image/png: png 16x16");
+
+      const grown = Bun.file(join(String(dir), "grown.png"));
+      expect(grown.size).toBe(cornersPng.length);
+      await Bun.write(join(String(dir), "grown.png"), gradientPng);
+      expect(await typeAndShape(new Response(grown.image()))).toBe("image/png: png 16x16");
+    });
+
+    // slice(0, n) has the offset of an un-sliced Bun.file() with a cached size (#4930), so the body is the whole file.
+    test.failing("slice(0, n) ends the body at n", () => {
+      using dir = threeIn();
+      const cut = three(String(dir)).slice(0, 30);
+      expect(() => new Response(cut.image())).toThrow("Image: decode failed");
+      const empty = three(String(dir)).slice(0, 0);
+      expect(() => new Response(empty.image())).toThrow(UNRECOGNISED);
+    });
+
+    // A negative start on a size that is not read yet counts back from the largest size a Blob can have, not from
+    // the end of the file (#41257). That offset is not a place in the file, so the body is the whole file.
+    test.failing("slice(-n) of a Bun.file() with an unread size is the last n bytes", async () => {
+      using dir = threeIn();
+      const last = three(String(dir)).slice(-c);
+      expect(await typeAndShape(new Response(last.image()))).toBe("image/png: png 4x3");
+    });
+
+    test("slice(-n) of a Bun.file() with an unread size is the whole file when n is over its size", async () => {
+      using dir = threeIn();
+      const all = three(String(dir)).slice(-(a + b + c + 10));
+      expect(await typeAndShape(new Response(all.image()))).toBe("image/png: png 16x16");
+    });
+
+    // A step that resolves the size of that Blob, structuredClone() here, leaves it empty at the end of the file.
+    test.failing("slice(-n) of a Bun.file() with an unread size is the same after structuredClone()", async () => {
+      using dir = threeIn();
+      const all = three(String(dir)).slice(-(a + b + c + 10));
+      structuredClone(all);
+      expect(await typeAndShape(new Response(all.image()))).toBe("image/png: png 16x16");
+    });
+
+    // A negative end on a size that is not read yet does not end the window: the body reads to the end of the file.
+    test.failing("slice(n, -m) of a Bun.file() with an unread size ends m bytes before the end", () => {
+      using dir = threeIn();
+      const cut = three(String(dir)).slice(a + b, -30);
+      expect(() => new Response(cut.image())).toThrow("Image: decode failed");
+    });
+
+    test("a negative index on a Bun.file() whose size was read counts back from the end of the file", async () => {
+      using dir = threeIn();
+      const file = three(String(dir));
+      expect(file.size).toBe(a + b + c);
+      expect(await typeAndShape(new Response(file.slice(-c).image()))).toBe("image/png: png 4x3");
+      expect(await typeAndShape(new Response(file.slice(a, -c).image()))).toBe("image/jpeg: jpeg 64x64");
+      expect(() => new Response(file.slice(a + b, -30).image())).toThrow("Image: decode failed");
+    });
   });
 
   // Store-backed Blob sources are read at terminal time through the Blob's

@@ -8,9 +8,6 @@
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 
-// An error that native code creates at the top of the event loop (e.g. run_from_js_thread in
-// node_fs.rs) has no JS call stack. The promise that is rejected with it has an await chain,
-// and JSC's walk of that chain (the one `new Error()` uses) gives the frames of what waits.
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue errorValue, JSC::JSPromise* promise)
 {
     auto& vm = JSC::getVM(globalObject);

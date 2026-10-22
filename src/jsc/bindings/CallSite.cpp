@@ -94,8 +94,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
     if (stackFrame.isAsync()) {
-        // An async frame is an async function or a module that waits. It has no CodeBlock after a
-        // collection took its code, and it is still not native code.
+        // Not native, also when a collection took its code and it has no CodeBlock.
         m_flags |= static_cast<unsigned int>(Flags::IsAsync);
     } else if (!stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);

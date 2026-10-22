@@ -296,8 +296,7 @@ public:
                 return true;
             }
 
-            // A frame with no function name is only its location: code at the top level of a module
-            // or a script, and `async <location>` for a module that waits at a top-level await.
+            // A frame with no function name is only its location, after `async ` for a module that waits.
             lineInner = line;
             if (lineInner.startsWith("async "_s)) {
                 frame.isAsync = true;

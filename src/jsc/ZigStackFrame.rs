@@ -87,8 +87,7 @@ impl ZigStackFrame {
         }
     }
 
-    /// What goes in front of the location of a frame that `name_formatter` prints nothing for.
-    /// A module that waits at a top-level await has such a frame: `at async file:line:column`.
+    /// For a frame with no name. A module that waits is one: `at async file:line:column`.
     pub fn location_prefix(&self) -> &'static str {
         if self.is_async { "async " } else { "" }
     }

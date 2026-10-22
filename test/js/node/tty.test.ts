@@ -1,5 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows } from "harness";
 import { spawn } from "node:child_process";
 import { WriteStream } from "node:tty";
 
@@ -348,5 +348,68 @@ describe("WriteStream.prototype.getColorDepth", () => {
 
   it("empty", () => {
     expect(WriteStream.prototype.getColorDepth.call(undefined, {})).toBe(isWindows ? 24 : 1);
+  });
+});
+
+// kqueue watches /dev/tty only when the kevent asks for a low-water mark of 1 (xnu, filt_specattach). Without it the
+// event loop could not watch the device: no writer opened on it, a stream lost what it wrote before process.exit(),
+// and stdin did not read. Linux never refuses /dev/tty, so these rows would pass there with no change.
+describe.skipIf(!isMacOS)("/dev/tty", () => {
+  // Runs the script in a bun whose controlling terminal is a new pty. Types `input` once the script prints "ready".
+  async function onTerminal(script: string, redirect = "", input?: string) {
+    let output = "";
+    const closed = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" -e "$1" ${redirect}`, bunExe(), script],
+      env: bunEnv,
+      terminal: {
+        data(terminal, chunk) {
+          output += Buffer.from(chunk).toString();
+          if (input !== undefined && output.includes("ready")) {
+            terminal.write(input);
+            input = undefined;
+          }
+        },
+        exit() {
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+    return { output: output.replaceAll("\r\n", "\n"), exitCode: await proc.exited };
+  }
+
+  test.concurrent.each([
+    ["tty.WriteStream", `new (require("tty").WriteStream)(require("fs").openSync("/dev/tty", "w"))`, ""],
+    ["process.stdout", "process.stdout", ">/dev/tty"],
+    ["process.stderr", "process.stderr", "2>/dev/tty"],
+  ])("%s delivers a write made before process.exit()", async (_name, stream, redirect) => {
+    const script = `${stream}.write("written before exit\\n"); process.exit(0);`;
+    expect(await onTerminal(script, redirect)).toEqual({ output: "written before exit\n", exitCode: 0 });
+  });
+
+  test.concurrent("Bun.file().writer() writes to it", async () => {
+    const script = `
+      const writer = Bun.file(require("fs").openSync("/dev/tty", "w")).writer();
+      writer.write("from a writer\\n");
+      await writer.end();
+    `;
+    expect(await onTerminal(script)).toEqual({ output: "from a writer\n", exitCode: 0 });
+  });
+
+  test.concurrent("process.stdin reads from it", async () => {
+    const script = `
+      process.stdin.setEncoding("utf8");
+      process.stdin.once("data", line => {
+        console.log("got " + JSON.stringify(line));
+        process.exit(0);
+      });
+      console.log("ready");
+    `;
+    // The terminal echoes what is typed.
+    expect(await onTerminal(script, "</dev/tty", "typed\n")).toEqual({
+      output: 'ready\ntyped\ngot "typed\\n"\n',
+      exitCode: 0,
+    });
   });
 });

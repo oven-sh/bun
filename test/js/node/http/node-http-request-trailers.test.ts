@@ -290,7 +290,8 @@ test("a trailer value over 64 KiB keeps the field after it", async () => {
   assert.deepStrictEqual(named, ["X-Big", "big", "X-After", "1"]);
 });
 
-// Bun keeps at most 199 trailer fields for a request. Node keeps server.maxHeadersCount of them, 2000 by default.
+// Bun keeps at most 199 trailer fields for a request. Node's limit is server.maxHeadersCount, 1000 when it is not set.
+// MAX_HEADER_PAIRS = 2000 counts names and values: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_common.js#L53
 describe("a trailer section with many fields", () => {
   const request = (count: number, lastLine = "") =>
     "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n0\r\n" +

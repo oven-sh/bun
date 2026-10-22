@@ -18,9 +18,6 @@ pub(crate) struct LintCommand;
 
 pub(crate) use bun_lint_driver::cli::HELP;
 
-/// True if `bun lint` is a command. A release build doesn't have it: there `bun lint` runs the project's own `lint`.
-pub(crate) const IS_ENABLED: bool = bun_core::Environment::IS_CANARY;
-
 /// True if `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release build doesn't have
 /// it.
 const HAS_TEST_RUNNER: bool = bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;

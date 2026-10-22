@@ -2952,6 +2952,28 @@ it("delivers 'session' even when the data handler destroys the socket immediatel
   await once(server, "close");
 });
 
+// node throws from connect(). Here the session is set when the connection opens, and nothing else can take the error.
+it("a session of the wrong type is the socket's 'error'", async () => {
+  const server = tls.createServer({ ...COMMON_CERT_ });
+  server.on("tlsClientError", () => {});
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const events: string[] = [];
+    // @ts-expect-error
+    const client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", session: 123 });
+    client.on("error", err => events.push("error:" + err.message));
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    client.on("close", resolve);
+    expect({ hadError: await promise, events }).toEqual({
+      events: ["error:Expected session to be a string, Buffer or TypedArray"],
+      hadError: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 describe.each(["TLSv1.2", "TLSv1.3"] as const)("%s: getSession() / getTLSTicket()", version => {
   // BoringSSL never folds a TLS 1.3 NewSessionTicket into the SSL's own
   // established_session; it only hands the ticket-bearing session to the

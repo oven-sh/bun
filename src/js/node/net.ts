@@ -174,7 +174,9 @@ interface TLSConnectOptions {
   servername: string;
 }
 
-interface InternalSocketHandler<Data> extends SocketHandler<Data> {
+interface InternalSocketHandler<Data> extends Omit<SocketHandler<Data>, "open"> {
+  /** The native dispatch takes an Error that this returns for one that it threw. */
+  open?(socket: Socket<Data>): unknown;
   session?(socket: Socket<Data>, session: Buffer): void;
   keylog?(socket: Socket<Data>, line: Buffer): void;
 }
@@ -197,6 +199,7 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+const ObjectKeys = Object.keys;
 const reportError = globalThis.reportError;
 
 let uvBinding;
@@ -385,6 +388,15 @@ function failRejectedWrite(self) {
   failWriteWith(self, er, self[kwriteCallback]);
   return true;
 }
+// Node completes a write in a callback of its own, so what that throws ends nothing else. This one can run under a
+// destroy() that an 'uncaughtException' listener made: the report waits for that call to return.
+function failWriteCallback(callback, er) {
+  try {
+    callback(er);
+  } catch (e) {
+    process.nextTick(reportError, e);
+  }
+}
 function failWriteWith(self, er, callback) {
   self._pendingData = null;
   self[kwriteCallback] = null;
@@ -395,7 +407,7 @@ function failWriteWith(self, er, callback) {
     // 'close' still fire even when every write had a callback. Only handing
     // the error to a callback that ignores it left the socket alive forever
     // (test-net-stream's server never observed its peer vanish).
-    callback(er);
+    failWriteCallback(callback, er);
     if (!self.destroyed && !self._hadError) {
       // _hadError is the cross-path once-guard: the native error dispatch
       // (SocketHandlers.error) can deliver the same failure, and node emits
@@ -687,69 +699,61 @@ function onClientHandshake(self, socket, success, verifyError) {
   self._secureEstablished = true;
   self[kVerifyError] = verifyError ?? null;
   self.alpnProtocol = socket.alpnProtocol;
-  // Node has no try/catch around these emits; a listener throw reaches
-  // InternalCallbackScope as uncaughtException. reportError mirrors that
-  // without changing Bun.connect's handshake-throw-to-error-handler contract.
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
-  try {
-    if (self[kStandaloneWrap]) {
-      finishStandaloneWrap(self, verifyError);
-      return;
+  if (self[kStandaloneWrap]) {
+    finishStandaloneWrap(self, verifyError);
+    return;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
+  // Unlike Node, don't gate on !isSessionReused(): BoringSSL keeps the peer
+  // chain on a resumed SSL_SESSION, so re-check it against this servername.
+  // The gate alone is the cross-servername resume of CVE-2026-48934.
+  const { checkServerIdentity } = self[bunTLSConnectOptions];
+  if (!verifyError && typeof checkServerIdentity === "function") {
+    const options = self[kConnectOptions];
+    const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
+    const cert = self.getPeerCertificate(true);
+    if (cert) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671. After TLSSocket#connect() the callback can be the constructor's, and then `options` is not its owner.
+      const receiver =
+        options !== undefined && $getByIdDirect(options, "checkServerIdentity") === checkServerIdentity
+          ? options
+          : undefined;
+      verifyError = checkServerIdentity.$call(receiver, hostname, cert);
     }
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1662-L1673
-    // Unlike Node, don't gate on !isSessionReused(): BoringSSL keeps the peer
-    // chain on a resumed SSL_SESSION, so re-check it against this servername.
-    // The gate alone is the cross-servername resume of CVE-2026-48934.
-    const { checkServerIdentity } = self[bunTLSConnectOptions];
-    if (!verifyError && typeof checkServerIdentity === "function") {
-      const options = self[kConnectOptions];
-      const hostname = self.servername || options?.host || options?.socket?._host || self._host || "localhost";
-      const cert = self.getPeerCertificate(true);
-      if (cert) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1671. After TLSSocket#connect() the callback can be the constructor's, and then `options` is not its owner.
-        const receiver =
-          options !== undefined && $getByIdDirect(options, "checkServerIdentity") === checkServerIdentity
-            ? options
-            : undefined;
-        verifyError = checkServerIdentity.$call(receiver, hostname, cert);
-      }
-    }
-    verifyError ||= refusedName;
-    let rejectUnauthorized;
-    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
-      if (verifyError) {
-        self.authorized = false;
-        self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized ?? self._rejectUnauthorized) {
-          self.destroy(verifyError);
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1686-L1688
-          self.emit("secure", self);
-          return;
-        }
-      } else {
-        self.authorized = true;
+  }
+  verifyError ||= refusedName;
+  let rejectUnauthorized;
+  if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
+    if (verifyError) {
+      self.authorized = false;
+      self.authorizationError = verifyError.code || verifyError.message;
+      if (rejectUnauthorized ?? self._rejectUnauthorized) {
+        self.destroy(verifyError);
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1686-L1688
+        self.emit("secure", self);
+        return;
       }
     } else {
       self.authorized = true;
     }
-    self[kSessionAccepted] = true;
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
-    self.secureConnecting = false;
-    // pauseOnConnect stopped the handle as the handshake completed, whatever resume() did before that.
-    if (!self.isPaused()) self.read(0);
-    self.emit(kSecureConnectDone);
-    self.emit("secureConnect", verifyError);
-    const pendingSession = self[kpendingSession];
-    if (pendingSession) {
-      self[kpendingSession] = null;
-      self.emit("session", pendingSession);
-    }
-    self.removeListener("end", onConnectEnd);
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
-    self.emit("secure", self);
-  } catch (err) {
-    reportError(err);
+  } else {
+    self.authorized = true;
   }
+  self[kSessionAccepted] = true;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
+  self.secureConnecting = false;
+  // pauseOnConnect stopped the handle as the handshake completed, whatever resume() did before that.
+  if (!self.isPaused()) self.read(0);
+  self.emit(kSecureConnectDone);
+  self.emit("secureConnect", verifyError);
+  const pendingSession = self[kpendingSession];
+  if (pendingSession) {
+    self[kpendingSession] = null;
+    self.emit("session", pendingSession);
+  }
+  self.removeListener("end", onConnectEnd);
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
+  self.emit("secure", self);
 }
 // Unlike node, a wrap rejects a bad certificate: node leaves that check to the app, and a forgotten check accepts anything.
 function finishStandaloneWrap(self, verifyError) {
@@ -795,7 +799,6 @@ function establishedTLSError(self, error) {
   }
 }
 
-// Node reports a throwing 'data' listener as uncaughtException and keeps reading.
 function pushDataToSocket(self, socket, buffer) {
   // TLS took over the fd; the wrapped socket reads nothing: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L723-L727
   if (socket[kAdoptedTLSRaw]) return;
@@ -804,17 +807,34 @@ function pushDataToSocket(self, socket, buffer) {
     self.destroy();
     return;
   }
-  let full;
-  try {
-    full = self.push(buffer) === false;
-  } catch (e) {
-    reportError(e);
-    return;
-  }
-  if (full) readStop(self, socket);
+  if (self.push(buffer) === false) readStop(self, socket);
 }
 
-const SocketHandlers = {
+function reportThrow(handler) {
+  return function (this: unknown, socket) {
+    // The socket went to another process, which leaves its handle without an owner until the receiver's ack closes it.
+    if (socket.data === undefined) return;
+    try {
+      return handler.$apply(this, arguments);
+    } catch (e) {
+      reportError(e);
+    }
+  };
+}
+// Node has no try/catch between a handle's callback and the listeners it runs, so a throw ends the callback as an
+// uncaughtException and the socket stays as it is: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1690-L1691
+// The native dispatch gives a handler's throw to `error`, and closes a socket whose `open` threw.
+function reportThrows<Handlers extends object>(handlers: Handlers): Handlers {
+  const wrapped = { ...handlers };
+  for (const name of ObjectKeys(handlers)) {
+    // What these two throw refuses the handshake, as what they return decides it.
+    if (name === "alpnCallback" || name === "serverName") continue;
+    if ($isCallable(handlers[name])) wrapped[name] = reportThrow(handlers[name]);
+  }
+  return wrapped;
+}
+
+const SocketHandlers = reportThrows({
   close(socket, err) {
     const self = socket.data;
     if (!self || self[kclosed]) return;
@@ -877,9 +897,10 @@ const SocketHandlers = {
   keylog(socket, line) {
     const self = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    // Node's first two listeners: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L903-L909 and #L1279-L1280
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
+    self.emit("keylog", line);
   },
   error(socket, error) {
     const self = socket.data;
@@ -890,7 +911,7 @@ const SocketHandlers = {
     const callback = self[kwriteCallback];
     if (callback) {
       self[kwriteCallback] = null;
-      callback(error);
+      failWriteCallback(callback, error);
     }
 
     self.emit("error", error);
@@ -953,7 +974,7 @@ const SocketHandlers = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
-} as const satisfies InternalSocketHandler<SocketInstance>;
+} as const satisfies InternalSocketHandler<SocketInstance>);
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198; a stopped handle does not hold the loop, a pending write still does.
 function readStop(self, handle) {
@@ -989,8 +1010,13 @@ function finishSocketEnd(self) {
   if (self[kended]) return;
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
-  self.push(null);
-  Duplex.prototype.read.$call(self, 0);
+  try {
+    self.push(null);
+    Duplex.prototype.read.$call(self, 0);
+  } catch (e) {
+    // A 'readable' listener. The hold on the loop has yet to go, and under a close so has the pending write.
+    process.nextTick(reportError, e);
+  }
   // The peer's FIN means kernel reads are over for good. In libuv a stream handle only holds
   // the loop while reading or with a write in flight, so node lets the process exit even if
   // the (half-open) writable side stays open and the readable side was never consumed. Mirror
@@ -1092,8 +1118,7 @@ function SocketEmitEndNT(self, _err?) {
   // also lands here, and its write stays parked because it can still drain.
   const pendingWrite = self[kwriteCallback];
   if (pendingWrite && (self[kclosed] || self.destroyed)) {
-    self[kwriteCallback] = null;
-    pendingWrite(_err ?? $ERR_SOCKET_CLOSED());
+    failWriteWith(self, _err ?? $ERR_SOCKET_CLOSED(), pendingWrite);
   }
 }
 
@@ -1152,7 +1177,7 @@ function onSNIResolution(state, err, context) {
   }
 }
 
-const ServerHandlers = {
+const ServerHandlers = reportThrows({
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -1164,9 +1189,10 @@ const ServerHandlers = {
   keylog(socket, line) {
     const { data: self } = socket;
     if (!self) return;
-    self.emit("keylog", line);
+    // See SocketHandlers.keylog.
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
     self.server?.emit?.("keylog", line, self);
+    self.emit("keylog", line);
   },
   alpnCallback(socket: Socket<TLSSocketInstance>, servername, protocolsWire) {
     // Returns false when this server has no ALPNCallback (the native side
@@ -1366,17 +1392,20 @@ const ServerHandlers = {
           // there and test-tls-sni-option asserts mustNotCall on it for the
           // authorized=false cases.
           // Node reports a connection once: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1234-L1240
-          if (!self[kerrorEmitted]) {
-            self[kerrorEmitted] = true;
-            server?.emit("tlsClientError", verifyError, self);
+          try {
+            if (!self[kerrorEmitted]) {
+              self[kerrorEmitted] = true;
+              server?.emit("tlsClientError", verifyError, self);
+            }
+          } finally {
+            // A rejected peer is torn down with the verification error, so
+            // 'close' reports hadError === true. The internal 'error' listener
+            // installed by the TLSSocket constructor (node's _init) keeps this
+            // from surfacing as an uncaught exception when the user attached
+            // none of their own.
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L606
+            self.destroy(verifyError);
           }
-          // A rejected peer is torn down with the verification error, so
-          // 'close' reports hadError === true. The internal 'error' listener
-          // installed by the TLSSocket constructor (node's _init) keeps this
-          // from surfacing as an uncaught exception when the user attached
-          // none of their own.
-          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L606
-          self.destroy(verifyError);
           return;
         }
       } else {
@@ -1392,30 +1421,23 @@ const ServerHandlers = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L524
       self.read(0);
     }
-    // Node: a listener throw here reaches InternalCallbackScope as
-    // uncaughtException; Bun's dispatch would route it to this table's error
-    // handler instead. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
-    try {
-      if (server) {
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
-        if (!self.destroyed && self._releaseControl()) {
-          server.emit("secureConnection", self);
-        }
+    if (server) {
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1214-L1232
+      if (!self.destroyed && self._releaseControl()) {
+        server.emit("secureConnection", self);
       }
-      if (self.destroyed) return;
-      self.emit(kSecureConnectDone);
-      // Accepted sockets expose no post-handshake events: node's socket-level
-      // 'secure' fires before a tls.Server user can hold the socket (the
-      // 'connection' event hands out the raw socket), and 'secureConnect' is
-      // attached by the client path only. A standalone
-      // `new TLSSocket(s, { isServer: true })` is user-held from construction,
-      // so its 'secure' stays observable.
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
-      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
-      if (!server) self.emit("secure", self);
-    } catch (err) {
-      reportError(err);
     }
+    if (self.destroyed) return;
+    self.emit(kSecureConnectDone);
+    // Accepted sockets expose no post-handshake events: node's socket-level
+    // 'secure' fires before a tls.Server user can hold the socket (the
+    // 'connection' event hands out the raw socket), and 'secureConnect' is
+    // attached by the client path only. A standalone
+    // `new TLSSocket(s, { isServer: true })` is user-held from construction,
+    // so its 'secure' stays observable.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1107
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1810
+    if (!server) self.emit("secure", self);
   },
   error(socket, error) {
     const data = this.data;
@@ -1431,7 +1453,7 @@ const ServerHandlers = {
       const callback = data[kwriteCallback];
       if (callback) {
         data[kwriteCallback] = null;
-        callback(error);
+        failWriteCallback(callback, error);
       }
       // Mirrors node's onerror:
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
@@ -1471,7 +1493,7 @@ const ServerHandlers = {
     const callback = data[kwriteCallback];
     if (callback) {
       data[kwriteCallback] = null;
-      callback(error);
+      failWriteCallback(callback, error);
     }
     if (!data.destroyed) {
       data.destroy(error);
@@ -1484,7 +1506,7 @@ const ServerHandlers = {
     SocketHandlers.drain(socket, rejected);
   },
   binaryType: "buffer",
-} as const satisfies InternalServerHandler<SocketInstance>;
+} as const satisfies InternalServerHandler<SocketInstance>);
 
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   if (typeof rejectUnauthorized !== "undefined") {
@@ -1659,7 +1681,7 @@ function onconnection(err, clientHandle) {
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2 = {
+const SocketHandlers2 = reportThrows({
   open(socket: Socket<PendingConnectData>) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -1674,14 +1696,20 @@ const SocketHandlers2 = {
       if (options) {
         const { session } = options;
         if (session) {
-          // On the native socket: an fd upgrade assigns `_handle` after `open`.
-          socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
+          try {
+            // On the native socket: an fd upgrade assigns `_handle` after `open`.
+            socket.setSession(typeof session === "string" ? Buffer.from(session, "latin1") : session);
+          } catch (e) {
+            // No listener's throw: the native dispatch gives an error that `open` returns to `error`, and closes the socket.
+            return e;
+          }
         }
       }
     }
     startNameCheckInHandshake(self, socket);
-    if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);
+    // Before the listeners: one that sends the socket to another process takes `data` off the handle.
     socket.data.req = undefined;
+    if (!self[kupgraded]) req.oncomplete(0, self._handle, req, true, true);
   },
   data(socket, buffer) {
     $debug("Bun.Socket data");
@@ -1733,8 +1761,9 @@ const SocketHandlers2 = {
   keylog(socket, line) {
     const { self } = socket.data;
     if (!self) return;
-    self.emit("keylog", line);
+    // See SocketHandlers.keylog.
     if (tlsKeylogPath !== undefined) appendTlsKeylog(tlsKeylogPath, line);
+    self.emit("keylog", line);
   },
   close(socket, err?: NativeSocketError) {
     $debug("Bun.Socket close");
@@ -1779,10 +1808,7 @@ const SocketHandlers2 = {
     // socket is gone - fail it so 'finish'/destroy are not stuck behind it
     // (mirrors SocketEmitEndNT).
     const pendingWrite = self[kwriteCallback];
-    if (pendingWrite) {
-      self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
-    }
+    if (pendingWrite) failWriteWith(self, $ERR_SOCKET_CLOSED(), pendingWrite);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
@@ -1791,7 +1817,6 @@ const SocketHandlers2 = {
   },
   error(socket, error) {
     $debug("Bun.Socket error");
-    if (socket.data === undefined) return;
     const { self } = socket.data;
     if (self._hadError) return;
     self._hadError = true;
@@ -1801,7 +1826,7 @@ const SocketHandlers2 = {
     const callback = self[kwriteCallback];
     if (callback) {
       self[kwriteCallback] = null;
-      callback(error);
+      failWriteCallback(callback, error);
     } else if (tlsError) {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L467-L498
       (self as TLSSocketInstance)._emitTLSError(error);
@@ -1838,7 +1863,7 @@ const SocketHandlers2 = {
     // An attempt that timed out was closed with its `oncomplete` cleared.
     req.oncomplete?.(error.errno, self._handle, req, true, true);
   },
-} satisfies InternalSocketHandler<ConnectData>;
+} satisfies InternalSocketHandler<ConnectData>);
 
 // The same table minus the per-connection callback members: a listener whose
 // config has neither handler never registers the native SNI/ALPN dispatches,
@@ -2169,7 +2194,7 @@ function Socket(options?): void {
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
-      data(socket, buffer) {
+      data: reportThrow(function data(socket, buffer) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
@@ -2180,7 +2205,7 @@ function Socket(options?): void {
           return;
         }
         self[kOnreadDeliver](buffer);
-      },
+      }),
     };
   }
   if (signal) {
@@ -3623,8 +3648,17 @@ function afterConnect(status, handle, req, readable, writable) {
     const pausedBeforeConnect = self.isPaused() || (self.readableEnded && self[kOnreadBuffer] === undefined);
     if (pausedBeforeConnect && !self.encrypted) readStop(self, self._handle);
 
-    self.emit("connect");
-    self.emit("ready");
+    let connectListenersRan = false;
+    try {
+      self.emit("connect");
+      connectListenersRan = true;
+      self.emit("ready");
+    } catch (e) {
+      // Node has not started to read, and so does not hold the loop. Its TLS socket starts from a 'connect' listener:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L502-L520
+      if (!self._readableState.reading && !(self.encrypted && connectListenersRan)) readStop(self, self._handle);
+      throw e;
+    }
 
     if (self[kPerfHooksNetConnectContext] && hasObserver("net")) {
       stopPerf(self, kPerfHooksNetConnectContext);

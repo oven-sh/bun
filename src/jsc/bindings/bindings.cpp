@@ -2344,12 +2344,374 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
+// node's isError branch (lib/internal/util/comparisons.js): these four compare unless the expected Error lists them as own enumerable keys.
+static bool nodeErrorsEqual(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
+{
+    VM& vm = globalObject->vm();
+    for (const Identifier* name : { &vm.propertyNames->message, &vm.propertyNames->name, &vm.propertyNames->cause, &vm.propertyNames->errors }) {
+        PropertySlot slot(o2, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool isOwn = o2->methodTable()->getOwnPropertySlot(o2, globalObject, *name, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isOwn && !(slot.attributes() & PropertyAttribute::DontEnum))
+            continue;
+        JSValue value1 = o1->get(globalObject, *name);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSValue value2 = o2->get(globalObject, *name);
+        RETURN_IF_EXCEPTION(scope, false);
+        bool valuesEqual = mode.deepEquals(globalObject, value1, value2, gcBuffer, stack, scope, true);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!valuesEqual)
+            return false;
+    }
+    bool hasOwnCause1 = o1->hasOwnProperty(globalObject, vm.propertyNames->cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool hasOwnCause2 = o2->hasOwnProperty(globalObject, vm.propertyNames->cause);
+    RETURN_IF_EXCEPTION(scope, false);
+    return hasOwnCause1 == hasOwnCause2;
+}
+
+// node's setEquiv and mapEquiv with their helpers (lib/internal/util/comparisons.js of v26.3.0, with the null fixes of nodejs/node#64441 and nodejs/node#64449), on the native entries: a subclass that overrides size, has, get or the iterator is not asked.
+struct NodeCollections {
+    const DeepEqualsMode& mode;
+    JSC::JSGlobalObject* globalObject;
+    MarkedArgumentBuffer& gcBuffer;
+    Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack;
+    ThrowScope& scope;
+    // The members of the expected collection that are still to pair off. A getter can empty the collection mid-walk.
+    MarkedArgumentBuffer candidates;
+    // The keys that both Maps hold with unequal values. node compares such a pair three times per nesting level.
+    JSSet* twins { nullptr };
+    bool sharesObjectKeys { false };
+
+    bool equal(JSValue a, JSValue b)
+    {
+        return mode.deepEquals(globalObject, a, b, gcBuffer, stack, scope, true);
+    }
+
+    JSValue candidate(int64_t index)
+    {
+        return index >= 0 && static_cast<size_t>(index) < candidates.size() ? candidates.at(index) : jsUndefined();
+    }
+
+    // typeof value === 'object' && value !== null
+    static bool isObject(JSValue value) { return value.isObject() && !value.isCallable(); }
+
+    // JSSet::has, JSSet::add, JSMap::has and JSMap::get are always inlined. The calls below share one copy of each.
+    NEVER_INLINE bool has(JSSet* set, JSValue value) { return set->has(globalObject, value); }
+    NEVER_INLINE void add(JSSet* set, JSValue value) { set->add(globalObject, value); }
+    NEVER_INLINE bool has(JSMap* map, JSValue key) { return map->has(globalObject, key); }
+    NEVER_INLINE JSValue get(JSMap* map, JSValue key) { return map->get(globalObject, key); }
+
+    void addTwin(JSValue key)
+    {
+        if (!twins)
+            twins = JSSet::create(globalObject->vm(), globalObject->setStructure());
+        add(twins, key);
+    }
+
+    // findLooseMatchingPrimitives. nullopt for undefined and null: only the other one of the two can match them.
+    std::optional<bool> canMatchLoosely(JSValue primitive)
+    {
+        if (primitive.isUndefinedOrNull())
+            return std::nullopt;
+        if (primitive.isSymbol())
+            return false;
+        if (primitive.isString()) {
+            double number = primitive.toNumber(globalObject);
+            RETURN_IF_EXCEPTION(scope, false);
+            return !std::isnan(number);
+        }
+        if (primitive.isNumber())
+            return !std::isnan(primitive.asNumber());
+        return true;
+    }
+
+    // setEquiv
+    bool setsEqual(JSSet* a, JSSet* b)
+    {
+        VM& vm = globalObject->vm();
+        auto* iteratorB = JSSetIterator::create(vm, globalObject->setIteratorStructure(), b, IterationKind::Keys);
+        JSValue value;
+        while (iteratorB->next(globalObject, value)) {
+            bool identical = has(a, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (identical)
+                continue;
+            if (!isObject(value)) {
+                if (!mode.looseValues)
+                    return false;
+                // setMightHaveLoosePrim
+                std::optional<bool> canMatch = canMatchLoosely(value);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!canMatch) {
+                    JSValue other = value.isUndefined() ? jsNull() : jsUndefined();
+                    bool expectedHasOther = has(b, other);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    canMatch = !expectedHasOther && has(a, other);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                if (!*canMatch)
+                    return false;
+            }
+            if (candidates.isEmpty() && a->size() < 3)
+                return smallSetsEqual(a, b, value, iteratorB);
+            candidates.appendWithCrashOnOverflow(value);
+        }
+        return candidates.isEmpty() || setMembersPairOff(a, b);
+    }
+
+    // node's compareSmallSets (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L724-L740), with its defect: past the end of `b` it compares a member with undefined, so new Set([o, { a: 1 }]) differs from its copy when `o` is deep-equal to { a: 1 }.
+    bool smallSetsEqual(JSSet* a, JSSet* b, JSValue value, JSSetIterator* iteratorB)
+    {
+        VM& vm = globalObject->vm();
+        auto* iteratorA = JSSetIterator::create(vm, globalObject->setIteratorStructure(), a, IterationKind::Keys);
+        JSValue firstA = jsUndefined();
+        iteratorA->next(globalObject, firstA);
+        JSValue secondA = jsUndefined();
+        bool firstMatches = equal(firstA, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (firstMatches) {
+            if (b->size() == 1)
+                return true;
+            iteratorA->next(globalObject, secondA);
+            bool identical = has(b, secondA);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (identical)
+                return true;
+            // iteratorB.next().value: undefined when `b` has no member left.
+            JSValue nextB = jsUndefined();
+            iteratorB->next(globalObject, nextB);
+            return equal(secondA, nextB);
+        }
+        if (a->size() == 1)
+            return false;
+        iteratorA->next(globalObject, secondA);
+        bool secondMatches = equal(secondA, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!secondMatches)
+            return false;
+        bool identical = has(b, firstA);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (identical)
+            return true;
+        JSValue nextB = jsUndefined();
+        iteratorB->next(globalObject, nextB);
+        return equal(firstA, nextB);
+    }
+
+    // setObjectEquiv, with arrayHasEqualElement
+    bool setMembersPairOff(JSSet* a, JSSet* b)
+    {
+        VM& vm = globalObject->vm();
+        bool forward = true;
+        int64_t start = 0;
+        int64_t end = static_cast<int64_t>(candidates.size()) - 1;
+        bool extraChecks = mode.looseValues || candidates.size() != a->size();
+        auto* iteratorA = JSSetIterator::create(vm, globalObject->setIteratorStructure(), a, IterationKind::Keys);
+        JSValue value;
+        while (iteratorA->next(globalObject, value)) {
+            if (!isObject(value) || extraChecks) {
+                bool identical = has(b, value);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (identical)
+                    continue;
+                if (!isObject(value) && !mode.looseValues)
+                    return false;
+            }
+            int64_t innerStart = start;
+            if (forward) {
+                bool matches = equal(value, candidate(start));
+                RETURN_IF_EXCEPTION(scope, false);
+                if (matches) {
+                    start++;
+                    continue;
+                }
+                if (start == end)
+                    return false;
+                forward = false;
+                innerStart++;
+            }
+            bool matches = equal(value, candidate(end));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!matches) {
+                forward = true;
+                for (int64_t i = end - 1; i >= innerStart && !matches; i--) {
+                    matches = equal(value, candidate(i));
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (matches && static_cast<size_t>(i) < candidates.size())
+                        candidates[i] = candidate(end);
+                }
+                if (!matches)
+                    return false;
+            }
+            end--;
+        }
+        return true;
+    }
+
+    // Whether the entry of `a` pairs with the entry that `b` holds under `key2`. A twin does not pair with itself.
+    bool entryMatches(JSMap* b, JSValue key1, JSValue item1, JSValue key2, bool isTwin)
+    {
+        if (isTwin) {
+            bool sameKey = JSC::JSValue::strictEqual(globalObject, key1, key2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (sameKey)
+                return false;
+        }
+        bool keysEqual = equal(key1, key2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!keysEqual)
+            return false;
+        JSValue item2 = get(b, key2);
+        RETURN_IF_EXCEPTION(scope, false);
+        return equal(item1, item2);
+    }
+
+    // mapEquiv
+    bool mapsEqual(JSMap* a, JSMap* b)
+    {
+        VM& vm = globalObject->vm();
+        auto* iteratorB = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), b, IterationKind::Entries);
+        JSValue key2, item2;
+        while (iteratorB->nextKeyValue(globalObject, key2, item2)) {
+            if (isObject(key2)) {
+                if (candidates.isEmpty() && a->size() == 1) {
+                    auto* iteratorA = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), a, IterationKind::Entries);
+                    JSValue key1 = jsUndefined(), item1 = jsUndefined();
+                    iteratorA->nextKeyValue(globalObject, key1, item1);
+                    bool keysEqual = equal(key1, key2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    return keysEqual && equal(item1, item2);
+                }
+                // node pairs every object key off by comparison, quadratic for two Maps that share their keys. A shared key with equal values is settled here, as a primitive key is.
+                bool shared = has(a, key2);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (shared) {
+                    sharesObjectKeys = true;
+                    JSValue item1 = get(a, key2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    bool matches = equal(item1, item2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (matches)
+                        continue;
+                    addTwin(key2);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                candidates.appendWithCrashOnOverflow(key2);
+                continue;
+            }
+            JSValue item1 = get(a, key2);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool present = !item1.isUndefined() || has(a, key2);
+            RETURN_IF_EXCEPTION(scope, false);
+            bool matches = present && equal(item1, item2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (matches)
+                continue;
+            if (!mode.looseValues)
+                return false;
+            // mapMightHaveLoosePrim
+            std::optional<bool> canMatch = canMatchLoosely(key2);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!canMatch) {
+                JSValue other = key2.isUndefined() ? jsNull() : jsUndefined();
+                JSValue otherItem = get(a, other);
+                RETURN_IF_EXCEPTION(scope, false);
+                bool otherPresent = !otherItem.isUndefined() || has(a, other);
+                RETURN_IF_EXCEPTION(scope, false);
+                bool otherMatches = otherPresent && equal(otherItem, item2);
+                RETURN_IF_EXCEPTION(scope, false);
+                canMatch = otherMatches && !has(b, other);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            if (!*canMatch)
+                return false;
+            if (present) {
+                addTwin(key2);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            candidates.appendWithCrashOnOverflow(key2);
+        }
+        return candidates.isEmpty() || mapEntriesPairOff(a, b);
+    }
+
+    // mapObjectEquiv, with arrayHasEqualMapElement
+    bool mapEntriesPairOff(JSMap* a, JSMap* b)
+    {
+        VM& vm = globalObject->vm();
+        bool forward = true;
+        int64_t start = 0;
+        int64_t end = static_cast<int64_t>(candidates.size()) - 1;
+        auto* iteratorA = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), a, IterationKind::Entries);
+        JSValue key1, item1;
+        while (iteratorA->nextKeyValue(globalObject, key1, item1)) {
+            bool isTwin = false;
+            bool isObjectKey = isObject(key1);
+            if (!isObjectKey || sharesObjectKeys) {
+                bool identical = has(b, key1);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (identical) {
+                    // mapsEqual compared this entry with the one that `b` holds under the same key.
+                    isTwin = twins && has(twins, key1);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!isTwin)
+                        continue;
+                } else if (!isObjectKey && !mode.looseValues) {
+                    return false;
+                }
+            }
+            int64_t innerStart = start;
+            if (forward) {
+                bool matches = entryMatches(b, key1, item1, candidate(start), isTwin);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (matches) {
+                    start++;
+                    continue;
+                }
+                if (start == end)
+                    return false;
+                forward = false;
+                innerStart++;
+            }
+            bool matches = entryMatches(b, key1, item1, candidate(end), isTwin);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!matches) {
+                forward = true;
+                for (int64_t i = end - 1; i >= innerStart && !matches; i--) {
+                    matches = entryMatches(b, key1, item1, candidate(i), isTwin);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (matches && static_cast<size_t>(i) < candidates.size())
+                        candidates[i] = candidate(end);
+                }
+                if (!matches)
+                    return false;
+            }
+            end--;
+        }
+        return true;
+    }
+};
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
     VM& vm = globalObject->vm();
     uint8_t c1Type = c1->type();
     uint8_t c2Type = c2->type();
+
+    if constexpr (checkPrototypes) {
+        if (c1Type == ErrorInstanceType) {
+            if (c2Type != ErrorInstanceType) {
+                return false;
+            }
+            bool errorsEqual = nodeErrorsEqual(deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, c1->getObject(), c2->getObject());
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!errorsEqual) {
+                return false;
+            }
+            return std::nullopt;
+        }
+    }
 
     switch (c1Type) {
     // Map/Set stay specialised: expect(...).toEqual on collections is hot enough

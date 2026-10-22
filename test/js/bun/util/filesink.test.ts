@@ -1359,64 +1359,57 @@ describe("a stream write that waits on its source does not keep the process aliv
   `;
   const exited = JSON.stringify({ settled: "pending", code: 0, beforeExit: 1 });
   // A child that does not exit by itself is killed, and fails on its signal.
-  const limit = 10_000;
+  const limit = 4_000;
 
-  it.concurrent(
-    "to a pipe that has taken no chunk",
-    async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture(0)],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: limit,
-        killSignal: "SIGKILL",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
-        stdout: "",
-        stderr: exited + "\n",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    limit + 5_000,
-  );
+  // A pipe gave the loop back with the flush of its first chunk, so only one that had taken none kept it.
+  it.concurrent.each([0, 1] as const)("to a pipe that has taken %d chunk(s)", async chunks => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(chunks)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: limit,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: chunks ? chunk : "",
+      stderr: exited + "\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 
   // A terminal takes each write at once, so the write of the first chunk was over before the sink
   // was given the loop, and no later write gave it back.
-  it.concurrent.skipIf(isWindows).each([0, 1] as const)(
-    "to a terminal that has taken %d chunk(s)",
-    async chunks => {
-      const { promise: terminalClosed, resolve } = Promise.withResolvers<void>();
-      const decoder = new TextDecoder();
-      let output = "";
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture(chunks)],
-        env: bunEnv,
-        terminal: {
-          data(_terminal, bytes) {
-            output += decoder.decode(bytes, { stream: true });
-          },
-          exit() {
-            resolve();
-          },
+  it.concurrent.skipIf(isWindows).each([0, 1] as const)("to a terminal that has taken %d chunk(s)", async chunks => {
+    const { promise: terminalClosed, resolve } = Promise.withResolvers<void>();
+    const decoder = new TextDecoder();
+    let output = "";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(chunks)],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, bytes) {
+          output += decoder.decode(bytes, { stream: true });
         },
-        timeout: limit,
-        killSignal: "SIGKILL",
-      });
-      await using _terminal = proc.terminal!;
-      const exitCode = await proc.exited;
-      await terminalClosed;
-      // The terminal turns the "\n" of the exit line into "\r\n".
-      expect({ output, exitCode, signalCode: proc.signalCode }).toEqual({
-        output: (chunks ? chunk : "") + exited + "\r\n",
-        exitCode: 0,
-        signalCode: null,
-      });
-    },
-    limit + 5_000,
-  );
+        exit() {
+          resolve();
+        },
+      },
+      timeout: limit,
+      killSignal: "SIGKILL",
+    });
+    await using _terminal = proc.terminal!;
+    const exitCode = await proc.exited;
+    await terminalClosed;
+    // The terminal turns the "\n" of the exit line into "\r\n".
+    expect({ output, exitCode, signalCode: proc.signalCode }).toEqual({
+      output: (chunks ? chunk : "") + exited + "\r\n",
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
 });
 
 // FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref

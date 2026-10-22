@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_core;
 
@@ -128,6 +129,11 @@ pub struct ModuleInfoDeserialized {
     table: ModuleInfoStrings<'static>,
     pub flags: Flags,
 }
+
+/// Records alive right now: created by `create_owned` / `create_with_table`,
+/// freed by `deinit`. `bun:internal-for-testing` reads it so a test can check
+/// that a loaded graph freed every record.
+pub static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
 /// Where a record's names come from: a self-contained record carries its own
 /// strings (`WTF::StringImpl` bodies the runtime atomizes) and the bytes they
@@ -282,6 +288,7 @@ impl ModuleInfoDeserialized {
     pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         drop(unsafe { bun_core::heap::take(this) });
+        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
     }
 
     /// The self-contained form (a module's own string table followed by its
@@ -294,6 +301,7 @@ impl ModuleInfoDeserialized {
         let bytes: &'static [u8] = unsafe { &*core::ptr::from_ref::<[u8]>(&owned) };
         let table = ModuleInfoStringTable::parse(bytes)?;
         let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(ModuleInfoDeserialized {
             body,
             table: ModuleInfoStrings::Owned {
@@ -318,6 +326,7 @@ impl ModuleInfoDeserialized {
         body: &'static [u8],
     ) -> Option<Box<ModuleInfoDeserialized>> {
         let (flags, body) = Body::parse(body).ok()?;
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Some(Box::new(ModuleInfoDeserialized {
             body,
             table: ModuleInfoStrings::Shared(*table),

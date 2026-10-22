@@ -5819,6 +5819,14 @@ impl VirtualMachine {
             .unwrap_or(false)
     }
 
+    /// `Bun__analyzeTranspiledModule`: cross-check every record against JSC's
+    /// own analysis in a release build (debug builds always do).
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__validateRuntimeModuleInfo() -> bool {
+        bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO::get()
+            .unwrap_or(false)
+    }
+
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,

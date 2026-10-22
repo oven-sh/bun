@@ -17,9 +17,6 @@
 #include "headers-handwritten.h"
 #include "IsolatedModuleCache.h"
 #include "BunAnalyzeTranspiledModule.h"
-#include "JavaScriptCore/AbstractModuleRecord.h"
-#include "JavaScriptCore/JSSourceCode.h"
-#include <wtf/HashSet.h>
 
 // ref: JSModuleLoader.cpp
 // ref: ModuleAnalyzer.cpp
@@ -202,63 +199,41 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
 
 } // namespace JSC
 
-// The record's BunTranspiledModule provider, or null for any other record (CommonJS wrappers, JSON, ...).
-static Zig::SourceProvider* transpiledModuleProvider(JSC::AbstractModuleRecord* record)
-{
-    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(record);
-    if (!moduleRecord)
-        return nullptr;
-    auto* provider = moduleRecord->sourceCode().provider();
-    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
-        return nullptr;
-    return static_cast<Zig::SourceProvider*>(provider);
-}
-
 void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue moduleRecordValue)
 {
-    auto* root = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue);
-    if (!root)
+    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!moduleRecord)
+        return;
+    auto* provider = moduleRecord->sourceCode().provider();
+    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
         return;
     if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM()))
         return;
-
-    // The evaluate hook runs for the root of a load only, once the whole graph
-    // has linked, so walk the graph. A transpiled record that an earlier walk
-    // released had its dependencies released by that same walk: do not descend
-    // into it again. Iterative, like NodeVMSourceTextModule's
-    // isModuleGraphLinked: a long import chain must not overflow the native
-    // stack here.
-    WTF::HashSet<JSC::AbstractModuleRecord*> visited;
-    WTF::Vector<JSC::AbstractModuleRecord*, 16> worklist;
-    worklist.append(root);
-    while (!worklist.isEmpty()) {
-        JSC::AbstractModuleRecord* record = worklist.takeLast();
-        if (auto* provider = transpiledModuleProvider(record)) {
-            if (!provider->m_moduleInfo)
-                continue;
-            zig__ModuleInfoDeserialized__deinit(provider->m_moduleInfo);
-            provider->m_moduleInfo = nullptr;
-        }
-        if (record->requestedModules().isEmpty() || !visited.add(record).isNewEntry)
-            continue;
-        const auto& loaded = record->loadedModules();
-        for (const auto& request : record->requestedModules()) {
-            if (JSC::AbstractModuleRecord* dependency = record->prelinkedRequestedModule(request)) {
-                worklist.append(dependency);
-                continue;
-            }
-            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
-            if (iter == loaded.end())
-                continue;
-            if (JSC::AbstractModuleRecord* dependency = iter->value.m_module.get())
-                worklist.append(dependency);
-        }
+    auto* zigProvider = static_cast<Zig::SourceProvider*>(provider);
+    if (zigProvider->m_moduleInfo) {
+        zig__ModuleInfoDeserialized__deinit(zigProvider->m_moduleInfo);
+        zigProvider->m_moduleInfo = nullptr;
     }
 }
 
 namespace JSC {
 
 extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&);
+extern "C" bool Bun__hasStandaloneModuleGraph();
+extern "C" bool Bun__validateRuntimeModuleInfo();
+
+// Debug builds cross-check every record against JSC's own analysis.
+// BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO=1 runs the same check in a
+// release build.
+static bool shouldValidateModuleInfo()
+{
+#if BUN_DEBUG
+    return true;
+#else
+    static const bool validate = Bun__validateRuntimeModuleInfo();
+    return validate;
+#endif
+}
 
 // JSModuleLoader::makeModule downcasts what we return before its caller consults
 // the throw scope, so never hand back a null cell. rejectWithCaughtException
@@ -291,15 +266,19 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
             promise->fulfill(vm, prelinked);
             RELEASE_AND_RETURN(scope, JSValue::encode(promise));
         }
-        // Neither: analyze the source text.
+        // Outside an executable a transpiled provider always carries its record
+        // until releaseModuleInfoAfterLink: reaching this parse means it was
+        // released too early.
+        ASSERT_WITH_MESSAGE(Bun__hasStandaloneModuleGraph(), "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().legacyCStringPointer());
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
-    // module_info stays on the provider until the module is evaluated (or, under
+    // module_info stays on the provider until the module evaluates (or, under
     // --isolate, until ~SourceProvider): JSC analyzes the same JSSourceCode more
-    // than once (require(esm) sync replay re-issues makeModule on an entry whose
-    // modulePromise is still pending; --isolate reuses providers across globals),
-    // and every call must produce the same record. See releaseModuleInfoAfterLink.
+    // than once (the require(esm) sync replay re-issues makeModule on an entry
+    // whose modulePromise is still pending; --isolate reuses providers across
+    // globals), and every call must produce the same record. See
+    // releaseModuleInfoAfterLink.
     auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
     RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));
@@ -307,12 +286,10 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-#if BUN_DEBUG
-    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
-#else
+    if (shouldValidateModuleInfo()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
     promise->fulfill(vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
-#endif
 }
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
 {

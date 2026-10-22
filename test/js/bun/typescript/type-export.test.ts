@@ -606,3 +606,45 @@ describe.each([
     expect(result.exitCode).toBe(0);
   });
 });
+
+// The record lives on the provider from the fetch until the module evaluates.
+// JSC runs the evaluate hook once per module body, so a graph that evaluated
+// holds no record: not the entry, not a static or dynamic dependency, and not
+// the shared dep of a require(esm) diamond that JSC analyzed twice. A deferred
+// import is linked but not evaluated, so its record is the one still alive.
+test.concurrent("every module record is freed once its module evaluates", async () => {
+  await using dir = tempDir("module-info-lifetime", {
+    "entry.mjs": `
+      import { moduleInfoLiveCount } from "bun:internal-for-testing";
+      import { value } from "./a.mjs";
+      import "./b.mjs";
+      import defer * as deferred from "./deferred.mjs";
+      const afterStatic = moduleInfoLiveCount();
+      const { y } = await import("./y.mjs");
+      const afterDynamic = moduleInfoLiveCount();
+      require("./mid.cjs");
+      await import("./a.mjs");
+      const beforeDeferred = moduleInfoLiveCount();
+      const d = deferred.d;
+      console.log(JSON.stringify({ value, y, d, afterStatic, afterDynamic, beforeDeferred, end: moduleInfoLiveCount() }));
+    `,
+    "deferred.mjs": `export const d = "d";`,
+    "a.mjs": `export const value = "a";`,
+    "b.mjs": `import "./a.mjs"; export const b = 1;`,
+    "y.mjs": `import { value } from "./a.mjs"; export const y = "y:" + value;`,
+    "mid.cjs": `module.exports = require("./z.mjs");`,
+    "z.mjs": `import { value } from "./a.mjs"; export const z = value;`,
+  });
+  const result = await run([bunExe(), "entry.mjs"], String(dir));
+  expect(result.stderr).toBe("");
+  expect(JSON.parse(result.stdout.trim())).toEqual({
+    value: "a",
+    y: "y:a",
+    d: "d",
+    afterStatic: 1,
+    afterDynamic: 1,
+    beforeDeferred: 1,
+    end: 0,
+  });
+  expect(result.exitCode).toBe(0);
+});

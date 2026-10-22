@@ -258,8 +258,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
-    // Escape hatch for the #7384 fix: never attach ModuleInfo to runtime ESM.
+    // Never attach ModuleInfo to runtime ESM: JSC analyzes the source itself.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO, "BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO", {});
+    // Cross-check every runtime ModuleInfo record against JSC's own analysis in a release build.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO, "BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});

@@ -4879,3 +4879,20 @@ fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
         Store::deref(this);
     }
 }
+
+pub(crate) mod testing_apis {
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+    /// `ModuleInfoDeserialized` records alive right now.
+    pub(crate) fn module_info_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        use core::sync::atomic::Ordering;
+        Ok(JSValue::js_number(
+            bun_bundler::analyze_transpiled_module::LIVE_COUNT.load(Ordering::Relaxed) as f64,
+        ))
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`.
+pub(crate) use testing_apis as testing_ap_is;

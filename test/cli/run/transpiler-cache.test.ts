@@ -666,6 +666,29 @@ ${filler}`,
   ]);
 });
 
+test("an entry written without a module record is replaced once records are on", async () => {
+  // BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO is part of the cache key: an
+  // entry the opt-out wrote has no record, and a run with records on must not
+  // serve it (JSC would silently fall back to its own analysis).
+  const filler = ("// " + "x".repeat(120) + "\n").repeat(40);
+  writeFileSync(join(temp_dir, "lib.js"), `export const one = 1;\nexport function two() {}\n${filler}`);
+  writeFileSync(join(temp_dir, "main.js"), `import * as lib from "./lib.js";\nconsole.log(Object.keys(lib).join(","));`);
+
+  const off = { ...env, BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO: "1" };
+  expect(await bunRun(join(temp_dir, "main.js"), off)).toSpawn("one,two");
+  expect(readdirSync(cache_dir).map(name => readModuleRecord(join(cache_dir, name)))).toEqual([null]);
+
+  expect(await bunRun(join(temp_dir, "main.js"), env)).toSpawn("one,two");
+  const records = readdirSync(cache_dir)
+    .map(name => readModuleRecord(join(cache_dir, name)))
+    .filter(records => records !== null);
+  expect(records).toEqual([
+    [
+      { kind: "ExportInfoLocal", name: "one" },
+      { kind: "ExportInfoLocal", name: "two" },
+    ],
+  ]);
+});
 test("rejects cached module records containing out-of-range string indices", () => {
   // The string indices inside the record are used to index an identifier
   // table when the record is converted back into a JSC module record, so any

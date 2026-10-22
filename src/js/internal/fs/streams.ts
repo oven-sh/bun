@@ -770,8 +770,7 @@ writeStreamPrototype._destroy = function (err, cb) {
     try {
       end = sink.end(err);
     } catch {
-      // A write the sink lost is reported to a caller of end() (`_final`). destroy() is a
-      // teardown, and Node emits nothing for `write(chunk); destroy()`.
+      // destroy() is a teardown: Node emits no 'error' for `write(chunk); destroy()`.
       this.fd = null;
       cb(err);
       return;

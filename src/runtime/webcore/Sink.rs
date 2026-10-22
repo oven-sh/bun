@@ -398,11 +398,7 @@ pub(crate) trait JsSinkType: Sized + JsSinkAbi {
         unsafe { (*this).end(None) }
     }
 
-    /// `close()` from script with no reason. A sink whose native `end()` has callers that drop
-    /// its result reports here what only a call from script can be told.
-    ///
-    /// # Safety
-    /// `this` is the cell's live sink.
+    /// `close()` from script with no reason; `this` is the cell's live sink.
     unsafe fn close_from_js(this: *mut Self) -> sys::Result<()> {
         // SAFETY: caller contract; `end` does not free the sink.
         unsafe { (*this).end(None) }

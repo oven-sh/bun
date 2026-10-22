@@ -419,8 +419,7 @@ impl WritablePending {
 }
 
 impl WritablePending {
-    /// Keeps `err` for [`take_unclaimed`](Self::take_unclaimed) when no promise is parked to
-    /// carry it. The first failure wins.
+    /// Keeps the first `err` for [`Self::take_unclaimed`] while no promise is parked.
     pub(crate) fn keep_unclaimed(&mut self, err: SysError) {
         if self.state != PendingState::Pending && !matches!(self.result, Writable::Err(_)) {
             self.result = Writable::Err(err);

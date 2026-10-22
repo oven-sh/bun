@@ -71,8 +71,7 @@ pub trait PosixPipeWriter {
         self.try_write_with_progress(force_sync, buf, &mut 0)
     }
 
-    /// `try_write` for a caller that keeps `buf` buffered when the write fails: on `Err`,
-    /// `wrote_before_error` is the length of the prefix the fd took first.
+    /// On `Err`, `wrote_before_error` is how much of `buf` the fd took first.
     fn try_write_with_progress(
         &self,
         force_sync: bool,
@@ -227,8 +226,7 @@ pub trait PosixPipeWriter {
 
     /// Only writes; the caller dispatches the callbacks (`&self` enforces it,
     /// and parents rely on no `on_write` arriving after `on_error`). An error
-    /// is always `Err`, and `drained_before_error` is then what the fd took
-    /// before it: a caller that keeps the buffer skips that much.
+    /// is always `Err`, with `drained_before_error` set to what the fd took first.
     fn drain_buffered_data(
         &self,
         max_write_size: usize,
@@ -970,8 +968,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.try_write_newly_buffered_data(self.outgoing.size() - buf_len)
     }
 
-    /// Writes the buffer, whose tail is the chunk of the `write()` under way;
-    /// `buffered_before` is what it held before that chunk.
+    /// `buffered_before` is what the buffer held before the chunk of this `write()`.
     fn try_write_newly_buffered_data(&mut self, buffered_before: usize) -> WriteResult {
         debug_assert!(!self.is_done);
 
@@ -1011,8 +1008,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             }
 
             WriteResult::Err(e) => {
-                // The caller of `write()` is told, so nothing of its chunk stays. What was
-                // buffered before it stays for a redo, less the prefix the fd took.
+                // The caller is told: drop its chunk, keep the earlier bytes the fd did not take.
                 self.outgoing.wrote(wrote_before_error);
                 self.outgoing
                     .truncate(buffered_before.saturating_sub(wrote_before_error));
@@ -1092,9 +1088,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.flush_impl(false)
     }
 
-    /// `flush()` for the drain at the end of the tick, which has no caller to tell. A hard
-    /// error leaves the unsent bytes buffered, so the next `flush()`/`end()`, or the `write()`
-    /// that reaches the threshold, redoes the write(2) with a caller on the stack.
+    /// `flush()` that keeps the unsent bytes on a hard error, for a drain with no caller to tell.
     pub fn flush_deferred(&mut self) -> WriteResult {
         self.flush_impl(true)
     }

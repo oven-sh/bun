@@ -491,8 +491,7 @@ impl FileSink {
         }
     }
 
-    /// Whether a write failure with no caller on the stack would reach nobody: no promise is
-    /// parked, the last one was not rejected with this fd's failure, and no stream is piped in.
+    /// No promise is parked or was just rejected, and no stream is piped in.
     fn failure_has_no_recipient(&self) -> bool {
         matches!(
             self.pending.get().state,
@@ -500,8 +499,7 @@ impl FileSink {
         ) && self.pipe.get().cell().is_none()
     }
 
-    /// A write failed on an fd that is gone, and the failure has no recipient. The next
-    /// flush()/end()/close()/start() throws it, once.
+    /// Ends the sink and keeps `err`: the next flush()/end()/close()/start() throws it, once.
     fn keep_unclaimed_error(&self, err: sys::Error) {
         self.done.set(true);
         self.pending.with_mut(|p| p.keep_unclaimed(err));
@@ -982,8 +980,7 @@ impl FileSink {
 
             // This drain has no caller to tell.
             let untold = (*this).failure_has_no_recipient();
-            // An fd with no poll (a regular file) can take the bytes later, and nothing but
-            // this drain reports its failure. A pipe or socket that fails has lost its reader.
+            // Only an fd with no poll (a regular file) can take the bytes later.
             #[cfg(unix)]
             let keep_unsent = untold && (*this).writer.get().get_poll().is_none();
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
@@ -1001,9 +998,7 @@ impl FileSink {
             match rc {
                 WriteResult::Err(err) => {
                     (*this).update_ref(false);
-                    // `flush_deferred` kept the bytes and the sink stays usable: the next
-                    // flush()/end()/close(), or the write() that reaches the threshold, redoes
-                    // the write(2) and tells its caller.
+                    // The bytes are kept for the next flush()/end()/close() or threshold write().
                     #[cfg(unix)]
                     if keep_unsent {
                         (*this).auto_flusher.with_mut(|a| a.registered.set(false));
@@ -1101,7 +1096,7 @@ impl FileSink {
                 written as u64 // @truncate
             }
             WriteResult::Err(err) => {
-                // This caller is told; a copy `on_error` kept during the call is not a second failure.
+                // This caller is told: drop the copy `on_error` kept during the call.
                 self.take_unclaimed_error();
                 return sys::Result::Err(err);
             }

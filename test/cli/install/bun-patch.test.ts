@@ -1496,6 +1496,41 @@ describe.concurrent.each(["hoisted", "isolated"] as const)(
         installed: patched + "// again\n",
       });
     });
+
+    test("--no-verify downloads nothing else when the tarball is another package now", async () => {
+      let served: object = { name: "dep", version: "1.0.0" };
+      await using server = Bun.serve({
+        port: 0,
+        fetch: async () => new Response(await packTarball({ "package.json": JSON.stringify(served) })),
+      });
+      await using project = await installedProject({ dependencies: { dep: `${server.url}dep.tgz` } }, { linker });
+      const { dir, env } = project;
+
+      removeCache(dir);
+      served = { name: "renamed", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } };
+      await bunOk(dir, env, "patch", "--no-verify", "dep");
+      expect(readdirSync(join(dir, ".bun-cache")).filter(entry => entry.startsWith("no-deps"))).toEqual([]);
+    });
+
+    // --force makes the install that follows the download read the tarball again.
+    test("bun patch --commit --force with a tarball", async () => {
+      const tarball = await packTarball({
+        "package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "index.js": "module.exports = 'original';\n",
+      });
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(tarball) });
+      await using project = await installedProject({ dependencies: { dep: `${server.url}dep.tgz` } }, { linker });
+      const { dir, env } = project;
+      await bunOk(dir, env, "patch", "dep");
+      await Bun.write(join(dir, "node_modules", "dep", "index.js"), patched);
+
+      removeCache(dir);
+      await bunOk(dir, env, "patch", "--commit", "--force", "dep");
+      expect(Object.keys((await Bun.file(join(dir, "package.json")).json()).patchedDependencies)).toEqual([
+        `dep@${server.url}dep.tgz`,
+      ]);
+      expect(await Bun.file(join(dir, "node_modules", "dep", "index.js")).text()).toBe(patched);
+    });
   },
 );
 

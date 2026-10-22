@@ -1210,6 +1210,31 @@ for (const peer of ["required", "optional"] as const) {
   );
 }
 
+// `m` is read again and `locked` keeps its package, so no dependency waits for the checkout that it starts. The `locked`
+// of `added` asks for that checkout once it's done.
+test.concurrent("a git package added to a workspace depends on the git package that bun.lock has for it", async () => {
+  using dir = tempDir("git-dep-locked-then-nested", {});
+  const root = String(dir);
+  const repoUrl = `git+${pathToFileURL(join(root, "shared-repo.git"))}`;
+  const bare = await makeSharedRepo(root, [
+    { name: "locked", branch: "locked" },
+    { name: "added", branch: "added", dependencies: { locked: `${repoUrl}#locked` } },
+  ]);
+  const { project, member } = writeWorkspace(root, { locked: `${repoUrl}#locked` });
+  expect(await runInstall(project, join(root, "cache"), {})).toMatchObject({ exitCode: 0 });
+
+  writeWorkspace(root, { locked: `${repoUrl}#locked`, added: `${repoUrl}#added` });
+  const { stderr, exitCode } = await runInstall(project, join(root, "cache"), {});
+  expect(stderr).toContain("Saved lockfile");
+  expect(await lockedResolutions(project)).toEqual({
+    added: `added@${repoUrl}#${branchCommits(bare).added}`,
+    locked: `locked@${repoUrl}#${branchCommits(bare).locked}`,
+    m: "m@workspace:packages/m",
+  });
+  expect(await installedVersions(member, ["added", "locked"])).toEqual({ added: "added", locked: "locked" });
+  expect(exitCode).toBe(0);
+});
+
 // One clone serves every package of a repository. Three packages wait for it here, and the one that's installed through
 // a's peer dependency is neither the first nor the last.
 test.concurrent(

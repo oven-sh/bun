@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 
+import { sslCtxLiveCount } from "bun:internal-for-testing";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { X509Certificate } from "node:crypto";
 import { once } from "node:events";
@@ -703,8 +704,8 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
     }
   });
 
-  // `setKeyCert()` moves the connection to another context. On a client that
-  // must not take the context's session id context either.
+  // `setKeyCert()` gives the connection the identity and the CA of another
+  // context. A client must not take the session id context of that one.
   it("lets a client that calls setKeyCert() still resume", async () => {
     const other = tls.createSecureContext({ key: agent3Key, cert: agent3Cert });
     const server = await listen();
@@ -860,6 +861,150 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("ALPN after SNI selected a Secure
     request.on("data", chunk => (body += chunk));
     await Promise.race([once(request, "end"), failed]);
     expect(body).toBe("over h2");
+  });
+});
+
+// The doors that only Bun has. node-tls-setkeycert.test.ts has the rows that Node.js has too.
+describe("setKeyCert() on a server-side socket", () => {
+  const own = { key: agent2Key, cert: agent2Cert };
+  const other = tls.createSecureContext({ key: agent1Key, cert: agent1Cert });
+
+  // One handshake that offers h2: the certificate and the protocol that the client got. `until` keeps the client open.
+  async function dial(port: number, options: tls.ConnectionOptions = {}, until?: Promise<unknown>) {
+    const client = tls.connect({
+      port,
+      host: "127.0.0.1",
+      servername: "a.test",
+      ALPNProtocols: ["h2"],
+      rejectUnauthorized: false,
+      ...options,
+    });
+    try {
+      await once(client, "secureConnect");
+      await until;
+      return { cn: client.getPeerCertificate().subject.CN, alpn: client.alpnProtocol };
+    } finally {
+      client.destroy();
+    }
+  }
+
+  // Bun emits 'connection' with the TLSSocket, before the ClientHello.
+  it.each([
+    ["selects nothing", null, { cn: "agent1", alpn: "h2", calls: 1 }],
+    ["refuses", new Error("denied"), { refused: true, calls: 1 }],
+  ] as const)("in a 'connection' listener: the SNICallback still runs and %s", async (_, answer, expected) => {
+    let calls = 0;
+    const SNICallback = (_: string, callback: (err: Error | null) => void) => {
+      calls++;
+      callback(answer);
+    };
+    const server = tls.createServer({ ...own, SNICallback, ALPNProtocols: ["h2"] }, socket =>
+      socket.on("error", () => {}),
+    );
+    server.on("tlsClientError", () => {});
+    server.on("connection", socket => (socket as tls.TLSSocket).setKeyCert(other));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const got = await dial((server.address() as AddressInfo).port).catch(() => ({ refused: true }));
+      expect({ ...got, calls }).toEqual(expected);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The connection holds what it took from the context, and not the context. No other context has these options, so
+  // the call builds one that nothing else holds.
+  it("serves from a context that was collected before the SNICallback answered", async () => {
+    const verdict = Promise.withResolvers<string>();
+    let collected = false;
+    const server = tls.createServer(
+      {
+        ...own,
+        requestCert: true,
+        rejectUnauthorized: false,
+        ALPNProtocols: ["h2"],
+        SNICallback(this: tls.TLSSocket, _: string, callback: (err: Error | null) => void) {
+          Bun.gc(true);
+          const before = sslCtxLiveCount();
+          this.setKeyCert({ key: agent1Key, cert: agent1Cert, ca: [ca2], sessionTimeout: 4321 });
+          let collections = 0;
+          const poll = () => {
+            Bun.gc(true);
+            collected = sslCtxLiveCount() <= before;
+            if (collected || ++collections === 50) callback(null);
+            else setImmediate(poll);
+          };
+          setImmediate(poll);
+        },
+      },
+      socket => {
+        socket.on("error", () => {});
+        verdict.resolve(socket.authorized ? "authorized" : String(socket.authorizationError));
+      },
+    );
+    server.on("tlsClientError", () => {});
+    // `this` in the SNICallback is the TLSSocket for a connection that the server adopts.
+    const front = net.createServer(raw => server.emit("connection", raw));
+    await once(front.listen(0, "127.0.0.1"), "listening");
+    try {
+      const port = (front.address() as AddressInfo).port;
+      const got = await dial(port, { key: agent3Key, cert: agent3Cert }, verdict.promise);
+      expect({ ...got, verdict: await verdict.promise, collected }).toEqual({
+        cn: "agent1",
+        alpn: "h2",
+        verdict: "authorized",
+        collected: true,
+      });
+    } finally {
+      front.close();
+    }
+  });
+
+  // With a handshake handler, Bun.listen() calls the open handler before the handshake. The native method takes the
+  // native context.
+  it("Bun.listen(): in the open handler", async () => {
+    let thrown: unknown;
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls: own,
+      socket: {
+        open(socket) {
+          try {
+            //@ts-expect-error
+            socket.setKeyCert(tls.createSecureContext().context);
+          } catch (err) {
+            thrown = (err as Error).message;
+          }
+          //@ts-expect-error
+          socket.setKeyCert(other.context);
+        },
+        handshake() {},
+        data() {},
+        error() {},
+      },
+    });
+    const { cn } = await dial(listener.port);
+    expect({ cn, thrown }).toEqual({ cn: "agent1", thrown: "SetKeyCert" });
+  });
+
+  // The order that stopped a debug build in BoringSSL, in a process of its own: a listening server with an
+  // ALPNCallback gave the context to addContext() too, and its SNICallback answers from a microtask.
+  it("an answer from a microtask, with an ALPNCallback and the context in addContext()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-tls-setkeycert-fixture.mjs")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual([
+      JSON.stringify({ version: "TLSv1.2", cn: "agent1", alpn: "h2", calls: 1 }),
+      JSON.stringify({ version: "TLSv1.3", cn: "agent1", alpn: "h2", calls: 1 }),
+      "",
+    ]);
+    expect({ exitCode, signal: proc.signalCode }).toEqual({ exitCode: 0, signal: null });
   });
 });
 

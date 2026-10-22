@@ -10,6 +10,7 @@ const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 // Node's last_message_start_: from the first byte of a request to its end, closeIdleConnections() leaves the connection alone.
 const kHttp1MessageOpen = Symbol("http1MessageOpen");
 const reportError = globalThis.reportError;
+function noopOnError() {}
 
 function rethrowUncaught(err) {
   throw err;
@@ -587,6 +588,9 @@ function connectionListenerHTTP1(server, socket, options) {
   };
 
   function onHttp1SocketError(err, rawPacket) {
+    // Ignore further errors, as node's socketOnError does.
+    socket.removeListener("error", onHttp1SocketErrorListener);
+    if (socket.listenerCount("error", noopOnError) === 0) socket.on("error", noopOnError);
     // Match Node's http _connectionListener: attach err.rawPacket and, when no
     // 'clientError' listener is present, write the same raw error response
     // Node's socketOnError does before destroying.

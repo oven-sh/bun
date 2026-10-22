@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle};
+use crate::generated_bindgen::socket_body::{AdoptedRawClose, BunSocket, SocketHandle};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
@@ -130,9 +130,11 @@ extern "C" fn select_alpn_callback(
     if this_ptr.is_null() {
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
-    // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open), kept
-    // live for this handshake callback by the JS wrapper's ref.
+    // SAFETY: ex_data slot 0 holds a `*mut TLSSocket` (set in on_open, cleared by
+    // `close_adopted_raw`), which the connection keeps live up to this call.
     let this = unsafe { bun_ptr::ThisPtr::new(this_ptr.cast::<TLSSocket>()) };
+    // The JS callback below can destroy the socket, which releases the references of the connection.
+    let _guard = RefPtr::from_this(this);
     // Same handlers-presence guard as every other dispatch entry point:
     // an idle socket has dropped its Handlers, and the ALPN selection
     // callback can still fire for a connection JS already detached -
@@ -250,6 +252,10 @@ extern "C" fn select_alpn_callback(
                 // fatal alert if the client did not actually offer it).
             }
         }
+    }
+    // The callback destroyed the socket: no protocol is selected out of a list that can go with `_guard`.
+    if this.socket.get().is_detached() {
+        return boringssl_sys::SSL_TLSEXT_ERR_ALERT_FATAL;
     }
     if let Some(protos) = this.protos.get() {
         if protos.is_empty() {
@@ -4188,6 +4194,15 @@ impl NativeCallbacks {
         unsafe { (*h2).on_native_writable() };
         true
     }
+    /// Ahead of a close by the owner of the socket that still sends what the socket took.
+    pub(crate) fn on_close_by_owner(&self) {
+        let h2 = match self {
+            NativeCallbacks::H2(h2) => h2.as_ptr(),
+            NativeCallbacks::None => return,
+        };
+        // SAFETY: `on_native_close_by_owner` takes a keepalive; `h2` stays live across re-entry.
+        unsafe { (*h2).on_native_close_by_owner() };
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -4797,6 +4812,86 @@ pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
         SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
         SocketHandle::Ignored(_) => {}
     }
+}
+
+/// node:net's `destroy()` of a socket that a node:tls socket wraps, or its `resetAndDestroy()`. `raw` is
+/// the handle of that socket: the raw half of an `upgradeTLS` pair. Node closes the handle under its
+/// TLSWrap, which hears nothing of it, and libuv cancels what the handle has not written. So this takes
+/// the connection from both halves and then closes it. No event of it reaches either half, and net.ts
+/// reports the close. Node's TLSWrap still emits the input that it had read: here that goes with the SSL.
+pub(crate) fn close_adopted_raw(raw: &TLSSocket, how: AdoptedRawClose) {
+    let socket = raw.socket.get();
+    let uws::InternalSocket::Connected(us) = socket.socket else {
+        return;
+    };
+    if !raw.flags.get().contains(Flags::BYPASS_TLS) || socket.is_closed() {
+        return;
+    }
+    let us = bun_opaque::opaque_deref_mut(us);
+    // The TLS half owns the ext slot of the socket that the two share. Every dispatcher returns on an empty slot.
+    let Some(tls) = us.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().take() else {
+        return;
+    };
+    debug_assert!(matches!(tls.twin.get(), Some(twin) if core::ptr::eq(twin.as_ptr(), raw)));
+    // SAFETY: the ext slot held this reference, and `on_close` no longer releases it.
+    let _tls_ref = unsafe { RefPtr::from_raw(tls.as_ptr()) };
+    // The wrapper that the caller passed outlives this reference to `raw`.
+    let _raw_ref = tls.twin.with_mut(|twin| twin.take());
+    if let Some(ssl) = socket.ssl() {
+        // Where `select_alpn_callback` finds the TLS half.
+        tls_socket_functions::ffi::SSL_set_ex_data(
+            boringssl_sys::SSL::opaque_ref(ssl),
+            0,
+            ptr::null_mut(),
+        );
+    }
+    let reset = how == AdoptedRawClose::Reset;
+    let established = tls.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
+    // Ciphertext that the kernel refused was reported as written (https://github.com/oven-sh/bun/issues/43874),
+    // so a close that is no reset waits for the kernel to take it (`CloseCode::fast_shutdown`). The TLS socket
+    // closed first when that close waits already: a second close would drop the ciphertext, also as a reset.
+    let waits = established && us.close_waits_for_spill();
+    if !waits {
+        if reset || !established {
+            // No record of an unfinished handshake was reported as written.
+            us.discard_unsent();
+        } else {
+            us.release_held_flight();
+        }
+    }
+    if established && !reset {
+        if !waits {
+            // An http2 session still holds frames that it reported as written.
+            tls.native_callback.get().on_close_by_owner();
+        }
+        // The pair reads no more. A close over input that the kernel holds would be a reset, which drops what the
+        // kernel has not sent: what a write callback reported as written.
+        us.discard_input();
+    }
+    // `bytesWritten` keeps the plaintext of the write that is cancelled here.
+    let unsent = tls.buffered_data_for_node_net.get().len() as u64;
+    tls.bytes_written.set(tls.bytes_written.get() + unsent);
+    for half in [&*tls, raw] {
+        half.set_latest_session(ptr::null_mut());
+        half.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        half.detach_native_callback();
+        half.socket.set(SocketHandler::<true>::DETACHED);
+    }
+    if !waits {
+        socket.close(if reset {
+            uws::CloseCode::Failure
+        } else {
+            uws::CloseCode::FastShutdown
+        });
+    }
+    if !socket.is_closed() {
+        // The close waits, for that ciphertext or for an SSL call on the stack. It reads nothing until then.
+        socket.pause_stream();
+    }
+    // What `on_close` does for each half, which also lets go of the loop.
+    raw.mark_inactive();
+    tls.mark_inactive();
 }
 
 /// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.

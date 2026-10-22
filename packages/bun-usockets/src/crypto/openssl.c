@@ -1254,6 +1254,16 @@ void us_socket_release_held_flight(struct us_socket_t *s) {
   s->ssl_fatal_error = 1;
 }
 
+/* libuv cancels the writes of a handle that closes. So does this, ahead of a close: the held flight and the ciphertext
+ * that the kernel refused go, and that close runs no handshake step and waits for nothing. */
+void us_socket_discard_unsent(struct us_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(s)) return;
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  ssl_release_batch(s->group->loop, s);
+  if (loop_ssl_data) ssl_discard_spill(loop_ssl_data, s);
+  s->ssl_fatal_error = 1;
+}
+
 void us_socket_set_first_flight_before_fin(struct us_socket_t *s) {
   s->ssl_first_flight_before_fin = 1;
 }
@@ -1816,6 +1826,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_first_flight_before_fin = 0;
   s->ssl_shutdown_after_first_flight = 0;
   s->ssl_send_rejected = 0;
+  s->ssl_discards_input = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2492,6 +2503,7 @@ static struct us_socket_t *ssl_on_writable(struct us_socket_t *s) {
   }
   if (s->ssl_close_after_spill) {
     s->ssl_close_after_spill = 0;
+    if (s->ssl_discards_input) us_socket_discard_input(s);
     return us_internal_ssl_close(s, s->ssl_pending_close_code, NULL);
   }
   ssl_update_handshake(s, 0);

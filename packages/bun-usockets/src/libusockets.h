@@ -393,6 +393,8 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
 /* For an owner that refuses the peer in its handshake callback: drops the flight held across that callback. */
 void us_socket_release_held_flight(us_socket_r s) nonnull_fn_decl;
+/* For a close that sends nothing more: drops the flight that is held and the ciphertext that the kernel has not taken. */
+void us_socket_discard_unsent(us_socket_r s) nonnull_fn_decl;
 /* Call it from on_open. A shutdown before the first handshake step sends its FIN after that step. */
 void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
 
@@ -699,6 +701,9 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
  * own a socket between loop iterations use this to tell an idle connection
  * from one the peer has already written to or closed. */
 int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
+/* For an owner that reads no more and closes with a FIN. A close over input that the kernel holds is a reset, which
+ * also drops what the kernel has not sent yet. This takes that input, now and again when a close that waits completes. */
+void us_socket_discard_input(us_socket_r s) nonnull_fn_decl;
 
 /* TLS sockets only: nothing sets the bit up for a plain one. The kernel rejected a send of TLS records, so the error
  * code of the close that follows stands for the lost records, not for a failed read. */
@@ -713,6 +718,8 @@ int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 /* Whether some of that ciphertext was thrown away before the kernel took it, which happens when the connection ends. */
 int us_socket_ssl_spill_dropped(us_socket_r s) nonnull_fn_decl;
+/* Whether a close of this socket waits for the kernel to take that ciphertext. A second close drops it. */
+int us_socket_ssl_close_waits_for_spill(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 /* Closes before it returns. A TLS socket first sends what the kernel takes now: its unsent ciphertext, then close_notify. */

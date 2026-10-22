@@ -5488,7 +5488,9 @@ class ClientHttp2Session extends Http2Session {
   #onClose() {
     this[kTransportClosed] = true;
     const parser = this.#parser;
-    const err = this.connecting ? $ERR_SOCKET_CLOSED() : null;
+    // In node the session is connecting until it is ready, also during the handshake of a socket that has connected.
+    // A socket that closes with no error in that time is reported to who listens, as a reset of it is (#onError).
+    const err = this.connecting || (!this.#connected && this.listenerCount("error") > 0) ? $ERR_SOCKET_CLOSED() : null;
     if (parser) {
       parser.forEachStream(streamCancel);
       parser.forEachStream(streamSocketClosed);

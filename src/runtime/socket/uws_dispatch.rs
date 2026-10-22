@@ -178,7 +178,7 @@ us_dispatch_shims! {
 ///
 /// # Safety
 /// `loop.c` must pass a live, non-null `s` whose ext slot holds a valid
-/// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
+/// `*mut TLSSocket` or nothing, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     s: *mut us_socket_t,
@@ -191,10 +191,10 @@ unsafe extern "C" fn us_dispatch_ssl_raw_tap(
     debug_assert!(s_ref.kind() == SocketKind::BunSocketTls);
     // `bun.jsc.API.NewSocket(true)` → the runtime-local `socket::NewSocket<true>`.
     type TLSSocket = super::NewSocket<true>;
-    // The ext slot for `BunSocketTls` always holds a live `TLSSocket`, stamped
-    // at construction.
-    let tls: bun_ptr::ThisPtr<TLSSocket> =
-        s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>().unwrap();
+    // Empty once `close_adopted_raw` took the connection from the pair.
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        return s;
+    };
     if let Some(raw) = tls.twin.get().as_ref() {
         let raw: *mut TLSSocket = raw.as_ptr();
         // A negative length from the C side means there is nothing to deliver;

@@ -319,6 +319,22 @@ impl us_socket_t {
         c::us_socket_release_held_flight(self);
     }
 
+    /// For a close that sends nothing more: drop the flight that is held and the ciphertext that the kernel has not taken.
+    pub fn discard_unsent(&mut self) {
+        c::us_socket_discard_unsent(self);
+    }
+
+    /// A close of this socket waits for the kernel to take ciphertext that it refused. A second close drops that.
+    pub fn close_waits_for_spill(&self) -> bool {
+        c::us_socket_ssl_close_waits_for_spill(self) != 0
+    }
+
+    /// For an owner that reads no more and closes with a FIN: take the input that the kernel holds, now and when a
+    /// close that waits completes. A close over unread input is a reset, which drops what the kernel has not sent.
+    pub fn discard_input(&mut self) {
+        c::us_socket_discard_input(self);
+    }
+
     /// A shutdown before the first handshake step sends its FIN after that step.
     pub fn set_first_flight_before_fin(&mut self) {
         c::us_socket_set_first_flight_before_fin(self);
@@ -625,6 +641,9 @@ mod c {
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
         pub(super) safe fn us_socket_release_held_flight(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_discard_unsent(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_ssl_close_waits_for_spill(s: &us_socket_t) -> c_int;
+        pub(super) safe fn us_socket_discard_input(s: &mut us_socket_t);
         pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }

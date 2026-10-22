@@ -160,6 +160,10 @@ unsigned int us_socket_ssl_spill_pending(struct us_socket_t *s) {
     return 0;
 }
 
+int us_socket_ssl_close_waits_for_spill(struct us_socket_t *s) {
+    return s->ssl && s->ssl_close_after_spill;
+}
+
 int us_socket_buffer_size(struct us_socket_t *s, int is_recv, int size, int *out) {
     return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size, out);
 }
@@ -186,6 +190,25 @@ int us_socket_queued_input(struct us_socket_t *s) {
         return LIBUS_QUEUED_INPUT_NONE;
     }
     return bsd_queued_input(us_poll_fd(&s->p));
+}
+
+void us_socket_discard_input(struct us_socket_t *s) {
+    if (s->flags.is_closed || !us_socket_is_established(s)) {
+        return;
+    }
+    s->ssl_discards_input = 1;
+#ifdef _WIN32
+    const int recv_flags = 0;
+#else
+    const int recv_flags = MSG_DONTWAIT;
+#endif
+    char discarded[16 * 1024];
+    /* Bounded: a peer that sends faster than this reads gets the reset. */
+    for (int rounds = 64; rounds > 0; rounds--) {
+        if (bsd_recv(us_poll_fd(&s->p), discarded, sizeof(discarded), recv_flags) <= 0) {
+            break;
+        }
+    }
 }
 
 /* Detach c from its group + drop the borrowed SSL_CTX ref, but leave c

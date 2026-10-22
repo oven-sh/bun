@@ -278,6 +278,8 @@ const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred")
 const checkServerIdentityInHandshake = $bindgen("socket_body.bind.ts", "checkServerIdentityInHandshake");
 // destroy() in the handshake callback: drops the handshake flight that the native layer holds.
 const releaseHeldFlight = $bindgen("socket_body.bind.ts", "releaseHeldFlight");
+// destroy() of a socket that a TLS socket wraps: closes the fd of the two, and neither handle gets a callback for it.
+const closeAdoptedRaw = $bindgen("socket_body.bind.ts", "closeAdoptedRaw");
 const isNamedPipeSocket = $bindgen("socket_body.bind.ts", "isNamedPipeSocket");
 const getBufferedAmount = $bindgen("socket_body.bind.ts", "getBufferedAmount");
 
@@ -310,6 +312,20 @@ const kOnUpgradedClose = Symbol("kOnUpgradedClose");
 const kupgraded = Symbol("kupgraded");
 // On the raw handle of an adopted fd: the TLS socket that adopted it.
 const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
+// On that raw handle: the TLS handle of the same fd.
+const kAdoptedTLSHandle = Symbol("kAdoptedTLSHandle");
+// On that TLS handle, once the owner of the wrapped socket destroyed that socket: the record of that destroy().
+//   late: false in the tick of the destroy(), with the ticks and the microtasks that it queued. A write then fails as on
+//     a handle that closes. After that tick it fails as on a destroyed stream, with no 'error': node destroys the TLS
+//     socket at the end of the loop turn of the destroy(), and no later callback can tell here whether that turn has
+//     ended. Also true from the start when the Writable of the TLS socket holds a write.
+//   cut: the handle took only a part of the writes that the destroy() handed over.
+//   cancels: the TLS socket has a write in flight, which libuv cancels.
+//   tlsClose: the argument of the 'close' that the TLS socket owes, once it is destroyed over this handle.
+const kRawDestroyed = Symbol("kRawDestroyed");
+// On a socket whose writes are the records of a TLS socket above it. Node hands those to the handle with no write(),
+// and reports nothing for the ones that a closed handle does not take.
+const kCarriesRecords = Symbol("kCarriesRecords");
 // On that TLS socket: the fd closed, and the socket it wraps waits to be closed with it.
 const kOwesRawClose = Symbol("kOwesRawClose");
 // Emitted on a socket under the stream-level TLS engine in place of reporting a read error itself.
@@ -452,11 +468,129 @@ function endNT(self, socket, callback) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
-// Shared-fd TLS pair teardown: mirrors node's close ordering, where the
-// close-callbacks phase runs after the check phase (lib/net.js close path in
-// node v26.3.0), so destroy()-time setImmediates still see the pair alive.
-function closeAdoptedTLSRawNT(self, handle, isException) {
-  setImmediate(closeSocketHandle, self, handle, isException);
+// destroy() of a socket that a TLS socket wraps closed their fd in the call. libuv runs the close callback of that handle
+// past the immediates of the loop turn, and node destroys the TLS socket from it (test-tls-socket-close). So the tick
+// of the destroy() ends first, and the immediates that it made run ahead of this one.
+function endRawDestroyTick(raw, pending) {
+  pending.late = true;
+  setImmediate(closeAdoptedTLSRaw, raw, pending);
+}
+function closeAdoptedTLSRaw(raw, pending) {
+  const { tlsSocket } = pending;
+  if (tlsSocket._handle === pending.tlsHandle) {
+    try {
+      // libuv fails the write that the closed handle still held ahead of its close callback. A write that waits for
+      // the handshake is TLSWrap's, which cancels it when the TLS socket is destroyed (closeHandleOfDestroyedRaw).
+      if (pending.cancels) cancelWrite(tlsSocket);
+    } catch (err) {
+      // Node calls the write callback in a callback scope of its own: a throw there does not stop the close.
+      reportError(err);
+    }
+    // With what a handshake callback reported after it destroyed `raw`: no handshake report comes for it any more.
+    tlsSocket.destroy(takeHandshakeCallbackError(tlsSocket));
+  }
+  // Past the 'error' of the TLS socket and the tick in which its stream marks the 'close' as emitted, and past a close
+  // that `_destroy` left to a microtask.
+  queueMicrotask(() => process.nextTick(emitAdoptedTLSCloses, raw, pending));
+}
+// Node emits the 'close' of the TLS socket inside its destroy(). node:http destroys a socket under its parser, and an
+// agent in a loop over its pool: neither expects a 'close' in that call. So the TLS socket owes it until here. It comes
+// ahead of the 'close' of `raw`, as it did before the fd closed in the call: a listener of either 'close' can connect
+// either socket again.
+function emitAdoptedTLSCloses(raw, pending) {
+  // In a tick of its own: what a 'close' listener of the TLS socket throws does not stop it.
+  process.nextTick(emitCloseNT, raw, pending.isException);
+  const hadError = pending.tlsClose;
+  if (hadError === undefined) return;
+  pending.tlsClose = undefined;
+  const { tlsSocket } = pending;
+  // Its listener for the 'close' of `raw` would destroy it once more, also when a listener of this 'close' has
+  // connected it again by then.
+  if (tlsSocket[kupgraded] === raw) raw.removeListener("close", tlsSocket[kOnUpgradedClose]);
+  tlsSocket.emit("close", hadError);
+}
+// What an SNICallback or an ALPNCallback reported for the handshake of `self`.
+function takeHandshakeCallbackError(self) {
+  const err = self[kSNIError] || self[kALPNError];
+  if (err) self[kSNIError] = self[kALPNError] = undefined;
+  return err;
+}
+// libuv cancels the write of a handle that closes. TLSWrap cancels the write that it holds when it is destroyed, with
+// `detail`: https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1310-L1318
+function cancelWrite(self, detail?: string) {
+  if (failRejectedWrite(self)) return true;
+  const callback = self[kwriteCallback];
+  if (!callback) return false;
+  failWriteWith(self, new ErrnoException(uv().UV_ECANCELED, "write", detail), callback);
+  return true;
+}
+// The TLS socket was destroyed first, and the destroy() of the socket that it wraps took the connection from its close.
+// Nothing else reports that to the write that it left in flight.
+function cancelWriteOfClosedTLS(tlsSocket) {
+  if (tlsSocket._handle !== null || !tlsSocket.destroyed) return;
+  try {
+    cancelWrite(tlsSocket, "Canceled because of SSL destruction");
+  } catch (err) {
+    reportError(err);
+  }
+}
+// The TLS socket took these writes ahead of the destroy() of the socket that it wraps, and its Writable hands over one
+// write in a tick. What a handle took still goes out with its close, so the destroy() hands over the rest, as the one
+// write that `_writev` makes of them. Node's http hands the head and the body of an answer to the handle in one write,
+// so there both leave. The Writable keeps the callbacks: its next write is one of no data.
+function handOverQueuedWrites(self, handle) {
+  const queued = self.writableBuffer;
+  const count = queued.length;
+  if (count === 0) return true;
+  let { chunk, encoding } = queued[0];
+  if (count > 1) {
+    const chunks = new Array(count);
+    for (let i = 0; i < count; i++) {
+      const write = queued[i];
+      chunks[i] = typeof write.chunk === "string" ? Buffer.from(write.chunk, write.encoding) : write.chunk;
+    }
+    chunk = Buffer.concat(chunks);
+    encoding = "buffer";
+  }
+  const taken = chunk.length === 0 || handle.$write(chunk, encoding) > 0;
+  const state = self._writableState;
+  for (let i = 0; i < count; i++) {
+    const write = queued[i];
+    // What the Writable counted for a write that the handle took, so that it still finishes. A write that was cut
+    // stays counted: no 'drain' reports it as flushed.
+    if (taken) state.length -= write.chunk.length;
+    write.chunk = kOnreadEmptyTail;
+    write.encoding = "buffer";
+  }
+  return taken;
+}
+// The owner of the socket that `self` wraps destroyed it, and `self` is destroyed a moment later (closeAdoptedTLSRaw).
+// Until then TLSWrap takes the writes that do not reach the closed handle:
+// https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1010-L1143
+function writeOverDestroyedRaw(self, pending, chunk, callback) {
+  if (chunk.length === 0 && !pending.cut) {
+    // Nothing to encrypt, or what the destroy() handed over.
+    process.nextTick(callback);
+  } else if (!self._secureEstablished) {
+    // It waits for the handshake, and is cancelled with the TLS socket.
+    self[kwriteCallback] = callback;
+  } else if (pending.late || pending.cut || self[kCarriesRecords]) {
+    // It fails when the TLS socket is destroyed. An 'error' for it would be one that node does not emit. Neither does
+    // node for a record of the TLS socket above, which that socket hands to the handle with no write().
+    self[kwriteCallback] = failAsDestroyed.bind(null, callback);
+  } else {
+    return false;
+  }
+  return true;
+}
+// Inside the destroy() of the TLS socket. Node failed this write when it was made, so what its callback throws there
+// does not stop that destroy().
+function failAsDestroyed(callback) {
+  try {
+    callback($ERR_STREAM_DESTROYED("write"));
+  } catch (err) {
+    reportError(err);
+  }
 }
 function detachSocket(self) {
   if (!self) self = this;
@@ -468,6 +602,9 @@ function destroyNT(self, err) {
 // Node's wrap 'close' -> destroy(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function onUpgradedClose(self, connection) {
   if (self[kupgraded] !== connection) return;
+  // The 'close' that a socket owes for the connection before this one: its owner has connected it again since.
+  if (connection instanceof Socket && !connection.destroyed)
+    return void connection.once("close", self[kOnUpgradedClose]);
   // The stream-level engine reads its transport with no backpressure, so the
   // transport can close after the peer's EOF with plaintext still unread.
   if ((self[kended] || self[kOnreadPendingEnd]) && !self.readableEnded) self.once("end", self[kOnUpgradedClose]);
@@ -496,6 +633,12 @@ function onUpgradedReadError(self, err) {
 // Whatever state the wrapped stream is in: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L739-L741
 function linkUpgraded(self, connection: SocketInstance) {
   const isSocket = connection instanceof Socket;
+  // `self` leaves a socket that its owner destroyed. The handle of their fd has closed.
+  const left = self._handle;
+  if (left?.[kRawDestroyed] !== undefined) {
+    closeHandleOfDestroyedRaw(self, left);
+    self._handle = null;
+  }
   self[kupgraded] = connection;
   self._parent = isSocket ? connection : null;
   destroyWhenUpgradedCloses(self, connection);
@@ -521,12 +664,14 @@ function attachTLSEngine(self, connection, options) {
   connection.once(kReadError, onUpgradedReadError.bind(null, self));
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/js_stream_socket.js#L117-L120
   connection.resume();
+  if (connection instanceof Socket) connection[kCarriesRecords] = true;
   self._handle = handle;
 }
 function adoptTLSPair(self, connection, pair) {
   if (!pair) throw new Error("Invalid socket");
   const raw = (connection._handle = pair[0]);
   raw[kAdoptedTLSRaw] = self;
+  raw[kAdoptedTLSHandle] = pair[1];
   self.once("end", self[kCloseRawConnection]);
   raw.connecting = false;
   self._handle = pair[1];
@@ -568,9 +713,17 @@ function adoptServerTLS(self, connection, options) {
   self.emit(kUpgradeAttached);
 }
 // What TLSWrap.prototype.close destroys. The raw twin of an adopted fd closes with that fd instead (closeWithTLSSocket).
+// Nor a socket that its owner destroyed: whatever it is by now is the owner's, also when it is connected again.
 function unadoptedTransport(self): SocketInstance | undefined {
   const upgraded = self[kupgraded];
-  if (upgraded && !upgraded.destroyed && upgraded._handle?.[kAdoptedTLSRaw] !== self) return upgraded;
+  if (
+    upgraded &&
+    !upgraded.destroyed &&
+    upgraded._handle?.[kAdoptedTLSRaw] !== self &&
+    self._handle?.[kRawDestroyed] === undefined
+  ) {
+    return upgraded;
+  }
 }
 // Node destroys the transport at every close: all writes have completed by then. Here a write completes once the transport has
 // taken the ciphertext, so one that can hold some of the application's is released instead (releaseTransport).
@@ -2293,6 +2446,9 @@ Socket.prototype[kAttach] = function (port, socket) {
 
 Socket.prototype[kCloseRawConnection] = function () {
   const connection = this[kupgraded];
+  // Not a socket that its owner has connected again since this socket took its fd.
+  const handle = connection._handle;
+  if (handle && handle[kAdoptedTLSRaw] !== this) return;
   // Only a destroy the connection's owner started counts as it closing under this socket.
   if (!connection.destroyed) connection.removeListener("close", this[kOnUpgradedClose]);
   connection.connecting = false;
@@ -2513,11 +2669,54 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     this[kBytesWritten] = this._handle.bytesWritten;
 
     const currentHandle = this._handle;
-    // Ahead of every branch: two of them close the handle a loop turn later, when the flight has left.
-    if (typeof this[bunTlsSymbol] === "function" || currentHandle[kAdoptedTLSRaw]) {
-      releaseHeldFlight(currentHandle);
-    }
-    if (this.resetAndClosing) {
+    const tlsSocket = currentHandle[kAdoptedTLSRaw];
+    // Set once the owner of the socket that this one wraps destroyed it.
+    const destroyedRaw = currentHandle[kRawDestroyed];
+    // Ahead of every branch: one of them closes the handle a microtask later, when the flight has left.
+    if (typeof this[bunTlsSymbol] === "function") releaseHeldFlight(currentHandle);
+    // Nothing is left to reset then.
+    if (this.resetAndClosing && destroyedRaw !== undefined) this.resetAndClosing = false;
+    if (tlsSocket !== undefined) {
+      // A TLS socket adopted the fd. Node closes the handle here, under its TLSWrap, which hears of it from the 'close'
+      // of this socket: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L358
+      // So the fd closes now and neither socket is told. Until the TLS socket is destroyed it takes no write (_write).
+      // Unlike in node, it emits no more of the input that it had read.
+      const tlsHandle = currentHandle[kAdoptedTLSHandle];
+      // Not a TLS socket that was closed first, or that has another socket to wrap by now.
+      const owns = tlsSocket._handle === tlsHandle && tlsSocket[kupgraded] === this;
+      const inFlight = owns && tlsSocket[kwriteCallback] != null;
+      // The Writable of the TLS socket holds writes from before this call, also ones of no data.
+      const writable = tlsSocket._writableState;
+      const busy = owns && (writable.writing || writable.bufferedRequestCount > 0);
+      const reset = this.resetAndClosing;
+      if (reset) this.resetAndClosing = false;
+      const pending = {
+        tlsSocket,
+        tlsHandle,
+        isException,
+        late: busy,
+        cut: false,
+        // After the FIN of this socket the TLS socket has no write in flight: the handle wrote all it had before that
+        // FIN. A record of the TLS socket above is not a write of this socket's owner.
+        cancels: inFlight && tlsSocket._secureEstablished && !this.writableFinished && !tlsSocket[kCarriesRecords],
+        tlsClose: undefined,
+      };
+      if (owns) tlsHandle[kRawDestroyed] = pending;
+      else process.nextTick(cancelWriteOfClosedTLS, tlsSocket);
+      // Past the ticks and the microtasks that this tick queued.
+      queueMicrotask(() => process.nextTick(endRawDestroyTick, this, pending));
+      if (reset) {
+        closeAdoptedRaw(currentHandle, "reset");
+      } else {
+        const handsOver = busy && !inFlight && tlsSocket._secureEstablished;
+        if (handsOver) pending.cut = !handOverQueuedWrites(tlsSocket, tlsHandle);
+        closeAdoptedRaw(currentHandle, "shutdown");
+        // With what the handle counts for a write that this close cancelled.
+        if (handsOver) tlsSocket[kBytesWritten] = tlsHandle.bytesWritten;
+        // Node calls close() on this handle. The connection is gone from it, so the call does nothing more.
+        if (currentHandle.readyState < 0) currentHandle.close(onSocketHandleClosed);
+      }
+    } else if (this.resetAndClosing) {
       this.resetAndClosing = false;
       // resetAndDestroy() must send an RST (not a graceful FIN) so the peer sees
       // ECONNRESET. `close()` does a fast shutdown (clean close) which only
@@ -2536,11 +2735,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // accessible when an `error` event is handled in the `next tick queue`.
       // The native close that follows a failure reported under a JS call detaches _handle before this runs.
       queueMicrotask(() => closeSocketHandle(this, currentHandle, isException, true));
-    } else if (currentHandle[kAdoptedTLSRaw]) {
-      // Shared-fd TLS pair: defer the close two check-phase turns
-      // (test-tls-socket-close); see closeAdoptedTLSRawNT.
-      currentHandle.pause?.();
-      setImmediate(closeAdoptedTLSRawNT, this, currentHandle, isException);
+    } else if (destroyedRaw !== undefined) {
+      closeHandleOfDestroyedRaw(this, currentHandle);
+      // Emitted right ahead of the 'close' of the socket that it wraps (emitAdoptedTLSCloses).
+      destroyedRaw.tlsClose = isException;
     } else {
       closeSocketHandle(this, currentHandle, isException);
     }
@@ -3069,6 +3267,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   this._unrefTimer();
   if (this.secureConnecting) this[kPreHandshakeWrite] = true;
   if (socket.readyState < 0) {
+    const destroyedRaw = socket[kRawDestroyed];
+    if (destroyedRaw !== undefined && writeOverDestroyedRaw(this, destroyedRaw, chunk, callback)) return;
     // The handle's native socket was already closed (e.g. handle.close() was
     // called directly): fail the write the way a write(2) on a closed fd does
     // in Node instead of waiting forever for a drain that never comes.
@@ -4515,13 +4715,24 @@ function initSocketHandle(self) {
 // intercepts close on `socket._handle` and invokes it, so always pass one.
 function onSocketHandleClosed() {}
 
+// The owner of the socket that `self` wraps destroyed it, so the connection is gone from `handle` and its close()
+// does nothing more. TLSWrap cancels the write that it holds.
+function closeHandleOfDestroyedRaw(self, handle) {
+  handle.close(onSocketHandleClosed);
+  cancelWrite(self, "Canceled because of SSL destruction");
+}
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
+  if (handle[kRawDestroyed] !== undefined) {
+    // A microtask after `_destroy`: the report of a handshake that failed destroyed the wrapped socket. TLSWrap.close()
+    // completes at once over a handle that its owner closed, and nothing of a caller is on the stack here.
+    closeHandleOfDestroyedRaw(self, handle);
+    emitCloseAndDetachHandle(self, isException, handle);
+    return;
+  }
   // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
   const transport = transportToDestroy(self);
   if (transport !== undefined) abortTransport(transport);
-  // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
-  handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);
   // Arguments instead of a closure, so no scope keeps the closed handle alive.
   if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);

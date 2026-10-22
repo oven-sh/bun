@@ -7500,6 +7500,16 @@ impl H2FrameParser {
         }
     }
 
+    /// The owner of the socket closes it now, with what the socket took. The cork holds frames that this session
+    /// reported as written, and its flush at the end of the tick would find no socket.
+    pub(crate) fn on_native_close_by_owner(&self) {
+        if !self.tx_tracker.get().at_boundary() {
+            return;
+        }
+        let _keepalive = self.keepalive();
+        let _ = self.uncork();
+    }
+
     pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
         // detach_native_socket can drop the socket's last ref (Writeonly deref),

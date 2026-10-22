@@ -16,6 +16,9 @@ export const upgradeTLSDeferred = b.fn({
   throws: true,
 });
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
+/** `destroy()` or `resetAndDestroy()` of a `net.Socket` that a `tls.TLSSocket` wraps. */
+export const AdoptedRawClose = b.enumeration(["shutdown", "reset"]);
+export const closeAdoptedRaw = b.fn({ args: { raw: TLSSocket, how: AdoptedRawClose } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });

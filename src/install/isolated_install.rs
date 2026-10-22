@@ -505,13 +505,8 @@ struct PeerColumns<'a> {
     peers: &'a mut [store::node::Peers],
 }
 
-/// Marks the peers that pass through a node on the chains that link to it.
-///
-/// A node that another node takes as a child in place of a node of its own (an ancestor at the
-/// end of a dependency cycle, or the node an early dedupe found) stands in for the whole subtree
-/// there too. Its peers are the marks the subtree would have left on that chain, so they are
-/// copied when the link is made, and a peer that newly passes through it later is queued again
-/// from each of its link parents.
+/// Marks the peers of a linked node (a cycle ancestor, or the node an early dedupe found) on each
+/// chain that links it: the ones it has when the link is made, and the ones that arrive later.
 struct PeerMarker<'a> {
     dependencies: &'a [install::Dependency],
     contained: &'a DynamicBitSet,
@@ -543,10 +538,7 @@ impl<'a> PeerMarker<'a> {
     }
 
     /// Records each queued peer on its start node and on every ancestor below the one that
-    /// resolves the peer's name, as the walk up from the peer's declarer does.
-    ///
-    /// A chain that resolves the name to another package is left alone: a declarer below it takes
-    /// that nearer package, and a mark for the linked one would make it choose the far one.
+    /// resolves the name. A chain that resolves it to another package is left alone.
     fn mark(
         &mut self,
         cols: &mut PeerColumns<'_>,
@@ -833,8 +825,7 @@ fn build_store(
 
     let mut visited_parent_node_ids: Vec<store::node::Id> = Vec::new();
 
-    // For each node, the nodes that link to it in place of a child of their own: the parent of a
-    // dependency that closed a cycle, and the parent of a dependency an early dedupe resolved to it.
+    // For each node, the parents of the dependencies that link it (a cycle or an early dedupe).
     let mut link_parents: Vec<Vec<store::node::Id>> = Vec::new();
     let mut peer_marker = PeerMarker {
         dependencies,
@@ -900,8 +891,6 @@ fn build_store(
                 ..
             } = nodes_slice.split_mut();
 
-            // The ancestor's subtree is not finished, so the peers that pass through it later
-            // reach this chain as a link parent.
             peer_marker.link(
                 entry.parent_id,
                 cycle_node_id,
@@ -1042,9 +1031,6 @@ fn build_store(
 
                     // The skipped subtree would have walked up through this
                     // ancestor chain marking each node with its leaking peers.
-                    // DFS guarantees `dedupe_node`'s subtree is fully processed,
-                    // so its `peers` is that set unless a cycle inside it adds
-                    // more later, which then arrive here as a link parent.
                     peer_marker.link(
                         entry.parent_id,
                         dedupe_node_id,

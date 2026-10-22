@@ -2056,6 +2056,15 @@ describe("bundler", () => {
             same.push(value);
             return items;
           }
+          // A function that only passes its own arguments on. It was right before, and is not compiled either:
+          // upstream leaves out every function that reads \`arguments\`.
+          function useForwarder(base) {
+            useState(0);
+            const log = function () {
+              return [base, ...arguments];
+            };
+            return { log };
+          }
           // No \`arguments\`: these two are compiled.
           function Plain({ name }) {
             return <div>Hello {name}</div>;
@@ -2087,10 +2096,11 @@ describe("bundler", () => {
             useCalledAtOnce: twice(useCalledAtOnce, [0, 0], [0, 0]),
             useArrowCalledAtOnce: twice(useArrowCalledAtOnce, ["a"], ["b"]),
             useOwn: twice(useOwn, ["a"], ["b"]),
+            useForwarder: twice(useForwarder, ["a"], ["b"], it => it.log(1, 2)),
             Plain: twice(Plain, [{ name: "a" }], [{ name: "b" }], it => it.props.children),
             useControl: twice(useControl, [], []),
           };
-          const all = { Jsx, useIndex, useLength, useSpread, usePattern, useMemoized, useArrow, useAlias, useArrowInFunction, useUnbound, useCalledAtOnce, useArrowCalledAtOnce, useOwn, Plain, useControl };
+          const all = { Jsx, useIndex, useLength, useSpread, usePattern, useMemoized, useArrow, useAlias, useArrowInFunction, useUnbound, useCalledAtOnce, useArrowCalledAtOnce, useOwn, useForwarder, Plain, useControl };
           const withMemoCache = Object.keys(all).filter(name => calls(all[name]) > 0);
           console.log(JSON.stringify({ renders, withMemoCache }));
         `,
@@ -2135,6 +2145,10 @@ describe("bundler", () => {
             useCalledAtOnce: [[0], [0]],
             useArrowCalledAtOnce: [["a"], ["b"]],
             useOwn: [["a"], ["b"]],
+            useForwarder: [
+              ["a", 1, 2],
+              ["b", 1, 2],
+            ],
             Plain: [
               ["Hello ", "a"],
               ["Hello ", "b"],

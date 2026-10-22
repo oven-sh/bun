@@ -52,7 +52,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
-        implicit_arguments_is_unsupported: is_oxlint,
+        // The plugin's compiler is older than facebook/react#37645 and says nothing of `arguments`.
+        implicit_arguments_is_unsupported: is_oxlint || has_no_foreign_config,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

@@ -1259,8 +1259,7 @@ fn match_slowly(
     match_groups(glob, glob_start, path, parsed, dots, is_kept, is_windows)
 }
 
-/// Matches `*{y,[!x]}*` like `*y*` and `*[!x]*`: runs the loop on from `state`, and writes out the group where it stops.
-/// Returns `None` if that can't be done.
+/// Matches `*{y,[!x]}*` like `*y*` and `*[!x]*`: runs the loop from `state` to a group and writes that out. `None` if it can't.
 #[cold]
 #[inline(never)]
 fn match_alternatives(glob: &[u8], mut state: State, path: &[u8], mode: Mode) -> Option<bool> {

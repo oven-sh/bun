@@ -1923,12 +1923,18 @@ test.concurrent(
         install(count)(error => error.stack),
       ],
       "of a node:vm context": [() => vm.runInContext("new Error('boom')", context), error => error.stack],
-      "not called to print": [
+      "not called to print, and called for a read after it": [
         () => new Error("boom"),
         error => {
           let calls = 0;
-          const printed = install(() => ++calls)(error => Bun.inspect(error))(error);
-          return [calls, printed.includes("at thrower")];
+          return install(() => ++calls)(error => [Bun.inspect(error).includes("at thrower"), calls, error.stack])(error);
+        },
+      ],
+      "not called to print a stack whose text has no frame to parse": [
+        Object.defineProperty(() => { try { return new Error("boom"); } finally {} }, "name", { value: "two\\nlines" }),
+        error => {
+          let calls = 0;
+          return install(() => ++calls)(error => [Bun.inspect(error).split("\\n", 1)[0], calls, error.stack !== undefined])(error);
         },
       ],
       "read by the stack getter of an error that is printed": [
@@ -1962,7 +1968,8 @@ test.concurrent(
       "called once": row(1),
       "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
       "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
-      "not called to print": row([0, true]),
+      "not called to print, and called for a read after it": row([true, 0, 1]),
+      "not called to print a stack whose text has no frame to parse": row([expect.any(String), 0, true]),
       "read by the stack getter of an error that is printed": row(expect.stringMatching(/^call sites: [1-9]/)),
     });
     expect(exitCode).toBe(0);

@@ -584,13 +584,16 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         // we don't want to serialize JSC::StackFrame longer than we need to
         // so in this case, we parse the stack trace as a string
 
-        // Frames that are alive print without a call to Error.prepareStackTrace, so ones a collection formatted do too.
-        err->clearCollectedStackFrames();
-
-        // This one intentionally calls getters.
-        JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
+        JSC::JSValue stackValue;
+        // Printing frames that are alive leaves the stack unread, so printing ones a collection formatted does too.
+        if (WTF::String collectedStackString = err->collectedStackString(); !collectedStackString.isNull()) {
+            stackValue = jsString(vm, collectedStackString);
+        } else {
+            // This one intentionally calls getters.
+            stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);
+            if (!scope.clearExceptionExceptTermination()) [[unlikely]]
+                return;
+        }
         if (stackValue) {
             // Prevent infinite recursion if stack property is the error object itself
             if (stackValue == val) {
@@ -644,6 +647,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     }
 
     if (except.stack.frames_len == 0 && getFromSourceURL) {
+        // These reads materialize the stack, and getNonObservable() may not run Error.prepareStackTrace.
+        err->clearCollectedStackFrames();
         JSC::JSValue sourceURL = getNonObservable(vm, global, obj, vm.propertyNames->sourceURL);
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;

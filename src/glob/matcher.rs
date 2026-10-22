@@ -1254,15 +1254,24 @@ fn match_slowly(
     match_groups(glob, glob_start, path, parsed, dots, is_kept, is_windows)
 }
 
-/// A walk finds matches that the loop misses: `*[!x]*` doesn't match `a/b`. So that `*{y,[!x]}*` doesn't either, writes the pattern
-/// out once for each alternative of its first group, and matches that. Returns `None` if it can't be written out.
+/// Matches `*{y,[!x]}*` like `*y*` and `*[!x]*`: writes the first group out. Returns `None` if that can't be done.
 #[cold]
 #[inline(never)]
 fn match_alternatives(glob: &[u8], parsed: &Parsed, path: &[u8], mode: Mode) -> Option<bool> {
-    // Each group multiplies the number of patterns to write out.
-    const MOST_ALTERNATIVES: usize = 16;
-    let first = parsed.alternatives.first()?;
-    if parsed.alternatives.len() > MOST_ALTERNATIVES
+    const MOST_PATTERNS: usize = 256;
+    let alternatives = &*parsed.alternatives;
+    let of_group = |first| {
+        std::iter::successors(Some(first), |it: &&Alternative| {
+            alternatives.get(it.next as usize)
+        })
+    };
+    // Each group multiplies the number of patterns to write out, and is one more call inside this one.
+    let groups = alternatives.iter().filter(|it| it.close > 0);
+    let patterns = groups.fold(1_usize, |so_far, it| {
+        so_far.saturating_mul(of_group(it).count().max(2))
+    });
+    let first = alternatives.first()?;
+    if patterns > MOST_PATTERNS
         || first.next == Alternative::IS_SEQUENCE
         || std::str::from_utf8(glob).is_err()
     {
@@ -1271,8 +1280,7 @@ fn match_alternatives(glob: &[u8], parsed: &Parsed, path: &[u8], mode: Mode) -> 
     let before = &glob[parsed.top as usize..first.start as usize - 1];
     let after = &glob[first.close as usize + 1..];
     let mut written: SmallVec<[u8; 64]> = SmallVec::new();
-    let mut next = Some(first);
-    while let Some(it) = next {
+    for it in of_group(first) {
         written.clear();
         for mut part in [before, &glob[it.start as usize..it.end as usize], after] {
             match (written.last(), part.first()) {
@@ -1290,7 +1298,6 @@ fn match_alternatives(glob: &[u8], parsed: &Parsed, path: &[u8], mode: Mode) -> 
         if match_written(&written, path, mode) {
             return Some(true);
         }
-        next = parsed.alternatives.get(it.next as usize);
     }
     Some(false)
 }
@@ -3646,8 +3653,7 @@ struct Parsed {
     /// All that keeps it from being regular are classes that can match a separator. It has neither `*` nor groups, so there's only
     /// one way to match it, and the loop finds that.
     is_fixed: bool,
-    /// The same holds, but one of those classes comes after a `*`, so the loop doesn't find every match. Its groups are all `{a,b}`.
-    /// See [`match_alternatives`].
+    /// One of those classes comes after a `*`, so the loop misses matches. All its groups are `{a,b}`. See [`match_alternatives`].
     has_missed_matches: bool,
     /// It has only literal bytes that need no second look, which nothing compares faster than the loop.
     is_plain_text: bool,

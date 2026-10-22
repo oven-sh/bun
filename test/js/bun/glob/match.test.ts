@@ -2541,9 +2541,11 @@ describe("Glob.match", () => {
     ["*[/]{/**/*,x}", ["//", "a//", "a//b/", "a/x"], ["/", "a/", "a/x/"]],
     ["{*,[!x]}(a)", ["(a)", "x(a)", "b(a)", "/(a)"], ["a", "", "aa"]],
     ["*[/]{1..3}", ["a/1", "a/2", "/3"], ["a/4", "a1", "a/1..3"]],
-    // Up to 16 alternatives are written out.
-    [`*{${Array.from({ length: 15 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z14", "/b"], ["a/b", "x"]],
-    [`*{${Array.from({ length: 16 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z15", "/b", "a/b"], ["x"]],
+    // Up to 256 patterns are written out.
+    [`*{${Array.from({ length: 255 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z254", "/b"], ["a/b", "x"]],
+    [`*{${Array.from({ length: 256 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z255", "/b", "a/b"], ["x"]],
+    [`*${Buffer.alloc(8 * 8, "{a,[!x]}")}*`, ["aaaaaaaa", "aaaaaaa/"], ["aaaaaaaaa/b", "aaaaaaa"]],
+    [`*${Buffer.alloc(9 * 8, "{a,[!x]}")}*`, ["aaaaaaaaa", "aaaaaaaa/", "aaaaaaaaaa/b"], ["aaaaaaaa"]],
   ])("a group, a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
     const glob = new Glob(pattern);
     for (let round = 0; round < 12; round++) {

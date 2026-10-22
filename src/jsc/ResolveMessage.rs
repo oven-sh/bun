@@ -303,8 +303,17 @@ impl ResolveMessage {
         msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
+        let mut cloned = msg.clone();
+        if let bun_ast::Metadata::Resolve(resolve) = &cloned.metadata
+            && resolve.err == bun_ast::Error::ModuleNotFound
+            && let Some(note) = blocked_lifecycle_script_note(referrer)
+        {
+            let mut notes = cloned.notes.into_vec();
+            notes.push(note);
+            cloned.notes = notes.into_boxed_slice();
+        }
         let resolve_error = ResolveMessage {
-            msg: msg.clone(),
+            msg: cloned,
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: Cell::new(false),
         };
@@ -464,4 +473,128 @@ impl ResolveMessage {
             JSValue::NULL
         })
     }
+}
+
+/// If `referrer` sits inside `node_modules/<pkg>/` and `<pkg>` has a lifecycle
+/// script that Bun may have blocked, return a `bun pm trust <pkg>` hint.
+/// <https://github.com/oven-sh/bun/issues/12890>
+#[cold]
+fn blocked_lifecycle_script_note(referrer: &[u8]) -> Option<bun_ast::Data> {
+    let (pkg_name, pkg_dir) = enclosing_node_modules_package(referrer)?;
+    let script = first_lifecycle_script(pkg_dir)?;
+
+    let mut text = Vec::new();
+    write!(
+        &mut text,
+        "The \"{script}\" script for \"{name}\" may have been blocked. If you trust this \
+         package, run `bun pm trust {name}` and try again.",
+        name = bstr::BStr::new(&pkg_name),
+    )
+    .ok()?;
+    Some(bun_ast::range_data(None, bun_ast::Range::NONE, text))
+}
+
+/// `(package_name, package_dir)` of the deepest `node_modules/<name>` that
+/// `referrer` sits inside. `package_dir` is a prefix of `referrer`.
+#[cold]
+fn enclosing_node_modules_package(referrer: &[u8]) -> Option<(Vec<u8>, &[u8])> {
+    let nm_start = strings::last_index_of(referrer, bun_paths::NODE_MODULES_NEEDLE)?;
+    let name_start = nm_start + bun_paths::NODE_MODULES_NEEDLE.len();
+    let rest = referrer.get(name_start..)?;
+    let next_sep = |bytes: &[u8]| bytes.iter().position(|&c| bun_paths::is_sep_any(c));
+    let name_len = if rest.first() == Some(&b'@') {
+        let scope_end = next_sep(rest)?;
+        let pkg_end = next_sep(rest.get(scope_end + 1..)?)?;
+        scope_end + 1 + pkg_end
+    } else {
+        next_sep(rest)?
+    };
+    if name_len == 0 || rest[..name_len].starts_with(b".") {
+        return None;
+    }
+    let mut name = rest[..name_len].to_vec();
+    for b in &mut name {
+        if *b == b'\\' {
+            *b = b'/';
+        }
+    }
+    Some((name, &referrer[..name_start + name_len]))
+}
+
+/// Byte-scan `<pkg_dir>/package.json` for any `bun_install` lifecycle hook key
+/// inside `"scripts"`, or a sibling `binding.gyp`. Used only for the UX hint
+/// above, so a full JSON parse is avoided.
+#[cold]
+fn first_lifecycle_script(pkg_dir: &[u8]) -> Option<&'static str> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+
+    let manifest = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        buf.as_mut_slice(),
+        &[pkg_dir, b"package.json"],
+    );
+    if let Ok(bytes) = bun_sys::File::read_from(bun_sys::Fd::cwd(), manifest)
+        && let Some(after) = find_json_key(&bytes, b"\"scripts\"")
+    {
+        // Bound to the `"scripts"` object so a sibling key like
+        // `"dependencies": { "install": "..." }` cannot match.
+        let scripts = &after[..end_of_flat_json_object(after)];
+        // Only the install-family: `Scripts::get_script_entries` gates
+        // `NAMES[3..]` (preprepare/prepare/postprepare) on `ResolutionTag`
+        // and never enqueues them for registry packages, so including them
+        // would false-positive on the ubiquitous `"prepare":"husky install"`.
+        for hook in &bun_install::lockfile::Scripts::NAMES[..3] {
+            if find_json_key(scripts, format!("\"{hook}\"").as_bytes()).is_some() {
+                return Some(hook);
+            }
+        }
+    }
+
+    let gyp = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
+        buf.as_mut_slice(),
+        &[pkg_dir, b"binding.gyp"],
+    );
+    if bun_sys::exists(gyp) {
+        return Some("install");
+    }
+
+    None
+}
+
+/// Find `key` (including its surrounding quotes) used as a JSON object key in
+/// `bytes`: i.e. followed by optional JSON whitespace and then `:`. Returns the
+/// slice starting after the `:`. Skips occurrences that are string values
+/// (`"files":["scripts"]`) rather than keys.
+#[cold]
+fn find_json_key<'a>(bytes: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    let mut rest = bytes;
+    loop {
+        let at = strings::index_of(rest, key)?;
+        let after = &rest[at + key.len()..];
+        let trimmed = after
+            .iter()
+            .position(|&b| !matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            .unwrap_or(after.len());
+        if after.get(trimmed) == Some(&b':') {
+            return Some(&after[trimmed + 1..]);
+        }
+        rest = &rest[at + key.len()..];
+    }
+}
+
+/// Offset of the first `}` that is not inside a JSON string. No brace nesting
+/// is tracked (sufficient for `"scripts"`, which is `Record<string, string>`).
+#[cold]
+fn end_of_flat_json_object(bytes: &[u8]) -> usize {
+    let mut in_string = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'}' if !in_string => return i,
+            _ => {}
+        }
+        i += 1;
+    }
+    bytes.len()
 }

@@ -945,6 +945,25 @@ describe.concurrent("version-scoped targets", () => {
     await installNoChanges(dir, "--frozen-lockfile");
   });
 
+  test("a range that links a workspace package never matches a selector", async () => {
+    const dir = await project(
+      {
+        workspaces: ["packages/*"],
+        dependencies: { "one-dep": "1.0.0" },
+        overrides: { "no-deps@1": "1.0.0" },
+      },
+      "hoisted",
+      {
+        "packages/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.5" }),
+        "packages/app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      },
+    );
+    await installOk(dir);
+    // one-dep declares no-deps@1.0.1, which the workspace package does not satisfy.
+    await expectVersionsSeenBy(dir, "no-deps", { "packages/app": "1.0.5", "one-dep": "1.0.0" });
+    await installNoChanges(dir, "--frozen-lockfile");
+  });
+
   test("a prerelease selector keeps applying after the lockfile is cloned for a dependency change", async () => {
     const overrides = { "no-deps@>=1.0.0-0 <2": "1.1.0" };
     const dir = await project({ dependencies: { "one-dep": "1.0.0", "one-range-dep": "1.0.0" }, overrides });

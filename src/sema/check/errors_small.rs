@@ -205,7 +205,7 @@ impl<'p> Checker<'p, '_> {
             self.check_expression_ex(file, location, CheckMode::empty())
         } else {
             let outside = self.type_only_node.take();
-            let ty = self.type_of_expr(file, location);
+            let ty = self.check_expression_again(file, location);
             self.type_only_node = outside;
             ty
         };

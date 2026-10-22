@@ -10340,6 +10340,56 @@ export class Methods {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the right operand of a logical operator in a test again", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+class Box { p = 1 }
+export function whole(o: { p: number }) {
+  fail();
+  while (c || c) { if (o.p) {} }
+}
+export function left(o: { p: number }) {
+  fail();
+  while (c || c) { if (o.p || c) {} }
+}
+export function rightOfOr(o: { p: number }) {
+  fail();
+  while (c || c) { if (c || o.p) {} }
+}
+export function rightOfAnd(o: { p: number }) {
+  fail();
+  while (c || c) { if (c && o.p) {} }
+}
+export function conditional(o: { p: number }) {
+  fail();
+  while (c || c) { c || o.p ? 1 : 2; }
+}
+export function notATest(o: { p: number }) {
+  fail();
+  while (c || c) { c || o.p; }
+}
+export function leftOfAnd(o: { p: number }) {
+  fail();
+  while (c || c) { (c || o.p) && c; }
+}
+export function operator(value: unknown) {
+  fail();
+  while (c || c) { if (c || value instanceof Box) {} }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(14,31): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(18,31): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(22,27): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(30,28): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(34,29): error TS2358: The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

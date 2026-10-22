@@ -525,3 +525,31 @@ pub(crate) fn create_memfd_for_testing(
         }
     }
 }
+
+#[bun_jsc::host_fn]
+pub(crate) fn fs_events_inject_for_testing(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut events = Vec::new();
+        for [path, flags] in frame.arguments().as_chunks::<2>().0 {
+            let path = path.to_utf8(global)?;
+            events.push((bun_core::ZBox::from_bytes(&*path), flags.to_int32()));
+        }
+        if crate::node::fs_events::inject_for_testing(&events) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        Err(global.throw(format_args!(
+            "fsEventsInject: no fs.watch() has started FSEvents"
+        )))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = frame;
+        Err(global.throw(format_args!(
+            "fsEventsInject is not implemented on this platform"
+        )))
+    }
+}

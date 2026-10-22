@@ -194,6 +194,13 @@ export const memfd_create: (size: number) => number = $newRustFunction(
   1,
 );
 
+// macOS-only. Gives fs.watch one batch of FSEvents events, as (path, flags) argument pairs.
+export const fsEventsInject: (...pathsAndFlags: (string | number)[]) => void = $newRustFunction(
+  "node_fs_binding.rs",
+  "fsEventsInjectForTesting",
+  2,
+);
+
 export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
   "Stat.rs",
   "createStatsForIno",

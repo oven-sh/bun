@@ -278,10 +278,10 @@ impl PathWatcher {
         }
     }
 
-    /// The shared inotify queue overflowed and events were lost; every handler
+    /// The inotify queue overflowed or FSEvents dropped events, so events were lost; every handler
     /// gets `('change', null)`. No duplicate suppression — a loss signal must
     /// always be delivered. Caller holds `manager.mutex`.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     fn emit_overflow(&self) {
         for &ctx in self.handlers.keys() {
             (FSWatcher::ON_PATH_UPDATE)(
@@ -1395,7 +1395,8 @@ impl Darwin {
             Event::Rename(path) => watcher.emit(WatchEventKind::Rename, &path, is_file),
             Event::Change(path) => watcher.emit(WatchEventKind::Change, &path, is_file),
             Event::Error { err, close } => watcher.emit_error(&err, close),
-            _ => {}
+            Event::NoFilename(_) => watcher.emit_overflow(),
+            Event::Abort => {}
         }
     }
 

@@ -25,6 +25,7 @@ pub(crate) type CFArrayRef = *mut c_void;
 pub(crate) type CFAllocatorRef = *mut c_void;
 pub(crate) type CFRunLoopRef = *mut c_void;
 pub(crate) type CFRunLoopSourceRef = *mut c_void;
+pub(crate) type CFRunLoopTimerRef = *mut c_void;
 pub(crate) type CFStringRef = *mut c_void;
 pub(crate) type CFTypeRef = *mut c_void;
 pub(crate) type FSEventStreamRef = *mut c_void;
@@ -53,6 +54,15 @@ pub(crate) struct CFRunLoopSourceContext {
 }
 
 #[repr(C)]
+pub(crate) struct CFRunLoopTimerContext {
+    pub(crate) version: CFIndex,
+    pub(crate) info: *mut c_void,
+    pub(crate) retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
+    pub(crate) release: Option<unsafe extern "C" fn(*const c_void)>,
+    pub(crate) copy_description: Option<unsafe extern "C" fn(*const c_void) -> *mut c_void>,
+}
+
+#[repr(C)]
 pub(crate) struct FSEventStreamContext {
     pub(crate) version: CFIndex,
     pub(crate) info: *mut c_void,
@@ -72,6 +82,8 @@ impl Default for FSEventStreamContext {
 const K_FS_EVENT_STREAM_CREATE_FLAG_NO_DEFER: c_int = 2;
 const K_FS_EVENT_STREAM_CREATE_FLAG_FILE_EVENTS: c_int = 16;
 
+const K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED: c_int = 0x2;
+const K_FS_EVENT_STREAM_EVENT_FLAG_KERNEL_DROPPED: c_int = 0x4;
 const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWNER: c_int = 0x4000;
 const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED: c_int = 0x100;
 const K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_FINDER_INFO_MOD: c_int = 0x2000;
@@ -91,6 +103,12 @@ const K_FS_EVENTS_MODIFIED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CHANGE_OWN
 const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
+
+const K_FS_EVENTS_DROPPED: c_int =
+    K_FS_EVENT_STREAM_EVENT_FLAG_USER_DROPPED | K_FS_EVENT_STREAM_EVENT_FLAG_KERNEL_DROPPED;
+
+/// FSEvents repeats its dropped event in every batch while it drops, and a listener scans again for each report.
+const LOSS_REPORT_INTERVAL: CFTimeInterval = 1.0;
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
@@ -117,6 +135,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
 // dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
 pub(crate) struct CoreFoundation {
+    pub(crate) absolute_time_get_current: unsafe extern "C" fn() -> CFAbsoluteTime,
     pub(crate) array_create: unsafe extern "C" fn(
         CFAllocatorRef,
         *mut *mut c_void,
@@ -128,6 +147,8 @@ pub(crate) struct CoreFoundation {
 
     pub(crate) run_loop_add_source:
         unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
+    pub(crate) run_loop_add_timer:
+        unsafe extern "C" fn(CFRunLoopRef, CFRunLoopTimerRef, CFStringRef),
     pub(crate) run_loop_get_current: unsafe extern "C" fn() -> CFRunLoopRef,
     pub(crate) run_loop_remove_source:
         unsafe extern "C" fn(CFRunLoopRef, CFRunLoopSourceRef, CFStringRef),
@@ -139,6 +160,15 @@ pub(crate) struct CoreFoundation {
     ) -> CFRunLoopSourceRef,
     pub(crate) run_loop_source_signal: unsafe extern "C" fn(CFRunLoopSourceRef),
     pub(crate) run_loop_stop: unsafe extern "C" fn(CFRunLoopRef),
+    pub(crate) run_loop_timer_create: unsafe extern "C" fn(
+        CFAllocatorRef,
+        CFAbsoluteTime,
+        CFTimeInterval,
+        usize,
+        CFIndex,
+        unsafe extern "C" fn(CFRunLoopTimerRef, *mut c_void),
+        *mut CFRunLoopTimerContext,
+    ) -> CFRunLoopTimerRef,
     pub(crate) run_loop_wake_up: unsafe extern "C" fn(CFRunLoopRef),
     pub(crate) string_create_with_file_system_representation:
         unsafe extern "C" fn(CFAllocatorRef, *const u8) -> CFStringRef,
@@ -204,6 +234,8 @@ fn init_core_foundation() -> CoreFoundation {
     };
 
     CoreFoundation {
+        absolute_time_get_current: dlsym(fsevents_cf_handle, c"CFAbsoluteTimeGetCurrent")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         array_create: dlsym(fsevents_cf_handle, c"CFArrayCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         retain: dlsym(fsevents_cf_handle, c"CFRetain")
@@ -211,6 +243,8 @@ fn init_core_foundation() -> CoreFoundation {
         release: dlsym(fsevents_cf_handle, c"CFRelease")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         run_loop_add_source: dlsym(fsevents_cf_handle, c"CFRunLoopAddSource")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_add_timer: dlsym(fsevents_cf_handle, c"CFRunLoopAddTimer")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         run_loop_get_current: dlsym(fsevents_cf_handle, c"CFRunLoopGetCurrent")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
@@ -223,6 +257,8 @@ fn init_core_foundation() -> CoreFoundation {
         run_loop_source_signal: dlsym(fsevents_cf_handle, c"CFRunLoopSourceSignal")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         run_loop_stop: dlsym(fsevents_cf_handle, c"CFRunLoopStop")
+            .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
+        run_loop_timer_create: dlsym(fsevents_cf_handle, c"CFRunLoopTimerCreate")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
         run_loop_wake_up: dlsym(fsevents_cf_handle, c"CFRunLoopWakeUp")
             .unwrap_or_else(|| panic!("Cannot Load CoreFoundation")),
@@ -282,6 +318,8 @@ struct FSEventsLoopState {
     fsevent_stream: FSEventStreamRef,
     paths: Option<Box<[*mut c_void]>>,
     cf_paths: CFArrayRef,
+    last_loss_report: CFAbsoluteTime,
+    loss_report_timer: CFRunLoopTimerRef,
 }
 
 // SAFETY: cross-thread pointers are `AtomicPtr`; `state` is only accessed under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
@@ -422,6 +460,8 @@ impl FSEventsLoop {
                 fsevent_stream: ptr::null_mut(),
                 paths: None,
                 cf_paths: ptr::null_mut(),
+                last_loss_report: 0.0,
+                loss_report_timer: ptr::null_mut(),
             }),
         }));
         // SAFETY: just allocated and exclusively owned; the CF thread only sees it after spawn.
@@ -522,15 +562,27 @@ impl FSEventsLoop {
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
+        loop_.dispatch(&paths.iter().zip(event_flags).map(|(path_ptr, flags)| {
+            // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
+            (unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes(), *flags)
+        }));
+    }
+
+    /// Reports one batch of `(path, flags)` events to every watcher.
+    fn dispatch<'a>(
+        &self,
+        events: &(impl Iterator<Item = (&'a [u8], FSEventStreamEventFlags)> + Clone),
+    ) {
         // Hold the mutex for the whole iteration. `unregisterWatcher` on the
         // main thread nulls the entry under this same mutex and then the
         // caller immediately frees the FSEventsWatcher (and its path buffer),
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock_guard();
+        let _guard = self.mutex.lock_guard();
         // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        let state = unsafe { self.state() };
+        let mut report_loss: Option<bool> = None;
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -539,11 +591,15 @@ impl FSEventsLoop {
             // scope. `emit`/`flush` take `&self`, so a shared borrow suffices.
             let handle = bun_ptr::BackRef::from(handle);
             let handle_path = handle.path.slice();
+            let mut dropped = false;
 
-            for (i, path_ptr) in paths.iter().enumerate() {
-                let mut flags = event_flags[i];
-                // SAFETY: each path_ptr is a NUL-terminated C string from FSEvents
-                let mut path = unsafe { bun_core::ffi::cstr(*path_ptr) }.to_bytes();
+            for (path, mut flags) in events.clone() {
+                // libuv skips these events, so Node reports nothing: https://github.com/libuv/libuv/blob/v1.52.0/src/unix/fsevents.c#L249-L251
+                if (flags & K_FS_EVENTS_DROPPED) != 0 {
+                    dropped = true;
+                    continue;
+                }
+                let mut path: &[u8] = path;
                 // Filter out paths that are outside handle's request
                 if path.len() < handle_path.len() || !path.starts_with(handle_path) {
                     continue;
@@ -597,6 +653,84 @@ impl FSEventsLoop {
                 };
                 handle.emit(event_type.to_event(path.into()), is_file);
             }
+            if dropped
+                && *report_loss.get_or_insert_with(|| {
+                    self.report_loss_now(&mut state.last_loss_report, &mut state.loss_report_timer)
+                })
+            {
+                handle.emit(Event::NoFilename(WatchEventKind::Change), false);
+            }
+            handle.flush();
+        }
+    }
+
+    /// False inside `LOSS_REPORT_INTERVAL` of the last report: `pending` then makes the report when the interval ends.
+    fn report_loss_now(
+        &self,
+        last_report: &mut CFAbsoluteTime,
+        pending: &mut CFRunLoopTimerRef,
+    ) -> bool {
+        let cf = CoreFoundation::get();
+        // SAFETY: CF fn pointer loaded via dlsym; it takes no argument.
+        let now = unsafe { (cf.absolute_time_get_current)() };
+        let loop_ = self.loop_.load(Ordering::Acquire);
+        if now - *last_report >= LOSS_REPORT_INTERVAL || loop_.is_null() {
+            *last_report = now;
+            *pending = ptr::null_mut();
+            return true;
+        }
+        if !pending.is_null() {
+            return false;
+        }
+        let mut ctx = CFRunLoopTimerContext {
+            version: 0,
+            info: core::ptr::from_ref::<FSEventsLoop>(self)
+                .cast_mut()
+                .cast::<c_void>(),
+            retain: None,
+            release: None,
+            copy_description: None,
+        };
+        // SAFETY: CF copies `ctx`; `self` is the leaked loop, so `info` outlives the timer; `loop_` is the CF
+        // thread's run loop, retained until `shutdown()`. The run loop owns the one-shot timer until it fires.
+        unsafe {
+            let timer = (cf.run_loop_timer_create)(
+                ptr::null_mut(),
+                *last_report + LOSS_REPORT_INTERVAL,
+                0.0,
+                0,
+                0,
+                Self::loss_report_timer_cb,
+                &raw mut ctx,
+            );
+            if timer.is_null() {
+                *last_report = now;
+                return true;
+            }
+            (cf.run_loop_add_timer)(loop_, timer, *cf.run_loop_default_mode);
+            (cf.release)(timer);
+            (cf.run_loop_wake_up)(loop_);
+            *pending = timer;
+        }
+        false
+    }
+
+    extern "C" fn loss_report_timer_cb(timer: CFRunLoopTimerRef, info: *mut c_void) {
+        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set in `report_loss_now`.
+        let this: &FSEventsLoop = unsafe { &*info.cast::<FSEventsLoop>() };
+        let _guard = this.mutex.lock_guard();
+        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
+        let state = unsafe { this.state() };
+        if state.loss_report_timer != timer {
+            return;
+        }
+        state.loss_report_timer = ptr::null_mut();
+        // SAFETY: CF fn pointer loaded via dlsym; it takes no argument.
+        state.last_loss_report = unsafe { (CoreFoundation::get().absolute_time_get_current)() };
+        for watcher in state.watchers.slice() {
+            let Some(handle) = *watcher else { continue };
+            let handle = bun_ptr::BackRef::from(handle);
+            handle.emit(Event::NoFilename(WatchEventKind::Change), false);
             handle.flush();
         }
     }
@@ -925,6 +1059,15 @@ pub(crate) fn watch(
     Ok(FSEventsWatcher::init(
         loop_, path, recursive, callback, update_end, ctx,
     ))
+}
+
+/// `bun:internal-for-testing`: false before the first `fs.watch()`.
+pub(crate) fn inject_for_testing(events: &[(bun_core::ZBox, FSEventStreamEventFlags)]) -> bool {
+    let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() else {
+        return false;
+    };
+    loop_.dispatch(&events.iter().map(|(path, flags)| (path.as_bytes(), *flags)));
+    true
 }
 
 extern "C" fn close_and_wait_on_exit() {

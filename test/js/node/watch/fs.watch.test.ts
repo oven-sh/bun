@@ -697,6 +697,176 @@ describe("fs.watch", () => {
     90_000,
   );
 
+  // When FSEvents loses events it sends an event with the UserDropped or
+  // KernelDropped flag. fs.watch reports it as ('change', null): at once for
+  // the first one, then at most once per second. libuv skips these events, so
+  // Node reports nothing for them.
+  // https://github.com/oven-sh/bun/issues/44780
+  test.skipIf(!isMacOS)("FSEvents: a dropped-events event is reported as ('change', null)", async () => {
+    using dir = tempDir("fs-watch-fsevents-dropped", { tree: { sub: {} }, other: {} });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixtures", "fsevents-dropped-events-fixture.ts"), String(dir)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const lost = ["change", null];
+    const created = [
+      ["rename", "sub/injected-a"],
+      ["rename", "sub/injected-b"],
+    ];
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      // The first batch is reported at once, the other three together one second later.
+      "four dropped batches": {
+        recursive: [lost, ...created, lost],
+        buffer: [lost, ...created, lost],
+        parent: [lost, lost],
+        sibling: [lost, lost],
+      },
+      "a created file": {
+        recursive: [["rename", "sub/injected"]],
+        buffer: [["rename", "sub/injected"]],
+        parent: [],
+        sibling: [],
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The layout of #44780 with a real loss: a recursive watcher, and watchers
+  // on the eight directories above it, which also contain a busy sibling
+  // directory. A stopped process cannot take its events, so FSEvents drops them.
+  test.skipIf(!isMacOS)(
+    "FSEvents: events dropped for a stopped process are reported as ('change', null)",
+    async () => {
+      using dir = tempDir("fs-watch-fsevents-stopped", {});
+      const flat: string[] = [];
+      let deep = fs.realpathSync(String(dir));
+      for (let i = 1; i <= 8; i++) flat.push((deep = path.join(deep, `a${i}`)));
+      const tree = path.join(deep, "tree");
+      const elsewhere = path.join(deep, "elsewhere");
+      fs.mkdirSync(path.join(tree, "sub"), { recursive: true });
+      fs.mkdirSync(elsewhere);
+
+      const child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const fs = require("fs");
+           const path = require("path");
+           const [tree, ...flat] = process.argv.slice(1);
+           const report = who => (type, name) => console.log(JSON.stringify([who, type, name]));
+           fs.watch(tree, { recursive: true }, report("tree"));
+           for (const dir of flat) fs.watch(dir, report(path.basename(dir)));`,
+          tree,
+          ...flat,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+
+      const events: [who: string, type: string, name: string | null][] = [];
+      let progress = Promise.withResolvers<void>();
+      const reading = (async () => {
+        let rest = "";
+        for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream())) {
+          const lines = (rest + chunk).split("\n");
+          rest = lines.pop()!;
+          for (const line of lines) events.push(JSON.parse(line));
+          progress.resolve();
+          progress = Promise.withResolvers<void>();
+        }
+      })();
+
+      const rounds: {
+        files: number;
+        // Of the recursive watcher.
+        renamesNotNamed: number;
+        nullFilename: number;
+        // Of every watcher: events that have the name of the watched directory itself.
+        namedAfterRoot: number;
+        flatWatchersWithNull: number;
+      }[] = [];
+      // Creates files in tree/sub until the recursive watcher reports one of them.
+      async function untilReported(prefix: string, from: number) {
+        const deadline = Date.now() + 15_000;
+        const reported = () =>
+          events.slice(from).some(([who, , name]) => who === "tree" && name?.startsWith(`sub/${prefix}`));
+        for (let i = 0; !reported(); i++) {
+          if (child.exitCode !== null || child.signalCode !== null || Date.now() > deadline) {
+            const state = { exitCode: child.exitCode, signalCode: child.signalCode, rounds, last: events.slice(-5) };
+            throw new Error(`the recursive watcher did not report ${prefix}*: ${JSON.stringify(state)}`);
+          }
+          fs.writeFileSync(path.join(tree, "sub", prefix + i), "");
+          await Promise.race([progress.promise, Bun.sleep(20)]);
+        }
+      }
+
+      try {
+        await untilReported("ready-", 0);
+        for (const [round, files] of [1_000, 5_000, 25_000].entries()) {
+          const from = events.length;
+          const renamed: string[] = [];
+          process.kill(child.pid, "SIGSTOP");
+          for (let i = 0; i < files; i++) {
+            fs.writeFileSync(path.join(elsewhere, `burst${round}-${i}`), "");
+            if (i % (files / 10) === 0) {
+              const name = `sub/renamed${round}-${renamed.length}`;
+              fs.writeFileSync(path.join(tree, name + ".tmp"), "");
+              fs.renameSync(path.join(tree, name + ".tmp"), path.join(tree, name));
+              renamed.push(name);
+            }
+          }
+          process.kill(child.pid, "SIGCONT");
+          // FSEvents keeps the order: when a file that is created now is
+          // reported, nothing of the burst is still on its way. The second
+          // file is reported in a later batch than the first, so the whole
+          // batch of the first one has arrived too.
+          await untilReported(`after${round}-`, from);
+          await untilReported(`settled${round}-`, from);
+
+          const since = events.slice(from);
+          const named = new Set(since.filter(([who]) => who === "tree").map(([, , name]) => name));
+          rounds.push({
+            files,
+            renamesNotNamed: renamed.filter(name => !named.has(name) && !named.has(name + ".tmp")).length,
+            nullFilename: since.filter(([who, , name]) => who === "tree" && name === null).length,
+            namedAfterRoot: since.filter(([who, , name]) => who === name).length,
+            flatWatchersWithNull: new Set(
+              since.filter(([who, , name]) => who !== "tree" && name === null).map(e => e[0]),
+            ).size,
+          });
+          if (rounds.at(-1)!.nullFilename > 0) break;
+        }
+      } finally {
+        child.kill("SIGKILL");
+        await child.exited;
+        await reading;
+      }
+
+      const dropped = rounds.filter(round => round.nullFilename > 0);
+      expect({
+        rounds,
+        // FSEvents does not keep a burst for a stopped process. macOS 14 and 26 drop the first one.
+        lossReported: dropped.length > 0,
+        lossReportedToEveryWatcher: dropped.every(round => round.flatWatchersWithNull === flat.length),
+        // The renames arrive by name, or the watcher says that events were lost.
+        lossNotReported: rounds.some(round => round.renamesNotNamed > 0 && round.nullFilename === 0),
+        namedAfterRoot: rounds.some(round => round.namedAfterRoot > 0),
+      }).toEqual({
+        rounds,
+        lossReported: true,
+        lossReportedToEveryWatcher: true,
+        lossNotReported: false,
+        namedAfterRoot: false,
+      });
+    },
+    30_000,
+  );
+
   // When inotify_add_watch fails for a subdirectory during the recursive walk
   // (ENOSPC at the watch limit, EACCES on an unreadable subdir), bun used to
   // swallow the failure so the watcher looked healthy while whole subtrees

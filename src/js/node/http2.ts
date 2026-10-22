@@ -3243,7 +3243,11 @@ function pipeFile(
   // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
   // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
   // handed to respondWithFD stays the caller's to close.
-  fileStream.on("error", onFileStreamError.bind(stream));
+  fileStream.on("error", err => {
+    // A pipe or a socket has no offset 0: it is read from its position, as it was before this path followed node.
+    if (err?.code === "ESPIPE" && offset === 0 && !ownsFd) pipeFile(stream, fd, -1, length, false, finishNativeStream);
+    else onFileStreamError.$call(stream);
+  });
   stream.once("close", () => {
     fileStream.unpipe(sink);
     if (ownsFd) fileStream.destroy();

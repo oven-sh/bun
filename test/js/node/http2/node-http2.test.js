@@ -5262,6 +5262,11 @@ const respondFileExpected = String.raw`
 {"case":"respondWithFD, /proc file","server":{"headersSent":true},"client":{"status":200,"body":"Linux\n"}}
 {"case":"respondWithFD, /proc file, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"Linux\n"}}
 {"case":"respondWithFile, /proc file","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFD, FIFO","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, length 4","server":{"headersSent":true},"client":{"status":200,"body":"0123"}}
+{"case":"respondWithFD, FIFO, offset -1","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, offset 2","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
 `;
 // Node v26 prints another line for these cases, and the same line for every other one.
 const respondFileOnNode = {
@@ -5274,6 +5279,10 @@ const respondFileOnNode = {
   // node resets the stream with the code that close() got. Bun sends no code for a stream that sent nothing.
   "respondWithFD, statCheck closes the stream": `{"case":"respondWithFD, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
   "respondWithFile, statCheck closes the stream": `{"case":"respondWithFile, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
+  // node reads a pipe at offset 0, which fails. Bun reads it from its position, as it did before it followed node here.
+  "respondWithFD, FIFO": `{"case":"respondWithFD, FIFO","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFD, FIFO, statCheck": `{"case":"respondWithFD, FIFO, statCheck","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFD, FIFO, length 4": `{"case":"respondWithFD, FIFO, length 4","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
 };
 // On Windows, node fails a read with a negative offset other than -1.
 const respondFileOnNodeOnWindows = {
@@ -5297,9 +5306,9 @@ for (const [name, runtime] of [
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       let expected = respondFileExpected.trim().split("\n");
-      // The fixture has the cases with a directory descriptor on POSIX only, and the ones with a /proc file on Linux.
+      // The fixture has the cases with a directory descriptor on POSIX only, and the ones with a /proc file or a FIFO on Linux.
       if (isWindows) expected = expected.filter(line => !line.startsWith(`{"case":"respondWithFD, directory`));
-      if (!isLinux) expected = expected.filter(line => !line.includes("/proc file"));
+      if (!isLinux) expected = expected.filter(line => !/\/proc file|, FIFO/.test(line));
       if (name === "node") {
         const onNode = isWindows ? { ...respondFileOnNode, ...respondFileOnNodeOnWindows } : respondFileOnNode;
         expected = expected.map(line => onNode[JSON.parse(line).case] ?? line);
@@ -5310,7 +5319,7 @@ for (const [name, runtime] of [
         exitCode: 0,
       });
     },
-    // A debug build needs 3 to 5 s to start and about as long for the 96 requests. Every other build keeps the default.
+    // A debug build needs 3 to 5 s to start and about as long for the 101 requests. Every other build keeps the default.
     isDebug ? 60_000 : undefined,
   );
 }

@@ -1,5 +1,6 @@
 // respondWithFD() and respondWithFile() on a server, one request per case. Runs under bun and under node.
 // Prints one JSON line per case: what the call did on the server, then what the client saw.
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import fsPromises from "node:fs/promises";
@@ -294,13 +295,31 @@ if (process.platform !== "win32") {
   cases["respondWithFD, directory, statCheck"] = (stream, log) =>
     stream.respondWithFD(open(stream, dir), {}, { statCheck: counted(log) });
 }
-// A file in /proc is a regular file of size 0 that has content. Only respondWithFile() goes by the size.
 if (process.platform === "linux") {
+  // A file in /proc is a regular file of size 0 that has content. Only respondWithFile() goes by the size.
   const procFile = "/proc/sys/kernel/ostype";
   cases["respondWithFD, /proc file"] = stream => stream.respondWithFD(open(stream, procFile));
   cases["respondWithFD, /proc file, statCheck"] = stream =>
     stream.respondWithFD(open(stream, procFile), {}, { statCheck() {} });
   cases["respondWithFile, /proc file"] = file(procFile);
+
+  // A FIFO that holds ten bytes and has no writer left: a read gives the bytes, and the next one EOF.
+  let fifos = 0;
+  const fifo = options => stream => {
+    const name = path.join(dir, `fifo-${fifos++}`);
+    execFileSync("mkfifo", [name]);
+    const fd = fs.openSync(name, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+    const writer = fs.openSync(name, "w");
+    fs.writeSync(writer, "0123456789");
+    fs.closeSync(writer);
+    stream.on("close", () => fs.closeSync(fd));
+    stream.respondWithFD(fd, {}, options);
+  };
+  cases["respondWithFD, FIFO"] = fifo();
+  cases["respondWithFD, FIFO, statCheck"] = fifo({ statCheck() {} });
+  cases["respondWithFD, FIFO, length 4"] = fifo({ length: 4 });
+  cases["respondWithFD, FIFO, offset -1"] = fifo({ offset: -1 });
+  cases["respondWithFD, FIFO, offset 2"] = fifo({ offset: 2 });
 }
 
 const names = Object.keys(cases);

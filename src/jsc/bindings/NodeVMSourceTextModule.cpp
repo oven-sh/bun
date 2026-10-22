@@ -113,7 +113,8 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
         WTF::move(sourceCode), moduleWrapper, initializeImportMeta);
     ptr->finishCreation(vm);
 
-    if (cachedData.isEmpty()) {
+    // Like Node, reject an empty cachedData.
+    if (cachedDataValue.isUndefined()) {
         return ptr;
     }
 
@@ -127,11 +128,12 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 
     // Decoding checks the format and the source key. Linking would need
     // the module's JSModuleEnvironment, which does not exist yet.
-    LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
-    SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
-    Ref<CachedBytecode> cachedBytecode = NodeVM::createOwnedCachedBytecode(cachedData.span());
-    if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, WTF::move(cachedBytecode)))
-        return ptr;
+    if (RefPtr<CachedBytecode> cachedBytecode = unwrapCachedData(cachedData.span())) {
+        LexicallyScopedFeatures lexicallyScopedFeatures = StrictModeLexicallyScopedFeature;
+        SourceCodeKey key(ptr->sourceCode(), {}, SourceCodeType::ModuleType, lexicallyScopedFeatures, JSParserScriptMode::Module, DerivedContextType::None, EvalContextType::None, false, {}, std::nullopt);
+        if (decodeCodeBlock<UnlinkedModuleProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull()))
+            return ptr;
+    }
 
     throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_CACHED_DATA_REJECTED, "cachedData buffer was rejected"_s);
     return nullptr;
@@ -140,6 +142,42 @@ NodeVMSourceTextModule* NodeVMSourceTextModule::create(VM& vm, JSGlobalObject* g
 void NodeVMSourceTextModule::destroy(JSCell* cell)
 {
     static_cast<NodeVMSourceTextModule*>(cell)->NodeVMSourceTextModule::~NodeVMSourceTextModule();
+}
+
+JSModuleRecord* NodeVMSourceTextModule::analyzeSourceText(JSGlobalObject* globalObject, std::unique_ptr<ModuleProgramNode>& node)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ParserError parserError;
+
+    node = parseRootNode<ModuleProgramNode>(vm, m_sourceCode,
+        ImplementationVisibility::Public,
+        JSParserBuiltinMode::NotBuiltin,
+        StrictModeLexicallyScopedFeature,
+        JSParserScriptMode::Module,
+        SourceParseMode::ModuleAnalyzeMode,
+        parserError);
+
+    if (parserError.isValid()) {
+        throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
+        return nullptr;
+    }
+
+    JSModuleLoader* loader = moduleLoader(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
+
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(node != nullptr);
+
+    auto result = analyzer.analyze(*node);
+    if (!result) {
+        auto [type, message] = result.error();
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
+        return nullptr;
+    }
+    return *result;
 }
 
 JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
@@ -151,37 +189,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ParserError parserError;
-
-    std::unique_ptr<ModuleProgramNode> node = parseRootNode<ModuleProgramNode>(vm, m_sourceCode,
-        ImplementationVisibility::Public,
-        JSParserBuiltinMode::NotBuiltin,
-        StrictModeLexicallyScopedFeature,
-        JSParserScriptMode::Module,
-        SourceParseMode::ModuleAnalyzeMode,
-        parserError);
-
-    if (parserError.isValid()) {
-        throwException(globalObject, scope, parserError.toErrorObject(globalObject, m_sourceCode));
-        return {};
-    }
-
-    JSModuleLoader* loader = moduleLoader(globalObject);
+    std::unique_ptr<ModuleProgramNode> node;
+    JSModuleRecord* moduleRecord = analyzeSourceText(globalObject, node);
     RETURN_IF_EXCEPTION(scope, {});
-    ModuleAnalyzer analyzer(globalObject, loader, Identifier::fromString(vm, m_identifier), m_sourceCode, AllFeatures);
-
-    RETURN_IF_EXCEPTION(scope, {});
-    ASSERT(node != nullptr);
-
-    JSModuleRecord* moduleRecord = nullptr;
-
-    if (auto result = analyzer.analyze(*node)) {
-        moduleRecord = *result;
-    } else {
-        auto [type, message] = result.error();
-        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, message);
-        return {};
-    }
 
     m_moduleRecord.set(vm, this, moduleRecord);
     m_hasTopLevelAwait = node->features() & AwaitFeature;
@@ -201,26 +211,22 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
-    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
-    attributesNodes.reserveInitialCapacity(requests.size());
-
+    // JSC dedupes requests by specifier and type and keeps the first declaration's, so a declaration's position isn't its request's index.
+    ModuleMap<ImportAttributesListNode*> attributesLists;
     for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
-        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
-        if (statement->isModuleDeclarationNode()) {
-            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-            if (moduleDeclaration->isImportDeclarationNode()) {
-                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
-                attributesNodes.append(importDeclaration->attributesList());
-            } else if (moduleDeclaration->hasAttributesList()) {
-                // Necessary to make the indices of `attributesNodes` and `requests` match up
-                attributesNodes.append(nullptr);
+        if (!statement->isModuleDeclarationNode() || !static_cast<ModuleDeclarationNode*>(statement)->isImportDeclarationNode())
+            continue;
+        auto* importDeclaration = static_cast<ImportDeclarationNode*>(statement);
+        ImportAttributesListNode* attributesList = importDeclaration->attributesList();
+        auto type = ScriptFetchParameters::Type::JavaScript;
+        if (attributesList) {
+            for (auto [key, value] : attributesList->attributes()) {
+                if (*key == vm.propertyNames->type)
+                    type = ScriptFetchParameters::parseType(value->impl()).value_or(type);
             }
         }
+        attributesLists.add(ModuleMapKey { importDeclaration->moduleName()->moduleName().impl(), type }, attributesList);
     }
-
-    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
@@ -270,10 +276,11 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
-            for (auto [key, value] : attributesNode->attributes()) {
+        if (ImportAttributesListNode* attributesList = attributesLists.get(ModuleMapKey { request.m_specifier.impl(), request.m_attributes ? request.m_attributes->type() : ScriptFetchParameters::Type::JavaScript })) {
+            for (auto [key, value] : attributesList->attributes()) {
                 attributeMap.set(key->string(), value->string());
-                attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
+                attributesObject->putDirectMayBeIndex(globalObject, *key, JSC::jsString(vm, value->string()));
+                RETURN_IF_EXCEPTION(scope, {});
             }
         }
 
@@ -318,6 +325,12 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     }
 
     JSModuleRecord* record = m_moduleRecord.get();
+
+    // The Link() of an importer already linked this record. It keeps the modules it linked with, as in Node.
+    if (record->status() >= JSC::CyclicModuleRecord::Status::Linked) {
+        m_linkCalled = true;
+        return jsUndefined();
+    }
 
     if (length != 0) {
         const auto& requested = record->requestedModules();
@@ -436,6 +449,51 @@ static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpeci
     return true;
 }
 
+// A failed Link() leaves environments, namespace objects and resolved exports on the records that did not link, all
+// made for the modules those records had. link() can give such a module other modules, as in Node, so each of them
+// starts over with a new record.
+void NodeVMSourceTextModule::replaceUnlinkedRecords(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    WTF::HashMap<AbstractModuleRecord*, NodeVMSourceTextModule*> modules;
+    WTF::Vector<NodeVMSourceTextModule*, 16> worklist;
+    worklist.append(this);
+    while (!worklist.isEmpty()) {
+        NodeVMSourceTextModule* module = worklist.takeLast();
+        JSModuleRecord* record = module->m_moduleRecord.get();
+        if (!record || record->status() != JSC::CyclicModuleRecord::Status::Unlinked || !modules.add(record, module).isNewEntry)
+            continue;
+        for (const auto& dependency : module->m_resolveCache.values()) {
+            if (auto* dependencyModule = dynamicDowncast<NodeVMSourceTextModule>(dependency.get()))
+                worklist.append(dependencyModule);
+        }
+    }
+
+    MarkedArgumentBuffer replacedRecords;
+    for (auto& [replaced, module] : modules) {
+        replacedRecords.append(replaced);
+        std::unique_ptr<ModuleProgramNode> node;
+        JSModuleRecord* record = module->analyzeSourceText(globalObject, node);
+        RETURN_IF_EXCEPTION(scope, );
+        record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
+        module->m_moduleRecord.set(vm, module, record);
+    }
+
+    for (auto& [replaced, module] : modules) {
+        for (const auto& request : replaced->loadedModules().values()) {
+            AbstractModuleRecord* imported = request.m_module.get();
+            if (!imported)
+                continue;
+            if (NodeVMSourceTextModule* importedModule = modules.get(imported))
+                imported = importedModule->m_moduleRecord.get();
+            module->m_moduleRecord->setImportedModule(globalObject, request, imported);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
+}
+
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -450,6 +508,7 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         return {};
     }
 
+    JSGlobalObject* callerGlobalObject = globalObject;
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, m_context.get(), false);
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
@@ -472,7 +531,14 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
         record->setStatus(JSC::CyclicModuleRecord::Status::Unlinked);
 
     record->link(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (JSC::Exception* exception = scope.exception()) [[unlikely]] {
+        if (!scope.tryClearException())
+            return {};
+        replaceUnlinkedRecords(callerGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        scope.throwException(globalObject, exception);
+        return {};
+    }
 
     status(Status::Linked);
     propagateLinked();
@@ -503,8 +569,12 @@ JSUint8Array* NodeVMSourceTextModule::cachedData(JSGlobalObject* globalObject)
     if (!m_cachedBytecodeBuffer) {
         RefPtr<CachedBytecode> cachedBytecode = bytecode(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        std::span<const uint8_t> bytes = cachedBytecode->span();
-        JSUint8Array* buffer = WebCore::createBuffer(globalObject, bytes);
+        // getBytecode can return null without throwing (serialization failure).
+        if (!cachedBytecode) [[unlikely]] {
+            throwVMError(globalObject, scope, "createCachedData failed"_s);
+            return nullptr;
+        }
+        JSUint8Array* buffer = createCachedDataBuffer(globalObject, cachedBytecode->span());
         RETURN_IF_EXCEPTION(scope, nullptr);
         m_cachedBytecodeBuffer.set(vm, this, buffer);
     }

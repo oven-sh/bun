@@ -932,7 +932,7 @@ impl JSValkeyClient {
     pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
         let client = self.client.get();
         let len = client.write_buffer.len() + client.read_buffer.len();
-        JSValue::js_number(f64::from(len))
+        JSValue::js_number(len as f64)
     }
 
     pub(crate) fn do_connect(
@@ -1295,7 +1295,9 @@ impl JSValkeyClient {
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = Js::onconnect_get_cached(this_value) {
+            if let Some(on_connect) = Js::onconnect_get_cached(this_value)
+                .filter(|handler| handler.without_async_context().is_callable())
+            {
                 let js_value = this_value;
                 js_value.ensure_still_alive();
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
@@ -1342,7 +1344,6 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn on_valkey_unsubscribe(&self) -> JsResult<()> {
-        debug_assert!(self.is_subscriber());
         debug_assert!(self.this_value.get().is_strong());
 
         self.client_mut().on_writable();
@@ -1442,7 +1443,9 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue) {
+        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue)
+            .filter(|handler| handler.without_async_context().is_callable())
+        {
             on_close.call(&global_object, this_jsvalue, &[error_value])?;
         }
         Ok(())
@@ -1860,6 +1863,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 }
             }
             this.client_mut().start()?;
+        } else if this.client.get().status == valkey::Status::Connected
+            && this.client.get().flags.enable_auto_reconnect
+        {
+            // uSockets reports a fatal error on an established session as a failed handshake. Before
+            // the reply to HELLO it is one: a TLS 1.3 server refuses a client certificate after our
+            // Finished. With no reconnect to follow, failing tells the queued commands why too.
+            return this.client_mut().on_tls_session_error(&ssl_error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);

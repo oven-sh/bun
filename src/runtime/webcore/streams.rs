@@ -1736,7 +1736,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // A prior `flush(true)` is already waiting on the drain. Push any
             // data buffered since (below highWaterMark) so it reaches uWS now
             // rather than when `on_writable` fires.
-            if self.end_len == 0 && !self.readable_slice().is_empty() {
+            if self.end_len == 0 && !self.is_done() && !self.readable_slice().is_empty() {
                 let _ = self.send_readable(0);
             }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
@@ -1986,6 +1986,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_sys::Result::Ok(JSValue::from(self.wrote))
     }
 
+    /// The response is gone, so this sink never writes again. [`Self::abort`] tells the source.
+    pub(crate) fn revoke_response(&mut self) {
+        self.state = HTTPServerWritableState::Aborted;
+        self.res = None;
+        self.unregister_auto_flusher();
+    }
+
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
     /// JS `onClose`, which can cancel the stream, drain microtasks, and free this
     /// sink. A `&mut self` argument protector must not be live across that free.
@@ -1996,11 +2003,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
-        unsafe {
-            (*this).state = HTTPServerWritableState::Aborted;
-            (*this).res = None;
-            (*this).unregister_auto_flusher();
-        }
+        unsafe { (*this).revoke_response() };
 
         // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
         unsafe { (*this).flush_promise() };

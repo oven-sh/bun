@@ -115,7 +115,14 @@ impl UserOptions {
         )?;
 
         let root = if let Some(slice) = config.get_optional_slice(global, "root")? {
-            ZBox::from_bytes(slice.slice())
+            // Make the root absolute because the dev server strips it off absolute file paths.
+            match framework::resolve_dir_option(slice.slice()) {
+                Some(root) => ZBox::from_vec(root),
+                None => {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("'{}.root' is too long", API_NAME)));
+                }
+            }
         } else {
             match bun_sys::getcwd_alloc() {
                 Ok(z) => z,

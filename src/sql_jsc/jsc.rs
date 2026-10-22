@@ -489,8 +489,6 @@ pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLQuery = "PostgresSQLQuery"
         as crate::postgres::PostgresSQLQuery { binding, copy, pendingValue, target });
 
-    ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
-        as crate::mysql::js_my_sql_connection::JSMySQLConnection { onconnect, onclose, onretire, checkServerIdentity, columnTransform });
     ::bun_jsc::js_class_module!(js_mysql_query = "MySQLQuery"
         as crate::mysql::js_my_sql_query::JSMySQLQuery { binding, pendingValue, target });
 }

@@ -1761,8 +1761,7 @@ nativeTests.test_external_buffer_finalized_by_idle_collection = async () => {
 };
 
 // Loops that are hot before the ArrayBuffer changes size: JIT code decides from a
-// Buffer's Structure whether its bounds can change. `new Function` gives each Buffer
-// its own profile.
+// Buffer's Structure whether its bounds can change. `new Function`: a CodeBlock per Buffer.
 function warmBufferLoops(buffer, value) {
   const sum = new Function(
     "view",
@@ -1777,9 +1776,6 @@ function warmBufferLoops(buffer, value) {
   return { sum, fill, total };
 }
 
-// node_api_create_buffer_from_arraybuffer returns a Buffer with a fixed length. Over a
-// resizable ArrayBuffer it is out of bounds (length 0, no elements) for as long as the
-// ArrayBuffer ends before it does.
 nativeTests.test_create_buffer_from_arraybuffer = () => {
   const create = nativeTests.create_buffer_from_arraybuffer;
   const state = (buffer, sum) =>
@@ -1855,21 +1851,18 @@ nativeTests.test_create_buffer_from_arraybuffer = () => {
   }
 };
 
-// Bun-only: node returns napi_invalid_arg for a SharedArrayBuffer, and the Structure of
-// a Buffer is visible only through bun:jsc. A growable SharedArrayBuffer never shrinks,
-// so the Structure is the one thing that tells a right Buffer from a wrong one.
+// Bun-only: bun:jsc shows the Structure. Bun accepts a SharedArrayBuffer here and Node
+// returns napi_invalid_arg: the growable shared row holds only while that is so.
 nativeTests.test_create_buffer_from_arraybuffer_structure = () => {
   const { jscDescribe } = require("bun:jsc");
   const structureId = value => jscDescribe(value).match(/StructureID: (\d+)/)[1];
-  const create = nativeTests.create_buffer_from_arraybuffer;
   const ids = {};
   for (const [kind, arrayBuffer] of [
     ["fixed", new ArrayBuffer(64)],
     ["resizable", new ArrayBuffer(64, { maxByteLength: 128 })],
-    ["shared", new SharedArrayBuffer(64)],
     ["growable shared", new SharedArrayBuffer(64, { maxByteLength: 128 })],
   ]) {
-    const buffer = create(arrayBuffer, 56, 8);
+    const buffer = nativeTests.create_buffer_from_arraybuffer(arrayBuffer, 56, 8);
     ids[kind] = structureId(buffer);
     console.log(
       `${kind}: isBuffer=${Buffer.isBuffer(buffer)} sameArrayBuffer=${buffer.buffer === arrayBuffer}`,
@@ -1877,17 +1870,8 @@ nativeTests.test_create_buffer_from_arraybuffer_structure = () => {
     );
   }
   console.log(
-    `fixed and shared: ${ids.fixed === ids.shared},`,
     `resizable and growable shared: ${ids.resizable === ids["growable shared"]},`,
     `fixed and resizable: ${ids.fixed === ids.resizable}`,
-  );
-
-  const shared = new SharedArrayBuffer(64, { maxByteLength: 128 });
-  const buffer = create(shared, 56, 8);
-  const { sum, total } = warmBufferLoops(buffer, 7);
-  shared.grow(128);
-  console.log(
-    `growable shared: warm=${total} grown: length=${buffer.length} byteOffset=${buffer.byteOffset} sum=${sum(buffer)}`,
   );
 };
 

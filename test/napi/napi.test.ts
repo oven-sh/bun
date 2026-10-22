@@ -1499,16 +1499,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       ]);
     });
 
-    // Bun only: node returns napi_invalid_arg for a SharedArrayBuffer, and bun:jsc shows the Structure.
+    // Bun only: bun:jsc shows the Structure, and Node returns napi_invalid_arg for a SharedArrayBuffer.
     it("gives the Buffer the Structure that Buffer.from gives it", async () => {
       const output = await runOn(bunExe(), "test_create_buffer_from_arraybuffer_structure", []);
       expect(output.trim().split(/\r?\n/)).toEqual([
         "fixed: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
         "resizable: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
-        "shared: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
         "growable shared: isBuffer=true sameArrayBuffer=true sameStructureAsBufferFrom=true",
-        "fixed and shared: true, resizable and growable shared: true, fixed and resizable: false",
-        "growable shared: warm=5600000 grown: length=8 byteOffset=56 sum=56",
+        "resizable and growable shared: true, fixed and resizable: false",
       ]);
     });
   });

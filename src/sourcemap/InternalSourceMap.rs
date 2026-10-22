@@ -148,34 +148,41 @@ pub struct Mark {
 const _: () = assert!(size_of::<Mark>() == 24);
 
 #[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, strum::FromRepr)]
 pub enum MarkKind {
-    /// A brace of an object literal, which is code. A block's is not, and coverage sees the same
-    /// character.
+    /// Of an object literal, which is code. A block's is not, and it is the same character.
     ObjectBrace,
     /// Where control goes one of several ways, each a `Branch`: `if`, `?:`, `switch`.
     Decision,
-    /// A `Decision` with one more branch that has no code of its own: without an `else` or a
-    /// `default`, or what `&&`, `||`, `??`, their assignments, `?.` and a default value skip. It
-    /// ran as often as this position, less the other branches.
+    /// One more branch has no code. It ran as often as this position, less the other branches.
     DecisionWithImplicitBranch,
     /// White space can be before it.
     Branch,
-    /// A `Branch` that is a `case` or a `default` without statements. It runs into the next one,
-    /// which JSC counts with the times the next one matched.
-    BranchWithoutStatements,
+    /// A `case` without statements. The count of the next clause has the times this one ran.
+    EmptyCase,
 }
 
 impl Mark {
+    pub(crate) fn new(
+        kind: MarkKind,
+        decision: u32,
+        generated: (i32, i32),
+        original: (i32, i32),
+    ) -> Mark {
+        let position = |(line, column)| LineColumnOffset {
+            lines: Ordinal(line),
+            columns: Ordinal(column),
+        };
+        Mark {
+            generated: position(generated),
+            original: position(original),
+            kind: kind as u32,
+            decision,
+        }
+    }
+
     pub fn kind(&self) -> Option<MarkKind> {
-        Some(match self.kind {
-            0 => MarkKind::ObjectBrace,
-            1 => MarkKind::Decision,
-            2 => MarkKind::DecisionWithImplicitBranch,
-            3 => MarkKind::Branch,
-            4 => MarkKind::BranchWithoutStatements,
-            _ => return None,
-        })
+        MarkKind::from_repr(self.kind)
     }
 }
 
@@ -874,39 +881,8 @@ impl Builder {
         }
     }
 
-    /// Marks `last`, the last mapping.
-    pub(crate) fn mark_object_brace(&mut self, last: &SourceMapState) {
-        self.marks.push(Mark {
-            generated: LineColumnOffset {
-                lines: Ordinal(self.generated_line),
-                columns: Ordinal(last.generated_column),
-            },
-            original: LineColumnOffset {
-                lines: Ordinal(last.original_line),
-                columns: Ordinal(last.original_column),
-            },
-            kind: MarkKind::ObjectBrace as u32,
-            decision: 0,
-        });
-    }
-
-    /// Marks a position on the line that is being printed. It needs no mapping.
-    pub(crate) fn mark_branch(
-        &mut self,
-        kind: MarkKind,
-        decision: u32,
-        generated_column: i32,
-        original: LineColumnOffset,
-    ) {
-        self.marks.push(Mark {
-            generated: LineColumnOffset {
-                lines: Ordinal(self.generated_line + self.pending_generated_line_delta),
-                columns: Ordinal(generated_column),
-            },
-            original,
-            kind: kind as u32,
-            decision,
-        });
+    pub(crate) fn mark(&mut self, mark: Mark) {
+        self.marks.push(mark);
     }
 
     fn flush_window(&mut self) {

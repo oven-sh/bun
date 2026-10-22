@@ -699,19 +699,20 @@ test("only imports the function", () => {
   expect(exitCode).toBe(0);
 });
 
-// https://github.com/oven-sh/bun/issues/40586
-// Each worker executes a different function of the same module; the merged
-// report must count a function as covered if any worker ran it.
-test("--parallel merges function coverage across workers", async () => {
-  // Each test file waits at import time until the other has started, so the
-  // two can only make progress in two different workers.
-  const rendezvous = (me: string, other: string) => `
+// Each test file waits at import time until the other has started, so the
+// two can only make progress in two different workers.
+const rendezvous = (me: string, other: string) => `
 await Bun.write("${me}.started", "");
 for (const deadline = Date.now() + 60_000; !(await Bun.file("${other}.started").exists()); ) {
   if (Date.now() > deadline) throw new Error("${other} never started in another worker");
   await Bun.sleep(5);
 }
 `;
+
+// https://github.com/oven-sh/bun/issues/40586
+// Each worker executes a different function of the same module; the merged
+// report must count a function as covered if any worker ran it.
+test("--parallel merges function coverage across workers", async () => {
   using dir = tempDir("cov-parallel-fn-merge", {
     "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { lines = 1.0, functions = 1.0 }\n`,
     "subject.ts": `export function first() {
@@ -1160,8 +1161,51 @@ test("reports an uncalled function on the last line of a // @bun file without a 
   expect(exitCode).toBe(0);
 });
 
+function recordOf(dir: string, file: string) {
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const record = lcov.split("end_of_record").find(r => r.includes(file + "\n"));
+  expect(record).toBeDefined();
+  return record!;
+}
+
+type Mode = "transpiled" | "// @bun" | "// @bun with a source map" | "coverageIgnoreSourcemaps";
+
+/** The lcov record of `lib` after `testFile`, which imports it from "./lib.js". */
+async function coverageOfLib(mode: Mode, lib: string, testFile: string) {
+  using dir = tempDir("cov-lib", {
+    "lib.test.ts": testFile,
+    ...(mode === "// @bun"
+      ? { "lib.js": "// @bun\n" + lib }
+      : mode === "// @bun with a source map"
+        ? { "src/lib.js": lib }
+        : mode === "coverageIgnoreSourcemaps"
+          ? { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }
+          : { "lib.js": lib }),
+  });
+  if (mode === "// @bun with a source map") {
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./src/lib.js", "--target=bun", "--sourcemap=linked", "--outdir=."],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await build.exited).toBe(0);
+    expect(readFileSync(path.join(String(dir), "lib.js"), "utf-8")).toStartWith("// @bun\n");
+  }
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "inherit",
+  });
+  const exitCode = await proc.exited;
+  return { record: recordOf(String(dir), "lib.js"), exitCode };
+}
+
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
-test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
+test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"] as const)(
   "both braces of an object are listed and no brace of a block is: %s",
   async mode => {
     // Laid out as the printer prints it, so that the lines are the same with coverageIgnoreSourcemaps.
@@ -1178,43 +1222,17 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
   }
 }
 `;
-    using dir = tempDir("cov-braces", {
-      "lib.test.ts": `
+    const { record, exitCode } = await coverageOfLib(
+      mode,
+      mode === "// @bun" ? lib + "await 0;\nif (false) globalThis.list = [\n  {\n  }\n];\n" : lib,
+      `
         import { expect, test } from "bun:test";
         import { f } from "./lib.js";
         test("f", () => { expect(f()).toEqual({ one: 1 }); });
       `,
-      ...(mode === "// @bun"
-        ? { "lib.js": "// @bun\n" + lib + "await 0;\nif (false) globalThis.list = [\n  {\n  }\n];\n" }
-        : mode === "// @bun with a source map"
-          ? { "src/lib.js": lib }
-          : { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }),
-    });
-    if (mode === "// @bun with a source map") {
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "./src/lib.js", "--target=bun", "--sourcemap=linked", "--outdir=."],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "inherit",
-      });
-      expect(await build.exited).toBe(0);
-      expect(readFileSync(path.join(String(dir), "lib.js"), "utf-8")).toStartWith("// @bun\n");
-    }
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "inherit",
-    });
-    const exitCode = await proc.exited;
-
-    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-    const record = lcov.split("end_of_record").find(r => r.includes("lib.js\n"));
-    expect(record).toBeDefined();
+    );
     const above = mode === "// @bun" ? 1 : 0;
-    const count = (line: number) => record!.match(new RegExp(`^DA:${line + above},(\\d+)$`, "m"))?.[1];
+    const count = (line: number) => record.match(new RegExp(`^DA:${line + above},(\\d+)$`, "m"))?.[1];
     expect([2, 4, 6, 8, 11, 12].map(count)).toEqual([undefined, "1", "1", undefined, undefined, undefined]);
     if (mode === "// @bun") {
       expect(record).toContain("DA:16,0");
@@ -1241,6 +1259,20 @@ export function decisions(v, o, list) {
     r = 2;
   else
     r = 3;
+  if (v) // [2,1]
+    ;
+  if (v) // [2,1]
+    ;
+  else
+    ;
+  if (v) // [2,1]
+    ;
+  else
+    r = 3;
+  if (v) // [2,1]
+    r = 1;
+  else
+    ;
   r = v && o; // [2,1]
   r = v || o; // [1,2]
   r = o ?? v; // [1,2]
@@ -1258,6 +1290,10 @@ export function decisions(v, o, list) {
   const { a = 1, b: { c = 2 } = {} } = o ?? {}; // [1,2] [3,0] [3,0] [1,2]
   const [d = 3] = list; // [1,2]
   [r = 4] = list; // [1,2]
+  [r = 7][0] = v;
+  [(r = {}).x] = list;
+  [...[r = 8]] = list; // [1,2]
+  ({ z: { b: r = 9 } = {} } = o ?? {}); // [3,0] [3,0] [1,2]
   ({ r = 5, a: r = 6 } = o ?? {}); // [3,0] [1,2] [1,2]
   return r;
 }
@@ -1328,84 +1364,99 @@ export function never(v) {
   return v ? 1 : v && 2; // [0,0] [0,0]
 }
 `;
-  const test_ = `
-    import { test } from "bun:test";
-    import { decisions, defaults, loops, switches, Fields } from "./lib.js";
-    test("lib", () => {
-      decisions(1, { a: { b: { c() {} } } }, [1]);
-      decisions(2, { a: null }, []);
-      decisions(0, null, [0]);
-      defaults();
-      defaults(0);
-      loops(3, [[], [1], [2]]);
-      switches(1, { a: 7 });
-      switches(2, { a: 7 });
-      switches(9, { a: 7 });
-      switches(9, null);
-      new Fields();
-      new Fields();
-    });
-  `;
   /** `[line, [hits of each branch]]` of each decision. */
-  const expected = lib
-    .split("\n")
-    .flatMap((text, i) =>
-      [...(text.split(" // ")[1] ?? "").matchAll(/\[([\d,]+)\]/g)].map(m => [i + 1, m[1].split(",").map(Number)]),
-    );
-  function branchesOf(dir: string, file: string) {
-    const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
-    const record = lcov.split("end_of_record").find(r => r.includes(file + "\n"));
-    expect(record).toBeDefined();
+  const expectedOf = (lib: string) =>
+    lib
+      .split("\n")
+      .flatMap((text, i) =>
+        [...(text.split(" // ")[1] ?? "").matchAll(/\[([\d,]+)\]/g)].map((m): [number, number[]] => [
+          i + 1,
+          m[1].split(",").map(Number),
+        ]),
+      );
+  function decisionsOf(record: string) {
     const decisions = new Map<string, [number, number[]]>();
-    for (const [, line, decision, branch, hits] of record!.matchAll(/^BRDA:(\d+),(\d+),(\d+),(\d+)$/gm)) {
+    for (const [, line, decision, branch, hits] of record.matchAll(/^BRDA:(\d+),(\d+),(\d+),(\d+)$/gm)) {
       if (!decisions.has(decision)) decisions.set(decision, [Number(line), []]);
       decisions.get(decision)![1][Number(branch)] = Number(hits);
     }
-    return { record: record!, decisions: [...decisions.values()] };
+    return [...decisions.values()];
   }
 
-  test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
+  test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"] as const)(
     "each way of each decision has its count: %s",
     async mode => {
-      using dir = tempDir("cov-branches", {
-        "lib.test.ts": test_,
-        ...(mode === "// @bun"
-          ? { "lib.js": "// @bun\n" + lib }
-          : mode === "// @bun with a source map"
-            ? { "src/lib.js": lib }
-            : mode === "coverageIgnoreSourcemaps"
-              ? { "lib.js": lib, "bunfig.toml": "[test]\ncoverageIgnoreSourcemaps = true\n" }
-              : { "lib.js": lib }),
-      });
-      if (mode === "// @bun with a source map") {
-        await using build = Bun.spawn({
-          cmd: [bunExe(), "build", "./src/lib.js", "--target=bun", "--sourcemap=linked", "--outdir=."],
-          env: bunEnv,
-          cwd: String(dir),
-          stdout: "ignore",
-          stderr: "inherit",
+      const { record, exitCode } = await coverageOfLib(
+        mode,
+        lib,
+        `
+        import { test } from "bun:test";
+        import { decisions, defaults, loops, switches, Fields } from "./lib.js";
+        test("lib", () => {
+          decisions(1, { a: { b: { c() {} } } }, [1]);
+          decisions(2, { a: null }, []);
+          decisions(0, null, [0]);
+          defaults();
+          defaults(0);
+          loops(3, [[], [1], [2]]);
+          switches(1, { a: 7 });
+          switches(2, { a: 7 });
+          switches(9, { a: 7 });
+          switches(9, null);
+          new Fields();
+          new Fields();
         });
-        expect(await build.exited).toBe(0);
-      }
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
-        env: bunEnv,
-        cwd: String(dir),
-        stdout: "ignore",
-        stderr: "inherit",
-      });
-      const exitCode = await proc.exited;
-
-      const { record, decisions } = branchesOf(String(dir), "lib.js");
+      `,
+      );
       const above = mode === "// @bun" ? 1 : 0;
-      expect(decisions).toEqual(expected.map(([line, hits]) => [(line as number) + above, hits]));
-      const all = expected.flatMap(([, hits]) => hits as number[]);
+      const expected = expectedOf(lib);
+      expect(decisionsOf(record)).toEqual(expected.map(([line, hits]) => [line + above, hits]));
+      const all = expected.flatMap(([, hits]) => hits);
       expect(record).toContain(`BRF:${all.length}\nBRH:${all.filter(hits => hits > 0).length}\n`);
       expect(exitCode).toBe(0);
     },
   );
 
-  test("what TypeScript and JSX turn into has no branches", async () => {
+  test.concurrent.each(["transpiled", "// @bun"] as const)(
+    "a name that Bun replaces with the value of its const is where it was: %s",
+    async mode => {
+      const lib = `const M = 2;
+export function inlined(v, o, t = M) { // [3,0]
+  const L = 3;
+  let r = v ?? L; // [1,2]
+  r = v || L; // [2,1]
+  r = v && L; // [1,2]
+  r = v ? L : 1; // [1,2]
+  r = L ? v : 1; // [3,0]
+  r = L && v; // [3,0]
+  r = L?.x; // [3,0]
+  r = o?.[L]; // [2,1]
+  r ??= L; // [3,0]
+  const { x = L } = o ?? {}; // [3,0] [1,2]
+  [r = L] = []; // [3,0]
+  return (p = L) => p; // [0,0]
+}
+`;
+      const { record, exitCode } = await coverageOfLib(
+        mode,
+        lib,
+        `
+          import { test } from "bun:test";
+          import { inlined } from "./lib.js";
+          test("lib", () => {
+            inlined(1, {});
+            inlined(0, null);
+            inlined(null, {});
+          });
+        `,
+      );
+      const above = mode === "// @bun" ? 1 : 0;
+      expect(decisionsOf(record)).toEqual(expectedOf(lib).map(([line, hits]) => [line + above, hits]));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent("what TypeScript and JSX turn into has no branches", async () => {
     using dir = tempDir("cov-branches-ts", {
       "lib.tsx": `enum Color { Red, Green = "g" }
 export namespace Outer { export const a = Color.Red; export namespace Inner { export const b = 2; } }
@@ -1435,8 +1486,8 @@ export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0)
       stderr: "inherit",
     });
     const exitCode = await proc.exited;
-    const { record, decisions } = branchesOf(String(dir), "lib.tsx");
-    expect(decisions).toEqual([]);
+    const record = recordOf(String(dir), "lib.tsx");
+    expect(decisionsOf(record)).toEqual([]);
     expect(record).toContain("BRF:0\nBRH:0\n");
     expect(exitCode).toBe(0);
   });
@@ -1473,16 +1524,7 @@ export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0)
     expect(exitCode).toBe(expectedExitCode);
   });
 
-  test("--parallel adds up what each worker took", async () => {
-    // Each test file waits at import time until the other has started, so the
-    // two can only make progress in two different workers.
-    const rendezvous = (me: string, other: string) => `
-await Bun.write("${me}.started", "");
-for (const deadline = Date.now() + 60_000; !(await Bun.file("${other}.started").exists()); ) {
-  if (Date.now() > deadline) throw new Error("${other} never started in another worker");
-  await Bun.sleep(5);
-}
-`;
+  test.concurrent("--parallel adds up what each worker took", async () => {
     using dir = tempDir("cov-branches-parallel", {
       "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { branches = 1.0 }\n`,
       "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\nexport const both = (v: number) => v && 1;\n`,
@@ -1506,7 +1548,7 @@ test("second", () => { pick(0); pick(0); both(1); });
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(stderr).toMatch(/ lib\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
-    expect(branchesOf(String(dir), "lib.ts").decisions).toEqual([
+    expect(decisionsOf(recordOf(String(dir), "lib.ts"))).toEqual([
       [1, [1, 2]],
       [2, [2, 1]],
     ]);
@@ -1514,7 +1556,7 @@ test("second", () => { pick(0); pick(0); both(1); });
   });
 });
 
-test("the braces of an object are listed when the file comes from the transpiler cache", async () => {
+test("the braces of an object and the branches are listed when the file comes from the transpiler cache", async () => {
   using dir = tempDir("cov-transpiler-cache", {
     // The cache leaves out a file of less than 4 KB.
     "lib.ts": `export const list = [

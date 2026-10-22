@@ -68,7 +68,7 @@ coverageThreshold = 0.9
 coverageThreshold = { lines = 0.9, functions = 0.9, branches = 0.8 }
 ```
 
-Setting any of these keys makes `bun test --coverage` exit with a non-zero exit code when the coverage of a file is below a threshold. If you omit `lines` or `functions`, it keeps the `0.9` default. Branch coverage is only checked when you set `branches`: a single number, as in `coverageThreshold = 0.9`, applies to lines and functions. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
+Setting any of these keys makes `bun test --coverage` exit with a non-zero exit code when the coverage of a file is below a threshold. If you omit `lines` or `functions`, it keeps the `0.9` default. Bun checks branch coverage only when you set `branches`: a single number, as in `coverageThreshold = 0.9`, applies to lines and functions. Bun accepts a `statements` key but does not currently enforce it. Outside `--parallel`, the check only runs when the `text` reporter is enabled (the default); a run with only `--coverage-reporter=lcov` currently exits 0 regardless of the threshold.
 
 ## Coverage Reporters
 
@@ -91,7 +91,7 @@ coverageDir = "path/to/somewhere"    # default "coverage"
 
 ### LCOV Coverage Reporter
 
-The lcov reporter writes an `lcov.info` file to the coverage directory, with the functions (`FN`, `FNDA`), the branches (`BRDA`) and the lines (`DA`) of each file and how often each ran.
+The lcov reporter writes an `lcov.info` file to the coverage directory, with the function totals (`FNF`, `FNH`) of each file, and how often each branch (`BRDA`) and each line (`DA`) ran.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
@@ -321,6 +321,9 @@ export function greet(user?: { name?: string }) {
 ```
 
 ```ts title="greet.test.ts" icon="/icons/typescript.svg"
+import { expect, test } from "bun:test";
+import { greet } from "./greet";
+
 test("greets a user", () => {
   expect(greet({ name: "Ada" })).toBe("Hello, Ada!");
 });
@@ -340,9 +343,14 @@ Wherever the code goes one of several ways, each way is a branch, whether or not
 
 `greet` has four branches, and the test takes two of them: `!user` is false, and `"stranger"` is skipped.
 
-In a `switch`, a `case` counts when it matches. One exception: after a `case` that has statements and runs on into the next one, without a `break` or a `return`, the next one counts those runs too, and that `switch` has no branch for no match.
+In a `switch`, a `case` counts when it matches. There is one exception, for a `case` that has statements and does not end in `break`, `continue`, `return` or `throw`, so it runs on into the next one:
+
+- The next `case` counts those runs too.
+- That `switch` has no branch for no match.
 
 The body of a loop and a `catch` block are not branches. Line coverage shows whether they ran.
+
+Bun counts code in blocks that run together. When a call throws, what is left of its block still reads as run, for lines and for branches: an `if` right after the call counts as reached, with its condition false.
 
 ### What to Aim For
 

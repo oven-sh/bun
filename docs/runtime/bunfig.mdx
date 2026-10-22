@@ -234,7 +234,7 @@ The coverage threshold. By default, no threshold is set. If your test suite does
 coverageThreshold = 0.9
 ```
 
-You can set separate thresholds for line, function and branch coverage. Branch coverage is only checked when you set `branches`. Bun accepts a `statements` key but does not currently enforce it.
+You can set separate thresholds for line, function and branch coverage. Bun checks branch coverage only when you set `branches`. Bun accepts a `statements` key but does not currently enforce it.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]

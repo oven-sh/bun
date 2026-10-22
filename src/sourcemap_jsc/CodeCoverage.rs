@@ -32,9 +32,7 @@ pub struct Report<'a> {
     pub(crate) stmts_which_have_executed: Bitset,
 }
 
-/// One of the ways control goes from a decision: each side of an `if` or a `?:`, with or without
-/// an `else`; the right side of `&&`, `||`, `??` and their assignments, what is after a `?.` and a
-/// default value, and skipping it; each clause of a `switch`, and none of them.
+/// One of the ways control goes from a decision, see `MarkKind`.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Branch {
     /// The same in every process that loaded the same file. The block of an lcov `BRDA`.
@@ -81,7 +79,7 @@ impl<'a> Report<'a> {
         (self.functions_which_have_executed.count() as f64) / total_count
     }
 
-    pub fn branches_which_have_executed(&self) -> usize {
+    pub fn branches_hit(&self) -> usize {
         self.branches.iter().filter(|&&(_, hits)| hits > 0).count()
     }
 
@@ -89,7 +87,7 @@ impl<'a> Report<'a> {
         if self.branches.is_empty() {
             return 1.0;
         }
-        (self.branches_which_have_executed() as f64) / (self.branches.len() as f64)
+        (self.branches_hit() as f64) / (self.branches.len() as f64)
     }
 
     /// This file's fractions, with `failing` judged against `thresholds`.
@@ -426,48 +424,22 @@ pub mod text {
             b' ',
             max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
-        if ENABLE_COLORS {
-            if vals.functions < failing.functions {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
-            } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+        for (value, threshold, width) in [
+            (vals.functions, failing.functions, 7),
+            (vals.lines, failing.lines, 7),
+            (vals.branches, failing.branches, 10),
+        ] {
+            writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
+            if ENABLE_COLORS {
+                if value < threshold {
+                    writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
+                } else {
+                    writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+                }
             }
+            write!(writer, "{:>width$.2}", value * 100.0)?;
         }
-
-        write!(writer, "{:>7.2}", vals.functions * 100.0)?;
-        // writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
-        // if ENABLE_COLORS {
-        //     // if vals.stmts < failing.stmts {
-        //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // } else {
-        //     //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // }
-        // }
-        // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
-
-        if ENABLE_COLORS {
-            if vals.lines < failing.lines {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
-            } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
-            }
-        }
-
-        write!(writer, "{:>7.2}", vals.lines * 100.0)?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
-
-        if ENABLE_COLORS {
-            if vals.branches < failing.branches {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
-            } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
-            }
-        }
-
-        write!(writer, "{:>10.2}", vals.branches * 100.0)?;
         Ok(())
     }
 
@@ -604,7 +576,7 @@ pub mod lcov {
         writeln!(writer, "BRF:{}", report.branches.len())?;
 
         // BRH: branches hit
-        writeln!(writer, "BRH:{}", report.branches_which_have_executed())?;
+        writeln!(writer, "BRH:{}", report.branches_hit())?;
 
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
@@ -885,8 +857,7 @@ impl ByteRangeMapping {
         functions: &[CountedRange],
         source_map: Option<&ParsedSourceMap>,
     ) -> Vec<(Branch, u32)> {
-        // A function that starts where a branch does has its own count there. JSC starts the
-        // basic block of a branch that is an expression one unit before it for that.
+        // JSC starts the block of a branch one unit early, as a function that starts it has its own.
         let count_at = |offset: u32| {
             let first = functions.partition_point(|function| function.range.start < offset);
             let starts_a_function = functions
@@ -899,7 +870,7 @@ impl ByteRangeMapping {
 
         let mut branches = Vec::with_capacity(self.branch_marks.len());
         for marks in self.branch_marks.chunk_by(|a, b| a.decision == b.decision) {
-            let [decision, ways @ ..] = marks else {
+            let [decision, branch_marks @ ..] = marks else {
                 continue;
             };
             let has_implicit_branch = match decision.kind {
@@ -931,11 +902,11 @@ impl ByteRangeMapping {
             };
             let mut ran_into_next = 0u32;
             let mut total = 0u32;
-            for way in ways {
-                let ran = count_at(way.offset);
+            for mark in branch_marks {
+                let ran = count_at(mark.offset);
                 let hits = ran.saturating_sub(ran_into_next);
-                ran_into_next = match way.kind {
-                    MarkKind::BranchWithoutStatements => ran,
+                ran_into_next = match mark.kind {
+                    MarkKind::EmptyCase => ran,
                     _ => 0,
                 };
                 total = total.saturating_add(hits);
@@ -1040,7 +1011,7 @@ impl ByteRangeMapping {
             // `scan` sets no brace.
             MarkKind::ObjectBrace => return self.executable_units.set(offset as usize),
             MarkKind::Decision | MarkKind::DecisionWithImplicitBranch => {}
-            MarkKind::Branch | MarkKind::BranchWithoutStatements => {
+            MarkKind::Branch | MarkKind::EmptyCase => {
                 let len = u32::try_from(self.executable_units.bit_length()).expect("int cast");
                 while offset + 1 < len
                     && matches!(source.char_at(offset as usize), 0x09 | 0x0A | 0x0D | 0x20)

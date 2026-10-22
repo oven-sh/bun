@@ -18,7 +18,7 @@ impl Default for Fraction {
         Self {
             functions: 0.9,
             lines: 0.9,
-            // A `coverageThreshold` from before there were branches does not ask for any.
+            // Checked only when `coverageThreshold` has `branches`.
             branches: 0.0,
             stmts: 0.75,
             failing: false,

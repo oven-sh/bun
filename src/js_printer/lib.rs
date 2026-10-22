@@ -1584,6 +1584,7 @@ pub enum ExprFlag {
     HasNonOptionalChainParent,
     ExprResultIsUnused,
     IsFollowedByOf,
+    IsAssignTarget,
 }
 
 pub(crate) type ExprFlagSet = enumset::EnumSet<ExprFlag>;
@@ -1646,8 +1647,7 @@ pub(crate) mod __gated_printer {
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
-    /// Control does not reach what is after `stmts`. `false` if that takes more than a look at
-    /// the last one to tell.
+    /// Control does not reach what is after `stmts`, going by the last of them alone.
     fn ends_in_jump(stmts: &[Stmt]) -> bool {
         match stmts.last().map(|stmt| &stmt.data) {
             Some(
@@ -1703,10 +1703,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
 
-        /// The last one that `mark_decision` marked.
-        pub(crate) last_decision: u32,
-        /// Each `a = 1` that is a default value in the destructuring assignment being printed.
-        pub(crate) assignment_defaults: Vec<*const E::Binary>,
+        pub(crate) decision_count: u32,
 
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
@@ -1743,7 +1740,6 @@ pub(crate) mod __gated_printer {
         pub(crate) right_level: Level,
         /// From `mark_decision`, if the right side is a branch.
         pub(crate) decision: u32,
-        pub(crate) is_assignment_default: bool,
     }
 
     // No `Default` impl: every construction
@@ -1879,6 +1875,10 @@ pub(crate) mod __gated_printer {
                 v.left_flags.insert(ExprFlag::ExprResultIsUnused);
             }
 
+            if e.op == Op::Code::BinAssign {
+                v.left_flags.insert(ExprFlag::IsAssignTarget);
+            }
+
             true
         }
 
@@ -1887,12 +1887,6 @@ pub(crate) mod __gated_printer {
             let e = v.e;
             let entry = v.entry;
             let mut flags = ExprFlagSet::empty();
-
-            let decision = if v.is_assignment_default {
-                self.mark_decision_after(e.left.loc, e.right.loc)
-            } else {
-                v.decision
-            };
 
             if e.op != Op::Code::BinComma {
                 self.print_space();
@@ -1919,7 +1913,7 @@ pub(crate) mod __gated_printer {
                 flags.insert(ExprFlag::ForbidIn);
             }
 
-            self.mark_branch(decision, e.right.loc);
+            self.mark_branch(v.decision, e.right.loc);
             self.print_expr(e.right, v.right_level, flags);
 
             if v.wrap {
@@ -2489,56 +2483,54 @@ pub(crate) mod __gated_printer {
             self.source_map_builder.mark_object_brace();
         }
 
-        /// Control goes one of several ways from what is at `loc`, which is about to be printed.
-        /// 0, which `mark_branch` ignores: nothing is marked, or the source does not have this
-        /// decision, as its first branch is not after it.
+        /// Control goes to one of `branches` from what is at `loc`, which is about to be printed.
         #[inline]
         pub(crate) fn mark_decision(
             &mut self,
             kind: MarkKind,
             loc: bun_ast::Loc,
-            first_branch: bun_ast::Loc,
+            branches: &[bun_ast::Loc],
         ) -> u32 {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
-                return 0;
-            }
-            if loc.start < 0 || first_branch.start <= loc.start {
-                return 0;
-            }
-            self.last_decision += 1;
-            self.source_map_builder
-                .mark_branch(kind, self.last_decision, loc, self.writer.slice());
-            self.last_decision
+            self.mark_decision_before_end(0, kind, loc, branches)
         }
 
-        /// The same for a `DecisionWithImplicitBranch` where what is at `loc` was just printed.
+        /// The same where what is at `loc` was just printed. Its last character is marked.
         #[inline]
         pub(crate) fn mark_decision_after(
             &mut self,
             loc: bun_ast::Loc,
-            first_branch: bun_ast::Loc,
+            branch: bun_ast::Loc,
+        ) -> u32 {
+            self.mark_decision_before_end(1, MarkKind::DecisionWithImplicitBranch, loc, &[branch])
+        }
+
+        /// Returns 0, which `mark_branch` ignores, for a decision that the source does not have.
+        #[inline]
+        fn mark_decision_before_end(
+            &mut self,
+            bytes_before_end: usize,
+            kind: MarkKind,
+            loc: bun_ast::Loc,
+            branches: &[bun_ast::Loc],
         ) -> u32 {
             if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
                 return 0;
             }
-            if loc.start < 0 || first_branch.start <= loc.start {
+            if loc.start < 0 || branches.iter().any(|branch| branch.start <= loc.start) {
                 return 0;
             }
+            self.decision_count += 1;
             let output = self.writer.slice();
-            let Some(last_character) = output.iter().rposition(|byte| byte & 0xC0 != 0x80) else {
-                return 0;
-            };
-            self.last_decision += 1;
-            self.source_map_builder.mark_branch(
-                MarkKind::DecisionWithImplicitBranch,
-                self.last_decision,
+            self.source_map_builder.mark(
+                kind,
+                self.decision_count,
                 loc,
-                &output[..last_character],
+                &output[..output.len() - bytes_before_end],
             );
-            self.last_decision
+            self.decision_count
         }
 
-        /// What is at `loc`, which is about to be printed, is one of the ways of `decision`.
+        /// What is at `loc`, which is about to be printed, is one of the branches of `decision`.
         #[inline]
         pub(crate) fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
             self.mark_branch_as(MarkKind::Branch, decision, loc);
@@ -2550,68 +2542,28 @@ pub(crate) mod __gated_printer {
                 return;
             }
             self.source_map_builder
-                .mark_branch(kind, decision, loc, self.writer.slice());
+                .mark(kind, decision, loc, self.writer.slice());
         }
 
         fn mark_binary(&mut self, v: &mut BinaryExpressionVisitor<'a>) {
             let e = v.e;
-            match e.op {
+            let right_is_a_branch = match e.op {
                 Op::Code::BinLogicalAnd
                 | Op::Code::BinLogicalOr
                 | Op::Code::BinNullishCoalescing
                 | Op::Code::BinLogicalAndAssign
                 | Op::Code::BinLogicalOrAssign
-                | Op::Code::BinNullishCoalescingAssign => {}
-                Op::Code::BinAssign => {
-                    let this: *const E::Binary = &raw const *e;
-                    if let Some(i) = self.assignment_defaults.iter().position(|&it| it == this) {
-                        self.assignment_defaults.swap_remove(i);
-                        v.is_assignment_default = true;
-                    }
-                    self.find_assignment_defaults(e.left);
-                    return;
-                }
-                _ => return,
-            }
-            v.decision = self.mark_decision(
-                MarkKind::DecisionWithImplicitBranch,
-                e.left.loc,
-                e.right.loc,
-            );
-        }
-
-        /// `target` is what a destructuring assignment assigns to.
-        fn find_assignment_defaults(&mut self, target: Expr) {
-            let element = |this: &mut Self, element: Expr| match &element.data {
-                ExprData::EBinary(e) if e.op == Op::Code::BinAssign => {
-                    this.assignment_defaults.push(&raw const **e);
-                }
-                ExprData::ESpread(e) => this.find_assignment_defaults(e.value),
-                _ => this.find_assignment_defaults(element),
+                | Op::Code::BinNullishCoalescingAssign => true,
+                // A default value: `[a = 1] = list`.
+                Op::Code::BinAssign => v.flags.contains(ExprFlag::IsAssignTarget),
+                _ => false,
             };
-            match &target.data {
-                ExprData::EArray(e) => {
-                    for item in e.items.slice() {
-                        element(self, *item);
-                    }
-                }
-                ExprData::EObject(e) => {
-                    for property in e.properties.slice() {
-                        if let Some(value) = property.value {
-                            element(self, value);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        /// `init` is what is before the `in` or the `of` of a loop.
-        fn find_assignment_defaults_of_loop(&mut self, init: Stmt) {
-            if GENERATE_SOURCE_MAP && self.options.code_coverage {
-                if let StmtData::SExpr(target) = &init.data {
-                    self.find_assignment_defaults(target.value);
-                }
+            if right_is_a_branch {
+                v.decision = self.mark_decision(
+                    MarkKind::DecisionWithImplicitBranch,
+                    e.left.loc,
+                    &[e.right.loc],
+                );
             }
         }
 
@@ -2642,21 +2594,20 @@ pub(crate) mod __gated_printer {
             let Some((last, others)) = cases.split_last() else {
                 return 0;
             };
-            // JSC counts a clause that the one above ran into and one that matched as one, so
-            // what did not match cannot be told.
-            let can_tell_no_match = last.value.is_some()
+            // JSC counts a clause that matched and one that the clause above ran into as one.
+            let has_no_match_branch = last.value.is_some()
                 && others.iter().all(|case| {
                     case.value.is_some()
                         && (case.body.is_empty() || ends_in_jump(slice_of(case.body)))
                 });
             self.mark_decision(
-                if can_tell_no_match {
+                if has_no_match_branch {
                     MarkKind::DecisionWithImplicitBranch
                 } else {
                     MarkKind::Decision
                 },
                 loc,
-                cases[0].loc,
+                &[cases[0].loc],
             )
         }
 
@@ -2719,10 +2670,7 @@ pub(crate) mod __gated_printer {
                 self.print_binding(arg.binding, TopLevelAndIsExport::default());
 
                 if let Some(default) = &arg.default {
-                    let decision = self.mark_decision_after(arg.binding.loc, default.loc);
-                    self.print_whitespacer(ws!(b" = "));
-                    self.mark_branch(decision, default.loc);
-                    self.print_expr(*default, Level::Comma, ExprFlag::none());
+                    self.print_initializer(*default, Some(arg.binding.loc));
                 }
             }
 
@@ -2769,7 +2717,7 @@ pub(crate) mod __gated_printer {
                     continue;
                 }
 
-                self.print_property(item, true);
+                self.print_property(item, ExprFlag::none());
 
                 if item.value.is_none() {
                     self.print_semicolon_after_statement();
@@ -3499,7 +3447,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ESpread(e) => {
                     self.add_source_mapping(expr.loc);
                     self.print(b"...");
-                    self.print_expr(e.value, Level::Comma, ExprFlag::none());
+                    self.print_expr(e.value, Level::Comma, flags & ExprFlag::IsAssignTarget);
                 }
                 ExprData::ENewTarget(_) => {
                     self.print_space_before_identifier();
@@ -3982,8 +3930,8 @@ pub(crate) mod __gated_printer {
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
                     }
 
-                    // The index target is not directly followed by `of`.
-                    flags.remove(ExprFlag::IsFollowedByOf);
+                    // The index target is not directly followed by `of`, and is not assigned to.
+                    flags -= ExprFlag::IsFollowedByOf | ExprFlag::IsAssignTarget;
                     self.print_expr(e.target, Level::Postfix, flags);
 
                     let is_optional_chain_start =
@@ -4019,7 +3967,8 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                         flags.remove(ExprFlag::ForbidIn);
                     }
-                    let decision = self.mark_decision(MarkKind::Decision, e.test.loc, e.yes.loc);
+                    let decision =
+                        self.mark_decision(MarkKind::Decision, e.test.loc, &[e.yes.loc, e.no.loc]);
                     self.print_expr(e.test, Level::Conditional, flags);
                     self.print_space();
                     self.print(b"?");
@@ -4147,7 +4096,7 @@ pub(crate) mod __gated_printer {
                                 self.print_newline();
                                 self.print_indent();
                             }
-                            self.print_expr(*item, Level::Comma, ExprFlag::none());
+                            self.print_expr(*item, Level::Comma, flags & ExprFlag::IsAssignTarget);
 
                             if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
                                 // Make sure there's a comma after trailing missing items
@@ -4194,7 +4143,7 @@ pub(crate) mod __gated_printer {
                             self.print_newline();
                             self.print_indent();
                         }
-                        self.print_property(&props[0], false);
+                        self.print_property(&props[0], flags & ExprFlag::IsAssignTarget);
 
                         if props.len() > 1 {
                             for property in &props[1..] {
@@ -4205,7 +4154,7 @@ pub(crate) mod __gated_printer {
                                     self.print_newline();
                                     self.print_indent();
                                 }
-                                self.print_property(property, false);
+                                self.print_property(property, flags & ExprFlag::IsAssignTarget);
                             }
                         }
 
@@ -4707,7 +4656,6 @@ pub(crate) mod __gated_printer {
                         wrap: false,
                         right_level: Level::Lowest,
                         decision: 0,
-                        is_assignment_default: false,
                     };
 
                     // Use a single stack to reduce allocation overhead
@@ -4745,7 +4693,6 @@ pub(crate) mod __gated_printer {
                             wrap: false,
                             right_level: Level::Lowest,
                             decision: 0,
-                            is_assignment_default: false,
                         };
                         self.binary_expression_stack.push(v);
                         v = next;
@@ -5076,9 +5023,9 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_property(&mut self, item_in: &G::Property, is_in_class: bool) {
-            let default_of = match item_in.key {
-                Some(key) if !is_in_class => Some(key.loc),
+        pub(crate) fn print_property(&mut self, item_in: &G::Property, value_flags: ExprFlagSet) {
+            let default_of = match item_in.value {
+                Some(value) if value_flags.contains(ExprFlag::IsAssignTarget) => Some(value.loc),
                 _ => None,
             };
             // `G::Property` isn't `Copy`, so take a borrow and shallow-copy the
@@ -5227,7 +5174,7 @@ pub(crate) mod __gated_printer {
                     }
                     self.print(b":");
                     self.print_space();
-                    self.print_expr(*val, Level::Comma, ExprFlag::none());
+                    self.print_expr(*val, Level::Comma, value_flags);
                 }
 
                 if let Some(initial) = &item.initializer {
@@ -5372,7 +5319,7 @@ pub(crate) mod __gated_printer {
                 }
                 self.print(b":");
                 self.print_space();
-                self.print_expr(*val, Level::Comma, ExprFlagSet::empty());
+                self.print_expr(*val, Level::Comma, value_flags);
             }
 
             if IS_JSON {
@@ -5384,15 +5331,14 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// `default_of`: the key of the property of a destructuring assignment. A class has
-        /// fields, whose values always run.
+        /// `default_of`: what gets `initial` if it has no value. `None` for a field of a class.
         pub(crate) fn print_initializer(
             &mut self,
             initial: Expr,
             default_of: Option<bun_ast::Loc>,
         ) {
             let decision = match default_of {
-                Some(key) => self.mark_decision_after(key, initial.loc),
+                Some(target) => self.mark_decision_after(target, initial.loc),
                 None => 0,
             };
             self.print_space();
@@ -5639,12 +5585,7 @@ pub(crate) mod __gated_printer {
             property: &P,
         ) {
             if let Some(default) = property.default_value() {
-                let decision = self.mark_decision_after(property.binding_loc(), default.loc);
-                self.print_space();
-                self.print(b"=");
-                self.print_space();
-                self.mark_branch(decision, default.loc);
-                self.print_expr(default, Level::Comma, ExprFlag::none());
+                self.print_initializer(default, Some(property.binding_loc()));
             }
         }
 
@@ -6157,8 +6098,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"for");
                     self.print_space();
                     self.print(b"(");
-                    self.find_assignment_defaults_of_loop(s.init);
-                    self.print_for_loop_init(s.init, ExprFlag::none());
+                    self.print_for_loop_init(s.init, ExprFlag::IsAssignTarget.into());
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"in");
@@ -6178,8 +6118,10 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print(b"(");
                     self.for_of_init_start = self.writer.written();
-                    self.find_assignment_defaults_of_loop(s.init);
-                    self.print_for_loop_init(s.init, ExprFlag::is_followed_by_of());
+                    self.print_for_loop_init(
+                        s.init,
+                        ExprFlag::is_followed_by_of() | ExprFlag::IsAssignTarget,
+                    );
                     self.print_space();
                     self.print_space_before_identifier();
                     self.print(b"of");
@@ -6302,7 +6244,7 @@ pub(crate) mod __gated_printer {
                         self.add_source_mapping(c.loc);
                         self.mark_branch_as(
                             if c.body.is_empty() {
-                                MarkKind::BranchWithoutStatements
+                                MarkKind::EmptyCase
                             } else {
                                 MarkKind::Branch
                             },
@@ -6835,15 +6777,10 @@ pub(crate) mod __gated_printer {
 
             self.print_space_before_identifier();
             self.add_source_mapping(loc);
-            let decision = self.mark_decision(
-                if s.no.is_some() {
-                    MarkKind::Decision
-                } else {
-                    MarkKind::DecisionWithImplicitBranch
-                },
-                loc,
-                s.yes.loc,
-            );
+            let decision = match &s.no {
+                Some(no) => self.mark_decision(MarkKind::Decision, loc, &[s.yes.loc, no.loc]),
+                None => self.mark_decision(MarkKind::DecisionWithImplicitBranch, loc, &[s.yes.loc]),
+            };
             self.print(b"if");
             self.print_space();
             self.print(b"(");
@@ -7310,8 +7247,7 @@ pub(crate) mod __gated_printer {
                 source_map_builder,
                 temporary_bindings: Vec::new(),
                 binary_expression_stack: Vec::new(),
-                last_decision: 0,
-                assignment_defaults: Vec::new(),
+                decision_count: 0,
                 stack_check: bun_core::StackCheck::init(),
                 stack_overflowed: false,
                 was_lazy_export: false,

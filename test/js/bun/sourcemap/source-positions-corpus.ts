@@ -512,6 +512,46 @@ export const cases: Record<string, Case> = {
  -|}
 `,
   },
+  // A `;` that is a body runs, and a name that Bun replaces with the value of its `const` is where it was.
+  "replaced.ts": {
+    functions: "2/3",
+    lines: `
+ 1|const M = 2;
+ 3|function g(...a: unknown[]) {
+ 3|  return a.length;
+ -|}
+ 3|function f(v: number, list: number[]) {
+ 3|  const L = 3;
+ 3|  let r = 0;
+ 3|  if (v)
+ 2|    ;
+ 1|  else
+ 1|    ;
+ 6|  while (r++ < v)
+ 3|    ;
+ 3|  for (const x of list)
+ 3|    ;
+ 3|  r = g(
+ 3|    L,
+ 3|    M,
+ 3|    v,
+ 3|  );
+ 3|  return r +
+ 3|    L;
+ -|}
+ 0|export function never() {
+ 0|  const N = 4;
+ 0|  if (N)
+ 0|    ;
+ 0|  return g(
+ 0|    N,
+ 0|  );
+ -|}
+ 1|f(1, [1, 2]);
+ 1|f(0, []);
+ 1|f(2, [3]);
+`,
+  },
   // What is after a statement that control flow left did not run.
   "leaves.ts": {
     functions: "7/7",

@@ -197,8 +197,9 @@ describe("HTTP/3 header encoding", () => {
       },
     );
     const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
-    // lsxpack holds the length of a value in 16 bits.
-    const headers = { ...request, "x-value": Buffer.alloc(70_000, "v").toString() };
+    // One call sends 128 fields at most.
+    const headers: Record<string, string> = { ...request };
+    for (let i = 0; i < 128; i++) headers[`x-field-${i}`] = "v";
 
     const client = await connect(server.address!, {
       servername: "localhost",

@@ -184,6 +184,10 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
     }
 }
 
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+_Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
 #define US_NQ_HSET_MIN_BUF 256
 
 struct nq_hset {
@@ -216,7 +220,9 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    if (space > LSXPACK_MAX_STRLEN)
+    /* `space` is lsqpack's estimate and can exceed what the field decodes to.
+     * A field over max_bytes is decoded and dropped, so it needs room as well. */
+    if (space > (h->max_bytes > UINT16_MAX / 2 ? 2 * (size_t) h->max_bytes : UINT16_MAX))
         return NULL;
     if (space > h->decode_cap) {
         size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;

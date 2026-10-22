@@ -13,6 +13,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
+import { lsxpackDefines } from "./lshpack.ts";
 
 const LSQUIC_COMMIT = "f812ceb9529e26717df78c6064a2ff648b949f3e";
 
@@ -174,6 +175,7 @@ export const lsquic: Dependency = {
         ...(needCompatQueue ? [lshpackSrc + "/compat/queue"] : []),
       ],
       defines: {
+        ...lsxpackDefines,
         HAVE_BORINGSSL: 1,
         ...(cfg.windows ? { WIN32: 1, WIN32_LEAN_AND_MEAN: 1 } : {}),
         XXH_HEADER_NAME: "xxhash.h",

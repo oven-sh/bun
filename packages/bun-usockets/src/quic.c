@@ -34,6 +34,10 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+_Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
 #define US_QUIC_READ_BUF (16 * 1024)
 /* A header set over max_size or max_fields fails its stream. One over this
  * multiple of either closes the connection, as in Http2Context.h, which has
@@ -524,7 +528,7 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     /* `space` is lsqpack's estimate and can exceed what the field decodes to. */
     size_t need = h->len + space;
-    if (space > LSXPACK_MAX_STRLEN || need > us_quic_hset_hard_cap(h)) return NULL;
+    if (need > us_quic_hset_hard_cap(h)) return NULL;
     if (need > h->cap) {
         size_t ncap = h->cap ? h->cap : 512;
         while (ncap < need) ncap *= 2;
@@ -1191,10 +1195,8 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
      * so each pair has to be contiguous. The caller hands us arbitrary
      * pointers, so flatten here. */
     size_t total = 0;
-    for (unsigned int i = 0; i < count; i++) {
-        if (headers[i].name_len > LSXPACK_MAX_STRLEN || headers[i].value_len > LSXPACK_MAX_STRLEN) return -1;
+    for (unsigned int i = 0; i < count; i++)
         total += headers[i].name_len + headers[i].value_len;
-    }
 
     char stackbuf[1024];
     char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
@@ -1416,10 +1418,9 @@ us_quic_socket_context_t *us_create_quic_client_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP);
     ctx->settings.es_versions = (1u << LSQVER_I001);
     ctx->settings.es_ecn = 0;
-    /* One field holds at most LSXPACK_MAX_STRLEN bytes, so a server isn't told it may send more. */
-    ctx->settings.es_max_header_list_size = 64 * 1024;
-    /* A server may ignore that setting. Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
+    /* Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
     ctx->max_header_set_size = 256 * 1024;
+    ctx->settings.es_max_header_list_size = ctx->max_header_set_size;
     ctx->settings.es_ext_http_prio = 0;
 
     struct lsquic_engine_api api;

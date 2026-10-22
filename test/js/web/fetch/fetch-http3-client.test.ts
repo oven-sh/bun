@@ -987,17 +987,39 @@ test("a response header set over the size limit fails that request and no other 
   expect(heldRequests).toBe(1);
 });
 
-test("rejects a request header value that is too long to send", async () => {
-  // lsxpack holds the length of a value in 16 bits.
-  const outcome = await fetch(`${base}/headers-echo`, {
-    ...h3,
-    headers: { "x-value": Buffer.alloc(70_000, "v").toString() },
-  }).then(
-    res => res.status,
-    err => err.code,
+test("a response header value of more than 64 KB is delivered, up to the size limit", async () => {
+  await using origin = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    fetch(req) {
+      const length = Number(new URL(req.url).pathname.slice(1));
+      return new Response(null, { headers: { "x-value": Buffer.alloc(length, "v").toString() } });
+    },
+  });
+  // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field.
+  const rest = [...(await fetch(`${origin.url}0`, h3)).headers].reduce(
+    (size, [name, value]) => size + name.length + value.length + 32,
+    ":status".length + "200".length + 32,
   );
-  expect(outcome).toBe("HTTP3HeaderEncodingError");
-  expect(await fetch(`${base}/hello`, h3).then(res => res.text())).toBe("hello over h3");
+  const atTheLimit = 256 * 1024 - rest;
+  const outcome = (length: number) =>
+    fetch(`${origin.url}${length}`, h3).then(
+      res => res.headers.get("x-value") === Buffer.alloc(length, "v").toString(),
+      err => err.code,
+    );
+  expect({
+    value70000: await outcome(70_000),
+    atTheLimit: await outcome(atTheLimit),
+    overTheLimit: await outcome(atTheLimit + 1),
+    after: await outcome(1),
+  }).toEqual({
+    value70000: true,
+    atTheLimit: true,
+    overTheLimit: "ResponseHeadersTooLarge",
+    after: true,
+  });
 });
 
 // Stale-session retry: a request bound on session A when A's conn closes

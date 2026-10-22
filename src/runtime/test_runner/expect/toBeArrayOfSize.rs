@@ -33,7 +33,7 @@ pub(crate) fn to_be_array_of_size(
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
-    let mut pass = value.js_type().is_array()
+    let mut pass = value.is_array_or_proxied_array()
         && value.get_length(global)? as i64 == size.to_int64();
 
     if not {

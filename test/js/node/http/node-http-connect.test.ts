@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import net from "node:net";
 import { join } from "node:path";
 import type { Duplex } from "node:stream";
-import { Writable } from "node:stream";
+import { getDefaultHighWaterMark, Writable } from "node:stream";
 import tls from "node:tls";
 import { WebSocketServer } from "ws";
 function connectClient(proxyAddress: AddressInfo, targetAddress: AddressInfo, add_http_prefix: boolean) {
@@ -1961,8 +1961,8 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
     "-e",
     `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
      const reply = "HTTP/1.1 200 OK\\r\\n\\r\\n";
-     // What a socket buffers before it stops its reads.
-     const full = Buffer.alloc(65536, "a");
+     // What a socket buffers before it stops its reads, however the bytes arrive.
+     const full = Buffer.alloc(${highWaterMark}, "a");
      const result = {};
      let client;
      server.on("${event}", (req, socket) => {
@@ -1985,6 +1985,8 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
      process.on("exit", () => console.log(JSON.stringify(result)));`,
   );
 }
+// 16 KiB on Windows, 64 KiB elsewhere.
+const highWaterMark = getDefaultHighWaterMark(false);
 // More than a loopback socket takes in one write, except on Windows.
 const large = 8 * 1024 * 1024;
 
@@ -2000,7 +2002,7 @@ describe.concurrent.each([
       server.close();
       socket.end(reply);
       process.on("beforeExit", () => (result.buffered = socket.readableLength));`;
-    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ buffered: 65536 }));
+    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ buffered: highWaterMark }));
   });
 
   // 'beforeExit': nothing keeps the process alive. It has to wait for what the listener starts there.
@@ -2023,7 +2025,7 @@ describe.concurrent.each([
         socket.on("data", chunk => (result.received += chunk.length)).on("end", () => socket.end());
         client.end(Buffer.alloc(${large}, "b"));
       });`;
-    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ received: 65536 + large }));
+    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ received: highWaterMark + large }));
   });
 });
 
@@ -2054,12 +2056,12 @@ describe.concurrent.each(["http", "https"])("%s: a tunnel behind server.unref() 
 
   test("does not keep the process alive when it reads again", async () => {
     // The peer stays connected and sends nothing more.
-    expect(await runTunnel(proto, "connect", readsAgain("", ""))).toEqual(exitedWith({ received: 65536 }));
+    expect(await runTunnel(proto, "connect", readsAgain("", ""))).toEqual(exitedWith({ received: highWaterMark }));
   });
 
   test("keeps the process alive when it reads again behind server.ref()", async () => {
     expect(await runTunnel(proto, "connect", readsAgain("server.ref();", "client.end();"))).toEqual(
-      exitedWith({ received: 65536, end: true }),
+      exitedWith({ received: highWaterMark, end: true }),
     );
   });
 

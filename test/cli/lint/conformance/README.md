@@ -3,7 +3,8 @@
 Every test case of every ESLint core rule, of every typescript-eslint rule and of the rules of other plugins that
 `bun lint` has, as JSON, with what **real ESLint** reports for it. They are in `bundle.zst`: one file after the other,
 compressed with zstd (see `../../format/bundle.ts`). `sync.ts` writes it, `version.json` says from which versions and
-commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@eslint/json`).
+commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@eslint/json`). The components in `svelte/` and
+`svelte-project/` are from eslint-plugin-svelte, under `licenses/eslint-plugin-svelte.txt`.
 
 |                           | version | rules | cases |
 | ------------------------- | ------- | ----- | ----- |
@@ -16,6 +17,7 @@ commits, and `licenses/` has the license of each (MIT, and Apache 2.0 for `@esli
 | eslint-plugin-prettier    | 5.5.6   | 1     | 448   |
 | @eslint/json              | 2.1.1   | 6     | 332   |
 | @eslint/markdown          | 8.0.3   | 21    | 1410  |
+| eslint-plugin-svelte      | 3.23.1  | 31    | 375   |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 
 The rules of `react-hooks` follow eslint-plugin-react-hooks 7.1.1, which reports the same for all of these cases of 7.0.0.
@@ -64,6 +66,25 @@ Versions that were resolved at generation time and can change what is reported:
 - typescript-eslint checkout (from its lockfile): typescript 6.0.2, ts-api-utils 2.5.0, **@types/node 24.19.0** and
   **@types/react 18.3.31**. ESLint is the checkout above, not the 10.11.0 of the lockfile.
 
+`svelte/` has the tests of eslint-plugin-svelte 3.23.1, each case a component with what ESLint 10.11 reports for it with
+svelte-eslint-parser 1.9 and the published plugin (`extract-svelte.ts`, `sync.ts --svelte`). A rule's suite comes into the bundle
+when the rule here passes all of it. A case is linted as `bun lint` lints a component, and differs from the others in this:
+
+- `filename` is relative to `packages/eslint-plugin-svelte` of the checkout, where upstream runs its tests: `tests/fixtures/rules/..`.
+  `languageOptions.parser` is `"svelte-eslint-parser"`, and `globals` are written out.
+- Each message has its `severity`, which is compared too. `suppressed` has the messages that comments suppress, with their `suppressions`.
+- `output` is the code after all passes of `--fix`, not one.
+- With `--projects` a case is linted as a file of `svelte-project/`, which has it, a `package.json` of `eslint-plugin-svelte`,
+  which SvelteKit's rules take for SvelteKit 2, and the `svelte.config.js` of a case.
+- A component of a rule that compiles it, `no-unused-svelte-ignore`, has `"skip": "svelte/compiler"`: it was recorded with
+  `svelte` 5.57.2, which the tests do not install. `--svelte-plugin=<node_modules>/eslint-plugin-svelte/lib/index.js` runs it with
+  the `svelte/compiler` that that plugin finds.
+
+Six of the rules here have no suite in the bundle. `comment-directive`'s tests lint with the processor and other rules in a `Linter`
+of their own, and `system` has none upstream. `no-unused-props`, `require-store-reactive-access` and `no-navigation-without-resolve`
+read types: their cases need `parserOptions.project`, and the runner does not lint components with types. Every case of
+`require-event-dispatcher-types` requires Svelte 3 or 4. `../js-parsers.test.ts` has their tests, with what ESLint reports.
+
 ## Running them
 
 ```sh
@@ -108,6 +129,7 @@ if a configuration with them would end the run. Not where the recorded options h
 - `node_modules/`: the declaration files of the packages that this project finds types in. 76 of the 8208 type-aware
   cases report something else without `@types/node` and `@types/react`, and one imports `@typescript-eslint/types`.
 - `import-project/`, `n-project/`: the files that the cases of `import/*` and `n/*` are next to.
+- `svelte/<rule>.json`, `svelte-project/`: the cases of `svelte/*`, and the project that they are files of.
 
 Next to the bundle, `markdown-trees.zst` has the tree that `@eslint/markdown`'s parser produces for every example in the
 CommonMark and GFM specs. `markdown-trees.mjs` writes it. `../js-parsers.test.ts` compares it with `bun lint`'s tree.
@@ -132,6 +154,17 @@ bun extract-oxlint.ts --oxc <oxc at the tag of the executable> --oxlint <oxlint>
 bun sync.ts --oxlint <directory>     # `oxlint/` of bundle.zst
 node extract-languages.ts ..         # the rules of a plugin that has its own language: usage is at the top of the file
 bun sync.ts --plugin json <fixtures> # `json/` of bundle.zst, and the same for `markdown`
+```
+
+For `svelte/`, a checkout of eslint-plugin-svelte at the tag of the package, and the packages that the cases were recorded with:
+
+```sh
+git clone --depth 1 --branch eslint-plugin-svelte@3.23.1 https://github.com/sveltejs/eslint-plugin-svelte
+bun add --cwd <dir> eslint@10.11.0 eslint-plugin-svelte@3.23.1 svelte-eslint-parser@1.9.0 svelte@5.57.2 \
+  @typescript-eslint/parser@8.71.1 typescript@6.0.3 globals@17.12.0 semver@7.8.5 yaml@2.9.1
+node extract-svelte.ts --tests eslint-plugin-svelte/packages/eslint-plugin-svelte --packages <dir>/node_modules \
+  --out <directory> <rule>..          # the rules that are in the bundle
+ESLINT_PLUGIN_SVELTE_DIR=$PWD/eslint-plugin-svelte bun sync.ts --svelte <directory>   # also licenses/ and version.json
 ```
 
 What is in `more/` is recorded by `extra-cases.ts`, which takes cases as JSON (a fixture is one way to write them), and
@@ -249,13 +282,15 @@ columns on one line.
 
 A case that cannot be reproduced without upstream's test code. It still has what ESLint reported.
 
-| `skip`                     | plugin            | cases | why                                                       |
-| -------------------------- | ----------------- | ----- | --------------------------------------------------------- |
-| `test-only plugin: <name>` | eslint            | 10    | the code enables a helper rule that the test file defines |
-| `test-only rule: <name>`   | typescript-eslint | 5     | same, through `defineRule()`                              |
-| `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                     |
-| `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative          |
-| `half of a surrogate pair` | json              | 3     | the code has a lone surrogate, which UTF-8 can't encode   |
+| `skip`                     | plugin            | cases | why                                                                      |
+| -------------------------- | ----------------- | ----- | ------------------------------------------------------------------------ |
+| `test-only plugin: <name>` | eslint            | 10    | the code enables a helper rule that the test file defines                |
+| `test-only rule: <name>`   | typescript-eslint | 5     | same, through `defineRule()`                                             |
+| `parser: custom`           | typescript-eslint | 1     | a stub parser without parser services                                    |
+| `skipped upstream`         | typescript-eslint | 1     | `skip: true` in the test; a known false negative                         |
+| `half of a surrogate pair` | json              | 3     | the code has a lone surrogate, which UTF-8 can't encode                  |
+| `svelte/compiler`          | svelte            | 45    | the rule compiles the component, see above                               |
+| `ESLint throws: <message>` | svelte            | 1     | the plugin's fix calls an API of `SourceCode` that ESLint 10 has removed |
 
 26 core cases name a "parser" of `tests/fixtures/parsers/*.js`, which returns a hard-coded AST (type annotations, old
 babel-eslint and typescript-eslint). They are not skipped: 25 are recorded with the real parser that reads the code

@@ -96,5 +96,9 @@
   },
   "redux": {
     "version": "3.7.2"
+  },
+  "eslint-plugin-svelte": {
+    "version": "3.23.1",
+    "commit": "24201e06a1a8e270c1143d1fb460e6ae635719d8"
   }
 }

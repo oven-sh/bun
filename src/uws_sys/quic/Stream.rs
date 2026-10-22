@@ -20,6 +20,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream);
+    safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
@@ -55,6 +56,11 @@ impl Stream {
 
     pub fn reset(&mut self) {
         us_quic_stream_reset(self)
+    }
+
+    /// The code of the last RESET_STREAM or STOP_SENDING on the stream, 0 without one.
+    pub fn reset_code(&mut self) -> u64 {
+        us_quic_stream_reset_code(self)
     }
 
     pub fn header_count(&mut self) -> c_uint {

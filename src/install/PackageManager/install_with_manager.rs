@@ -1831,8 +1831,10 @@ fn enqueue_named_updates(
             named.latest_rows.push(dependency_i as DependencyID);
         }
         // The root's link to a workspace has no version to update. Other dependencies on that name
-        // can only link to the workspace while it stays resolved.
+        // can only link to the workspace while it stays resolved. The differ has just resolved a row
+        // that is at an appended package, and the package's download finds it through that row.
         if package_id == invalid_package_id
+            || package_id >= manager.lockfile.loaded_package_count
             || dependency.behavior.is_bundled()
             || dependency.behavior.is_workspace()
         {

@@ -1274,6 +1274,10 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_has_unacked_data(s->stream) : 0;
 }
 
+uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
+    return s->stream ? lsquic_stream_get_error_code(s->stream) : 0;
+}
+
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }
 
 us_quic_socket_t *us_quic_stream_socket(us_quic_stream_t *s) {

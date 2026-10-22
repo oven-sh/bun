@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 
 let registry: TestRegistry;
 beforeAll(() => {
@@ -61,6 +61,61 @@ describe.concurrent("bun update --interactive actually installs packages", () =>
     expect(await updateNoDeps("^1.0.0", "l\r")).toEqual({
       before: "1.1.0",
       declared: "^2.0.0",
+      installed: "2.0.0",
+      exitCode: 0,
+    });
+  });
+
+  test("updates a catalog entry from a workspace member", async () => {
+    using dir = tempDir("update-interactive-catalog", {
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["packages/*"],
+        catalog: { "no-deps": "1.0.0", "a-dep": "^1.0.1" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:" } }),
+      "packages/b/package.json": JSON.stringify({ name: "b", dependencies: { "a-dep": "catalog:" } }),
+    });
+    const env = installEnv(String(dir));
+    // The link in the list of cached versions is the last thing that a download writes.
+    const isDownloaded = () =>
+      readdirSync(join(env.BUN_INSTALL_CACHE_DIR, "no-deps")).some(version => version.startsWith("2.0.0"));
+
+    // During the update, the manifest of the entry that stays arrives after the download of the new version.
+    let updating = false;
+    using slowRegistry = new TestRegistry({
+      async intercept(request) {
+        if (!updating || new URL(request.url).pathname !== "/a-dep") return;
+        const deadline = Date.now() + 5000;
+        while (!isDownloaded() && Date.now() < deadline) await Bun.sleep(1);
+      },
+    }).start();
+    await Bun.write(join(String(dir), "bunfig.toml"), `[install]\nregistry = "${slowRegistry.registryUrl()}"\n`);
+
+    await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env, stderr: "pipe" });
+    expect({ stderr: await install.stderr.text(), exitCode: await install.exited }).toMatchObject({ exitCode: 0 });
+
+    updating = true;
+    await using update = Bun.spawn({
+      cmd: [bunExe(), "update", "--interactive"],
+      cwd: join(String(dir), "packages", "a"),
+      env,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    update.stdin.write("l\r");
+    update.stdin.end();
+    const [stderr, exitCode] = await Promise.all([update.stderr.text(), update.exited, update.stdout.text()]);
+    expect(stderr).not.toContain("error:");
+    expect({
+      declared: (await Bun.file(join(String(dir), "package.json")).json()).catalog,
+      locked: (await Bun.file(join(String(dir), "bun.lock")).text()).match(/"no-deps@([^"]+)"/)?.[1],
+      installed: (await Bun.file(join(String(dir), "packages/a/node_modules/no-deps/package.json")).json()).version,
+      exitCode,
+    }).toEqual({
+      declared: { "no-deps": "2.0.0", "a-dep": "^1.0.1" },
+      locked: "2.0.0",
       installed: "2.0.0",
       exitCode: 0,
     });

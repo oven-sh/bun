@@ -9,10 +9,8 @@ export const createObjectURL = b.fn({
   returns: b.string,
 });
 
-export const revokeObjectURL = b.fn({
-  args: { url: b.string.allowStringObject },
-  expected: { url: "revokeObjectURL expects a string" },
-});
+/** Without an argument it throws `ERR_MISSING_ARGS`, as in Node. */
+export const revokeObjectURL = b.fn({ args: { url: b.any.variadic }, capability: "js", throws: true, length: 1 });
 
 /** `resolveObjectURL` of `node:buffer`. */
 export const resolveObjectURL = b.fn({ args: { url: b.string.loose }, returns: b.any, capability: "js" });

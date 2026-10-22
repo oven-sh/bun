@@ -2,9 +2,9 @@ use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, UUID};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, UUID};
 use bun_threading::Guarded;
 
 use crate::webcore::Blob;
@@ -118,17 +118,31 @@ pub(crate) fn create_object_url(blob: &Blob) -> bun_core::String {
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 
-pub(crate) fn revoke_object_url(str: &bun_core::String) {
+pub(crate) fn revoke_object_url(cx: &mut JsScope<'_>, url: &[JsLocal<'_>]) -> JsResult<()> {
+    let global = cx.global();
+    let Some(url) = url.first() else {
+        return Err(global.throw_not_enough_arguments("revokeObjectURL", 1, 0));
+    };
+    let url = url.to_js();
+    if !url.is_string() {
+        return Err(
+            global.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
+        );
+    }
+    // `is_string()` is `is_string_like()` and admits `StringObject`, so
+    // `to_bun_string` can still observe a user `toString` that throws.
+    let str = url.to_bun_string(global)?;
     if !str.starts_with_ascii(b"blob:") {
-        return;
+        return Ok(());
     }
 
     let slice = str.to_utf8();
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
-        return;
+        return Ok(());
     }
     ObjectURLRegistry::singleton().revoke(&sliced[b"blob:".len()..]);
+    Ok(())
 }
 
 pub(crate) fn resolve_object_url(cx: &mut JsScope<'_>, str: &bun_core::String) -> JSValue {

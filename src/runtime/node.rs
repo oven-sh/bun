@@ -101,9 +101,6 @@ pub(crate) mod node_fs_watcher;
 #[path = "node/uv_signal_handle_windows.rs"]
 pub(crate) mod uv_signal_handle_windows;
 
-// Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
-// each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
 #[path = "node/buffer.rs"]
 pub(crate) mod buffer;
 

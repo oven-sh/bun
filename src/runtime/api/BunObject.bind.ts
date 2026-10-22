@@ -127,9 +127,9 @@ export const openInEditor = b.fn({
     path: b.string.loose.utf8.nullable.default(""),
     options: EditorOptions.nullable.default({}),
   },
-  length: 1,
   capability: "heap",
   throws: true,
+  length: 1,
 });
 
 export const shellEscape = b.fn({
@@ -160,10 +160,10 @@ export const which = b.fn({
     command: b.string.loose.utf8.nullable.default(""),
     options: WhichOptions.nullable.default({}),
   },
-  length: 1,
   returns: b.string.local.nullable,
   capability: "heap",
   throws: true,
+  length: 1,
 });
 
 export const ZstdCompressionOptions = b.dictionary({ level: b.f64.loose.allowBigInt.optional }, { allowArray: true });

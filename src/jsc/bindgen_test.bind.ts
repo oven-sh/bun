@@ -220,20 +220,20 @@ export const TestCounter = b.class({
   proto: {
     count: { getter: b.i32 },
     label: { getter: b.string.utf8, setter: true },
-    tag: { getter: b.any, capability: "heap", cache: true, throws: true },
-    sameTag: { getter: b.any, capability: "heap", cache: "tag", throws: true },
-    increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
+    tag: { getter: b.any, cache: true, capability: "heap", throws: true },
+    sameTag: { getter: b.any, cache: "tag", capability: "heap", throws: true },
+    increment: { args: { by: b.i32.default(1) }, returns: b.i32 },
     /** By a number, or by the length of a string, as many times. */
     add: [
-      { rustName: "add_length", args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, mutates: true },
-      { rustName: "add_number", args: { by: b.i32 }, returns: b.i32, mutates: true },
+      { args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, rustName: "add_length" },
+      { args: { by: b.i32 }, returns: b.i32, rustName: "add_number" },
     ],
     forgetTag: { capability: "heap", passThis: true },
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
-    notify: { returns: b.i32, capability: "js", throws: true },
+    notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** `other` may be `this`. */
-    plus: { args: { other: b.self }, returns: b.i32, capability: "js" },
+    plus: { args: { other: b.self }, returns: b.i32 },
   },
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
@@ -244,13 +244,14 @@ export const TestCounter = b.class({
   },
 });
 
-/** Keeps a `TestCounter` alive from Rust. */
-export const TestHolder = b.class({
-  rustPath: "crate::bindgen_test::TestHolder",
-  construct: { args: { counter: TestCounter }, capability: "heap" },
+/** `mutates`: `increment` and the setter take `&mut self`. */
+export const TestMutates = b.class({
+  rustPath: "crate::bindgen_test::TestMutates",
+  construct: { args: { count: b.i32 } },
   proto: {
-    counter: { getter: TestCounter, capability: "heap" },
-    incrementCounter: { returns: b.i32, capability: "js" },
+    count: { getter: b.i32 },
+    label: { getter: b.string.utf8, setter: true },
+    increment: { args: { by: b.i32 }, returns: b.i32, mutates: true },
   },
 });
 
@@ -264,10 +265,10 @@ export const TestRefCounted = b.class({
   proto: {
     value: { getter: b.i32, setter: true },
     listener: { getter: b.any, setter: { capability: "js" }, passThis: true },
-    sameListener: { internalField: "listener", setter: true },
+    sameListener: { setter: true, internalField: "listener" },
     readOnlyListener: { internalField: "listener" },
     /** Calls the listener, which may call back into this object, then returns the value. */
-    notify: { returns: b.i32, passThis: true, capability: "js", throws: true },
+    notify: { returns: b.i32, capability: "js", throws: true, passThis: true },
     /** Makes Rust hold a ref until `TestRefCounted.release()`. */
     keep: {},
     "@@dispose": {},
@@ -297,6 +298,88 @@ export const TestToken = b.class({
 });
 export const makeToken = b.fn({ args: { id: b.u32 }, returns: TestToken, capability: "heap" });
 
+/** `enumerable` / `configurable`, `prototypeBase`, `call`, `writable` and a cached setter. */
+export const TestError = b.class({
+  rustPath: "crate::bindgen_test::TestError",
+  prototypeBase: "Error",
+  configurable: true,
+  enumerable: false,
+  construct: { args: { code: b.i32 } },
+  /** An instance whose code is the sum. */
+  call: { args: { codes: b.any.variadic }, returns: b.self, capability: "heap" },
+  proto: {
+    code: { getter: b.i32 },
+    nonConfigurableCode: { getter: b.i32, configurable: false },
+    describe: { returns: b.string.utf8 },
+    countArguments: { args: { args: b.any.variadic }, returns: b.usize },
+    /** Computed once. Assigning replaces it without calling Rust. */
+    message: { getter: b.string.utf8, cache: true, writable: true },
+    /** Computed once. Assigning a number stores its double. */
+    detail: { getter: b.any, setter: true, cache: true, capability: "heap", passThis: true },
+  },
+  static: {
+    /** Process-wide. */
+    level: { getter: b.i32, setter: true },
+  },
+});
+
+const note = {
+  estimatedSize: true,
+  construct: {
+    passStructure: true,
+    args: { text: b.any, size: b.usize.default(0) },
+    capability: "heap",
+    throws: true,
+  },
+  internalFields: ["text"],
+  proto: { text: { internalField: "text" } },
+} as const;
+/** `passStructure`, `estimatedSize` and `memoryCost`: it reports `size` bytes. */
+export const TestNote = b.class({ ...note, rustPath: "crate::bindgen_test::TestNote", memoryCost: true });
+export const TestRefCountedNote = b.class({
+  ...note,
+  rustPath: "crate::bindgen_test::TestRefCountedNote",
+  refCounted: true,
+});
+
+/** `forBind`: the bound `this` of a function. */
+export const TestBoundThis = b.class({
+  rustPath: "crate::bindgen_test::TestBoundThis",
+  forBind: true,
+  construct: { args: { value: b.i32 } },
+  proto: {
+    value: { getter: b.i32 },
+    /** Says how many times it was computed. */
+    label: { getter: b.string, cache: true },
+    plus: { args: { other: b.i32 }, returns: b.i32 },
+  },
+});
+
+/** `rustTraits`, `overridesToJS` and `final: false`. */
+export const TestNonFinal = b.class({
+  rustPath: "crate::bindgen_test::TestNonFinal",
+  refCounted: true,
+  final: false,
+  overridesToJS: true,
+  rustTraits: ["crate::bindgen_test::TestNonFinalExt"],
+  construct: { args: { value: b.i32 } },
+  proto: { value: { getter: b.i32 } },
+  static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
+});
+
+/** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
+export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });
+/** Whether `from_js_direct` takes the value as a `TestNote` or a `TestRefCountedNote`. */
+export const isNoteFromJSDirect = b.fn({ args: { note: b.any }, returns: b.bool });
+export const errorConstructor = b.fn({ returns: b.any, capability: "js" });
+/** The arguments after the first, as an array. */
+export const afterFirst = b.fn({
+  args: { first: b.any, rest: b.any.variadic },
+  returns: b.any,
+  capability: "heap",
+  throws: true,
+});
+
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });
 export const looseInteger = b.fn({ args: { value: b.u16.loose }, returns: b.u16 });
 export const looseIntegerOrBigInt = b.fn({ args: { value: b.u16.loose.allowBigInt }, returns: b.u16 });
@@ -317,7 +400,7 @@ export const TestAnything = b.union({
   list: b.array(b.f64),
   options: TestOptions,
 });
-export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8, capability: "js" });
+export const describeAnything = b.fn({ args: { value: TestAnything }, returns: b.string.utf8 });
 
 /** Told apart by the first argument, then by the second. */
 export const overloaded = b.overloads(
@@ -341,7 +424,6 @@ export const overloaded = b.overloads(
   {
     args: { counter: TestCounter },
     returns: b.string.utf8,
-    capability: "js",
     rustPath: "crate::bindgen_test::overloaded_counter",
   },
 );
@@ -359,7 +441,6 @@ export const TestOuter = b.dictionary({
   value: b.any,
   choice: TestChoice,
   rest: TestColorOrRest,
-  counter: TestCounter.nullable,
 });
 /** What a default written in the schema gives each member, the nested ones included. */
 export const describeDefaults = b.fn({

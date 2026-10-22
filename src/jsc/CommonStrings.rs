@@ -23,32 +23,28 @@ pub enum CommonStringsForRust {
     FetchInclude = 8,
     Buffer = 9,
     BinaryTypeArrayBuffer = 10,
-    BinaryTypeNodeBuffer = 11,
-    BinaryTypeUint8Array = 12,
-    BinaryTypeBlob = 13,
-    Unknown = 14,
-    ProtocolHttp = 15,
-    ProtocolHttps = 16,
-    AlpnH2 = 17,
-    AlpnHttp11 = 18,
-    Utf8WithDash = 19,
-    QuicDatagramAbandoned = 20,
-    QuicDatagramAcknowledged = 21,
-    QuicDatagramLost = 22,
-    Base64 = 23,
-    Write = 24,
-    FetchOptionCompress = 25,
-    FetchOptionDecompress = 26,
-    FetchOptionKeepalive = 27,
-    FetchOptionMaxRedirects = 28,
-    FetchOptionProtocol = 29,
-    FetchOptionProxy = 30,
-    FetchOptionS3 = 31,
-    FetchOptionSession = 32,
-    FetchOptionTimeout = 33,
-    FetchOptionTls = 34,
-    FetchOptionUnix = 35,
-    FetchOptionVerbose = 36,
+    BinaryTypeUint8Array = 11,
+    Unknown = 12,
+    AlpnH2 = 13,
+    AlpnHttp11 = 14,
+    Utf8WithDash = 15,
+    QuicDatagramAbandoned = 16,
+    QuicDatagramAcknowledged = 17,
+    QuicDatagramLost = 18,
+    Base64 = 19,
+    Write = 20,
+    FetchOptionCompress = 21,
+    FetchOptionDecompress = 22,
+    FetchOptionKeepalive = 23,
+    FetchOptionMaxRedirects = 24,
+    FetchOptionProtocol = 25,
+    FetchOptionProxy = 26,
+    FetchOptionS3 = 27,
+    FetchOptionSession = 28,
+    FetchOptionTimeout = 29,
+    FetchOptionTls = 30,
+    FetchOptionUnix = 31,
+    FetchOptionVerbose = 32,
 }
 
 unsafe extern "C" {
@@ -105,11 +101,6 @@ impl<'a> CommonStrings<'a> {
     pub fn ipv4_lower(self) -> JSValue {
         CommonStringsForRust::Ipv4Lower.to_js(self.global_object)
     }
-    /// `"ipv6"`
-    #[inline]
-    pub fn ipv6_lower(self) -> JSValue {
-        CommonStringsForRust::Ipv6Lower.to_js(self.global_object)
-    }
     /// `"default"`
     #[inline]
     pub fn default(self) -> JSValue {
@@ -135,35 +126,15 @@ impl<'a> CommonStrings<'a> {
     pub fn arraybuffer(self) -> JSValue {
         CommonStringsForRust::BinaryTypeArrayBuffer.to_js(self.global_object)
     }
-    /// `"nodebuffer"`
-    #[inline]
-    pub fn nodebuffer(self) -> JSValue {
-        CommonStringsForRust::BinaryTypeNodeBuffer.to_js(self.global_object)
-    }
     /// `"uint8array"`
     #[inline]
     pub fn uint8array(self) -> JSValue {
         CommonStringsForRust::BinaryTypeUint8Array.to_js(self.global_object)
     }
-    /// `"blob"`
-    #[inline]
-    pub fn blob(self) -> JSValue {
-        CommonStringsForRust::BinaryTypeBlob.to_js(self.global_object)
-    }
     /// `"unknown"`
     #[inline]
     pub fn unknown(self) -> JSValue {
         CommonStringsForRust::Unknown.to_js(self.global_object)
-    }
-    /// `"http"`
-    #[inline]
-    pub fn http(self) -> JSValue {
-        CommonStringsForRust::ProtocolHttp.to_js(self.global_object)
-    }
-    /// `"https"`
-    #[inline]
-    pub fn https(self) -> JSValue {
-        CommonStringsForRust::ProtocolHttps.to_js(self.global_object)
     }
     /// `"h2"`
     #[inline]

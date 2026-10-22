@@ -15535,6 +15535,50 @@ declare const i9: P7<number> & { z: 1 }; i9.m();
       expect(exitCode).toBe(1);
     });
 
+    test("instantiates an accessor of an object literal that is the argument of a generic call", async () => {
+      using dir = project({
+        "a.ts": `declare function hold<S>(value: S): S;
+function getter<T>(value: T) {
+  return hold({ get current() { return value; } });
+}
+function annotated<T>(value: T) {
+  return hold({ get current(): T { return value; }, other: value });
+}
+function setter<T>(value: T) {
+  return hold({ set current(next: T) { value = next; } });
+}
+function both<T>(value: T) {
+  return hold({ get current(): T { return value; }, set current(next: T | undefined) {} });
+}
+function nested<T>(value: T) {
+  return hold({ inner: { get current() { return value; } } });
+}
+function twice<T>(value: T) {
+  return <U>(other: U) => hold({ get pair(): [T, U] { return [value, other]; } });
+}
+export const n: number = getter(1).current;
+export const r1: never = getter(1);
+export const r2: never = annotated("a");
+export const r3: never = setter(1);
+export const r4: never = both(1);
+export const r5: never = nested(1);
+export const r6: never = twice(1)("a");
+both(1).current = "a";
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(21,14): error TS2322: Type '{ readonly current: number; }' is not assignable to type 'never'.
+        a.ts(22,14): error TS2322: Type '{ readonly current: string; other: string; }' is not assignable to type 'never'.
+        a.ts(23,14): error TS2322: Type '{ current: number; }' is not assignable to type 'never'.
+        a.ts(24,14): error TS2322: Type '{ get current(): number; set current(next: number | undefined); }' is not assignable to type 'never'.
+        a.ts(25,14): error TS2322: Type '{ inner: { readonly current: number; }; }' is not assignable to type 'never'.
+        a.ts(26,14): error TS2322: Type '{ readonly pair: [number, string]; }' is not assignable to type 'never'.
+        a.ts(27,1): error TS2322: Type 'string' is not assignable to type 'number'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("reports TS7022 for a template literal with `this` in a class that has optional members", async () => {
       using dir = project({
         "a.ts": `export class A1 { x = \`\${this}\` as const; }

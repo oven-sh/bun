@@ -3272,6 +3272,13 @@ impl<'p, 's> Checker<'p, 's> {
         };
         shape.symbol_declared_at = self.symbol_declaration_of_object_type(lazy_type);
         shape.mapper = self.mapper_of_object_literal_type(lazy_type);
+        // An accessor is the same symbol in every check. Like the members of `lazy_type`, it's instantiated with the
+        // literal's outer type parameters.
+        for prop in &mut shape.props {
+            if matches!(prop.source, PropSource::Literal(..)) {
+                prop.mapper = shape.mapper;
+            }
+        }
         shape.is_js_literal = self.has_js_literal_flag(lazy_type);
         shape.contains_widening_type = self.contains_widening_type(lazy_type);
         self.synth(shape)

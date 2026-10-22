@@ -30,9 +30,9 @@
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
-#include <openssl/err.h>
 #include "CryptoKeyEC.h"
 #include "CryptoKeyHMAC.h"
 #include "CryptoKeyOKP.h"
@@ -45,6 +45,7 @@
 #include "JSDOMException.h"
 #include "JSDOMGlobalObject.h"
 #include "JSMessagePort.h"
+#include "OpenSSLUtilities.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/BigIntObject.h>
@@ -375,8 +376,6 @@ enum class CryptoAlgorithmIdentifierTag {
     ML_KEM_768 = 31,
     ML_KEM_1024 = 32,
 };
-
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 32;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -2905,101 +2904,104 @@ private:
         uint8_t algorithmTag;
         if (!read(algorithmTag))
             return false;
-        if (algorithmTag > cryptoAlgorithmIdentifierTagMaximumValue)
-            return false;
         switch (static_cast<CryptoAlgorithmIdentifierTag>(algorithmTag)) {
         case CryptoAlgorithmIdentifierTag::RSAES_PKCS1_v1_5:
             result = CryptoAlgorithmIdentifier::RSAES_PKCS1_v1_5;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::RSASSA_PKCS1_v1_5:
             result = CryptoAlgorithmIdentifier::RSASSA_PKCS1_v1_5;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::RSA_PSS:
             result = CryptoAlgorithmIdentifier::RSA_PSS;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::RSA_OAEP:
             result = CryptoAlgorithmIdentifier::RSA_OAEP;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ECDSA:
             result = CryptoAlgorithmIdentifier::ECDSA;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ECDH:
             result = CryptoAlgorithmIdentifier::ECDH;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::AES_CTR:
             result = CryptoAlgorithmIdentifier::AES_CTR;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::AES_CBC:
             result = CryptoAlgorithmIdentifier::AES_CBC;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::AES_GCM:
             result = CryptoAlgorithmIdentifier::AES_GCM;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::AES_CFB:
             result = CryptoAlgorithmIdentifier::AES_CFB;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::AES_KW:
             result = CryptoAlgorithmIdentifier::AES_KW;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::HMAC:
             result = CryptoAlgorithmIdentifier::HMAC;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA_1:
             result = CryptoAlgorithmIdentifier::SHA_1;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA_224:
             result = CryptoAlgorithmIdentifier::SHA_224;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA_256:
             result = CryptoAlgorithmIdentifier::SHA_256;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA_384:
             result = CryptoAlgorithmIdentifier::SHA_384;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA_512:
             result = CryptoAlgorithmIdentifier::SHA_512;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA3_256:
             result = CryptoAlgorithmIdentifier::SHA3_256;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA3_384:
             result = CryptoAlgorithmIdentifier::SHA3_384;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::SHA3_512:
             result = CryptoAlgorithmIdentifier::SHA3_512;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::HKDF:
             result = CryptoAlgorithmIdentifier::HKDF;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::PBKDF2:
             result = CryptoAlgorithmIdentifier::PBKDF2;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ED25519:
             result = CryptoAlgorithmIdentifier::Ed25519;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::X25519:
             result = CryptoAlgorithmIdentifier::X25519;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::CHACHA20_POLY1305:
             result = CryptoAlgorithmIdentifier::ChaCha20_Poly1305;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ML_DSA_44:
             result = CryptoAlgorithmIdentifier::ML_DSA_44;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ML_DSA_65:
             result = CryptoAlgorithmIdentifier::ML_DSA_65;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ML_DSA_87:
             result = CryptoAlgorithmIdentifier::ML_DSA_87;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ML_KEM_768:
             result = CryptoAlgorithmIdentifier::ML_KEM_768;
-            break;
+            return true;
         case CryptoAlgorithmIdentifierTag::ML_KEM_1024:
             result = CryptoAlgorithmIdentifier::ML_KEM_1024;
-            break;
+            return true;
         }
-        return true;
+        return false;
+    }
+
+    bool readHashAlgorithm(CryptoAlgorithmIdentifier& result)
+    {
+        return read(result) && digestAlgorithm(result);
     }
 
     bool read(CryptoKeyClassSubtag& result)
@@ -3064,7 +3066,7 @@ private:
         if (!read(keyData))
             return false;
         CryptoAlgorithmIdentifier hash;
-        if (!read(hash))
+        if (!readHashAlgorithm(hash))
             return false;
         result = CryptoKeyHMAC::importRaw(0, hash, WTF::move(keyData), extractable, usages);
         return true;
@@ -3092,11 +3094,12 @@ private:
         if (!CryptoKeyRSA::isValidRSAAlgorithm(algorithm))
             return false;
 
+        // Only an RSAES-PKCS1-v1_5 key has no hash, and nothing can create one.
         int32_t isRestrictedToHash;
-        CryptoAlgorithmIdentifier hash = CryptoAlgorithmIdentifier::SHA_1;
-        if (!read(isRestrictedToHash))
+        if (!read(isRestrictedToHash) || !isRestrictedToHash)
             return false;
-        if (isRestrictedToHash && !read(hash))
+        CryptoAlgorithmIdentifier hash;
+        if (!readHashAlgorithm(hash))
             return false;
 
         CryptoKeyAsymmetricTypeSubtag type;
@@ -3225,7 +3228,7 @@ private:
             if (!read(keyData))
                 return false;
             result = CryptoKeyOKP::create(algorithm, namedCurve, type == CryptoKeyAsymmetricTypeSubtag::Public ? CryptoKeyType::Public : CryptoKeyType::Private, WTF::move(keyData), extractable, usages);
-            return !!result;
+            return true;
         }
         }
         Vector<uint8_t> keyData;
@@ -3245,6 +3248,8 @@ private:
             return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
+            return false;
+        if (algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305 && keyData.size() * 8 != CryptoAlgorithmChaCha20Poly1305::s_keyLengthBits)
             return false;
         result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;
@@ -3271,15 +3276,15 @@ private:
             result = CryptoKeyAKP::importPkcs8(algorithm, WTF::move(keyData), extractable, usages, nullptr);
             break;
         }
-        // A corrupt payload leaves the BoringSSL parse error in the queue;
-        // nothing here attaches it as a cause, so clear it.
-        if (!result)
-            ERR_clear_error();
-        return !!result;
+        return true;
     }
 
     bool readCryptoKey(JSValue& cryptoKey)
     {
+        // A corrupt payload leaves the BoringSSL parse error in the queue;
+        // nothing here attaches it as a cause, so clear it.
+        ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
         uint32_t keyFormatVersion;
         if (!read(keyFormatVersion) || keyFormatVersion > currentKeyFormatVersion)
             return false;
@@ -3371,6 +3376,8 @@ private:
                 return false;
             break;
         }
+        if (!result)
+            return false;
         cryptoKey = getJSValue(result.get());
         return true;
     }

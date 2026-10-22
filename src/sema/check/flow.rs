@@ -3582,10 +3582,8 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     enum_symbol = enum_symbol.or(parent);
                 }
+                // `CompareTypes` puts them before the enum members.
                 TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
-                    if enum_symbol.is_some() {
-                        return false;
-                    }
                     has_string_or_number_literal = true;
                 }
                 _ => {}

@@ -10598,6 +10598,7 @@ export function notNarrowed(u: unknown) {
       using dir = project({
         "a.ts": `enum Color { Red, Green }
 enum Size { Small, Large }
+enum Word { A = "a", B = "b" }
 declare const key: unique symbol;
 export function union(x: number | undefined) {
   if (x === 1) {
@@ -10647,10 +10648,22 @@ export function enumAndText(x: Color | string) {
     y = "b";
   }
 }
-export function enumAndLiteral(x: Color | "z" | string[]["length"]) {
-  if (x === 1) {
+export function oneEnum(x: Color | bigint) {
+  if (x === 1n) {
     let y = x;
-    y = 2;
+    y = 2n;
+  }
+}
+export function numericEnumAndLiteral(x: Color | "z" | bigint) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function stringEnumAndLiteral(x: Word | 5 | bigint) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
   }
 }
 export function twoEnums(x: Color | Size | string) {
@@ -10682,13 +10695,13 @@ export function inSwitch(x: number | undefined) {
       });
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(`
-        "a.ts(7,5): error TS2322: Type '2' is not assignable to type '1'.
-        a.ts(19,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
-        a.ts(25,5): error TS2322: Type '2n' is not assignable to type '1n'.
-        a.ts(49,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
-        a.ts(55,5): error TS2322: Type '2' is not assignable to type '1'.
-        a.ts(73,5): error TS2322: Type '2' is not assignable to type '1'.
-        a.ts(80,7): error TS2322: Type '2' is not assignable to type '1'."
+        "a.ts(8,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(20,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(26,5): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(50,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(56,5): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(86,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(93,7): error TS2322: Type '2' is not assignable to type '1'."
       `);
       expect(exitCode).toBe(1);
     });

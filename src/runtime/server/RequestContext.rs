@@ -168,7 +168,8 @@ pub(crate) struct RequestContext<
 
     pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
-    /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
+    /// `Request.body` (each holds its own `+1`). Released by the last chunk in
+    /// `on_buffered_body_chunk`, or in `deinit` if the body never completes.
     pub(crate) request_body: JsCell<Option<body::BodyHiveHandle>>,
     pub(crate) request_body_buf: JsCell<Vec<u8>>,
     pub(crate) request_body_content_len: Cell<usize>,
@@ -4318,6 +4319,8 @@ where
                     let _ =
                         Body::Value::resolve(&mut old, body, &global_this.js_thread(context), None); // TODO: properly propagate exception upwards
                 }
+                // A complete body is the `Request`'s alone. May free the slot: `body` is dead.
+                this.request_body_take_unref();
                 return;
             }
 

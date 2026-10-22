@@ -495,6 +495,27 @@ impl<Id: 'static> Args<Id> {
     }
 }
 
+/// One argument of the command line, as [`walk_typed`] reads it.
+pub struct Typed<'p> {
+    /// `None` at the end of the command line.
+    pub param: Option<&'p Param<usize>>,
+    /// The value of an option, or the positional itself.
+    pub value: Option<&'static [u8]>,
+    /// The arguments before this one that no param names: `--unknown[=value]`, `--`.
+    pub skipped: &'static [&'static [u8]],
+    /// How many positionals are in front of this argument.
+    pub positionals: usize,
+}
+
+/// [`parse_with_table`] again: calls `each` with every argument in the order typed.
+pub fn walk_typed(
+    table: &'static ConvertedTable,
+    opt: ParseOptions<'_>,
+    each: &mut dyn FnMut(Typed<'_>),
+) -> crate::Result<()> {
+    table.walk_typed(opt, each)
+}
+
 /// Same as `parse_ex` but uses the `args::OsIterator` by default.
 ///
 /// **Cold path** — the startup hot set uses [`parse_with_table`] against a

@@ -580,6 +580,21 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     }
 }
 
+/// `run()` of `node:test` calls this for each file with its `cwd`: `[before, after]` of `test`.
+pub(crate) fn node_test_file_flags(cwd: &[u8]) -> [Vec<Box<[u8]>>; 2] {
+    use crate::cli::arguments;
+
+    let options = &VirtualMachine::get().transpiler.options.transform_options;
+    arguments::node_test_file_flags(
+        arguments::NodeTestCaller {
+            no_addons: options.allow_addons == Some(false),
+            no_ffi_cc: options.allow_ffi_cc == Some(false),
+            startup_directory: options.absolute_working_dir.as_deref(),
+        },
+        cwd,
+    )
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

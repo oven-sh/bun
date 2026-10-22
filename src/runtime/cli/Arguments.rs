@@ -718,6 +718,442 @@ fn tag_table(cmd: CommandTag) -> &'static clap::ConvertedTable {
     }
 }
 
+/// How `cmd` reads its command line: `parse` and `node_test_file_flags` must read it alike.
+#[inline(always)]
+fn parse_options(
+    cmd: CommandTag,
+    diagnostic: Option<&mut clap::Diagnostic>,
+) -> clap::ParseOptions<'_> {
+    clap::ParseOptions {
+        diagnostic,
+        stop_after_positional_at: match cmd {
+            CommandTag::RunCommand => 2,
+            CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
+            _ => 0,
+        },
+        // Only the paths standing in for `node` get node's aliases.
+        short_aliases: match cmd {
+            CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+            _ => &[],
+        },
+        unknown_long_flags_are_positional: false,
+        unknown_long_flags_are_errors: false,
+        ignored_long_flags: clap::IgnoredLongFlags::default(),
+    }
+}
+
+// ─── the runtime flags of a file that `run()` of `node:test` starts ──────────
+
+/// The shared flags that a file of `run()` is given when its caller was given them.
+const HANDED_ON_TO_NODE_TEST_FILE: &[&[u8]] = &[
+    b"--env-file",
+    b"--no-env-file",
+    b"--config",
+    b"--main-fields",
+    b"--preserve-symlinks",
+    b"--preserve-symlinks-main",
+    b"--extension-order",
+    b"--tsconfig-override",
+    b"--define",
+    b"--drop",
+    b"--feature",
+    b"--loader",
+    b"--no-macros",
+    b"--jsx-factory",
+    b"--jsx-fragment",
+    b"--jsx-import-source",
+    b"--jsx-runtime",
+    b"--jsx-side-effects",
+    b"--ignore-dce-annotations",
+    b"--watch-kill-signal",
+    b"--no-clear-screen",
+    b"--smol",
+    b"--interactive",
+    b"--preload",
+    b"--require",
+    b"--import",
+    b"--cpu-prof",
+    b"--cpu-prof-name",
+    b"--cpu-prof-dir",
+    b"--cpu-prof-md",
+    b"--cpu-prof-interval",
+    b"--heap-prof",
+    b"--heap-prof-name",
+    b"--heap-prof-dir",
+    b"--heap-prof-md",
+    b"--heap-prof-interval",
+    b"--no-install",
+    b"--install",
+    b"-i",
+    b"--prefer-offline",
+    b"--prefer-latest",
+    b"--origin",
+    b"--conditions",
+    b"--fetch-preconnect",
+    b"--experimental-http2-fetch",
+    b"--experimental-http3-fetch",
+    b"--max-http-header-size",
+    b"--insecure-http-parser",
+    b"--dns-result-order",
+    b"--experimental-stream-iter",
+    b"--expose-gc",
+    b"--no-deprecation",
+    b"--throw-deprecation",
+    b"--no-warnings",
+    b"--trace-warnings",
+    b"--trace-deprecation",
+    b"--pending-deprecation",
+    b"--redirect-warnings",
+    b"--disable-warning",
+    b"--title",
+    b"--zero-fill-buffers",
+    b"--use-system-ca",
+    b"--use-openssl-ca",
+    b"--use-bundled-ca",
+    b"--tls-min-v1.0",
+    b"--tls-min-v1.1",
+    b"--tls-min-v1.2",
+    b"--tls-min-v1.3",
+    b"--tls-max-v1.2",
+    b"--tls-max-v1.3",
+    b"--redis-preconnect",
+    b"--sql-preconnect",
+    b"--no-addons",
+    b"--no-ffi-cc",
+    b"--disallow-code-generation-from-strings",
+    b"--unhandled-rejections",
+    b"--console-depth",
+    b"--user-agent",
+    b"--trace-events-enabled",
+    b"--trace-event-categories",
+    b"--trace-event-file-pattern",
+    b"--trace-env",
+    b"--trace-env-js-stack",
+    b"--trace-env-native-stack",
+    b"--trace-exit",
+    b"--expose-internals",
+    b"--stack-trace-limit",
+];
+
+/// The shared flags that stay with the caller.
+const WITHHELD_FROM_NODE_TEST_FILE: &[&[u8]] = &[
+    // What the caller runs, and how: the child runs a test file.
+    b"--help",
+    b"--eval",
+    b"--print",
+    b"--if-present",
+    b"--cron-title",
+    b"--cron-period",
+    // The caller starts again when a file changes. A child under `--watch` would never end.
+    b"--watch",
+    b"--hot",
+    // One address serves one process, and a debugger is attached to one.
+    b"--inspect",
+    b"--inspect-wait",
+    b"--inspect-brk",
+    b"--breakpoint-resolve",
+    b"--port",
+    // A type check in each child. The `execArgv` option of `run()` can ask for it.
+    b"--check",
+    // The caller moved already, and the child starts where `run()` says.
+    b"--cwd",
+];
+
+/// Started as `node`, Bun reads these as Node.js does or not at all. The child reads them as Bun.
+const WITHHELD_WHEN_STARTED_AS_NODE: &[&[u8]] = &[b"--loader", b"-i"];
+
+/// Flags with a path that is relative to the startup directory: resolved for a child elsewhere.
+const PATHS_FROM_STARTUP_DIRECTORY: &[&[u8]] = &[
+    b"--env-file",
+    b"--config",
+    b"--tsconfig-override",
+    b"--preload",
+    b"--require",
+    b"--import",
+];
+
+/// Of those, the ones that name a module. A package name is not a path.
+const MODULES_FROM_STARTUP_DIRECTORY: &[&[u8]] = &[b"--preload", b"--require", b"--import"];
+
+/// Whether `dashed` (`--name` or `-n`) is one of `names`.
+const fn is_named(names: &clap::Names, dashed: &[u8]) -> bool {
+    match dashed {
+        [b'-', b'-', long @ ..] => {
+            if let Some(name) = names.long {
+                if strings::const_bytes_eq(name, long) {
+                    return true;
+                }
+            }
+            let mut i = 0;
+            while i < names.long_aliases.len() {
+                if strings::const_bytes_eq(names.long_aliases[i], long) {
+                    return true;
+                }
+                i += 1;
+            }
+            false
+        }
+        [b'-', short] => matches!(names.short, Some(s) if s == *short),
+        _ => false,
+    }
+}
+
+/// How many of `list` name the flag `names`.
+const fn count_in(list: &[&[u8]], names: &clap::Names) -> usize {
+    let mut count = 0;
+    let mut i = 0;
+    while i < list.len() {
+        if is_named(names, list[i]) {
+            count += 1;
+        }
+        i += 1;
+    }
+    count
+}
+
+/// Whether `dashed` names one of `params`.
+const fn names_one_of<Id>(params: &[clap::Param<Id>], dashed: &[u8]) -> bool {
+    let mut i = 0;
+    while i < params.len() {
+        if is_named(&params[i].names, dashed) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+const _: () = {
+    let shared = BASE_RUNTIME_TRANSPILER_PARAMS;
+    let mut i = 0;
+    while i < shared.len() {
+        let names = &shared[i].names;
+        let is_flag = names.long.is_some() || names.short.is_some();
+        assert!(
+            !is_flag
+                || count_in(HANDED_ON_TO_NODE_TEST_FILE, names)
+                    + count_in(WITHHELD_FROM_NODE_TEST_FILE, names)
+                    == 1,
+            "A flag that `bun run` and `bun test` share is in neither or in both of HANDED_ON_TO_NODE_TEST_FILE and \
+             WITHHELD_FROM_NODE_TEST_FILE. A test file that `run()` of node:test starts is given a flag of the first list \
+             when its caller was given it. If the flag says what the caller itself does (what it runs, a mode, an address \
+             that serves one process), it belongs in the second list. Add it to the test in node-test.test.ts too."
+        );
+        i += 1;
+    }
+    let lists = [
+        HANDED_ON_TO_NODE_TEST_FILE,
+        WITHHELD_FROM_NODE_TEST_FILE,
+        WITHHELD_WHEN_STARTED_AS_NODE,
+        PATHS_FROM_STARTUP_DIRECTORY,
+        MODULES_FROM_STARTUP_DIRECTORY,
+    ];
+    let mut list = 0;
+    while list < lists.len() {
+        let mut i = 0;
+        while i < lists[list].len() {
+            // The flag of `DEBUG_PARAMS` is shared only in a build that has it.
+            assert!(
+                names_one_of(shared, lists[list][i]) || names_one_of(DEBUG_PARAMS, lists[list][i]),
+                "A name in the lists for the test files of `run()` is not a flag that `bun run` and `bun test` share."
+            );
+            i += 1;
+        }
+        list += 1;
+    }
+};
+
+/// The command this process was started as, if it reads the shared flags from its command line.
+fn started_as() -> Option<CommandTag> {
+    // The arguments of a compiled executable are its program's.
+    if bun_standalone_graph::Graph::get().is_some() {
+        return None;
+    }
+    let started = bun_crash_handler::cli_state::cmd_char()?;
+    [
+        CommandTag::AutoCommand,
+        CommandTag::RunCommand,
+        CommandTag::RunAsNodeCommand,
+        CommandTag::TestCommand,
+    ]
+    .into_iter()
+    .find(|tag| tag.char() == started)
+}
+
+/// One argument, `--name[=value]`: a value of its own could be read as the command.
+fn write_flag(
+    param: &clap::Param<usize>,
+    value: Option<&[u8]>,
+    startup_directory: Option<&[u8]>,
+) -> Box<[u8]> {
+    let names = &param.names;
+    let mut flag = Vec::new();
+    match (names.long, names.short) {
+        (Some(long), _) => {
+            flag.extend_from_slice(b"--");
+            flag.extend_from_slice(long);
+        }
+        (None, Some(short)) => flag.extend_from_slice(&[b'-', short]),
+        (None, None) => {}
+    }
+    // A flag with an optional value and none is given as it was.
+    let Some(value) =
+        value.filter(|it| !(it.is_empty() && param.takes_value == clap::Values::OneOptional))
+    else {
+        return flag.into_boxed_slice();
+    };
+    flag.push(b'=');
+    let directory = startup_directory.filter(|_| count_in(PATHS_FROM_STARTUP_DIRECTORY, names) > 0);
+    match directory {
+        // The env loader splits its value at commas: a directory with a comma cannot be written.
+        Some(directory) if is_named(names, b"--env-file") => {
+            if strings::contains_char(directory, b',') {
+                flag.extend_from_slice(value);
+            } else {
+                for (i, path) in strings::split(strings::trim(value, b" "), b",").enumerate() {
+                    if i > 0 {
+                        flag.push(b',');
+                    }
+                    if !path.is_empty() && !bun_paths::is_absolute(path) {
+                        flag.extend_from_slice(directory);
+                        flag.extend_from_slice(bun_paths::SEP_STR.as_bytes());
+                    }
+                    flag.extend_from_slice(path);
+                }
+            }
+        }
+        // A module can have `file://` in front of its path, and a package name is not a path.
+        Some(directory) => {
+            let is_module = count_in(MODULES_FROM_STARTUP_DIRECTORY, names) > 0;
+            let path = match value.strip_prefix(b"file://".as_slice()) {
+                Some(path) if is_module => path,
+                _ => value,
+            };
+            if bun_paths::is_absolute(path)
+                || (is_module && bun_paths::is_package_path_not_absolute(path))
+            {
+                flag.extend_from_slice(value);
+            } else {
+                let mut spill = Vec::new();
+                flag.extend_from_slice(resolve_path::join_abs_string_spill::<platform::Auto>(
+                    directory,
+                    &mut spill,
+                    &[path],
+                ));
+            }
+        }
+        None => flag.extend_from_slice(value),
+    }
+    flag.into_boxed_slice()
+}
+
+/// What the thread that calls `run()` runs with: a `Worker` has an `execArgv` of its own.
+#[derive(Copy, Clone)]
+pub(crate) struct NodeTestCaller<'a> {
+    pub no_addons: bool,
+    pub no_ffi_cc: bool,
+    /// Where the process looked for the files its flags name.
+    pub startup_directory: Option<&'a [u8]>,
+}
+
+/// The caller's flags for one file of `run()`, in typed order: `[before, after]` of its `test`.
+#[cold]
+#[inline(never)]
+pub(crate) fn node_test_file_flags(
+    caller: NodeTestCaller<'_>,
+    child_directory: &[u8],
+) -> [Vec<Box<[u8]>>; 2] {
+    let mut before: Vec<Box<[u8]>> = Vec::new();
+    let mut after: Vec<Box<[u8]>> = Vec::new();
+    let Some(cmd) = started_as() else {
+        return [before, after];
+    };
+    let is_test = cmd == CommandTag::TestCommand;
+    // The `--parallel` coordinator wrote a worker's argv. One file is given what two are.
+    let is_parallel = is_test
+        && bun_options_types::context::try_get()
+            .is_some_and(|ctx| ctx.test_options.test_worker || ctx.test_options.parallel > 0);
+
+    if !is_parallel {
+        // As the OS resolves it: `link/..` is the directory above the target of the link.
+        let mut resolved = bun_paths::path_buffer_pool::get();
+        let child_directory =
+            bun_sys::realpath(&bun_core::ZBox::from_bytes(child_directory), &mut resolved)
+                .unwrap_or(child_directory);
+        // On Windows the startup directory keeps the spelling the process was started with.
+        let mut respelled = bun_paths::path_buffer_pool::get();
+        let startup_directory = caller.startup_directory.filter(|directory| {
+            *directory != child_directory
+                && !bun_sys::realpath(&bun_core::ZBox::from_bytes(directory), &mut respelled)
+                    .is_ok_and(|directory| directory == child_directory)
+        });
+        let walked = clap::walk_typed(tag_table(cmd), parse_options(cmd, None), &mut |arg| {
+            // A flag after `test` is not in `process.execArgv`. The child has it after `test` too.
+            let is_after_test = is_test && arg.positionals > 0;
+            if !is_after_test {
+                // Node.js also hands on what its parser does not know: node:net reads such flags.
+                for token in arg.skipped {
+                    let name = strings::split_once_char(token, b'=').map_or(*token, |it| it.0);
+                    if name.len() > 2
+                        && name.starts_with(b"--")
+                        && !names_one_of(TEST_TABLE.params(), name)
+                    {
+                        before.push((*token).into());
+                    }
+                }
+            }
+            let Some(param) = arg.param else {
+                return;
+            };
+            let names = &param.names;
+            if count_in(HANDED_ON_TO_NODE_TEST_FILE, names) == 0
+                || (cmd == CommandTag::RunAsNodeCommand
+                    && count_in(WITHHELD_WHEN_STARTED_AS_NODE, names) > 0)
+            {
+                return;
+            }
+            let flag = write_flag(param, arg.value, startup_directory);
+            if is_after_test {
+                after.push(flag);
+            } else {
+                before.push(flag);
+            }
+        });
+        // Startup read these arguments in the same way, and left if it refused one.
+        debug_assert!(walked.is_ok(), "startup accepted this command line");
+    }
+
+    let code_generation: Option<&[u8]> =
+        if bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD {
+            None
+        } else {
+            match bun_core::code_generation_from_strings() {
+                bun_core::CodeGenerationFromStrings::Allowed => None,
+                bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
+                    Some(b"--disallow-code-generation-from-strings")
+                }
+                bun_core::CodeGenerationFromStrings::Strict => {
+                    Some(b"--disallow-code-generation-from-strings=strict")
+                }
+            }
+        };
+    // What the caller runs under goes before `test`: it holds for a child that evaluates too.
+    for flag in [
+        caller.no_addons.then_some(&b"--no-addons"[..]),
+        caller.no_ffi_cc.then_some(&b"--no-ffi-cc"[..]),
+        code_generation,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        if !before.iter().any(|given| **given == *flag) {
+            before.push(flag.into());
+        }
+    }
+
+    [before, after]
+}
+
 // ─── exported FFI globals (written by parse(), read from C++) ────────────────
 // `AtomicBool` has the same size/alignment/bit-validity as `bool`, so the
 // `#[no_mangle]` symbol layout is unchanged for the C++ side that reads these
@@ -820,31 +1256,16 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     let mut diag = clap::Diagnostic::default();
     let table = tag_table(cmd);
 
-    let args = match clap::parse_with_table::<clap::Help>(
-        table,
-        clap::ParseOptions {
-            diagnostic: Some(&mut diag),
-            stop_after_positional_at: match cmd {
-                CommandTag::RunCommand => 2,
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
-                _ => 0,
-            },
-            // Only the paths standing in for `node` get node's aliases.
-            short_aliases: match cmd {
-                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
-                _ => &[],
-            },
-            ..Default::default()
-        },
-    ) {
-        Ok(a) => a,
-        Err(err) => {
-            // Report useful error and exit
-            let _ = diag.report(Output::error_writer(), err);
-            command::tag_print_help(cmd, false);
-            Global::exit(1);
-        }
-    };
+    let args =
+        match clap::parse_with_table::<clap::Help>(table, parse_options(cmd, Some(&mut diag))) {
+            Ok(a) => a,
+            Err(err) => {
+                // Report useful error and exit
+                let _ = diag.report(Output::error_writer(), err);
+                command::tag_print_help(cmd, false);
+                Global::exit(1);
+            }
+        };
 
     if args.flag(b"--help") {
         command::tag_print_help(cmd, true);

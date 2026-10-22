@@ -442,6 +442,21 @@ function reportCancelledFile(
   counts.topLevel++;
 }
 
+// Bound by the first file of the first run(): importing node:test costs nothing for it.
+let fileFlags: ((cwd: string) => string[][]) | undefined;
+
+function isCAStoreFlag(arg: string) {
+  return arg === "--use-system-ca" || arg === "--use-openssl-ca" || arg === "--use-bundled-ca";
+}
+
+function withoutCAStoreFlags(flags: string[]) {
+  const kept: string[] = [];
+  for (let i = 0; i < flags.length; i++) {
+    if (!isCAStoreFlag(flags[i])) kept[kept.length] = flags[i];
+  }
+  return kept;
+}
+
 async function runOneFile(
   file: string,
   opts: ReturnType<typeof validateRunOptions>,
@@ -450,10 +465,28 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
-  // in the child's process.execArgv; bun's CLI likewise takes runtime flags
-  // before the `test` keyword and user args after the path.
-  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  fileFlags ??= $bindgen("jest.bind.ts", "nodeTestFileFlags");
+  let [beforeTest, afterTest] = fileFlags(opts.cwd as string);
+  const execArgv = opts.execArgv as string[];
+  let choosesCAStore = false;
+  for (let i = 0; i < execArgv.length; i++) choosesCAStore ||= isCAStoreFlag(execArgv[i]);
+  // Bun takes one CA store flag, so the one of the option is the child's.
+  if (choosesCAStore) {
+    beforeTest = withoutCAStoreFlags(beforeTest);
+    afterTest = withoutCAStoreFlags(afterTest);
+  }
+  // Node's getRunArgs. After flags that follow `test`, execArgv is given again to have the last word.
+  const args = [
+    process.execPath,
+    ...beforeTest,
+    ...execArgv,
+    // If execArgv makes the child evaluate a script (-e, -p), the rest is the script's arguments.
+    "test",
+    ...afterTest,
+    absolute,
+    ...(afterTest.length > 0 ? execArgv : []),
+    ...(opts.argv as string[]),
+  ];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 

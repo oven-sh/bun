@@ -426,6 +426,73 @@ impl ConvertedTable {
         }))
     }
 
+    /// The params of the table, in the order they were declared.
+    pub fn params(&self) -> &'static [Param<usize>] {
+        self.converted
+    }
+
+    /// Uses `SliceIterator`, not startup's iterator: startup keeps its own copy of the parser.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn walk_typed(
+        &'static self,
+        opt: crate::ParseOptions<'_>,
+        each: &mut dyn FnMut(crate::Typed<'_>),
+    ) -> crate::Result<()> {
+        let mut iter = crate::args::SliceIterator {
+            remain: crate::args::os_argv().get(1..).unwrap_or_default(),
+        };
+        let mut stream = StreamingClap::<usize, crate::args::SliceIterator<'static>> {
+            params: self.converted,
+            iter: &mut iter,
+            diagnostic: opt.diagnostic,
+            state: streaming::State::Normal,
+            positional: None,
+            short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
+            unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
+            ignored_long_flags: opt.ignored_long_flags,
+        };
+        let mut positionals = 0;
+        loop {
+            let left = stream.iter.remain;
+            let arg = stream.next()?;
+            let read = &left[..left.len() - stream.iter.remain.len()];
+            let is_positional =
+                |param: &Param<usize>| param.names.long.is_none() && param.names.short.is_none();
+            // The last 1 of `read` is this argument: 2 with a separate value, 0 later in `-abc`.
+            let own = match &arg {
+                None => 0,
+                Some(arg) if is_positional(arg.param) => 1,
+                Some(arg) => match (arg.value, read.last()) {
+                    (Some(value), Some(last)) if core::ptr::eq(value, *last) => read.len().min(2),
+                    _ => read.len().min(1),
+                },
+            };
+            let Some(arg) = arg else {
+                each(crate::Typed {
+                    param: None,
+                    value: None,
+                    skipped: read,
+                    positionals,
+                });
+                return Ok(());
+            };
+            each(crate::Typed {
+                param: Some(arg.param),
+                value: arg.value,
+                skipped: &read[..read.len() - own],
+                positionals,
+            });
+            if is_positional(arg.param) {
+                positionals += 1;
+                if opt.stop_after_positional_at > 0 && positionals >= opt.stop_after_positional_at {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     /// Runtime name resolution. O(1) for shorts, O(log n) for longs (with a
     /// final byte-compare to reject hash collisions). Const-built tables now
     /// carry a rodata `long_index` too, so the linear-scan fallback is only

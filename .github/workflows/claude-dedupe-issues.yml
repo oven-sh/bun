@@ -14,6 +14,7 @@ on:
 
 jobs:
   claude-dedupe-issues:
+    if: github.repository == 'oven-sh/bun'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     concurrency:
@@ -30,10 +31,15 @@ jobs:
           persist-credentials: false
 
       - name: Run Claude Code slash command
-        uses: anthropics/claude-code-action/base-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
+        uses: anthropics/claude-code-action@2261fcfc88e7de1b55f179edd588805e12de71f2 # v1.0.228
         env:
           ANTHROPIC_MODEL: claude-opus-5
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_SCRIPT_CAPS: '{"comment-on-duplicates.sh":1}'
         with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Issue text is untrusted: this also strips credentials from the agent's subprocesses.
+          allowed_non_write_users: "*"
           prompt: "/dedupe ${{ github.repository }}/issues/${{ github.event.issue.number || inputs.issue_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_args: '--disallowedTools "WebFetch,WebSearch,Write,Edit,MultiEdit,NotebookEdit"'

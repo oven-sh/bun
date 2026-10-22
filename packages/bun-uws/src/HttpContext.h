@@ -263,7 +263,10 @@ private:
         bool nodeHttpTunnelAfterBody = false;
         if constexpr (IsNodeHttp) nodeHttpTunnelAfterBody = (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY) != 0;
         if(httpResponseData->isConnectRequest || nodeHttpTunnelAfterBody) {
-            if (httpResponseData->socketData && httpContextData->onSocketData) {
+            /* node:http: only the peer's FIN ends its stream. A reset, a failed TLS session and a close that this side starts do not. */
+            bool streamEnded = true;
+            if constexpr (IsNodeHttp) streamEnded = us_socket_read_fin(s);
+            if (streamEnded && httpResponseData->socketData && httpContextData->onSocketData) {
                 httpContextData->onSocketData(httpResponseData->socketData, SSL, s, "", 0, true);
             }
             /* node:http: the body of a tunnel that started has had its last chunk from the parser. This close can come from inside that call. */

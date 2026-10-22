@@ -555,6 +555,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
+                        s->read_fin = 0;
                         s->hangup_closes_unsent = 0;
 
                         /* We always use nodelay */
@@ -845,6 +846,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else if (!length) {
                         eof = LIBUS_POLL_EOF; // lets handle EOF in the same place
                         read_fin = 1;
+                        s->read_fin = 1;
                         break;
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         /* A read error closes with its errno even when the drain above

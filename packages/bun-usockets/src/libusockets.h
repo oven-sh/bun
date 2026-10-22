@@ -714,6 +714,10 @@ int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 /* Whether some of that ciphertext was thrown away before the kernel took it, which happens when the connection ends. */
 int us_socket_ssl_spill_dropped(us_socket_r s) nonnull_fn_decl;
+/* Whether a read of this socket returned 0, which is the peer's FIN. The close code does not tell: a close that this
+ * side starts and a failed TLS session close with code 0 too. When the FIN follows this side's own, the socket closes
+ * with no on_end, so this is the one record of it. */
+int us_socket_read_fin(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 /* Closes before it returns. A TLS socket first sends what the kernel takes now: its unsent ciphertext, then close_notify. */

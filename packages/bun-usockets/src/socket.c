@@ -168,6 +168,10 @@ int us_socket_ssl_spill_dropped(struct us_socket_t *s) {
     return s->ssl && s->ssl_spill_dropped;
 }
 
+int us_socket_read_fin(struct us_socket_t *s) {
+    return s->read_fin;
+}
+
 int us_connecting_socket_is_closed(struct us_connecting_socket_t *c) {
     return c->closed;
 }
@@ -452,6 +456,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
     s->read_eof = 0;
+    s->read_fin = 0;
     s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
 

@@ -186,6 +186,88 @@ it("echo server 1 on 1", async () => {
   })();
 });
 
+it("write() and end() read byteOffset and byteLength by value", async () => {
+  const received: Buffer[] = [];
+  const { promise: closed, resolve, reject } = Promise.withResolvers<void>();
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(_socket, chunk) {
+        received.push(chunk);
+      },
+      close() {
+        resolve();
+      },
+      error(_socket, err) {
+        reject(err);
+      },
+    },
+  });
+  const client = await Bun.connect({
+    hostname: "127.0.0.1",
+    port: listener.port,
+    socket: { data() {} },
+  });
+
+  const buf = Buffer.from("0123456789");
+  // -0 is an integer that ordinary arithmetic produces, and it equals 0.
+  const negativeZero = Math.round(-0.2);
+  // JSC stores this whole number as a double, not as an int32.
+  const double = (n: number) => new Float64Array([n])[0];
+  const notAnInteger = "TypeError [ERR_INVALID_ARG_TYPE]";
+  const outOfRange = (name: string, max: number, received: string) =>
+    `RangeError [ERR_OUT_OF_RANGE]: The value of "${name}" is out of range. It must be >= 0 and <= ${max}. Received ${received}`;
+  const outcome = (offset: unknown, length: unknown) => {
+    try {
+      return client.write(buf, offset as number, length as number);
+    } catch (e: any) {
+      return e.code === "ERR_OUT_OF_RANGE" ? `${e.name} [${e.code}]: ${e.message}` : `${e.name} [${e.code}]`;
+    }
+  };
+
+  // Each refused value for one argument, with the other argument valid. `end` is the
+  // largest value the buffer allows: 10 for byteOffset, and 6 for byteLength after offset 4.
+  const refused = (name: string, end: number): [value: unknown, expected: string][] => [
+    [1.5, notAnInteger],
+    [NaN, notAnInteger],
+    [Infinity, notAnInteger],
+    [-Infinity, notAnInteger],
+    [true, notAnInteger],
+    [5n, notAnInteger],
+    [null, notAnInteger],
+    [{}, notAnInteger],
+    [-1, outOfRange(name, Number.MAX_SAFE_INTEGER, "-1")],
+    [-(2 ** 53), outOfRange(name, Number.MAX_SAFE_INTEGER, "-9007199254740992")],
+    [-1e300, outOfRange(name, Number.MAX_SAFE_INTEGER, "-1e+300")],
+    [end + 1, outOfRange(name, end, String(end + 1))],
+    [2 ** 32, outOfRange(name, end, "4294967296")],
+    [2 ** 51, outOfRange(name, end, "2251799813685248")],
+    [2 ** 53 - 1, outOfRange(name, end, "9007199254740991")],
+    [2 ** 53, outOfRange(name, Number.MAX_SAFE_INTEGER, "9007199254740992")],
+    [1e300, outOfRange(name, Number.MAX_SAFE_INTEGER, "1e+300")],
+  ];
+  const offsets = refused("byteOffset", 10);
+  expect(offsets.map(([offset]) => [offset, outcome(offset, 0)])).toEqual(offsets);
+  const lengths = refused("byteLength", 6);
+  expect(lengths.map(([length]) => [length, outcome(4, length)])).toEqual(lengths);
+
+  const wrote = {
+    offset: client.write(buf, negativeZero, 3),
+    length: client.write(buf, 3, negativeZero),
+    both: client.write(buf, negativeZero, negativeZero),
+    offsetAlone: client.write(buf, negativeZero),
+    doubles: client.write(buf, double(1), double(2)),
+    end: client.end(buf, negativeZero, 2),
+  };
+  await closed;
+
+  expect({ wrote, received: Buffer.concat(received).toString() }).toEqual({
+    wrote: { offset: 3, length: 0, both: 0, offsetAlone: 10, doubles: 2, end: 2 },
+    received: "012" + "0123456789" + "12" + "01",
+  });
+});
+
 describe("tcp socket binaryType", () => {
   const binaryType = ["arraybuffer", "uint8array", "buffer"] as const;
   for (const type of binaryType) {

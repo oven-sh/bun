@@ -888,6 +888,45 @@ describe("mock()", () => {
     expect(() => expect(fn).toHaveBeenCalledTimes(5)).toThrow();
   });
 
+  test("toHaveBeenCalledTimes and toHaveReturnedTimes take any non-negative safe integer", () => {
+    const fn = jest.fn();
+    // -0 is an integer that ordinary arithmetic produces, and it equals 0.
+    const negativeZero = Math.round(-0.2);
+    const usageError = (matcher, count) => {
+      try {
+        expect(fn).not[matcher](count);
+      } catch (e) {
+        return e;
+      }
+    };
+    for (const [matcher, name] of [
+      ["toHaveBeenCalledTimes", "toHaveBeenCalledTimes"],
+      ["toHaveReturnedTimes", "toHaveReturnedTimes"],
+      // Jest 30 removed this alias.
+      ...(isBun ? [["toBeCalledTimes", "toHaveBeenCalledTimes"]] : []),
+    ]) {
+      expect(fn)[matcher](negativeZero);
+      expect(() => expect(fn).not[matcher](negativeZero)).toThrow("Expected number of");
+      // A count that the mock did not reach is a mismatch that names the count, not a usage error.
+      for (const count of [2 ** 32 - 1, 2 ** 32, 2 ** 53 - 1]) {
+        expect(fn).not[matcher](count);
+        expect(() => expect(fn)[matcher](count)).toThrow(String(count));
+      }
+      // Every other value is a usage error, also under `.not`.
+      for (const count of [-1, 1.5, NaN, Infinity, 2 ** 53, "1", 1n, null, undefined]) {
+        expect(usageError(matcher, count)).toMatchObject(
+          isBun
+            ? {
+                name: "TypeError",
+                code: "ERR_INVALID_ARG_TYPE",
+                message: `${name}() requires 1 non-negative integer argument`,
+              }
+            : { message: expect.stringContaining("non-negative integer") },
+        );
+      }
+    }
+  });
+
   it("no segmentation fault when passing jest.fn into another jest.fn, issue#5900", () => {
     function foo() {
       return true;

@@ -3014,50 +3014,20 @@ impl<const SSL: bool> NewSocket<SSL> {
             if offset_value.is_undefined() {
                 break 'brk 0;
             }
-            if !offset_value.is_any_int() {
-                let _ = global.throw_invalid_argument_type(label, "byteOffset", "integer");
+            let Some(offset) = byte_count_arg(global, offset_value, label, "byteOffset") else {
                 return WriteResult::Fail;
-            }
-            let i = offset_value.to_int64();
-            if i < 0 {
-                let _ = global.throw_range_error(
-                    i,
-                    jsc::RangeErrorOptions {
-                        field_name: b"byteOffset",
-                        min: 0,
-                        max: jsc::MAX_SAFE_INTEGER,
-                        msg: b"",
-                    },
-                );
-                return WriteResult::Fail;
-            }
-            usize::try_from(i).expect("int cast")
+            };
+            offset
         };
 
         let byte_length: usize = 'brk: {
             if length_value.is_undefined() {
                 break 'brk buffer.slice().len();
             }
-            if !length_value.is_any_int() {
-                let _ = global.throw_invalid_argument_type(label, "byteLength", "integer");
+            let Some(length) = byte_count_arg(global, length_value, label, "byteLength") else {
                 return WriteResult::Fail;
-            }
-
-            let l = length_value.to_int64();
-
-            if l < 0 {
-                let _ = global.throw_range_error(
-                    l,
-                    jsc::RangeErrorOptions {
-                        field_name: b"byteLength",
-                        min: 0,
-                        max: jsc::MAX_SAFE_INTEGER,
-                        msg: b"",
-                    },
-                );
-                return WriteResult::Fail;
-            }
-            usize::try_from(l).expect("int cast")
+            };
+            length
         };
 
         let mut bytes = buffer.slice();
@@ -4197,6 +4167,52 @@ impl NativeCallbacks {
 enum WriteResult {
     Fail,
     Success { wrote: i32, total: usize },
+}
+
+/// `byteOffset` / `byteLength` of `write()` and `end()`, read by value; `None` means it threw.
+#[inline]
+fn byte_count_arg(
+    global: &JSGlobalObject,
+    value: JSValue,
+    label: &'static str,
+    field: &'static str,
+) -> Option<usize> {
+    if value.is_int32() {
+        if let Ok(count) = usize::try_from(value.as_int32()) {
+            return Some(count);
+        }
+    } else if let Some(number) = value.get_number() {
+        if number >= 0.0 && number <= jsc::MAX_SAFE_INTEGER as f64 && number.trunc() == number {
+            return Some(number as usize);
+        }
+    }
+    throw_byte_count_arg(global, value, label, field);
+    None
+}
+
+#[cold]
+#[inline(never)]
+fn throw_byte_count_arg(
+    global: &JSGlobalObject,
+    value: JSValue,
+    label: &'static str,
+    field: &'static str,
+) {
+    let _ = match value
+        .get_number()
+        .filter(|n| n.is_finite() && n.trunc() == *n)
+    {
+        Some(number) => global.throw_range_error(
+            number,
+            jsc::RangeErrorOptions {
+                field_name: field.as_bytes(),
+                min: 0,
+                max: jsc::MAX_SAFE_INTEGER,
+                msg: b"",
+            },
+        ),
+        None => global.throw_invalid_argument_type(label, field, "integer"),
+    };
 }
 
 pub(crate) struct StoredVerifyError {

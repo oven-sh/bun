@@ -404,6 +404,76 @@ describe("Bun.serve websocket options", () => {
   );
 });
 
+describe("Bun.serve integer options are read by value", () => {
+  // -0 is an integer that ordinary arithmetic produces, and it equals 0.
+  const negativeZero = Math.round(-0.2);
+  const fetch = () => new Response("ok");
+  const websocket = (option: string) => (value: unknown) => ({ websocket: { message() {}, [option]: value } });
+
+  // `max` is the largest value the option takes. The two options without one clamp at 2^32 - 1.
+  const integerOptions: [name: string, expects: string, max: number | null, withValue: (value: unknown) => object][] = [
+    ["idleTimeout", "Bun.serve expects idleTimeout", 255, idleTimeout => ({ idleTimeout })],
+    ["websocket.idleTimeout", "websocket expects idleTimeout", 960, websocket("idleTimeout")],
+    ["websocket.maxPayloadLength", "websocket expects maxPayloadLength", null, websocket("maxPayloadLength")],
+    ["websocket.backpressureLimit", "websocket expects backpressureLimit", null, websocket("backpressureLimit")],
+  ];
+
+  describe.each(integerOptions)("%s", (_name, expects, max, withValue) => {
+    const notAnInteger = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: `${expects} to be an integer` };
+    const aboveMax = max === null ? "accepted" : { ...notAnInteger, message: `${expects} to be ${max} or less` };
+    const limit = max ?? 2 ** 32 - 1;
+
+    function outcome(value: unknown) {
+      try {
+        serve({ port: 0, fetch, ...withValue(value) }).stop(true);
+        return "accepted";
+      } catch (e: any) {
+        return { name: e.name, code: e.code, message: e.message };
+      }
+    }
+
+    test("takes -0 and every other whole number, and refuses what is not one", () => {
+      const cases: [value: unknown, expected: unknown][] = [
+        [0, "accepted"],
+        [negativeZero, "accepted"],
+        [limit, "accepted"],
+        // A negative value means 0, whatever its size.
+        [-1, "accepted"],
+        [-(2 ** 53), "accepted"],
+        [limit + 1, aboveMax],
+        [2 ** 51, aboveMax],
+        [2 ** 53, aboveMax],
+        [1e300, aboveMax],
+        [1.5, notAnInteger],
+        [NaN, notAnInteger],
+        [Infinity, notAnInteger],
+        [-Infinity, notAnInteger],
+        ["5", notAnInteger],
+        [true, notAnInteger],
+        [5n, notAnInteger],
+        [{}, notAnInteger],
+      ];
+      expect(cases.map(([value]) => [value, outcome(value)])).toEqual(cases);
+    });
+  });
+
+  test("-0 for every option in one call, and again in reload()", () => {
+    const all = () => ({
+      idleTimeout: negativeZero,
+      websocket: {
+        message() {},
+        idleTimeout: negativeZero,
+        maxPayloadLength: negativeZero,
+        backpressureLimit: negativeZero,
+      },
+      fetch,
+    });
+    using server = serve({ port: 0, ...all() });
+    server.reload(all());
+    expect(server.port).toBeGreaterThan(0);
+  });
+});
+
 describe("Bun.serve development options", () => {
   test("development mode", () => {
     using server = serve({

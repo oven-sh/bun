@@ -972,7 +972,7 @@ impl ServerConfig {
 
         if let Some(value) = arg.get(global, "idleTimeout")? {
             if !value.is_undefined_or_null() {
-                if !value.is_any_int() {
+                if !value.is_integer() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Bun.serve expects idleTimeout to be an integer",
                     )));

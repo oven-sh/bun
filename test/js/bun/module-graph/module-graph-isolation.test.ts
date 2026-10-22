@@ -3,7 +3,7 @@
 // happened to be running when it was opened.
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tls as tlsCertificate } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { EventEmitter, once } from "node:events";
 import http from "node:http";
@@ -3779,47 +3779,6 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       exitCode: 0,
     });
   });
-  // TEMPORARY DIAGNOSTIC, not for merging: what keeps the server on the macOS x64 lane. Goes before this leaves draft.
-  // Two at a time, as the two tests below are, one run after the other.
-  for (const [slot, modes] of [
-    [
-      "a",
-      [...Array(6).fill("old"), ...Array(4).fill("old-floor"), ...Array(3).fill("weak"), ...Array(3).fill("judge")],
-    ],
-    [
-      "b",
-      [...Array(6).fill("old"), ...Array(4).fill("old-floor"), "time-gc", "time-gc", "time-plain", "judge", "judge"],
-    ],
-  ] as const)
-    test.skipIf(!isMacOS && !process.env.ZZ_DIAG)(
-      "zz diag " + slot,
-      async () => {
-        const began = Date.now();
-        for (const [run, mode] of modes.entries()) {
-          const at = Date.now();
-          const fixture = mode.startsWith("old") ? "old" : mode === "judge" ? "judge" : "pages";
-          await using proc = Bun.spawn({
-            cmd: [bunExe(), join(import.meta.dir, "zz-diag-" + fixture + "-fixture.mjs"), dir, "-", mode],
-            env: bunEnv,
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: 40_000,
-            killSignal: "SIGKILL",
-          });
-          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-          const lines = stderr.split("\n").filter(line => line.startsWith("DIAG"));
-          const said = stdout.trim();
-          // One line for a run of the old fixture that went well, everything for the rest.
-          console.error(
-            `ZZDIAG ${slot}${run} ${mode}: stdout ${JSON.stringify(said)} exit ${exitCode}, began ${at - began} ms into the slot, took ${Date.now() - at} ms, ${navigator.hardwareConcurrency} cores\n` +
-              (said === "collected" && mode.startsWith("old") ? lines.slice(-1) : lines.slice(0, 400))
-                .map(line => "ZZDIAG   " + line)
-                .join("\n"),
-          );
-        }
-      },
-      170_000,
-    );
   test("a server whose HTML routes were still being built is released with it", async () => {
     expect(await runsFixture("disposed-while-building-pages.mjs")).toEqual({ stdout: "released", exitCode: 0 });
   });

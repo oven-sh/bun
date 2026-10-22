@@ -1307,7 +1307,7 @@ pub mod tf {
 }
 
 bitflags::bitflags! {
-    /// The `ObjectFlags` that are derived from a type's constituents, plus five that are specific
+    /// The `ObjectFlags` that are derived from a type's constituents, plus six that are specific
     /// to this checker.
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u16 {
@@ -1354,6 +1354,10 @@ bitflags::bitflags! {
         /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace. They don't all
         /// have the same apparent type (`can_become_one_reference`).
         const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
+        /// Is or contains a type created with `FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION`.
+        /// `couldContainTypeVariables` holds for it whatever it references, so `instantiateType` gets to
+        /// `getObjectTypeInstantiation`, which resolves names the first time: `Checker::resolve_names_at_first_instantiation`.
+        const RESOLVES_NAMES_AT_INSTANTIATION = 2048;
     }
 }
 
@@ -1714,10 +1718,18 @@ impl FirstRequest {
     /// request decided that it isn't.
     pub const CONSTRAINED_TYPE_VARIABLE: FirstRequest = FirstRequest(1 << 2);
     pub const NO_CONSTRAINED_TYPE_VARIABLE: FirstRequest = FirstRequest(1 << 3);
+    /// The type of the syntax of an anonymous type that is in a generic declaration and has unchecked type arguments of
+    /// an import type in or around it: see `ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION`.
+    pub const RESOLVES_NAMES_AT_INSTANTIATION: FirstRequest = FirstRequest(1 << 4);
 
     #[inline]
     fn has(self, flag: FirstRequest) -> bool {
         self.0 & flag.0 != 0
+    }
+
+    #[inline]
+    pub fn with(self, flags: FirstRequest) -> FirstRequest {
+        FirstRequest(self.0 | flags.0)
     }
 }
 
@@ -1975,8 +1987,9 @@ impl TypeRecord<'_> {
     }
 
     fn instantiation_class(&self) -> InstantiationClass {
-        let is_changed =
-            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
+        let is_changed = ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+            | ObjectFlags::HAS_OTHER_INSTANTIATION
+            | ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
         if !self.object_flags.intersects(is_changed) && !self.has_type_variables_in_alias_only {
             return InstantiationClass::Unchanged;
         }
@@ -3768,13 +3781,16 @@ impl<'p, 's> Types<'p, 's> {
                 flags |= ObjectFlags::CONTAINS_OBJECT_OR_ARRAY_LITERAL;
             }
         }
+        let first_request = self.own.first_request.get();
+        if first_request.has(FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION) {
+            flags |= ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
+        }
         // Unlike the other flags, these two aren't propagated from the type's constituents.
         flags.set(ObjectFlags::MAY_BE_REDUCED, may_be_reduced);
         flags.set(
             ObjectFlags::HAS_ONLY_OWN_APPARENT_TYPES,
             has_only_own_apparent_types,
         );
-        let first_request = self.own.first_request.get();
         let constrained_type_variable =
             if first_request.has(FirstRequest::CONSTRAINED_TYPE_VARIABLE) {
                 2

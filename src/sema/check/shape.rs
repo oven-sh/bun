@@ -1572,6 +1572,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if are_provisional {
                     resolved.store_handle = None;
                 }
+                if !(self.hir(target.file).type_arguments_of_import_types()).is_empty() {
+                    self.instantiate_base_types_that_resolve_names(target, mapper);
+                }
                 // A separate shape is already instantiated. Its inherited members are those of the
                 // instantiated base types, where `target`'s type parameters come from `args`.
                 let outer = if under == mapper {
@@ -5644,8 +5647,9 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         };
-        let is_changed =
-            ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
+        let is_changed = ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+            | ObjectFlags::HAS_OTHER_INSTANTIATION
+            | ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
         let is_instantiated = !has_resolved_type
             && self.types().object_flags(base).intersects(is_changed)
             && match prop.source {
@@ -6719,10 +6723,18 @@ impl<'p, 's> Checker<'p, 's> {
                     .map(|&(f, m)| (f, self.hir(f)[m].func))
                     .collect();
                 let mapper = self.identity_mapper_for_fns(file, parent, &declarations);
-                self.intern_key(TypeKey::Fns {
+                let mut first_request = FirstRequest::NONE;
+                for &(f, m) in &members {
+                    let declaration = &self.hir(f)[m];
+                    let range = (declaration.start, declaration.loc.end);
+                    let of_declaration = self.first_request_of_anonymous_type(f, parent, range);
+                    first_request = first_request.with(of_declaration);
+                }
+                let key = TypeKey::Fns {
                     decls: &decls,
                     mapper,
-                })
+                };
+                self.intern_key_as(key, first_request)
             }
             MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
                 let getter = members
@@ -7208,6 +7220,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None
                 };
                 self.circular_constraint_origins.push((ty, current));
+                self.report_circular_constraint_on_request(ty);
             }
             // Another frame of `ty` can be in progress below a `resolution_start` barrier. Its
             // first read was a miss, so it learns of the cycle at its own `leave`. The mark stays

@@ -2080,6 +2080,44 @@ impl<'p, 's> Checker<'p, 's> {
         self.index_type_of_type(rest_type, TypeId::NUMBER)
     }
 
+    /// The types of `nodes`, the type arguments of a type query or an import type that instantiate `ty`, for
+    /// `with_type_arguments`. `getInstantiatedSignatures` asks `checkTypeArguments` for them only where a signature takes
+    /// that many, and `checkImportType` checks none of them.
+    pub(super) fn type_arguments_of_instantiation(
+        &mut self,
+        ty: TypeId,
+        file: FileId,
+        nodes: IdList<TypeNodeId>,
+    ) -> Vec<TypeId> {
+        match self.has_signature_taking_type_arguments(ty, nodes.len()) {
+            true => self.types_from_nodes(file, nodes),
+            false => vec![TypeId::ERROR; nodes.len()],
+        }
+    }
+
+    /// Whether `getInstantiatedTypePart` finds a signature in `ty` that takes `count` type arguments.
+    fn has_signature_taking_type_arguments(&mut self, ty: TypeId, count: usize) -> bool {
+        if ty == TypeId::SILENT_NEVER || self.is_any(ty) {
+            return false;
+        }
+        if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(ty) {
+            return (parts.iter()).any(|&p| self.has_signature_taking_type_arguments(p, count));
+        }
+        if self.is_deferred(ty) {
+            let constraint = self.base_constraint(ty);
+            return constraint != ty && self.has_signature_taking_type_arguments(constraint, count);
+        }
+        let Some(members) = self.members(ty) else {
+            return false;
+        };
+        let signatures = members.call_signatures().iter();
+        let mut signatures = signatures.chain(members.construct_signatures());
+        signatures.any(|&sig| {
+            let params = self.sig_type_params(sig);
+            !params.is_empty() && self.has_correct_type_argument_arity(&params, count)
+        })
+    }
+
     /// `getInstantiationExpressionType`, `f<Args>` without a call: `ty` restricted to the
     /// signatures that accept that many type arguments, instantiated with them. `node` is its node,
     /// which the created object types store.

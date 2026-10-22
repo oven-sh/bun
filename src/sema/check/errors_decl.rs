@@ -14,7 +14,6 @@ impl Checker<'_, '_> {
         self.check_parameter_references(file);
         self.check_merged_declarations(file);
         self.check_variable_like_declarations(file);
-        self.check_index_signatures(file);
     }
 
     /// Runs `check_reference_in_parameter` for the identifiers of `file`.
@@ -389,19 +388,27 @@ impl Checker<'_, '_> {
             || flags(left) == flags(right)
     }
 
-    /// `checkTypeForDuplicateIndexSignatures`: 2374 for each `__index` of a class, an interface or a type literal in
-    /// `file`.
-    fn check_index_signatures(&mut self, file: FileId) {
-        let (bound, files) = (self.bound(file), self.files());
-        let unchecked = self.unchecked_jsdoc_types(file);
-        for (i, symbol) in bound.symbols.iter().enumerate() {
-            if symbol.name != known::index_signature
+    /// `checkTypeForDuplicateIndexSignatures`: 2374 for the declarations of the `__index` of the class, the interface or
+    /// the type literal of `file` that has `members`. `checkClassOrInterfaceForDuplicateIndexSignatures` checks a type
+    /// once: here where the first of those declarations is.
+    pub(super) fn check_type_for_duplicate_index_signatures(
+        &mut self,
+        file: FileId,
+        members: Span<MemberId>,
+    ) {
+        let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
+        for first in members.iter() {
+            let id = bound.member_symbol[first.idx()];
+            if hir[first].kind != MemberKind::IndexSignature || id.is_none() {
+                continue;
+            }
+            let symbol = bound.symbol(id);
+            if symbol.decls.first() != Some(&Decl::Member(first))
                 || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
-                || matches!(symbol.decls.first(), Some(&Decl::Member(m)) if unchecked.contain(self.hir(file)[m].start))
             {
                 continue;
             }
-            let index_symbol = files.sym(file, SymbolId(i as u32));
+            let index_symbol = files.sym(file, id);
             // `getIndexSymbol` searches the members. A class's static members are among its exports, which aren't
             // searched.
             if files

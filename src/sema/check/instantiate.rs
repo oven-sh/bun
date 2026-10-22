@@ -1030,6 +1030,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn instantiate_uncached(&mut self, ty: TypeId, mapper: MapperId) -> TypeId {
+        let resolves_names = ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
+        if self.types().object_flags(ty).contains(resolves_names) {
+            self.resolve_names_at_first_instantiation(ty, mapper);
+        }
         if self.types().deferred(ty).is_some() {
             return self.instantiate_deferred_type_reference(ty, mapper, None);
         }

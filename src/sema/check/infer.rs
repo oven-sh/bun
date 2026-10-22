@@ -3065,11 +3065,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns an inference context's mapper for a `ty` that mentions none of its type parameters.
-    /// It isn't nil, so `instantiateType` replaces what has `ObjectFlags::HAS_OTHER_INSTANTIATION`.
-    /// Only type parameters are looked up in a mapper, so the pair maps nothing.
+    /// It isn't nil, so `instantiateType` replaces what has `ObjectFlags::HAS_OTHER_INSTANTIATION`, and gets to what has
+    /// `ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION`. Only type parameters are looked up in a mapper, so the pair maps
+    /// nothing.
     fn mapper_of_context_not_mentioned_in(&self, ty: TypeId) -> MapperId {
         let flags = self.types().object_flags(ty);
-        if flags.contains(ObjectFlags::HAS_OTHER_INSTANTIATION) {
+        let is_instantiated =
+            ObjectFlags::HAS_OTHER_INSTANTIATION | ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
+        if flags.intersects(is_instantiated) {
             self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)])
         } else {
             MapperId::IDENTITY

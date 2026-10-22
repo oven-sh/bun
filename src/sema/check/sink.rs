@@ -889,6 +889,9 @@ impl Checker<'_, '_> {
             return self.mark_tainted_from(0);
         }
         if diagnostic.file != NOWHERE.0 && self.defers_to_earlier_file(owner, diagnostic.file) {
+            if self.is_left_to_a_request(diagnostic.file, diagnostic.start) {
+                self.task.leave_to_an_earlier_request();
+            }
             // Not every error goes through `add_diagnostic`.
             return self.note_error_in(diagnostic.file);
         }
@@ -961,8 +964,46 @@ impl Checker<'_, '_> {
             }
             _ => true,
         };
-        (owner.iter().chain(in_progress))
-            .any(|&q| is_requested_by_check(q) && q.syntax().is_none_or(is_in_time))
+        (owner.iter().chain(in_progress)).any(|&q| {
+            is_requested_by_check(q)
+                && q.syntax().is_none_or(is_in_time)
+                && !self.is_in_unchecked_type_arguments(q)
+        })
+    }
+
+    /// True if the check of `file` reports errors and never gets to what is at `pos` by itself: `pos` is below the type
+    /// arguments of an import type, and that import type isn't being resolved. `checkImportType` checks nothing below
+    /// the type arguments, and `getTypeFromImportTypeNode` resolves what the type arguments themselves need. So an error
+    /// there is reported only if something else requests it.
+    pub(super) fn is_left_to_a_request(&self, file: FileId, pos: u32) -> bool {
+        let hir = self.hir(file);
+        hir.type_arguments_of_import_types().contain(pos)
+            && self.reports_semantic_errors(file)
+            && (hir.import_type_with_type_arguments_at(pos))
+                .is_none_or(|node| !self.stack.contains(&Query::TypeNode(file, node)))
+    }
+
+    /// True if `q` is about syntax below the type arguments of an import type. `checkImportType` checks nothing there,
+    /// so no check requests `q`.
+    fn is_in_unchecked_type_arguments(&self, q: Query) -> bool {
+        let (file, pos) = match q {
+            Query::TypeNode(file, node) => (file, self.hir(file)[node].pos),
+            Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                (file, self.hir(file)[pat].pos)
+            }
+            Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                (file, self.hir(file)[func].start)
+            }
+            Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) | Query::Call(file, e) => {
+                (file, self.hir(file)[e].pos)
+            }
+            Query::Symbol(symbol) => match self.span_of_symbol(symbol) {
+                Some((file, start, _)) => (file, start),
+                None => return false,
+            },
+            _ => return false,
+        };
+        (self.hir(file).type_arguments_of_import_types()).contain(pos)
     }
 
     /// True if `checkVariableLikeDeclaration` `returns_before_type_of_symbol` for every name

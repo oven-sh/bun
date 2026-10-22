@@ -995,7 +995,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `len(tp.symbol.Declarations) == 1`. `infer U` occurring twice is one symbol of its scope.
     /// The type parameters of a class or an interface are among its members.
-    fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
+    pub(super) fn type_param_has_one_declaration(&self, file: FileId, tp: TypeParamId) -> bool {
         let bound = self.bound(file);
         let symbol = bound.type_param_symbol[tp.idx()];
         let files = self.files();
@@ -1079,6 +1079,13 @@ impl<'p, 's> Checker<'p, 's> {
         }))
     }
 
+    /// Whether the check of `file` leaves what is at `pos` to whoever asks for it: see `File::type_arguments_of_import_types`
+    /// and `unchecked_jsdoc_types`.
+    pub(super) fn is_resolved_on_request_at(&self, file: FileId, pos: u32) -> bool {
+        self.hir(file).type_arguments_of_import_types().contain(pos)
+            || self.unchecked_jsdoc_types(file).contain(pos)
+    }
+
     /// `getAliasSymbolForTypeNode`: the type alias declaration whose body is `node`, which is in
     /// `scope`. A `readonly` operator around `node` is skipped.
     pub(super) fn alias_with_body(
@@ -1104,7 +1111,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// True if `node`, in `scope`, is the body of a type alias that has type parameters.
-    fn is_body_of_generic_alias(&self, file: FileId, scope: ScopeId, node: TypeNodeId) -> bool {
+    pub(super) fn is_body_of_generic_alias(
+        &self,
+        file: FileId,
+        scope: ScopeId,
+        node: TypeNodeId,
+    ) -> bool {
         self.alias_with_body(file, scope, node)
             .is_some_and(|alias| !self.hir(file)[alias].type_params.is_empty())
     }
@@ -1366,6 +1378,44 @@ impl<'p, 's> Checker<'p, 's> {
             let param = self.type_param(file, tp);
             out.enclosing_infer_params.push(param);
         }
+    }
+
+    /// `getOuterTypeParameters`: the `infer` type parameters of the conditional types around `node`.
+    pub(super) fn infer_type_parameters_around(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+    ) -> SmallVec<[TypeId; 4]> {
+        let mut mentioned = Mentioned::default();
+        if self.files().has_conditional_or_mapped_type(file)
+            && self.is_in_conditional_type_with_infer(file, node)
+        {
+            self.collect_enclosing_infer_params(file, node, &mut mentioned);
+        }
+        mentioned.enclosing_infer_params
+    }
+
+    /// `FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION` for the type of the syntax from `start` to `end`, which is in
+    /// `scope` and is an anonymous type for `getObjectTypeInstantiation`. `isTypeParameterPossiblyReferenced` resolves
+    /// names below the type arguments of an import type that no check visits.
+    pub(super) fn first_request_of_anonymous_type(
+        &mut self,
+        file: FileId,
+        scope: ScopeId,
+        (start, end): (u32, u32),
+    ) -> FirstRequest {
+        let unchecked = self.hir(file).type_arguments_of_import_types();
+        // One whose end is unknown extends to the end.
+        let end = if end <= start { u32::MAX } else { end };
+        // Without a report there is nothing for the walk to do: a declaration file under `skipLibCheck`.
+        if unchecked.is_empty()
+            || !unchecked.intersect(start, end)
+            || !self.reports_semantic_errors(file)
+            || self.type_params_in_scope(file, scope).is_empty()
+        {
+            return FirstRequest::NONE;
+        }
+        FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION
     }
 
     fn collect_fn_mentions(&self, file: FileId, func: FnId, out: &mut Mentioned) {
@@ -3097,8 +3147,11 @@ impl<'p, 's> Checker<'p, 's> {
         let alias = alias
             .as_ref()
             .map(|(alias, type_arguments)| (*alias, &type_arguments[..]));
+        let range = (self.hir(file)[node].pos, self.hir(file)[node].end);
+        let first_request = self.first_request_of_anonymous_type(file, scope, range);
+        let first_request = first_request.with(FirstRequest::FROM_TYPE_NODE);
         let first_new_type_id = self.types().first_new_type_id();
-        let ty = (self.types()).as_first_request(FirstRequest::FROM_TYPE_NODE, || {
+        let ty = (self.types()).as_first_request(first_request, || {
             self.deferred_type_reference(reference, alias)
         });
         self.types().mark_from_type_node(ty, first_new_type_id);
@@ -3230,10 +3283,13 @@ impl<'p, 's> Checker<'p, 's> {
             }
             TypeNodeKind::Fn(func) => {
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                self.intern_key(TypeKey::Fns {
+                let range = (hir[node].pos, hir[node].end);
+                let first_request = self.first_request_of_anonymous_type(file, scope, range);
+                let key = TypeKey::Fns {
                     decls: &[(file, func)],
                     mapper,
-                })
+                };
+                self.intern_key_as(key, first_request)
             }
             TypeNodeKind::Object(members) => {
                 // `emptyTypeLiteralType`, unless it's the body of an alias.
@@ -3247,10 +3303,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 self.get_members_of_type_literal(file, members);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                self.intern(TypeData::Anon {
+                let range = (hir[node].pos, hir[node].end);
+                let first_request = self.first_request_of_anonymous_type(file, scope, range);
+                let literal = TypeData::Anon {
                     origin: Origin::TypeLiteral(file, node),
                     mapper,
-                })
+                };
+                (self.types()).as_first_request(first_request, || self.intern(literal))
             }
             TypeNodeKind::Mapped(m) => {
                 // `getTypeFromMappedTypeNode`: the constraint of the key is resolved eagerly,
@@ -3259,9 +3318,20 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = self.type_param(file, hir[m].param);
                 self.base_constraint(key);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
+                let range = (hir[node].pos, hir[node].end);
+                let first_request = self.first_request_of_anonymous_type(file, scope, range);
+                if first_request != FirstRequest::NONE {
+                    // The record that `instantiate_mapped` finds for the declared type.
+                    let declared = TypeData::Anon {
+                        origin: Origin::Mapped(file, node),
+                        mapper,
+                    };
+                    (self.types()).as_first_request(first_request, || self.intern(declared));
+                }
                 self.instantiate_mapped(file, node, mapper)
             }
             TypeNodeKind::Cond { .. } => {
+                self.resolve_names_of_conditional_type(file, scope, node);
                 let mapper = self.identity_mapper_for_node(file, scope, node);
                 self.conditional_type(file, node, mapper)
             }
@@ -3325,7 +3395,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if !has_type_arguments {
                     return ty;
                 }
-                let args = self.types_from_nodes(file, args);
+                let args = self.type_arguments_of_instantiation(ty, file, args);
                 self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
             }
             TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
@@ -3433,7 +3503,7 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return ty;
             }
-            let args = self.types_from_nodes(file, args);
+            let args = self.type_arguments_of_instantiation(ty, file, args);
             let node = InstantiationExpression::TypeNode(file, node);
             return self.with_type_arguments(ty, &args, node);
         }
@@ -3462,6 +3532,38 @@ impl<'p, 's> Checker<'p, 's> {
         self.type_reference_type_of_node(file, scope, node, sym, args)
     }
 
+    /// `resolveExternalModuleName(node, n.Argument.AsLiteralTypeNode().Literal, false /*ignoreErrors*/)` of
+    /// `getTypeFromImportTypeNode`, for what it reports: the import type `node` of `file` names `spec`.
+    fn resolve_external_module_of_import_type(
+        &mut self,
+        file: FileId,
+        node: TypeNodeId,
+        spec: Atom,
+    ) {
+        let hir = self.hir(file);
+        let (start, end) = (hir[node].pos, hir[node].end);
+        // The argument is the first specifier in the node. Those of the import types in its type arguments come after it.
+        let is_in_node = |it: &&SpecifierUse| {
+            it.kind == SpecifierKind::ImportType
+                && it.spec == spec
+                && (start..end).contains(&it.pos)
+        };
+        let uses = &hir.specifier_uses;
+        // FOR SPEED: the parser adds the specifiers of import types in source order. Calls may be out of order around them.
+        let first = uses.get(uses.partition_point(|it| it.pos < start));
+        let written = match first.filter(is_in_node) {
+            Some(written) => Some(written),
+            None => uses.iter().filter(is_in_node).min_by_key(|it| it.pos),
+        };
+        if let Some(&written) = written {
+            let site = SpecifierSite {
+                is_ambient: hir.kind == FileKind::Declaration,
+                ..Default::default()
+            };
+            self.resolve_external_module(file, written, site);
+        }
+    }
+
     /// The qualifier loop of `getTypeFromImportTypeNode`. Returns the final `currentNamespace` (the module symbol if
     /// there's no qualifier), or `None` where tsgo returns `errorType`.
     pub(super) fn resolve_import_type(
@@ -3485,6 +3587,9 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             SymFlags::TYPE
         };
+        if reports_errors {
+            self.resolve_external_module_of_import_type(file, node, spec);
+        }
         let inner_module_symbol = files.module_of_import_type(file, node)?;
         let module_symbol = self.resolve_external_module_symbol(inner_module_symbol);
         if name.is_empty() {

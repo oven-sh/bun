@@ -2732,6 +2732,13 @@ impl<R: std::ops::Deref<Target = [TextRange]>> RangeSet<R> {
         after > 0 && pos < self.0[after - 1].end
     }
 
+    /// Whether a range has a position from `pos` up to `end`.
+    #[inline]
+    pub fn intersect(&self, pos: u32, end: u32) -> bool {
+        let before = self.0.partition_point(|range| range.end <= pos);
+        (self.0.get(before)).is_some_and(|range| range.pos < end)
+    }
+
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
@@ -3446,6 +3453,49 @@ impl File<'_> {
             .into_boxed()
         });
         extends_ranges.contain(self[e].pos)
+    }
+
+    /// The type arguments of the import types, each from its first argument to the end of the import type.
+    /// `checkImportType` checks nothing below them, and `getTypeFromTypeNode` resolves them as far as something asks.
+    pub fn type_arguments_of_import_types(&self) -> &RangeSet<Box<[TextRange]>> {
+        self.lazy.cells.import_type_argument_ranges.get_or_init(|| {
+            // FOR SPEED: most files have few specifiers and no import type.
+            let mut specifiers = self.specifier_uses.iter();
+            let has_import_types = specifiers.any(|it| it.kind == SpecifierKind::ImportType);
+            let nodes = self.types.iter().take(match has_import_types {
+                true => usize::MAX,
+                false => 0,
+            });
+            let nodes = nodes.filter_map(|node| match node.kind {
+                // An argument that is no string is in `args`, and the type arguments are in no node.
+                TypeNodeKind::Import { spec, args, .. } if spec.is_some() => {
+                    let first = self.ids(args).next()?;
+                    Some(TextRange {
+                        pos: self[first].pos,
+                        // One whose end is unknown extends to the end.
+                        end: if node.end == 0 { u32::MAX } else { node.end },
+                    })
+                }
+                _ => None,
+            });
+            RangeSet::new(nodes).into_boxed()
+        })
+    }
+
+    /// The outermost import type whose type arguments have `pos` in or below them: see
+    /// `type_arguments_of_import_types`. For a caller that has found `pos` in those ranges.
+    pub fn import_type_with_type_arguments_at(&self, pos: u32) -> Option<TypeNodeId> {
+        let nodes = self.types.iter().enumerate();
+        let around = nodes.filter(|(_, node)| match node.kind {
+            TypeNodeKind::Import { spec, args, .. } if spec.is_some() => {
+                let first = self.ids(args).next();
+                first.is_some_and(|first| self[first].pos <= pos)
+                    && (node.end == 0 || pos < node.end)
+            }
+            _ => false,
+        });
+        let outermost = around.min_by_key(|(_, node)| node.pos);
+        outermost.map(|(i, _)| TypeNodeId(i as u32))
     }
 
     /// `isInAmbientOrTypeNode`, in one walk up the parents. A node that starts outside every such range needs no walk.

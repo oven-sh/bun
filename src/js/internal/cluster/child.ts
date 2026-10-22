@@ -119,8 +119,10 @@ cluster._setupWorker = function () {
 cluster._getServer = function (obj, options, cb) {
   let address = options.address;
 
-  // Resolve unix socket paths to absolute paths
-  if (options.port < 0 && typeof address === "string" && process.platform !== "win32") address = path.resolve(address);
+  // Resolve unix socket paths to absolute paths. An abstract name (leading NUL) is not a path.
+  if (options.port < 0 && typeof address === "string" && process.platform !== "win32" && address.charCodeAt(0) !== 0) {
+    address = path.resolve(address);
+  }
 
   const indexesKey = ArrayPrototypeJoin.$call([address, options.port, options.addressType, options.fd], ":");
 

@@ -278,8 +278,13 @@ function queryServer(worker, message) {
   if (handle === undefined) {
     let address = message.address;
 
-    // Find shortest path for unix sockets because of the ~100 byte limit
-    if (message.port < 0 && typeof address === "string" && process.platform !== "win32") {
+    // Find shortest path for unix sockets because of the ~100 byte limit. An abstract name (leading NUL) is not a path.
+    if (
+      message.port < 0 &&
+      typeof address === "string" &&
+      process.platform !== "win32" &&
+      address.charCodeAt(0) !== 0
+    ) {
       address = require("node:path").relative(process.cwd(), address);
 
       if (message.address.length < address.length) address = message.address;

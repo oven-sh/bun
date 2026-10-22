@@ -1994,3 +1994,49 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 });
+
+// An abstract name is not a path: the worker must not resolve it against its cwd before asking the primary.
+test.skipIf(!isLinux).each(["net", "http"])(
+  "a %s worker with another cwd than the primary listens on an abstract name through the primary",
+  async moduleName => {
+    using dir = tempDir("cluster-abstract-cwd", {
+      "main.js": /* js */ `
+const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+const path = require("node:path");
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+const NAME = "\\0bun-cluster-abstract-cwd-" + (process.env.ABSTRACT_ID || process.pid);
+if (cluster.isPrimary) {
+  const cwd = path.join(__dirname, "worker-cwd");
+  fs.mkdirSync(cwd, { recursive: true });
+  cluster.setupPrimary({ cwd });
+  const worker = cluster.fork({ ABSTRACT_ID: String(process.pid) });
+  worker.on("message", message => {
+    const finish = result => { console.log(JSON.stringify(result)); worker.process.kill(); };
+    if (message.error) return finish(message);
+    const c = net.connect(NAME, () => { c.destroy(); finish({ address: message.address === NAME, connect: "ok" }); });
+    c.on("error", err => finish({ connect: err.code }));
+  });
+} else {
+  const server = require("node:" + process.env.MODULE).createServer(() => {});
+  server.on("error", error => process.send({ error: error.code }));
+  server.listen(NAME, () => process.send({ address: server.address() }));
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: { ...bunEnv, MODULE: moduleName },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr }).toEqual({
+      out: { address: true, connect: "ok" },
+      stderr: expect.any(String),
+    });
+    expect(exitCode).toBe(0);
+  },
+);

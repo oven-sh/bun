@@ -1624,7 +1624,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket_unix(const char *path, size_t le
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
-        *error = LIBUS_ERR;
+#if defined(_WIN32)
+        *error = GetLastError();
+#else
+        *error = errno;
+#endif
         return LIBUS_SOCKET_ERROR;
     }
 

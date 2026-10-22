@@ -5715,6 +5715,7 @@ pub mod darwin {
         pub const LINK: u32 = libc::NOTE_LINK;
         pub const RENAME: u32 = libc::NOTE_RENAME;
         pub const REVOKE: u32 = libc::NOTE_REVOKE;
+        pub const LOWAT: u32 = libc::NOTE_LOWAT;
         /// `EVFILT_MEMORYSTATUS` fflags (xnu `<sys/event_private.h>`). Values are
         /// ABI-stable; libdispatch depends on them for `DISPATCH_MEMORYPRESSURE_*`.
         pub const MEMORYSTATUS_PRESSURE_NORMAL: u32 = 0x00000001;

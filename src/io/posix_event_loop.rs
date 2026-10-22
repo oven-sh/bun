@@ -731,6 +731,8 @@ impl FilePoll {
             // output events only include change errors
             const KEVENT_FLAG_ERROR_EVENTS: u32 = 0x000002;
 
+            let change = changelist[0];
+            let mut low_water_mark = false;
             // The kevent() system call returns the number of events placed in
             // the eventlist, up to the value given by nevents.  If the time
             // limit expires, then kevent() returns 0.
@@ -750,10 +752,23 @@ impl FilePoll {
                         &raw const TIMEOUT,
                     )
                 };
-                if sys::get_errno(rc) == sys::E::EINTR {
-                    continue;
+                match sys::get_errno(rc) {
+                    sys::E::EINTR => continue,
+                    // xnu watches a terminal that has no kqueue filter of its own (`/dev/tty`) only at a low-water mark of 1.
+                    sys::E::EINVAL
+                        if !low_water_mark
+                            && matches!(flag, Flags::Readable | Flags::Writable)
+                            && sys::isatty(fd) =>
+                    {
+                        low_water_mark = true;
+                        changelist[0] = kevent64_s {
+                            fflags: NOTE::LOWAT,
+                            data: 1,
+                            ..change
+                        };
+                    }
+                    _ => break 'rc rc,
                 }
-                break 'rc rc;
             };
 
             self.flags.insert(Flags::WasEverRegistered);

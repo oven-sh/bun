@@ -2837,6 +2837,39 @@ describe("a package in node_modules", () => {
     });
   });
 
+  // The entry in .bin is below a folder with the name of an optional dependency, which has a package.json. But that
+  // folder is above the project, and the entry is the bin of another package.
+  it.concurrent.todoIf(isWindows)(
+    "after an install, a package that cannot run below a package with the name of its optional dependency",
+    async () => {
+      using registry = await localRegistry(
+        fixturePackage("aaa-first", "1.0.0", "tool"),
+        { name: "other-dep", version: "1.0.0", files: { "index.js": "" } },
+        { ...fixturePackage("zzz-last", "1.0.0", "tool"), optionalDependencies: { "other-dep": "1.0.0" } },
+      );
+      const app = { name: "app", dependencies: { "aaa-first": "1.0.0", "zzz-last": "1.0.0" } };
+      using box = sandbox(registry, {
+        cwd: {
+          "other-dep": {
+            "package.json": JSON.stringify({ name: "other-dep" }),
+            app: { "package.json": JSON.stringify(app) },
+          },
+        },
+      });
+      const cwd = join(box.cwd, "other-dep", "app");
+      expect(await box.run(["--linker=hoisted"], { bunx: [bunExe(), "install"], cwd })).toMatchObject({ exitCode: 0 });
+      expect(join(cwd, "node_modules", ".bin", "tool")).toBeValidBin(join("..", "aaa-first", "cli.js"));
+
+      chmodSync(join(cwd, "node_modules", "zzz-last", "cli.js"), 0o644);
+      expect(await box.run(["zzz-last", "arg"], { cwd })).toEqual({
+        stdout: "",
+        stderr: expect.stringMatching(/^error: .*\/node_modules\/zzz-last\/cli\.js is not executable\n$/),
+        exitCode: 126,
+        requests: [],
+      });
+    },
+  );
+
   // `other-dep` comes before the platform package in `optionalDependencies`, and is the name of a folder above the
   // project too. `nativeDependencies` has the name of the package, which is not the name of its folder under an alias.
   it.concurrent.todoIf(isWindows).each([

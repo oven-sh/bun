@@ -504,6 +504,7 @@ impl BunxCommand {
                                 transpiler,
                                 project,
                                 &package_json,
+                                real_dir,
                                 real,
                             )
                     }) =>
@@ -544,7 +545,7 @@ impl BunxCommand {
         let mut buf = bun_paths::path_buffer_pool::get();
         if let Some(entry) = entry
             && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
-            && Self::is_in_optional_dependency(transpiler, package_json, real, |_| true)
+            && Self::is_in_optional_dependency(transpiler, package_json, real_dir, real, |_| true)
         {
             return InProject::Run(entry);
         }
@@ -571,11 +572,14 @@ impl BunxCommand {
         transpiler: &mut Transpiler,
         project: &[u8],
         package_json: &ZStr,
+        real_dir: &[u8],
         real: &[u8],
     ) -> bool {
-        if !Self::is_in_optional_dependency(transpiler, package_json, real, |dependency| {
+        let has_platform = |dependency: &bun_ast::Expr| {
             dependency.get(b"os").is_some() && dependency.get(b"cpu").is_some()
-        }) {
+        };
+        if !Self::is_in_optional_dependency(transpiler, package_json, real_dir, real, has_platform)
+        {
             return false;
         }
         // Under an alias, the folder does not have the name of the package.
@@ -592,11 +596,12 @@ impl BunxCommand {
         .unwrap_or(false)
     }
 
-    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json`
-    /// whose package.json `is_match`.
+    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json`, in
+    /// `real_dir`, whose package.json `is_match`.
     fn is_in_optional_dependency(
         transpiler: &mut Transpiler,
         package_json: &ZStr,
+        real_dir: &[u8],
         real: &[u8],
         is_match: impl Fn(&bun_ast::Expr) -> bool,
     ) -> bool {
@@ -606,11 +611,12 @@ impl BunxCommand {
                 return None;
             };
             // `node_modules` can be a link to a folder of another name, which is the name in `real`.
-            // A folder above the project can have the name of a dependency too.
+            // A folder above the project can have the name of a dependency. The package is in it too.
             let candidates = optional.get().properties().iter().filter_map(|dependency| {
                 let name = dependency.key.slice();
                 let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
-                Some([parent, b"/", name, b"/package.json"].concat())
+                let dir = [parent, b"/", name, b"/"].concat();
+                (!real_dir.starts_with(&dir)).then(|| [dir.as_slice(), b"package.json"].concat())
             });
             Some(candidates.collect::<Vec<_>>())
         });

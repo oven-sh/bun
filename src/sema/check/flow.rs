@@ -6857,9 +6857,15 @@ impl<'p, 's> Checker<'p, 's> {
     /// result.
     pub(super) fn get_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         let depth = self.flow_type_cache_depth;
+        // The check of `e`'s statement checks `e` again.
+        if depth == usize::MAX {
+            return self.outside_flow_loops(|c| {
+                c.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY))
+            });
+        }
         // `checkExpressionCached` computes with an empty cache, so a type resolution entered since
         // the traversal began hides this one.
-        if depth == usize::MAX || !self.is_flow_loop_visible(depth) {
+        if !self.is_flow_loop_visible(depth) {
             return self.type_of_declaration_initializer_ex(file, e, Some(CheckMode::TYPE_ONLY));
         }
         if let Some(&cached) = self.flow_type_cache.get(&(file, e)) {

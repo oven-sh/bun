@@ -10228,6 +10228,33 @@ export declare function css(style: Style): void;
       }
     });
 
+    test("checks the targets of a destructuring assignment again after the contextual type of its right side", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function plain(o: { p: number }) {
+  fail();
+  while (c || c) { o.p = 1; }
+}
+export function array(o: { p: number }) {
+  fail();
+  while (c || c) { [o.p] = [1]; }
+}
+export function object(o: { p: number }) {
+  fail();
+  while (c || c) { ({ a: o.p } = { a: 1 }); }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(5,20): error TS2322: Type '1' is not assignable to type 'never'.
+        a.ts(9,23): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(13,28): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

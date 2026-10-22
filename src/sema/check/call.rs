@@ -466,7 +466,10 @@ impl<'p, 's> Checker<'p, 's> {
         // A call that's requested while it's being resolved is resolved again, and `resolveCall`
         // reports its errors in the state at that time. Only the first resolution is retained.
         if is_in_progress {
-            if let Some(reported) = reported
+            // Each resolution from the temporary types of a loop reports, as below.
+            if self.is_in_flow_loop() {
+                self.reported.extend(reported.into_iter().flatten());
+            } else if let Some(reported) = reported
                 && (self.p.diagnostics_of_re_resolved_calls)
                     .get_ref(&self.task, &(file, call))
                     .is_none()

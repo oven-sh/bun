@@ -11038,6 +11038,36 @@ export function g() {
       expect(exitCode).toBe(1);
     });
 
+    test("keeps what every resolution of a call reports while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function onlyB(value: "b"): "c";
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  while (more) {
+    do {
+      [x] = [onlyB(x)];
+    } while (more);
+    for (const item of list) {
+      x = "b";
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,20): error TS2345: Argument of type '"a"' is not assignable to parameter of type '"b"'.
+        a.ts(9,20): error TS2345: Argument of type '"a" | "c"' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'.
+        a.ts(9,20): error TS2345: Argument of type 'Letter' is not assignable to parameter of type '"b"'.
+          Type '"a"' is not assignable to type '"b"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

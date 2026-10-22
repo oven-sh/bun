@@ -1448,6 +1448,16 @@ function getSelectedPlatform(platforms: Map<string, Platform>, key: string): Pla
   return platform;
 }
 
+/**
+ * What option tags like [skip tests] are read from. On main the lines below
+ * the subject are a pull request's description, which can mention a tag
+ * without asking for it. A pull request's first build has the pull request's
+ * title here, not the head commit's subject.
+ */
+function getCommitSubject(): string | undefined {
+  return getCommitMessage()?.split("\n", 1)[0];
+}
+
 async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   const isManual = isBuildManual();
   if (isManual && !process.argv.includes("--apply")) {
@@ -1506,15 +1516,13 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     };
   }
 
-  // BUILDKITE_MESSAGE is the commit subject line only — option tags like
-  // [skip tests] must appear in the subject, not the commit body.
-  const commitMessage = getCommitMessage();
-  if (commitMessage === undefined) {
+  const subject = getCommitSubject();
+  if (subject === undefined) {
     throw new Error("Failed to read the commit message");
   }
 
   const parseOption = (pattern: RegExp): OptionFlag => {
-    const match = pattern.exec(commitMessage);
+    const match = pattern.exec(subject);
     if (match) {
       const [, value] = match;
       return value;
@@ -1523,7 +1531,7 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
   };
 
   const isCanary =
-    !parseBoolean(process.env.RELEASE || "false") && !/\[(release|build release|release build)\]/i.test(commitMessage);
+    !parseBoolean(process.env.RELEASE || "false") && !/\[(release|build release|release build)\]/i.test(subject);
 
   return {
     canary: isCanary ? canary : 0,
@@ -1653,10 +1661,6 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
   }
 
   const { buildPlatforms = [], testPlatforms = [] } = options;
-  // Sign with [sign windows] in the commit message (for testing the sign step
-  // on a branch). DigiCert charges per signature, so canary builds are never signed.
-  const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
-  const signWindows = ((isMainBranch() && !options.canary) || !!options.signWindows) && windowsPlatforms.length > 0;
 
   // A build makes sure every image of the spec exists, not only the ones its
   // own steps start from: which steps a build has depends on its options (a
@@ -1710,6 +1714,15 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       console.warn("No last successful build found, must force builds...");
     }
   }
+
+  // DigiCert charges per signature, so canary builds are not signed. That
+  // leaves a release as the first build to find out that a new image broke the
+  // sign step, so a build that bakes the step's image signs what it builds.
+  // [sign windows] is for testing the step on a branch.
+  const windowsPlatforms = buildPlatforms.filter(p => p.os === "windows");
+  const bakesSignImage = !buildId && baking.has(getImageKey(windowsSignPlatform));
+  const signWindows =
+    windowsPlatforms.length > 0 && ((isMainBranch() && !options.canary) || !!options.signWindows || bakesSignImage);
 
   const includeASAN = !isMainBranch();
 
@@ -1819,7 +1832,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     { os: "darwin", arch: "x64", release: "any" },
   ];
   const darwinTestsEnabled =
-    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage() ?? "");
+    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitSubject() ?? "");
   // The macOS beta lane: a single home-hosted mini on the next macOS,
   // its own queue, soft-fail. PR builds get it only when that queue is
   // idle at upload time, so it is always busy while PRs flow and never

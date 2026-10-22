@@ -118,7 +118,7 @@ impl DirectoryRoute {
         };
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -248,7 +248,6 @@ impl DirectoryRoute {
             pollable: false,
             offset: body_offset,
             length: Some(body_len),
-            idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),
         });
     }

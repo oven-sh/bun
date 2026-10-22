@@ -107,6 +107,10 @@ impl Response {
     pub(crate) fn reset_timeout(&mut self) {
         c::uws_h2_res_reset_timeout(self)
     }
+    /// This stream's idle budget becomes the server's idle timeout.
+    pub fn start_timeout(&mut self) {
+        c::uws_h2_res_start_timeout(self)
+    }
     pub(crate) fn get_buffered_amount(&mut self) -> u64 {
         c::uws_h2_res_get_buffered_amount(self)
     }
@@ -633,6 +637,7 @@ mod c {
         pub(super) safe fn uws_h2_res_get_buffered_amount(res: &mut Response) -> u64;
         pub(super) safe fn uws_h2_res_reset_timeout(res: &mut Response);
         pub(super) safe fn uws_h2_res_timeout(res: &mut Response, seconds: u8);
+        pub(super) safe fn uws_h2_res_start_timeout(res: &mut Response);
         pub(super) safe fn uws_h2_res_end_sendfile(res: &mut Response, off: u64, close: bool);
         // safe: `&mut Response` is ABI-identical to a non-null `*mut`;
         // `cb`/`ud` are stored opaquely (never dereferenced by the C++ shim

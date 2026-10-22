@@ -272,7 +272,7 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
         resp.corked(|| this.render_metadata_and_end(resp));
         Self::on_response_complete(this, resp);
@@ -327,7 +327,7 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
         let mut finished = false;
         this.do_render_blob(resp, &mut finished);
@@ -407,10 +407,6 @@ impl StaticRoute {
     }
 
     fn on_writable(this: ThisPtr<Self>, write_offset: u64, resp: AnyResponse) -> bool {
-        if let Some(server) = this.server.get() {
-            resp.timeout(server.config().idle_timeout);
-        }
-
         if !this.on_writable_bytes(write_offset, resp) {
             return false;
         }
@@ -558,7 +554,7 @@ impl StaticRoute {
         Self::retain_for_response(this);
         if let Some(mut server) = this.server.get() {
             server.on_pending_request();
-            resp.timeout(server.config().idle_timeout);
+            resp.start_timeout();
         }
         this.do_write_status(status, resp);
         this.do_write_headers(resp);

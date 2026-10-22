@@ -791,9 +791,14 @@ class Session extends EventEmitter {
         }
         if (samplingInterval < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid sampling interval");
         if (stackDepth < 1) return $ERR_INSPECTOR_COMMAND("-32000: Invalid stack depth");
-        // A second start keeps the running session and its interval, as V8 does. The profile comes after a full
-        // collection (forceGC), as V8's inspector takes it.
-        startAllocationSampling(samplingInterval, stackDepth, true, includeMajor, includeMinor);
+        // A second start keeps the running session and its interval, as V8 does. V8 truncates the depth to an int.
+        startAllocationSampling(
+          samplingInterval,
+          Math.min(Math.trunc(stackDepth), 0x7fffffff),
+          true,
+          includeMajor,
+          includeMinor,
+        );
         this.#startedAllocationSampling = true;
         return {};
       }

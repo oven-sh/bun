@@ -48,6 +48,8 @@ std::optional<HeapSampler::Options> HeapSampler::optionsFromArguments(JSC::JSGlo
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Options options;
+    V::validateFiniteNumber(scope, globalObject, callFrame->argument(0), JSC::jsString(vm, WTF::String("sampleInterval"_s)));
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     V::validateNumber(scope, globalObject, callFrame->argument(0), "sampleInterval"_s, JSC::jsNumber(1), JSC::jsUndefined());
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     options.intervalBytes = callFrame->argument(0).asNumber();

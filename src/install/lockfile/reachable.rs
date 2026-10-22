@@ -190,6 +190,8 @@ fn linked_importers(
 /// Returns the packages that an optional peer does not install under `--filter`: the importers left
 /// out depend on them, and the selected importers use no version of them. Every dependency group
 /// counts, but not the inside of a tarball, and an optional peer only if it installs its package.
+/// The root is above every workspace, so its own dependencies are provided to them, as in pnpm,
+/// except for a workspace that is left out.
 /// `None` without `--filter`, also in a pruned checkout, which does install them.
 fn foreign_packages(
     workspace_filters: &[WorkspaceFilter],
@@ -226,6 +228,16 @@ fn foreign_packages(
     let names = lockfile.packages.items_name_hash();
     let deps = lockfile.buffers.dependencies.as_slice();
     let dep_slices = lockfile.packages.items_dependencies();
+    for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+        let target = resolutions[row] as usize;
+        // An alias provides nothing under the package's own name. See `peer_provider`.
+        if !deps[row].behavior.is_optional_peer()
+            && names.get(target) == Some(&deps[row].name_hash)
+            && tags[target].tag != ResolutionTag::Workspace
+        {
+            foreign.unset(target);
+        }
+    }
     loop {
         let own = packages_from(lockfile, resolutions, &selected, false, options);
         let mut ids = own.iterator::<true, true>();

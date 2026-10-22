@@ -3318,14 +3318,53 @@ describe("install --filter", () => {
       }
     });
 
+    // The root is above every workspace, so it provides its own dependencies to their packages, as in pnpm.
+    const optional = (name: string) => ({
+      peerDependencies: { [name]: "*" },
+      peerDependenciesMeta: { [name]: { optional: true } },
+    });
+    test.concurrent.each<{ when: string; root: object; app?: object; lender?: Dependencies; installed?: Installed }>([
+      {
+        when: "is installed if the root depends on it",
+        root: { dependencies: { [target]: "1.0.0" } },
+        lender: { [target]: "1.0.0" },
+        installed: { hoisted: [`${consumer}@1.0.0`, `${leaf}@2.0.0`, `${target}@1.0.0`], isolated: withTarget },
+      },
+      {
+        when: "is not installed if only a dependency of the root depends on it",
+        root: { dependencies: { "optional-peer-hoist-deep": "1.0.0" } },
+      },
+      {
+        when: "is not installed if the root depends on it under another name",
+        root: { dependencies: { "my-target": `npm:${target}@1.0.0` } },
+        lender: { [target]: "1.0.0" },
+      },
+      {
+        when: "is not installed if the root has an optional peer on it too",
+        root: optional(target),
+        lender: { [target]: "1.0.0" },
+      },
+      {
+        when: "is not installed if it is a workspace that the root depends on",
+        root: { dependencies: { lender: "workspace:*" } },
+        app: optional("lender"),
+        lender: { [target]: "1.0.0" },
+      },
+    ])("$when, and the filter leaves out the root", async ({ root, app, lender = {}, installed }) => {
+      using ctx = await setupTest();
+      await setup(ctx, {
+        app: { dependencies: { [consumer]: "1.0.0" }, ...app },
+        lender: { dependencies: lender },
+      });
+      await write(ctx.packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"], ...root }));
+
+      expect(await install(ctx, "--filter", "app")).toEqual(installed?.[linker] ?? [alone]);
+    });
+
     test.concurrent("is not installed for the selected workspace itself", async () => {
       using ctx = await setupTest();
       await setup(ctx, {
-        app: {
-          dependencies: { "no-deps": "1.0.0" },
-          peerDependencies: { [target]: "*" },
-          peerDependenciesMeta: { [target]: { optional: true } },
-        },
+        app: { dependencies: { "no-deps": "1.0.0" }, ...optional(target) },
         lender: { dependencies: { [target]: "1.0.0" } },
       });
 

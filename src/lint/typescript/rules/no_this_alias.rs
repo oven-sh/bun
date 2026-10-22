@@ -17,19 +17,19 @@ const THIS_DESTRUCTURE: Message = Message::new(
 
 impl NoThisAlias {
     fn check<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        // For oxc `(this)` is no `this`.
+        // For oxc `(this)` isn't a `this`.
         if cx.language().is_oxlint && this.is_parenthesized() {
             return;
         }
-        // What `this` is assigned to: where it is, and its name if it is an identifier.
+        // The target `this` is assigned to: its span, and its name if it's an identifier.
         let (id, name) = match this.parent() {
-            // For oxlint without the type.
+            // oxlint's span excludes the type.
             Node::VarDecl(declaration) if cx.language().is_oxlint => {
                 (declaration.pat().span(), declaration.pat().as_ident())
             }
             Node::VarDecl(declaration) => (declaration.binding_span(), declaration.pat().as_ident()),
             Node::Expr(parent) => match parent.as_assign() {
-                // oxlint finds the `a` of `a! = this` and of `(a as T) = this`.
+                // oxlint finds the `a` in `a! = this` and `(a as T) = this`.
                 Some((_, target, value))
                     if value == this
                         && !utils::is_assignment_target(parent)
@@ -73,7 +73,7 @@ impl Rule for NoThisAlias {
         let options = options.object(0);
         NoThisAlias {
             allow_destructuring: options.bool_or("allowDestructuring", true),
-            // `allowNames` is what oxlint called it at first.
+            // `allowNames` was oxlint's original name for it.
             allowed_names: options
                 .strings("allowedNames")
                 .into_iter()

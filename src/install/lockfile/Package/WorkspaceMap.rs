@@ -29,7 +29,6 @@ type Map = StringArrayHashMap<Entry>;
 pub struct Entry {
     pub(crate) name: Box<[u8]>,
     pub(crate) version: Option<Box<[u8]>>,
-    pub(crate) name_loc: bun_ast::Loc,
     /// `"installConfig": { "hoistingLimits": "workspaces" }` — this workspace's
     /// node_modules must be self-contained (see `Lockfile::self_contained_workspaces`).
     pub(crate) hoisting_limits: bool,
@@ -37,7 +36,7 @@ pub struct Entry {
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
     /// Whether the glob walk followed a symlink to reach this workspace's folder. `None` means no
-    /// walk could tell, so whoever needs the answer has to check the disk.
+    /// walk could tell, so the code that needs the answer has to check the disk.
     pub(crate) is_behind_link: Option<bool>,
 }
 
@@ -178,7 +177,8 @@ pub(crate) enum MissingWorkspace<'a> {
     SkipEmptyToo,
 }
 
-/// `None`: no usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
+/// Returns `None` if there's no usable `"name"`. Nothing could link to or resolve such a workspace,
+/// so it's skipped, like in pnpm and npm.
 fn process_workspace_name(
     workspace_names: &mut WorkspaceMap,
     json_cache: &mut WorkspacePackageJSONCache,
@@ -214,11 +214,10 @@ fn process_workspace_name(
     let name = match workspace_json.root.get(b"name") {
         Some(name_expr) => name_expr
             .as_string_cloned(&scratch)?
-            .filter(|name| !name.is_empty())
-            .map(|name| (name, name_expr.loc)),
+            .filter(|name| !name.is_empty()),
         None => None,
     };
-    let Some((name, name_loc)) = name else {
+    let Some(name) = name else {
         bun_output::scoped_log!(
             Lockfile,
             "processWorkspaceName({}) has no name, skipping",
@@ -251,7 +250,6 @@ fn process_workspace_name(
     };
     let entry = Entry {
         name: Box::<[u8]>::from(name),
-        name_loc,
         hoisting_limits: hoisting_limits.as_deref() == Some(b"workspaces".as_slice()),
         unsupported_hoisting_limits: match hoisting_limits {
             // "none" is yarn's default: no limit, which is how every workspace hoists
@@ -353,7 +351,8 @@ fn relative_workspace_path<'b>(
 }
 
 impl WorkspaceMap {
-    /// `"workspaces"`: an array, or an object with a `"packages"` array. Any other lists nothing.
+    /// `"workspaces"` is an array, or an object with a `"packages"` array. Any other value means no
+    /// workspaces.
     pub(crate) fn process_manifest(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
@@ -606,7 +605,7 @@ impl WorkspaceMap {
                                 root_dir,
                                 workspace_dir_of(abs_package_json_path),
                             );
-                            // skip root package.json: `**`, or `../*` matching it again
+                            // Skip the root package.json, which `**` or `../*` can match again.
                             if dir.is_empty() {
                                 continue;
                             }
@@ -674,8 +673,9 @@ impl WorkspaceMap {
         Ok(workspace_names.count() as u32)
     }
 
-    /// Whether [`Self::process_names_array`] would make `abs_dir` a workspace, given that `abs_dir`
-    /// has a named package.json. It never reads the disk, so `**` also matches through a symlink.
+    /// Returns true if [`Self::process_names_array`] would make `abs_dir` a workspace, given that
+    /// `abs_dir` has a named package.json. It never reads the disk, so `**` also matches through a
+    /// symlink.
     pub(crate) fn lists(arr: NamesArray<'_>, source: &bun_ast::Source, abs_dir: &[u8]) -> bool {
         let root_dir: &[u8] = package_json_dir(source);
         let mut dir_buf = path::path_buffer_pool::get();
@@ -716,8 +716,8 @@ impl WorkspaceMap {
     }
 }
 
-/// Whether the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the absolute
-/// path of `dir`, which is what an absolute pattern is matched against.
+/// Returns true if the glob `user_pattern` matches the package.json in `dir`. `abs_dir` is the
+/// absolute path of `dir`, which is what an absolute pattern is matched against.
 fn glob_lists(user_pattern: &[u8], dir: &[u8], abs_dir: &[u8]) -> bool {
     let dir = if path::is_absolute(user_pattern) {
         abs_dir

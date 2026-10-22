@@ -122,7 +122,7 @@ const validateHeaderValue = (name, value) => {
 
 // Node's `getOptionValue('--insecure-http-parser')`. The flag is fixed during
 // CLI parsing, so reading it once here is equivalent.
-const insecureHTTPParser = $newRustFunction("node_http_binding.rs", "getInsecureHTTPParser", 0)();
+const insecureHTTPParser = $bindgen("node_http_binding.bind.ts", "getInsecureHTTPParser")();
 
 const kIncomingMessage = Symbol("IncomingMessage");
 const kSkipPendingData = Symbol("SkipPendingData");

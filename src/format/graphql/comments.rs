@@ -1,5 +1,5 @@
-//! Which node a comment belongs to: Prettier's `attachComments` (`src/main/comments/attach.js`),
-//! which has no special cases for GraphQL.
+//! Decides which node a comment belongs to: Prettier's `attachComments` (`src/main/comments/attach.js`), which has no
+//! special cases for GraphQL.
 
 use super::parser::{NodeId, Tree};
 use crate::text::has_newline_backwards;
@@ -8,7 +8,7 @@ use crate::text::has_newline_backwards;
 pub(crate) enum Placement {
     Leading,
     Trailing,
-    /// In a node that has nothing else in it.
+    /// Inside a node that has no children.
     Dangling,
 }
 
@@ -20,11 +20,11 @@ pub(crate) struct Attached {
     pub(crate) placement: Placement,
 }
 
-/// Fills `attached`, which is sorted by node, and by position for the same node.
+/// Fills `attached`, sorted by node and then by position.
 pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     attached.clear();
-    // The nodes that the last comment is in, from the outside in. The comments are in the order of the text, so the way
-    // down to one starts at the innermost of them that it is in, not at the root.
+    // The nodes that contain the previous comment, outermost first. Comments are in source order, so the search for the
+    // next one starts at the innermost of these nodes that contains it, not at the root.
     let mut path = vec![tree.root()];
     for (index, comment) in tree.comments.iter().enumerate() {
         while let [_, .., last] = path[..]
@@ -32,8 +32,8 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
         {
             path.pop();
         }
-        // Prettier's `decorateComment`: the innermost node that the comment is in, and its
-        // children before and after the comment.
+        // Prettier's `decorateComment`: finds the innermost node that contains the comment, and that node's children
+        // right before and after the comment.
         let mut enclosing = path.last().copied().unwrap_or_else(|| tree.root());
         let (mut preceding, mut following);
         'descend: loop {

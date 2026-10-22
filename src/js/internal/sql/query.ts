@@ -129,6 +129,8 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     }
 
     if (status & SQLQueryStatus.cancelled) {
+      // as in onQuerySettled()
+      $pokePromiseAsHandled(this);
       this.reject(this[_adapter].queryCancelledError());
       return;
     }

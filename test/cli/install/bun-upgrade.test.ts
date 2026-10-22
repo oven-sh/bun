@@ -460,7 +460,7 @@ it.concurrent("verifies the downloaded release archive against the digest report
     return {
       stderr,
       exitCode,
-      // Whatever the upgrade staged before it gave up.
+      // Returns whatever the upgrade staged before it gave up.
       staged: readdirSync(String(stagingRoot)),
       downloadUrl: `https://${server.hostname}:${server.port}/download/${releaseAsset}`,
     };

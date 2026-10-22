@@ -4,10 +4,12 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
+use crate::generated_bindgen::socket_body::{BunSocket, SocketHandle};
 use bun_core::EncodedSlice;
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
@@ -98,7 +100,7 @@ mod tls_socket_functions;
 use crate::api::bun::h2_frame_parser::H2FrameParser;
 use crate::api::bun_secure_context::SecureContext;
 use crate::server::ServerWebSocket;
-use crate::socket::udp_socket_draft::get_us_error;
+use crate::socket::udp_socket::get_us_error;
 
 bun_output::declare_scope!(Socket, visible);
 macro_rules! log {
@@ -2227,6 +2229,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 "C"
             }
         );
+        // Like Node, an http2 session reports a failed read, not a send that the kernel rejected.
+        let err = if SSL
+            && matches!(this.native_callback.get(), NativeCallbacks::H2(_))
+            && socket.ssl_send_rejected()
+        {
+            0
+        } else {
+            err
+        };
         this.detach_native_callback();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         // Declared first so it drops last: ticks drain ahead of the teardown.
@@ -3398,7 +3409,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get(global, "socket")?
             .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
 
-        let handlers = this.get_handlers();
+        // The "socket" getter can close this socket, which drops its handlers.
+        let Some(handlers) = this.handlers_opt() else {
+            return Ok(JSValue::UNDEFINED);
+        };
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
         let reloaded = Handlers::prepare_reload(global, socket_obj)?;
@@ -3467,11 +3481,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+        if !matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
-        };
+        }
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3606,6 +3620,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             default_data = v;
             default_data.ensure_still_alive();
         }
+
+        // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
+        let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgradeTLS requires an established socket"
+            )));
+        };
 
         let vm = handlers.vm;
 
@@ -4297,23 +4318,33 @@ impl SocketMode {
 
 impl bun_event_loop::Taskable for DuplexUpgradeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::DuplexUpgradeContext;
-    /// The context's one queued hop will not run, and nothing else frees the
-    /// context. If the TLSSocket is still attached (a `StartTLS` that never
-    /// ran: no wrapper was created, so no close ever detached it), route it
-    /// through its close first — that consumes our +1 and detaches it from the
-    /// duplex, so its finalizer during ~VM finds nothing to reach into — then
-    /// free the context.
+    /// The context's one queued hop will not run. If the TLSSocket is still
+    /// attached (a `StartTLS` that never ran: no wrapper was created, so no
+    /// close ever detached it), route it through its close first — that
+    /// consumes our +1 and detaches it from the duplex, so its finalizer
+    /// during ~VM finds nothing to reach into. Then free the context, unless
+    /// an entry point holds it: the release of that ref queues the free.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; the single queue entry for `this`.
         let ctx = unsafe { bun_ptr::ThisPtr::new(this) };
         ctx.queued.set(false);
         if let Some(tls) = ctx.tls.replace(None) {
+            // An entry point on the stack keeps the context past this call.
+            // Neuter the listener thunks now, while the wrapper is still
+            // strongly held.
+            ctx.upgrade.teardown();
             let socket = ctx.duplex_socket();
             // `Err` is left pending for the release dispatcher's fold.
             let _ = TLSSocket::on_close(tls.into_this_ptr(), socket, 0, None);
         }
-        // SAFETY: fn contract; nothing else frees the context and no borrow of it is live.
-        unsafe { Self::deinit(this) };
+        // Not `release_connection`: at zero that queues the hop this call stands in for.
+        if ctx.take_connection_ref() {
+            ctx.ref_count.set(ctx.ref_count.get() - 1);
+        }
+        if ctx.ref_count.get() == 0 {
+            // SAFETY: fn contract; nothing holds the context and no borrow of it is live.
+            unsafe { Self::deinit(this) };
+        }
     }
     /// The hop continues the script that upgraded the duplex: once that context has stopped, a
     /// `StartTLS` that has not run yet must not start (`release_unrun` closes what there is).
@@ -4323,20 +4354,31 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
     }
 }
 
+/// Live contexts, read by `bun:internal-for-testing` leak tests.
+pub(crate) static DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+#[derive(bun_ptr::CellRefCounted)]
+#[ref_count(destroy = Self::queue_free)]
 pub(crate) struct DuplexUpgradeContext {
+    /// One ref for the open connection (`connection_ref`) and one per entry
+    /// point on the stack ([`UpgradedDuplex::keep_alive`]). At zero the
+    /// `Close` hop is queued, which frees the context. No ref is taken after
+    /// that.
+    ref_count: Cell<u32>,
+    /// The connection's ref is still held. Cleared by [`Self::take_connection_ref`].
+    connection_ref: Cell<bool>,
     pub upgrade: UpgradedDuplex,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: JsCell<Option<RefPtr<TLSSocket>>>,
-    // task used to deinit the context in the next tick, vm is used to enqueue the task
     /// JSC_BORROW: process-lifetime per-thread VM (immortal). Stored as
     /// `&'static` so [`enqueue_self_task`](Self::enqueue_self_task) routes
     /// through the safe `event_loop_mut()` accessor instead of a raw deref.
     pub vm: &'static VirtualMachine,
     pub(in crate::socket) task_event: Cell<EventState>,
     /// A `task_event` hop is in the VM's queue. The context is enqueued by
-    /// pointer, so at most one entry may exist: a second request while queued
-    /// (the stop phase closing a duplex whose StartTLS has not run) only
-    /// updates `task_event`, which the pending entry reads when it runs.
+    /// pointer, so at most one entry may exist: `StartTLS` first, and `Close`
+    /// once the ref count has reached zero.
     queued: Cell<bool>,
     /// Config to build a fresh `SSL_CTX` from (legacy `{ca,cert,key}` callers).
     /// Mutually exclusive with `owned_ctx` — `runEvent` prefers `owned_ctx`.
@@ -4386,7 +4428,63 @@ impl DuplexUpgradeContext {
         self.tls.get().as_ref().map(|t| t.this_ptr())
     }
 
+    /// A handler can close the socket and turn the event loop before it
+    /// returns, so every dispatch runs under an entry point's
+    /// [`UpgradedDuplex::keep_alive`].
+    #[inline]
+    pub(in crate::socket) fn debug_assert_kept_alive(&self) {
+        debug_assert!(
+            self.ref_count.get() > u32::from(self.connection_ref.get()),
+            "DuplexUpgradeContext dispatch with no keep_alive() on the stack"
+        );
+    }
+
+    /// Holds the context until the returned guard drops: see
+    /// [`UpgradedDuplex::keep_alive`].
+    pub(in crate::socket) fn keep_alive(this: bun_ptr::ThisPtr<Self>) -> RefPtr<Self> {
+        debug_assert!(
+            this.ref_count.get() > 0,
+            "DuplexUpgradeContext entered after its last ref was released"
+        );
+        RefPtr::from_this(this)
+    }
+
+    /// The connection is over. True the first time: the caller then releases
+    /// the connection's ref.
+    fn take_connection_ref(&self) -> bool {
+        if !self.connection_ref.replace(false) {
+            return false;
+        }
+        // Nothing is left for the owning context to close, and its hook would
+        // take a ref.
+        self.abort_handle.leave();
+        true
+    }
+
+    /// The transport closed, or `StartTLS` could not start it.
+    fn release_connection(this: bun_ptr::ThisPtr<Self>) {
+        if this.take_connection_ref() {
+            // SAFETY: `this` is live and the ref released is the connection's.
+            unsafe { Self::deref(this.as_ptr()) };
+        }
+    }
+
+    /// The last ref is gone. It is usually an entry point's guard, which
+    /// drops while that entry point's `&self` is live, so the context is not
+    /// freed in place: the queued hop frees it.
+    fn queue_free(this: *mut Self) {
+        // SAFETY: the count just reached zero; `this` is live until that hop runs.
+        let this = unsafe { bun_ptr::ThisPtr::new(this) };
+        debug_assert!(
+            !this.queued.get(),
+            "DuplexUpgradeContext released its last ref with a hop still queued"
+        );
+        this.task_event.set(EventState::Close);
+        Self::enqueue_self_task(this);
+    }
+
     fn on_open(this: bun_ptr::ThisPtr<Self>) {
+        this.debug_assert_kept_alive();
         this.is_open.set(true);
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
@@ -4395,6 +4493,7 @@ impl DuplexUpgradeContext {
     }
 
     fn on_data(this: bun_ptr::ThisPtr<Self>, decoded_data: &[u8]) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_data(tls, socket, decoded_data));
@@ -4402,12 +4501,14 @@ impl DuplexUpgradeContext {
     }
 
     fn on_session(this: bun_ptr::ThisPtr<Self>, session: &[u8]) {
+        this.debug_assert_kept_alive();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_session(tls, session));
         }
     }
 
     fn on_keylog(this: bun_ptr::ThisPtr<Self>, line: &[u8]) {
+        this.debug_assert_kept_alive();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_keylog(tls, line));
         }
@@ -4417,6 +4518,7 @@ impl DuplexUpgradeContext {
         this: bun_ptr::ThisPtr<Self>,
         ssl: &mut boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
+        this.debug_assert_kept_alive();
         this.tls_this_ptr()
             .map_or(bun_boringssl::ServerIdentity::Unchecked, |tls| {
                 tls.server_identity(ssl)
@@ -4428,6 +4530,7 @@ impl DuplexUpgradeContext {
         success: bool,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_handshake(
@@ -4440,6 +4543,7 @@ impl DuplexUpgradeContext {
     }
 
     fn on_end(this: bun_ptr::ThisPtr<Self>) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_end(tls, socket));
@@ -4447,6 +4551,7 @@ impl DuplexUpgradeContext {
     }
 
     fn on_writable(this: bun_ptr::ThisPtr<Self>) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_writable(tls, socket));
@@ -4454,6 +4559,7 @@ impl DuplexUpgradeContext {
     }
 
     fn on_error(this: bun_ptr::ThisPtr<Self>, err_value: JSValue) {
+        this.debug_assert_kept_alive();
         if this.is_open.get() {
             if let Some(tls) = this.tls_this_ptr() {
                 crate::dispatch::fold(tls.handle_error(err_value));
@@ -4477,9 +4583,10 @@ impl DuplexUpgradeContext {
             // pointee).
             //
             // Neuter the JS listener thunks now, while the wrapper is still
-            // strongly held, so the later `StartTLS` → `deinit` → `Drop`
-            // teardown (after `handle_connect_error` downgrades it) is a
-            // no-op on already-cleared shadows.
+            // strongly held, so the `deinit` → `Drop` teardown later (the
+            // queued `StartTLS` releases the connection's ref, after
+            // `handle_connect_error` downgrades the wrapper) is a no-op on
+            // already-cleared shadows.
             this.upgrade.teardown();
             let p = tls.into_this_ptr();
             crate::dispatch::fold(TLSSocket::handle_connect_error(
@@ -4497,6 +4604,7 @@ impl DuplexUpgradeContext {
     }
 
     fn on_timeout(this: bun_ptr::ThisPtr<Self>) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls_this_ptr() {
             crate::dispatch::fold(TLSSocket::on_timeout(tls, socket));
@@ -4504,11 +4612,12 @@ impl DuplexUpgradeContext {
     }
 
     fn on_close(this: bun_ptr::ThisPtr<Self>) {
+        this.debug_assert_kept_alive();
         let socket = this.duplex_socket();
         if let Some(tls) = this.tls.replace(None) {
             // `TLSSocket::on_close` consumes the +1 we hold (its scope-exit deref
             // is the ext-slot/owner pin). Null our pointer first so the
-            // `deinit_in_next_tick` → `deinit` path doesn't deref it a second
+            // `queue_free` → `deinit` path doesn't deref it a second
             // time — that's the over-deref behind the cross-file
             // `TLSSocket::finalize` use-after-poison. It also means a throw
             // from `duplex.end()` (called right after this returns via
@@ -4519,7 +4628,7 @@ impl DuplexUpgradeContext {
             crate::dispatch::fold(TLSSocket::on_close(p, socket, 0, None));
         }
 
-        Self::deinit_in_next_tick(this);
+        Self::release_connection(this);
     }
 
     /// Takes `ThisPtr<Self>` because it may free `this` (via
@@ -4528,18 +4637,19 @@ impl DuplexUpgradeContext {
         this.queued.set(false);
         match this.task_event.get() {
             EventState::StartTLS => {
+                // `start_tls` dispatches `on_open` and the first handshake pass.
+                let _keep_alive = Self::keep_alive(this);
                 // A pre-open error (onError's `!is_open` branch) may have
                 // already fired the connect-error callback, freed
                 // `tls.handlers`, and nulled `tls` while this task was
                 // queued. There is nothing to open in that case — and
-                // nothing else will reach `deinit()` since the SSLWrapper
-                // (whose close callback normally schedules it) is never
-                // created — so tear everything down here instead of
+                // nothing else will release the connection's ref since the
+                // SSLWrapper (whose close callback normally does) is never
+                // created — so release it here instead of
                 // spinning up a wrapper that would dispatch `onOpen` into
                 // the dead socket.
                 if this.tls.get().is_none() {
-                    // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
-                    unsafe { Self::deinit(this.as_ptr()) };
+                    Self::release_connection(this);
                     return;
                 }
                 // The transport closed while this task was queued: an engine
@@ -4578,18 +4688,17 @@ impl DuplexUpgradeContext {
                         //
                         // Neuter the JS listener thunks now, while the wrapper
                         // is still strongly held, so the `deinit` → `Drop`
-                        // teardown below is a no-op on already-cleared shadows.
+                        // teardown later is a no-op on already-cleared shadows.
                         this.upgrade.teardown();
                         let p = tls.into_this_ptr();
                         crate::dispatch::fold(TLSSocket::handle_connect_error(p, errno, 0));
                     }
                     // `start_tls`/`start_tls_with_ctx` failed before the
                     // SSLWrapper was assigned, so its close callback
-                    // was never registered and nothing will schedule
-                    // `.Close`. Same as the `tls == null` early-return
-                    // above: tear down here.
-                    // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
-                    unsafe { Self::deinit(this.as_ptr()) };
+                    // was never registered and nothing else will release
+                    // the connection's ref. Same as the `tls == null`
+                    // early-return above.
+                    Self::release_connection(this);
                     return;
                 }
                 this.ssl_config.set(None); // Drop frees.
@@ -4606,7 +4715,7 @@ impl DuplexUpgradeContext {
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
             // for every duplex-upgraded TLS socket.
-            // SAFETY: `this` is the task's live context; no borrow of `*this` is live.
+            // SAFETY: `this` is the task's live context; its last ref queued this hop and no borrow of `*this` is live.
             EventState::Close => unsafe { Self::deinit(this.as_ptr()) },
         }
     }
@@ -4626,11 +4735,6 @@ impl DuplexUpgradeContext {
             .enqueue_task(jsc::Task::init(this.as_ptr()));
     }
 
-    fn deinit_in_next_tick(this: bun_ptr::ThisPtr<Self>) {
-        this.task_event.set(EventState::Close);
-        Self::enqueue_self_task(this);
-    }
-
     fn start_tls(this: bun_ptr::ThisPtr<Self>) {
         this.task_event.set(EventState::StartTLS);
         Self::enqueue_self_task(this);
@@ -4638,7 +4742,8 @@ impl DuplexUpgradeContext {
 
     /// # Safety
     /// `this` must be the unique live pointer to the heap allocation produced
-    /// in `js_upgrade_duplex_to_tls`. Frees the allocation; callers must not
+    /// in `js_upgrade_duplex_to_tls`, with a ref count of zero. Frees the
+    /// allocation; callers must not
     /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
     /// be a Stacked Borrows protector violation when the backing `Box` is
     /// reclaimed below).
@@ -4646,6 +4751,8 @@ impl DuplexUpgradeContext {
         {
             // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
             let ctx = unsafe { &*this };
+            debug_assert_eq!(ctx.ref_count.get(), 0);
+            DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
             ctx.abort_handle.leave();
             ctx.tls.set(None);
             // Close raced ahead of StartTLS — drop the unconsumed config / ctx.
@@ -4667,65 +4774,43 @@ impl DuplexUpgradeContext {
 
 /// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
-#[bun_jsc::host_fn]
-pub(crate) fn js_upgrade_tls_deferred(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn upgrade_tls_deferred<'a>(
+    cx: &mut JsScope<'a>,
+    socket: BunSocket<'a>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, opts] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+    match socket {
+        BunSocket::Tcp(this) => {
+            NewSocket::<false>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
+        BunSocket::Tls(this) => {
+            NewSocket::<true>::upgrade_tls_impl(this, cx.global(), options.to_js(), true)
+        }
     }
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
-    }
-    Err(global.throw(format_args!("Expected a socket instance")))
 }
 
 /// node:net's `destroy()`: drops the handshake flight held for the handshake callback.
-#[bun_jsc::host_fn]
-pub(crate) fn js_release_held_flight(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.socket.get().release_held_flight();
-    } else if let Some(this) = socket.as_class_ref::<TCPSocket>() {
+pub(crate) fn release_held_flight(socket: SocketHandle<'_>) {
+    match socket {
         // The raw half of an `upgradeTLS` pair shares the socket of its TLS half.
-        this.socket.get().release_held_flight();
+        SocketHandle::Tcp(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Tls(this) => this.socket.get().release_held_flight(),
+        SocketHandle::Ignored(_) => {}
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// node:tls with the built-in `checkServerIdentity`: `server_identity` refuses a wrong name like Bun.connect's.
-#[bun_jsc::host_fn]
-pub(crate) fn js_check_server_identity_in_handshake(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket, in_handshake] = callframe.arguments_as_array::<2>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, in_handshake != JSValue::TRUE));
+pub(crate) fn check_server_identity_in_handshake(socket: SocketHandle<'_>, in_handshake: bool) {
+    if let SocketHandle::Tls(this) = socket {
+        this.update_flags(|f| f.set(Flags::DEFERS_SERVER_IDENTITY, !in_handshake));
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 /// `tls.connect()`'s first 'connect' listener, where node sends the ClientHello.
-#[bun_jsc::host_fn]
-pub(crate) fn js_first_flight_before_fin(
-    _global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-    let [socket] = callframe.arguments_as_array::<1>();
-    if let Some(this) = socket.as_class_ref::<TLSSocket>() {
+pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
+    if let SocketHandle::Tls(this) = socket {
         this.socket.get().set_first_flight_before_fin();
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 #[bun_jsc::host_fn]
@@ -4897,6 +4982,9 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
     // below before any read or `&mut DuplexUpgradeContext` is formed.
     unsafe {
+        // The connection's ref.
+        ptr::addr_of_mut!((*duplex_context).ref_count).write(Cell::new(1));
+        ptr::addr_of_mut!((*duplex_context).connection_ref).write(Cell::new(true));
         ptr::addr_of_mut!((*duplex_context).tls)
             .write(JsCell::new(Some(RefPtr::from_raw(tls.as_ptr()))));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
@@ -4973,6 +5061,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
             },
         ));
     }
+    DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // ssl_opts is moved into duplexContext.ssl_config when owned_ctx == null;
     // otherwise it was only used for protos/server_name and is freed here.
     // SAFETY: every field initialized above; nothing frees the context before this fn returns.
@@ -5007,54 +5096,20 @@ pub(crate) fn js_upgrade_duplex_to_tls(
     Ok(array)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_is_named_pipe_socket(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "isNamedPipeSocket",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn is_named_pipe_socket(socket: SocketHandle<'_>) -> bool {
+    match socket {
+        SocketHandle::Tcp(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Tls(this) => this.socket.get().is_named_pipe(),
+        SocketHandle::Ignored(_) => false,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
-    }
-    Ok(JSValue::FALSE)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_get_buffered_amount(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [socket, _, _] = callframe.arguments_as_array::<3>();
-    if callframe.arguments_count() < 1 {
-        return Err(global.throw_not_enough_arguments(
-            "getBufferedAmount",
-            1,
-            callframe.arguments_count() as usize,
-        ));
+pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
+    match socket {
+        SocketHandle::Tcp(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Tls(this) => this.buffered_data_for_node_net.get().len(),
+        SocketHandle::Ignored(_) => 0,
     }
-    if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
-    }
-    Ok(JSValue::js_number(0.0))
 }
 
 #[bun_jsc::host_fn]
@@ -5172,6 +5227,16 @@ pub(crate) mod testing_apis {
         Ok(JSValue::js_number(count as f64))
     }
 
+    /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_duplex_upgrade_context_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let count = DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+        Ok(JSValue::js_number(count as f64))
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn js_clear_socket_faults(
         global: &JSGlobalObject,
@@ -5267,11 +5332,13 @@ pub(crate) mod testing_apis {
                 fi::ACTION_SHORT
             } else if action_str.eq_ascii(b"zero") {
                 fi::ACTION_ZERO
+            } else if action_str.eq_ascii(b"excess") {
+                fi::ACTION_EXCESS
             } else if action_str.eq_ascii(b"none") {
                 fi::ACTION_NONE
             } else {
                 return Err(global.throw(format_args!(
-                    "rule.action must be one of: errno, short, zero, none"
+                    "rule.action must be one of: errno, short, zero, excess, none"
                 )));
             };
 
@@ -5297,6 +5364,12 @@ pub(crate) mod testing_apis {
             {
                 return Err(global.throw(format_args!(
                     "rule.action \"zero\" is only supported for syscall \"recv\", \"send\", \"writev\", \"sendmsg\" or \"recvmsg\""
+                )));
+            }
+
+            if action == fi::ACTION_EXCESS && syscall != fi::SEND && syscall != fi::WRITEV {
+                return Err(global.throw(format_args!(
+                    "rule.action \"excess\" is only supported for syscall \"send\" or \"writev\""
                 )));
             }
 

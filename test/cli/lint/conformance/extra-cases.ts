@@ -1,4 +1,4 @@
-// Records what real ESLint reports for test cases that are not upstream's, in the format of `fixtures/`.
+// Records what real ESLint reports for test cases that aren't upstream's, in the `fixtures/` format.
 //
 //   ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. node extra-cases.ts --out <dir> <plugin>/<rule> <cases.json> [<plugin>/<rule> <cases.json> ...]
 //
@@ -7,26 +7,27 @@
 //   { "code": "..", "options"?: [..], "filename"?: "..", "languageOptions"?: {..}, "settings"?: {..}, "name"?: "..",
 //     "typeAware"?: false }
 //
-// (a plain string is `{ code }`), `languageOptions` as in the fixtures: `parser` is `"espree"` or `"typescript"`, and in
-// `parserOptions`, `project` and `tsconfigRootDir` are relative to `fixtures/typescript-eslint-project`. A case of a
-// fixture is a valid input.
+// (a plain string means `{ code }`). `languageOptions` is the same as in the fixtures: `parser` is `"espree"` or
+// `"typescript"`, and `project` and `tsconfigRootDir` in `parserOptions` are relative to
+// `fixtures/typescript-eslint-project`. A case copied from a fixture is valid input.
 //
-// The configuration is layered as the RuleTester of the plugin does it (see `extract-*.ts`), with these defaults:
+// The config is layered the way the plugin's RuleTester does it (see `extract-*.ts`), with these defaults:
 //
 // - eslint: espree, `ecmaVersion: "latest"`, `sourceType: "module"`; the TypeScript parser when `filename` ends in
 //   `.ts`, `.tsx`, `.mts` or `.cts`; JSX when it ends in `.jsx`.
-// - typescript-eslint: its parser. A rule that requires types gets the `parserOptions` that most of its upstream cases
-//   have, and the code is `file.ts` (`react.tsx` with `ecmaFeatures.jsx`) of the fixture project. `typeAware: false`
-//   turns that off. Unlike in the RuleTester, all the rules of the plugin are defined, and only the one is enabled.
-// - A case that names neither a file nor a parser and that does not parse is tried again with JSX, then as `file.ts`,
-//   then as `file.tsx`. What is recorded says which it was.
+// - typescript-eslint: its parser. A rule that requires types gets the `parserOptions` most of its upstream cases use,
+//   and the code is linted as the fixture project's `file.ts` (`react.tsx` with `ecmaFeatures.jsx`). `typeAware: false`
+//   turns that off. Unlike in the RuleTester, all of the plugin's rules are defined, but only the one under test is
+//   enabled.
+// - A case with no filename and no parser that fails to parse is retried with JSX, then as `file.ts`, then as
+//   `file.tsx`. The recorded case has the one that worked.
 //
-// `skip` is set on what cannot be compared: a fatal parse error, options that ESLint rejects, a rule that throws or that
-// does not finish in `--timeout` seconds (20).
+// `skip` is set on a case that can't be compared: a fatal parse error, options that ESLint rejects, or a rule that
+// throws or doesn't finish in `--timeout` seconds (20).
 //
-// `--out <dir>` gets `<dir>/<plugin>/<rule>.json` and a link to the fixture project.
+// Writes `<dir>/<plugin>/<rule>.json` and a link to the fixture project into `--out <dir>`.
 //
-// Needs Node.js >= 23.6, as the extractors do.
+// Needs Node.js >= 23.6, like the extractors.
 
 import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -58,7 +59,7 @@ export interface ExtraCase {
   filename?: string | null;
   languageOptions?: Config | null;
   settings?: Config | null;
-  /** `false`: without types, also for a rule that requires them. */
+  /** `false` lints without types, even for a rule that requires them. */
   typeAware?: boolean;
 }
 
@@ -68,9 +69,9 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 // Command line
 // ---------------------------------------------------------------------------
 
-const jobsOfRule: { plugin: Plugin; rule: string; file: string }[] = [];
+const ruleJobs: { plugin: Plugin; rule: string; file: string }[] = [];
 let out = "";
-/** Seconds that ESLint has for one case. */
+/** Time limit for ESLint on one case, in seconds. */
 let timeout = 20;
 let upstream = join(scriptDir, "fixtures");
 {
@@ -92,12 +93,12 @@ let upstream = join(scriptDir, "fixtures");
     const id = plain[i].replace(/^@typescript-eslint\//, "typescript-eslint/");
     const [plugin, rule] = id.includes("/") ? id.split("/") : ["eslint", id];
     if (plugin !== "eslint" && plugin !== "typescript-eslint") throw new Error(`unknown plugin ${plugin}`);
-    jobsOfRule.push({ plugin, rule, file: resolve(plain[i + 1]) });
+    ruleJobs.push({ plugin, rule, file: resolve(plain[i + 1]) });
   }
 }
 
 // ---------------------------------------------------------------------------
-// What both plugins share
+// Shared by both plugins
 // ---------------------------------------------------------------------------
 
 const withoutNulls = (object: Config | null | undefined): Config =>
@@ -107,11 +108,11 @@ let pending: () => LintMessage[];
 Object.assign(globalThis, { __extraCasesLint: () => pending() });
 const watched = new Script("__extraCasesLint()");
 
-/** Lints, and says why the result cannot be compared if it cannot. */
+/** Lints. `skip` is the reason the result can't be compared, if any. */
 function verify(lint: () => LintMessage[]): { messages: LintMessage[]; skip: string | null; fatal: boolean } {
   let messages: LintMessage[];
   try {
-    // Some rules take exponential time on some types. The watchdog of `vm` also stops code that the script calls.
+    // Some rules take exponential time on some types. The `vm` timeout also stops code that the script calls.
     pending = lint;
     messages = watched.runInThisContext({ timeout: timeout * 1000 });
   } catch (error) {
@@ -136,7 +137,7 @@ interface Recorder {
 }
 
 // ---------------------------------------------------------------------------
-// eslint: `runCase()` of extract-eslint.ts
+// eslint: mirrors `runCase()` in extract-eslint.ts
 // ---------------------------------------------------------------------------
 
 function eslintRecorder(): Recorder {
@@ -210,10 +211,11 @@ function eslintRecorder(): Recorder {
     meta: rule => builtinRules.get(rule),
     record(ruleName, item) {
       const given = item.languageOptions?.parser;
-      const named: "espree" | "typescript" | undefined = given === "espree" || given === "typescript" ? given : undefined;
+      const explicitParser: "espree" | "typescript" | undefined =
+        given === "espree" || given === "typescript" ? given : undefined;
       const wantsJsx = Boolean(item.languageOptions?.parserOptions?.ecmaFeatures?.jsx);
-      if (item.filename || named) {
-        const parser = named ?? (/\.[cm]?tsx?$/.test(item.filename!) ? "typescript" : "espree");
+      if (item.filename || explicitParser) {
+        const parser = explicitParser ?? (/\.[cm]?tsx?$/.test(item.filename!) ? "typescript" : "espree");
         const filename = item.filename ?? `file.${parser === "typescript" ? "ts" : "js"}${wantsJsx ? "x" : ""}`;
         const only = attempt(ruleName, item, parser, filename, parser === "espree" && filename.endsWith(".jsx"));
         if (!only.fatal || item.filename || parser === "espree" || wantsJsx) return only.recorded;
@@ -236,7 +238,7 @@ function eslintRecorder(): Recorder {
 }
 
 // ---------------------------------------------------------------------------
-// typescript-eslint: `runCase()` of extract-typescript-eslint.ts
+// typescript-eslint: mirrors `runCase()` in extract-typescript-eslint.ts
 // ---------------------------------------------------------------------------
 
 function typescriptRecorder(): Recorder {
@@ -283,7 +285,7 @@ function typescriptRecorder(): Recorder {
     return linter;
   }
 
-  /** Gives the file of the last type-aware case the text that it has on disk. */
+  /** Lints the last type-aware case's file again with its text on disk. */
   let restore: { path: string; run: () => void } | null = null;
 
   function attempt(ruleName: string, item: ExtraCase, defaults: Config | null, jsx: boolean) {
@@ -294,7 +296,7 @@ function typescriptRecorder(): Recorder {
     delete languageOptions.parser;
 
     const given: Config = { ...languageOptions.parserOptions };
-    // A case that chooses a project does not also want the project service of the defaults, and the other way around.
+    // A case that sets `project` doesn't inherit `projectService` from the defaults, and vice versa.
     const inherited: Config = { ...defaults };
     if (given.project !== undefined && given.projectService === undefined) delete inherited.projectService;
     if (given.projectService && given.project === undefined) delete inherited.project;
@@ -305,13 +307,14 @@ function typescriptRecorder(): Recorder {
     }
 
     let filename: string = item.filename ?? (parserOptions.ecmaFeatures?.jsx ? "react.tsx" : "file.ts");
-    // As in the fixtures, the name of a type-aware case is relative to the project.
+    // As in the fixtures, a type-aware case's filename is relative to the project.
     if (typeAware && item.filename) filename = resolve(projectDir, filename);
     else if (parserOptions.project) filename = join(parserOptions.tsconfigRootDir ?? process.cwd(), filename);
 
     const config: Config = {
       files: ["**"],
-      // All the rules, as in a project: a comment that disables another rule of the plugin is about a rule that is defined.
+      // Define all the rules, as a real project does, so a comment that disables another of the plugin's rules is
+      // valid.
       plugins: { "@typescript-eslint": { rules } },
       languageOptions: {
         ...languageOptions,
@@ -328,8 +331,8 @@ function typescriptRecorder(): Recorder {
     };
     if (item.settings) config.settings = item.settings;
 
-    // The programs of typescript-estree remember the text that a file was linted with. The declarations of a case that was
-    // `react.tsx` would be visible to the next one that is `file.ts`: both are scripts of one program.
+    // typescript-estree's programs remember the text a file was last linted with. Without the restore, a `file.ts` case
+    // would see the declarations of the previous `react.tsx` case, because both are scripts in one program.
     const path = resolve(parserOptions.tsconfigRootDir ?? ".", filename);
     if (restore && restore.path !== path) {
       restore.run();
@@ -338,7 +341,10 @@ function typescriptRecorder(): Recorder {
     const linter = linterFor(parserOptions.tsconfigRootDir, filename);
     const result = verify(() => linter.verify(code, config, filename));
     if (typeAware && existsSync(path)) {
-      restore = { path, run: () => verify(() => linter.verify(readFileSync(path, "utf8"), { ...config, rules: {} }, filename)) };
+      restore = {
+        path,
+        run: () => verify(() => linter.verify(readFileSync(path, "utf8"), { ...config, rules: {} }, filename)),
+      };
     }
     if (result.skip) result.skip = result.skip.replaceAll(projectDir, ".");
 
@@ -391,8 +397,8 @@ function typescriptRecorder(): Recorder {
 // ---------------------------------------------------------------------------
 
 /**
- * The `parserOptions` that most of the type-aware upstream cases of a rule that requires types have. `null` for a rule
- * that is mostly tested without types (`naming-convention`).
+ * Returns the most common `parserOptions` among the rule's type-aware upstream cases, or `null` if the rule doesn't
+ * require types or is mostly tested without them (`naming-convention`).
  */
 function typeAwareDefaults(fixture: Fixture | null): Config | null {
   if (!fixture?.meta.requiresTypeChecking) return null;
@@ -410,7 +416,7 @@ function typeAwareDefaults(fixture: Fixture | null): Config | null {
 
 const recorders: Partial<Record<Plugin, Recorder>> = {};
 
-for (const { plugin, rule, file } of jobsOfRule) {
+for (const { plugin, rule, file } of ruleJobs) {
   const recorder = (recorders[plugin] ??= plugin === "eslint" ? eslintRecorder() : typescriptRecorder());
   const module = recorder.meta(rule);
   if (!module) {
@@ -437,7 +443,7 @@ if (!existsSync(join(out, "typescript-eslint-project"))) {
   try {
     symlinkSync(join(upstream, "typescript-eslint-project"), join(out, "typescript-eslint-project"));
   } catch {
-    // Someone else was faster.
+    // Another process created it first.
   }
 }
 

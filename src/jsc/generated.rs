@@ -72,7 +72,7 @@ impl<T, U> IntoRawMut<T> for *mut U {
 /// **Do not use** when `to_js` carries side-effects beyond box-and-hand-off
 /// (e.g. `Request` runs `calculate_estimated_byte_size` + body-stream GC
 /// migration) or when the payload is intrusively refcounted and never held
-/// by-value (e.g. `HTMLBundle`).
+/// by-value.
 #[macro_export]
 macro_rules! impl_js_class_via_generated {
     // `for<…>` arms FIRST: a leading `for` would otherwise feed into the `:ty`
@@ -255,8 +255,6 @@ macro_rules! js_class_module {
     };
 }
 
-js_class_module!(JSTimeout   = "Timeout"   { callback, arguments, idleTimeout, repeat, idleStart });
-js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 // Payload `Blob` lives in this crate (`webcore_types`) — pass it so the extern
 // signatures unify with the typed declarations there.
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
@@ -264,14 +262,3 @@ js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, str
 js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
-// `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
-// monomorphization. Payload erased;
-// the native struct lives in `bun_runtime::crypto`.
-js_class_module!(JSMD4        = "MD4"        {});
-js_class_module!(JSMD5        = "MD5"        {});
-js_class_module!(JSSHA1       = "SHA1"       {});
-js_class_module!(JSSHA224     = "SHA224"     {});
-js_class_module!(JSSHA256     = "SHA256"     {});
-js_class_module!(JSSHA384     = "SHA384"     {});
-js_class_module!(JSSHA512     = "SHA512"     {});
-js_class_module!(JSSHA512_256 = "SHA512_256" {});

@@ -12,9 +12,9 @@ const {
 const { SQLDialect, SQLResultArray, isUnsafeTransactionStart } = require("internal/sql/shared");
 const AsyncContextFrame = require("internal/async_context_frame");
 const { isStoppedModuleGraphRunning } = require("internal/shared");
-const monotonicNowMs = $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0);
+const monotonicNowMs = $bindgen("Timer.bind.ts", "monotonicNowMs");
 /// how many times `bun --hot` has reloaded the program, -1 without --hot
-const hotReloadGeneration = $newRustFunction("jsc_hooks.rs", "hotReloadGeneration", 0);
+const hotReloadGeneration = $bindgen("jsc_hooks.bind.ts", "hotReloadGeneration");
 
 const enum PooledConnectionState {
   connecting = 0,
@@ -207,7 +207,7 @@ class PooledConnection<ConnectionHandle extends NativeConnection = any> {
       return false;
     }
     // an explicit connectionTimeout of 0 disables the connect timer, and with it the retry budget
-    const connectionTimeout = adapter.connectionInfo.connectionTimeout ?? 30 * 1000;
+    const connectionTimeout = $getByIdDirect(adapter.connectionInfo, "connectionTimeout") ?? 30 * 1000;
     return connectionTimeout > 0 && monotonicNowMs() - this.connectStartedAt < connectionTimeout;
   }
 
@@ -336,7 +336,7 @@ function sameSettings(a: BaseSQLAdapter<any, any>, b: BaseSQLAdapter<any, any>):
       return false;
     }
   }
-  return x.transform?.column.from === y.transform?.column.from;
+  return $getByIdDirect(x, "transform")?.column.from === $getByIdDirect(y, "transform")?.column.from;
 }
 
 /// bun --hot only. This module and the open connections outlive a reload, the `new SQL()` of the program does not.
@@ -413,7 +413,8 @@ async function createPooledConnectionHandle<ConnectionHandle>(
     foundRows,
     channelBinding,
     transform,
-  } = options;
+    // Not what `Object.prototype` has for a key that is not set.
+  } = { __proto__: null, ...options } as unknown as typeof options;
 
   // What script of a disposed Bun.ModuleGraph starts does not start: nothing is dialed, and what
   // waits for this connection waits.
@@ -503,6 +504,11 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   public saslprep: boolean | undefined;
   /// One login is finding out which form the server has. Nothing else is dialed until it has settled.
   #dialsHeld = false;
+  /// The most connections it has had open at once since a dial last failed, when that was, and how often it has
+  /// asked for one more since the last login, see #dialForQueued().
+  #most = 0;
+  #refusedAt = -Infinity;
+  #tries = 0;
   public readonly generation: number = hotReloadGeneration();
   /// see retireUnusedPools()
   public asked: boolean = false;
@@ -553,7 +559,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
     this.connectionInfo = connectionInfo;
     this.ownerGraphFrame = AsyncContextFrame.currentGraphFrame();
     this.callbackAsyncContext =
-      connectionInfo.onconnect || connectionInfo.onclose ? AsyncContextFrame.current() : undefined;
+      $getByIdDirect(connectionInfo, "onconnect") || $getByIdDirect(connectionInfo, "onclose")
+        ? AsyncContextFrame.current()
+        : undefined;
     if (this.generation !== -1) {
       hotPools.add(this);
     }
@@ -562,6 +570,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   get closed(): boolean {
     return this.#closing !== null;
   }
+
+  /// close({ timeout: 0 }) was called: the caller gave up on what is queued.
+  public closedAtOnce: boolean = false;
 
   abstract array(values: any[], typeNameOrID?: number | ArrayType): SQLArrayParameter;
   abstract getDistributedTransactionCommands(name: string): TransactionCommands | null;
@@ -649,7 +660,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   /// For the callers that wait. If no connection is ready, the pool is started: it dials until `max` is reached.
-  /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers.
+  /// Otherwise it grows by one dial for each waiting caller that no dial in flight covers: back to what it has had
+  /// since a dial last failed, and by one more 20 ms after that, a pause that doubles with each such try, up to 1 s.
+  /// A login ends it.
   #dialForQueued() {
     if (this.queue.length !== 0) {
       this.#dial(this.readyConnections.size === 0);
@@ -658,15 +671,20 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   #dial(start: boolean) {
     const connections = this.connections;
+    const pause = Math.min(20 * 2 ** this.#tries, 1000);
+    const limit = start ? 0 : this.#most + (monotonicNowMs() - this.#refusedAt < pause ? 0 : 1);
     while (
       !this.#dialsHeld &&
       connections.length < this.connectionInfo.max &&
       this.#closing === null &&
-      (start || this.#connecting() < this.queue.length)
+      (start || (connections.length < limit && this.#connecting() < this.queue.length))
     ) {
       if (!this.#adopt()) {
         const connection = new PooledConnection(this);
         connections.push(connection);
+        if (!start && connections.length > this.#most) {
+          this.#tries++;
+        }
         connection.dial();
         if (connection.otherPassword === true && this.saslprep === undefined) {
           this.#dialsHeld = true;
@@ -736,7 +754,8 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   #serveNext(): boolean {
     const queue = this.queue;
     let reservationsAhead = 0;
-    for (let i = 0; i < queue.length; i++) {
+    // Behind as many reservations as there are connections nobody can be served.
+    for (let i = 0; i < queue.length && reservationsAhead < this.connections.length; i++) {
       const waiter = queue[i];
       if (typeof waiter === "function") {
         // An even share of the demand over `max` connections.
@@ -812,13 +831,21 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 
   connectionOpened(connection: PooledConnection) {
     this.saslprep = connection.saslprep;
+    this.#most = Math.max(this.#most, this.connections.length - this.#connecting());
+    this.#tries = 0;
+    this.#refusedAt = -Infinity;
     this.readyConnections.add(connection);
     if (this.#dialsHeld) {
       this.#dialsHeld = false;
       this.#dial(true);
     }
-    this.runUserCallback(this.connectionInfo.onconnect, null);
+    this.runUserCallback($getByIdDirect(this.connectionInfo, "onconnect"), null);
     this.#serve();
+    // The server has room: the callers that still wait do not have to wait for the next one to arrive. One more
+    // connection, not a start: a reservation that has just taken this one leaves nothing ready.
+    if (this.queue.length !== 0) {
+      this.#dial(false);
+    }
   }
 
   connectionClosed(connection: PooledConnection, err: Error, established: boolean) {
@@ -829,6 +856,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#dialsHeld = false;
     }
     this.readyConnections.delete(connection);
+    if (!established) {
+      this.#most = connections.length - this.#connecting();
+      this.#refusedAt = monotonicNowMs();
+    }
     const closeHandlers = connection.closeHandlers;
     for (const onClose of closeHandlers) {
       onClose(err);
@@ -852,7 +883,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       }
       this.#closeIfDrained();
     }
-    this.runUserCallback(this.connectionInfo.onclose, err);
+    this.runUserCallback($getByIdDirect(this.connectionInfo, "onclose"), err);
   }
 
   #failQueued(err: Error) {
@@ -922,6 +953,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       this.#closeIfDrained();
     }
     if (timeout === 0) {
+      this.closedAtOnce = true;
       this.#teardown();
     } else if (timeout !== undefined && !this.#tornDown) {
       const timer = setTimeout(BaseSQLAdapter.#closeTimerFired, timeout, this);

@@ -10,7 +10,7 @@ pub struct ParamNames {
 
 struct Pattern {
     regex: Regex,
-    /// As it is in the configuration.
+    /// The pattern as written in the config.
     text: String,
 }
 

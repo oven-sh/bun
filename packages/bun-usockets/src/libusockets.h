@@ -415,14 +415,10 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
 /* SNI: the names outlive us_listen_socket_close() for the connections already
- * accepted. ssl_ctx is up_ref'd; user is opaque (uWS stores a per-domain
- * HttpRouter*). user may be NULL. The last registration of a name replaces the
+ * accepted. ssl_ctx is up_ref'd. The last registration of a name replaces the
  * earlier one. */
 void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
-    __attribute__((nonnull(1, 2, 3)));
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
+    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
@@ -444,7 +440,6 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
-void *us_socket_server_name_userdata(us_socket_r s);
 /* Records a per-serverName entry's client-certificate policy on its SSL_CTX
  * so the SNI switch adds it to the connection's inherited one, and gives the
  * context its own session-id context so sessions from other contexts are not
@@ -704,6 +699,10 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
  * own a socket between loop iterations use this to tell an idle connection
  * from one the peer has already written to or closed. */
 int us_socket_queued_input(us_socket_r s) nonnull_fn_decl;
+
+/* TLS sockets only: nothing sets the bit up for a plain one. The kernel rejected a send of TLS records, so the error
+ * code of the close that follows stands for the lost records, not for a failed read. */
+int us_socket_ssl_send_rejected(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;

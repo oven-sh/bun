@@ -59,8 +59,17 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
 a function gives its full path instead. `length` sets the function's `.length`,
 which is otherwise the number of arguments up to the last that is not written
-`.optional`, `.nullable`, `.falsyAsNull` or `.default()`. The ones after that are
+`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()`. The ones after that are
 the ones TypeScript lets a caller leave out.
+
+A function of a `node:*` module names what Node's own source expects of an argument:
+`expected: { data: ["Buffer", "TypedArray", "DataView", "string"] }`. A value the argument's type
+refuses then throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`, "The "data" argument must
+be of type string or an instance of Buffer, TypedArray, or DataView. Received null", and not "data
+must be a string, ArrayBuffer or ArrayBufferView". What the type takes is the same. A string in the
+place of the list is the whole message: Node's C++ writes its own out that way, and so do the Bun APIs
+that have a message of their own. A dictionary named in `expected` reports what is not an object as the
+argument, and not under the dictionary's name.
 
 Nothing else is written by hand, except once per crate: `src/<crate>/generated_bindgen.rs`
 includes the generated file, the crate root declares `mod generated_bindgen`, and a
@@ -70,7 +79,7 @@ not compile.
 
 To reach the function:
 
-- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema;
+- from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`. A `.nullable` result, and a `.nullable` getter without a setter, is `T | null`;
 - from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
 
 ### Namespaces
@@ -114,8 +123,8 @@ and `&mut self` for its object, because nothing can invalidate either while it
 runs.
 
 The compiler holds a body to its capability as far as this API goes. The older API has
-other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`), and a body that
-takes one of those to run JavaScript has stepped around the check.
+other ways to a `&JSGlobalObject` (`VirtualMachine::get().global()`, a field of the struct), and a
+body that takes one of those to run JavaScript has stepped around the check.
 
 Much of the older API takes a `&JSGlobalObject` only to allocate or to throw. A `"heap"`
 function calls it with `heap.global()`, which is `unsafe`: nothing the global object is passed
@@ -123,7 +132,11 @@ to may run JavaScript, and the compiler cannot see that. Read what is called all
 before writing the `SAFETY` comment. `ToString` of an object, a property that is looked up or
 set and not defined, and a call to a constructor found on the global object all run JavaScript.
 Throwing tells the debugger, which can run code, so after a throw the body returns without
-reading what it borrowed.
+reading what it borrowed. A `mutates: true` method does not throw: what the debugger runs can call
+a method of the same object while the `&mut self` is live. It returns the error, which is thrown
+after the borrow ends. Every `heap.create_*` that returns a `Result` throws at once, except
+`create_utf16_string_from_vec`. A method that has to call one takes `capability: "js"` and borrows
+with `with_mut` (see [the receiver](#the-receiver)).
 
 ```rust
 // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
@@ -133,10 +146,11 @@ let global = unsafe { heap.global() };
 
 `throws: true` makes the return type a `Result`. The error is a
 `bindgen::Error<'a>`, made by `heap.error(..)`, `heap.type_error(..)`,
-`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)` or
-`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any type that
-implements `bindgen::IntoError` (`bun_sys::Error`, `SystemError`, `JsError` and a `Box` of
-one do), which lets a `capability: "none"` function fail too.
+`heap.range_error(..)`, `heap.error_with_code(ErrorCode::OUT_OF_RANGE, ..)`, `heap.invalid_arguments(..)`,
+`heap.string_too_long()`, `heap.memory_allocation_failed()` or
+`bindgen::Error::from_value(value)` (`?` makes one of a `JsError` or an `AllocError`), or any
+type that implements `bindgen::IntoError` (`bun_sys::Error`,
+`SystemError`, `JsError` and a `Box` of one do), which lets a `capability: "none"` function fail too.
 
 `cx.global()` is the `&JSGlobalObject`, for code that takes one. It borrows all of
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
@@ -149,7 +163,7 @@ own Rust function, which gets exactly the types of that signature:
 
 ```ts
 export const read = b.overloads(
-  { args: { path: b.string.utf8, options: ReadOptions.optional }, rustPath: "crate::read_path" },
+  { args: { path: b.string.utf8, options: ReadOptions.default({}) }, rustPath: "crate::read_path" },
   { args: { fd: b.i32, buffer: b.bytes({ from: ["buffer"] }), offset: b.u32.default(0) }, rustPath: "crate::read_fd" },
 );
 ```
@@ -163,7 +177,8 @@ arguments from left to right:
 1. It keeps the candidates whose type at that position takes the [kind](#unions-and-kinds)
    of the argument.
 2. An argument that was not passed is `undefined`. So `f(x)` and `f(x, undefined)` are the
-   same call.
+   same call. It keeps the candidates where the argument can be left out, or if there are none,
+   those whose type takes every kind.
 3. A candidate with no argument at that position stays.
 4. If no candidate takes the argument, all of them stay, and the next argument decides.
 5. When the arguments run out, the candidate written first wins. Its conversion reports
@@ -186,39 +201,55 @@ any other: nothing looks at how many there are.
 | `b.bool`                                         | `bool`                           | a boolean; `.loose` is `ToBoolean`                            |
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
-| `b.string`                                       | `bun_core::String`               | a string; `.loose` is `ToString`                              |
+| `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
 | `b.bufferSource.arrayBuffer`                     | `ExternalShared<JSCArrayBuffer>` | the same; the bytes of a view are copied                      |
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
+| `b.classRef(name)`                               | `&'a T`                          | an instance of a class of a `.classes.ts` file; see below     |
+| `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
-| `b.dictionary(members)`                          | a generated `struct`             | an object that is not an array                                |
+| `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
 | `b.union(alternatives)`                          | a generated `enum`               | see [Unions and kinds](#unions-and-kinds)                     |
-| `b.class(options)`                               | `JsWrapper<'a, T>`               | an instance                                                   |
+| `b.class(options)`                               | `JsWrapper<'a, T>`, `&'a T`      | an instance; the second with [`refCounted`](#refcounted)      |
 
 One JS type has one name; a modifier picks the Rust form. The last four are named
 types: each is called what it is exported as, and has to be exported. It is used by
 schemas of the crate it is generated into. A member or an alternative also names a C++
 field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
-These come last, in this order (`b.any` already takes `undefined` and `null`, so none applies to it):
+These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` applies to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
+- `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
-is `IntoIterator`. The body of a `b.fn` or of a namespace's function whose bytes do not outlive
-it returns the string itself, from `heap.create_utf8_string(bytes)`. `b.u64.asBigInt` is a
-result only: a `u64` that is always returned as a BigInt. `b.bufferSource` as a result is what
-`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array_from_box(bytes)` or
-`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation.
+is `IntoIterator`. `b.bufferSource` as a result is what
+`heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
+`heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
+`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
+before them copy.
+
+These are results only:
+
+| Schema           | Rust                                          | JavaScript gets                                                                                                                                                                      |
+| ---------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `b.u64.asBigInt` | `u64`                                         | always a BigInt                                                                                                                                                                      |
+| `b.f64.asDate`   | `f64`                                         | a `Date` with that time value                                                                                                                                                        |
+| `b.string.local` | `JsLocal<'a, JSString>`                       | the string the body made: `heap.create_latin1_string(bytes)`, `heap.create_utf16_string_from_vec(units)`, `heap.create_utf8_string(bytes)` or `heap.common_string(CommonString::..)` |
+| `b.record(T)`    | anything that is `IntoIterator` of `(key, T)` | an object with an own property for each pair; a key is UTF-8 and one that comes again takes the new value, `T` holds no JS value, and it is not a member or an alternative           |
+
+A body that returns `b.any` makes the value with what the generated code calls:
+`bindgen::to_js::record`, `to_js::array`, `to_js::utf8` and the others of that module. An empty
+object is `heap.create_empty_object()`.
 
 ### Numbers
 
@@ -246,9 +277,16 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage and can be stored. It belongs to the
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
+body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
+it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
-one anywhere.
+one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
+
+`b.classRef("TCPSocket")` is a `&'a` of the struct that class wraps, `crate::generated_classes::TCPSocket`.
+The argument's slot in the frame holds the instance, so it is only for an argument, alone or in
+`.nullable` or a union. In a function that can run JavaScript the struct must be one whose own
+methods take `&self`, since they can be called while the body holds the `&`.
 
 ### Dictionaries
 
@@ -262,9 +300,9 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, rustName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be absent implements `Default`. The thunk hands the struct
-over by value, so the body of one over 64 bytes needs
-`#[allow(clippy::large_types_passed_by_value)]`.
+A dictionary whose members can all be absent implements `Default`. As an argument, with
+`.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
+`options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot
@@ -282,6 +320,7 @@ The second argument of `b.dictionary` takes:
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
+| `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                            |
 
 ### Enumerations
 
@@ -312,8 +351,8 @@ reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 **A value goes to the first alternative, in written order, that takes its kind.** That
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
-The buffer types and `b.blob` refuse some values of their kinds (a shared buffer, a
-detached `Blob`); those go on to the next alternative that takes the kind and does not
+The buffer types, `b.blob` and `b.classRef` refuse some values of their kinds (a shared buffer, a
+detached `Blob`, an instance that wraps nothing); those go on to the next alternative that takes the kind and does not
 refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
@@ -321,6 +360,9 @@ kind goes last. An alternative that can never be chosen is an error when the sch
 loaded. Choosing tests whether the value is a cell once, loads the type byte once and
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
 place they end up in.
+
+A union is returned as what the alternative it holds is. One that is only returned owns its
+strings: `b.string.utf8` in it is a `Vec<u8>`.
 
 ### Buffers
 
@@ -334,7 +376,13 @@ let after = buffer.with_bytes(&cx.heap, sum);
 ```
 
 Calling `callback.call(cx, ..)` inside the closure does not compile. A detached or
-out-of-bounds view is empty. A shared buffer is refused: [`b.bytes`](#bytes) takes one.
+out-of-bounds view is empty. A shared buffer is refused, unless the type is
+`b.bufferSource.allowShared`, as with WebIDL's `[AllowShared]`. A resizable one is taken either
+way. To only read one, there is [`b.bytes`](#bytes).
+
+`buffer.with_bytes_mut(heap, |bytes| ..)` is for a buffer the function writes. It is `unsafe`:
+another argument can be the same memory, as in `hash(data, data)`, so the closure must not use
+bytes that were borrowed from one.
 
 ### Bytes
 
@@ -352,7 +400,7 @@ export const gzipSync = b.fn({
 ```
 
 ```rust
-fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
+fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: &ZlibCompressionOptions<'a>) -> bindgen::Result<'a, JsLocal<'a, BufferSource>>
 ```
 
 | Option      | Values                                               | Meaning                                                                |
@@ -360,13 +408,14 @@ fn gzip_sync<'a>(heap: &JsHeap<'a>, data: &[u8], options: ZlibCompressionOptions
 | `from`      | `"string"`, `"buffer"`, `"blob"`                     | what is taken without `ToString`                                       |
 | `otherwise` | **`"throw"`**, `"toString"`                          | anything else                                                          |
 | `refuse`    | `"undefined"`, `"null"`                              | with `"toString"`: these throw, and are not `"undefined"` and `"null"` |
+| `refuse`    | `"stringObject"`                                     | with `"throw"`: `"string"` is only a string                            |
 | `string`    | **`"utf8"`**, `"asIs"`                               | a string is its UTF-8, or stays a `bun_core::String`                   |
 | `shared`    | **`"borrowed"`**, `"copied"`                         | the bytes of a shared buffer                                           |
 | `held`      | **`"borrowed"`**, `"handle"`, `"copied"`, `"pinned"` | what the body gets                                                     |
 
 `"string"` is a string or a `String` object. `"buffer"` is a typed array, `DataView`,
-`ArrayBuffer` or `SharedArrayBuffer`. `"blob"` is a `Blob` whose bytes are in memory: a file,
-here or in S3, throws.
+`ArrayBuffer` or `SharedArrayBuffer`. `"blob"` is a `Blob`, or an output of `Bun.build()`, whose
+bytes are in memory: a file, here or in S3, throws.
 
 | `held`       | `string` | Rust                  |
 | ------------ | -------- | --------------------- |
@@ -401,17 +450,21 @@ thread.
 **A shared buffer** is borrowed like any other, as JSC's own `toBase64` and `indexOf` read one, and
 another thread that writes it during the call changes what the body reads. `shared: "copied"` is
 for a body that reads a byte again and counts on what it was, such as a parser that scans ahead
-and comes back. JSC's `sort` copies for the same reason.
+and comes back. JSC's `sort` copies for the same reason. With `string: "asIs"` the body calls
+`JsBytes::get_or_copy_if_shared` instead.
 
 The kind of the value is checked, and a string converted, in the order of the arguments. The
-bytes of a buffer are read, copied or pinned after every argument is converted. The argument is
-always there: it is not `.optional`, and not a member of a dictionary, a union or an array.
+bytes of a buffer are read, copied or pinned after every argument is converted. It is not a
+member of a dictionary, a union or an array. `held: "borrowed"` can be `.optional` or
+`.nullable`: an `Option<&'a [u8]>`. `string: "asIs"` can be `.nullable`: an `Option<StringOrJsBytes<'a>>`.
 
-An option that cannot apply is a build error: `refuse` without `"toString"`, `string` where no
+An option that cannot apply is a build error: `refuse` of `undefined` or `null` without `"toString"`,
+of a `String` object with it or where no string is taken, `string` where no
 string is taken, `shared` where no buffer is taken or `held: "copied"` copies it anyway. So is
 what no function needs yet, which is not written: `"asIs"` without `"handle"` or that copies a
-shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, and a `"pinned"` argument
-next to another or next to a `"borrowed"` one.
+shared buffer, `"pinned"` that takes a `Blob` or copies a shared buffer, a `"pinned"` argument
+next to another or next to a `"borrowed"` one, and an absent `"copied"`, `"pinned"` or `"handle"` other
+than `.nullable` of `"asIs"`.
 
 ## Values and lifetimes
 
@@ -449,52 +502,96 @@ export const Glob = b.class({
 });
 ```
 
-generates a trait, which the struct implements:
+A member is a function with a receiver. It is one of the struct's own methods, which the generated code calls by name:
 
 ```rust
 pub(crate) struct Glob {
     pattern: bun_core::Utf8Bytes<'static>,
 }
 
-impl GlobClass for Glob {
-    fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
+impl Glob {
+    pub(crate) fn constructor(pattern: bun_core::Utf8Bytes<'static>) -> Self {
         Glob { pattern }
     }
 
-    fn r#match<'a>(&self, str: &'a [u8]) -> bool {
+    pub(crate) fn r#match(&self, str: &[u8]) -> bool {
         bun_glob::r#match(self.pattern.slice(), str).matches()
     }
 }
 ```
 
+| Parameter, in order                         | When                                                                |
+| ------------------------------------------- | ------------------------------------------------------------------- |
+| [the receiver](#the-receiver)               | not in `static` or `construct`                                      |
+| `this_value: JsWrapper<'a, Self>`           | `passThis: true`                                                    |
+| `heap: &JsHeap<'a>`, `cx: &mut JsScope<'a>` | [`capability`](#what-a-function-may-do-capability) `"heap"`, `"js"` |
+| one for each of `args`                      |                                                                     |
+
+Arguments, results, `capability` and `throws` are those of a function. The generated code is in
+`crate::generated_bindgen`, so a member is at least `pub(crate)`.
+
 The struct, the _payload_, is stored **inside** the JS object, the _wrapper_, so the
 two have one lifetime and one allocation. It is dropped when the object is
 collected. `Drop` gets no capability, so it cannot touch the JS heap, and no Rust
 runs on the collector's threads. The collector is not told of memory the payload owns
-outside the object: there is no `estimatedSize` yet.
+outside the object.
+
+If a timer, another thread or a C library can still point at the struct after its JS object
+is collected, make the class [`refCounted`](#refcounted).
 
 | Key              | What it declares                                                                               |
 | ---------------- | ---------------------------------------------------------------------------------------------- |
 | `rustPath`       | the struct                                                                                     |
+| `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
+| `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
 | `proto`          | properties of the prototype                                                                    |
-| `static`         | functions on the constructor                                                                   |
+| `static`         | properties of the constructor: native functions and accessors without `setter` or `cache`      |
 | `internalFields` | JS values the object holds                                                                     |
-| `configurable`   | `false` makes the native properties of the prototype non-configurable                          |
+| `configurable`   | `false` makes the native properties non-configurable                                           |
 
-A property of `proto` is one of:
+Code that has the global object and no capability makes one with
+`payload.into_js_value(global)`, which returns a `JSValue`.
 
-| Property                                    | What it is                                                                   |
-| ------------------------------------------- | ---------------------------------------------------------------------------- |
-| `{ args, returns, capability, throws, .. }` | a native function; `privateSymbol` keys it by a private name of `src/js`     |
-| `{ getter: T, capability, throws }`         | an accessor; with `setter: true` it can be assigned                          |
-| `{ getter: T, cache: true, .. }`            | an accessor whose value is computed once per object; it cannot have a setter |
-| `{ builtin: true, length }`                 | the export of that name in `src/js/builtins/<class name>.ts`                 |
+A class that JavaScript names but cannot make, like `Crypto`, declares `construct: "illegal"`:
+`new Crypto()` throws `Illegal constructor`, and there is no `constructor` in Rust.
 
-If any member has `throws: true`, the trait has a
-`type Error<'a>: bindgen::IntoError<'a>` that they all fail with. `b.self` is the
-class itself as an argument, a result or a getter of its own members. `Glob::get_constructor(heap)` is the
-constructor function.
+A property of `proto` is one of these.
+
+| Property                                      | What it is                                                                                 |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `{ args, returns, capability, throws, .. }`   | a native function; `privateSymbol` keys it by a private name of `src/js`                   |
+| `{ getter: T, capability, throws, passThis }` | an accessor; with `setter` it can be assigned                                              |
+| `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields); no setter                   |
+| `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
+| `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
+| `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
+
+The properties are in the order of the schema, which `for-in` and `Object.keys` show. The Rust
+function is named after the property, and `rustName` names it otherwise, which tells apart the
+overloads of a function, and two members of `proto` and `static` that share a name. Two keys can
+also have the same `rustName`. The getter of `x` is `get_x` and its setter is `set_x`, and a leading
+`_` of the property is dropped: `_idleStart` is `get_idle_start`.
+`setter: true` gives the setter the getter's `capability`, and `setter: { capability: "js" }` its own. An
+accessor of `static` ignores its receiver, so a subclass inherits it.
+
+A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
+writable, configurable (even with `configurable: false`) and not enumerable, like the built-in ones. Its `name` is
+`[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's `name`: Node's
+`Timeout.prototype[Symbol.dispose].name` is `""`. Only a function can have an `@@` key.
+
+A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
+`undefined` instead, as some of Node's methods do.
+
+`b.self` is the class itself as an argument, a result or a getter of its own members. It can also be `.optional` or
+`.nullable`. A result that is an instance is a `JsWrapper`, a `JsLocal` or a `JSValue`.
+
+The constructor has a `PropertyCallback`, in the namespace of the file, for the static property
+table of the object that has the class:
+
+```
+    Glob    Bun::Bindgen::Generated::Glob::getGlobConstructor    DontDelete|PropertyCallback
+```
 
 ### The receiver
 
@@ -503,6 +600,7 @@ constructor function.
 | `capability: "none"` or `"heap"` | `&self`                     |
 | …with `mutates: true`            | `&mut self`                 |
 | `capability: "js"`               | `this: JsWrapper<'a, Self>` |
+| with [`refCounted`](#refcounted) | `&self`                     |
 
 A method that can run JavaScript can be re-entered, by a callback that calls
 another method of the same object. A `&mut self` held across that would be
@@ -510,8 +608,10 @@ undefined behaviour, so it gets the wrapper instead and borrows the payload for 
 long as nothing else can run:
 
 ```rust
-fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
-    if let Some(listener) = this.listener_field(&cx.heap).as_callable() {
+pub(crate) fn notify<'a>(this: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) -> bindgen::Result<'a, i32> {
+    if let Some(listener) = js_TestCounter::listener_get_cached(this.to_js())
+        && let Some(listener) = JsLocal::new(&cx.heap, listener).as_callable()
+    {
         listener.call(cx, this.as_value(), &[])?;
     }
     Ok(this.with(&cx.payloads, |counter| counter.count))
@@ -524,10 +624,74 @@ allocating or viewing a buffer inside the closure is fine.
 
 ### `internalFields`
 
-`internalFields: ["listener"]` generates `this.listener_field(heap)` and
-`this.set_listener_field(heap, value)` on `JsWrapper<'a, T>`. A `&self` or
-`&mut self` method that needs them asks for the wrapper too, with `passThis: true`.
-The wrapper reaches the internal fields and not the payload.
+`internalFields: ["callback"]` on `CronJob` generates these in the module `js_CronJob`, next to the schema's types.
+`this_value` is the object: `this_value.to_js()` in a member with `passThis: true`.
+
+| Function                                                 | What it does                        |
+| -------------------------------------------------------- | ----------------------------------- |
+| `js_CronJob::callback_get_cached(this_value)`            | the field, or `None` if it is empty |
+| `js_CronJob::callback_set_cached(this_value, global, v)` | sets it; `JSValue::ZERO` empties it |
+| `js_CronJob::callback_take_cached(this_value, global)`   | reads and empties it                |
+
+Every field starts empty. A heap snapshot shows what it holds as a property of its name.
+
+A getter with `cache: true` declares a field of its own name, with the same functions, and
+returns it. While the field is empty the getter calls Rust and stores the result, so emptying
+`tag` makes the next read compute it again.
+`cache: "tag"` on another getter declares nothing: it returns that field, of a getter or of
+`internalFields`, and fills it from its own Rust function.
+
+### `refCounted`
+
+With `refCounted: true` the struct is a separate, refcounted heap allocation and the object holds one ref:
+
+```ts
+export const CronJob = b.class({
+  rustPath: "crate::api::cron::CronJob",
+  refCounted: true,
+  finalize: true,
+  internalFields: ["callback", "pendingPromise", "cron"],
+  proto: {
+    cron: { internalField: "cron" },
+    stop: { returns: b.self, passThis: true },
+    "@@dispose": { returns: b.self, passThis: true, rustName: "stop" },
+  },
+});
+```
+
+```rust
+impl CronJob {
+    pub(crate) fn finalize(&self) {
+        self.this_value.with_mut(|v| v.finalize());
+    }
+
+    pub(crate) fn stop<'a>(&self, this_value: JsWrapper<'a, Self>) -> JsWrapper<'a, Self> {
+        Self::self_stop(self.self_ref.get().this_ptr(), self.global.bun_vm());
+        this_value
+    }
+}
+```
+
+- The struct is intrusively refcounted: `bun_ptr::CellRefCounted`, `RefCounted` or `ThreadSafeRefCounted`.
+- Every member takes `&self`, whatever its `capability`. Mutable state is in `Cell` and `JsCell`, and `mutates: true` is an error.
+- `construct` returns a `*mut Self`, whose ref the object takes over.
+- As an argument the class is a `&'a T`.
+- The pointer in the object never changes and is never null. A class with a closed or detached state tracks it in a
+  field of its own.
+- `finalize` runs before the object's ref is dropped. `Drop` runs when the last ref is dropped, which can be much later.
+- C++ reads the pointer to the struct with `wrapper->wrapped()`.
+- A heap snapshot reports the object's size plus `size_of` the struct.
+
+Native callbacks have no capability. What they need to reach the JS object takes the global object:
+
+| Function                         | What it does                                        |
+| -------------------------------- | --------------------------------------------------- |
+| `js_CronJob::to_js(ptr, global)` | makes the object, which takes over the caller's ref |
+| `js_CronJob::from_js(value)`     | the struct, if `value` is an instance               |
+
+`CronJob::to_js_ptr(ptr, global)` is `to_js` as an `unsafe fn`, and `CronJob::to_js_nonnull(ptr, global)` takes a
+`NonNull`. The struct also implements `bun_jsc::JsClass`, so `value.as_class_ref::<CronJob>()` works. To get
+back to its JS object the struct stores a `JsRef`, and calls `finalize()` on it from the class's `finalize`.
 
 ### Staying alive
 
@@ -538,3 +702,4 @@ thread when the work completes.
 ## Tests
 
 - `test/internal/bindgen.test.ts`: conversions with hostile inputs, through `src/jsc/bindgen_test.bind.ts`. A schema named `*_test.bind.ts` is only part of a build with assertions (a debug build, CI's ASAN lane), so nothing it binds ships; `$bindgen` of one is `undefined` elsewhere, and its Rust module is `#[cfg(debug_assertions)]`. What that schema does not use is covered by the suites of the APIs that do.
+- `test/integration/bun-types/bun-types.test.ts`: `packages/bun-types` promises nothing that a schema breaks. Every call the published types allow has arguments the schema takes, every result they name is one it gives, and no object has a member that the schema's dictionary or class lacks, but for those the test lists. A new schema file is listed in `PUBLISHED_AS` there, with what the published types call its exports.

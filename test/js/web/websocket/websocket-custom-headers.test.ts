@@ -390,6 +390,7 @@ describe("WebSocket options are read through the prototype chain", () => {
         return new Response("not a websocket", { status: 400 });
       },
       websocket: {
+        data: {} as Record<string, string>,
         open(ws) {
           ws.send(JSON.stringify(ws.data));
         },

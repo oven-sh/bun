@@ -2296,7 +2296,7 @@ function markStreamClosed(stream: Http2Stream) {
 
   if ((status & StreamState.Closed) === 0) {
     stream[bunHTTP2StreamStatus] = status | StreamState.Closed;
-    clearTimeout(stream[kTimeout]);
+    if (stream[kTimeout]) clearTimeout(stream[kTimeout]);
     stream[kTimeout] = null;
     stream.removeAllListeners("timeout");
     publishStreamCloseChannel(stream);
@@ -5110,7 +5110,10 @@ function destroyClosedStream(session: Http2Session, stream: Http2Stream) {
     // Like node's onStreamClose, wait for 'end' so a reader that attaches late still gets the buffered data.
     stream.once("end", destroySelfOnEndAndFinish);
     stream.on(EventEmitter.errorMonitor, destroySelfIfErrored);
-    (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
+    // A flowing stream with nothing buffered emits 'end' within a few ticks, whatever happens to its session.
+    if (!stream.readableFlowing || stream.readableLength > 0) {
+      (session[kUnreadClosedStreams] ??= new SafeSet()).add(stream);
+    }
   } else if (!stream.writableFinished && !stream.destroyed) {
     // END_STREAM closed the stream from inside end(), or from respond() just before its end(). Destroying now would swallow 'finish'.
     if (!stream[kEndingWithChunk]) stream.end();
@@ -6615,18 +6618,12 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
-const {
-  connectionListenerHTTP1,
-  closeIdleHttp1Connections,
-  kHttp1Connections,
-} = require("internal/http1_server_fallback");
-
 function connectionListener(socket: TLSSocket | Socket) {
   const options = this[bunSocketServerOptions] || {};
   if (socket.alpnProtocol === false || socket.alpnProtocol === "http/1.1") {
     if (options.allowHTTP1 === true) {
       // Fallback to HTTP/1.1
-      return connectionListenerHTTP1(this, socket, options);
+      return require("internal/http1_server_fallback").connectionListenerHTTP1(this, socket, options);
     }
     // Let event handler deal with the socket
 
@@ -6855,7 +6852,7 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     this.setMaxListeners(0);
     this.on("newListener", setupCompat);
     if (options.allowHTTP1 === true) {
-      this[kHttp1Connections] = new SafeSet();
+      this[require("internal/http1_server_fallback").kHttp1Connections] = new SafeSet();
       const http1Options = { ...options, ...options.http1Options };
       this.keepAliveTimeout = http1Options.keepAliveTimeout ?? 5000;
       this.headersTimeout = http1Options.headersTimeout ?? 60000;
@@ -6910,7 +6907,9 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
     closeAllSessions(this);
   }
   closeIdleConnections() {
-    if (this[bunSocketServerOptions]?.allowHTTP1 === true) closeIdleHttp1Connections(this);
+    if (this[bunSocketServerOptions]?.allowHTTP1 === true) {
+      require("internal/http1_server_fallback").closeIdleHttp1Connections(this);
+    }
   }
 }
 function createServer(options, onRequestHandler) {

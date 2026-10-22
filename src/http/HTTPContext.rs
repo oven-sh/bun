@@ -245,7 +245,7 @@ pub struct PooledSocket<const SSL: bool> {
     pub(crate) pool_id: u64,
     /// Seconds it can be idle before the timer closes it.
     pub(crate) idle_timeout_seconds: u32,
-    /// `find_in` closes the socket instead of reusing it once `http_thread().timer` passes this many nanoseconds.
+    /// `find_in` closes the socket instead of reusing it once `http_thread().timer` passes this many nanoseconds. `u64::MAX` is the default timeout, which only the timer enforces.
     pub(crate) reuse_deadline_ns: u64,
 }
 
@@ -690,8 +690,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 h2_session,
                 pool_id: pool.id,
                 idle_timeout_seconds: pool.idle_timeout_ms_or_default().div_ceil(1000),
-                reuse_deadline_ns: crate::async_http::http_thread_timer_read()
-                    .saturating_add(u64::from(pool.idle_timeout_ms_or_default()) * 1_000_000),
+                reuse_deadline_ns: match pool.idle_timeout_ms {
+                    0 => u64::MAX,
+                    ms => crate::async_http::http_thread_timer_read()
+                        .saturating_add(u64::from(ms) * 1_000_000),
+                },
             };
             let parked = match transport {
                 Transport::Tcp => Self::park(self.pending_sockets.get_or_init(), pooled, pool),
@@ -843,7 +846,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
             transport,
             pool_id,
         } = *key;
-        let now_ns = crate::async_http::http_thread_timer_read();
         let mut iter = pool.used.iterator::<true, true>();
 
         while let Some(pending_socket_index) = iter.next() {
@@ -926,7 +928,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 }
 
                 // The origin is about to close it, and a non-idempotent request that loses that race isn't retried.
-                if now_ns >= socket.reuse_deadline_ns {
+                if socket.reuse_deadline_ns != u64::MAX
+                    && crate::async_http::http_thread_timer_read() >= socket.reuse_deadline_ns
+                {
                     Self::close_socket(http_socket);
                     continue;
                 }

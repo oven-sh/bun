@@ -602,11 +602,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // A fetch never uses the fragment, and `Response.url` excludes it.
-    let mut href = bun_url::href_from_string_without_fragment(&url_str);
-    if href.starts_with_ascii(b"s3:") {
-        // `#` is part of an S3 key.
-        href = bun_url::href_from_string(&url_str);
-    }
+    let href = bun_url::href_from_string_without_fragment(&url_str);
     if href.tag() == BunStringTag::Dead {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_URL,
@@ -621,6 +617,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // Move the href into `url_proxy_buffer` and re-parse `url` to borrow it.
     let mut url_proxy_buffer = href.to_owned_slice();
+    if url_proxy_buffer.starts_with(b"s3:") {
+        // `#` is part of an S3 key.
+        url_proxy_buffer = bun_url::href_from_string(&url_str).to_owned_slice();
+    }
     let mut url = parse_url_detached!(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
@@ -2020,7 +2020,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Explicit `&*` first to satisfy `dangerous_implicit_autorefs` — the
     // `Index` call would otherwise create an implicit `&` to `*buf_ptr`.
     let buf: &'static [u8] = unsafe { &*buf_ptr };
-    let url_static: ZigURL<'static> = ZigURL::parse(&buf[..url_len]);
+    // `url` still points into `buf` unless `into_boxed_slice` had to shrink the allocation and moved it.
+    let url_static: ZigURL<'static> = if core::ptr::eq(url.href.as_ptr(), buf.as_ptr()) {
+        url
+    } else {
+        ZigURL::parse(&buf[..url_len])
+    };
     let proxy_static: Option<&'static [u8]> = if has_proxy {
         Some(&buf[url_len..])
     } else {

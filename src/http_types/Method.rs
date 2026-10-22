@@ -290,6 +290,7 @@ impl OwnedMethod {
     }
 
     /// Appends a token to `headers.buf`, where the HTTP client reads it from.
+    #[inline]
     pub fn to_ref(&self, headers: &mut Headers) -> MethodRef {
         match self {
             OwnedMethod::Known(method) => MethodRef::Known(*method),

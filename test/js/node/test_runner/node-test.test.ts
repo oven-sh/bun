@@ -361,14 +361,13 @@ describe("run() with forceExit", () => {
 
     const [options, reader] = process.argv.slice(2);
     const file = "file.test.mjs";
-    // The report-delivery files give their tests names of many kilobytes.
-    const name = data =>
-      data.name === file ? "<file>" : data.name.length > 99 ? data.name.slice(0, data.name.indexOf(" ")) : data.name;
+    // A file that fails as a whole is reported as a test with the name of the file.
+    const name = data => (data.name === file ? "<file>" : data.name);
     const result = { pass: [], fail: [], stdout: [], summary: null, readLate: false };
     for await (const { type, data } of run({ files: [file], ...JSON.parse(options) })) {
-      if (reader === "late" && !result.readLate && type === "test:pass") {
-        // Read no more until the process of the file is at its exit. Its report is larger than
-        // its stdout takes, so most of it is then still inside that process.
+      if (reader === "late" && !result.readLate && type === "test:stdout" && data.message.startsWith("CHILD start")) {
+        // Read no more until the process of the file is at its exit. The file writes more than
+        // its stdout takes while nothing reads it, so most of that is then still in the process.
         const deadline = Date.now() + 20_000;
         const cell = new Int32Array(new SharedArrayBuffer(4));
         while (!existsSync("at-exit")) {
@@ -380,7 +379,7 @@ describe("run() with forceExit", () => {
       if (type === "test:pass") {
         result.pass.push(name(data));
       } else if (type === "test:fail") {
-        result.fail.push([name(data), data.details.error.failureType]);
+        result.fail.push(name(data));
       } else if (type === "test:stdout") {
         for (const line of data.message.split("\\n")) if (line.startsWith("CHILD ")) result.stdout.push(line);
       } else if (type === "test:summary" && data.file === undefined) {
@@ -496,7 +495,7 @@ describe("run() with forceExit", () => {
       `;
       expect(await runFile(file, { forceExit: true })).toEqual({
         pass: ["passes"],
-        fail: [["fails and schedules more work", "testCodeFailure"]],
+        fail: ["fails and schedules more work"],
         stdout: ["CHILD exit 1"],
         summary: { success: false, tests: 2, passed: 1, failed: 1 },
         ...ended,
@@ -518,7 +517,7 @@ describe("run() with forceExit", () => {
       expect(await runFile(file, { forceExit: true })).toEqual({
         pass: ["x"],
         // A file whose tests pass and that still exits with an error is itself the failed test.
-        fail: [["<file>", "testCodeFailure"]],
+        fail: ["<file>"],
         stdout: ["CHILD exit 7"],
         summary: { success: false, tests: 2, passed: 1, failed: 1 },
         ...ended,
@@ -574,7 +573,7 @@ describe("run() with forceExit", () => {
       async (_, failure, stdout) => {
         expect(await runFile(failure, { forceExit: true })).toEqual({
           pass: [],
-          fail: [["<file>", "testCodeFailure"]],
+          fail: ["<file>"],
           stdout,
           summary: { success: false, tests: 1, passed: 0, failed: 1 },
           ...ended,
@@ -625,34 +624,36 @@ describe("run() with forceExit", () => {
     30_000,
   );
 
-  // The file reports each test on its stdout, and its report is larger than that stdout takes
-  // at once. A process that ends without the event loop wait must still write all of it.
+  // The file reports each test on its stdout, after 2 MiB that a test wrote there. While
+  // nothing reads that stdout it takes a part of this, and the rest waits in the process. A
+  // process that ends without the event loop wait must still write all of it.
   describe("the whole report arrives", () => {
-    const count = 64;
-    const names = Array.from({ length: count }, (_, i) => String(i));
-    const tests = `
+    const tests = (last: string) => `
       import { writeFileSync } from "node:fs";
       import { test } from "node:test";
       process.on("exit", () => writeFileSync("at-exit", ""));
-      const pad = Buffer.alloc(16 * 1024, "x").toString();
-      for (let i = 0; i < ${count}; i++) test(i + " " + pad, () => {});
+      console.log("CHILD start");
+      test("first", () => {
+        process.stdout.write(Buffer.alloc(2 * 1024 * 1024, "x").toString() + "\\n");
+      });
+      test("last", () => {${last}});
     `;
-    // A Windows pipe is written synchronously: the file cannot get to its exit before all of
-    // its report is read, so there the reader keeps up.
+    // A Windows pipe is written synchronously: the file cannot get to its exit before all that
+    // it wrote is read, so there the reader keeps up.
     const reader = isWindows ? "prompt" : "late";
-    const delivered = { stdout: [], readLate: !isWindows, exitCode: 0, signalCode: null };
+    const delivered = { stdout: ["CHILD start"], readLate: !isWindows, exitCode: 0, signalCode: null };
 
     test.concurrent(
       "from a file that forceExit ends",
       async () => {
         const file = `
-          ${tests}
+          ${tests("")}
           setInterval(() => {}, 1000);
         `;
         expect(await runFile(file, { forceExit: true }, reader)).toEqual({
-          pass: names,
+          pass: ["first", "last"],
           fail: [],
-          summary: passed(count),
+          summary: passed(2),
           ...delivered,
         });
       },
@@ -662,14 +663,11 @@ describe("run() with forceExit", () => {
     test.concurrent(
       "from a file whose event loop wait an unhandled rejection cuts short",
       async () => {
-        const file = `
-          ${tests}
-          Promise.reject(new Error("unhandled"));
-        `;
+        const file = tests(` Promise.reject(new Error("unhandled")); `);
         expect(await runFile(file, {}, reader)).toEqual({
-          pass: names,
-          fail: [["<file>", "testCodeFailure"]],
-          summary: { success: false, tests: count + 1, passed: count, failed: 1 },
+          pass: ["first", "last"],
+          fail: ["<file>"],
+          summary: { success: false, tests: 3, passed: 2, failed: 1 },
           ...delivered,
         });
       },

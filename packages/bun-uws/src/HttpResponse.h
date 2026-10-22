@@ -185,7 +185,8 @@ public:
     }
 
     /* node:http: an idle tunnel is at read EOF and has nothing left to send. Like a libuv handle in that state, it does not hold
-     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again. */
+     * the event loop. The filter hears -3 when a tunnel becomes idle and +3 when it has bytes to send again.
+     * The connection of a parked request (NodeHTTPResponse::update_parked) counts as one, until it reads or has bytes to send again. */
     void setNodeHttpTunnelIdle(bool idle) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
@@ -585,6 +586,10 @@ public:
     HttpResponse *resume() {
         Super::resume();
         this->resetTimeout();
+        /* The connection of a parked request reads again. A tunnel is idle at read EOF, which no resume undoes. */
+        if (!getHttpResponseData()->isConnectRequest) {
+            setNodeHttpTunnelIdle(false);
+        }
         return this;
     }
 

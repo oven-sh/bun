@@ -124,7 +124,7 @@ pub(crate) struct RequestContext<
     /// BACKREF to the embedding `Server` — the server owns this request
     /// context (allocated from its `HiveArray` pool) and outlives it, so the
     /// pointee is live for the holder's entire lifetime. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer, bun_ptr::Mut>>>,
+    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
     pub(crate) resp: Cell<Option<uws::AnyResponse>>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -636,7 +636,7 @@ where
                 .server
                 .get()
                 .expect("infallible: server bound")
-                .as_ptr()
+                .as_const_ptr()
         }
     }
 
@@ -1076,9 +1076,7 @@ where
 
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
-            // SAFETY: `&mut` through the backref — the server outlives this
-            // context and no other borrow of it is live here.
-            unsafe { (*server.as_ptr()).on_request_complete() };
+            server.on_request_complete();
         }
     }
 
@@ -1574,7 +1572,7 @@ where
                 req: Cell::new(Some(req)),
                 method: resolved_method,
                 server: Cell::new(
-                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw_mut(p.as_ptr())),
+                    NonNull::new(server).map(|p| bun_ptr::BackRef::from_raw(p.as_ptr())),
                 ),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
@@ -3371,10 +3369,7 @@ where
                         }
 
                         readable_stream::Source::Bytes(byte_stream_ptr) => {
-                            // BACKREF: `Source::Bytes` stores a live non-null
-                            // `*mut ByteStream` (the JS wrapper's `m_ctx` heap
-                            // payload, kept alive by `stream`). R-2: all touched
-                            // ByteStream methods/fields are `&self`/interior-mutable.
+                            // BACKREF: `stream` keeps its `ByteStream` alive.
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
@@ -4271,8 +4266,7 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
-                // heap `ByteStream` kept alive by `readable` for this call.
+                // BACKREF: `readable` keeps its `ByteStream` alive for this call.
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );
@@ -4301,8 +4295,7 @@ where
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
                     return;
                 };
-                // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
-                // heap `ByteStream` kept alive by `readable` for this call.
+                // BACKREF: `readable` keeps its `ByteStream` alive for this call.
                 let bytes = bun_ptr::BackRef::from(
                     NonNull::new(bytes_ptr).expect("Source::Bytes payload is non-null"),
                 );

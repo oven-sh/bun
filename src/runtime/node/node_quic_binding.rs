@@ -110,7 +110,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
     obj.put(
         global,
         b"Endpoint",
-        crate::generated_classes::js_QuicEndpoint::get_constructor(global),
+        crate::generated_bindgen::quic::js_QuicEndpoint::get_constructor(global),
     );
     obj.put(
         global,

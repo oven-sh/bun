@@ -1,6 +1,5 @@
 /// <reference types="../../build/types/generated.d.ts" />
 /// <reference types="../../build/types/ErrorCode.d.ts" />
-/// <reference types="../../build/types/ZigGeneratedClasses.d.ts" />
 /// <reference types="../../build/types/WebCoreJSBuiltins.d.ts" />
 /// <reference types="../../build/types/Bindgen.d.ts" />
 

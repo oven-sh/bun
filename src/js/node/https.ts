@@ -613,7 +613,7 @@ function Server(options, requestListener): void {
   this.ALPNCallback = options.ALPNCallback;
   const blockList = options.blockList;
   if (blockList) {
-    if (!$rust("node_net_binding.rs", "BlockList").isBlockList(blockList)) {
+    if (!$bindgen("BlockList.bind.ts", "BlockList").isBlockList(blockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
     }
     this.blockList = blockList;

@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::JSValue;
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
@@ -10,6 +10,11 @@ bun_opaque::opaque_ffi! {
 
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
+    safe fn MarkedArgumentBuffer__size(args: &MarkedArgumentBuffer) -> usize;
+    safe fn MarkedArgumentBuffer__constructArray(
+        args: &MarkedArgumentBuffer,
+        global: &JSGlobalObject,
+    ) -> JSValue;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
     // (never dereferenced as Rust data) — same contract as
     // `JSC__VM__holdAPILock` / `JSC__JSGlobalObject__queueMicrotaskCallback`.
@@ -51,6 +56,18 @@ impl MarkedArgumentBuffer {
 
     pub fn append(&mut self, value: JSValue) {
         MarkedArgumentBuffer__append(self, value)
+    }
+
+    pub fn size(&self) -> usize {
+        MarkedArgumentBuffer__size(self)
+    }
+
+    /// A `JSArray` of the values.
+    #[track_caller]
+    pub fn construct_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        crate::call_zero_is_throw(global, || {
+            MarkedArgumentBuffer__constructArray(self, global)
+        })
     }
 
     pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {

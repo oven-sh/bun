@@ -13,7 +13,7 @@ use crate::server::ServerWebSocket;
 pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
     macro_rules! open_count {
         ($server:expr) => {
-            $server.pending_requests.get() as f64
+            f64::from($server.pending_requests.get())
                 + f64::from($server.active_sockets_count())
                 + f64::from($server.active_connection_count.get())
         };

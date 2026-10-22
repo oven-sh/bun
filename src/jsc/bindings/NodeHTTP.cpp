@@ -14,10 +14,8 @@
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http2Context.h>
-#include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
-#include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"

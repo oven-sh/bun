@@ -293,7 +293,7 @@ impl ServerConfig {
         &mut self,
     ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
-        // `self.config = self.config.clone_for_reloading_static_routes()?;`.
+        // `*config = config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
         // place on `self` (idle_timeout, development, reuse_port, http1/http3,
         // etc. retained; resources gone), ensuring the assignment-drop of the
@@ -692,10 +692,10 @@ impl ServerConfig {
 
     pub(crate) fn from_js(
         global: &JSGlobalObject,
-        arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
+        arg: JSValue,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
-        let vm = arguments.vm;
+        let vm = global.bun_vm();
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
@@ -724,7 +724,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if arguments.vm.transpiler.options.production || process_env_is_production(global)? {
+        if vm.transpiler.options.production || process_env_is_production(global)? {
             args.development = DevelopmentOption::Production;
         }
 
@@ -740,22 +740,18 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = arguments.vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler.options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &arguments.vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
         // NOTE: SSLConfig drops automatically when `args` drops on error path.
-
-        let Some(arg) = arguments.next() else {
-            return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));
-        };
 
         if !arg.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Bun.serve expects an object")));

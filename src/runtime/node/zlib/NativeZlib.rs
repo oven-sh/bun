@@ -5,37 +5,27 @@ use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, F
 
 use crate::node::node_zlib_binding::Error;
 
-// ─── gated: JsClass payload + host fns ────────────────────────────────────
-// `NativeZlib` carries `#[bun_jsc::JsClass]` and its methods are
-// `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
-// exported with the expected shapes. The pure-FFI `Context` (zlib state
-// machine) is hoisted below as the non-JSC body.
-
 mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::{
-        CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
-    };
+    use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+    use bun_jsc::{JSGlobalObject, JsCell, JsResult, StrongOptional, WorkPoolTask};
+    use bun_ptr::RefPtr;
 
-    use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
+    use crate::node::node_zlib_binding::{CompressionStreamImpl as _, CountedKeepAlive};
     use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs).
+    /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
 
-    // `mod js { write_callback_*, error_callback_*, ... }` is emitted by
-    // `__impl_compression_stream!` below (wraps `bun_jsc::codegen_cached_accessors!`).
-
-    #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub(crate) struct NativeZlib {
         pub(crate) ref_count: Cell<u32>,
-        // JSC_BORROW backref; global outlives this m_ctx payload. `BackRef`
+        // The global outlives this payload. `BackRef`
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
@@ -53,50 +43,17 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-    // finalize are provided as inherent methods on
-    // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-    // struct, not a trait); `__compression_stream_mixin_reexports!` re-exports the
-    // same JS-exposed surface (write / writeSync / reset / close / setOnError /
-    // getOnError / finalize); runFromJSThread and emitError stay internal.
+    // `CompressionStreamImpl` (node_zlib_binding.rs) has write, writeSync, reset, close and onerror.
 
     impl NativeZlib {
-        // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
-        // the constructor shim that calls `<NativeZlib>::constructor(g, f)` directly.
-        pub(crate) fn constructor(
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<Box<Self>> {
-            let arguments = frame.arguments_undef::<4>();
-
-            let mode = arguments.ptr[0];
-            if !mode.is_number() {
-                return Err(global.throw_invalid_argument_type_value("mode", "number", mode));
-            }
-            let mode_double = mode.as_number();
-            if mode_double % 1.0 != 0.0 {
-                return Err(global.throw_invalid_argument_type_value("mode", "integer", mode));
-            }
-            let mode_int: i64 = mode_double as i64;
-            if mode_int < 1 || mode_int > 7 {
-                return Err(global.throw_range_error(
-                    mode_int,
-                    bun_jsc::RangeErrorOptions {
-                        field_name: b"mode",
-                        min: 1,
-                        max: 7,
-                        msg: b"",
-                    },
-                ));
-            }
-
+        pub(crate) fn constructor(cx: &mut JsScope<'_>, mode: u8) -> *mut Self {
             let stream = Context {
-                mode: c::NodeMode::from_int(mode_int as u8),
+                mode: c::NodeMode::from_int(mode),
                 ..Default::default()
             };
-            Ok(Box::new(Self {
+            RefPtr::new(Self {
                 ref_count: Cell::new(1),
-                global_this: bun_ptr::BackRef::new(global),
+                global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
@@ -110,45 +67,38 @@ mod _impl {
                     node: Default::default(),
                     callback: noop_task_callback,
                 }),
-            }))
+            })
+            .into_raw()
         }
 
         //// adding this didnt help much but leaving it here to compare the number with later
         pub(crate) fn estimated_size(&self) -> usize {
             // @sizeOf(@cImport(@cInclude("deflate.h")).internal_state) @ cloudflare/zlib @ 92530568d2c128b4432467b76a3b54d93d6350bd
             const INTERNAL_STATE_SIZE: usize = 3309;
-            mem::size_of::<Self>() + INTERNAL_STATE_SIZE
+            INTERNAL_STATE_SIZE
         }
 
-        #[bun_jsc::host_fn(method)]
-        pub(crate) fn init(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-            let arguments = frame.arguments_undef::<7>();
-            let this_value = frame.this();
-
-            if arguments.len != 7 {
-                return Err(global
-                .err(
-                    bun_jsc::ErrorCode::MISSING_ARGS,
-                    format_args!(
-                        "init(windowBits, level, memLevel, strategy, writeResult, writeCallback, dictionary)"
-                    ),
-                )
-                .throw());
-            }
+        pub(crate) fn init(
+            &self,
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            window_bits: i32,
+            level: i32,
+            mem_level: i32,
+            strategy: i32,
+            write_state: JsLocal<'_>,
+            process_callback: JsLocal<'_>,
+            dictionary: JsLocal<'_>,
+        ) -> JsResult<()> {
+            let global = cx.global();
+            let this_value = this_value.to_js();
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
+            self.throw_unless_idle(global)?;
 
-            let window_bits =
-                validators::validate_int32(global, arguments.ptr[0], "windowBits", None, None)?;
-            let level = validators::validate_int32(global, arguments.ptr[1], "level", None, None)?;
-            let mem_level =
-                validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
-            let strategy =
-                validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
-            let write_result_value = arguments.ptr[4];
+            let write_result_value = write_state.to_js();
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
                     "writeResult",
@@ -173,14 +123,14 @@ mod _impl {
                     .throw());
             }
             let write_callback =
-                validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
+                validators::validate_function(global, "writeCallback", process_callback.to_js())?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
             // the call to `stream.init` below (E0716 otherwise).
             let dictionary_buf;
-            let dictionary = if arguments.ptr[6].is_undefined() {
+            let dictionary = if dictionary.is_undefined() {
                 None
             } else {
-                let dictionary_value = arguments.ptr[6];
+                let dictionary_value = dictionary.to_js();
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
                     Some(buf) => buf,
                     None => {
@@ -222,41 +172,29 @@ mod _impl {
                 self.closed.set(true);
             }
 
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
 
-        #[bun_jsc::host_fn(method)]
         pub(crate) fn params(
             &self,
-            global: &JSGlobalObject,
-            frame: &CallFrame,
-        ) -> JsResult<JSValue> {
-            let arguments = frame.arguments_undef::<2>();
-
-            if arguments.len != 2 {
-                return Err(global
-                    .err(
-                        bun_jsc::ErrorCode::MISSING_ARGS,
-                        format_args!("params(level, strategy)"),
-                    )
-                    .throw());
-            }
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            level: i32,
+            strategy: i32,
+        ) -> JsResult<()> {
+            let global = cx.global();
             // `set_params` calls `deflateParams` on the same `z_stream` an
             // in-flight async write's `deflate()` is using.
-            CompressionStream::<Self>::throw_unless_idle(self, global)?;
-
-            let level = validators::validate_int32(global, arguments.ptr[0], "level", None, None)?;
-            let strategy =
-                validators::validate_int32(global, arguments.ptr[1], "strategy", None, None)?;
+            self.throw_unless_idle(global)?;
 
             let err = self.stream.with_mut(|s| s.set_params(level, strategy));
             if err.is_error() {
-                // R-2: `&self` over `Cell`/`JsCell` fields — `emit_error` →
+                // `&self` over `Cell`/`JsCell` fields — `emit_error` →
                 // `run_callback` may re-enter `close()`/`reset()` via a fresh
-                // `&Self` from `m_ctx`; interior mutability makes that sound.
-                CompressionStream::<Self>::emit_error(self, global, frame.this(), err);
+                // `&Self`; interior mutability makes that sound.
+                self.emit_error(global, this_value.to_js(), err);
             }
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
     }
 
@@ -267,8 +205,7 @@ mod _impl {
         }
     }
 
-    crate::__impl_compression_stream!(NativeZlib, super::Context, "NativeZlib");
-    crate::__compression_stream_mixin_reexports!(NativeZlib);
+    crate::__impl_compression_stream!(NativeZlib, super::Context, js_NativeZlib);
 } // mod _impl
 
 pub(crate) use _impl::NativeZlib;

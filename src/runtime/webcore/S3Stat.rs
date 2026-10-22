@@ -41,7 +41,7 @@ impl S3Stat {
         self.size
     }
 
-    pub(crate) fn get_content_type(&self) -> BunString {
+    pub(crate) fn get_type(&self) -> BunString {
         self.content_type.clone()
     }
 }

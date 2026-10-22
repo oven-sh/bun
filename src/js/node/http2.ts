@@ -97,7 +97,7 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
-const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
+const H2FrameParser = $bindgen("h2_frame_parser.bind.ts", "H2FrameParser");
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",
@@ -4210,7 +4210,7 @@ class ServerHttp2Session extends Http2Session {
   #connected: boolean = false;
   #connections: number = 0;
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
-  #parser: typeof H2FrameParser | null;
+  #parser: $Bindgen.H2FrameParser | null;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
   #encrypted: boolean = false;
@@ -5201,7 +5201,7 @@ class ClientHttp2Session extends Http2Session {
   #connections: number = 0;
 
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
-  #parser: typeof H2FrameParser | null;
+  #parser: $Bindgen.H2FrameParser | null;
   #defaultScheme: string;
   #authority: string;
   #alpnProtocol: string | undefined = undefined;
@@ -5604,10 +5604,10 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSocket = socket._handle;
     if (nativeSocket) {
-      this.#parser.setNativeSocket(nativeSocket);
+      this.#parser!.setNativeSocket(nativeSocket);
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
-    this.#parser.flush();
+    this.#parser!.flush();
   }
 
   // Requests made while connecting go out after the 'connect' listeners, which can still destroy() or close() the session.
@@ -6466,7 +6466,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       connectionsCounted = true;
-      let stream_id: number = this.#parser.getNextStream();
+      let stream_id: number = this.#parser!.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(emitOutofStreamErrorNT, req);
@@ -6481,11 +6481,7 @@ class ClientHttp2Session extends Http2Session {
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
       this.#takeRequestSlot(req);
       slotHolder = req;
-      if (typeof options === "undefined") {
-        this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
-      } else {
-        this.#parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
-      }
+      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
       slotHolder = undefined;
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
@@ -6550,7 +6546,7 @@ class ClientHttp2Session extends Http2Session {
   }
 
   #submitQueuedRequest(
-    parser: typeof H2FrameParser,
+    parser: $Bindgen.H2FrameParser,
     req: ClientHttp2Stream,
     { headers, wireHeaders, sensitiveNames, options }: NonNullable<ClientHttp2Stream[typeof kQueuedRequest]>,
   ) {

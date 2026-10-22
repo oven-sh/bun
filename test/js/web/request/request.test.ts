@@ -77,7 +77,7 @@ test("clone() does not lock original body when body was accessed before clone", 
 });
 
 test.each([
-  ["no arguments", [], "1 argument required, but only 0 present."],
+  ["no arguments", [], "expected non-empty string or object, got undefined"],
   ["undefined", [undefined], "expected non-empty string or object, got undefined"],
   ["null", [null], "expected non-empty string or object, got null"],
   ["a number", [5], "expected non-empty string or object, got number"],

@@ -10855,6 +10855,32 @@ export function notInTheTest() {
       expect(exitCode).toBe(1);
     });
 
+    test("keeps what is reported while a loop is analyzed if a circular return type follows", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  while (next[x] === y) {
+    y = next[id(y)];
+    if (more) {
+      ({ p: y } = { p: (() => y)() });
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(9,14): error TS2538: Type 'unknown' cannot be used as an index type.
+        a.ts(11,25): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

@@ -784,7 +784,10 @@ impl Checker<'_, '_> {
     #[cold]
     pub(super) fn settle_reported(&mut self, frame: QueryFrame, q: Query) {
         let from = frame.reported_from as usize;
-        if frame.drops_reported {
+        // What follows from the types that a loop has collected so far isn't reported again.
+        let drops_reported =
+            frame.drops_reported && !(frame.incomplete_flow && self.is_in_flow_loop());
+        if drops_reported {
             self.reported.truncate(from);
         } else if !frame.tainted {
             for diagnostic in self.reported.split_off(from) {
@@ -795,7 +798,7 @@ impl Checker<'_, '_> {
         }
         let requests = &self.reported_iteration_requests;
         let since_entered = requests.partition_point(|request| request.0 < frame.serial);
-        self.settle_iteration_requests(since_entered, frame.drops_reported);
+        self.settle_iteration_requests(since_entered, drops_reported);
     }
 
     /// `settle_reported` for an innermost frame that stores nothing under its query, like an

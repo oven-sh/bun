@@ -163,6 +163,41 @@ pub fn build_url_with_printer<R, E>(
     }
 }
 
+/// The inverse of `build_url`: the version in `url`, when `registry` serves `full_name` from `url`.
+pub(crate) fn version_in_url<'a>(
+    url: &'a [u8],
+    registry: &[u8],
+    full_name: &[u8],
+) -> Option<&'a [u8]> {
+    struct Rest<'a>(&'a [u8]);
+    impl fmt::Write for Rest<'_> {
+        fn write_str(&mut self, printed: &str) -> fmt::Result {
+            self.0 = (self.0.strip_prefix(printed.as_bytes())).ok_or(fmt::Error)?;
+            Ok(())
+        }
+    }
+
+    let name = match strings::last_index_of_char(full_name, b'/') {
+        Some(scope_end) => &full_name[scope_end + 1..],
+        None => full_name,
+    };
+    if name.is_empty() {
+        return None;
+    }
+    let file = strings::last_index_of_char(url, b'/')? + 1;
+    let text = url.get(file + name.len() + 1..url.len().checked_sub(b".tgz".len())?)?;
+    let version = Version::parse_exact(bun_semver::SlicedString::init(text, text))?;
+    let mut rest = Rest(url);
+    let printed = build_url_with_printer(
+        registry,
+        &StringOrTinyString::init(full_name),
+        version,
+        text,
+        |args| fmt::Write::write_fmt(&mut rest, args),
+    );
+    (printed.is_ok() && rest.0.is_empty()).then_some(text)
+}
+
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,

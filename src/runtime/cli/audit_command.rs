@@ -7,14 +7,16 @@ use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
-use bun_install::audit_fix::{self, Advisory};
+use bun_install::audit_fix::{self, Advisory, RecordedVersion, UnrecordedPackage};
+use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
-    CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
+    CommandLineArguments, Dependency, LogLevel, PackageID, PackageManager, PackageNameHash,
+    Subcommand,
 };
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
@@ -31,6 +33,8 @@ struct VulnerabilityInfo {
     vulnerable_versions: Box<[u8]>,
     id: Box<[u8]>,
     package_name: Box<[u8]>,
+    /// CWE-506, embedded malicious code: the advisory is about what the registry serves.
+    is_malware: bool,
 }
 
 /// Root-most first, ending at the vulnerable package.
@@ -40,8 +44,12 @@ type DependencyPath = Vec<Box<[u8]>>;
 struct AuditStats {
     checked: usize,
     skipped: usize,
+    /// Packages that the lockfile has no version for. No registry was asked about them.
+    not_audited: usize,
     below_level: u32,
     ignored: u32,
+    /// Malware advisories for a name that the project has from a tarball, git or GitHub only.
+    registry_only: Vec<VulnerabilityInfo>,
 }
 
 fn plural(n: usize) -> &'static str {
@@ -78,9 +86,58 @@ fn print_no_vulnerabilities(stats: &AuditStats, audit_level: Option<AuditLevel>)
     if stats.skipped > 0 {
         pretty!(", {} skipped", stats.skipped);
     }
+    if stats.not_audited > 0 {
+        pretty!(", {} not audited", stats.not_audited);
+    }
+    if !stats.registry_only.is_empty() {
+        pretty!(", {} not counted", stats.registry_only.len());
+    }
     pretty!(")<r> ");
     Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
     prettyln!("");
+    Output::flush();
+}
+
+fn print_registry_only(
+    pm: &PackageManager,
+    advisories: &[VulnerabilityInfo],
+    collected: &CollectPackagesResult,
+) {
+    if advisories.is_empty() || pm.options.log_level == LogLevel::Silent {
+        return;
+    }
+    let lockfile: &Lockfile = &pm.lockfile;
+    Output::flush();
+    for advisory in advisories {
+        let name = &advisory.package_name;
+        let mut copies: Vec<u8> = Vec::new();
+        for (version, resolution) in collected
+            .package(name)
+            .into_iter()
+            .flat_map(|p| p.copies(lockfile))
+        {
+            if !copies.is_empty() {
+                copies.extend_from_slice(b", ");
+            }
+            let _ = write!(
+                copies,
+                "{}@{} from {}",
+                escape_control_chars(name),
+                escape_control_chars(version),
+                escape_control_chars(&resolution)
+            );
+        }
+        bun_core::warn!(
+            "not counted: {} is a malware advisory for {} on the registry",
+            escape_control_chars(if advisory.url.is_empty() {
+                &advisory.id
+            } else {
+                &advisory.url
+            }),
+            escape_control_chars(name)
+        );
+        bun_core::note!("this project has {}", BStr::new(&copies));
+    }
     Output::flush();
 }
 
@@ -195,8 +252,14 @@ impl AuditCommand {
         let response_text = responses.response_text;
 
         if json_output {
-            let vulnerabilities =
-                collect_vulnerabilities(&response_text, audit_level, ignore_list, &mut stats)?;
+            let vulnerabilities = collect_vulnerabilities(
+                &response_text,
+                audit_level,
+                ignore_list,
+                Some(&collected),
+                &mut stats,
+            )?;
+            print_registry_only(pm, &stats.registry_only, &collected);
             if !matches!(vulnerabilities, Err(SkipReason::NotJson)) {
                 let _ = Output::writer().write_all(&response_text);
                 let _ = Output::writer().write_all(b"\n");
@@ -244,6 +307,7 @@ impl AuditCommand {
         let dry_run = pm.options.dry_run;
         let mut plan = audit_fix::plan_fixes(pm, &first.advisories)?;
         plan.unaudited = first.unaudited;
+        plan.unrecorded = first.unrecorded;
         if !json_output {
             plan.print_sections();
         }
@@ -272,7 +336,14 @@ impl AuditCommand {
         if json_output {
             plan.unaudited = reaudit.unaudited;
         }
-        Global::exit(plan.finish_installed(&pm.lockfile, &reaudit.advisories, json_output));
+        // The install records the version of what it extracts.
+        plan.unrecorded = reaudit.unrecorded;
+        Global::exit(plan.finish_installed(
+            &pm.lockfile,
+            &pm.options,
+            &reaudit.advisories,
+            json_output,
+        ));
     }
 }
 
@@ -285,17 +356,13 @@ fn build_dependency_tree(
     let pkg_names = packages.items_name();
     let pkg_dependencies = packages.items_dependencies();
     let pkg_resolutions = packages.items_resolutions();
-    let pkg_resolution = packages.items_resolution();
     let buf = pm.lockfile.buffers.string_bytes.as_slice();
     let dependencies = pm.lockfile.buffers.dependencies.as_slice();
     let resolutions = pm.lockfile.buffers.resolutions.as_slice();
 
-    for pkg_idx in 0..pkg_names.len() {
-        let package_name = pkg_names[pkg_idx].slice(buf);
-
-        if pkg_resolution[pkg_idx].tag != ResolutionTag::Npm {
-            continue;
-        }
+    for row in audit_fix::audit_rows(&pm.lockfile, &pm.options) {
+        let package_name = row.name;
+        let pkg_idx = row.id as usize;
 
         let dep_slice = pkg_dependencies[pkg_idx].get(dependencies);
         let res_slice = pkg_resolutions[pkg_idx].get(resolutions);
@@ -342,19 +409,27 @@ struct AuditRequest {
 
 struct CollectPackagesResult {
     requests: Vec<AuditRequest>,
+    unrecorded: Vec<UnrecordedPackage>,
+}
+
+impl PackageVersions {
+    /// The version and the source of each copy in `elsewhere`.
+    fn copies<'a>(
+        &'a self,
+        lockfile: &'a Lockfile,
+    ) -> impl Iterator<Item = (&'a [u8], Box<[u8]>)> + 'a {
+        (self.elsewhere.iter()).map(move |&(id, version)| {
+            let resolution = audit_fix::redacted_resolution(lockfile, id);
+            (&*self.versions[version], resolution)
+        })
+    }
 }
 
 impl CollectPackagesResult {
-    fn installed_versions(&self, name: &[u8]) -> &[Box<[u8]>] {
-        match self
-            .requests
-            .iter()
+    fn package(&self, name: &[u8]) -> Option<&PackageVersions> {
+        (self.requests.iter())
             .flat_map(|request| request.packages.iter())
             .find(|package| *package.name == *name)
-        {
-            Some(package) => package.versions.as_slice(),
-            None => &[],
-        }
     }
 }
 
@@ -367,12 +442,17 @@ struct AuditResponses {
 struct FixAudit {
     advisories: Vec<Advisory>,
     unaudited: Vec<audit_fix::UnauditedRegistry>,
+    unrecorded: Vec<UnrecordedPackage>,
     stats: AuditStats,
 }
 
 struct PackageVersions {
     name: Box<[u8]>,
     versions: Vec<Box<[u8]>>,
+    /// A copy is a registry package. An advisory for the name is about that copy.
+    from_registry: bool,
+    /// Tarball, git and GitHub copies, each with its index in `versions`. A registry knows these by name only.
+    elsewhere: Vec<(PackageID, usize)>,
 }
 
 enum SkipReason {
@@ -441,28 +521,56 @@ fn collect_packages_for_audit(
     });
 
     let options = &pm.options;
-    let packages = pm.lockfile.packages.slice();
-    let pkg_names = packages.items_name();
-    let pkg_name_hashes = packages.items_name_hash();
-    let pkg_resolutions = packages.items_resolution();
     let buf = pm.lockfile.buffers.string_bytes.as_slice();
 
     let mut by_name: HashMap<PackageNameHash, (usize, usize)> =
-        HashMap::with_capacity(pkg_names.len());
+        HashMap::with_capacity(pm.lockfile.packages.len());
     let mut ver_scratch: Vec<u8> = Vec::new();
+    let mut unrecorded: Vec<UnrecordedPackage> = Vec::new();
+    let mut installable: Option<DynamicBitSet> = None;
 
-    for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
-        if idx as u32 == root_id
-            || res.tag != ResolutionTag::Npm
-            || (wanted_packages.as_ref()).is_some_and(|wanted| !wanted.is_set(idx))
-        {
+    for row in audit_fix::audit_rows(&pm.lockfile, &pm.options) {
+        let idx = row.id as usize;
+        if (wanted_packages.as_ref()).is_some_and(|wanted| !wanted.is_set(idx)) {
             continue;
         }
 
-        let (group_idx, list_idx) = match by_name.get(&pkg_name_hashes[idx]) {
+        ver_scratch.clear();
+        let from_registry = match row.version {
+            RecordedVersion::Registry(version) => {
+                write!(&mut ver_scratch, "{}", version.fmt(buf)).expect("unreachable");
+                true
+            }
+            RecordedVersion::RegistryTarball(version) => {
+                ver_scratch.extend_from_slice(version);
+                true
+            }
+            RecordedVersion::PackageJson(version) => {
+                ver_scratch.extend_from_slice(version);
+                false
+            }
+            // npm does not send a package without a version either.
+            RecordedVersion::Unversioned => continue,
+            RecordedVersion::Unknown => {
+                // No install reaches a row that nothing depends on, so none records its version.
+                let installable = installable.get_or_insert_with(|| {
+                    let bound = pm.lockfile.buffers.resolutions.as_slice();
+                    reachable::packages(&pm.lockfile, bound, reachable::Options::all(0))
+                });
+                if installable.is_set(idx) {
+                    unrecorded.push(UnrecordedPackage {
+                        name: Box::from(row.name),
+                        resolution: audit_fix::redacted_resolution(&pm.lockfile, row.id),
+                    });
+                }
+                continue;
+            }
+        };
+
+        let (group_idx, list_idx) = match by_name.get(&row.name_hash) {
             Some(&found) => found,
             None => {
-                let name_slice = name.slice(buf);
+                let name_slice = row.name;
                 let package_scope = options.scope_for_package_name(name_slice);
                 let group_idx = match groups
                     .iter()
@@ -478,20 +586,28 @@ fn collect_packages_for_audit(
                 packages_list.push(PackageVersions {
                     name: Box::<[u8]>::from(name_slice),
                     versions: Vec::new(),
+                    from_registry: false,
+                    elsewhere: Vec::new(),
                 });
                 let found = (group_idx, packages_list.len() - 1);
-                by_name.put(pkg_name_hashes[idx], found)?;
+                by_name.put(row.name_hash, found)?;
                 found
             }
         };
         let found_package = &mut groups[group_idx].1[list_idx];
 
-        ver_scratch.clear();
-        write!(&mut ver_scratch, "{}", res.npm().version.fmt(buf)).expect("unreachable");
-
         let versions = &mut found_package.versions;
-        if !versions.iter().any(|existing| **existing == *ver_scratch) {
-            versions.push(Box::<[u8]>::from(ver_scratch.as_slice()));
+        let version_idx = match versions.iter().position(|seen| **seen == *ver_scratch) {
+            Some(version_idx) => version_idx,
+            None => {
+                versions.push(Box::<[u8]>::from(ver_scratch.as_slice()));
+                versions.len() - 1
+            }
+        };
+        if from_registry {
+            found_package.from_registry = true;
+        } else {
+            found_package.elsewhere.push((row.id, version_idx));
         }
     }
 
@@ -506,7 +622,10 @@ fn collect_packages_for_audit(
         })
         .collect();
 
-    Ok(CollectPackagesResult { requests })
+    Ok(CollectPackagesResult {
+        requests,
+        unrecorded,
+    })
 }
 
 fn build_body(packages_list: &[PackageVersions]) -> Box<[u8]> {
@@ -566,8 +685,10 @@ fn send_audit_requests(
         }
     }
 
+    stats.not_audited = collected.unrecorded.len();
     if warn && pm.options.log_level != LogLevel::Silent {
         audit_fix::print_unaudited(&unaudited_registries);
+        audit_fix::print_unrecorded(&collected.unrecorded);
     }
 
     Ok(AuditResponses {
@@ -591,6 +712,7 @@ fn audit_for_fix(
         &responses.response_text,
         audit_level,
         ignore_list,
+        Some(&collected),
         &mut stats,
     )? {
         Ok(vulnerabilities) => vulnerabilities,
@@ -600,9 +722,14 @@ fn audit_for_fix(
         }
     };
 
+    if warn {
+        print_registry_only(pm, &stats.registry_only, &collected);
+    }
+
     Ok(FixAudit {
         advisories: vulnerabilities.into_iter().map(to_advisory).collect(),
         unaudited: responses.unaudited,
+        unrecorded: collected.unrecorded,
         stats,
     })
 }
@@ -684,7 +811,7 @@ fn send_audit_request(
         Ok(_) => {
             let response = response_buf.list.as_slice();
             // Before the bodies are merged, so that the registry that sent this one is named.
-            match collect_vulnerabilities(response, None, &[], &mut AuditStats::default())? {
+            match collect_vulnerabilities(response, None, &[], None, &mut AuditStats::default())? {
                 Ok(_) => return Ok(Ok(Box::<[u8]>::from(response))),
                 Err(reason) => reason,
             }
@@ -726,6 +853,7 @@ fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> Vulnerabili
         vulnerable_versions: Box::default(),
         id: Box::default(),
         package_name: Box::<[u8]>::from(package_name),
+        is_malware: false,
     };
 
     for prop in vuln.properties() {
@@ -744,6 +872,10 @@ fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> Vulnerabili
             }
             E::JsonValue::Number(num) if field_name == b"id" => {
                 vulnerability.id = (num.value() as u64).to_string().into_bytes().into();
+            }
+            E::JsonValue::Array(ids) if field_name == b"cwe" => {
+                vulnerability.is_malware = (ids.items().iter())
+                    .any(|id| matches!(id, E::JsonValue::String(id) if id.slice() == b"CWE-506"));
             }
             _ => {}
         }
@@ -892,10 +1024,12 @@ fn to_advisory(vulnerability: VulnerabilityInfo) -> Advisory {
     }
 }
 
+/// With `collected`, what the request had, it fills `stats.registry_only`.
 fn collect_vulnerabilities(
     response_text: &[u8],
     audit_level: Option<AuditLevel>,
     ignore_list: &[&[u8]],
+    collected: Option<&CollectPackagesResult>,
     stats: &mut AuditStats,
 ) -> Result<Result<Vec<VulnerabilityInfo>, SkipReason>, bun_alloc::AllocError> {
     // An empty body (also from a 204 or 304) does not mean "no advisories", even though the parser
@@ -921,6 +1055,8 @@ fn collect_vulnerabilities(
     let mut vulnerabilities: Vec<VulnerabilityInfo> = Vec::new();
     for prop in obj.get().properties() {
         let package_name: &[u8] = prop.key.slice();
+        let registry_only = (collected.and_then(|collected| collected.package(package_name)))
+            .is_some_and(|package| !package.from_registry);
 
         let Some(arr) = prop.value.as_array() else {
             return Ok(Err(SkipReason::NotAdvisories));
@@ -930,7 +1066,12 @@ fn collect_vulnerabilities(
                 return Ok(Err(SkipReason::NotAdvisories));
             };
             let vulnerability = parse_vulnerability(package_name, vuln_obj);
-            if keep_vulnerability(&vulnerability, audit_level, ignore_list, stats) {
+            if !keep_vulnerability(&vulnerability, audit_level, ignore_list, stats) {
+                continue;
+            }
+            if registry_only && vulnerability.is_malware {
+                stats.registry_only.push(vulnerability);
+            } else {
                 vulnerabilities.push(vulnerability);
             }
         }
@@ -999,14 +1140,20 @@ fn print_enhanced_audit_report(
     ignore_list: &[&[u8]],
     mut stats: AuditStats,
 ) -> Result<u32, bun_alloc::AllocError> {
-    let mut vulnerabilities =
-        match collect_vulnerabilities(response_text, audit_level, ignore_list, &mut stats)? {
-            Ok(vulnerabilities) => vulnerabilities,
-            Err(reason) => {
-                report_bad_response(default_registry_href(pm), &reason);
-                return Ok(1);
-            }
-        };
+    let mut vulnerabilities = match collect_vulnerabilities(
+        response_text,
+        audit_level,
+        ignore_list,
+        Some(collected),
+        &mut stats,
+    )? {
+        Ok(vulnerabilities) => vulnerabilities,
+        Err(reason) => {
+            report_bad_response(default_registry_href(pm), &reason);
+            return Ok(1);
+        }
+    };
+    print_registry_only(pm, &stats.registry_only, collected);
 
     if vulnerabilities.is_empty() {
         print_no_vulnerabilities(&stats, audit_level);
@@ -1037,7 +1184,18 @@ fn print_enhanced_audit_report(
     for group in vulnerabilities.chunk_by(|a, b| a.package_name == b.package_name) {
         let package_name: &[u8] = &group[0].package_name;
 
-        print_package_heading(package_name, collected.installed_versions(package_name));
+        let package = collected.package(package_name);
+        print_package_heading(
+            package_name,
+            package.map_or(&[], |found| &found.versions[..]),
+        );
+        for (version, resolution) in package.into_iter().flat_map(|p| p.copies(&pm.lockfile)) {
+            prettyln!(
+                "  <d>{} from {}, matched by name<r>",
+                escape_control_chars(version),
+                escape_control_chars(&resolution)
+            );
+        }
 
         for path in &find_dependency_paths(package_name, dependency_tree, pm)? {
             print_dependency_path(path, separator);

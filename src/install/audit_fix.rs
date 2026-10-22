@@ -15,7 +15,7 @@ use crate::lockfile::Lockfile;
 use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::npm::{FindResult, PackageManifest};
-use crate::package_manager::Options::{Do, Enable, LogLevel};
+use crate::package_manager::Options::{Do, Enable, LogLevel, Options};
 use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::update_transitive::{pretty_update_row, row_glyphs};
@@ -26,7 +26,82 @@ use crate::{
 
 mod json;
 mod package_json_edits;
+pub use crate::lockfile_real::RecordedVersion;
 pub use package_json_edits::{EditSite, OverrideSelector, PackageJsonEdit};
+
+/// A row of a fetched package, and its version. The lockfile can have a row that no dependency leads to.
+pub struct AuditRow<'a> {
+    pub id: PackageID,
+    pub name: &'a [u8],
+    pub name_hash: PackageNameHash,
+    pub version: RecordedVersion<'a>,
+}
+
+pub struct AuditRows<'a> {
+    lockfile: &'a Lockfile,
+    options: &'a Options,
+    next: PackageID,
+}
+
+pub fn audit_rows<'a>(lockfile: &'a Lockfile, options: &'a Options) -> AuditRows<'a> {
+    AuditRows {
+        lockfile,
+        options,
+        next: 0,
+    }
+}
+
+impl<'a> AuditRows<'a> {
+    /// See `RecordedVersion::RegistryTarball`. The public registry counts under both of its hosts.
+    #[cold]
+    fn version_in_registry_url(&self, id: PackageID, name: &[u8]) -> Option<&'a [u8]> {
+        let lockfile = self.lockfile;
+        let resolution = &lockfile.packages.items_resolution()[id as usize];
+        if resolution.tag != ResolutionTag::RemoteTarball {
+            return None;
+        }
+        let url = (resolution.remote_tarball()).slice(lockfile.buffers.string_bytes.as_slice());
+        let scope = self.options.scope_for_package_name(name);
+        let configured = crate::yarn_berry::registry_without_auth(scope.url.href());
+        [
+            configured.as_slice(),
+            crate::npm::Registry::DEFAULT_URL.as_bytes(),
+            b"https://registry.yarnpkg.com",
+        ]
+        .into_iter()
+        .find_map(|registry| crate::extract_tarball::version_in_url(url, registry, name))
+    }
+}
+
+impl<'a> Iterator for AuditRows<'a> {
+    type Item = AuditRow<'a>;
+
+    // Every pass of an audit calls this once per package of the lockfile.
+    #[inline(always)]
+    fn next(&mut self) -> Option<AuditRow<'a>> {
+        let lockfile = self.lockfile;
+        let names = lockfile.packages.items_name();
+        while (self.next as usize) < names.len() {
+            let id = self.next;
+            self.next += 1;
+            if let Some(recorded) = lockfile.recorded_version(id) {
+                let name = names[id as usize].slice(lockfile.buffers.string_bytes.as_slice());
+                let version = match recorded {
+                    RecordedVersion::Registry(_) => recorded,
+                    _ => (self.version_in_registry_url(id, name))
+                        .map_or(recorded, RecordedVersion::RegistryTarball),
+                };
+                return Some(AuditRow {
+                    id,
+                    name,
+                    name_hash: lockfile.packages.items_name_hash()[id as usize],
+                    version,
+                });
+            }
+        }
+        None
+    }
+}
 
 pub struct Advisory {
     pub package_name: Box<[u8]>,
@@ -103,16 +178,52 @@ pub struct UnauditedRegistry {
     pub reason: Box<[u8]>,
 }
 
+/// A tarball, git or GitHub row that an older bun wrote, without a version.
+pub struct UnrecordedPackage {
+    pub name: Box<[u8]>,
+    /// Without URL credentials.
+    pub resolution: Box<[u8]>,
+}
+
+/// Where a tarball, git or GitHub row points, without URL credentials.
+pub fn redacted_resolution(lockfile: &Lockfile, id: PackageID) -> Box<[u8]> {
+    let resolution = &lockfile.packages.items_resolution()[id as usize];
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    bun_core::fmt::redacted(resolution.fmt(buf, bun_core::fmt::PathSep::Posix))
+        .to_string()
+        .into_bytes()
+        .into()
+}
+
+/// A vulnerable copy that its dependent pins to a tarball or a commit.
+pub struct PinnedCopy {
+    pub name: Box<[u8]>,
+    pub from: Box<[u8]>,
+    pub resolution: Box<[u8]>,
+    pub ignore_tokens: Vec<Box<[u8]>>,
+}
+
+impl PinnedCopy {
+    fn order(a: &PinnedCopy, b: &PinnedCopy) -> Ordering {
+        order_name_from(&a.name, &a.from, &b.name, &b.from)
+            .then_with(|| a.resolution.cmp(&b.resolution))
+    }
+}
+
 pub struct FixPlan {
     pub fixes: Vec<PlannedFix>,
     pub blocked: Vec<BlockedFix>,
     pub unfixable: Vec<UnfixableFix>,
+    /// `bun audit fix` does not rewrite a URL or a commit.
+    pub pinned: Vec<PinnedCopy>,
     pub manifest_unavailable: Vec<ManifestUnavailable>,
     pub unmatched: Vec<UnmatchedAdvisory>,
     pub unaudited: Vec<UnauditedRegistry>,
+    /// No registry was asked about these.
+    pub unrecorded: Vec<UnrecordedPackage>,
     pub fixed_vulnerabilities: u32,
     pub remaining_vulnerabilities: u32,
-    /// Distinct npm package names in the lockfile, i.e. what the audit request covered (before `unaudited` skips).
+    /// Distinct package names that the audit request covered (before `unaudited` skips).
     pub checked_packages: usize,
     pub quiet: bool,
     pub(crate) advisories: AdvisoryIndex,
@@ -178,6 +289,18 @@ impl AdvisoryIndex {
             group.satisfies_including_prerelease(version, &self.range_buf, version_buf)
         })
     }
+
+    /// No range covers a package.json version that is not semver: a registry matches it to nothing.
+    pub(crate) fn covers(&self, i: usize, version: RecordedVersion<'_>, buf: &[u8]) -> bool {
+        match version {
+            RecordedVersion::Registry(version) => self.matches(i, *version, buf),
+            RecordedVersion::RegistryTarball(text) | RecordedVersion::PackageJson(text) => {
+                Semver::Version::parse_exact(SlicedString::init(text, text))
+                    .is_some_and(|version| self.matches(i, version, text))
+            }
+            RecordedVersion::Unversioned | RecordedVersion::Unknown => false,
+        }
+    }
 }
 
 pub struct StillVulnerable {
@@ -190,6 +313,8 @@ pub struct FixOutcome {
     pub fixed_vulnerabilities: u32,
     pub remaining_vulnerabilities: u32,
     pub still_vulnerable: Vec<StillVulnerable>,
+    /// Not in the plan's `pinned`: the install recorded their version.
+    pub pinned: Vec<PinnedCopy>,
 }
 
 struct Edge {
@@ -254,6 +379,24 @@ fn order_name_from(a_name: &[u8], a_from: &[u8], b_name: &[u8], b_from: &[u8]) -
 fn print_elapsed_line() {
     pretty!(" ");
     Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+    prettyln!("");
+}
+
+fn print_pinned(copies: &[PinnedCopy]) {
+    if copies.is_empty() {
+        return;
+    }
+    prettyln!("pinned to a tarball or a commit, not changed:");
+    for copy in copies {
+        pretty!(
+            "  {}@{}  <d>{}  ",
+            escape_control_chars(&copy.name),
+            escape_control_chars(&copy.from),
+            escape_control_chars(&copy.resolution)
+        );
+        print_tokens(&copy.ignore_tokens);
+        prettyln!("<r>");
+    }
     prettyln!("");
 }
 
@@ -326,6 +469,28 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
             );
         }
     }
+    Output::flush();
+}
+
+pub fn print_unrecorded(packages: &[UnrecordedPackage]) {
+    if packages.is_empty() {
+        return;
+    }
+    Output::flush();
+    let mut rows: Vec<u8> = Vec::new();
+    for (i, package) in packages.iter().enumerate() {
+        if i > 0 {
+            rows.extend_from_slice(b", ");
+        }
+        let _ = write!(
+            rows,
+            "{}@{}",
+            escape_control_chars(&package.name),
+            escape_control_chars(&package.resolution)
+        );
+    }
+    bun_core::warn!("cannot audit {}: no version in lockfile", BStr::new(&rows));
+    bun_core::note!("run 'bun install --lockfile-only' to record it");
     Output::flush();
 }
 
@@ -536,28 +701,30 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
     let mut index = AdvisoryIndex::build(advisories)?;
 
     let mut instances: Vec<Instance> = Vec::new();
+    let mut pinned: Vec<PinnedCopy> = Vec::new();
+    let mut pinned_advisories: Vec<usize> = Vec::new();
     let mut checked_names: HashMap<PackageNameHash, ()> = HashMap::new();
     let instance_of: Vec<u32> = {
         let lockfile = &*manager.lockfile;
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let names = lockfile.packages.items_name();
-        let name_hashes = lockfile.packages.items_name_hash();
-        let res = lockfile.packages.items_resolution();
 
-        let mut instance_of: Vec<u32> = vec![u32::MAX; res.len()];
-        for pkg_id in 0..res.len() {
-            if res[pkg_id].tag != ResolutionTag::Npm {
+        let mut instance_of: Vec<u32> = vec![u32::MAX; lockfile.packages.len()];
+        for row in audit_rows(lockfile, &manager.options) {
+            // The audit request has no entry for a package without a version.
+            if matches!(
+                row.version,
+                RecordedVersion::Unversioned | RecordedVersion::Unknown
+            ) {
                 continue;
             }
-            checked_names.insert(name_hashes[pkg_id], ());
-            let Some(candidates) = index.by_name.get(&name_hashes[pkg_id]) else {
+            checked_names.insert(row.name_hash, ());
+            let Some(candidates) = index.by_name.get(&row.name_hash) else {
                 continue;
             };
-            let current = res[pkg_id].npm().version;
             let matched: Vec<usize> = candidates
                 .iter()
                 .copied()
-                .filter(|&i| index.matches(i, current, buf))
+                .filter(|&i| index.covers(i, row.version, buf))
                 .collect();
             if matched.is_empty() {
                 continue;
@@ -565,11 +732,32 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             for &i in &matched {
                 index.matched_before_install.set(i);
             }
-            instance_of[pkg_id] = instances.len() as u32;
+            let current = match row.version {
+                RecordedVersion::Registry(version) => *version,
+                RecordedVersion::RegistryTarball(version)
+                | RecordedVersion::PackageJson(version) => {
+                    let mut ignore_tokens: Vec<Box<[u8]>> = matched
+                        .iter()
+                        .map(|&a| advisories[a].ignore_token.clone())
+                        .collect();
+                    index_sort::sort_vec_unstable_by(&mut ignore_tokens, |a, b| a.cmp(b));
+                    ignore_tokens.dedup();
+                    pinned.push(PinnedCopy {
+                        name: Box::from(row.name),
+                        from: Box::from(version),
+                        resolution: redacted_resolution(lockfile, row.id),
+                        ignore_tokens,
+                    });
+                    pinned_advisories.extend_from_slice(&matched);
+                    continue;
+                }
+                RecordedVersion::Unversioned | RecordedVersion::Unknown => continue,
+            };
+            instance_of[row.id as usize] = instances.len() as u32;
             instances.push(Instance {
-                pkg_id: pkg_id as PackageID,
-                name: Box::from(names[pkg_id].slice(buf)),
-                name_hash: name_hashes[pkg_id],
+                pkg_id: row.id,
+                name: Box::from(row.name),
+                name_hash: row.name_hash,
                 from: fmt_version(current, buf),
                 current,
                 advisories: matched,
@@ -578,6 +766,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         }
         instance_of
     };
+    index_sort::sort_vec_by(&mut pinned, PinnedCopy::order);
 
     if !instances.is_empty() {
         let root_json: Option<Expr> = (!manager.lockfile.overrides.is_empty())
@@ -653,9 +842,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             fixes: Vec::new(),
             blocked: Vec::new(),
             unfixable: Vec::new(),
+            pinned,
             manifest_unavailable: Vec::new(),
             unmatched,
             unaudited: Vec::new(),
+            unrecorded: Vec::new(),
             fixed_vulnerabilities: 0,
             remaining_vulnerabilities: advisories.len() as u32,
             checked_packages: checked_names.len(),
@@ -686,6 +877,9 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
     let mut expected_gone: Vec<(PackageNameHash, Box<[u8]>)> = Vec::new();
     let mut advisory_still_present = index.matched_before_install.clone()?;
     advisory_still_present.toggle_all();
+    for &a in &pinned_advisories {
+        advisory_still_present.set(a);
+    }
 
     for inst in instances {
         let mut expired = false;
@@ -992,9 +1186,11 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
         fixes,
         blocked,
         unfixable,
+        pinned,
         manifest_unavailable,
         unmatched,
         unaudited: Vec::new(),
+        unrecorded: Vec::new(),
         fixed_vulnerabilities: advisories.len() as u32 - remaining,
         remaining_vulnerabilities: remaining,
         checked_packages: checked_names.len(),
@@ -1122,6 +1318,7 @@ impl FixPlan {
             prettyln!("<r>");
             prettyln!("");
         }
+        print_pinned(&self.pinned);
         if !self.unmatched.is_empty() {
             prettyln!("not matched to an installed version:");
             for item in &self.unmatched {
@@ -1136,11 +1333,14 @@ impl FixPlan {
     fn print_checked(&self) {
         let skipped = skipped_package_count(&self.unaudited);
         let checked = self.checked_packages.saturating_sub(skipped);
+        pretty!(" <d>(checked {}", checked);
         if skipped > 0 {
-            pretty!(" <d>(checked {}, {} skipped)<r>", checked, skipped);
-        } else {
-            pretty!(" <d>(checked {})<r>", checked);
+            pretty!(", {} skipped", skipped);
         }
+        if !self.unrecorded.is_empty() {
+            pretty!(", {} not audited", self.unrecorded.len());
+        }
+        pretty!(")<r>");
     }
 
     fn print_summary_lines(&self, dry_run: bool, fixed: u32, remaining: u32) {
@@ -1193,10 +1393,11 @@ impl FixPlan {
     pub fn finish_installed(
         &self,
         lockfile: &Lockfile,
+        options: &Options,
         installed_advisories: &[Advisory],
         json: bool,
     ) -> u32 {
-        let outcome = self.outcome(lockfile, installed_advisories);
+        let outcome = self.outcome(lockfile, options, installed_advisories);
         if json {
             json::write(self, Some(&outcome), false);
         } else if !self.quiet {
@@ -1213,6 +1414,7 @@ impl FixPlan {
                 }
                 prettyln!("");
             }
+            print_pinned(&outcome.pinned);
             self.print_summary_lines(
                 false,
                 outcome.fixed_vulnerabilities,
@@ -1223,11 +1425,13 @@ impl FixPlan {
         u32::from(outcome.remaining_vulnerabilities > 0)
     }
 
-    pub fn outcome(&self, lockfile: &Lockfile, installed_advisories: &[Advisory]) -> FixOutcome {
+    pub fn outcome(
+        &self,
+        lockfile: &Lockfile,
+        options: &Options,
+        installed_advisories: &[Advisory],
+    ) -> FixOutcome {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let names = lockfile.packages.items_name();
-        let name_hashes = lockfile.packages.items_name_hash();
-        let res = lockfile.packages.items_resolution();
         let planned = &self.advisories;
         let installed = AdvisoryIndex::build(installed_advisories).unwrap_or_oom();
 
@@ -1247,15 +1451,12 @@ impl FixPlan {
             .collect();
 
         let mut still_vulnerable: Vec<StillVulnerable> = Vec::new();
-        for pkg_id in 0..res.len() {
-            if res[pkg_id].tag != ResolutionTag::Npm {
-                continue;
-            }
-            let name_hash = name_hashes[pkg_id];
-            let version = res[pkg_id].npm().version;
+        let mut pinned: Vec<PinnedCopy> = Vec::new();
+        for row in audit_rows(lockfile, options) {
+            let name_hash = row.name_hash;
             if let Some(list) = planned.by_name.get(&name_hash) {
                 for &i in list {
-                    if planned.matches(i, version, buf) {
+                    if planned.covers(i, row.version, buf) {
                         plan_remaining.set(i);
                     }
                 }
@@ -1265,7 +1466,7 @@ impl FixPlan {
             };
             let mut advisories: Vec<Box<[u8]>> = list
                 .iter()
-                .filter(|&&i| installed.matches(i, version, buf))
+                .filter(|&&i| installed.covers(i, row.version, buf))
                 .map(|&i| installed_advisories[i].ignore_token.clone())
                 .collect();
             if advisories.is_empty() {
@@ -1273,7 +1474,25 @@ impl FixPlan {
             }
             index_sort::sort_vec_unstable_by(&mut advisories, |a, b| a.cmp(b));
             advisories.dedup();
-            let ver = fmt_version(version, buf);
+            let ver: Box<[u8]> = match row.version {
+                RecordedVersion::Registry(version) => fmt_version(*version, buf),
+                // The plan leaves these copies alone, so one of them is never a failed fix.
+                RecordedVersion::RegistryTarball(version)
+                | RecordedVersion::PackageJson(version) => {
+                    let copy = PinnedCopy {
+                        name: Box::from(row.name),
+                        from: Box::from(version),
+                        resolution: redacted_resolution(lockfile, row.id),
+                        ignore_tokens: advisories,
+                    };
+                    let is_same = |seen: &PinnedCopy| PinnedCopy::order(seen, &copy).is_eq();
+                    if !self.pinned.iter().any(is_same) {
+                        pinned.push(copy);
+                    }
+                    continue;
+                }
+                RecordedVersion::Unversioned | RecordedVersion::Unknown => continue,
+            };
             let planned_gone = self
                 .expected_gone
                 .iter()
@@ -1283,7 +1502,7 @@ impl FixPlan {
                 .any(|&(hash, from)| hash == name_hash && *from == *ver);
             if planned_gone || !reported_staying {
                 still_vulnerable.push(StillVulnerable {
-                    name: Box::from(names[pkg_id].slice(buf)),
+                    name: Box::from(row.name),
                     version: ver,
                     advisories,
                 });
@@ -1293,12 +1512,14 @@ impl FixPlan {
             order_name_from(&a.name, &a.version, &b.name, &b.version)
         });
         still_vulnerable.dedup_by(|a, b| a.name == b.name && a.version == b.version);
+        index_sort::sort_vec_by(&mut pinned, PinnedCopy::order);
 
         FixOutcome {
             fixed_vulnerabilities: plan_remaining.bit_length() as u32
                 - plan_remaining.count() as u32,
             remaining_vulnerabilities: installed_advisories.len() as u32,
             still_vulnerable,
+            pinned,
         }
     }
 }

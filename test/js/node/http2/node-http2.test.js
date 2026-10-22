@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, isWindows, nodeExe, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5228,7 +5228,8 @@ it("http2 respondWithFile/respondWithFD send an empty range and reset the stream
   };
   expect(JSON.parse(stdout.trim())).toEqual({
     "empty-file": ok,
-    "empty-fd": ok,
+    // respondWithFD() sends the headers before anything reads the descriptor, so it adds no content-length.
+    "empty-fd": { status: 200, body: "", rstCode: 0 },
     "offset=size": ok,
     "offset=size+1": reset,
     "offset=NaN": reset,
@@ -5337,6 +5338,512 @@ it("http2 respondWithFD does not respond on a stream that was destroyed before f
   expect(stdout).toBe("done\n");
   expect(exitCode).toBe(0);
 });
+
+// Requests `pathname` and resolves once the stream has closed, with everything the client saw.
+function collectHttp2Response(client, pathname) {
+  return new Promise(resolve => {
+    const req = client.request({ ":path": pathname });
+    const seen = { status: undefined, contentLength: undefined, body: "", trailers: undefined, error: undefined };
+    req.setEncoding("utf8");
+    req.on("response", headers => {
+      seen.status = headers[":status"];
+      seen.contentLength = headers["content-length"];
+    });
+    req.on("trailers", headers => (seen.trailers = Object.fromEntries(Object.entries(headers))));
+    req.on("data", chunk => (seen.body += chunk));
+    req.on("error", err => (seen.error = err.message));
+    req.on("close", () => resolve(seen));
+  });
+}
+
+// What node-http2-respond-file.fixture.mjs prints under Bun: one line per case.
+const respondFileExpected = String.raw`
+{"case":"respondWithFD, no options","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, no options, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":-1}]},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, offset 0","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, offset 0, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":-1}]},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, offset 3","server":{"headersSent":true},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, offset 3, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":3,"length":-1}]},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, offset 3, length 4","server":{"headersSent":true},"client":{"status":200,"body":"3456"}}
+{"case":"respondWithFD, offset 3, length 4, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":3,"length":4}]},"client":{"status":200,"body":"3456"}}
+{"case":"respondWithFD, offset 3, length 100","server":{"headersSent":true},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, offset 3, length 100, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":3,"length":100}]},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, offset 3, length MAX_SAFE_INTEGER","server":{"headersSent":true},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, offset 3, length MAX_SAFE_INTEGER, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":3,"length":9007199254740991}]},"client":{"status":200,"body":"3456789"}}
+{"case":"respondWithFD, length 0","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, length 0, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":0}]},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, length -5","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, length -5, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":-5}]},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, length 2.5","server":{"headersSent":true},"client":{"status":200,"body":"01"}}
+{"case":"respondWithFD, length 2.5, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":2.5}]},"client":{"status":200,"body":"01"}}
+{"case":"respondWithFD, length NaN","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, length NaN, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":0,"length":null}]},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, offset 1.5","server":{"headersSent":true},"client":{"status":200,"body":"123456789"}}
+{"case":"respondWithFD, offset 1.5, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":1.5,"length":-1}]},"client":{"status":200,"body":"123456789"}}
+{"case":"respondWithFD, offset NaN","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, offset NaN, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":null,"length":-1}]},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, offset 100","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, offset 100, statCheck","server":{"headersSent":false,"statCheck":[3,{"offset":100,"length":-1}]},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, statCheck sets the range","server":{"headersSent":false},"client":{"status":200,"body":"56"}}
+{"case":"respondWithFD, statCheck sets length 2 ** 40","server":{"headersSent":false},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, statCheck sets a BigInt offset","server":{"headersSent":false,"uncaught":"TypeError"},"client":{"status":500,"body":""}}
+{"case":"respondWithFD, offset -1, length 3","server":{"headersSent":true},"client":{"status":200,"body":"456"}}
+{"case":"respondWithFD, offset -1, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"789"}}
+{"case":"respondWithFD, offset -7","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, statCheck sets content-length","server":{"headersSent":false},"client":{"status":200,"content-length":"10","body":"0123456789"}}
+{"case":"respondWithFD, statCheck returns false","server":{"headersSent":false},"client":{"status":418,"body":""}}
+{"case":"respondWithFD, statCheck responds","server":{"headersSent":false},"client":{"status":204,"body":""}}
+{"case":"respondWithFD, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"body":""}}
+{"case":"respondWithFD, waitForTrailers","server":{"headersSent":true},"client":{"status":200,"trailers":"sent","body":"0123456789"}}
+{"case":"respondWithFD, length 0, then a 'wantTrailers' listener","server":{"headersSent":true},"client":{"status":200,"trailers":"sent","body":""}}
+{"case":"respondWithFD, with headers","server":{"headersSent":true},"client":{"status":200,"content-length":"10","content-type":"text/plain","body":"0123456789"}}
+{"case":"respondWithFD, status 204","server":{"threw":"ERR_HTTP2_PAYLOAD_FORBIDDEN"},"client":{"status":500,"body":""}}
+{"case":"respondWithFD, request pseudo-header","server":{"error":"ERR_HTTP2_INVALID_PSEUDOHEADER","headersSent":false},"client":{"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, bad descriptor","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, bad descriptor, onError","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, bad descriptor, statCheck","server":{"statCheckCalls":0,"headersSent":false,"error":"EBADF"},"client":{"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, -1","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, FileHandle","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, closed FileHandle","server":{"closed":false,"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, 200000 bytes","server":{"headersSent":true},"client":{"status":200,"body":"200000 bytes, sha1 0cbcb1e27b56"}}
+{"case":"respondWithFD, 200000 bytes, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"200000 bytes, sha1 0cbcb1e27b56"}}
+{"case":"respondWithFD, 200000 bytes, offset -1","server":{"headersSent":true},"client":{"status":200,"body":"200000 bytes, sha1 0cbcb1e27b56"}}
+{"case":"respondWithFD, 200000 bytes, offset 70000, length 100000","server":{"headersSent":true},"client":{"status":200,"body":"100000 bytes, sha1 83713c1bc9e4"}}
+{"case":"respondWithFD, 200000 bytes, length 65536","server":{"headersSent":true},"client":{"status":200,"body":"65536 bytes, sha1 e12dfcaaafbf"}}
+{"case":"respondWithFD, 200000 bytes, length 65537","server":{"headersSent":true},"client":{"status":200,"body":"65537 bytes, sha1 f1dc6ecd5bba"}}
+{"case":"respondWithFD, then respond()","server":{"then":"ERR_HTTP2_HEADERS_SENT","headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, then respondWithFD()","server":{"then":"ERR_HTTP2_HEADERS_SENT","headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, then respondWithFile()","server":{"then":"ERR_HTTP2_HEADERS_SENT","headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, then end()","server":{"then":"no throw","headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"close(), then respondWithFD","server":{"threw":"ERR_HTTP2_INVALID_STREAM"},"client":{"body":""}}
+{"case":"close(), then respondWithFD, statCheck","server":{"threw":"ERR_HTTP2_INVALID_STREAM"},"client":{"body":""}}
+{"case":"respondWithFD, bad descriptor, then destroy()","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, bad descriptor, then close()","server":{"headersSent":true},"client":{"status":200,"body":""}}
+{"case":"respondWithFD, bad descriptor, statCheck, then destroy()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFD, bad descriptor, statCheck, then close()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFD, statCheck, then destroy()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFD, statCheck, then close()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFile","server":{"headersSent":false},"client":{"status":200,"content-length":"10","body":"0123456789"}}
+{"case":"respondWithFile, offset 2, length 3","server":{"headersSent":false},"client":{"status":200,"content-length":"3","body":"234"}}
+{"case":"respondWithFile, length 0","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFile, offset 4, length 0","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFile, offset -5","server":{"headersSent":false},"client":{"status":200,"content-length":"10","body":"0123456789"}}
+{"case":"respondWithFile, offset 10","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFile, length 2 ** 40","server":{"headersSent":false},"client":{"status":200,"content-length":"10","body":"0123456789"}}
+{"case":"respondWithFile, empty file","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFile, statCheck returns false","server":{"headersSent":false},"client":{"status":418,"body":""}}
+{"case":"respondWithFile, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"body":""}}
+{"case":"respondWithFile, statCheck sets a header","server":{"headersSent":false},"client":{"status":200,"content-length":"10","x-size":"10","body":"0123456789"}}
+{"case":"respondWithFile, statCheck arguments","server":{"headersSent":false,"statCheck":[2]},"client":{"status":200,"content-length":"10","body":"0123456789"}}
+{"case":"respondWithFile, waitForTrailers","server":{"headersSent":false},"client":{"status":200,"content-length":"10","trailers":"sent","body":"0123456789"}}
+{"case":"respondWithFile, 200000 bytes","server":{"headersSent":false},"client":{"status":200,"content-length":"200000","body":"200000 bytes, sha1 0cbcb1e27b56"}}
+{"case":"respondWithFile, 200000 bytes, offset 70000, length 100000","server":{"headersSent":false},"client":{"status":200,"content-length":"100000","body":"100000 bytes, sha1 83713c1bc9e4"}}
+{"case":"respondWithFile, missing file","server":{"headersSent":false,"error":"ENOENT"},"client":{"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFile, missing file, onError","server":{"headersSent":false,"onError":"ENOENT"},"client":{"status":404,"body":""}}
+{"case":"respondWithFile, directory","server":{"headersSent":false,"error":"ERR_HTTP2_SEND_FILE"},"client":{"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFile, directory, onError","server":{"headersSent":false,"onError":"ERR_HTTP2_SEND_FILE"},"client":{"status":500,"body":""}}
+{"case":"respondWithFile, then respond()","server":{"headersSent":true},"client":{"status":201,"body":"second"}}
+{"case":"close(), then respondWithFile","server":{"threw":"ERR_HTTP2_INVALID_STREAM"},"client":{"body":""}}
+{"case":"respondWithFile, statCheck, then destroy()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFile, statCheck, then close()","server":{"statCheckCalls":0,"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFile, directory, then destroy()","server":{"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFile, directory, then close()","server":{"headersSent":false},"client":{"body":""}}
+{"case":"respondWithFD, after every other case","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, directory","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, directory, statCheck","server":{"statCheckCalls":1,"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+{"case":"respondWithFD, /proc file","server":{"headersSent":true},"client":{"status":200,"body":"Linux\n"}}
+{"case":"respondWithFD, /proc file, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"Linux\n"}}
+{"case":"respondWithFile, /proc file","server":{"headersSent":false},"client":{"status":200,"content-length":"0","body":""}}
+{"case":"respondWithFD, FIFO","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, statCheck","server":{"headersSent":false},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, length 4","server":{"headersSent":true},"client":{"status":200,"body":"0123"}}
+{"case":"respondWithFD, FIFO, offset -1","server":{"headersSent":true},"client":{"status":200,"body":"0123456789"}}
+{"case":"respondWithFD, FIFO, offset 2","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}
+`;
+// Node v26 prints another line for these cases, and the same line for every other one.
+const respondFileOnNode = {
+  // node coerces the range with `| 0`, so 2 ** 40 is 0 there. Bun keeps a range past 2 GiB.
+  "respondWithFD, statCheck sets length 2 ** 40": `{"case":"respondWithFD, statCheck sets length 2 ** 40","server":{"headersSent":false},"client":{"status":200,"body":""}}`,
+  // node adds a negative offset to content-length, and the client rejects the response. Bun reads from 0.
+  "respondWithFile, offset -5": `{"case":"respondWithFile, offset -5","server":{"headersSent":false},"client":{"status":200,"content-length":"15","error":"Stream closed with error code NGHTTP2_PROTOCOL_ERROR","body":"0123456789"}}`,
+  // node sets headersSent before it checks the headers.
+  "respondWithFD, request pseudo-header": `{"case":"respondWithFD, request pseudo-header","server":{"error":"ERR_HTTP2_INVALID_PSEUDOHEADER","headersSent":true},"client":{"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  // node resets the stream with the code that close() got. Bun sends no code for a stream that sent nothing.
+  "respondWithFD, statCheck closes the stream": `{"case":"respondWithFD, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
+  "respondWithFile, statCheck closes the stream": `{"case":"respondWithFile, statCheck closes the stream","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"error":"Stream closed with error code NGHTTP2_REFUSED_STREAM","body":""}}`,
+  // node reads a pipe at offset 0, which fails. Bun reads it from its position, as it did before it followed node here.
+  "respondWithFD, FIFO": `{"case":"respondWithFD, FIFO","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFD, FIFO, statCheck": `{"case":"respondWithFD, FIFO, statCheck","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFD, FIFO, length 4": `{"case":"respondWithFD, FIFO, length 4","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+};
+// On Windows, node fails a read with a negative offset other than -1.
+const respondFileOnNodeOnWindows = {
+  "respondWithFD, offset -7": `{"case":"respondWithFD, offset -7","server":{"headersSent":true,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+  "respondWithFile, offset -5": `{"case":"respondWithFile, offset -5","server":{"headersSent":false,"error":"ERR_HTTP2_STREAM_ERROR"},"client":{"status":200,"content-length":"15","error":"Stream closed with error code NGHTTP2_INTERNAL_ERROR","body":""}}`,
+};
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", optionChecksNode],
+]) {
+  it.skipIf(!runtime)(
+    `http2 respondWithFD() and respondWithFile() respond like node v26 (${name})`,
+    async () => {
+      using dir = tempDir("http2-respond-file-fixture", {});
+      await using proc = Bun.spawn({
+        cmd: [runtime, path.join(import.meta.dir, "node-http2-respond-file.fixture.mjs"), String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      let expected = respondFileExpected.trim().split("\n");
+      // The fixture has the cases with a directory descriptor on POSIX only, and the ones with a /proc file or a FIFO on Linux.
+      if (isWindows) expected = expected.filter(line => !line.startsWith(`{"case":"respondWithFD, directory`));
+      if (!isLinux) expected = expected.filter(line => !/\/proc file|, FIFO/.test(line));
+      if (name === "node") {
+        const onNode = isWindows ? { ...respondFileOnNode, ...respondFileOnNodeOnWindows } : respondFileOnNode;
+        expected = expected.map(line => onNode[JSON.parse(line).case] ?? line);
+      }
+      expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        lines: expected,
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    // A debug build needs 3 to 5 s to start and about as long for the 101 requests. Every other build keeps the default.
+    isDebug ? 60_000 : undefined,
+  );
+}
+
+it("http2 respondWithFD() and respondWithFile() throw on a stream whose session is gone", async () => {
+  using dir = tempDir("http2-respond-file-no-session", { "file.txt": "0123456789" });
+  const file = path.join(String(dir), "file.txt");
+  const fd = fs.openSync(file, "r");
+  const { promise: delivered, resolve: onDelivered } = Promise.withResolvers();
+  const { promise: observed, resolve: onObserved } = Promise.withResolvers();
+  let openStream;
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    openStream = stream;
+    onDelivered();
+  });
+  // A GOAWAY with an error code destroys the session before the flags of its streams change.
+  server.on("sessionError", () => {
+    const seen = [];
+    for (const respond of [
+      () => openStream.respondWithFD(fd),
+      () => openStream.respondWithFD(fd, {}, { statCheck() {} }),
+      () => openStream.respondWithFile(file),
+    ]) {
+      try {
+        respond();
+        seen.push("no throw");
+      } catch (e) {
+        seen.push(e.code);
+      }
+    }
+    onObserved({ seen, headersSent: openStream.headersSent });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    req.resume();
+    await delivered;
+    client.goaway(http2.constants.NGHTTP2_INTERNAL_ERROR);
+    expect(await observed).toEqual({
+      seen: ["ERR_HTTP2_INVALID_STREAM", "ERR_HTTP2_INVALID_STREAM", "ERR_HTTP2_INVALID_STREAM"],
+      headersSent: false,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it("http2 respondWithFD() without a length reads a small file into a buffer of its size", async () => {
+  using dir = tempDir("http2-respond-with-fd-buffer", { "file.txt": "0123456789" });
+  const fd = fs.openSync(path.join(String(dir), "file.txt"), "r");
+  // The read stream of a file response reads through fs.read. A read to EOF of unknown size takes 64 KiB.
+  const buffers = [];
+  const { read } = fs;
+  fs.read = (descriptor, buffer, ...rest) => {
+    if (descriptor === fd) buffers.push(buffer.length);
+    return read(descriptor, buffer, ...rest);
+  };
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    stream.respondWithFD(fd, {}, headers[":path"] === "/statCheck" ? { statCheck() {} } : {});
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const pathname of ["/", "/statCheck"]) {
+      expect((await collectHttp2Response(client, pathname)).body).toBe("0123456789");
+    }
+    expect(buffers).toEqual([10, 10]);
+  } finally {
+    fs.read = read;
+    client.destroy();
+    server.close();
+    fs.closeSync(fd);
+  }
+});
+
+it("http2 respondWithFD() starts no read of the file once the stream is gone", async () => {
+  // Each 64 KiB of the file holds its own index: the byte at the descriptor's position tells how far reads moved it.
+  const content = Buffer.alloc(200000);
+  for (let i = 0; i < content.length; i++) content[i] = 48 + (i >> 16);
+  using dir = tempDir("http2-respond-with-fd-gone", { "file.txt": content.toString() });
+  const file = path.join(String(dir), "file.txt");
+  const closed = {};
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    const fd = fs.openSync(file, "r");
+    const { promise, resolve } = Promise.withResolvers();
+    closed[headers[":path"]] = promise;
+    stream.on("close", () => resolve(fd));
+    // A read with offset -1 is from the descriptor's own position, and moves it.
+    stream.respondWithFD(fd, {}, { offset: -1 });
+    if (headers[":path"] === "/destroy") stream.destroy();
+    else stream.close();
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const pathname of ["/destroy", "/close"]) {
+      await collectHttp2Response(client, pathname);
+      const fd = await closed[pathname];
+      // Nothing signals a read that does not start: give a stray one a bounded number of turns to land.
+      for (let turn = 0; turn < 100; turn++) await new Promise(resolve => setImmediate(resolve));
+      const at = Buffer.alloc(1);
+      fs.readSync(fd, at, 0, 1, null);
+      fs.closeSync(fd);
+      expect({ pathname, chunkAtPosition: at.toString() }).toEqual({ pathname, chunkAtPosition: "0" });
+    }
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+// /proc/self/fd tells which file a descriptor is open on.
+function descriptorsOpenOn(file) {
+  return fs.readdirSync("/proc/self/fd").filter(name => {
+    try {
+      return fs.readlinkSync(`/proc/self/fd/${name}`) === file;
+    } catch {
+      return false;
+    }
+  }).length;
+}
+// The count of descriptors open on `file`, once it is `count` or a deadline has passed.
+async function descriptorsLeftOpenOn(file, count) {
+  const deadline = Date.now() + 3000;
+  while (descriptorsOpenOn(file) !== count && Date.now() < deadline) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  return descriptorsOpenOn(file);
+}
+
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when respondWithFD() responds first",
+  async () => {
+    using dir = tempDir("http2-respond-with-file-owner", { "file.txt": "0123456789" });
+    const file = fs.realpathSync(path.join(String(dir), "file.txt"));
+    const fd = fs.openSync(file, "r");
+    const server = http2.createServer();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      // respondWithFile() is still opening the file when respondWithFD() sends the response.
+      stream.respondWithFile(file);
+      stream.respondWithFD(fd);
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const client = http2.connect(`http://localhost:${server.address().port}`);
+    client.on("error", () => {});
+
+    try {
+      for (let i = 0; i < 5; i++) {
+        expect((await collectHttp2Response(client, "/")).status).toBe(200);
+      }
+      // respondWithFile() finds the response taken once its open and fstat come back, after the
+      // stream is over, and closes its descriptor then. Only `fd` may stay open on the file.
+      expect(await descriptorsLeftOpenOn(file, 1)).toBe(1);
+    } finally {
+      client.destroy();
+      server.close();
+      fs.closeSync(fd);
+    }
+  },
+);
+
+it.skipIf(!isLinux)("http2 respondWithFile() of zero bytes closes the file it opened", async () => {
+  using dir = tempDir("http2-respond-with-file-empty", { "empty.txt": "", "ten.txt": "0123456789" });
+  const empty = fs.realpathSync(path.join(String(dir), "empty.txt"));
+  const ten = fs.realpathSync(path.join(String(dir), "ten.txt"));
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.on("error", () => {});
+    if (headers[":path"] === "/empty") stream.respondWithFile(empty);
+    else stream.respondWithFile(ten, {}, { offset: 10 });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+
+  try {
+    for (const pathname of ["/empty", "/at-eof", "/empty", "/at-eof"]) {
+      expect({ pathname, ...(await collectHttp2Response(client, pathname)) }).toEqual({
+        pathname,
+        status: 200,
+        contentLength: "0",
+        body: "",
+        trailers: undefined,
+        error: undefined,
+      });
+    }
+    expect({ empty: await descriptorsLeftOpenOn(empty, 0), ten: await descriptorsLeftOpenOn(ten, 0) }).toEqual({
+      empty: 0,
+      ten: 0,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
+// The throw is an uncaught exception, so the server gets a process of its own.
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when statCheck throws",
+  async () => {
+    using dir = tempDir("http2-stat-check-throws", { "file.txt": "0123456789" });
+    const script = `
+      const http2 = require("node:http2");
+      const fs = require("node:fs");
+      const file = fs.realpathSync(process.env.HTTP2_TEST_FILE);
+      const descriptorsOpenOnFile = () =>
+        fs.readdirSync("/proc/self/fd").filter(name => {
+          try {
+            return fs.readlinkSync("/proc/self/fd/" + name) === file;
+          } catch {
+            return false;
+          }
+        }).length;
+      let uncaught = 0;
+      let current;
+      // Nothing responds after the throw, so close the stream to let the client's request end.
+      process.on("uncaughtException", () => {
+        uncaught++;
+        current.close();
+      });
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        current = stream;
+        stream.on("error", () => {});
+        stream.respondWithFile(file, {}, {
+          statCheck() {
+            throw new Error("statCheck threw");
+          },
+        });
+      });
+      server.listen(0, "127.0.0.1", async () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => {
+            const req = client.request();
+            req.on("error", () => {});
+            req.resume();
+            req.on("close", resolve);
+          });
+        }
+        const deadline = Date.now() + 3000;
+        while (descriptorsOpenOnFile() !== 0 && Date.now() < deadline) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log(JSON.stringify({ uncaught, open: descriptorsOpenOnFile() }));
+        client.destroy();
+        server.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, HTTP2_TEST_FILE: path.join(String(dir), "file.txt") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ uncaught: 3, open: 0 }),
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+  isDebug ? 15_000 : undefined,
+);
+
+it.skipIf(!isLinux)(
+  "http2 respondWithFile() closes the file it opened when the stream goes away mid-transfer",
+  async () => {
+    using dir = tempDir("http2-respond-with-file-teardown", { "file.txt": Buffer.alloc(1000000, "a").toString() });
+    const file = fs.realpathSync(path.join(String(dir), "file.txt"));
+    // Each one runs on the tick after the fstat callback, before the file has been read.
+    const teardowns = {
+      "/destroy": stream => stream.destroy(),
+      "/close": stream => stream.close(),
+      "/session-destroy": stream => stream.session.destroy(),
+    };
+    const server = http2.createServer();
+    server.on("session", session => session.on("error", () => {}));
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      const teardown = teardowns[headers[":path"]];
+      const statCheck = () => void (teardown && process.nextTick(teardown, stream));
+      stream.respondWithFile(file, {}, { statCheck });
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const url = `http://localhost:${server.address().port}`;
+    let client = http2.connect(url);
+    client.on("error", () => {});
+
+    try {
+      // The client resets the stream while the file's chunk is queued behind its window.
+      const req = client.request({ ":path": "/queued" });
+      req.on("error", () => {});
+      req.pause();
+      await once(req, "response");
+      req.close(http2.constants.NGHTTP2_CANCEL);
+      await once(req, "close");
+      await collectHttp2Response(client, "/destroy");
+      await collectHttp2Response(client, "/close");
+      client.destroy();
+      // The last teardown takes the whole session with it.
+      client = http2.connect(url);
+      client.on("error", () => {});
+      await collectHttp2Response(client, "/session-destroy");
+
+      expect(await descriptorsLeftOpenOn(file, 0)).toBe(0);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  },
+);
+
 it("http2 client.request() on a destroyed or closed session uses the right error codes", async () => {
   // Node: destroyed session -> ERR_HTTP2_INVALID_SESSION,
   // closed (GOAWAY-pending) session -> ERR_HTTP2_GOAWAY_SESSION.

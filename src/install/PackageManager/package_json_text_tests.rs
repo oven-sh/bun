@@ -446,6 +446,108 @@ fn a_name_that_is_there_many_times_is_looked_up_once() {
     );
 }
 
+// ───── names that have one hash ─────
+
+/// The eight bytes of this number are the string, and the hash of a number is the hash of its bytes.
+const TIED_NUMBER: &str = "2261634.5098039214";
+const TIED_STRING: &str = "\"AAAAAAAA\"";
+/// Two strings whose hash is 0.
+const TIED_KEYS: [&str; 2] = ["\"IORK7qW3vZPGLwg7\"", "\"UynIw4a86y1UEOvU\""];
+
+#[test]
+fn the_names_of_the_tests_have_one_hash() {
+    bun_ast::initialize_store_or_reset();
+    let bump = bun_alloc::Arena::new();
+    let [a, b] = TIED_KEYS;
+    let root = parse(
+        format!("[{TIED_NUMBER}, {TIED_STRING}, {a}, {b}]").as_bytes(),
+        &bump,
+    );
+    let entries = Entries::of(&root, b'[').expect("an array");
+    let hash = |index| entries.name(index).expect("a name").hash();
+    assert_eq!(hash(0), hash(1));
+    assert_eq!((hash(2), hash(3)), (0, 0));
+}
+
+#[test]
+fn a_container_where_a_look_meets_another_name_of_its_hash_is_printed() {
+    let (number, string) = (TIED_NUMBER, TIED_STRING);
+    let old = format!(
+        "{{\n  // outside\n  \"n\": [\n    {number}, // 0\n    {string}, // 1\n    {string} // 2\n  ], // beside\n  \"m\": 1\n}}\n"
+    );
+    // The first one goes: the look for the string meets the number. No comment in the array is kept.
+    assert_eq!(
+        saved(&old, &format!("{{\"n\": [{string}, {string}], \"m\": 1}}")),
+        format!("{{\n  // outside\n  \"n\": [{string}, {string}], // beside\n  \"m\": 1\n}}\n")
+    );
+    assert_eq!(
+        saved(
+            &old,
+            &format!("{{\"n\": [{string}, {number}, {string}], \"m\": 1}}")
+        ),
+        format!(
+            "{{\n  // outside\n  \"n\": [{string}, {number}, {string}], // beside\n  \"m\": 1\n}}\n"
+        )
+    );
+    // The last one goes, or one more comes: each look meets its own name.
+    assert_eq!(
+        saved(&old, &format!("{{\"n\": [{number}, {string}], \"m\": 1}}")),
+        old.replace(
+            &format!("{string}, // 1\n    {string} // 2"),
+            &format!("{string} // 1")
+        )
+    );
+    assert_eq!(
+        saved(
+            &old,
+            &format!("{{\"n\": [{number}, {string}, {string}, 7], \"m\": 1}}")
+        ),
+        old.replace("// 2", "// 2\n    7")
+            .replace(&format!("{string} // 2"), &format!("{string}, // 2"))
+    );
+    // Keys, and a container in the one that is printed.
+    let [a, b] = TIED_KEYS;
+    let old = format!(
+        "{{\n  // outside\n  \"n\": {{\n    {a}: 0, // a\n    {b}: {{\n      \"x\": 1 // x\n    }} // b\n  }}, // beside\n  \"m\": 1\n}}\n"
+    );
+    assert_eq!(
+        saved(&old, &format!("{{\"n\": {{{b}: {{\"x\": 1}}}}, \"m\": 1}}")),
+        format!(
+            "{{\n  // outside\n  \"n\": {{\n    {b}: {{\n      \"x\": 1\n    }}\n  }}, // beside\n  \"m\": 1\n}}\n"
+        )
+    );
+    assert_eq!(
+        saved(&old, &format!("{{\"n\": {{{a}: 0}}, \"m\": 1}}")),
+        format!(
+            "{{\n  // outside\n  \"n\": {{\n    {a}: 0 // a\n  }}, // beside\n  \"m\": 1\n}}\n"
+        )
+    );
+    // The root: what is before it and after it stays.
+    assert_eq!(
+        saved(
+            &format!("// before\n{{\n  {a}: 0, // a\n  {b}: 1 // b\n}} // after\n"),
+            &format!("{{{b}: 1}}")
+        ),
+        format!("// before\n{{\n  {b}: 1\n}} // after\n")
+    );
+}
+
+#[test]
+fn names_that_have_one_hash_are_not_walked() {
+    // A walk passed the taken members behind the number again for every entry.
+    let count = 100_000;
+    let (number, string) = (TIED_NUMBER, TIED_STRING);
+    let old = format!(
+        "{{\n  \"n\": [\n    {number},\n{}    {string}\n  ]\n}}\n",
+        format!("    {string},\n").repeat(count - 2)
+    );
+    let strings = vec![string; count - 1];
+    assert_eq!(
+        saved(&old, &format!("{{\"n\": [{}]}}", strings.join(","))),
+        format!("{{\n  \"n\": [{}]\n}}\n", strings.join(", "))
+    );
+}
+
 // ───── a container on one line ─────
 
 #[test]

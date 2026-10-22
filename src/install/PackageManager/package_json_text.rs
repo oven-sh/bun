@@ -869,18 +869,18 @@ impl<'a> Text<'a> {
         names
     }
 
-    /// For each entry its member of the text, and for each member whether the tree still has it.
+    /// For each entry its member of the text, and for each member whether the tree still has it. `None`: a look met a member of another name that has its hash.
     fn pair(
         &mut self,
         container: &Container,
         entries: Entries<'_>,
-    ) -> (Vec<Option<usize>>, Vec<bool>) {
+    ) -> Option<(Vec<Option<usize>>, Vec<bool>)> {
         let text = self.text;
         let old_len = container.len;
         let mut pairs: Vec<Option<usize>> = vec![None; entries.len()];
         let mut taken = vec![false; old_len];
         let names = self.names(container);
-        // For a name that is there many times: how many of its members are taken, from its first one on.
+        // For a hash that many members have: how many of them are taken, from the first one on.
         let mut taken_first: Vec<usize> = Vec::new();
         for (index, pair) in pairs.iter_mut().enumerate() {
             let Some(name) = entries.name(index) else {
@@ -893,23 +893,23 @@ impl<'a> Text<'a> {
             while at < names.len() && names[at].0 == hash {
                 let old = names[at].1;
                 if taken[old] {
-                    if at == first + skip {
-                        skip += 1;
-                        if taken_first.is_empty() {
-                            taken_first.resize(names.len(), 0);
-                        }
-                        taken_first[first] = skip;
+                    skip += 1;
+                    if taken_first.is_empty() {
+                        taken_first.resize(names.len(), 0);
                     }
+                    taken_first[first] = skip;
                 } else if self.is_named(container, old, name) {
                     taken[old] = true;
                     *pair = Some(old);
                     break;
+                } else {
+                    return None;
                 }
                 at += 1;
             }
         }
         let Entries::Items(items) = entries else {
-            return (pairs, taken);
+            return Some((pairs, taken));
         };
         // The objects and arrays of the tree and of the text, in order.
         let theirs: Vec<usize> = (0..items.len())
@@ -964,7 +964,7 @@ impl<'a> Text<'a> {
                 }
             }
         }
-        (pairs, taken)
+        Some((pairs, taken))
     }
 
     // ───── the new text ─────
@@ -1084,7 +1084,11 @@ impl<'a> Text<'a> {
             }
             return self.in_place(&container, entries);
         }
-        let (pairs, stays) = self.pair(&container, entries);
+        let Some((pairs, stays)) = self.pair(&container, entries) else {
+            bun_core::hint::cold();
+            // Two names of one hash: the printer writes the container, as it writes one that is on one line.
+            return self.print(value, self.line_indent(old.at));
+        };
         // An array that has every item where the text has one: only values are other values.
         let is_in_place = pairs.len() == container.len
             && pairs

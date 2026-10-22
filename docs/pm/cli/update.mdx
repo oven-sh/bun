@@ -34,7 +34,7 @@ Updated packages appear in the install summary as `↑ name old → new`, with `
 - Bun never rewrites `catalog:` references; it updates the catalog entry in the root `package.json` instead. An entry that no `catalog:` dependency uses stays as written.
 - `--no-save` updates `node_modules` only, leaving `package.json` and `bun.lock` untouched.
 - Bun edits the text of `package.json` in place, here and in `bun add`, `bun remove` and `bun pm pkg`. Comments, blank lines, line endings and everything an edit does not touch stay as written.
-- An entry that Bun removes takes its line with it: the comment on that line, and blank lines directly above it. Comment lines above it stay. When `bun add` sorts a dependency group, a comment above an entry moves with that entry. An object or array on one line that gains or loses an entry is printed again, without the comments inside it. So is a file that is written on one line.
+- An entry that Bun removes takes its line with it: the comment on that line, and blank lines directly above it. Comment lines above it stay. When `bun add` sorts a dependency group, a comment above an entry moves with that entry. An object or array on one line that gains or loses an entry is printed again, without the comments inside it. So is a file that is written on one line. So is an object or array in which two names have the same internal hash. In practice, only a file that is built for it has such names.
 - Node.js, npm and most other tools do not read a `package.json` that has comments or trailing commas.
 
 ### What is held back

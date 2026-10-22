@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
@@ -1798,5 +1798,69 @@ describe.concurrent("bun pm pkg: the text of package.json", () => {
     const deep = `${Buffer.alloc(open.length * levels, open)}1${Buffer.alloc(close.length * levels, close)}`;
     const packageJson = `{\n  "name": "app",\n  "deep": ${deep}\n}\n`;
     await edit(packageJson, ["set", "license=MIT"], packageJson.replace(`\n}\n`, `,\n  "license": "MIT"\n}\n`));
+  });
+
+  // Two names can have one hash. The hash of a number is the hash of the eight bytes of its bits, so this number
+  // and this string have one. The hash of the two keys is 0.
+  const tiedNumber = "2261634.5098039214";
+  const tiedString = `"AAAAAAAA"`;
+  const [tiedA, tiedB] = ["IORK7qW3vZPGLwg7", "UynIw4a86y1UEOvU"];
+  it("has names that have one hash", () => {
+    expect(Bun.hash.wyhash(JSON.parse(tiedString))).toBe(Bun.hash.wyhash(new Float64Array([Number(tiedNumber)])));
+    expect([tiedA, tiedB].map(key => Bun.hash.wyhash(key))).toEqual([0n, 0n]);
+  });
+
+  const tiedItems = `{\n  // outside\n  "n": [\n    ${tiedNumber}, // 0\n    ${tiedString}, // 1\n    ${tiedString} // 2\n  ], // beside\n  "m": 1\n}\n`;
+  const tiedKeys = `{\n  // outside\n  "n": {\n    "${tiedA}": 0, // a\n    "${tiedB}": 1 // b\n  }, // beside\n  "m": 1\n}\n`;
+  it.each<Edit>([
+    // The look for the string meets the number, which has its hash: the printer writes the array.
+    [
+      tiedItems,
+      ["delete", "n[0]"],
+      `{\n  // outside\n  "n": [\n    ${tiedString},\n    ${tiedString}\n  ], // beside\n  "m": 1\n}\n`,
+    ],
+    [tiedKeys, ["delete", `n.${tiedA}`], `{\n  // outside\n  "n": {\n    "${tiedB}": 1\n  }, // beside\n  "m": 1\n}\n`],
+    // Each look meets its own name: the lines stay.
+    [
+      tiedItems,
+      ["delete", "n[2]"],
+      tiedItems.replace(`${tiedString}, // 1\n    ${tiedString} // 2`, `${tiedString} // 1`),
+    ],
+    [tiedKeys, ["delete", `n.${tiedB}`], tiedKeys.replace(`0, // a\n    "${tiedB}": 1 // b`, `0 // a`)],
+  ])("prints an object or array where a look for a name meets another name of its hash (%#)", edit);
+
+  // The time on a clock says little on a busy machine: this is the CPU time of the command.
+  it.each([
+    // A look for a name started at its first member and walked over the ones that were taken.
+    ["one name", `"same"`, `"same"`, "n[1]"],
+    // A walk passed the taken members behind the number again for each entry: 10 s for 200,000 in a release build.
+    ["two names of one hash", tiedNumber, tiedString, "n[0]"],
+  ])("pairs many members of %s in linear time", async (_, first, other, path) => {
+    const count = isDebug || isASAN ? 50_000 : 200_000;
+    const others = Buffer.alloc(`    ${other},\n`.length * (count - 2), `    ${other},\n`).toString();
+    using dir = tempDir("pm-pkg-text-many", {
+      "package.json": `{\n  "n": [\n    ${first},\n${others}    ${other}\n  ]\n}\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "pm", "pkg", "delete", path],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+    const { n } = JSON.parse(await readRaw(String(dir)));
+    const value = JSON.parse(other);
+    expect({ length: n.length, same: n.every((item: unknown) => item === value) }).toEqual({
+      length: count - 1,
+      same: true,
+    });
+    expect(Number(proc.resourceUsage()!.cpuTime.total) / 1e6).toBeLessThan(isDebug || isASAN ? 30 : 3);
   });
 });

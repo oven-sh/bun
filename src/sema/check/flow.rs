@@ -3529,6 +3529,16 @@ impl<'p, 's> Checker<'p, 's> {
                     return TypeId::OBJECT;
                 }
             }
+            // `unionContainsType` without `matchSymbol`. A `number` narrowed to `1` this way doesn't
+            // widen to `number` again.
+            if !loose
+                && self.has_primitive_flag(value_ty)
+                && self.flags(value_ty) & tf::UNIQUE_ES_SYMBOL == 0
+                && self.is_uniform_union_type(ty)
+                && self.each_union_contains(&[ty], value_ty)
+            {
+                return value_ty;
+            }
             // `isCoercibleUnderDoubleEquals`
             let coerces = loose
                 && (matches!(value_ty, TypeId::NUMBER | TypeId::STRING)
@@ -3552,6 +3562,36 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         ty
+    }
+
+    /// `isUniformUnionType`: a union of primitive types in which no two literal types are
+    /// comparable.
+    fn is_uniform_union_type(&self, ty: TypeId) -> bool {
+        if !self.is_primitive_union(ty) {
+            return false;
+        }
+        let (mut enum_symbol, mut has_string_or_number_literal) = (None, false);
+        for &t in self.parts(ty) {
+            match *self.data(t) {
+                TypeData::EnumLit { member: symbol, .. } | TypeData::Enum { symbol, .. } => {
+                    let parent = self.files().parent_of_symbol(symbol);
+                    if has_string_or_number_literal
+                        || enum_symbol.is_some_and(|it| Some(it) != parent)
+                    {
+                        return false;
+                    }
+                    enum_symbol = enum_symbol.or(parent);
+                }
+                TypeData::StringLit { .. } | TypeData::NumberLit { .. } => {
+                    if enum_symbol.is_some() {
+                        return false;
+                    }
+                    has_string_or_number_literal = true;
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     /// FOR SPEED: true for a string, number or bigint literal type that isn't an enum member. No

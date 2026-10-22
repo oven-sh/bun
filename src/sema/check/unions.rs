@@ -1892,7 +1892,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `ObjectFlagsPrimitiveUnion`: a union with no member that has `TypeFlagsNotPrimitiveUnion`. `object` is allowed.
     /// `void`, template literal types and `keyof T` aren't. `filterType` forwards the flag, so a union that it's the
     /// first to create from a union without the flag lacks it too.
-    fn is_primitive_union(&self, ty: TypeId) -> bool {
+    pub(super) fn is_primitive_union(&self, ty: TypeId) -> bool {
         let TypeData::Union(parts) = self.data(ty) else {
             return false;
         };
@@ -1948,7 +1948,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `eachUnionContains`. A union that has `string` contains `"a"`.
-    fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
+    pub(super) fn each_union_contains(&self, unions: &[TypeId], t: TypeId) -> bool {
         for &union in unions {
             let has = |expected: TypeId| self.contains_type(self.parts(union), expected);
             if has(t) {

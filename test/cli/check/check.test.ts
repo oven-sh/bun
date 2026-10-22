@@ -10594,6 +10594,105 @@ export function notNarrowed(u: unknown) {
       expect(exitCode).toBe(1);
     });
 
+    test("narrows a union of primitive types that is compared with a literal to the regular literal type", async () => {
+      using dir = project({
+        "a.ts": `enum Color { Red, Green }
+enum Size { Small, Large }
+declare const key: unique symbol;
+export function union(x: number | undefined) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function notAUnion(x: number) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function text(x: string | null) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function big(x: bigint | boolean) {
+  if (x === 1n) {
+    let y = x;
+    y = 2n;
+  }
+}
+export function loose(x: number | undefined) {
+  if (x == 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function withObject(x: number | { a: 1 }) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function withVoid(x: number | void) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function enumAndText(x: Color | string) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function enumAndLiteral(x: Color | "z" | string[]["length"]) {
+  if (x === 1) {
+    let y = x;
+    y = 2;
+  }
+}
+export function twoEnums(x: Color | Size | string) {
+  if (x === "a") {
+    let y = x;
+    y = "b";
+  }
+}
+export function symbols(x: symbol | undefined) {
+  if (x === key) {
+    let y = x;
+    y = Symbol();
+  }
+}
+export function property(o: { p: number | undefined }) {
+  if (o.p === 1) {
+    let { p = 1 } = o;
+    p = 2;
+  }
+}
+export function inSwitch(x: number | undefined) {
+  switch (x) {
+    case 1:
+      let y = x;
+      y = 2;
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(19,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(25,5): error TS2322: Type '2n' is not assignable to type '1n'.
+        a.ts(49,5): error TS2322: Type '"b"' is not assignable to type '"a"'.
+        a.ts(55,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(73,5): error TS2322: Type '2' is not assignable to type '1'.
+        a.ts(80,7): error TS2322: Type '2' is not assignable to type '1'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

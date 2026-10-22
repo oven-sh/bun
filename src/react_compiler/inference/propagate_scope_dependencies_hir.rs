@@ -1855,6 +1855,8 @@ struct DependencyCollectionContext<'a> {
     scope_stack_copy: Option<Rc<[ScopeId]>>,
     dep_stack: Vec<Vec<ReactiveScopeDependency>>,
     deps: IndexMap<ScopeId, Vec<ReactiveScopeDependency>>,
+    /// Not in upstream: the scopes in `deps` that assign a variable and are on each path to the current block.
+    ended_scopes: Vec<ScopeId>,
     temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     inner_fn_context: Option<EvaluationOrder>,
@@ -1872,6 +1874,7 @@ impl<'a> DependencyCollectionContext<'a> {
             scope_stack_copy: None,
             dep_stack: Vec::new(),
             deps: IndexMap::new(),
+            ended_scopes: Vec::new(),
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
@@ -1911,15 +1914,17 @@ impl<'a> DependencyCollectionContext<'a> {
 
         if !pruned {
             self.deps.insert(scope_id, scoped_deps);
+            if !env.scopes[scope_id.0 as usize].reassignments.is_empty() {
+                self.ended_scopes.push(scope_id);
+            }
         }
         Ok(())
     }
 
-    /// Not in upstream, which visits an operand only when it is an optional chain. A scope gives back each variable
-    /// that it assigns, so a value from before the scope that reaches a phi in it is a dependency.
+    /// Not in upstream (facebook/react#37224): a scope gives back a variable on a path that did not assign it too.
     fn visit_phi(&mut self, phi: &Phi, before_block: EvaluationOrder, env: &mut Environment) {
         for operand in phi.operands.values() {
-            // An operand that is not declared yet comes from a loop back edge, later in the scope.
+            // What is not declared yet comes from a loop back edge, later in the scope.
             if self.temporaries.contains_key(operand.identifier)
                 || self.reassignments.contains_key(operand.identifier)
             {
@@ -2059,8 +2064,33 @@ impl<'a> DependencyCollectionContext<'a> {
         }
     }
 
+    /// Not in upstream: a scope that assigns the variable only where it returns or throws gives it back over `dep` too.
+    fn visit_value_from_before_ended_scopes(
+        &mut self,
+        dep: &ReactiveScopeDependency,
+        env: &Environment,
+    ) {
+        let declaration = env.identifiers[dep.identifier.0 as usize].declaration_id;
+        for index in 0..self.ended_scopes.len() {
+            let scope_id = self.ended_scopes[index];
+            let assigned = &env.scopes[scope_id.0 as usize].reassignments;
+            if assigned
+                .iter()
+                .any(|id| env.identifiers[id.0 as usize].declaration_id == declaration)
+                && self.check_valid_dependency_of(Some(scope_id), dep, env)
+                && let Some(deps) = self.deps.get_mut(&scope_id)
+            {
+                deps.push(ReactiveScopeDependency {
+                    path: hir_vec![],
+                    ..dep.clone()
+                });
+            }
+        }
+    }
+
     fn visit_dependency(&mut self, dep: ReactiveScopeDependency, env: &mut Environment) {
         self.declare_outside_original_scope(dep.identifier, env);
+        self.visit_value_from_before_ended_scopes(&dep, env);
 
         // Handle ref.current access
         let dep = if crate::hir::is_use_ref_type(
@@ -2332,14 +2362,23 @@ fn handle_function_deps(
             None => {}
         }
 
+        // A predecessor from before the scope is a path around it.
+        ctx.ended_scopes.retain(|scope| {
+            let start = env.scopes[scope.0 as usize].range.start;
+            let mut preds = block.preds.iter().map(|pred| &func.body.blocks[pred]);
+            preds.all(|pred| pred.terminal.evaluation_order() >= start)
+        });
+
         // Record phi operands
         if !block.phis.is_empty() {
             let first = match block.instructions.first() {
                 Some(instr_id) => func.instructions[instr_id.0 as usize].id,
                 None => block.terminal.evaluation_order(),
             };
+            // A scope starts at the id of its terminal, and the phis of the block of that terminal are before it.
+            let before_block = EvaluationOrder(first.0.saturating_sub(1));
             for phi in &block.phis {
-                ctx.visit_phi(phi, EvaluationOrder(first.0.saturating_sub(1)), env);
+                ctx.visit_phi(phi, before_block, env);
             }
         }
 

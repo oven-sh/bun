@@ -3349,59 +3349,93 @@ describe("bundler", () => {
     });
   }
 
-  // A `let` that is declared before a memo block and reassigned inside it is an
-  // output of the block: the block stores it after the computation and restores
-  // it when the cache hits. Every component below renders several times against
-  // one memo cache, and has to render what the uncompiled component renders.
-  // `*` marks a render that got the same `list` array as the render before it,
-  // so each line also shows that the block still hits its cache.
+  // A memo block saves each `let` that it assigns and gives it back when its cache hits. Each component renders several
+  // times on one memo cache and has to render what the plain build renders. `*` marks a render that got the `list` of
+  // the render before it, so each line also shows that the block still hits its cache.
   const reassignedLocalOutput = `
+    DefaultThenProp [1,[1]] [1,[1]]* [2,[2]]
+    EitherArmThenProp [3,[3]] [3,[3]]* [1,[1]]
+    NullableEntryThenProp ["anon",["anon"]] ["anon",["anon"]]* ["ann",["ann"]] ["ann",["ann"]]*
+    BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
+    DependencyPath ["b",["a","b"]] ["b",["b","b"]] ["b",["b","b"]]*
     ConditionalReassign [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]]
-    ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
-    UpdateExpression [2,["x"]] [3,["x"]] [3,["x"]]*
-    CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
-    NestedScope ["flagged",[[1],"x"]] ["flagged",[[1],"x"]]* ["none",[[1],"x"]]
-    PrunedNestedScope [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]]* ["k",[{"v":1,"w":1},{"v":2,"w":1}]]
     LoopReassign ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[3]]
+    PrunedNestedScope [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]] [true,[{"v":3,"w":1}]]* ["k",[{"v":1,"w":1},{"v":2,"w":1}]]
+    NestedScope ["a",[3]] ["b",[3]] ["b",[3]]* ["off",[3]] ["off",[3]]*
+    LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
     JoinBeforeScope ["a1",["x"]] ["a2",["x"]] ["base",["x"]] ["base",["x"]]*
     ChainedScopes ["1two",[[0],[]]] ["2two",[[0],[]]] ["2two",[[0],[]]]* ["onetwo",[[],[]]]
-    DependencyPath ["b",["a","b"]] ["b",["b","b"]] ["b",["b","b"]]*
-    DestructuringSwap ["2:1",[0]] ["1:2",[0]] ["1:2",[0]]*
     ForOfOnly ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]* ["none",null]
     ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
     useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
     useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
-    NullableEntryThenProp ["anon",["anon"]] ["ann",["ann"]] ["ann",["ann"]]*
-    BothArmsThenProp ["b",["b"]] ["b",["b"]]* ["c",["c"]]
-    TwoArrays ["v1",[3]] ["v1",[3]]* ["v2",[3]]
-    ThreeArrays ["v1",[3]] ["v1",[3]]* ["v2",[3]]
-    SameDependencies ["v1",[1]] ["v1",[1]]* ["v2",[2]]
-    DestructuringInNestedScope ["1:2",[3]] ["1:2",[3]]* ["2:2",[3]]
-    PrefixUpdateInNestedScope [-1,[3]] [-1,[3]]* [0,[3]]
-    NestedScopeWithEntryFromProp ["a",[3]] ["b",[3]] ["b",[3]]* ["off",[3]] ["off",[3]]*
-    DoWhileInsideScopeOfSibling ["v1",{}] ["v1",{}]* ["v2",{}]
-    SpreadInsideLoopsInsideScopeOfSibling [{"q":1},{}] [{"q":1},{}]* ["init",{}]
-    LoopInsideScopeOfSibling ["a",{}] ["b",{}] ["b",{}]* ["off",{}] ["off",{}]*
-    ClosureReassigns [1,["x"]] [2,["x"]] [2,["x"]]* ["flagged",[]] ["flagged",[]] ["flagged",[]]*
-    CompoundInTernaryTest [2,[1,2,2]] [4,[2,4,4]] [4,[2,4,4]]* [2,[3,2,2]] [4,[2,4,4]]
-    CompoundInArray [5,[6,3,3,5,5]] [4,[5,2,2,4,4]] [4,[5,2,2,4,4]]*
-    CompoundInIfTest [3,["big",3]] [2,["small",2]] [2,["small",2]]*
-    CompoundInJsxAttribute [2,{"title":8,"id":2}] [0,{"title":2,"id":0}] [0,{"title":2,"id":0}]*
-    CompoundInMapEntries [2,[[8,2],["after",2]]] [0,[[2,0],["after",0]]] [0,[[2,0],["after",0]]]*
-    PlainAssignmentInArray [2,[4,2,2]] [1,[2,1,1]] [1,[2,1,1]]*
-    CompoundStatement [2,[2]] [4,[4]] [4,[4]]*
-    UpdateInTernaryTest [2,[[1]]] [3,[[1]]] [3,[[1]]]
-    CopyNamedLikeAnExport [1,["imported"]] [2,["imported"]] [2,["imported"]]*
+    AssignThenReturn [1,["x"]] [2,["x"]] [2,["x"]]* ["other",[]]
+    AssignThenThrow [1,["x"]] [2,["x"]] [2,["x"]]* THROW(other)
+    AssignThenReturnInLoop ["i",[1,2]] ["j",[1,2]] ["j",[1,2]]* [3,[]]
+    AssignThenReturnThenJoin [1,["x"]] [2,["x"]] [2,["x"]]* ["late",["x"]]*
+    ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
+    CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
+    AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
+    AssignedInOneArm [1,["x"]] [2,["x"]]* [3,3]
   `;
   for (const reactCompiler of [false, true]) {
     itBundled(`react-compiler/ReassignedLocalDeclaredBeforeMemoBlock-${reactCompiler ? "compiled" : "plain"}`, {
       files: {
         "/entry.jsx": /* jsx */ `
           import { render } from "react";
-          import { t1 as imported } from "./names";
 
-          // The else path leaves label with the value it had on entry, so that
-          // value is an input of the block although no instruction in it reads it.
+          // The first four read a property after the join. Before the block the variable has the value that it came
+          // in with, which can be null, so nothing may read that property there.
+          const defaults = new Set([1]);
+          function DefaultThenProp(p) {
+            let v = p.v;
+            const list = [];
+            if (v == null) v = defaults;
+            list.push(v.size);
+            return <div label={v.size} list={list} />;
+          }
+
+          function EitherArmThenProp({ items, filter }) {
+            let shown;
+            const list = [];
+            if (filter) {
+              shown = items.filter(filter);
+            } else {
+              shown = items;
+            }
+            list.push(shown.length);
+            return <div label={shown.length} list={list} />;
+          }
+
+          function NullableEntryThenProp({ user, fallbackUser }) {
+            let u = user;
+            const list = [];
+            if (!u) u = fallbackUser;
+            list.push(u.profile.name);
+            return <div label={u.profile.name} list={list} />;
+          }
+
+          function BothArmsThenProp(p) {
+            let object = p.a;
+            const list = [];
+            if (p.kind) object = p.b;
+            else object = p.c;
+            list.push(object.v.w);
+            return <div label={object.v.w} list={list} />;
+          }
+
+          // The first read is of the value that object came in with, so it stays an input of the block.
+          function DependencyPath(p) {
+            let object = p.o;
+            const list = [];
+            list.push(object.x);
+            if (p.flag) object = p.o2;
+            list.push(object.x);
+            return <div label={object.x} list={list} />;
+          }
+
+          // In the next eleven a path through the block leaves the variable as it came in, so that value is an input
+          // of the block.
           function ConditionalReassign(p) {
             let label = p.count;
             const list = [];
@@ -3413,45 +3447,14 @@ describe("bundler", () => {
             return <div label={label} list={list} />;
           }
 
-          // The block reads label, so it is a dependency. Its cache slot has to
-          // hold the value on entry, not the value after the reassignment.
-          function ReadThenReassign(p) {
-            let label = p.count;
-            const list = [];
-            if (p.flag) label = label + 1;
-            list.push(p.b);
-            return <div label={label} list={list} />;
-          }
-
-          function UpdateExpression(p) {
-            let n = p.count;
-            const list = [];
-            if (p.flag) n++;
-            list.push(p.b);
-            return <div label={n} list={list} />;
-          }
-
-          function CounterInLoop(p) {
-            let count = 0;
+          function LoopReassign(p) {
+            let found = p.initial;
             const list = [];
             for (const item of p.items) {
-              if (item.ok) count++;
+              if (item.ok) found = item.v;
               list.push(item.v);
             }
-            return <div label={count} list={list} />;
-          }
-
-          // inner has its own memo block inside the block of outer. When the
-          // outer cache hits, the inner block does not run.
-          function NestedScope(p) {
-            let label = "none";
-            const outer = [];
-            const inner = [];
-            if (p.flag) label = "flagged";
-            inner.push(p.a);
-            outer.push(inner);
-            outer.push(p.b);
-            return <div label={label} list={outer} />;
+            return <div label={found} list={list} />;
           }
 
           // The block of copy is in a loop, so the compiler prunes it.
@@ -3467,18 +3470,26 @@ describe("bundler", () => {
             return <div label={hasOk} list={list} />;
           }
 
-          function LoopReassign(p) {
-            let found = p.initial;
-            const list = [];
-            for (const item of p.items) {
-              if (item.ok) found = item.v;
-              list.push(item.v);
-            }
-            return <div label={found} list={list} />;
+          // The assignment is in the block of inner, which is in the block of outer.
+          function NestedScope(p) {
+            let v = p.v;
+            const outer = [];
+            const inner = [];
+            if (p.off) v = "off";
+            inner.push(p.b);
+            outer.push(p.c);
+            return <div label={v} list={outer} inner={inner} />;
           }
 
-          // The value on entry is itself the join of two paths, and nothing reads
-          // it between that join and the block.
+          function LoopInsideScopeOfSibling(p) {
+            let v = p.v;
+            let w = "w";
+            for (const it of p.items) { if (p.off) v = "off"; }
+            for (const it of p.items) { w = {}; }
+            return <div label={v} list={w} />;
+          }
+
+          // The value that label comes in with is the join of two paths, and nothing reads it before the block.
           function JoinBeforeScope(p) {
             let label = "base";
             if (p.primary) label = p.a;
@@ -3497,24 +3508,6 @@ describe("bundler", () => {
             if (p.f2) label = label + "two";
             else second.push(p.y);
             return <div label={label} list={[first, second]} />;
-          }
-
-          function DependencyPath(p) {
-            let object = p.o;
-            const list = [];
-            list.push(object.x);
-            if (p.flag) object = p.o2;
-            list.push(object.x);
-            return <div label={object.x} list={list} />;
-          }
-
-          function DestructuringSwap(p) {
-            let a = p.a;
-            let b = p.b;
-            const list = [];
-            if (p.flag) [a, b] = [b, a];
-            list.push(p.x);
-            return <div label={a + ":" + b} list={list} />;
           }
 
           // The memo block belongs to the loop, not to another value.
@@ -3536,9 +3529,8 @@ describe("bundler", () => {
             return <div label={derived ? derived.join(",") : "none"} list={derived} />;
           }
 
-          // facebook/react#37224. Each check has a memo block of its own, and both
-          // blocks restore hasErrors. "use memo" because the compiler only infers a
-          // hook from a call to another hook.
+          // facebook/react#37224: the second block gets hasErrors from the first. "use memo" because the compiler only
+          // infers a hook from a call to another hook.
           function useFormErrors(name, existingNames, settings) {
             "use memo";
             let hasErrors = false;
@@ -3558,7 +3550,7 @@ describe("bundler", () => {
             return { label: hasErrors, list: [nameErrors, settingsErrors] };
           }
 
-          // The value on entry is a parameter that nothing but the join reads.
+          // label is a parameter that nothing but the join reads.
           function useBareParam(p, label) {
             "use memo";
             const list = [];
@@ -3567,222 +3559,96 @@ describe("bundler", () => {
             return { label, list };
           }
 
-          // user.profile.name is read from the value after the join. The value on
-          // entry can be null, so nothing may read that path before the block.
-          function NullableEntryThenProp({ user, fallbackUser }) {
-            let u = user;
+          // In the next four the path that assigns leaves the function, so no join in the block shows that the other
+          // path leaves the variable as it came in.
+          function AssignThenReturn(p) {
+            let label = p.count;
             const list = [];
-            if (!u) u = fallbackUser;
-            list.push(u.profile.name);
-            return <div label={u.profile.name} list={list} />;
-          }
-
-          // Both arms assign, so the value on entry does not reach the read at all.
-          function BothArmsThenProp(p) {
-            let object = p.a;
-            const list = [];
-            if (p.kind) object = p.b;
-            else object = p.c;
-            list.push(object.v.w);
-            return <div label={object.v.w} list={list} />;
-          }
-
-          // The components from here on have a memo block inside another one,
-          // and the assignment is in the inner block. When the cache of the
-          // outer block hits, the inner block does not run, so the outer block
-          // has to restore the variable too. In the first two, every block
-          // survives to the output.
-          function TwoArrays(p) {
-            let v = "init";
-            const outer = [];
-            const inner = [];
-            v = "v" + p.a;
-            inner.push(p.b);
-            outer.push(p.c);
-            return <div label={v} list={outer} inner={inner} />;
-          }
-
-          function ThreeArrays(p) {
-            let v = "init";
-            const outer = [];
-            const middle = [];
-            const inner = [];
-            v = "v" + p.a;
-            inner.push(p.a);
-            middle.push(p.b);
-            outer.push(p.c);
-            return <div label={v} list={outer} middle={middle} inner={inner} />;
-          }
-
-          // Both blocks depend on p.a only, so the compiler merges the inner one
-          // into the outer one.
-          function SameDependencies(p) {
-            let v = "init";
-            const outer = [];
-            const inner = [];
-            v = "v" + p.a;
-            inner.push(p.a);
-            outer.push(p.a);
-            return <div label={v} list={outer} inner={inner} />;
-          }
-
-          function DestructuringInNestedScope(p) {
-            let v = "init", u = "init";
-            const outer = [];
-            const inner = [];
-            [v, u] = [p.a, p.b];
-            inner.push(p.b);
-            outer.push(p.c);
-            return <div label={v + ":" + u} list={outer} inner={inner} />;
-          }
-
-          function PrefixUpdateInNestedScope(p) {
-            let v = 0;
-            const outer = [];
-            const inner = [];
-            if (p.a === 1) --v;
-            inner.push(p.b);
-            outer.push(p.c);
-            return <div label={v} list={outer} inner={inner} />;
-          }
-
-          // The value on entry is a prop, and the outer block is the one that
-          // has to depend on it.
-          function NestedScopeWithEntryFromProp(p) {
-            let v = p.v;
-            const outer = [];
-            const inner = [];
-            if (p.off) v = "off";
-            inner.push(p.b);
-            outer.push(p.c);
-            return <div label={v} list={outer} inner={inner} />;
-          }
-
-          // The block of w runs from its declaration to the end of the for-of.
-          // The do-while counter j has a block of its own inside it. The
-          // compiler prunes that block later, because nothing it computes needs
-          // memoization.
-          function DoWhileInsideScopeOfSibling(p) {
-            let v = "init";
-            let w = "w";
-            let j = 0;
-            do { j++; v = "v" + p.a; } while (j < p.n);
-            for (const it of p.items) { w = {}; }
-            return <div label={v} list={w} />;
-          }
-
-          // The block of the object spread is inside loops, so the compiler
-          // flattens it.
-          function SpreadInsideLoopsInsideScopeOfSibling(p) {
-            let v = "init";
-            let w = "w";
-            for (const k in p.obj) {
-              for (let i = 0; i < p.n; i++) {
-                switch (p.a) {
-                  case 1: v = { ...p.obj }; break;
-                  default: break;
-                }
-              }
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
             }
-            for (const it of p.items) { w = {}; }
-            return <div label={v} list={w} />;
-          }
-
-          function LoopInsideScopeOfSibling(p) {
-            let v = p.v;
-            let w = "w";
-            for (const it of p.items) { if (p.off) v = "off"; }
-            for (const it of p.items) { w = {}; }
-            return <div label={v} list={w} />;
-          }
-
-          // Right on 1.4.3 too. A local that a closure assigns is not in SSA form.
-          // Its declaration is part of the same memo block as the call.
-          function ClosureReassigns(p) {
-            let label = p.count;
-            const set = () => {
-              label = "flagged";
-            };
-            const list = [];
-            if (p.flag) set();
-            else list.push(p.b);
+            list.push(p.b);
             return <div label={label} list={list} />;
           }
 
-          // From here on the block reads i and then assigns it, in one expression.
-          // Each run renders a value of n that equals the i the render before
-          // ended with, which is what the cache slot of i held. The compiler
-          // moves the assignments of CompoundInArray, CompoundInJsxAttribute,
-          // CompoundInMapEntries and PlainAssignmentInArray out of the block, so
-          // those four were right before. They guard the copy of i.
-          function CompoundInTernaryTest(p) {
-            let i = p.n;
-            const list = (i *= 1) > 2 ? [i, (i -= 1), i] : [i, (i *= 2), i];
-            return <div label={i} list={list} />;
-          }
-
-          function CompoundInArray(p) {
-            let i = p.n;
-            const list = [i, (i >>= 1), i, (i += 2), i];
-            return <div label={i} list={list} />;
-          }
-
-          function CompoundInIfTest(p) {
-            let i = p.n;
-            const list = [];
-            if ((i -= 1) > 2) list.push("big", i);
-            else list.push("small", i);
-            return <div label={i} list={list} />;
-          }
-
-          function CompoundInJsxAttribute(p) {
-            let i = p.n;
-            const list = <b title={i} id={(i >>= 2)} />;
-            return <div label={i} list={list} />;
-          }
-
-          function CompoundInMapEntries(p) {
-            let i = p.n;
-            const list = [...new Map([[i, (i >>= 2)], ["after", i]])];
-            return <div label={i} list={list} />;
-          }
-
-          function PlainAssignmentInArray(p) {
-            let i = p.n;
-            const list = [i, (i = i >> 1), i];
-            return <div label={i} list={list} />;
-          }
-
-          function CompoundStatement(p) {
-            let i = p.n;
-            const list = [];
-            i *= 2;
-            list.push(i);
-            return <div label={i} list={list} />;
-          }
-
-          // The block that assigns n has all of its instructions in the test of
-          // the conditional. The compiler leaves this function as written, so no
-          // render hits a cache.
-          const yes = () => true;
-          function UpdateInTernaryTest(p) {
-            let n = p.count;
-            const outer = [];
-            const inner = [];
-            const r = (n++, p.f()) ? 1 : 0;
-            inner.push(r);
-            outer.push(inner);
-            return <div label={n} list={outer} />;
-          }
-
-          // The copy of label is the first free t<n>, which is t1 here. The bundler
-          // prints the import under the name of its export, which is t1 too.
-          function CopyNamedLikeAnExport(p) {
+          function AssignThenThrow(p) {
             let label = p.count;
             const list = [];
-            if (p.flag) label = "flagged";
-            else list.push(imported);
+            if (p.flag) {
+              label = p.other;
+              throw new Error(label);
+            }
+            list.push(p.b);
             return <div label={label} list={list} />;
+          }
+
+          function AssignThenReturnInLoop(p) {
+            let found = p.initial;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) {
+                found = item.v;
+                return <a label={found} list={list} />;
+              }
+              list.push(item.v);
+            }
+            return <div label={found} list={list} />;
+          }
+
+          function AssignThenReturnThenJoin(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) {
+              label = p.other;
+              return <a label={label} list={list} />;
+            }
+            list.push(p.b);
+            if (p.late) label = "late";
+            return <div label={label} list={list} />;
+          }
+
+          // The block reads label, so it is an input. Its slot has to keep the value that label came in with.
+          function ReadThenReassign(p) {
+            let label = p.count;
+            const list = [];
+            if (p.flag) label = label + 1;
+            list.push(p.b);
+            return <div label={label} list={list} />;
+          }
+
+          // In the last three the value that the variable came in with is not an input. Here it is a constant.
+          function CounterInLoop(p) {
+            let count = 0;
+            const list = [];
+            for (const item of p.items) {
+              if (item.ok) count++;
+              list.push(item.v);
+            }
+            return <div label={count} list={list} />;
+          }
+
+          // The block assigns found on each path to the loop.
+          function AssignedBeforeLoop(p) {
+            let found = p.initial;
+            const initial = found;
+            const list = [];
+            found = p.b;
+            for (const item of p.items) {
+              if (item.ok) found = item.v;
+              list.push(item.v);
+            }
+            return <div label={initial + ":" + found} list={list} />;
+          }
+
+          // The path that keeps the value goes around the block.
+          function AssignedInOneArm(p) {
+            let list = p.count;
+            if (p.flag) {
+              list = [];
+              list.push(p.b);
+            }
+            return <div label={p.count} list={list} />;
           }
 
           function run(Component, ...renders) {
@@ -3800,10 +3666,28 @@ describe("bundler", () => {
             console.log(Component.name + " " + results.join(" "));
           }
 
-          const none = [{ ok: false, v: 1 }, { ok: false, v: 2 }];
-          const some = [{ ok: true, v: 3 }];
+          run(DefaultThenProp, {}, {}, { v: new Set([1, 2]) });
+          const three = [1, 2, 3];
+          run(EitherArmThenProp, { items: three }, { items: three }, { items: three, filter: item => item > 2 });
+          const ann = { profile: { name: "ann" } };
+          const anon = { user: null, fallbackUser: { profile: { name: "anon" } } };
+          run(
+            NullableEntryThenProp,
+            anon,
+            anon,
+            { user: ann, fallbackUser: null },
+            { user: ann, fallbackUser: null },
+          );
+          const w = value => ({ v: { w: value } });
+          const b1 = w("b"), c1 = w("c");
+          run(
+            BothArmsThenProp,
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 1, b: b1, c: null },
+            { a: null, kind: 0, b: null, c: c1 },
+          );
           const o1 = { x: "a" }, o2 = { x: "b" }, o3 = { x: "b" };
-
+          run(DependencyPath, { o: o1, o2, flag: true }, { o: o3, o2, flag: true }, { o: o3, o2, flag: true });
           run(
             ConditionalReassign,
             { count: 1, flag: false, b: "x" },
@@ -3811,24 +3695,14 @@ describe("bundler", () => {
             { count: 2, flag: false, b: "x" },
             { count: 3, flag: true, b: "x" },
           );
+          const none = [{ ok: false, v: 1 }, { ok: false, v: 2 }];
+          const some = [{ ok: true, v: 3 }];
           run(
-            ReadThenReassign,
-            { count: 1, flag: true, b: "x" },
-            { count: 2, flag: true, b: "x" },
-            { count: 2, flag: true, b: "x" },
-          );
-          run(
-            UpdateExpression,
-            { count: 1, flag: true, b: "x" },
-            { count: 2, flag: true, b: "x" },
-            { count: 2, flag: true, b: "x" },
-          );
-          run(CounterInLoop, { items: some }, { items: some }, { items: none });
-          run(
-            NestedScope,
-            { flag: true, a: 1, b: "x" },
-            { flag: true, a: 1, b: "x" },
-            { flag: false, a: 1, b: "x" },
+            LoopReassign,
+            { initial: "i", items: none },
+            { initial: "j", items: none },
+            { initial: "j", items: none },
+            { initial: "k", items: some },
           );
           run(
             PrunedNestedScope,
@@ -3837,13 +3711,11 @@ describe("bundler", () => {
             { initial: "j", items: some, w: 1 },
             { initial: "k", items: none, w: 1 },
           );
-          run(
-            LoopReassign,
-            { initial: "i", items: none },
-            { initial: "j", items: none },
-            { initial: "j", items: none },
-            { initial: "k", items: some },
-          );
+          const entryA = { v: "a", off: false, b: 2, c: 3, items: [1] };
+          const entryB = { ...entryA, v: "b" };
+          const entryOff = { ...entryB, off: true };
+          run(NestedScope, entryA, entryB, entryB, entryOff, entryOff);
+          run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
           run(
             JoinBeforeScope,
             { primary: true, a: "a1", flag: false, b: "x" },
@@ -3857,13 +3729,6 @@ describe("bundler", () => {
             { count: 2, f1: false, f2: true, x: 0, y: 0 },
             { count: 2, f1: false, f2: true, x: 0, y: 0 },
             { count: 3, f1: true, f2: true, x: 0, y: 0 },
-          );
-          run(DependencyPath, { o: o1, o2, flag: true }, { o: o3, o2, flag: true }, { o: o3, o2, flag: true });
-          run(
-            DestructuringSwap,
-            { a: 1, b: 2, flag: true, x: 0 },
-            { a: 2, b: 1, flag: true, x: 0 },
-            { a: 2, b: 1, flag: true, x: 0 },
           );
           const positive = [1, 2];
           run(
@@ -3892,55 +3757,41 @@ describe("bundler", () => {
           );
           const flagOff = { flag: false, x: "X", b: "b" };
           run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
-          const ann = { profile: { name: "ann" } };
+          const counts = [
+            { count: 1, flag: false, b: "x", other: "other" },
+            { count: 2, flag: false, b: "x", other: "other" },
+            { count: 2, flag: false, b: "x", other: "other" },
+          ];
+          run(AssignThenReturn, ...counts, { count: 3, flag: true, b: "x", other: "other" });
+          run(AssignThenThrow, ...counts, { count: 3, flag: true, b: "x", other: "other" });
           run(
-            NullableEntryThenProp,
-            { user: null, fallbackUser: { profile: { name: "anon" } } },
-            { user: ann, fallbackUser: null },
-            { user: ann, fallbackUser: null },
+            AssignThenReturnInLoop,
+            { initial: "i", items: none },
+            { initial: "j", items: none },
+            { initial: "j", items: none },
+            { initial: "k", items: some },
           );
-          const w = value => ({ v: { w: value } });
-          const b1 = w("b"), c1 = w("c");
+          run(AssignThenReturnThenJoin, ...counts, { count: 2, flag: false, b: "x", other: "other", late: true });
           run(
-            BothArmsThenProp,
-            { a: null, kind: 1, b: b1, c: null },
-            { a: null, kind: 1, b: b1, c: null },
-            { a: null, kind: 0, b: null, c: c1 },
+            ReadThenReassign,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
           );
-          const nested1 = { a: 1, b: 2, c: 3, n: 1, items: [1], obj: { q: 1 } };
-          const nested2 = { ...nested1, a: 2 };
-          run(TwoArrays, nested1, nested1, nested2);
-          run(ThreeArrays, nested1, nested1, nested2);
-          run(SameDependencies, nested1, nested1, nested2);
-          run(DestructuringInNestedScope, nested1, nested1, nested2);
-          run(PrefixUpdateInNestedScope, nested1, nested1, nested2);
-          const entryA = { v: "a", off: false, b: 2, c: 3, items: nested1.items };
-          const entryB = { ...entryA, v: "b" };
-          const entryOff = { ...entryB, off: true };
-          run(NestedScopeWithEntryFromProp, entryA, entryB, entryB, entryOff, entryOff);
-          run(DoWhileInsideScopeOfSibling, nested1, nested1, nested2);
-          run(SpreadInsideLoopsInsideScopeOfSibling, nested1, nested1, nested2);
-          run(LoopInsideScopeOfSibling, entryA, entryB, entryB, entryOff, entryOff);
+          run(CounterInLoop, { items: some }, { items: some }, { items: none });
           run(
-            ClosureReassigns,
-            { count: 1, flag: false, b: "x" },
-            { count: 2, flag: false, b: "x" },
-            { count: 2, flag: false, b: "x" },
-            { count: 3, flag: true, b: "x" },
-            { count: 4, flag: true, b: "x" },
-            { count: 4, flag: true, b: "x" },
+            AssignedBeforeLoop,
+            { initial: "i", b: "b", items: none },
+            { initial: "j", b: "b", items: none },
+            { initial: "j", b: "b", items: some },
           );
-          run(CompoundInTernaryTest, { n: 1 }, { n: 2 }, { n: 2 }, { n: 3 }, { n: 2 });
-          run(CompoundInArray, { n: 6 }, { n: 5 }, { n: 5 });
-          run(CompoundInIfTest, { n: 4 }, { n: 3 }, { n: 3 });
-          run(CompoundInJsxAttribute, { n: 8 }, { n: 2 }, { n: 2 });
-          run(CompoundInMapEntries, { n: 8 }, { n: 2 }, { n: 2 });
-          run(PlainAssignmentInArray, { n: 4 }, { n: 2 }, { n: 2 });
-          run(CompoundStatement, { n: 1 }, { n: 2 }, { n: 2 });
-          run(UpdateInTernaryTest, { count: 1, f: yes }, { count: 2, f: yes }, { count: 2, f: yes });
-          run(CopyNamedLikeAnExport, { count: 1, flag: false }, { count: 2, flag: false }, { count: 2, flag: false });
+          run(
+            AssignedInOneArm,
+            { count: 1, flag: true, b: "x" },
+            { count: 2, flag: true, b: "x" },
+            { count: 3, flag: false, b: "x" },
+          );
         `,
-        "/names.js": `export const t1 = "imported";`,
         // One memo cache per component, kept between renders, as a fiber keeps it.
         "/node_modules/react/index.js": /* js */ `
           const fibers = new Map();

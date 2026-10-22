@@ -2538,3 +2538,79 @@ describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("a stdin buffer of ab
     180_000,
   );
 });
+
+// TEMPORARY, removed before this PR leaves draft: records how many bytes of ONE
+// pipe write of each size reach the child on Windows, and the error a FileSink
+// reports for it. The assertion fails on purpose so that CI prints the table.
+describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("probe: one pipe write of N bytes", () => {
+  const countStdin = `
+    let total = 0;
+    for await (const chunk of Bun.stdin.stream()) total += chunk.length;
+    console.log(total);
+  `;
+  const prelude = `
+    const started = performance.now();
+    const describeError = e => ({ code: e?.code, errno: e?.errno, syscall: e?.syscall, message: String(e?.message) });
+    const finish = async (proc, outcome) => {
+      const out = await proc.stdout.text();
+      const exitCode = await proc.exited;
+      console.log(JSON.stringify({ childTotal: JSON.parse(out.trim() || "null"), childExit: exitCode, ...outcome, ms: Math.round(performance.now() - started) }));
+    };
+    const child = stdin => Bun.spawn({
+      cmd: [process.execPath, "-e", process.env.COUNT_STDIN],
+      env: process.env,
+      stdin,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+  `;
+
+  async function run(source: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", prelude + source],
+      env: { ...bunEnv, COUNT_STDIN: countStdin },
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 110_000,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result: unknown = stdout.trim();
+    try {
+      result = JSON.parse(stdout.trim());
+    } catch {}
+    return { result, stderr: stderr.slice(0, 400), exitCode, signalCode: proc.signalCode };
+  }
+
+  it("records what reaches the child", async () => {
+    const results: unknown[] = [];
+    // A stdin buffer goes out as one uv_write.
+    for (const size of [2 ** 28, 2 ** 29, 2 ** 30, 0x7fff_f000, 2 ** 31, 3 * 2 ** 30, 2 ** 32 - 65536]) {
+      results.push({ via: "buffer", size, ...(await run(`await finish(child(new Uint8Array(${size})), {});`)) });
+    }
+    // One FileSink write also goes out as one uv_write, and the sink reports its error.
+    for (const size of [2 ** 30, 0x7fff_f000, 2 ** 31]) {
+      results.push({
+        via: "sink",
+        size,
+        ...(await run(`
+          const proc = child("pipe");
+          const outcome = {};
+          try {
+            const written = proc.stdin.write(new Uint8Array(${size}));
+            outcome.write = typeof written === "number" ? written : "promise";
+            if (typeof written !== "number") outcome.writeSettled = await written;
+          } catch (e) {
+            outcome.writeError = describeError(e);
+          }
+          try {
+            outcome.end = await proc.stdin.end();
+          } catch (e) {
+            outcome.endError = describeError(e);
+          }
+          await finish(proc, outcome);
+        `)),
+      });
+    }
+    expect({ probe: results }).toEqual({ probe: "recorded" });
+  }, 1_200_000);
+});

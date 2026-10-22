@@ -2,7 +2,6 @@ import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { totalmem } from "node:os";
 import { join } from "node:path";
 
@@ -1763,13 +1762,13 @@ describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("writes that queue mo
     expect(result).toEqual({ result: "closed", stderr: "", exitCode: 0, signalCode: null });
 
     const seen: number[] = [];
-    const fd = openSync(file, "r");
+    const fd = fs.openSync(file, "r");
     try {
       const byte = new Uint8Array(1);
-      for (const at of probes) seen.push(readSync(fd, byte, 0, 1, at) === 1 ? byte[0] : -1);
+      for (const at of probes) seen.push(fs.readSync(fd, byte, 0, 1, at) === 1 ? byte[0] : -1);
     } finally {
-      closeSync(fd);
+      fs.closeSync(fd);
     }
-    expect({ size: statSync(file).size, seen }).toEqual({ size: total, seen: expected });
+    expect({ size: fs.statSync(file).size, seen }).toEqual({ size: total, seen: expected });
   }, 180_000);
 });

@@ -262,11 +262,7 @@ describe.skipIf(!isASAN)("when a receive buffer can't grow", () => {
   const got = (message: Buffer) => `text "got ${message.length} ${Bun.hash(message)}"`;
   const intact = patterned(2 * MiB);
   // What the `error` handler receives when the message handler's copy can't be allocated.
-  const copyFailed = {
-    error: "RangeError",
-    message: "Failed to allocate memory",
-    code: "ERR_MEMORY_ALLOCATION_FAILED",
-  };
+  const copyFailed = { error: "RangeError", message: "Out of memory" };
 
   type Mode = "ws" | "wss" | "ws-package";
   let proc: Bun.Subprocess<"ignore", "pipe", "pipe">;

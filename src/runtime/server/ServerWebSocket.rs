@@ -2,9 +2,9 @@ use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::Utf8Bytes;
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{ComptimeStringMapExt as _, JsCell, StringJsc};
+use bun_jsc::{ComptimeStringMapExt as _, JsCell};
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};
@@ -735,8 +735,7 @@ impl ServerWebSocket {
         let _loop_guard = vm.enter_event_loop_scope();
 
         let data = match opcode {
-            // `create_utf8_for_js` still crashes if the allocation for non-ASCII text under 64 KiB fails.
-            Opcode::Text => StringJsc::into_js(BunString::clone_utf8(message), global_object),
+            Opcode::Text => bun_string_jsc::create_utf8_for_js(global_object, message),
             Opcode::Binary => self.binary_to_js(global_object, message),
             _ => unreachable!(),
         };

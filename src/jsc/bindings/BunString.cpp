@@ -101,8 +101,8 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     }
 
     std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    // convertUTF8ToString crashes if the allocation fails, so only use it for small or invalid input.
-    constexpr size_t minFallibleLength = 64 * 1024;
+    // convertUTF8ToString crashes if the allocation fails, and from 16 bytes it is also slower. Only short or invalid input takes it.
+    constexpr size_t minFallibleLength = 16;
     auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
         ? Zig::tryConvertValidUTF8ToString(bytes)
         : Zig::convertUTF8ToString(bytes);

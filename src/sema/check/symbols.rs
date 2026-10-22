@@ -2732,7 +2732,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::Await(_)
             )
             && let Some(loop_pushed_at) = {
-                self.instantiation_count = 0;
+                self.reset_instantiation_count();
                 // The resolutions of the declaration itself are right below the frame of `e`. They
                 // don't hide any loop from here on, including from the check for whether a loop has
                 // led here again.

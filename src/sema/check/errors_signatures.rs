@@ -134,7 +134,8 @@ impl Checker<'_, '_> {
             // `checkDeferredNode`: `c.currentNode = node`, `c.instantiationCount = 0`
             let node = CurrentNode::Node(file, hir.node(tp));
             let saved = self.current_source_element.replace(node);
-            let instantiation_count = std::mem::take(&mut self.instantiation_count);
+            let instantiation_count = self.instantiation_count;
+            self.reset_instantiation_count();
             self.check_type_assignable_to(source, target, Some(at), Some(2636));
             self.instantiation_count = instantiation_count;
             self.current_source_element = saved;

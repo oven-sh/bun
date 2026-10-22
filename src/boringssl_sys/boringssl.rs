@@ -937,6 +937,10 @@ opaque!(
     /// `struct rsa_st` (`typedef ... RSA`).
     RSA
 );
+opaque!(
+    /// `struct dh_st` (`typedef ... DH`).
+    DH
+);
 
 /// `int (*SSL_verify_cb)(int preverify_ok, X509_STORE_CTX *ctx)` — verify
 /// callback type for `SSL_set_verify` / `SSL_CTX_set_verify`.
@@ -1255,6 +1259,15 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509_CRL;
+    pub fn PEM_read_bio_DHparams(
+        bp: *mut BIO,
+        x: *mut *mut DH,
+        cb: Option<pem_password_cb>,
+        u: *mut c_void,
+    ) -> *mut DH;
+    /// The bit length of the group's prime.
+    pub fn DH_bits(dh: *const DH) -> c_uint;
+    pub fn DH_free(dh: *mut DH);
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.

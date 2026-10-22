@@ -45,16 +45,27 @@ function assertInvalidCommand(fn) {
  * Node's DHE tests exercise OpenSSL's finite-field DHE cipher support and DH
  * parameter-size policy. BoringSSL does not offer these DHE cipher suites on
  * this surface, so creating a server context with a DHE-only cipher list fails
- * before a handshake can test DH parameter behavior.
+ * before a handshake can test DH parameter behavior. The size policy of
+ * `dhparam` (test-tls-dhe.js) is applied before the cipher list, so it is
+ * asserted here: under 1024 bits throws, under 2048 bits warns.
  */
 function assertFiniteFieldDheUnsupported() {
+  const key = fixtures.readKey('agent2-key.pem');
+  const cert = fixtures.readKey('agent2-cert.pem');
   assertNoCipherMatch(() => {
-    tls.createServer({
-      key: fixtures.readKey('agent2-key.pem'),
-      cert: fixtures.readKey('agent2-cert.pem'),
-      ciphers: 'DHE-RSA-AES128-GCM-SHA256',
-    });
+    tls.createServer({ key, cert, ciphers: 'DHE-RSA-AES128-GCM-SHA256' });
   });
+  assert.throws(() => {
+    tls.createServer({ key, cert, dhparam: fixtures.readKey('dh512.pem') });
+  }, {
+    code: 'ERR_INVALID_ARG_VALUE',
+    message: 'DH parameter is less than 1024 bits',
+  });
+  common.expectWarning('SecurityWarning', 'DH parameter is less than 2048 bits');
+  tls.createServer({ key, cert, dhparam: fixtures.readKey('dh1024.pem') }).close();
+  for (const name of ['dh2048.pem', 'dh3072.pem', 'dherror.pem']) {
+    tls.createServer({ key, cert, dhparam: fixtures.readKey(name) }).close();
+  }
 }
 
 /**

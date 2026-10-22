@@ -20,6 +20,7 @@ use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 use core::cell::Cell;
@@ -213,6 +214,74 @@ impl SecureContext {
             result.put(global, b"ca", EncodedSlice::latin1(ca_slice).to_js(global));
         }
         Ok(result)
+    }
+
+    /// `SecureContext.validateDHParam(dhparam)` - the size policy of Node's
+    /// `SecureContext::SetDHParam`: throws under 1024 bits, returns the warning text under 2048.
+    pub(crate) fn validate_dh_param(
+        global: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args = callframe.arguments();
+        let Some(&value) = args.first() else {
+            return Ok(JSValue::UNDEFINED);
+        };
+        let view;
+        let string;
+        let bytes: &[u8] = match value.as_array_buffer(global) {
+            Some(v) => {
+                view = v;
+                view.byte_slice()
+            }
+            None if value.is_string() => {
+                string = value.to_utf8(global)?;
+                string.slice()
+            }
+            None => return Ok(JSValue::UNDEFINED),
+        };
+        if bytes.is_empty() || bytes.len() > core::ffi::c_int::MAX as usize {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: `bytes` outlives `bio`; BoringSSL only reads from it.
+        let bio =
+            unsafe { boringssl::BIO_new_mem_buf(bytes.as_ptr().cast(), bytes.len() as isize) };
+        if bio.is_null() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: `bio` is live; no out-pointer and no password callback.
+        let dh = unsafe {
+            boringssl::PEM_read_bio_DHparams(
+                bio,
+                core::ptr::null_mut(),
+                None,
+                core::ptr::null_mut(),
+            )
+        };
+        // SAFETY: `bio` came from `BIO_new_mem_buf` above.
+        unsafe { boringssl::BIO_free(bio) };
+        // Drop the PEM/ASN.1 errors of a failed parse.
+        boringssl::ERR_clear_error();
+        if dh.is_null() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // SAFETY: `dh` is the parsed group, owned here until `DH_free`.
+        let bits = unsafe {
+            let bits = boringssl::DH_bits(dh);
+            boringssl::DH_free(dh);
+            bits
+        };
+        if bits < 1024 {
+            return Err(global
+                .err(
+                    bun_jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("DH parameter is less than 1024 bits"),
+                )
+                .throw());
+        }
+        if bits < 2048 {
+            return bun_core::String::static_("DH parameter is less than 2048 bits").to_js(global);
+        }
+        Ok(JSValue::UNDEFINED)
     }
 
     /// `tls.createSecureContext()` / `new tls.SecureContext()` entry - builds a context that owns its

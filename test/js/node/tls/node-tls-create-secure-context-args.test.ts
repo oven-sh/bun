@@ -150,3 +150,120 @@ describe("tls.createSecureContext pfx argument", () => {
     }
   });
 });
+
+describe("tls.createSecureContext dhparam argument", () => {
+  const readKey = (name: string) => readFileSync(join(import.meta.dir, "../test/fixtures/keys", name));
+  // `openssl dhparam 1020`: Node measures the prime in bits, not whole bytes.
+  const dh1020 = `-----BEGIN DH PARAMETERS-----
+MIGGAoGACOInxoOj9RDQXpM4O4JnjfSu54ArxtF+xVSn1/oZlX+MJyxRE78IZKBTpr4K+JTXYm9l
+eynoIQlnoXbKLjpHcp6VJ2IFLJ+NqTHIkQwMKcHHbAqIEd7F4MYFVkO2/fF29/Wb6bMSr1jcfywZ
+47LuxCK85oCYclGov1+ta6ZZZtsCAQI=
+-----END DH PARAMETERS-----
+`;
+  const tooSmall = expect.objectContaining({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: "DH parameter is less than 1024 bits",
+  });
+
+  it.each([
+    ["a 512-bit string", readKey("dh512.pem").toString()],
+    ["a 512-bit Buffer", readKey("dh512.pem")],
+    ["a 512-bit Uint8Array", new Uint8Array(readKey("dh512.pem"))],
+    ["a 512-bit DataView", new DataView(new Uint8Array(readKey("dh512.pem")).buffer)],
+    ["a 1020-bit string", dh1020],
+  ])("throws on %s like Node", (_, dhparam) => {
+    expect(() => tls.createSecureContext({ dhparam })).toThrow(tooSmall);
+    expect(() => new tls.SecureContext({ dhparam })).toThrow(tooSmall);
+    expect(() => tls.createServer({ dhparam })).toThrow(tooSmall);
+    expect(() => tls.createServer({}).addContext("a", { dhparam })).toThrow(tooSmall);
+    expect(() => tls.connect({ port: 1, host: "127.0.0.1", dhparam })).toThrow(tooSmall);
+  });
+
+  it.each([
+    ["a number", 42],
+    ["an object", {}],
+    ["an ArrayBuffer", new ArrayBuffer(8)],
+    ["false", false],
+  ])("throws on %s like Node", (_, dhparam) => {
+    // @ts-expect-error
+    expect(() => tls.createSecureContext({ dhparam })).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  // Node: `if (options.dhparam) this.dhparam = options.dhparam; else this.dhparam = undefined;`
+  it.each([0, false, ""])("tls.createServer drops a falsy dhparam (%p) like Node", dhparam => {
+    // @ts-expect-error
+    expect(tls.createServer({ dhparam })).toBeInstanceOf(tls.Server);
+  });
+
+  it.each([
+    ["a string that is not a PEM", "not a pem"],
+    ["an empty string", ""],
+    ["a PEM with a bad body", readKey("dherror.pem").toString()],
+  ])("ignores %s like Node", (_, dhparam) => {
+    expect(tls.createSecureContext({ dhparam })).toHaveProperty("context");
+  });
+
+  // Node warns below 2048 bits. Its OpenSSL then rejects the 1024-bit group at
+  // security level 2; BoringSSL has no security levels, so Bun keeps the context.
+  it("warns once per context below 2048 bits, and not above", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import tls from "node:tls";
+          import { readFileSync } from "node:fs";
+          const key = readFileSync(process.env.KEYS + "/agent1-key.pem");
+          const cert = readFileSync(process.env.KEYS + "/agent1-cert.pem");
+          let warnings = 0;
+          process.on("warning", w => { if (w.name === "SecurityWarning") warnings++; });
+          const settle = () => new Promise(r => setImmediate(r));
+          const count = async (name, fn) => {
+            warnings = 0;
+            fn();
+            await settle();
+            console.log(name + " " + warnings);
+          };
+          for (const file of ["dh1024.pem", "dh2048.pem", "dh3072.pem"]) {
+            const dhparam = readFileSync(process.env.KEYS + "/" + file);
+            await count(file + " createSecureContext", () => tls.createSecureContext({ dhparam }));
+            await count(file + " createServer", () => tls.createServer({ key, cert, dhparam }).close());
+            await count(file + " setSecureContext", () => {
+              const server = tls.createServer({ key, cert });
+              server.setSecureContext({ key, cert, dhparam });
+              server.close();
+            });
+            await count(file + " addContext", () => {
+              const server = tls.createServer({ key, cert });
+              server.addContext("a", { key, cert, dhparam });
+              server.close();
+            });
+          }
+        `,
+      ],
+      env: { ...bunEnv, KEYS: join(import.meta.dir, "../test/fixtures/keys") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n").filter(Boolean)).toEqual([
+      "dh1024.pem createSecureContext 1",
+      "dh1024.pem createServer 1",
+      "dh1024.pem setSecureContext 1",
+      "dh1024.pem addContext 1",
+      "dh2048.pem createSecureContext 0",
+      "dh2048.pem createServer 0",
+      "dh2048.pem setSecureContext 0",
+      "dh2048.pem addContext 0",
+      "dh3072.pem createSecureContext 0",
+      "dh3072.pem createServer 0",
+      "dh3072.pem setSecureContext 0",
+      "dh3072.pem addContext 0",
+    ]);
+    expect(stderr).toContain("SecurityWarning: DH parameter is less than 2048 bits");
+    expect(exitCode).toBe(0);
+  });
+});

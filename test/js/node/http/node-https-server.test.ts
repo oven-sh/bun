@@ -253,6 +253,7 @@ describe("https.createServer forwards every TLS server option", () => {
 
   test.each([
     ["ecdhCurve", "not-a-curve", "ERR_CRYPTO_OPERATION_FAILED"],
+    ["dhparam", readFileSync(join(import.meta.dirname, "../test/fixtures/keys/dh512.pem")), "ERR_INVALID_ARG_VALUE"],
     ["sessionTimeout", -1, "ERR_OUT_OF_RANGE"],
     ["sigalgs", "", "ERR_INVALID_ARG_VALUE"],
     ["crl", 42, "ERR_INVALID_ARG_TYPE"],
@@ -265,6 +266,8 @@ describe("https.createServer forwards every TLS server option", () => {
   test.each([
     // BoringSSL has no DHE suites to apply it to.
     ["dhparam", "auto"],
+    ["dhparam", 0],
+    ["dhparam", false],
     // tls.Server#setSecureContext() drops these when they are falsy.
     ["clientCertEngine", 0],
     ["clientCertEngine", ""],

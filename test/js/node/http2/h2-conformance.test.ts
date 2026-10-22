@@ -2741,10 +2741,18 @@ describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
       c.sendPreface();
       c.sendEmptySettings();
       const expected = await closings[name](c);
-      const before = expected.length ? 8 : 0;
-      c.send(Buffer.concat([small, large, large, large]));
-      await c.waitFor(() => credit(c.frames) >= 3 * 16_384);
-      expect(credit(c.frames)).toBe(before + 1 + 3 * 16_384);
+      // More than the whole window, so it only fits if what is dropped comes back. The window is
+      // credited once half of it is used, so less than that can be outstanding after any read.
+      let sent = expected.length ? 8 : 0;
+      for (const frames of [
+        [small, large, large],
+        [large, large],
+        [large, large],
+      ]) {
+        c.send(Buffer.concat(frames));
+        sent += frames.reduce((sum, frame) => sum + frame.length - 9, 0);
+        await c.waitFor(() => credit(c.frames) > sent - 32_767);
+      }
       // A stream that nobody opened is not a closed one.
       c.sendFrame(FrameType.DATA, 0, 99, Buffer.from("x"));
       c.sendFrame(FrameType.HEADERS, 0x5, 101, requestHeaderBlock("GET"));

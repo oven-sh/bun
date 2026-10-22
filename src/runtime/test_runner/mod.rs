@@ -201,7 +201,10 @@ pub(crate) mod expect {
     use bun_jsc::console_object::Formatter;
 
     pub(crate) trait JSValueTestExt {
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
+        /// `call_to_json` is pretty-format's `callToJSON`. Jest merges
+        /// property matchers into a plain copy of the received object, which
+        /// drops a prototype `toJSON`, so that mode passes `false`.
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject, call_to_json: bool) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
         fn bind(
@@ -215,13 +218,14 @@ pub(crate) mod expect {
     }
     impl JSValueTestExt for JSValue {
         #[inline]
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
+        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject, call_to_json: bool) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
             let fmt_options = FormatOptions {
                 enable_colors: false,
                 add_newline: false,
                 flush: false,
                 quote_strings: true,
+                call_to_json,
             };
             JestPrettyFormat::format(
                 MessageLevel::Debug,

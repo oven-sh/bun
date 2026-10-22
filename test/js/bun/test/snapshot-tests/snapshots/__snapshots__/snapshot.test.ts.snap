@@ -607,3 +607,5 @@ exports[`snapshot numbering 4`] = `"snap"`;
 exports[`snapshot numbering 6`] = `"hello"`;
 
 exports[`snapshot numbering: hinted 1`] = `"hello"`;
+
+exports[`toJSON is called like pretty-format: object with toJSON 1`] = `"custom"`;

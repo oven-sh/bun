@@ -101,6 +101,9 @@ pub(crate) struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// pretty-format's `callToJSON`: print `value.toJSON()` in place of a
+    /// complex value that has a callable `toJSON`.
+    pub(crate) call_to_json: bool,
 }
 
 impl JestPrettyFormat {
@@ -146,6 +149,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.call_to_json = options.call_to_json;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -192,6 +196,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.call_to_json = options.call_to_json;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -315,6 +320,11 @@ pub(crate) struct Formatter<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
+    pub(crate) call_to_json: bool,
+    /// The value whose `toJSON()` result is being printed, or the sample of
+    /// an `expect.objectContaining`. Its own `toJSON` is not called again.
+    /// Nested values are different cells, so theirs still are.
+    pub(crate) to_json_exempt: JSValue,
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
@@ -329,6 +339,8 @@ impl<'a> Formatter<'a> {
             global_this: global,
             indent: 0,
             quote_strings: false,
+            call_to_json: false,
+            to_json_exempt: JSValue::ZERO,
             failed: false,
             estimated_line_length: 0,
             always_newline_scope: false,
@@ -350,6 +362,34 @@ impl<'a> Formatter<'a> {
     pub(crate) fn add_for_new_line(&mut self, len: usize) {
         self.estimated_line_length = self.estimated_line_length.saturating_add(len);
     }
+
+    /// pretty-format's `callToJSON` step (`printComplexValue`): the result of
+    /// `value.toJSON()` when `value` has a callable one. `Date`, `WeakMap` and
+    /// `WeakSet` are printed by `printBasicValue` before that step, so they
+    /// are skipped. The value printed in place of its `toJSON()` result
+    /// (`to_json_exempt`) is skipped too, like pretty-format's `hasCalledToJSON`.
+    fn call_to_json(&self, value: JSValue, js_type: JSType) -> JsResult<Option<JSValue>> {
+        if value == self.to_json_exempt
+            || !value.is_object()
+            || matches!(js_type, JSType::JSDate | JSType::WeakMap | JSType::WeakSet)
+            || has_bun_only_to_json(value)
+        {
+            return Ok(None);
+        }
+        let Some(to_json) = value
+            .fast_get(self.global_this, jsc::BuiltinName::toJSON)?
+            .filter(|f| f.is_callable())
+        else {
+            return Ok(None);
+        };
+        Ok(Some(to_json.call(self.global_this, value, &[])?))
+    }
+}
+
+/// Bun gives these classes a `toJSON()`. Node does not, so under Jest
+/// pretty-format prints them as `Headers {}` and so on.
+fn has_bun_only_to_json(value: JSValue) -> bool {
+    matches!(value.get_class_info_name(), Some(b"Headers" | b"FormData" | b"URLSearchParams"))
 }
 
 // The node is acquired lazily inside `print_as` via `visited::Pool::get_node()`;
@@ -423,7 +463,34 @@ impl Tag {
 
     #[inline]
     pub(crate) const fn can_have_circular_references(self) -> bool {
-        matches!(self, Tag::Array | Tag::Object | Tag::Map | Tag::Set | Tag::JSX)
+        matches!(
+            self,
+            Tag::Array
+                | Tag::Object
+                | Tag::Map
+                | Tag::Set
+                | Tag::JSX
+                | Tag::TypedArray
+                | Tag::Promise
+                | Tag::JSON
+        )
+    }
+
+    /// The tags pretty-format reaches `printComplexValue` with. Everything
+    /// `printBasicValue` handles first (primitives, functions, Date, Error,
+    /// RegExp) and the plugin-handled JSX stay out.
+    #[inline]
+    pub(crate) const fn may_call_to_json(self) -> bool {
+        matches!(
+            self,
+            Tag::Array
+                | Tag::Object
+                | Tag::Map
+                | Tag::Set
+                | Tag::TypedArray
+                | Tag::Promise
+                | Tag::JSON
+        )
     }
 }
 
@@ -1090,6 +1157,21 @@ impl<'a> Formatter<'a> {
         // call `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
         // cannot be used here because it would hold `&mut self` across the match body.
         let result: JsResult<()> = (|| {
+            if FORMAT.may_call_to_json() && self.call_to_json {
+                if let Some(result) = self.call_to_json(value, js_type)? {
+                    let prev_exempt = self.to_json_exempt;
+                    self.to_json_exempt = result;
+                    let tag = Tag::get(result, self.global_this);
+                    let r = tag.and_then(|tag| {
+                        self.format::<W, ENABLE_ANSI_COLORS>(
+                            tag, writer.ctx, result, self.global_this,
+                        )
+                    });
+                    self.to_json_exempt = prev_exempt;
+                    return r;
+                }
+            }
+
             match FORMAT {
                 Tag::StringPossiblyFormatted => {
                     let str = value.to_utf8(self.global_this)?;
@@ -1581,27 +1663,6 @@ impl<'a> Formatter<'a> {
                             return Err(JsError::Thrown);
                         }
                         return Ok(());
-                    } else if bun_jsc::DOMFormData::from_js(value).is_some() {
-                        if let Some(to_json_function) = value
-                            .get(self.global_this, "toJSON")?
-                            .filter(|f| f.is_callable())
-                        {
-                            self.add_for_new_line(b"FormData (entries) ".len());
-                            writer.write_all(
-                                pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><blue>FormData<r> <d>(entries)<r> ")
-                                .as_bytes(),
-                            );
-
-                            return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                                writer.ctx,
-                                to_json_function.call(self.global_this, value, &[])?,
-                                JSType::Object,
-                            );
-                        }
-
-                        return self.print_as::<W, { Tag::Object }, ENABLE_ANSI_COLORS>(
-                            writer.ctx, value, JSType::Event,
-                        );
                     } else if let Some(timer) = value.as_class_ref::<crate::timer::TimeoutObject>() {
                         self.add_for_new_line(
                             b"Timeout(# ) ".len()
@@ -1819,27 +1880,15 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let str = value.json_stringify(self.global_this, self.indent)?;
-                    self.add_for_new_line(str.length());
                     if js_type == JSType::JSDate {
-                        // in the code for printing dates, it never exceeds this amount
-                        let mut iso_string_buf = [0u8; 36];
-                        let mut out_buf: &[u8] = {
-                            use std::io::Write;
-                            let mut cursor = &mut iso_string_buf[..];
-                            match write!(cursor, "{}", str) {
-                                Ok(()) => {
-                                    let written = 36 - cursor.len();
-                                    &iso_string_buf[..written]
-                                }
-                                Err(_) => b"",
-                            }
-                        };
-                        if out_buf.len() > 2 {
-                            // trim the quotes
-                            out_buf = &out_buf[1..out_buf.len() - 1];
-                        }
-
+                        // pretty-format's `printBasicValue`: the ISO string, or
+                        // `Date { NaN }` for an invalid date. `Date.prototype.toJSON`
+                        // is not consulted.
+                        let mut iso_string_buf = [0u8; 64];
+                        let out_buf: &[u8] = value
+                            .to_iso_string(self.global_this, &mut iso_string_buf)
+                            .unwrap_or(b"Date { NaN }");
+                        self.add_for_new_line(out_buf.len());
                         writer.print(format_args!(
                             "{}{}{}",
                             pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r><magenta>"),
@@ -1849,6 +1898,8 @@ impl<'a> Formatter<'a> {
                         return Ok(());
                     }
 
+                    let str = value.json_stringify(self.global_this, self.indent)?;
+                    self.add_for_new_line(str.length());
                     writer.print(format_args!("{}", str));
                 }
                 Tag::Event => {
@@ -2384,51 +2435,7 @@ impl<'a> Formatter<'a> {
                         writer.write_all(b"\n");
                     }
 
-                    if js_type == JSType::Uint8Array {
-                        let buffer_name = value.get_class_name(self.global_this)?;
-                        if buffer_name.eq_ascii(b"Buffer") {
-                            // special formatting for 'Buffer' snapshots only
-                            if slice.is_empty() && self.indent == 0 {
-                                writer.write_all(b"\n");
-                            }
-                            writer.write_all(b"{\n");
-                            self.indent += 1;
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"data\": [");
-
-                            self.indent += 1;
-                            for el in slice {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.print(format_args!("{},", el));
-                            }
-                            self.indent = self.indent.saturating_sub(1);
-
-                            if !slice.is_empty() {
-                                writer.write_all(b"\n");
-                                let _ = self.write_indent(writer.ctx);
-                                writer.write_all(b"],\n");
-                            } else {
-                                writer.write_all(b"],\n");
-                            }
-
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"\"type\": \"Buffer\",\n");
-
-                            self.indent = self.indent.saturating_sub(1);
-                            let _ = self.write_indent(writer.ctx);
-                            writer.write_all(b"}");
-
-                            if self.indent == 0 {
-                                writer.write_all(b"\n");
-                            }
-
-                            return Ok(());
-                        }
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
-                    } else {
-                        writer.write_all(array_buffer.typed_array_type.typed_array_name());
-                    }
+                    writer.write_all(array_buffer.typed_array_type.typed_array_name());
 
                     writer.write_all(b" [");
 
@@ -2688,6 +2695,11 @@ pub(crate) trait AsymmetricMatcherFormatter {
     fn amf_add_for_new_line(&mut self, n: usize);
     fn amf_global_this(&self) -> &JSGlobalObject;
     fn amf_quote_strings(&mut self) -> &mut bool;
+    /// Marks `value` as printed by its own properties even when it has a
+    /// `toJSON` (pretty-format's AsymmetricMatcher plugin prints the
+    /// `objectContaining` sample with `printObjectProperties`). Returns the
+    /// previous mark so the caller can restore it.
+    fn amf_set_to_json_exempt(&mut self, value: JSValue) -> JSValue;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
@@ -2706,6 +2718,10 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_set_to_json_exempt(&mut self, value: JSValue) -> JSValue {
+        core::mem::replace(&mut self.to_json_exempt, value)
+    }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2727,6 +2743,12 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
+    #[inline]
+    fn amf_set_to_json_exempt(&mut self, _value: JSValue) -> JSValue {
+        // The console formatter only calls `toJSON` on `JSAsJSONType` cells
+        // (`Tag::ToJSON`), never on a plain object sample.
+        JSValue::ZERO
+    }
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
@@ -2862,9 +2884,12 @@ impl JestPrettyFormat {
                 this.amf_add_for_new_line(b"ObjectContaining ".len());
                 writer.write_all(b"ObjectContaining ");
             }
-            this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
+            let prev_exempt = this.amf_set_to_json_exempt(object_value);
+            let printed = this.amf_print_as::<W, ENABLE_ANSI_COLORS>(
                 bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
-            )?;
+            );
+            this.amf_set_to_json_exempt(prev_exempt);
+            printed?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
                 expect_js::string_containing::string_value_get_cached(value)

@@ -878,6 +878,196 @@ test("indented inline snapshots", () => {
   }).toThrow();
 });
 
+// pretty-format's `callToJSON` (default true): a complex value with a callable
+// `toJSON` is printed as its `toJSON()` result. Expected values come from
+// pretty-format 29.7.0.
+test("toJSON is called like pretty-format", () => {
+  class Duration {
+    values: { milliseconds: number };
+    constructor(ms: number) {
+      this.values = { milliseconds: ms };
+    }
+    toJSON() {
+      return "PT1S";
+    }
+  }
+  expect(new Duration(1000)).toMatchInlineSnapshot(`"PT1S"`);
+  expect({ a: 1, toJSON: () => "custom" }).toMatchInlineSnapshot(`"custom"`);
+  expect({ a: 1, toJSON: () => "custom" }).toMatchSnapshot("object with toJSON");
+  expect({ d: { toJSON: () => ({ x: 1 }) } }).toMatchInlineSnapshot(`
+    {
+      "d": {
+        "x": 1,
+      },
+    }
+  `);
+  expect(new URL("https://example.com/a")).toMatchInlineSnapshot(`"https://example.com/a"`);
+  expect({ toJSON: () => 42 }).toMatchInlineSnapshot(`42`);
+  expect({ toJSON: () => null }).toMatchInlineSnapshot(`null`);
+  expect({ toJSON: () => undefined }).toMatchInlineSnapshot(`undefined`);
+  expect({ toJSON: () => [1, "two"] }).toMatchInlineSnapshot(`
+    [
+      1,
+      "two",
+    ]
+  `);
+
+  // not only plain objects
+  const arr: any = [1, 2];
+  arr.toJSON = () => "arr";
+  expect(arr).toMatchInlineSnapshot(`"arr"`);
+  expect([{ toJSON: () => "e0" }, { toJSON: () => "e1" }]).toMatchInlineSnapshot(`
+    [
+      "e0",
+      "e1",
+    ]
+  `);
+  const map: any = new Map([[1, 2]]);
+  map.toJSON = () => "map";
+  expect(map).toMatchInlineSnapshot(`"map"`);
+  expect(new Map([[{ toJSON: () => "k" }, { toJSON: () => "v" }]])).toMatchInlineSnapshot(`
+    Map {
+      "k" => "v",
+    }
+  `);
+  const set: any = new Set([1]);
+  set.toJSON = () => "set";
+  expect(set).toMatchInlineSnapshot(`"set"`);
+  expect(new Set([{ toJSON: () => "member" }])).toMatchInlineSnapshot(`
+    Set {
+      "member",
+    }
+  `);
+  const u8: any = new Uint8Array([1, 2]);
+  u8.toJSON = () => "u8";
+  expect(u8).toMatchInlineSnapshot(`"u8"`);
+  const promise: any = Promise.resolve(1);
+  promise.toJSON = () => "promise";
+  expect(promise).toMatchInlineSnapshot(`"promise"`);
+  const nullProto = Object.create(null);
+  nullProto.toJSON = () => "null proto";
+  expect(nullProto).toMatchInlineSnapshot(`"null proto"`);
+  const getter = {};
+  Object.defineProperty(getter, "toJSON", { get: () => () => "getter" });
+  expect(getter).toMatchInlineSnapshot(`"getter"`);
+
+  // Buffer.prototype.toJSON gives the same text the old special case did
+  expect(Buffer.from("hi")).toMatchInlineSnapshot(`
+    {
+      "data": [
+        104,
+        105,
+      ],
+      "type": "Buffer",
+    }
+  `);
+  expect({ a: Buffer.alloc(0) }).toMatchInlineSnapshot(`
+    {
+      "a": {
+        "data": [],
+        "type": "Buffer",
+      },
+    }
+  `);
+
+  // a non-callable toJSON is an ordinary property
+  expect({ toJSON: 5 }).toMatchInlineSnapshot(`
+    {
+      "toJSON": 5,
+    }
+  `);
+
+  // hasCalledToJSON: the result's own toJSON is not called, nested ones are
+  expect({ toJSON: () => ({ toJSON: () => "inner" }) }).toMatchInlineSnapshot(`
+    {
+      "toJSON": [Function],
+    }
+  `);
+  expect({ toJSON: () => ({ n: { toJSON: () => "deep" } }) }).toMatchInlineSnapshot(`
+    {
+      "n": "deep",
+    }
+  `);
+  expect({ toJSON: () => new URL("https://x/") }).toMatchInlineSnapshot(`URL {}`);
+
+  // the receiver is a visited reference while its result prints
+  const circular: any = { a: 1 };
+  circular.toJSON = () => ({ y: circular });
+  expect(circular).toMatchInlineSnapshot(`
+    {
+      "y": [Circular],
+    }
+  `);
+  const self: any = {};
+  self.toJSON = () => self;
+  expect(self).toMatchInlineSnapshot(`[Circular]`);
+
+  // printBasicValue runs first: Date, Error, RegExp, functions never reach toJSON
+  const date: any = new Date(0);
+  date.toJSON = () => "OVERRIDE";
+  expect(date).toMatchInlineSnapshot(`1970-01-01T00:00:00.000Z`);
+  expect(new Date(NaN)).toMatchInlineSnapshot(`Date { NaN }`);
+  const err: any = new Error("boom");
+  err.toJSON = () => "err";
+  expect(err).toMatchInlineSnapshot(`[Error: boom]`);
+  const re: any = /x/;
+  re.toJSON = () => "re";
+  expect(re).toMatchInlineSnapshot(`/x/`);
+  const fn: any = () => {};
+  fn.toJSON = () => "fn";
+  expect(fn).toMatchInlineSnapshot(`[Function]`);
+
+  // the objectContaining sample prints its properties, not its toJSON
+  expect({ m: expect.objectContaining({ toJSON: () => "sample", b: { toJSON: () => "nested" } }) })
+    .toMatchInlineSnapshot(`
+    {
+      "m": ObjectContaining {
+        "b": "nested",
+        "toJSON": [Function],
+      },
+    }
+  `);
+
+  // Node's Headers, FormData and URLSearchParams have no toJSON, so Jest never
+  // calls one. Bun's toJSON on them is skipped. (URLSearchParams keeps the
+  // JSON text bun printed before.)
+  expect(new Headers({ a: "1" })).toMatchInlineSnapshot(`Headers {}`);
+  expect(new URLSearchParams("a=1")).toMatchInlineSnapshot(`{"a":"1"}`);
+  const fd = new FormData();
+  fd.append("a", "1");
+  expect(fd).toMatchInlineSnapshot(`FormData {}`);
+
+  // property matchers: Jest merges them into a plain copy of the received
+  // object, which has no prototype toJSON, so the shape is printed
+  expect(new Duration(1000)).toMatchInlineSnapshot(
+    { values: expect.any(Object) },
+    `
+    Duration {
+      "values": Any<Object>,
+    }
+  `,
+  );
+});
+
+test("a throwing toJSON fails the snapshot matcher", () => {
+  expect(() =>
+    expect({
+      toJSON() {
+        throw new Error("toJSON threw");
+      },
+    }).toMatchInlineSnapshot(`"x"`),
+  ).toThrow("toJSON threw");
+  expect(() =>
+    expect({
+      nested: {
+        toJSON() {
+          throw new Error("nested toJSON threw");
+        },
+      },
+    }).toMatchSnapshot(),
+  ).toThrow("nested toJSON threw");
+});
+
 test("error snapshots", () => {
   expect(() => {
     throw new Error("hello");

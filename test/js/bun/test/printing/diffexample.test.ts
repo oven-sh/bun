@@ -900,3 +900,69 @@ test("large diffs are exact rather than abandoned part-way", () => {
   expect(message.slice(-400)).toContain("\n-   49994,\n+   49995,\n    49995,\n");
   expect(message.slice(-120).trimEnd()).toEndWith(`\n\n- Expected  - ${changed}\n+ Received  + ${changed}`);
 });
+
+function failureMessage(fn: () => void) {
+  try {
+    fn();
+  } catch (e) {
+    return cleanAnsiEscapes((e as Error).message);
+  }
+  throw new Error("expected the matcher to fail");
+}
+
+// jest-diff formats both sides with toJSON first. When that gives the same text
+// for both sides, or a toJSON throws, it formats again without toJSON.
+test("toEqual diffs print values through toJSON like jest-diff", () => {
+  expect(
+    failureMessage(() => {
+      expect(new URL("https://a/")).toEqual(new URL("https://b/"));
+    }),
+  ).toEndWith('Expected: "https://b/"\nReceived: "https://a/"\n');
+
+  expect(
+    failureMessage(() => {
+      expect({ a: 1, toJSON: () => "x" }).toEqual({ b: 2, toJSON: () => "y" });
+    }),
+  ).toEndWith('Expected: "y"\nReceived: "x"\n');
+
+  // same toJSON text on both sides: the diff shows the object shape instead
+  expect(
+    failureMessage(() => {
+      expect({ a: 1, toJSON: () => "x" }).toEqual({ b: 2, toJSON: () => "x" });
+    }),
+  ).toContain('\n  {\n-   "b": 2,\n+   "a": 1,\n    "toJSON": [Function],\n  }\n');
+
+  // a throwing toJSON does not replace the assertion error
+  expect(
+    failureMessage(() => {
+      expect({
+        a: 1,
+        toJSON() {
+          throw new Error("toJSON threw");
+        },
+      }).toEqual({ b: 2 });
+    }),
+  ).toContain('\n  {\n-   "b": 2,\n+   "a": 1,\n+   "toJSON": [Function: toJSON],\n  }\n');
+
+  // .not prints the expected value only, through toJSON like jest's stringify
+  const toJSON = () => "same";
+  expect(
+    failureMessage(() => {
+      expect({ a: 1, toJSON }).not.toEqual({ a: 1, toJSON });
+    }),
+  ).toEndWith('Expected: not "same"\n');
+
+  // toMatchObject diffs the object shape: Jest diffs a plain-object subset of
+  // the received value, which has no prototype toJSON
+  class Duration {
+    constructor(public ms: number) {}
+    toJSON() {
+      return "PT1S";
+    }
+  }
+  expect(
+    failureMessage(() => {
+      expect(new Duration(1000)).toMatchObject({ ms: 2000 });
+    }),
+  ).toContain('\n- {\n-   "ms": 2000,\n+ Duration {\n+   "ms": 1000,\n  }\n');
+});

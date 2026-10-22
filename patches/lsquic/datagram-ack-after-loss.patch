@@ -1,0 +1,219 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -259,13 +259,22 @@
+     /**
+      * Optional callback fired once for each DATAGRAM frame when its packet
+      * is acknowledged, when its packet is declared lost, or when the frame
+-     * is dropped before its packet is sent.  `dgram_id` is the value that
+-     * on_dg_write gave lsquic_conn_set_datagram_id() for that frame (0 if it
+-     * gave none).  `status` is one of enum lsquic_dg_status.  bun addition.
++     * is dropped before its packet is sent.  LSQ_DG_LOST is not the last
++     * word on a frame: see on_datagram_late_ack.  `dgram_id` is the value
++     * that on_dg_write gave lsquic_conn_set_datagram_id() for that frame (0
++     * if it gave none).  `status` is one of enum lsquic_dg_status.  bun
++     * addition.
+      */
+     void (*on_datagram_status)(lsquic_conn_t *c, uint64_t dgram_id,
+                                int status);
+     /**
++     * Optional callback fired when the peer acknowledges the packet of a
++     * DATAGRAM frame that on_datagram_status reported LSQ_DG_LOST: the
++     * packet was late, not lost.  lsquic remembers the frames it reports
++     * lost only while this callback is set.  bun addition.
++     */
++    void (*on_datagram_late_ack)(lsquic_conn_t *c, uint64_t dgram_id);
++    /**
+      * Optional callback fired on the client the moment the server rejects
+      * its early data (before any of the 0-RTT streams are torn down).
+      * bun addition.
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -1164,11 +1164,109 @@
+ }
+ 
+ 
++/* bun: the DATAGRAM frames that were last reported LSQ_DG_LOST, oldest
++ * first.  A loss is a guess: the packet can still arrive, and the peer then
++ * acknowledges it.  ngtcp2 keeps a lost packet and reports that late
++ * acknowledgement (ack_datagram after lost_datagram), so node:quic has to:
++ * https://github.com/nodejs/node/blob/v26.3.0/deps/ngtcp2/ngtcp2/lib/ngtcp2_rtb.c#L491-L515
++ * https://github.com/nodejs/node/blob/v26.3.0/deps/ngtcp2/ngtcp2/lib/ngtcp2_rtb.c#L704-L716
++ * lsquic has dropped the packet by then, so the pair (packet number, id) is
++ * kept here.  Nothing in this list feeds loss detection or congestion
++ * control.
++ *
++ * Which packets are declared lost is not as in ngtcp2.  lsquic also gives
++ * up on packets when a retransmission timer expires (TLP, RTO), with no ACK
++ * of a later packet.  ngtcp2 only sends probes then.  For a packet that was
++ * slow, ngtcp2 reports the acknowledgement alone, and this list turns the
++ * report of lsquic into LSQ_DG_LOST followed by the late acknowledgement.
++ *
++ * A frame leaves the list when an ACK covers its packet, when an ACK is
++ * SC_LOST_DGRAM_REACH packets past it, or when SC_MAX_LOST_DGRAMS newer
++ * frames are lost.  Both numbers are choices made here.  ngtcp2 keeps a
++ * lost packet for 3 PTOs, and at most the newest
++ * max(3, min(256, packets in flight / 2)) lost packets:
++ * https://github.com/nodejs/node/blob/v26.3.0/deps/ngtcp2/ngtcp2/lib/ngtcp2_conn.c#L11418-L11431
++ * https://github.com/nodejs/node/blob/v26.3.0/deps/ngtcp2/ngtcp2/lib/ngtcp2_rtb.c#L1051-L1060
++ * https://github.com/nodejs/node/blob/v26.3.0/deps/ngtcp2/ngtcp2/lib/ngtcp2_rtb.c#L1195
++ * The list is longer than 3, because a retransmission timeout reports
++ * every DATAGRAM frame in flight at once.
++ */
++#define SC_MAX_LOST_DGRAMS 32
++#define SC_LOST_DGRAM_REACH 256
++
++struct lost_dgrams
++{
++    unsigned                    ld_count;
++    struct {
++        lsquic_packno_t         packno;
++        uint64_t                id;
++    }                           ld_el[SC_MAX_LOST_DGRAMS];
++};
++
++
++static void
++send_ctl_keep_lost_datagram (struct lsquic_send_ctl *ctl,
++                                        lsquic_packno_t packno, uint64_t id)
++{
++    struct lost_dgrams *ld = ctl->sc_lost_dgrams;
++
++    if (!ld)
++    {
++        ld = malloc(sizeof(*ld));
++        if (!ld)
++            return;
++        ld->ld_count = 0;
++        ctl->sc_lost_dgrams = ld;
++    }
++    if (SC_MAX_LOST_DGRAMS == ld->ld_count)
++        memmove(ld->ld_el, ld->ld_el + 1,
++                                --ld->ld_count * sizeof(ld->ld_el[0]));
++    ld->ld_el[ld->ld_count].packno = packno;
++    ld->ld_el[ld->ld_count].id = id;
++    ++ld->ld_count;
++    ctl->sc_flags |= SC_LOST_DGRAMS;
++}
++
++
++/* bun: an ACK covers the packet of a frame in the list: the packet was
++ * late.  Report the frame once and forget it.
++ */
++static void
++send_ctl_ack_lost_datagrams (struct lsquic_send_ctl *ctl,
++                                                const struct ack_info *acki)
++{
++    struct lost_dgrams *const ld = ctl->sc_lost_dgrams;
++    const struct lsquic_packno_range *const end
++                                        = acki->ranges + acki->n_ranges;
++    const struct lsquic_packno_range *range;
++    lsquic_packno_t packno;
++    unsigned i, n_kept;
++
++    for (i = 0, n_kept = 0; i < ld->ld_count; ++i)
++    {
++        packno = ld->ld_el[i].packno;
++        /* The ranges are in descending order */
++        for (range = acki->ranges; range < end && range->low > packno; ++range)
++            ;
++        if (range < end && packno <= range->high)
++            ctl->sc_enpub->enp_stream_if->on_datagram_late_ack(
++                            ctl->sc_conn_pub->lconn, ld->ld_el[i].id);
++        else if (largest_acked(acki) <= packno + SC_LOST_DGRAM_REACH)
++            ld->ld_el[n_kept++] = ld->ld_el[i];
++    }
++    ld->ld_count = n_kept;
++    if (0 == n_kept)
++        ctl->sc_flags &= ~SC_LOST_DGRAMS;
++}
++
++
+ /* bun: tell the application what became of each DATAGRAM frame in the
+  * packet, under the id that write_datagram stored in the frame record.
+  * DATAGRAM frames are never retransmitted (RFC 9221 Section 5), so a caller
+- * is the last place that can name them: the packet was acknowledged, it was
+- * declared lost, or it is dropped or stripped before it is sent.
++ * is the last place where the packet names them: the packet was
++ * acknowledged, it was declared lost, or it is dropped or stripped before
++ * it is sent.  A frame that is reported lost goes to sc_lost_dgrams, for an
++ * ACK that can still come.
+  */
+ static void
+ send_ctl_report_datagrams (struct lsquic_send_ctl *ctl,
+@@ -1184,8 +1282,14 @@
+     for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                 frec = lsquic_pofi_next(&pofi))
+         if (QUIC_FRAME_DATAGRAM == frec->fe_frame_type)
++        {
++            if (LSQ_DG_LOST == status
++                    && ctl->sc_enpub->enp_stream_if->on_datagram_late_ack)
++                send_ctl_keep_lost_datagram(ctl, packet_out->po_packno,
++                                                            frec->fe_u.data);
+             ctl->sc_enpub->enp_stream_if->on_datagram_status(
+                 ctl->sc_conn_pub->lconn, frec->fe_u.data, status);
++        }
+ }
+ 
+ 
+@@ -1477,6 +1581,15 @@
+     ecn_ce_cnt = 0;
+     one_rtt_cnt = 0;
+ 
++    /* bun: DATAGRAM frames travel in PNS_APP only.  This runs before the
++     * walk of the unacked queue, because that walk is skipped when the
++     * queue is empty or starts above this ACK.  So a late frame is reported
++     * ahead of the frames that the walk acknowledges, also when one of
++     * those is in an older packet.  ngtcp2 reports in ascending packet
++     * order. */
++    if (UNLIKELY(ctl->sc_flags & SC_LOST_DGRAMS) && PNS_APP == pns)
++        send_ctl_ack_lost_datagrams(ctl, acki);
++
+     if (UNLIKELY(ctl->sc_flags & SC_WAS_QUIET))
+     {
+         ctl->sc_flags &= ~SC_WAS_QUIET;
+@@ -1856,6 +1969,7 @@
+         ctl->sc_stats.n_delayed);
+ #endif
+     free(ctl->sc_token);
++    free(ctl->sc_lost_dgrams);
+ }
+ 
+ 
+--- a/src/liblsquic/lsquic_send_ctl.h
++++ b/src/liblsquic/lsquic_send_ctl.h
+@@ -30,6 +30,8 @@
+     unsigned                        bpq_count;
+ };
+ 
++struct lost_dgrams;
++
+ enum send_ctl_flags {
+     SC_TCID0        = (1 << 0),
+     SC_NSTP         = (1 << 2),
+@@ -56,6 +58,7 @@
+     SC_ROUGH_RTT    =  1 << 22,
+     SC_BW_SAMPLER_INIT = 1 << 23, /* bw_sampler is initialized */
+     SC_KEEP_BW_SAMPLER = 1 << 24, /* keep bw sampler for conn lifetime */
++    SC_LOST_DGRAMS  =  1 << 25,     /* bun: sc_lost_dgrams has entries */
+ #if LSQUIC_DEVEL
+     SC_DYN_PTHRESH  =  1 << 31u,    /* dynamic packet threshold enabled */
+ #endif
+@@ -70,6 +73,8 @@
+     enum send_ctl_flags             sc_flags;
+     enum ecn                        sc_ecn;
+     unsigned                        sc_n_stop_waiting;
++    /* bun: in this 4-byte gap, so that sc_lost_dgrams adds no bytes */
++    enum quic_ft_bit                sc_retx_frames;
+     struct lsquic_packets_tailq     sc_unacked_packets[N_PNS];
+     lsquic_packno_t                 sc_largest_acked_packno;
+     lsquic_time_t                   sc_largest_acked_sent_time;
+@@ -88,7 +93,8 @@
+     unsigned                        sc_n_consec_rtos;
+     unsigned                        sc_n_hsk;
+     unsigned                        sc_n_tlp;
+-    enum quic_ft_bit                sc_retx_frames;
++    /* bun: the DATAGRAM frames reported lost, for on_datagram_late_ack */
++    struct lost_dgrams             *sc_lost_dgrams;
+     struct lsquic_alarmset         *sc_alset;
+ 
+     /* Second section: everything else. */

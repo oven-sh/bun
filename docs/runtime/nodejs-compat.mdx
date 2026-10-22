@@ -185,7 +185,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:quic`](https://github.com/nodejs/node/blob/main/doc/api/quic.md)
 
-🟢 Implemented: `listen()`, `connect()`, `QuicEndpoint`, `QuicSession` and `QuicStream`. 99% of Node.js's test suite passes. The API is experimental in Node.js, and importing it emits an `ExperimentalWarning` in Bun too.
+🟢 Implemented: `listen()`, `connect()`, `QuicEndpoint`, `QuicSession` and `QuicStream`. 99% of Node.js's test suite passes. The API is experimental in Node.js, and importing it emits an `ExperimentalWarning` in Bun too. Bun uses lsquic and Node.js uses ngtcp2, and the two libraries declare a packet lost by different rules. `ondatagramstatus` can report `'lost'` for different datagrams in Bun and in Node.js. When the peer acknowledges the packet of such a datagram after all, Bun reports `'acknowledged'` after `'lost'`.
 
 ### [`node:sea`](https://nodejs.org/api/single-executable-applications.html)
 

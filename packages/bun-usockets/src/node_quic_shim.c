@@ -159,6 +159,16 @@ static void nq_on_datagram_status(lsquic_conn_t *c, uint64_t id, int status) {
         vt->on_datagram_status(ctx, id, status);
     }
 }
+/* The peer acknowledged the packet of a datagram that was reported lost: the
+ * packet was late. Node reports 'acknowledged' after 'lost' for such a datagram
+ * and counts it in both stats:
+ * https://github.com/nodejs/node/blob/v26.3.0/src/quic/session.cc#L3222-L3247
+ * Not as in Node: lsquic also declares a loss when a retransmission timer
+ * expires, with no ACK of a later packet. For a packet that was only slow,
+ * Node reports 'acknowledged' alone. Bun reports 'lost', then 'acknowledged'. */
+static void nq_on_datagram_late_ack(lsquic_conn_t *c, uint64_t id) {
+    nq_on_datagram_status(c, id, LSQ_DG_ACKED);
+}
 static void nq_on_early_data_failed(lsquic_conn_t *c) {
     void *ctx = (void *) lsquic_conn_get_ctx(c);
     if (ctx) {
@@ -354,6 +364,7 @@ static const struct lsquic_stream_if nq_stream_if = {
     .on_dg_write = nq_on_dg_write,
     .on_datagram = nq_on_datagram,
     .on_datagram_status = nq_on_datagram_status,
+    .on_datagram_late_ack = nq_on_datagram_late_ack,
     .on_early_data_failed = nq_on_early_data_failed,
     .on_path_switch = nq_on_path_switch,
     .on_origin = nq_on_origin,

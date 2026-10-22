@@ -307,29 +307,52 @@ await (foo());
   });
 });
 
-// The tree of the file has no place for the type arguments of a second base class. `tsc` has them, and checks nothing in
-// them: the file that one names is in the program, and one that names no file is no error.
-test.concurrent(
-  "bun check, an `import()` type in the type arguments of a second base class is not resolved",
-  async () => {
-    expect(
-      await check({
-        "tsconfig.json": tsconfig({ ...options, module: "commonjs" }, ["src/main.ts"]),
-        "other/o.ts": target,
-        "src/main.ts": `class A {}
+// Syntax that the tree of the file has no place for. `tsc` has the nodes and checks nothing in them: a file that one names
+// is in the program, and one that names no file is no error.
+test.concurrent("bun check, an `import()` type in syntax that is kept nowhere is not resolved", async () => {
+  const roots = ["src/base-class.ts", "src/constraint.ts", "src/type-arguments.ts"];
+  expect(
+    await check({
+      "tsconfig.json": tsconfig({ ...options, module: "commonjs" }, roots),
+      "other/base-class.ts": target,
+      "other/constraint.ts": target,
+      "other/constraint-call.ts": target,
+      "other/type-arguments.ts": target,
+      // The type arguments of a second base class.
+      "src/base-class.ts": `class A {}
 class B<T> { x!: T }
-class C extends A, B<import("../other/o").O> {}
+class C extends A, B<import("../other/base-class").O> {}
 class D extends A, B<import("../other/missing").O> {}
 new C(); new D();
 `,
-      }),
-    ).toEqual({
-      lines: [
-        wrongIn("other/o.ts"),
-        "src/main.ts(3,20): error TS1174: Classes can only extend a single class.",
-        "src/main.ts(4,20): error TS1174: Classes can only extend a single class.",
-      ],
-      exitCode: 1,
-    });
-  },
-);
+      // An expression in the place of the constraint of a type parameter.
+      "src/constraint.ts": `function f<T extends -(<import("../other/constraint").O>0)>() {}
+function g<T extends -(<import("../other/missing").O>0)>() {}
+function h<T extends -import("../other/constraint-call")>() {}
+f; g; h;
+`,
+      // The type arguments of an import type whose argument is no string.
+      "src/type-arguments.ts": `declare const name: string;
+export type First = import(name)<import("../other/type-arguments").O>;
+export type Second = import(name)<import("../other/missing").O>;
+`,
+    }),
+  ).toEqual({
+    lines: [
+      wrongIn("other/base-class.ts"),
+      wrongIn("other/constraint-call.ts"),
+      wrongIn("other/constraint.ts"),
+      wrongIn("other/type-arguments.ts"),
+      "src/base-class.ts(3,20): error TS1174: Classes can only extend a single class.",
+      "src/base-class.ts(4,20): error TS1174: Classes can only extend a single class.",
+      "src/constraint.ts(1,22): error TS1110: Type expected.",
+      "src/constraint.ts(2,22): error TS1110: Type expected.",
+      "src/constraint.ts(3,22): error TS1110: Type expected.",
+      "src/type-arguments.ts(2,28): error TS1141: String literal expected.",
+      "src/type-arguments.ts(2,28): error TS2749: 'name' refers to a value, but is being used as a type here. Did you mean 'typeof name'?",
+      "src/type-arguments.ts(3,29): error TS1141: String literal expected.",
+      "src/type-arguments.ts(3,29): error TS2749: 'name' refers to a value, but is being used as a type here. Did you mean 'typeof name'?",
+    ],
+    exitCode: 1,
+  });
+});

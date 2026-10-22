@@ -19168,11 +19168,16 @@
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2017\"], \"skipLibCheck\": true, \"module\": \"esnext\", \"allowJs\": true, \"checkJs\": true, \"target\": \"es2022\", \"moduleResolution\": \"bundler\" }, \"files\": [\"src/module.js\", \"src/script.js\"] }\n"
     }
   },
-  "import-type-in-the-type-arguments-of-a-second-base-class": {
+  "import-types-in-syntax-that-the-tree-of-the-file-has-no-place-for": {
     "files": {
-      "other/o.ts": "export type O = 1;\nexport const wrong: string = 1;\n",
-      "src/main.ts": "class A {}\nclass B<T> { x!: T }\nclass C extends A, B<import(\"../other/o\").O> {}\nclass D extends A, B<import(\"../other/missing\").O> {}\nnew C(); new D();\n",
-      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"commonjs\" }, \"files\": [\"src/main.ts\"] }\n"
+      "other/base-class.ts": "export type O = 1;\nexport const wrong: string = 1;\n",
+      "other/constraint-call.ts": "export type O = 1;\nexport const wrong: string = 1;\n",
+      "other/constraint.ts": "export type O = 1;\nexport const wrong: string = 1;\n",
+      "other/type-arguments.ts": "export type O = 1;\nexport const wrong: string = 1;\n",
+      "src/base-class.ts": "class A {}\nclass B<T> { x!: T }\nclass C extends A, B<import(\"../other/base-class\").O> {}\nclass D extends A, B<import(\"../other/missing\").O> {}\nnew C(); new D();\n",
+      "src/constraint.ts": "function f<T extends -(<import(\"../other/constraint\").O>0)>() {}\nfunction g<T extends -(<import(\"../other/missing\").O>0)>() {}\nfunction h<T extends -import(\"../other/constraint-call\")>() {}\nf; g; h;\n",
+      "src/type-arguments.ts": "declare const name: string;\nexport type First = import(name)<import(\"../other/type-arguments\").O>;\nexport type Second = import(name)<import(\"../other/missing\").O>;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es5\"], \"skipLibCheck\": true, \"module\": \"commonjs\" }, \"files\": [\"src/base-class.ts\", \"src/constraint.ts\", \"src/type-arguments.ts\"] }\n"
     }
   },
   "jsdoc-import-type-of-no-node-in-a-composite-project": {

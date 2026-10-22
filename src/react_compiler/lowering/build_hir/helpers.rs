@@ -248,7 +248,10 @@ pub(super) fn lower_identifier(
                     })?;
                 }
                 if name.slice() == b"arguments"
-                    && builder.environment().config.implicit_arguments_is_unsupported
+                    && builder
+                        .environment()
+                        .config
+                        .implicit_arguments_is_unsupported
                 {
                     builder.record_error(CompilerErrorDetail {
                         category: ErrorCategory::UnsupportedSyntax,

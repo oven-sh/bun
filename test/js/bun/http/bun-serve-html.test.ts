@@ -1561,6 +1561,170 @@ test("wildcard static routes", async () => {
   }
 });
 
+// A reload without a routes object keeps an html route like every other kind
+// of route, together with the chunk routes its bundle registered on the server.
+describe.each([false, true])("server.reload() without routes keeps an html route (development: %p)", development => {
+  const page = `<!DOCTYPE html><html><head><title>kept</title><script type="module" src="./app.ts"></script></head><body></body></html>`;
+
+  test.concurrent("that is already built, with its chunks", async () => {
+    using dir = tempDir("bun-serve-html-reload-keeps-route", {
+      "index.html": page,
+      "app.ts": `console.log("app");`,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          routes: { "/": html },
+          fetch: () => new Response("fetch v1", { status: 404 }),
+        });
+        async function probe() {
+          const page = await fetch(server.url);
+          const chunk = (await page.text()).match(/src="([^"]+\\.js)"/)?.[1];
+          if (!chunk) return { page: page.status, chunk: "none" };
+          const script = await fetch(new URL(chunk, server.url));
+          await script.text();
+          return { page: page.status, chunk: script.status };
+        }
+
+        const before = await probe();
+        server.reload({ fetch: () => new Response("fetch v2", { status: 404 }) });
+        const after = await probe();
+        const other = await (await fetch(new URL("/other", server.url))).text();
+        console.log(JSON.stringify({ before, after, other }));
+        server.stop(true);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({
+        before: { page: 200, chunk: 200 },
+        after: { page: 200, chunk: 200 },
+        other: "fetch v2",
+      }),
+      exitCode: 0,
+    });
+  });
+
+  // The route is kept while its first bundle is still building: the request
+  // that started the bundle and a request after the reload both get the page.
+  test.concurrent("whose first bundle is still in flight", async () => {
+    using dir = tempDir("bun-serve-html-reload-keeps-pending-route", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": page,
+      "app.ts": `console.log("app");`,
+      "plugin.ts": /*ts*/ `
+        export default {
+          name: "hold-bundle",
+          setup(build) {
+            build.onLoad({ filter: /app\\.ts$/ }, async () => {
+              globalThis.bundleStarted.resolve();
+              await globalThis.releaseBundle.promise;
+              return { loader: "ts", contents: "console.log('app');" };
+            });
+          },
+        };
+      `,
+      "serve.ts": /*ts*/ `
+        import html from "./index.html";
+
+        globalThis.bundleStarted = Promise.withResolvers();
+        globalThis.releaseBundle = Promise.withResolvers();
+
+        const server = Bun.serve({
+          port: 0,
+          development: ${development},
+          routes: { "/": html },
+          fetch: () => new Response("fetch v1", { status: 404 }),
+        });
+        const title = async response => (await response.text()).match(/<title>(.*?)<\\/title>/)?.[1];
+        const page = () => fetch(server.url).then(async response => [response.status, await title(response)]);
+
+        const first = page();
+        await globalThis.bundleStarted.promise;
+        server.reload({ fetch: () => new Response("fetch v2", { status: 404 }) });
+        const second = page();
+        globalThis.releaseBundle.resolve();
+
+        console.log(JSON.stringify({ first: await first, second: await second, third: await page() }));
+        server.stop(true);
+      `,
+    });
+    const { stdout, stderr, exitCode } = await runServeFixture(dir);
+    expect({ stdout, exitCode }, stderr).toEqual({
+      stdout: JSON.stringify({ first: [200, "kept"], second: [200, "kept"], third: [200, "kept"] }),
+      exitCode: 0,
+    });
+  });
+});
+
+// The dev server keeps its own table of html routes, which a reload clears
+// and fills again from the kept routes. A client that is on the page keeps
+// its HMR socket and still gets the hot update for an edit after the reload.
+test.concurrent("server.reload() without routes keeps a dev server html route live for HMR", async () => {
+  using dir = tempDir("bun-serve-html-reload-keeps-hmr", {
+    "index.html": `<!DOCTYPE html><html><head><title>kept</title><script type="module" src="./app.ts"></script></head><body></body></html>`,
+    "app.ts": `console.log("app");`,
+    "serve.ts": /*ts*/ `
+      import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
+      import html from "./index.html";
+
+      const server = Bun.serve({
+        port: 0,
+        development: true,
+        static: { "/": html },
+        fetch: () => new Response("fetch v1", { status: 404 }),
+        websocket: { message() {} },
+      });
+      const page = async () => (await fetch(server.url)).status;
+      const before = await page();
+
+      // An HMR client that is on "/" and subscribed to hot updates.
+      const url = new URL("/_bun/hmr", server.url);
+      url.protocol = "ws:";
+      const ws = new WebSocket(url);
+      ws.binaryType = "arraybuffer";
+      const onRoute = Promise.withResolvers();
+      const hotUpdate = Promise.withResolvers();
+      let closed = false;
+      ws.onerror = ws.onclose = () => {
+        closed = true;
+        const error = new Error("the HMR socket closed");
+        onRoute.reject(error);
+        hotUpdate.reject(error);
+      };
+      ws.onmessage = ({ data }) => {
+        const id = String.fromCharCode(new Uint8Array(data)[0]);
+        if (id === "V") {
+          ws.send("sh");
+          ws.send(new TextEncoder().encode("n/"));
+        } else if (id === "n") onRoute.resolve();
+        else if (id === "u") hotUpdate.resolve();
+      };
+      await onRoute.promise;
+
+      server.reload({ fetch: () => new Response("fetch v2", { status: 404 }) });
+      const after = await page();
+      const other = await (await fetch(new URL("/other", server.url))).text();
+
+      writeFileSync(join(import.meta.dir, "app.ts"), "console.log('edited');");
+      await hotUpdate.promise;
+
+      console.log(JSON.stringify({ before, after, other, hmrSocketStayedOpen: !closed }));
+      ws.onerror = ws.onclose = null;
+      ws.close();
+      server.stop(true);
+    `,
+  });
+  const { stdout, stderr, exitCode } = await runServeFixture(dir);
+  expect({ stdout, exitCode }, stderr).toEqual({
+    stdout: JSON.stringify({ before: 200, after: 200, other: "fetch v2", hmrSocketStayedOpen: true }),
+    exitCode: 0,
+  });
+});
+
 test("serve html with JSX runtime in development mode", async () => {
   const dir = join(import.meta.dir, "jsx-runtime");
   const { default: html } = await import(join(dir, "index.html"));

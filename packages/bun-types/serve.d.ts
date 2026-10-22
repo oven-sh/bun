@@ -1037,7 +1037,11 @@ declare module "bun" {
     closeIdleConnections(): number;
 
     /**
-     * Update the `fetch` and `error` handlers without restarting the server.
+     * Update the `fetch`, `error`, `routes` and `websocket` options without restarting the server.
+     *
+     * An option that you leave out keeps its current value. `routes` and
+     * `websocket` are each replaced as a whole. `routes: {}` removes every
+     * route, and throws if that leaves the server without a `fetch` handler.
      *
      * @example
      *

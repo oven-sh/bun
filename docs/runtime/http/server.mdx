@@ -386,6 +386,10 @@ server.reload({
 
 Use this for development and hot reloading. You can update only `fetch`, `error`, `routes`, and `websocket`.
 
+`server.reload()` changes only the options that you pass. An option that you leave out keeps its current value, so `server.reload({ fetch })` keeps all routes. `routes` and `websocket` are each replaced as a whole. The new object does not merge with the current one.
+
+To remove all routes, pass `routes: {}`. The server must have a `fetch` handler, or you pass one in the same call. Otherwise `reload()` throws and the server keeps its routes.
+
 ---
 
 ## Per-Request Controls

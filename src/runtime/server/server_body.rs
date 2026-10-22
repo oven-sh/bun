@@ -1898,8 +1898,10 @@ where
         &mut self,
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
+        kind: super::ReloadKind,
     ) {
         httplog!("onReload");
+        let patch = kind == super::ReloadKind::Patch;
 
         // SAFETY: `on_reload` is only reachable while the server is running
         // (`self.app` set in `listen()`).
@@ -1928,7 +1930,8 @@ where
         }
         // Swap on any change, *including* clearing to ZERO when the reload
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
-        // `set_routes` stop routing through the node:http path.
+        // `set_routes` stop routing through the node:http path. A patch that
+        // names neither this handler nor a `fetch` to take its place keeps it.
         //
         // Never the other direction: a server that was not created as a
         // node:http server cannot become one through reload(). listen()
@@ -1939,6 +1942,11 @@ where
         // request path would construct and index past them.
         if self.config.is_node_http_server
             && self.config.on_node_http_request != new_config.on_node_http_request
+            && !(patch
+                && new_config
+                    .on_node_http_request
+                    .is_empty_or_undefined_or_null()
+                && new_config.on_request.is_empty_or_undefined_or_null())
         {
             super::wrap_handler_slot(
                 &mut new_config.on_node_http_request,
@@ -1973,10 +1981,14 @@ where
             dev_server.html_router.fallback = None;
         }
 
-        // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
-        // a move-assign frees the old `static_routes`.
-        self.config.static_routes = core::mem::take(&mut new_config.static_routes);
-        self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+        // A patch without a `routes` object keeps the static routes, like the
+        // callback routes below. `set_routes` registers them again.
+        if new_config.had_routes_object || !patch {
+            // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
+            // a move-assign frees the old `static_routes`.
+            self.config.static_routes = core::mem::take(&mut new_config.static_routes);
+            self.config.negative_routes = core::mem::take(&mut new_config.negative_routes);
+        }
 
         if new_config.had_routes_object {
             self.config.user_routes_to_build =
@@ -2040,7 +2052,12 @@ where
                 allow_bake_config: false,
                 is_fetch_required: true,
                 previous_fetch: !self.config.on_request.is_empty_or_undefined_or_null(),
-                previous_routes: !self.user_routes.is_empty(),
+                previous_routes: !self.user_routes.is_empty()
+                    || !self.config.static_routes.is_empty(),
+                previous_node_http_request: !self
+                    .config
+                    .on_node_http_request
+                    .is_empty_or_undefined_or_null(),
             },
         )?;
 
@@ -2049,7 +2066,7 @@ where
         // ws shadows, and each `wrap_handler_slot` call allocates via
         // `with_async_context_if_needed`. Same window as `serve()`; same fix.
         let _handler_pins = super::protect_handler_shadows(&new_config);
-        self.on_reload_from_zig(&mut new_config, global);
+        self.on_reload_from_zig(&mut new_config, global, super::ReloadKind::Patch);
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))
     }

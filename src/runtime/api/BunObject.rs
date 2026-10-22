@@ -1220,6 +1220,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 is_fetch_required: true,
                 previous_fetch: false,
                 previous_routes: false,
+                previous_node_http_request: false,
             },
         )?;
 
@@ -1248,7 +1249,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // values for servers are pinned here to match `crate::server::AnyServerTag`
     // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
     // is round-trippable through `serve` again on hot-reload.
-    use crate::server::{AnyServer, AnyServerTag};
+    use crate::server::{AnyServer, AnyServerTag, ReloadKind};
     use bun_jsc::rare_data::HotMapEntry;
 
     if config.allow_hot {
@@ -1262,7 +1263,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
                         let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
-                        server.on_reload_from_zig(&mut config, global_object);
+                        server.on_reload_from_zig(&mut config, global_object, ReloadKind::Takeover);
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();

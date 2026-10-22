@@ -35,6 +35,8 @@ export default [
       clipboardChangeCount: { fn: "clipboardChangeCount", length: 0 },
     },
     proto: {
+      // Sharp's clone(): a new Image sharing this input with the recorded ops.
+      clone: { fn: "doClone", length: 0 },
       // Chainable mutators — record an op and return `this`.
       resize: { fn: "doResize", length: 2 },
       rotate: { fn: "doRotate", length: 1 },
@@ -64,6 +66,8 @@ export default [
       // <img src> / blurDataURL.
       placeholder: { fn: "doPlaceholder", length: 0, async: true },
       metadata: { fn: "doMetadata", length: 0, async: true },
+      // Sharp-shaped stats of the source image (recorded ops ignored).
+      stats: { fn: "doStats", length: 0, async: true },
 
       // Read-only after a pipeline has run; -1 before.
       width: { getter: "getWidth" },

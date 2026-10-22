@@ -1113,10 +1113,9 @@ function f() {
 function g() {}
 f();
 `,
-      // Node has no range for the test or the update.
       "a continue that is last": `
 function f() {
-  for (let i = 0;«3: i < 2»;«2: i++») «2:{
+  for (let i = 0; i < 2; i++) «2:{
     continue;
   }»
   g();
@@ -1124,20 +1123,19 @@ function f() {
 function g() {}
 f();
 `,
-      // Node has no range for the update.
       "a loop that is not entered": `
 function f() {
-  for (let i = 0; i < 0;«0: i++») «0:{
+  for (let i = 0; i < 0; i++) «0:{
     g();
   }»
 }
 function g() {}
 f();
 `,
-      // Node has the last two as one range, and none for the test or the update.
+      // Node has the last two as one range.
       "after an if that continues": `
 function f() {
-  for (let i = 0;«3: i < 2»;«2: i++») «2:{
+  for (let i = 0; i < 2; i++) «2:{
     if (i) «1:{
       continue;
     }»«1:
@@ -1147,22 +1145,20 @@ function f() {
 function g() {}
 f();
 `,
-      // Node has no count for the condition.
       "do while": `
 function f() {
   let n = 0;
   do «3:{
     n++;
-  }»«3: while (n < 3);»
+  }» while (n < 3);
   g();
 }
 function g() {}
 f();
 `,
-      // Node has no range for the name.
       "for in": `
 function f() {
-  for (const «0:x »in {}) «0:{
+  for (const x in {}) «0:{
     g();
   }»
   g();

@@ -363,3 +363,12 @@ export default /BADD~!!!!;
   expect(types.isNativeError(buildError)).toBeTrue();
   expect(buildError.constructor.name).toBe("BuildMessage");
 });
+
+test("util/types functions aren't constructors", () => {
+  for (const [name, fn] of Object.entries(types)) {
+    if (typeof fn !== "function") continue;
+    expect(() => Reflect.construct(fn, [new Date()])).toThrow(TypeError);
+    expect(Bun.inspect(fn)).toBe(`[Function: ${name}]`);
+  }
+  expect(Array.of.call(types.isDate, 1, 2, 3)).toEqual([1, 2, 3]);
+});

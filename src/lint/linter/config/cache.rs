@@ -1,21 +1,24 @@
-//! What a [`Config`](super::Config) computes once and all threads share.
+//! Values that a [`Config`](super::Config) computes once and shares between threads.
 
 use crate::js_plugin::{Configured, Rule};
+use crate::language::GlobalsFromOptions;
 use crate::linter::resolved::ResolvedConfig;
 use crate::options::Json;
 use bun_threading::RwLock;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-type Resolved = Vec<(Box<[u32]>, Arc<ResolvedConfig>)>;
+type Resolved = Vec<(Box<[u32]>, Arc<OnceLock<Arc<ResolvedConfig>>>)>;
 type JsInstances = Vec<(Arc<[Json]>, Arc<Configured>)>;
 
 pub(super) struct Cache {
-    /// By the indices of the objects that are merged. Sorted.
+    /// Keyed by the indices of the merged objects. Sorted.
     resolved: RwLock<Resolved>,
-    /// What has been made of the rules of JavaScript plugins, by the options as they are written.
+    /// The configured JavaScript plugin rules, keyed by the options as written.
     js_rules: RwLock<JsInstances>,
-    /// For each rule, by its index in the registry: the options that its schema allows.
+    /// Indexed by a rule's index in the registry: the options known to pass its schema.
     valid: RwLock<Vec<Vec<Arc<[Json]>>>>,
+    /// Keyed by `$env` and `globals` in `languageOptions`.
+    globals: RwLock<Vec<(Option<Json>, Option<Json>, GlobalsFromOptions)>>,
 }
 
 impl Default for Cache {
@@ -24,6 +27,7 @@ impl Default for Cache {
             resolved: RwLock::new(Vec::new()),
             js_rules: RwLock::new(Vec::new()),
             valid: RwLock::new(Vec::new()),
+            globals: RwLock::new(Vec::new()),
         }
     }
 }
@@ -35,25 +39,50 @@ impl Cache {
         make: impl FnOnce() -> ResolvedConfig,
     ) -> Arc<ResolvedConfig> {
         let find = |all: &Resolved| all.binary_search_by(|it| (*it.0).cmp(indices));
-        {
+        let known = {
             let all = self.resolved.read();
-            if let Ok(at) = find(&all) {
-                return Arc::clone(&all[at].1);
+            find(&all).ok().map(|at| Arc::clone(&all[at].1))
+        };
+        let slot = known.unwrap_or_else(|| {
+            let mut all = self.resolved.write();
+            match find(&all) {
+                Ok(at) => Arc::clone(&all[at].1),
+                Err(at) => {
+                    let slot = Arc::default();
+                    all.insert(at, (indices.into(), Arc::clone(&slot)));
+                    slot
+                }
             }
-        }
-        // Not under the lock: it takes the other one. Two threads may do the same work once.
-        let made = Arc::new(make());
-        let mut all = self.resolved.write();
-        match find(&all) {
-            Ok(at) => Arc::clone(&all[at].1),
-            Err(at) => {
-                all.insert(at, (indices.into(), Arc::clone(&made)));
-                made
-            }
-        }
+        });
+        // Not under the lock, because `make` takes the other locks. A thread that wants the same entry waits for it.
+        Arc::clone(slot.get_or_init(|| Arc::new(make())))
     }
 
-    /// Whether `options` are [known](Cache::set_valid) to be what the schema of the rule at `index` of the registry allows.
+    /// Returns [`GlobalsFromOptions::new`] for `language_options`, which is what `make` computes.
+    pub(super) fn globals(
+        &self,
+        language_options: &Json,
+        make: impl FnOnce() -> GlobalsFromOptions,
+    ) -> GlobalsFromOptions {
+        let key = (
+            language_options.get(b"$env"),
+            language_options.get(b"globals"),
+        );
+        let known = self.globals.read();
+        if let Some(found) = known
+            .iter()
+            .find(|it| (it.0.as_ref(), it.1.as_ref()) == key)
+        {
+            return found.2.clone();
+        }
+        drop(known);
+        let made = make();
+        let entry = (key.0.cloned(), key.1.cloned(), made.clone());
+        self.globals.write().push(entry);
+        made
+    }
+
+    /// True if `options` are [known](Cache::set_valid) to pass the schema of the rule at `index` in the registry.
     pub(super) fn is_valid(&self, index: usize, options: &Arc<[Json]>) -> bool {
         let valid = self.valid.read();
         (valid.get(index)).is_some_and(|all| all.iter().any(|it| it == options))
@@ -74,10 +103,10 @@ impl Cache {
         make: impl FnOnce() -> Arc<Configured>,
     ) -> Arc<Configured> {
         let mut rules = self.js_rules.write();
-        let is_it = |it: &&(Arc<[Json]>, Arc<Configured>)| {
+        let matches = |it: &&(Arc<[Json]>, Arc<Configured>)| {
             Arc::ptr_eq(&it.1.rule, rule) && it.0 == *options
         };
-        if let Some(found) = rules.iter().find(is_it) {
+        if let Some(found) = rules.iter().find(matches) {
             return Arc::clone(&found.1);
         }
         let made = make();

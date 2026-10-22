@@ -19,7 +19,7 @@ pub(crate) fn nested_too_deeply() -> crate::diagnostics::CompilerDiagnostic {
     crate::diagnostics::CompilerDiagnostic::new(
         crate::diagnostics::ErrorCategory::Todo,
         "Support functions of this size",
-        Some("What is in it is nested too deeply".to_string()),
+        Some("The function body is nested too deeply".to_string()),
     )
 }
 

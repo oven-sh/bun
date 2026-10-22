@@ -45,7 +45,7 @@ impl Rule for PreferArrayFlat {
     }
 }
 
-/// `array.method(..)` becomes `array.flat()`.
+/// Rewrites `array.method(..)` to `array.flat()`.
 fn report_with_fix<'a>(e: Expr<'a>, call: Call<'a>, cx: &Cx<'a, PreferArrayFlat>) {
     cx.report(e, PREFER_ARRAY_FLAT).fix(|fixer| {
         let (name, _) = as_member_expression(call.callee()).and_then(static_property_info)?;
@@ -53,7 +53,7 @@ fn report_with_fix<'a>(e: Expr<'a>, call: Call<'a>, cx: &Cx<'a, PreferArrayFlat>
     });
 }
 
-/// The arrow function that `e` is, if it is not `async` and has `count` parameters.
+/// Returns `e` as an arrow function, if it isn't `async` and has `count` parameters.
 fn as_arrow_function(e: Expr<'_>, count: usize) -> Option<Func<'_>> {
     e.as_fn().filter(|it| it.is_arrow() && !e.is_parenthesized() && !it.is_async() && it.params().len() == count)
 }
@@ -62,7 +62,7 @@ fn plain_identifier(e: Expr<'_>) -> Option<Name<'_>> {
     e.as_ident().filter(|_| !e.is_parenthesized())
 }
 
-/// The `a` of `...a`.
+/// The `a` in `...a`.
 fn spread_argument(e: Expr<'_>) -> Option<Expr<'_>> {
     e.operand().filter(|_| e.tag() == ExprTag::Spread)
 }
@@ -94,7 +94,7 @@ fn is_obviously_non_array_flat_map_receiver(object: Expr) -> bool {
     )
 }
 
-/// `None`: it is no `const`, or it cannot be told.
+/// `None` if it isn't a `const` or the initializer's type can't be determined.
 fn is_const_variable_initialized_with_array(ident: Expr) -> Option<bool> {
     let declaration = ident.symbol()?.declarations().next().filter(|it| !it.is_catch_parameter())?;
     let Node::VarDecl(declarator) = declaration.node()? else {

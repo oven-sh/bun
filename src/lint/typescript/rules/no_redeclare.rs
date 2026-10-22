@@ -7,7 +7,7 @@ pub struct NoRedeclare {
 }
 
 impl Rule for NoRedeclare {
-    const META: Meta = Meta::typescript("no-redeclare", Kind::Suggestion).extends_base_rule("no-redeclare");
+    const META: Meta = Meta::typescript("no-redeclare", Kind::Suggestion).extends_base_rule("no-redeclare").hints();
     const ON: On = On::new().symbols().finish();
     type State<'a> = bool;
 

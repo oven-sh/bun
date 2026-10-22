@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ts_utils::is_definition_file;
-use rustc_hash::FxHashMap;
+use bun_lint::utils::visible::{is_declared_again, is_only_declaration};
 
 /// Disallow the declaration of empty interfaces.
 pub struct NoEmptyInterface {
@@ -13,7 +14,7 @@ const NO_EMPTY_WITH_SUPER: Message = Message::new(
     "An interface declaring no members is equivalent to its supertype.",
 );
 
-/// `type I<T> = Super` in place of `interface I<T> extends Super {}`.
+/// Replaces `interface I<T> extends Super {}` with `type I<T> = Super`.
 fn fix<'a>(fixer: Fixer<'a>, interface: Interface<'a>, extended: TypeNode<'a>) -> Fix {
     let type_params = interface.type_params().angle_brackets_span();
     let text = [
@@ -37,12 +38,12 @@ impl NoEmptyInterface {
         }
         let extends = interface.extends();
         // oxlint points at the declaration.
-        let place = match cx.language().is_oxlint {
+        let report_span = match cx.language().is_oxlint {
             true => statement.span_without_export(),
             false => interface.name().span(),
         };
         let Some(extended) = extends.first() else {
-            cx.report(place, NO_EMPTY);
+            cx.report(report_span, NO_EMPTY);
             return;
         };
         if extends.len() != 1 || self.allow_single_extends {
@@ -50,13 +51,13 @@ impl NoEmptyInterface {
         }
         let scope = Node::Stmt(statement).scope();
         let is_merged_with_class_declaration = scope.get_name(interface.name().name()).is_some_and(|symbol| {
-            *cx.state.entry(symbol).or_insert_with(|| {
+            *cx.state.get_or_insert_with(symbol, || {
                 symbol
                     .declarations()
                     .any(|it| matches!(it, Declaration::Class(class) if matches!(class.owner(), Node::Stmt(_))))
             })
         });
-        let report = cx.report(place, NO_EMPTY_WITH_SUPER);
+        let report = cx.report(report_span, NO_EMPTY_WITH_SUPER);
         if is_merged_with_class_declaration {
             return;
         }
@@ -66,7 +67,10 @@ impl NoEmptyInterface {
         if is_in_ambient_declaration {
             report.suggest(NO_EMPTY_WITH_SUPER, |fixer| fix(fixer, interface, extended));
         } else {
-            report.fix(|fixer| fix(fixer, interface, extended));
+            report.fix_where_safe(
+                || is_only_declaration(interface),
+                |fixer| (!is_declared_again(interface)).then(|| fix(fixer, interface, extended)),
+            );
         }
     }
 }
@@ -77,8 +81,8 @@ impl Rule for NoEmptyInterface {
         .has_suggestions()
         .deprecated();
     const ON: On = On::new().stmts(&[StmtTag::Interface]);
-    /// Whether one of the declarations of a name is a class declaration.
-    type State<'a> = FxHashMap<Symbol<'a>, bool>;
+    /// Caches whether one of a name's declarations is a class declaration.
+    type State<'a> = IdMap<Symbol<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         NoEmptyInterface {
@@ -87,7 +91,7 @@ impl Rule for NoEmptyInterface {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(FxHashMap::default())
+        Some(IdMap::default())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

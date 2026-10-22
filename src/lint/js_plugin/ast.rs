@@ -1,50 +1,50 @@
-//! The ESTree of a file as arrays of numbers.
+//! A file's ESTree as arrays of numbers.
 //!
-//! The nodes are numbered in the order in which ESLint comes to them: a node before what is in it,
-//! the fields in the order of the visitor keys. The `Program` is 0. For each node there is its type,
-//! its range, its parent, and one word for each field that the table of [`crate::estree`] has for
-//! the type in the dialect of the file, in the order of the table. So where the words of a node
-//! are follows from the types of the nodes before it.
+//! The nodes are numbered in ESLint's traversal order: a node before its children, the fields in visitor key order. The
+//! `Program` is 0. Each node has its type, its range, its parent, and one word for each field that the table in
+//! [`crate::estree`] lists for the type in the file's dialect, in table order. So the position of a node's words
+//! follows from the types of the nodes before it.
 //!
-//! A word is a [`Tag`] in its low 4 bits and a number above them. Most strings are in the text of
-//! the file, and are sent as where.
+//! A word is a [`Tag`] in its low 4 bits and a number above them. Most strings are slices of the file's text and are
+//! sent as offsets.
 //!
-//! The message: [`HEADER`] words with the lengths of the parts, then the parts in the order of the
-//! fields of [`Tree`]: the 8-byte numbers first, the bytes last.
+//! The message is [`HEADER`] words with the lengths of the parts, then the parts in the order of [`Tree`]'s fields: the
+//! 8-byte numbers first, the bytes last.
 
 use super::wire;
 use crate::ast::File;
-use crate::estree::{Dialect, Nodes, Object, Sink, VNode, Value};
+use crate::code_path;
+use crate::estree::{Dialect, NodeType, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
 
-/// What the number in a word is.
+/// The meaning of the number in a word.
 #[derive(Copy, Clone)]
 #[repr(u32)]
 enum Tag {
     /// One of the constants below.
     Constant = 0,
     Node = 1,
-    /// Where in `lists` a list of nodes is: its length, then the nodes. 0 is a hole.
+    /// The offset in `lists` of a list of nodes: its length, then the nodes. 0 is a hole.
     List = 2,
     /// The index of a pair in `strings`.
     String = 3,
     /// The index of one of [`STRINGS`].
     Known = 4,
-    /// Itself.
+    /// The integer itself.
     Integer = 5,
-    /// An index in `numbers`.
+    /// An index into `numbers`.
     Number = 6,
-    /// Where in `lists` the length and the UTF-16 code units of a string are.
+    /// The offset in `lists` of a string's length and UTF-16 code units.
     Units = 7,
-    /// Where in `lists` two words are: the pattern and the flags of a `RegExp`.
+    /// The offset in `lists` of two words: a `RegExp`'s pattern and flags.
     RegExp = 8,
     /// The same for `{ pattern, flags }`.
     RegExpParts = 9,
     /// The same for `{ cooked, raw }`.
     Template = 10,
-    /// Where in `lists` a word is: the digits of a `bigint`.
+    /// The offset in `lists` of one word: a `bigint`'s digits.
     BigInt = 11,
 }
 
@@ -57,12 +57,12 @@ const UNDEFINED: u32 = word(Tag::Constant, 0);
 const NULL: u32 = word(Tag::Constant, 1);
 const FALSE: u32 = word(Tag::Constant, 2);
 const TRUE: u32 = word(Tag::Constant, 3);
-/// The text of the node.
+/// The node's text.
 const TEXT: u32 = word(Tag::Constant, 4);
-/// The text of the node without its first and its last character.
+/// The node's text without its first and last characters.
 const INNER_TEXT: u32 = word(Tag::Constant, 5);
 
-/// Strings that are frequent and not where their node starts. Sorted.
+/// Frequent strings that aren't at the start of their node. Sorted.
 pub(super) const STRINGS: &[&str] = &[
     "!",
     "!=",
@@ -135,11 +135,18 @@ pub(super) const STRINGS: &[&str] = &[
     "~",
 ];
 
-/// The nodes of a file, by their numbers.
-pub(super) type Numbered<'a> = Vec<VNode<'a>>;
+/// A file's numbered nodes. Later requests about the same tree read them.
+pub(super) struct Numbered<'a> {
+    pub(super) nodes: Vec<VNode<'a>>,
+    /// Each node's [`NodeType`](crate::estree::NodeType).
+    pub(super) types: Vec<u8>,
+    pub(super) parents: Vec<u32>,
+    /// See [`Tree::twice`].
+    pub(super) twice: Vec<u32>,
+}
 
-const HEADER: usize = 10;
-/// In the start of a pair of `strings`: it is in `extra`.
+const HEADER: usize = 8;
+/// Set in the start of a `strings` pair if the string is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
 
 #[derive(Default)]
@@ -150,56 +157,58 @@ struct Tree {
     parents: Vec<u32>,
     fields: Vec<u32>,
     lists: Vec<u32>,
-    /// Pairs: where a string starts and ends, in the text of the file or in `extra`.
+    /// Pairs: a string's start and end, in the file's text or in `extra`.
     strings: Vec<u32>,
-    /// The nodes that are in two fields of their parent, which ESLint comes to twice.
+    /// The nodes that are in two fields of their parent, which ESLint visits twice. It isn't part of the message:
+    /// `calls.rs` reads it.
     twice: Vec<u32>,
     types: Vec<u8>,
     /// UTF-8.
     extra: Vec<u8>,
 }
 
-/// Where the number of a node goes.
+/// The slot that a node's number gets written to.
 #[derive(Copy, Clone)]
 enum Slot {
-    /// Nowhere: it is the `Program`.
+    /// Nowhere: it's the `Program`.
     None,
-    /// An index in [`Tree::fields`].
+    /// An index into [`Tree::fields`].
     Field(u32),
-    /// Two of them: it is in two fields of its parent.
+    /// Two such indices: the node is in two fields of its parent.
     Fields(u32, u32),
-    /// An index in [`Tree::lists`].
+    /// An index into [`Tree::lists`].
     List(u32),
 }
 
-/// A node that is still to be written.
+/// A node that hasn't been written yet.
 struct Pending<'a> {
     node: VNode<'a>,
     parent: u32,
     to: Slot,
 }
 
-struct Writer<'a, 's> {
+pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
     dialect: Dialect,
+    shortens_nodes: bool,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
-    nodes: Numbered<'a>,
+    nodes: Vec<VNode<'a>>,
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
-    /// The last is the next.
+    /// A stack: the last entry is written next.
     open: Vec<Pending<'a>>,
 }
 
-/// Writes the fields of a node.
+/// Writes a node's fields.
 struct Fields<'w, 'a, 's> {
     writer: &'w mut Writer<'a, 's>,
     id: u32,
     span: Span,
-    /// How many were [`Writer::open`] before.
+    /// The length of [`Writer::open`] before this node.
     open_before: usize,
 }
 
@@ -238,11 +247,11 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
         self.put(word);
     }
 
-    #[inline]
+    #[inline(never)]
     fn node(&mut self, node: VNode<'a>) {
         let at = self.writer.tree.fields.len() as u32;
         self.put(UNDEFINED);
-        // For espree both names of `import { a }` are one node.
+        // In espree, both names of `import { a }` are the same node.
         if let Some(last) = self.writer.open[self.open_before..].last_mut()
             && let Slot::Field(first) = last.to
             && last.node == node
@@ -281,8 +290,42 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
     }
 }
 
+impl<'a> Numbered<'a> {
+    pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        code_path::estree::Tree {
+            nodes: &self.nodes,
+            types: &self.types,
+            parents: &self.parents,
+            twice: &self.twice,
+        }
+    }
+}
+
 impl<'a> Writer<'a, '_> {
-    /// Writes `node`, and notes what is in it. Returns its number.
+    pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        code_path::estree::Tree {
+            nodes: &self.nodes,
+            types: &self.tree.types,
+            parents: &self.tree.parents,
+            twice: &self.tree.twice,
+        }
+    }
+
+    /// The nodes that match each of the selectors.
+    pub(super) fn matches(&self) -> &[Vec<u32>] {
+        &self.matches
+    }
+
+    pub(super) fn into_numbered(self) -> Numbered<'a> {
+        Numbered {
+            nodes: self.nodes,
+            types: self.tree.types,
+            parents: self.tree.parents,
+            twice: self.tree.twice,
+        }
+    }
+
+    /// Writes `node` and queues its children. Returns its number.
     fn write_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
         let (node_type, span) = node.type_and_span();
@@ -299,10 +342,12 @@ impl<'a> Writer<'a, '_> {
         self.tree.starts.push(self.offsets.to_utf16(span.start));
         self.tree.ends.push(self.offsets.to_utf16(span.end));
         self.tree.parents.push(parent);
-        let (open_before, is_espree) = (self.open.len(), self.dialect == Dialect::Espree);
+        let open_before = self.open.len();
+        let without_typescript =
+            self.dialect == Dialect::Espree || (self.shortens_nodes && is_short(node_type));
         node_type.emit_fields(
             node,
-            is_espree,
+            without_typescript,
             &mut Fields {
                 writer: self,
                 id,
@@ -310,7 +355,7 @@ impl<'a> Writer<'a, '_> {
                 open_before,
             },
         );
-        // The first of them is the next.
+        // The first child has to be popped first.
         self.open[open_before..].reverse();
         id
     }
@@ -422,7 +467,7 @@ impl<'a> Writer<'a, '_> {
         word(Tag::String, self.tree.strings.len() / 2 - 1)
     }
 
-    /// The word for a string that is not valid UTF-8, because it has half of a surrogate pair.
+    /// The word for a string that isn't valid UTF-8 because it has an unpaired surrogate.
     fn units(&mut self, value: &[u8]) -> u32 {
         let at = self.tree.lists.len();
         self.tree.lists.push(0);
@@ -450,15 +495,45 @@ impl<'a> Writer<'a, '_> {
     }
 }
 
-/// For each of the selectors: how many nodes match it, then these, in the order of their numbers.
-fn write_matches(matches: &[Vec<u32>], out: &mut Vec<u8>) {
-    for matches in matches {
-        wire::words(out, &[matches.len() as u32]);
-        wire::words(out, matches);
-    }
+/// True if the fields that only TypeScript can fill in aren't written for the types that [`is_short`] lists. In oxlint,
+/// a node of a JavaScript file has them anyway: an `Identifier` has `decorators`, `optional` and `typeAnnotation`.
+/// There they're always `[]`, `false` and `null`, which `layouts.rs` sends once per type.
+pub(super) fn shortens_nodes(file: &File) -> bool {
+    file.language().is_oxlint && file.is_javascript()
 }
 
-fn walk<'a, 's>(
+/// The types whose TypeScript-only fields are the same in every node of a JavaScript file, because anything that would
+/// change one is a syntax error there, both in oxlint and in Bun. That doesn't hold for every type: JavaScript has
+/// decorators on classes and their members and `import defer`, and both parsers accept `class C { m?() {} p?; }`. None
+/// of these types has an espree-only field, which `emit_fields` would write for them.
+pub(super) fn is_short(node_type: NodeType) -> bool {
+    matches!(
+        node_type,
+        NodeType::Identifier
+            | NodeType::CallExpression
+            | NodeType::NewExpression
+            | NodeType::TaggedTemplateExpression
+            | NodeType::VariableDeclaration
+            | NodeType::VariableDeclarator
+            | NodeType::ArrowFunctionExpression
+            | NodeType::FunctionExpression
+            | NodeType::FunctionDeclaration
+            | NodeType::Property
+            | NodeType::ObjectPattern
+            | NodeType::ArrayPattern
+            | NodeType::AssignmentPattern
+            | NodeType::RestElement
+            | NodeType::JSXOpeningElement
+            | NodeType::ImportSpecifier
+            | NodeType::ExportSpecifier
+            | NodeType::ExportNamedDeclaration
+            | NodeType::ExportDefaultDeclaration
+            | NodeType::ExportAllDeclaration
+    )
+}
+
+/// Walks `file`'s tree, numbers the nodes, and records which ones match `selectors`.
+pub(super) fn walk<'a, 's>(
     file: &'a File<'a>,
     offsets: &'s Utf16OffsetTable,
     selectors: &'s [Option<&'s Selector>],
@@ -466,10 +541,11 @@ fn walk<'a, 's>(
     let mut writer = Writer {
         text: file.text(),
         dialect: Dialect::of(file),
+        shortens_nodes: shortens_nodes(file),
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],
-        nodes: Numbered::default(),
+        nodes: Vec::new(),
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
@@ -485,62 +561,36 @@ fn walk<'a, 's>(
     writer
 }
 
-/// Appends the tree of `file`, and what matches `selectors`. `listened`: by the number of a type, whether somebody listens to it. A
-/// tree without nodes is appended if no such node is in the file and nothing matches: making the nodes is dearer than this.
-pub(super) fn write<'a>(
-    file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
-    selectors: &[Option<&Selector>],
-    listened: Option<&[bool; 256]>,
-    out: &mut Vec<u8>,
-) -> Numbered<'a> {
-    let writer = walk(file, offsets, selectors);
-    let tree = &writer.tree;
-    let is_listened = |listened: &[bool; 256]| tree.types.iter().any(|&it| listened[it as usize]);
-    if listened.is_some_and(|it| !is_listened(it)) && writer.matches.iter().all(Vec::is_empty) {
-        wire::words(out, &[0; HEADER]);
-        return writer.nodes;
+impl Writer<'_, '_> {
+    /// Appends the tree. For `alternates`, see `layouts.rs`.
+    pub(super) fn append(&self, alternates: &[u32], out: &mut Vec<u8>) {
+        let tree = &self.tree;
+        let header: [u32; HEADER] = [
+            tree.types.len() as u32,
+            tree.fields.len() as u32,
+            tree.lists.len() as u32,
+            tree.strings.len() as u32,
+            tree.numbers.len() as u32,
+            tree.extra.len() as u32,
+            alternates.len() as u32,
+            0,
+        ];
+        wire::words(out, &header);
+        for number in &tree.numbers {
+            out.extend_from_slice(&number.to_le_bytes());
+        }
+        for part in [
+            &tree.starts[..],
+            &tree.ends,
+            &tree.parents,
+            &tree.fields,
+            &tree.lists,
+            &tree.strings,
+            alternates,
+        ] {
+            wire::words(out, part);
+        }
+        out.extend_from_slice(&tree.types);
+        out.extend_from_slice(&tree.extra);
     }
-    let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
-    let header: [u32; HEADER] = [
-        tree.types.len() as u32,
-        tree.fields.len() as u32,
-        tree.lists.len() as u32,
-        tree.strings.len() as u32,
-        tree.twice.len() as u32,
-        matches as u32,
-        tree.numbers.len() as u32,
-        tree.extra.len() as u32,
-        u32::from(writer.dialect == Dialect::Espree),
-        0,
-    ];
-    wire::words(out, &header);
-    for number in &tree.numbers {
-        out.extend_from_slice(&number.to_le_bytes());
-    }
-    for part in [
-        &tree.starts,
-        &tree.ends,
-        &tree.parents,
-        &tree.fields,
-        &tree.lists,
-        &tree.strings,
-        &tree.twice,
-    ] {
-        wire::words(out, part);
-    }
-    write_matches(&writer.matches, out);
-    out.extend_from_slice(&tree.types);
-    out.extend_from_slice(&tree.extra);
-    writer.nodes
-}
-
-/// Appends only what matches `selectors`.
-pub(super) fn write_only_matches<'a>(
-    file: &'a File<'a>,
-    offsets: &Utf16OffsetTable,
-    selectors: &[Option<&Selector>],
-    out: &mut Vec<u8>,
-) {
-    write_matches(&walk(file, offsets, selectors).matches, out);
 }

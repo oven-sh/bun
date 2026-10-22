@@ -1,8 +1,8 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name_or_regex};
 use crate::react::is_jsx;
-use bun_lint_oxlint::same_expression::is_same_member_expression;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name_or_regex};
+use bun_lint_oxlint::same_expression::is_same_member_expression;
 use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::{SmallVec, smallvec};
 use std::hash::Hasher;
@@ -10,13 +10,18 @@ use std::hash::Hasher;
 /// Disallow JSX prop spreading the same identifier multiple times
 pub struct JsxPropsNoSpreadMulti;
 
-const NO_MULTI_SPREADING: Message =
-    Message::new("noMultiSpreading", "Spreading the same expression multiple times is forbidden");
-const MULTIPLE_IDENTIFIERS: Message = Message::new("", "Prop '{{prop_name}}' is spread multiple times.");
-const MULTIPLE_MEMBER_EXPRESSIONS: Message = Message::new("", "'{{member_name}}' is spread multiple times.");
+const NO_MULTI_SPREADING: Message = Message::new(
+    "noMultiSpreading",
+    "Spreading the same expression multiple times is forbidden",
+);
+const MULTIPLE_IDENTIFIERS: Message =
+    Message::new("", "Prop '{{prop_name}}' is spread multiple times.");
+const MULTIPLE_MEMBER_EXPRESSIONS: Message =
+    Message::new("", "'{{member_name}}' is spread multiple times.");
 
 impl Rule for JsxPropsNoSpreadMulti {
-    const META: Meta = Meta::plugin(Plugin::React, "jsx-props-no-spread-multi", Kind::None).fixable(Fixable::Code);
+    const META: Meta =
+        Meta::plugin(Plugin::React, "jsx-props-no-spread-multi", Kind::None).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
@@ -25,7 +30,7 @@ impl Rule for JsxPropsNoSpreadMulti {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // oxlint goes by the name of the file.
+        // oxlint decides by the file name.
         (!file.language().is_oxlint || is_jsx(file)).then_some(())
     }
 
@@ -38,41 +43,72 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     let ExprKind::Jsx(jsx) = e.kind() else {
         return;
     };
-    let spread_attrs = jsx.attrs().iter().filter(|it| it.kind() == PropKind::Spread);
-    let spread_attrs: SmallVec<[(Expr<'a>, Span); 4]> =
-        spread_attrs.filter_map(|it| Some((it.value()?, it.span()))).collect();
+    let spread_attrs = jsx
+        .attrs()
+        .iter()
+        .filter(|it| it.kind() == PropKind::Spread);
+    let spread_attrs: SmallVec<[(Expr<'a>, Span); 4]> = spread_attrs
+        .filter_map(|it| Some((it.value()?, it.span())))
+        .collect();
     if spread_attrs.len() < 2 {
         return;
     }
     let mut identifiers: FxHashMap<Name<'a>, Vec<Span>> = FxHashMap::default();
-    // Those that are the same are in the same list.
+    // Keyed by hash, so equal member expressions are in the same list.
     let mut member_expressions: FxHashMap<u64, Vec<(Expr<'a>, Span)>> = FxHashMap::default();
     let is_oxlint = cx.language().is_oxlint;
     for &(argument, span) in &spread_attrs {
-        // oxlint looks through `a!`, `a as T` and the like, and compares member expressions as well.
-        let seen = if is_oxlint { get_inner_expression(argument) } else { argument };
+        // oxlint looks through `a!`, `a as T` and the like, and also compares member expressions.
+        let seen = if is_oxlint {
+            get_inner_expression(argument)
+        } else {
+            argument
+        };
         if let Some(name) = seen.as_ident() {
             identifiers.entry(name).or_default().push(span);
-        } else if is_oxlint && matches!(argument.tag(), ExprTag::Dot | ExprTag::Index) && !argument.is_chain_root() {
-            member_expressions.entry(hash_of_names(argument)).or_default().push((argument, span));
+        } else if is_oxlint
+            && matches!(argument.tag(), ExprTag::Dot | ExprTag::Index)
+            && !argument.is_chain_root()
+        {
+            member_expressions
+                .entry(hash_of_names(argument))
+                .or_default()
+                .push((argument, span));
         }
     }
-    for (name, spans) in identifiers {
+    for (name, spans) in
+        utils::sort::collect_sorted_by_key(identifiers, |it| it.1.first().map(|it| it.start))
+    {
         // oxlint reports the first one, once, and removes all but the last.
         if !is_oxlint {
-            for span in spans.iter().skip(1) {
-                cx.report(*span, NO_MULTI_SPREADING).listened_on(jsx.opening_span());
+            // The plugin has no fix, so only fix when there's no plugin to match.
+            let fixes = cx.language().has_no_foreign_config;
+            for (previous, span) in spans.iter().zip(spans.iter().skip(1)) {
+                cx.report(*span, NO_MULTI_SPREADING)
+                    .listened_on(jsx.opening_span())
+                    .fix(|fixer| fixes.then(|| fixer.remove(*previous)));
             }
         } else if let [first, .., _] = spans[..] {
             (spans.iter().skip(1))
-                .fold(cx.report(first, MULTIPLE_IDENTIFIERS), |report, span| report.label(*span, ""))
+                .fold(cx.report(first, MULTIPLE_IDENTIFIERS), |report, span| {
+                    report.label(*span, "")
+                })
                 .data("prop_name", name)
-                .fix(|fixer| spans.iter().rev().skip(1).map(|span| fixer.remove(*span)).collect::<Vec<_>>());
+                .fix(|fixer| {
+                    spans
+                        .iter()
+                        .rev()
+                        .skip(1)
+                        .map(|span| fixer.remove(*span))
+                        .collect::<Vec<_>>()
+                });
         }
     }
-    for alike in member_expressions.values() {
-        for (i, &(left, left_span)) in alike.iter().enumerate() {
-            for &(right, right_span) in alike.iter().skip(i + 1) {
+    for same_hash_group in utils::sort::collect_sorted_by_key(member_expressions.values(), |it| {
+        it.first().map(|it| it.1.start)
+    }) {
+        for (i, &(left, left_span)) in same_hash_group.iter().enumerate() {
+            for &(right, right_span) in same_hash_group.iter().skip(i + 1) {
                 if is_same_member_expression(left, right) {
                     cx.report(left_span, MULTIPLE_MEMBER_EXPRESSIONS)
                         .data("member_name", left.text())
@@ -84,8 +120,8 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
     }
 }
 
-/// The same number for what [`is_same_member_expression`] takes for the same: of all that it compares, so that few
-/// others have the same number.
+/// Returns the same hash for member expressions that [`is_same_member_expression`] treats as equal. It hashes
+/// everything that function compares, so collisions are rare.
 fn hash_of_names(member: Expr) -> u64 {
     let mut hasher = FxHasher::default();
     let mut pending: SmallVec<[Expr; 8]> = smallvec![member];
@@ -95,12 +131,14 @@ fn hash_of_names(member: Expr) -> u64 {
                 match (static_property_name_or_regex(e), e.index()) {
                     (Some(name), _) => hasher.write(name),
                     (None, Some(index)) => pending.push(index),
-                    (None, None) => hasher.write(e.member_name().map(Ident::bytes).unwrap_or_default()),
+                    (None, None) => {
+                        hasher.write(e.member_name().map(Ident::bytes).unwrap_or_default())
+                    }
                 }
                 pending.push(obj);
             }
             ExprKind::Ident(name) | ExprKind::String(name) => hasher.write(name.bytes()),
-            // `` `a` `` is `"a"`.
+            // `` `a` `` equals `"a"`.
             ExprKind::Template(template) => match template.as_static() {
                 Some(value) => hasher.write(value.bytes()),
                 None => pending.extend(template.exprs()),
@@ -115,4 +153,3 @@ fn hash_of_names(member: Expr) -> u64 {
     }
     hasher.finish()
 }
-

@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_flag_set;
-use bun_lint::types::{SyntaxKind, Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, NameOf, SyntaxKind, TsNode, Type, TypeFlags};
 
 /// Disallow enums from having both number and string members.
 pub struct NoMixedEnums;
@@ -15,12 +14,12 @@ enum AllowedType {
     Unknown,
 }
 
-/// By a variable, [`get_type_from_imported`] of the first of its declarations that has one: an enum that is declared
-/// many times has as many declarations to go through for each of them.
+/// Caches, per variable, [`get_type_from_imported`] of its first declaration that has one. Otherwise an enum that's
+/// declared many times would walk all of its declarations once per declaration.
 #[derive(Default)]
-pub struct State<'a>(FxHashMap<Symbol<'a>, Option<AllowedType>>);
+pub struct State<'a>(IdMap<Symbol<'a>, Option<AllowedType>>);
 
-/// Whether it is in quotes, and one name of upstream's `getModuleName`.
+/// Returns whether the name is quoted, and one name of upstream's `getModuleName`.
 fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
     match module.name() {
         ModuleName::Ident(name) => (false, name.bytes()),
@@ -31,9 +30,9 @@ fn name_part<'a>(module: Module<'a>) -> (bool, &'a [u8]) {
 
 /// `getModuleName(a.id) === getModuleName(b.id)`
 fn have_same_module_name<'a>(a: Module<'a>, b: Module<'a>) -> bool {
-    // Upstream takes the first name as it is written, with its escapes.
-    let written = |module: Module<'a>| module.stmt().file().slice(module.name_span());
-    if name_part(a) != name_part(b) || !name_part(a).0 && written(a) != written(b) {
+    // Upstream takes the first name as written, escapes included.
+    let name_source = |module: Module<'a>| module.stmt().file().slice(module.name_span());
+    if name_part(a) != name_part(b) || !name_part(a).0 && name_source(a) != name_source(b) {
         return false;
     }
     let (mut a, mut b) = (a.nested(), b.nested());
@@ -131,12 +130,12 @@ fn get_desired_type_for_definition<'a>(
             continue;
         };
         let find = || variable.declarations().find_map(|it| get_type_from_imported(file, it));
-        if let Some(from_imported) = *known.0.entry(variable).or_insert_with(find) {
+        if let Some(from_imported) = *known.0.get_or_insert_with(variable, find) {
             return from_imported;
         }
     }
 
-    // Several declarations in the file, also across the declarations of a namespace.
+    // Several declarations in the file, possibly spread across a namespace's declarations.
     let start = statement.span().start;
     let mut previous_sibling = None;
     any_enclosing_scope(statement, &mut |enclosing| {
@@ -150,6 +149,38 @@ fn get_desired_type_for_definition<'a>(
         previous_sibling.is_some()
     });
     get_member_type(previous_sibling.unwrap_or(first))
+}
+
+/// tsgolint's `getMemberType`: only a numeric or string literal is classified by its syntax, and a type that isn't
+/// `StringLike` or `NumberLike` itself is unknown.
+fn tsgolint_get_member_type(member: TsNode) -> AllowedType {
+    let Some(initializer) = member.initializer() else {
+        return AllowedType::Number;
+    };
+    match initializer.kind() {
+        SyntaxKind::NumericLiteral => AllowedType::Number,
+        SyntaxKind::StringLiteral => AllowedType::String,
+        _ => {
+            let ty = initializer.get_type_at_location();
+            if is_type_flag_set(ty, TypeFlags::STRING_LIKE) {
+                AllowedType::String
+            } else if is_type_flag_set(ty, TypeFlags::NUMBER_LIKE) {
+                AllowedType::Number
+            } else {
+                AllowedType::Unknown
+            }
+        }
+    }
+}
+
+/// tsgolint's `getDesiredTypeForDefinition`: `symbol.Declarations[0].Members()[0]` of the name's symbol, which fails if
+/// that isn't an enum with a member.
+fn tsgolint_get_desired_type_for_definition(node: Enum) -> AllowedType {
+    let declaration = NameOf(node).ts_symbol().and_then(|symbol| symbol.declarations().next());
+    let first = declaration
+        .filter(|it| it.kind() == SyntaxKind::EnumDeclaration)
+        .and_then(|it| it.children().find(|member| member.kind() == SyntaxKind::EnumMember));
+    first.map_or(AllowedType::Unknown, tsgolint_get_member_type)
 }
 
 impl Rule for NoMixedEnums {
@@ -174,12 +205,19 @@ impl Rule for NoMixedEnums {
         let Some(first) = node.members().first() else {
             return;
         };
-        let desired_type = get_desired_type_for_definition(cx.file(), node, first, &mut cx.state);
+        let is_oxlint = cx.language().is_oxlint;
+        let desired_type = match is_oxlint {
+            true => tsgolint_get_desired_type_for_definition(node),
+            false => get_desired_type_for_definition(cx.file(), node, first, &mut cx.state),
+        };
         if desired_type == AllowedType::Unknown {
             return;
         }
         for member in node.members() {
-            let current_type = get_member_type(member);
+            let current_type = match is_oxlint {
+                true => tsgolint_get_member_type(member.ts_node()),
+                false => get_member_type(member),
+            };
             if current_type == AllowedType::Unknown {
                 return;
             }

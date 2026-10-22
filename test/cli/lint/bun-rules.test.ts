@@ -1,5 +1,5 @@
-// The rules of `bun lint` that are Bun's own: `bun/..` and `bun:test/..`. No other linter has them, so what they should report is
-// written here.
+// Tests for `bun lint`'s own rules, `bun/..` and `bun:test/..`. No other linter has them, so the expected reports are
+// written by hand here.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { basename } from "node:path";
@@ -8,9 +8,9 @@ import { endChildren, spawn } from "../children";
 afterAll(endChildren);
 
 /**
- * `«` and `»` are around what is reported. They are not part of the code. A string is a case with nothing else to say.
- * `file`: where the file lies, below a directory of its own. By default it is `case-N.tsx`.
- * `output`: the code after one pass of the fixes. `suggestions`: the code with each suggestion alone, in the order of the reports.
+ * `«` and `»` mark each reported range. They aren't part of the code. A plain string is a case with only `code`. `file`
+ * is the file's path inside the case's own directory. The default is `case-N.tsx`. `output` is the code after one fix
+ * pass. `suggestions` has the code after applying each suggestion by itself, in report order.
  */
 type Case =
   | string
@@ -68,7 +68,7 @@ const rules: Record<string, Case[]> = {
     `switch (kind) {\n  case 1:\n    «import("a")»;\n}`,
     `block: {\n  «import("a")»;\n}`,
     `namespace N {\n  export const a = «import("a")»;\n}`,
-    // What is called where it is written.
+    // Immediately invoked functions.
     `(() => «import("a")»)();`,
     `(function () {\n  return «import("a")»;\n})();`,
     `(async () => {\n  await «import("a")»;\n})();`,
@@ -76,7 +76,7 @@ const rules: Record<string, Case[]> = {
     `(function () {\n  «import("a")»;\n}).call(this);`,
     `(function () {\n  «import("a")»;\n}).apply(this, []);`,
     `new (function () {\n  «import("a")»;\n})();`,
-    // What runs when a class is defined.
+    // Code that runs when a class is defined.
     `class A {\n  static a = «import("a")»;\n}`,
     `class A {\n  static {\n    «import("a")»;\n  }\n}`,
     `class A {\n  [key(«import("a")»)]() {}\n}`,
@@ -413,7 +413,7 @@ const rules: Record<string, Case[]> = {
     `const a = «b.split(",")?.length»;`,
     `const a = «b().trim().split(" ").length»;`,
     `if («b.split("\\t").length» > 3) {}`,
-    // The function is not in scope, or the result can be `undefined`.
+    // No fix, because the function isn't in scope or the result can be `undefined`.
     { code: `const a = «b.split(",").length»;`, options: countFunction },
     { code: `${count}const a = «b?.split(",").length»;`, options: countFunction },
     { code: `${count}const a = «(b, c).split(",").length»;`, options: countFunction },
@@ -516,7 +516,7 @@ const rules: Record<string, Case[]> = {
     `const [list, update] = useState([]);\nupdate([...«list», 1]);`,
     `function A() {\n  ${rowsState}  return <button onClick={() => setRows([...«rows», 1])} />;\n}`,
     `function A() {\n  ${rowsState}  useEffect(() => {\n    setRows([...«rows», 1]);\n  }, []);\n}`,
-    // Where they are not from a `useState()` in the file, the names decide.
+    // If they don't come from a `useState()` in the file, the rule goes by their names.
     `function A({ rows, setRows }) {\n  setRows([...«rows», 1]);\n}`,
     `function A({ form, setForm }) {\n  setForm({ ...«form», name });\n}`,
     `setRows([...«rows», 1]);`,
@@ -724,7 +724,7 @@ const rules: Record<string, Case[]> = {
     `readJson("a.json");`,
   ],
 
-  "prefer-lazy-schema": [
+  "zod-prefer-lazy-schema": [
     ...[
       `const A = «z.string()»;`,
       `const A = «z.string().min(1).optional()»;`,
@@ -760,6 +760,11 @@ const rules: Record<string, Case[]> = {
     { code: `const A = z.string();`, options: [{ roots: ["v"] }] },
     `const A = userSchema();`,
     `const B = A.extend({ b: 1 });`,
+    // `lazySchema` itself ends with the factory suffix.
+    {
+      code: `${zod}const A = lazySchema(() => z.object({ a: userSchema() }));`,
+      options: [{ factorySuffix: "Schema", lazyWrapper: "lazySchema" }],
+    },
   ],
 
   "no-side-effects-on-import": [
@@ -830,7 +835,7 @@ const rules: Record<string, Case[]> = {
     `import "a";`,
   ],
 
-  "no-unseeded-random-in-property-test": [
+  "fast-check-no-unseeded-random": [
     { code: `${fastCheck}fc.property(fc.integer(), a => «fc.sample(fc.integer(), 1)»);`, ids: ["sample"] },
     { code: `${fastCheck}fc.property(fc.integer(), a => a > «Math.random()»);`, ids: ["random"] },
     `${fastCheck}fc.assert(\n  fc.property(fc.integer(), a => {\n    const [b] = «fc.sample(fc.integer(), 1)»;\n    return a + b === b + a;\n  }),\n);`,
@@ -881,7 +886,7 @@ const rules: Record<string, Case[]> = {
         `import React, { useState as useS } from "react";\n«React.useState»(0);`,
         `import React, { useState as useS } from "react";\nuseS(0);`,
       ],
-      // All that is missing is imported with the first fix. The others are for the next pass.
+      // The first fix imports every missing name. The other fixes are applied in the next pass.
       [
         `${react}«React.useState»(0);\n«React.useEffect»(f);`,
         `import React, { useEffect, useState } from "react";\nuseState(0);\nReact.useEffect(f);`,
@@ -1195,7 +1200,7 @@ const rules: Record<string, Case[]> = {
       options: [{ modules: [{ package: "axios", use: "@/http", names: { isCancel: "wasCancelled" } }] }],
       output: `import axios from "@/http";`,
     },
-    // What cannot be written anew is only reported.
+    // Imports that can't be rewritten are reported without a fix.
     { code: `import * as axios from «"axios"»;`, options: mapped },
     { code: `import type { Reply } from «"axios"»;`, options: mapped },
     { code: `export { isCancel } from «"axios"»;`, options: mapped },
@@ -1216,7 +1221,7 @@ const rules: Record<string, Case[]> = {
     `import axios from "axios";`,
   ],
 
-  "no-unbounded-requests": [
+  "axios-no-unbounded-requests": [
     `${axios}«axios.get»("/a");`,
     `${axios}await «axios.get»("/a");`,
     `${axios}«axios.get»("/a", {});`,
@@ -1227,7 +1232,7 @@ const rules: Record<string, Case[]> = {
     `${axios}«axios.post»("/a");`,
     `${axios}«axios.post»("/a", body);`,
     `${axios}«axios.post»("/a", body, { headers });`,
-    // The second argument of `post()` is what is sent.
+    // The second argument of `post()` is the request body.
     `${axios}«axios.post»("/a", { timeout: 3000 });`,
     `${axios}«axios.put»("/a", body);`,
     `${axios}«axios.patch»("/a", body);`,
@@ -1286,7 +1291,7 @@ const rules: Record<string, Case[]> = {
     `${axios}axios("/a", { timeout: 3000 });`,
     `${axios}const api = axios.create({ timeout: 3000 });`,
     `${axios}function f(Infinity) {\n  axios.get("/a", { timeout: Infinity });\n}`,
-    // What the configuration has is not to be seen.
+    // The config's contents can't be determined statically.
     `${axios}axios.get("/a", config);`,
     `${axios}axios.get("/a", { ...config });`,
     `${axios}axios.get("/a", { params, ...config });`,
@@ -1296,16 +1301,16 @@ const rules: Record<string, Case[]> = {
     `${axios}axios.request(config);`,
     `${axios}axios(config);`,
     `${axios}axios.create(config);`,
-    // "Config Defaults"
+    // axios calls these "Config Defaults".
     `${axios}axios.defaults.timeout = 3000;\naxios.get("/a");`,
     `${axios}const api = axios.create();\napi.defaults.timeout = 3000;`,
-    // What takes no configuration, or makes no request.
+    // Calls that don't take a config or don't make a request.
     `${axios}axios.isAxiosError(error);`,
     `${axios}axios.isCancel(error);`,
     `${axios}axios.all([a, b]);`,
     `${axios}axios.interceptors.request.use(log);`,
     `${axios}new axios.Axios({});`,
-    // Another `axios`.
+    // A different `axios`.
     `axios.get("/a");`,
     `import axios from "./axios";\naxios.get("/a");`,
     `${axios}function f(axios) {\n  axios.get("/a");\n}`,
@@ -1314,12 +1319,12 @@ const rules: Record<string, Case[]> = {
     { code: `import { other } from "./http";\nother.get("/a");`, options: ownClient },
     { code: `import { http } from "./other";\nhttp.get("/a");`, options: ownClient },
     { code: `import { http } from "./http";\nhttp.get("/a", { timeout: 3000 });`, options: ownClient },
-    // An instance: what it was made with is checked where it is made.
+    // An instance's config is checked where the instance is created.
     `${axios}const api = axios.create({ timeout: 3000 });\napi.get("/a");`,
   ],
 
   "no-unhandled-emitter-errors": [
-    // Nothing is done with it.
+    // The emitter is discarded.
     `${processes}«spawn»("a");`,
     `${processes}«fork»("./a.js");`,
     `${files}«createReadStream»("a");`,
@@ -1340,7 +1345,7 @@ const rules: Record<string, Case[]> = {
     `const { spawn } = require("node:child_process");\n«spawn»("a");`,
     `const fs = require("fs");\n«fs.createWriteStream»("a");`,
     `«require("node:net").connect»(80);`,
-    // Other events, other methods, properties.
+    // Only other events, other methods or properties are used.
     `${processes}«spawn»("a").on("exit", done);`,
     `${processes}«spawn»("a").on("exit", done).once("spawn", go);`,
     `${processes}«spawn»("a").on(name, done);`,
@@ -1356,7 +1361,7 @@ const rules: Record<string, Case[]> = {
     // The listener is on the other stream.
     `${files}«createReadStream»("a").pipe(target);`,
     `${files}«createReadStream»("a").pipe(target).on("error", fail);`,
-    // A variable.
+    // The emitter is stored in a variable.
     `${processes}const child = «spawn»("a");`,
     `${processes}const child = «spawn»("a");\nchild.on("exit", done);`,
     `${processes}const child = «spawn»("a");\nchild.stdout.on("data", use);\nchild.kill();`,
@@ -1393,7 +1398,7 @@ const rules: Record<string, Case[]> = {
     `${processes}let child;\nchild = spawn("a");\nchild.on("error", fail);`,
     `${processes}const child = spawn("a");\nfunction watch() {\n  child.on("error", fail);\n}`,
     `${processes}const child = spawn("a") as ChildProcess;\nchild.on("error", fail);`,
-    // It goes where it cannot be followed.
+    // The emitter escapes to code the rule can't follow.
     `${processes}function run() {\n  return spawn("a");\n}`,
     `${processes}const run = () => spawn("a");`,
     `${processes}track(spawn("a"));`,
@@ -1411,26 +1416,28 @@ const rules: Record<string, Case[]> = {
     `${processes}const child = spawn("a");\nconst other = child;`,
     `${processes}const child = spawn("a");\nthis.child = child;`,
     `${processes}const child = spawn("a");\nexport { child };`,
+    `${processes}export const child = spawn("a");`,
+    `${processes}export let child;\nchild = spawn("a");`,
     `${files}await pipeline(createReadStream("a"), createWriteStream("b"));`,
     `${files}const source = createReadStream("a");\nfinished(source, done);`,
     `${files}const source = createReadStream("a");\nfor await (const piece of source) use(piece);`,
     `${files}for await (const piece of createReadStream("a")) use(piece);`,
     `${files}other.pipe(createWriteStream("a"));`,
     `${files}createReadStream("a").on("error", fail).pipe(createWriteStream("b"));`,
-    // What a method returns that is not known to return the emitter.
+    // The result of a method that isn't known to return the emitter.
     `${files}const source = createReadStream("a").setEncoding("utf8");`,
-    // They take the error themselves and hand it to the callback.
+    // These handle the error themselves and pass it to the callback.
     `import { exec, execFile } from "node:child_process";\nexec("a");\nexecFile("a");`,
-    // They begin nothing yet.
+    // These don't start anything yet.
     `import net from "node:net";\nnet.createServer(use).listen(80);`,
     `import dgram from "node:dgram";\ndgram.createSocket("udp4");`,
-    // No emitters.
+    // These don't return emitters.
     `import { spawnSync } from "node:child_process";\nspawnSync("a");`,
     `import { watch } from "node:fs/promises";\nwatch("a");`,
     `import fs from "node:fs";\nfs.promises.watch("a");`,
     `import fs from "node:fs";\nfs.readFile("a", use);`,
     `Bun.spawn(["a"]);`,
-    // Others of the same name.
+    // Other functions with the same name.
     `spawn("a");`,
     `import { spawn } from "./spawn";\nspawn("a");`,
     `${processes}function f(spawn) {\n  spawn("a");\n}`,
@@ -1455,7 +1462,7 @@ const rules: Record<string, Case[]> = {
     `import type { UserId } from "../../src/ids";\nconst a = text as «UserId»;`,
     `import type { UserId } from "@app/src/ids";\nconst a = text as «UserId»;`,
     `import type { UserId } from "src/ids";\nconst a = text as «UserId»;`,
-    // What has it as an element.
+    // Types with it as an element.
     `${ids}const a = texts as «UserId[]»;`,
     `${ids}const a = texts as «UserId[][]»;`,
     `${ids}const a = texts as «readonly UserId[]»;`,
@@ -1480,7 +1487,7 @@ const rules: Record<string, Case[]> = {
     `${ids}const a = text as «Id»;\ntype Id = UserId;`,
     `${ids}function f() {\n  type Id = UserId;\n  return text as «Id»;\n}`,
     `${ids}const a = text as «UserId»;\nconst b = text as «UserId»;`,
-    // What mints it.
+    // The functions that mint it.
     { code: `import { «toUserId» } from "../ids";`, ids: ["mint"] },
     { code: `import { «toUserId as mint» } from "../ids";`, ids: ["mint"] },
     { code: `import { other, «toUserId» } from "../ids";`, ids: ["mint"] },
@@ -1501,14 +1508,14 @@ const rules: Record<string, Case[]> = {
     `${ids}const a = id as string;\nlet b: UserId;`,
     `${ids}const a = [] as const;`,
     `${ids}const a = text!;`,
-    // What only mentions it.
+    // Types that only mention it.
     `${ids}const a = map as Map<UserId, string>;`,
     `${ids}const a = set as Set<UserId>;`,
     `${ids}const a = row as { id: UserId };`,
     `${ids}const a = f as (id: UserId) => void;`,
     `${ids}const a = key as keyof UserId;`,
     `${ids}const a = promise as Promise<UserId>;`,
-    // Others of that name.
+    // Other types with that name.
     `const a = text as UserId;`,
     `type UserId = string;\nconst a = text as UserId;`,
     `interface UserId {}\nconst a = value as UserId;`,
@@ -1524,7 +1531,7 @@ const rules: Record<string, Case[]> = {
     `${ids}class Array<T> {}\nconst a = texts as Array<UserId>;`,
     `type A = B;\ntype B = A;\nconst a = text as A;`,
     `type A = A[];\nconst a = text as A;`,
-    // The module itself.
+    // The module that declares it.
     {
       code: `export type UserId = string & { readonly brand: unique symbol };\nexport const toUserId = (text: string) => text as UserId;`,
       file: "src/ids.ts",
@@ -1534,7 +1541,7 @@ const rules: Record<string, Case[]> = {
       code: `export type UserId = string & { readonly brand: unique symbol };\nconst a = text as UserId;`,
       file: "src/ids/index.ts",
     },
-    // Where it may be minted.
+    // Files that are allowed to mint it.
     { code: `import { toUserId } from "./ids";`, file: "src/session.ts" },
     { code: `import * as ids from "./ids";\nids.toUserId(text);`, file: "src/session.ts" },
     { code: `export { toUserId } from "./ids";`, file: "src/session.ts" },
@@ -1552,7 +1559,8 @@ const rules: Record<string, Case[]> = {
   ].map(inPage),
 };
 
-// The rules of `bun:test/..` are those that oxlint has for Jest and Vitest, whose cases are in conformance/. Here is what is Bun's own.
+// The `bun:test/..` rules are oxlint's Jest and Vitest rules, whose cases are in conformance/. These cases cover what's
+// specific to Bun.
 const bunTest = `import { describe, expect, expectTypeOf, it, jest, mock, setDefaultTimeout, test, vi, xdescribe, xit, xtest } from "bun:test";\n`;
 const inBunTest = (it: Case): Case => {
   const { code, output, suggestions, ...rest } = typeof it === "string" ? { code: it } : it;
@@ -1585,7 +1593,7 @@ const testRules: Record<string, Case[]> = {
     `test.if(a)("b", () => {});`,
     `test.only;`,
     `other.only("a", () => {});`,
-    // Bun has none of these.
+    // `bun:test` doesn't have any of these.
     `fit("a", () => {});`,
     `fdescribe("a", () => {});`,
     `test.sequential.only("a", () => {});`,
@@ -1607,7 +1615,7 @@ const testRules: Record<string, Case[]> = {
     `«test.skipIf(a)("b")»;`,
     `«test()»;`,
 
-    // A test needs no title.
+    // A test doesn't need a title.
     `test(() => {});`,
     `test(async () => {});`,
     `test(function () {});`,
@@ -1616,7 +1624,7 @@ const testRules: Record<string, Case[]> = {
     `test(callback, 1000);`,
     `test(callback, { timeout: 1000 });`,
     `test.each([1])(callback, 1000);`,
-    // What depends on a condition is not disabled.
+    // A conditional test isn't a disabled test.
     `test.skipIf(a)("b", () => {});`,
     `test.if(a)("b", () => {});`,
     `test.todoIf(a)("b", () => {});`,
@@ -1652,7 +1660,7 @@ const testRules: Record<string, Case[]> = {
     `describe("a", () => tests());`,
     `describe("a", callback);`,
     `describe(callback);`,
-    // What is no function is no callback, so the name before or after it is.
+    // A non-function argument can't be the callback, so the identifier before or after it is.
     `describe(callback, 1000);`,
     `describe(callback, { timeout: 1000 });`,
     `describe("a", { timeout: 1000 }, callback);`,
@@ -1693,13 +1701,13 @@ const testRules: Record<string, Case[]> = {
     inTest(`const one = expect(1);\n  one.toBe(1);`),
     inTest(`return expect(1);`),
     inTest(`check(expect(1).toBe);`),
-    // So can the promise be awaited.
+    // The promise can be awaited elsewhere too.
     inTest(`const later = expect(a).resolves.toBe(1);\n  await later;`),
     inTest(`all.push(expect(a).resolves.toBe(1));`),
     inTest(`await expect(a).resolves.not.toBe(1);`),
     inTest(`await expect(a).not.resolves.toBe(1);`),
     inTest(`expect(1).not.not.toBe(1);`),
-    // Of `expect` itself, wherever a value can be.
+    // Members of `expect` itself, which can appear anywhere a value can.
     inTest(`expect(a).toEqual({ b: expect.resolvesTo.stringContaining("c") });`),
     inTest(`expect(a).toEqual({ b: expect.rejectsTo.stringContaining("c") });`),
     inTest(`expect(a).toEqual([expect.rejectsTo.anything()]);`),
@@ -1717,7 +1725,12 @@ const testRules: Record<string, Case[]> = {
     `test(«" a"», () => {\n  expect(1).toMatchSnapshot();\n});`,
     `test(«a», () => {});`,
     { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
+    { code: `test(«"adds"», () => {});`, options: [{ mustMatch: "/^ADDS/" }] },
+    { code: `test(«"Adds"», () => {});`, options: [{ mustNotMatch: "/^adds/i" }] },
+    { code: `it(«"adds"», () => {});\ntest("adds", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
 
+    { code: `test("adds", () => {});`, options: [{ mustMatch: "/^ADDS/i" }] },
+    { code: `it("should add", () => {});`, options: [{ mustMatch: { it: "^should " } }] },
     `test("a", () => {});`,
     `test(() => {});`,
     `test(callback);`,
@@ -1733,7 +1746,7 @@ const testRules: Record<string, Case[]> = {
     `«test»("a", () => {});`,
     `«test.failing»("a", () => {});`,
     `«test.skipIf(a)»("b", () => {});`,
-    // Vitest's.
+    // `assert` is Vitest's, so it doesn't count.
     `«test»("a", () => {\n  assert(1);\n});`,
 
     `test("a", () => {\n  expect(1).toBe(1);\n});`,
@@ -1741,6 +1754,33 @@ const testRules: Record<string, Case[]> = {
     `test.skip("a", () => {});`,
     `test.todo("a", () => {});`,
     `test.todoIf(a)("b");`,
+    `own("a", () => {});`,
+    // `**` also matches zero segments, and `*` matches any character in a name.
+    ...[
+      `test("a", () => {\n  request(b).expect(200);\n});`,
+      `test("a", () => {\n  request(b).get("/").set("c").expect(200);\n});`,
+      `test("a", () => {\n  check_all$(b);\n});`,
+      `test("a", () => {\n  b.c.verify();\n});`,
+      `test("a", () => {\n  verify();\n});`,
+      `test("a", () => {\n  $assert(b);\n});`,
+      `«test»("a", () => {\n  request(b).get("/");\n});`,
+      `«test»("a", () => {\n  requests.expect(200);\n});`,
+      `«test»("a", () => {\n  recheck(b);\n});`,
+      `«test»("a", () => {\n  assert(b);\n});`,
+    ].map(code => ({
+      code,
+      options: [{ assertFunctionNames: ["request.**.expect", "check*", "**.verify", "$ass*"] }],
+    })),
+    // A custom wrapper, a method and a hook.
+    ...[
+      `«own»("a", () => {});`,
+      `«helpers.own»("a", () => {});`,
+      `«beforeAll»(() => {});`,
+      `own("a", () => {\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {});`,
+      `own.skip("a", () => {});`,
+      `own;`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "helpers.own", "beforeAll"] }] })),
   ].map(inBunTest),
 
   "no-done-callback": [
@@ -1764,6 +1804,13 @@ const testRules: Record<string, Case[]> = {
 
   "prefer-ending-with-an-expect": [
     `«test»(() => {\n  expect(1).toBe(1);\n  a();\n});`,
+    `own("a", () => {\n  b();\n});`,
+    ...[
+      `«own»("a", () => {\n  expect(1).toBe(1);\n  b();\n});`,
+      `«beforeAll»(() => {\n  b();\n});`,
+      `own("a", () => {\n  b();\n  expect(1).toBe(1);\n});`,
+      `other("a", () => {\n  b();\n});`,
+    ].map(code => ({ code, options: [{ additionalTestBlockFunctions: ["own", "beforeAll"] }] })),
     `«test»("a", { retry: 1 }, () => {\n  expect(1).toBe(1);\n  a();\n});`,
     `test(() => {\n  a();\n  expect(1).toBe(1);\n});`,
   ].map(inBunTest),
@@ -1771,12 +1818,15 @@ const testRules: Record<string, Case[]> = {
   "prefer-todo": [
     { code: `«test»("a");`, output: `test.todo("a");` },
     { code: `«test»("a", () => {});`, output: `test.todo("a");` },
-    // No fix takes away the options, or the whole test.
+    // There's no fix if it would drop the options or the whole test.
     `«test»("a", () => {}, 1000);`,
     `«test»("a", { retry: 1 }, () => {});`,
     `«test»("a", 1000, () => {});`,
     `«test.if(a)»("b", () => {});`,
     `«test.each([1])»("a", () => {});`,
+    // The fix doesn't delete a comment either. It's often the test body, commented out.
+    `«test»("a", () => {\n  // expect(b()).toBe(1);\n});`,
+    `«test»("a", /* later */ () => {});`,
     `test(() => {});`,
     `test("a", { retry: 1 }, () => {\n  b();\n});`,
     `test.todoIf(a)("b");`,
@@ -1798,6 +1848,66 @@ const testRules: Record<string, Case[]> = {
     .map(it => (it.code.includes("«") ? it : it.code))
     .map(inBunTest),
 
+  // A test's count includes its nested blocks and the callbacks it passes to other functions.
+  "max-expects": [
+    `test("a", () => {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  for (const b of c) {\n    «expect»(b).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  c.forEach(b => {\n    «expect»(b).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  if (b) expect(1).toBe(1);\n  else «expect»(2).toBe(2);\n});`,
+    `function check() {\n  expect(1).toBe(1);\n  «expect»(2).toBe(2);\n}`,
+
+    `test("a", () => {\n  expect(1).toBe(1);\n});\ntest("b", () => {\n  expect(2).toBe(2);\n});`,
+    `describe("a", () => {\n  test("b", () => {\n    expect(1).toBe(1);\n  });\n  test("c", () => {\n    expect(2).toBe(2);\n  });\n});`,
+    `test("a", () => {\n  expect(1).toBe(1);\n  function check() {\n    expect(2).toBe(2);\n  }\n});`,
+    `test("a", () => {\n  expect.assertions(1);\n  expect.hasAssertions();\n  expect(1).toBe(1);\n});`,
+  ]
+    .map(code => ({ code, options: [{ max: 1 }] }))
+    .map(inBunTest),
+
+  "no-conditional-expect": [
+    `test("a", () => {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function () {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", function named() {\n  if (b) «expect»(1).toBe(1);\n});`,
+    `test("a", () => {\n  each(function () {\n    if (b) «expect»(1).toBe(1);\n  });\n});`,
+    // Functions that a test calls, or that are passed as the test itself.
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", () => check());`,
+    `function check() {\n  if (b) «expect»(1).toBe(1);\n}\ntest("a", check);`,
+    `const check = () => {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", () => check());`,
+    `const check = function () {\n  if (b) «expect»(1).toBe(1);\n};\ntest("a", check);`,
+
+    `if (b) {\n  test("a", function () {\n    expect(1).toBe(1);\n  });\n}`,
+    `test("a", () => {\n  if (b) {\n    const check = () => expect(1).toBe(1);\n  }\n});`,
+    `function check() {\n  if (b) expect(1).toBe(1);\n}`,
+    `const check = () => {\n  if (b) expect(1).toBe(1);\n};\ncheck();`,
+    `const checks = {\n  check() {\n    if (b) expect(1).toBe(1);\n  },\n};\ntest("a", () => checks.check());`,
+  ].map(inBunTest),
+
+  // The condition for running a test, its title and its timeout aren't part of the test body.
+  "no-conditional-in-test": [
+    `test("a", () => {\n  «if (a) b();»\n});`,
+    `test.skipIf(a)("b", () => {\n  const c = «d || e»;\n});`,
+    `test("a", { timeout: 1000 }, function () {\n  return «b ? c : d»;\n});`,
+    `test(() => {\n  «a ?? b»;\n}, 1000);`,
+
+    `test.skipIf(a || b)("c", () => {});`,
+    `test.if(a && b)("c", () => {});`,
+    `test.todoIf(a ? b : c)("d", () => {});`,
+    `test.each(a ?? b)("c", () => {});`,
+    `test(a || "b", () => {});`,
+    `test("a", () => {}, b ? 1000 : 5000);`,
+    `test("a", { timeout: b ?? 1000 }, () => {});`,
+  ].map(inBunTest),
+
+  "no-large-snapshots": [
+    inTest("expect(a).«toMatchInlineSnapshot»(`\n1\n2\n3\n`);"),
+    inTest("expect(a).«toMatchInlineSnapshot»({ b: expect.any(Number) }, `\n1\n2\n3\n`);"),
+    inTest("expect(a).toMatchInlineSnapshot({\n  b: expect.any(Number),\n  c: expect.any(Number),\n}, `1`);"),
+    inTest("expect(a).toMatchInlineSnapshot(`1`);"),
+    inTest("expect(a).toMatchInlineSnapshot();"),
+  ]
+    .map(code => ({ code, options: [{ inlineMaxSize: 2 }] }))
+    .map(inBunTest),
+
   "no-identical-title": [
     `test("a", () => {});\ntest(«"a"», () => {});`,
     `test.failing("a", () => {});\ntest.serial(«"a"», () => {});`,
@@ -1807,7 +1917,7 @@ const testRules: Record<string, Case[]> = {
     `test.each([1])("a", () => {});\ntest.each([2])("a", () => {});`,
   ].map(inBunTest),
 
-  // A fix writes a name only if the file imports it: nothing else is declared in a file that imports from "bun:test".
+  // A fix only writes a name that the file imports. In a file that imports from "bun:test", nothing else is declared.
   "consistent-test-it": [
     inBunTest({ code: `«it»("a", () => {});`, output: `test("a", () => {});` }),
     inBunTest({ code: `«xit»("a", () => {});`, output: `xtest("a", () => {});` }),
@@ -1818,6 +1928,16 @@ const testRules: Record<string, Case[]> = {
     `import { it } from "bun:test";\n«it»("a", () => {});`,
     `import { test, xit } from "bun:test";\n«xit»("a", () => {});`,
     `import { describe, test } from "bun:test";\ndescribe("a", () => {\n  «test»("b", () => {});\n});`,
+    {
+      code: `const { it, test } = require("bun:test");\n«it»("a", () => {});`,
+      output: `const { it, test } = require("bun:test");\ntest("a", () => {});`,
+    },
+    // At the call site, `test` isn't the `test` that "bun:test" exports.
+    `import { it } from "bun:test";\n«it».concurrent("a", () => {});\nfunction test(name: string) {\n  «it»(name, () => {});\n}`,
+    `import { it } from "bun:test";\nimport { test } from "./helpers";\n«it»("a", () => {});`,
+    `import { it, expect as test } from "bun:test";\n«it»("a", () => {});`,
+    inBunTest(`for (const test of cases) {\n  «it»(test.name, () => {});\n}`),
+    inBunTest(`function each(test: { name: string }) {\n  «it»(test.name, () => {});\n}`),
   ],
 
   "no-test-prefixes": [
@@ -1829,15 +1949,18 @@ const testRules: Record<string, Case[]> = {
     ].map(inBunTest),
     `import { xtest } from "bun:test";\n«xtest»("a", () => {});`,
     `import { xdescribe } from "bun:test";\n«xdescribe»("a", () => {});`,
+    `import { xit } from "bun:test";\n«xit»("a", () => {});\nfunction it() {}`,
+    inBunTest(`for (const it of cases) {\n  «xit»(it.name, () => {});\n}`),
+    inBunTest(`function each(test: string) {\n  «xtest»(test, () => {});\n}`),
   ],
 
   "no-export": [
     { code: `export const «a» = 1;\ntest("a", () => {});`, file: "a.test.ts" },
     { code: `export const «a» = 1;\ntest("a", () => {});`, file: "a_spec.ts" },
-    // `bun test` does not run it: others import what it has.
+    // `bun test` doesn't run this file. Other files import its exports.
     { code: `export const a = 1;\ntest("a", () => {});`, file: "helpers.ts" },
     { code: `export const a = 1;`, file: "a.test.ts" },
-    // Who imports a type does not run the tests.
+    // Importing a type doesn't run the tests.
     { code: `export type A = number;\nexport interface B {}\ntest("a", () => {});`, file: "a.test.ts" },
     { code: `type A = number;\nexport type { A };\nexport {};\ntest("a", () => {});`, file: "a.test.ts" },
     { code: `type A = number;\nconst b = 1;\nexport { type A, «b» };\ntest("a", () => {});`, file: "a.test.ts" },
@@ -1855,7 +1978,7 @@ const testRules: Record<string, Case[]> = {
     inTest(`expect(a).toHaveBeenCalledTimes(2);`),
   ].map(inBunTest),
 
-  // A fix that writes `expect(..)` again keeps the message, and the name that `expect` has in the file.
+  // A fix that rewrites `expect(..)` keeps the message and the file's local name for `expect`.
   "prefer-called-times": [
     {
       code: inTest(`«expect(a, "why").toHaveBeenCalledOnce()»;`),
@@ -1899,6 +2022,13 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-to-be": [
+    { code: inTest(`expect(a).«toEqual»(1);`), output: inTest(`expect(a).toBe(1);`) },
+    { code: inTest(`expect(a).«toEqual»(-1);`), output: inTest(`expect(a).toBe(-1);`) },
+    inTest(`expect(a).toEqual(0.5);`),
+    inTest(`expect(a).toEqual(-0.5);`),
+  ].map(inBunTest),
+
   "prefer-to-contain": [
     {
       code: inTest(`expect(a.includes(1), "why").«toBe»(true);`),
@@ -1910,7 +2040,7 @@ const testRules: Record<string, Case[]> = {
     { code: inTest(`expect(a < 1, "why").«toBe»(true);`), suggestions: [inTest(`expect(a, "why").toBeLessThan(1);`)] },
   ].map(inBunTest),
 
-  // A snapshot in a file of its own is found by the titles.
+  // A snapshot in a separate file is looked up by the titles, so there's no fix then.
   "prefer-lowercase-title": [
     { code: `test(«"A"», () => {});`, output: `test("a", () => {});` },
     `test(«"A"», () => {\n  expect(1).toMatchSnapshot();\n});`,
@@ -1920,14 +2050,60 @@ const testRules: Record<string, Case[]> = {
     },
   ].map(inBunTest),
 
+  "prefer-mock-return-shorthand": [
+    { code: `a.«mockImplementation»(() => 1);`, output: `a.mockReturnValue(1);` },
+    { code: `a.«mockImplementationOnce»(() => ({ b: [c] }));`, output: `a.mockReturnValueOnce({ b: [c] });` },
+    { code: `a.«mockImplementation»(function () {\n  return 1;\n});`, output: `a.mockReturnValue(1);` },
+    // These run each time the mock is called.
+    `a.mockImplementation(() => create());`,
+    `a.mockImplementation(() => new User());`,
+    `a.mockImplementation(() => ({ id: next() }));`,
+    "a.mockImplementation(() => sql`b`);",
+    `a.mockImplementation(() => import("b"));`,
+    // This one doesn't return anything.
+    `a.mockImplementation(function () {\n  b;\n});`,
+  ].map(inBunTest),
+
+  "prefer-spy-on": [
+    ...[
+      { code: `a.b = «jest.fn»();`, suggestions: [`jest.spyOn(a, 'b').mockImplementation();`] },
+      // No suggestion, because `spyOn` isn't imported.
+      `a.b = «mock»();`,
+      `a.b = other();`,
+      `const a = mock();`,
+      `const a = { b: mock() };`,
+      `function f(mock) {\n  a.b = mock();\n}`,
+    ].map(inBunTest),
+    ...[
+      { code: `a.b = «mock»();`, suggestions: [`spyOn(a, 'b').mockImplementation();`] },
+      { code: `a.b = «mock»(() => 1);`, suggestions: [`spyOn(a, 'b').mockImplementation(() => 1);`] },
+      { code: `a[b] = «mock»(c);`, suggestions: [`spyOn(a, b).mockImplementation(c);`] },
+    ].map(({ code, suggestions }) => {
+      const head = `import { mock, spyOn } from "bun:test";\n`;
+      return { code: head + code, suggestions: suggestions.map(it => head + it) };
+    }),
+    {
+      code: `import { mock as fake, spyOn } from "bun:test";\na.b = «fake»();`,
+      suggestions: [`import { mock as fake, spyOn } from "bun:test";\nspyOn(a, 'b').mockImplementation();`],
+    },
+    `import { test } from "bun:test";\nimport { mock } from "./mock";\na.b = mock();`,
+    `import { mock } from "bun:test";\nfunction spyOn() {}\na.b = «mock»();`,
+    `import { mock, spyOn } from "bun:test";\nfor (const spyOn of c) {\n  a.b = «mock»(spyOn);\n}`,
+    `import { mock, spyOn } from "bun:test";\nfunction f(spyOn) {\n  a.b = «mock»();\n}`,
+  ],
+
   "prefer-describe-function-title": [
     {
       code: `import { add } from "./add";\ndescribe(«"add"», () => {});`,
       suggestions: [`import { add } from "./add";\ndescribe(add, () => {});`],
     },
+    // A type can't be passed as a value.
+    `import type { Add } from "./add";\ndescribe("Add", () => {});`,
+    `import { type Add } from "./add";\ndescribe("Add", () => {});`,
   ].map(inBunTest),
 
-  // oxlint applies these, and the fixes above of what is awaited, included and compared. A test that passes can fail afterwards.
+  // oxlint applies these as fixes, like the ones above for what's awaited, included and compared. They can make a
+  // passing test fail, so they're suggestions here.
   "prefer-called-with": [
     { code: inTest(`expect(a).«toHaveBeenCalled»();`), suggestions: [inTest(`expect(a).toHaveBeenCalledWith();`)] },
   ].map(inBunTest),
@@ -1935,6 +2111,14 @@ const testRules: Record<string, Case[]> = {
   "prefer-strict-boolean-matchers": [
     { code: inTest(`expect(1).«toBeTruthy()»;`), suggestions: [inTest(`expect(1).toBe(true);`)] },
     { code: inTest(`expect(0, "why").«toBeFalsy()»;`), suggestions: [inTest(`expect(0, "why").toBe(false);`)] },
+    // `.not.toBe(true)` passes for everything but `true`.
+    { code: inTest(`expect(a).not.«toBeTruthy()»;`), suggestions: [inTest(`expect(a).toBe(false);`)] },
+    { code: inTest(`expect(a).not.«toBeFalsy()»;`), suggestions: [inTest(`expect(a).toBe(true);`)] },
+    {
+      code: inTest(`await expect(a).resolves.not.«toBeTruthy()»;`),
+      suggestions: [inTest(`await expect(a).resolves.toBe(false);`)],
+    },
+    inTest(`expect(a)["not"].«toBeTruthy()»;`),
   ].map(inBunTest),
 
   "require-hook": [
@@ -1966,7 +2150,7 @@ const testRules: Record<string, Case[]> = {
     `test("a", () => {}, «limit»);`,
     `«test("a", () => {})»;\nsetDefaultTimeout(1000);`,
     `setDefaultTimeout(«limit»);`,
-    // Vitest's.
+    // `vi.setConfig` is Vitest's, so it doesn't count.
     `vi.setConfig({ testTimeout: 1000 });\n«test("a", () => {})»;`,
 
     `test("a", () => {}, 1000);`,
@@ -1980,23 +2164,54 @@ const testRules: Record<string, Case[]> = {
     `test.todo("a", () => {});`,
     `xtest("a", () => {});`,
   ].map(inBunTest),
+
+  "no-unneeded-async-expect-function": [
+    {
+      code: inTest(`await expect(«async () => {\n    await load("a");\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load("a")).rejects.toThrow();`),
+    },
+    {
+      code: inTest(`await expect(«async () => await load("a")»).resolves.toBe(1);`),
+      output: inTest(`await expect(load("a")).resolves.toBe(1);`),
+    },
+    {
+      code: inTest(`await expect(«async function () {\n    await load("a");\n  }»).rejects.not.toThrow("b");`),
+      output: inTest(`await expect(load("a")).rejects.not.toThrow("b");`),
+    },
+    // A comment inside the call is kept.
+    {
+      code: inTest(`await expect(«async () => {\n    await load(/* no name */);\n  }»).rejects.toThrow();`),
+      output: inTest(`await expect(load(/* no name */)).rejects.toThrow();`),
+    },
+    // Any other comment would be deleted, so these have no fix.
+    inTest(`await expect(«async () => {\n    // @ts-expect-error\n    await load(1);\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async () => {\n    await load(1); // not a name\n  }»).rejects.toThrow();`),
+    inTest(`await expect(«async (/* nothing */) => await load(1)»).rejects.toThrow();`),
+
+    // Without `.rejects` or `.resolves`, `bun test` needs the function: `expect(promise).toThrow()` fails.
+    inTest(`await expect(async () => {\n    await load("a");\n  }).toThrow();`),
+    inTest(`expect(async () => await load("a")).toThrow("b");`),
+    inTest(`expect(async () => await load("a")).not.toThrow();`),
+    inTest(`await expect(load("a")).rejects.toThrow();`),
+    inTest(`await expect(async () => {\n    await load("a");\n    await load("b");\n  }).rejects.toThrow();`),
+  ].map(inBunTest),
 };
 
-const whose: Case[] = [
+const importSourceCases: Case[] = [
   focused(`import { test } from "bun:test";\ntest.«only»("a", () => {});`),
   focused(`import { test as check } from "bun:test";\ncheck.«only»("a", () => {});`),
   focused(`import { type Mock, test } from "bun:test";\ntest.«only»("a", () => {});`),
   focused(`const { test } = require("bun:test");\ntest.«only»("a", () => {});`),
   focused(`const { test: check } = require("bun:test");\ncheck.«only»("a", () => {});`),
   focused(`const { test } = await import("bun:test");\ntest.«only»("a", () => {});`),
-  // What `bun test` declares, in a file that imports something else from there.
+  // `bun test`'s globals, in a file that imports something else from "bun:test".
   focused(`import { expect } from "bun:test";\ntest.«only»("a", () => {});`),
   focused(`import { expect } from "bun:test";\ndescribe.«only»("a", () => {});`),
   focused(`import "bun:test";\ntest.«only»("a", () => {});`),
   focused(`import * as all from "bun:test";\ntest.«only»("a", () => {});`),
   focused(`const all = require("bun:test");\ntest.«only»("a", () => {});`),
 
-  // Nothing is imported from there.
+  // Nothing is imported from "bun:test".
   { code: `test.only("a", () => {});`, file: "a.test.ts" },
   { code: `import { test } from "vitest";\ntest.only("a", () => {});`, file: "a.test.ts" },
   { code: `import { test } from "@jest/globals";\ntest.only("a", () => {});`, file: "a.test.ts" },
@@ -2004,13 +2219,13 @@ const whose: Case[] = [
   `import { test } from "bun:tests";\ntest.only("a", () => {});`,
   `const from = "bun:test";\ntest.only("a", () => {});`,
   `function load() {\n  return require("bun:test");\n}\ntest.only("a", () => {});`,
-  // It is somebody else's.
+  // `test` comes from somewhere else.
   `import { expect } from "bun:test";\nimport { test } from "vitest";\ntest.only("a", () => {});`,
   `import { expect } from "bun:test";\nimport { test } from "@jest/globals";\ntest.only("a", () => {});`,
   `import { expect } from "bun:test";\nimport { test } from "./test";\ntest.only("a", () => {});`,
   `import { expect } from "bun:test";\nfunction test() {}\ntest.only("a", () => {});`,
   `import { expect } from "bun:test";\nfunction run(test) {\n  test.only("a", () => {});\n}`,
-  // As with `@jest/globals`, the members of a namespace are not followed.
+  // As with `@jest/globals`, a namespace import's members aren't tracked.
   `import * as all from "bun:test";\nall.test.only("a", () => {});`,
 ];
 
@@ -2031,7 +2246,7 @@ const applied = (code: string, fixes: Fix[]) =>
     .toSorted((a, b) => b.range[0] - a.range[0])
     .reduce((text, { range, text: by }) => text.slice(0, range[0]) + by + text.slice(range[1]), code);
 
-/** One pass of `--fix`: of fixes that overlap the first is applied. */
+/** Applies one `--fix` pass. Of overlapping fixes, only the first is applied. */
 function fixedOnce(code: string, fixes: Fix[]) {
   let end = -1;
   return applied(
@@ -2046,7 +2261,7 @@ function fixedOnce(code: string, fixes: Fix[]) {
   );
 }
 
-/** `code` with `«` and `»` around what `messages` are about. */
+/** Returns `code` with `«` and `»` around each message's range. */
 function marked(code: string, messages: Message[]) {
   const lines = code.split("\n");
   const offset = (line: number, column: number) =>
@@ -2055,7 +2270,7 @@ function marked(code: string, messages: Message[]) {
     { range: [offset(it.line, it.column), offset(it.line, it.column)], text: "«" },
     { range: [offset(it.endLine, it.endColumn), offset(it.endLine, it.endColumn)], text: "»" },
   ]) as Fix[];
-  // Of two marks at one place the `»` comes first.
+  // If two marks are at the same offset, the `»` comes first.
   return applied(
     code,
     marks.toSorted((a, b) => a.text.localeCompare(b.text)),
@@ -2064,7 +2279,7 @@ function marked(code: string, messages: Message[]) {
 
 const tables = Object.entries({
   bun: rules,
-  "bun:test": { ...testRules, "no-focused-tests, by whose the call is": whose },
+  "bun:test": { ...testRules, "no-focused-tests, by whose the call is": importSourceCases },
 });
 describe.concurrent.each(tables)("%s/", (plugin, rules) => {
   for (const [title, table] of Object.entries(rules)) {
@@ -2141,18 +2356,18 @@ async function lint(files: Record<string, string>, args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-/** What ESLint's `json` has: the names of the rules that report, by line. */
+/** Parses ESLint's `json` format. Returns `line rule` for each message in `file`. */
 const reported = (stdout: string, file = "a.js") =>
   (JSON.parse(stdout) as { filePath: string; messages: (Message & { message: string })[] }[])
     .filter(it => basename(it.filePath) === file)
     .flatMap(it => it.messages.map(it => `${it.line} ${it.ruleId}`));
 
-describe.concurrent("the plugin bun", () => {
+describe.concurrent("the bun plugin", () => {
   const name = "bun/no-eager-dynamic-import";
   const flat = (rules: unknown) => `export default [{ rules: ${JSON.stringify(rules)} }];\n`;
   const eager = `import("a");\n`;
 
-  test("no configuration file has to name it", async () => {
+  test("works without being listed in a config file's plugins", async () => {
     const legacy = {
       root: true,
       parserOptions: { ecmaVersion: 2022, sourceType: "module" },
@@ -2172,7 +2387,7 @@ describe.concurrent("the plugin bun", () => {
     expect(reported(eslintrc.stdout)).toEqual([`1 ${name}`]);
     for (const { stdout } of [oxlint, withoutPlugins]) {
       const found = JSON.parse(stdout).diagnostics.filter((it: { code: string }) => it.code.startsWith("bun"));
-      // There is no page about it at oxc.rs.
+      // oxc.rs has no docs page for it, so there's no `url`.
       expect(found.map((it: object) => Object.keys(it).filter(key => key === "code" || key === "url"))).toEqual([
         ["code"],
       ]);
@@ -2219,7 +2434,7 @@ describe.concurrent("the plugin bun", () => {
     }
   });
 
-  test("nothing turns a rule on by itself", async () => {
+  test("no rule is on by default or in an oxlint category", async () => {
     const all = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
     const categories = Object.fromEntries(all.map(it => [it, "error"]));
     const [plain, everything] = await Promise.all([
@@ -2230,7 +2445,7 @@ describe.concurrent("the plugin bun", () => {
     expect(everything.stdout).not.toContain("no-eager-dynamic-import");
   });
 
-  test("--print-config has the rule and no plugin", async () => {
+  test("--print-config lists the rule but not the plugin", async () => {
     const [eslint, oxlint] = await Promise.all([
       lint({ "eslint.config.mjs": flat({ [name]: "error" }), "a.js": eager }, ["--print-config", "a.js"]),
       lint({ ".oxlintrc.json": JSON.stringify({ plugins: [], rules: { [name]: "error" } }), "a.js": eager }, [
@@ -2243,7 +2458,7 @@ describe.concurrent("the plugin bun", () => {
     expect(JSON.parse(oxlint.stdout).plugins).toEqual([]);
   });
 
-  test("a plugin of the project that is called bun hides it", async () => {
+  test("a project's own plugin named bun overrides it", async () => {
     const config = `
       const rule = { create: context => ({ Program: node => context.report({ node, message: "theirs" }) }) };
       export default [{ plugins: { bun: { rules: { "no-eager-dynamic-import": rule } } }, rules: { "${name}": "error" } }];`;
@@ -2251,26 +2466,25 @@ describe.concurrent("the plugin bun", () => {
     expect(JSON.parse(stdout)[0].messages.map((it: { message: string }) => it.message)).toEqual(["theirs"]);
   });
 
-  test("an .oxlintrc.json cannot name it among its plugins", async () => {
+  test("an .oxlintrc.json can't list it in `plugins`", async () => {
     const { stdout, exitCode } = await lint({ ".oxlintrc.json": JSON.stringify({ plugins: ["bun"] }), "a.js": eager }, [
       "a.js",
     ]);
-    // On stdout, where oxlint says it.
+    // oxlint prints this on stdout.
     expect(stdout).toContain("Unknown plugin: 'bun'.");
     expect(exitCode).toBe(1);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
+  test("--rules lists its rules without a category", async () => {
     const { stdout } = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const listed = (JSON.parse(stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun");
-    // `bun/format` is tested with `prettier/prettier`: prettier-rule.test.ts.
+    // `bun/format` is tested with `prettier/prettier` in prettier-rule.test.ts.
     expect(listed.map(it => it.value)).toEqual([...Object.keys(rules), "format"].toSorted());
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(listed.map(it => `https://bun.com/docs/lint/rules/bun/${it.value}`));
   });
 
-  test("options that a rule does not have are refused", async () => {
+  test("rejects options that a rule doesn't have", async () => {
     const rule = "bun/no-env-at-module-scope";
     const [unknown, wrong, tooMany] = await Promise.all([
       lint({ "eslint.config.mjs": flat({ [rule]: ["error", { nope: 1 }] }), "a.js": eager }, ["a.js"]),
@@ -2287,15 +2501,157 @@ describe.concurrent("the plugin bun", () => {
     expect([unknown, wrong, tooMany].map(it => it.exitCode)).toEqual([2, 2, 2]);
   });
 
-  test("a pattern that is no regular expression is refused", async () => {
+  test("rejects a pattern that isn't a valid regular expression", async () => {
     const options = { patterns: [{ pattern: "(" }] };
     const files = { "eslint.config.mjs": flat({ "bun/no-restricted-text": ["error", options] }), "a.js": eager };
     const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toContain(`The pattern "(" is not a regular expression`);
+    expect(stderr).toContain(`Invalid pattern "(": Invalid regular expression: `);
     expect(exitCode).toBe(2);
   });
 
-  test("bun/prefer-local-module leaves the files in exemptFiles alone", async () => {
+  test("each rule's message", async () => {
+    const files = {
+      "bunfig.toml": `[lint.rules]
+"bun/no-eager-dynamic-import" = "error"
+"bun/no-eager-native-addon" = "error"
+"bun/no-env-at-module-scope" = "error"
+"bun/no-literal-temp-dir" = "error"
+"bun/no-negative-repeat-count" = "error"
+"bun/no-redundant-catch-type" = "error"
+"bun/no-useless-spread-fallback" = "error"
+"bun/no-array-just-to-count" = "error"
+"bun/prefer-builtin-sleep" = "error"
+"bun/react-prefer-updater-function" = "error"
+"bun/no-console-window-flash" = "error"
+"bun/no-unportable-commands" = "error"
+"bun/no-cwd-dependent-path" = "error"
+"bun/zod-prefer-lazy-schema" = "error"
+"bun/no-side-effects-on-import" = "error"
+"bun/fast-check-no-unseeded-random" = "error"
+"bun/react-no-namespace-hooks" = "error"
+"bun/react-no-latest-value-ref" = "error"
+"bun/jsx-no-forbidden-nesting" = "error"
+"bun/consistent-directive-prefix" = "error"
+"bun/no-restricted-text" = ["error", { patterns = [{ pattern = "foo" }] }]
+"bun/prefer-timeout-signal" = "error"
+"bun/prefer-url-for-sibling-files" = "error"
+"bun/react-no-local-render-helpers" = "error"
+"bun/prefer-local-module" = ["error", { modules = [{ package = "axios", use = "@/http" }] }]
+"bun/axios-no-unbounded-requests" = "error"
+"bun/no-unhandled-emitter-errors" = "error"
+"bun/no-cast-to-brand" = ["error", { branded = [{ module = "src/ids", type = "UserId", mint = ["toUserId"], mintedIn = ["src/session.ts"] }] }]
+`,
+      "tsconfig.json": `{ "compilerOptions": { "strict": true, "jsx": "preserve" } }\n`,
+      "a.tsx": `import { exec, spawn } from "node:child_process";
+import fs from "node:fs";
+import { join } from "node:path";
+import { z } from "zod";
+import fc from "fast-check";
+import React, { useRef, useEffect, useState } from "react";
+import axios from "axios";
+const a1 = import("a");
+const addon = require("./addon.node");
+const port = process.env.PORT;
+const env = { ...process.env };
+const t = "/tmp/a.txt";
+const r = " ".repeat(width - text.length);
+try {} catch (error: unknown) {}
+const s = { ...(b ? { c: 1 } : {}) };
+const n = b.split(",").length;
+await new Promise(done => setTimeout(done, 250));
+spawn("npm", ["install"]);
+spawn("ls", ["-l"]);
+exec("a && b");
+exec("ps -ef");
+fs.readFileSync("a.txt");
+const A = z.string();
+start();
+a.b = 1;
+fc.property(fc.integer(), a => fc.sample(fc.integer(), 1));
+fc.property(fc.integer(), a => a > Math.random());
+React.useState(0);
+function C({ count }) {
+  const saved = useRef(count);
+  saved.current = count;
+  useEffect(() => {
+    saved.current = count;
+  });
+  const [rows, setRows] = useState([]);
+  setRows([...rows, 1]);
+}
+const x = <a><a /></a>;
+// oxlint-disable-next-line no-debugger
+debugger;
+const f = "a foo b";
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 2000);
+await fetch(address, { signal: controller.signal });
+const j = join(import.meta.dirname, "a.txt");
+function Table({ rows }) {
+  const renderCell = row => <tr key={row.id} />;
+  return <table>{rows.map(renderCell)}</table>;
+}
+axios.get("/a");
+axios.get("/a", { timeout: 0 });
+const ps = "ps -ef";
+`,
+      "src/ids.ts": `export type UserId = string & { brand: 1 };
+export const toUserId = (a: string) => a as UserId;
+`,
+      "src/views/page.ts": `import type { UserId } from "../ids";
+import { toUserId } from "../ids";
+const a = text as UserId;
+const b = toUserId(text);
+`,
+    };
+    const { stdout, exitCode } = await lint(files, ["-f", "json"]);
+    const messages = (JSON.parse(stdout) as { messages: { ruleId: string | null; message: string }[] }[])
+      .flatMap(it => it.messages)
+      .filter(it => it.ruleId?.startsWith("bun/"));
+    expect([...new Set(messages.map(it => `${it.ruleId}: ${it.message}`))].sort()).toEqual([
+      "bun/axios-no-unbounded-requests: This axios request has no time limit. Set `timeout` or pass a `signal`.",
+      "bun/axios-no-unbounded-requests: `timeout: 0` means no time limit.",
+      "bun/consistent-directive-prefix: Use `eslint` instead of `oxlint`.",
+      "bun/fast-check-no-unseeded-random: `Math.random()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/fast-check-no-unseeded-random: `sample()` ignores the seed of the run, so a failure cannot be replayed or shrunk. Make the value a parameter of the property.",
+      "bun/jsx-no-forbidden-nesting: `<a>` cannot be inside `<a>`.",
+      "bun/no-array-just-to-count: `split()` builds an array only to read its length. Count the separators instead.",
+      "bun/no-cast-to-brand: This cast creates a `UserId` from an unchecked value. Only `src/ids` should create one.",
+      "bun/no-cast-to-brand: `toUserId` turns any value into a `UserId`, and this file is not allowed to import it.",
+      "bun/no-console-window-flash: On Windows, this process briefly opens a console window. Set `windowsHide: true`.",
+      'bun/no-cwd-dependent-path: "a.txt" is relative to the working directory of the process. Resolve it from `import.meta.dirname`.',
+      "bun/no-eager-dynamic-import: This `import()` runs as soon as the module is imported. Call it where it is needed, or use an `import` statement.",
+      "bun/no-eager-native-addon: The native addon `./addon.node` loads as soon as the module is imported. Load it inside the function that needs it.",
+      "bun/no-env-at-module-scope: The environment is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-env-at-module-scope: `process.env.PORT` is read as soon as the module is imported. Read it inside the function that needs it.",
+      "bun/no-literal-temp-dir: `/tmp` is not the temporary directory on every system. Use `os.tmpdir()`.",
+      "bun/no-negative-repeat-count: `repeat()` throws a `RangeError` if this count is negative. Give it a lower bound.",
+      "bun/no-redundant-catch-type: With `strict` or `useUnknownInCatchVariables`, a `catch` variable is already `unknown`. Remove the annotation.",
+      "bun/no-restricted-text: `foo` matches the restricted pattern `foo`.",
+      "bun/no-side-effects-on-import: This changes an object as soon as the module is imported. Move it into an exported function.",
+      "bun/no-side-effects-on-import: This runs as soon as the module is imported. Move it into an exported function.",
+      "bun/no-unhandled-emitter-errors: `spawn()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
+      "bun/no-unportable-commands: On Windows, `npm` is the script `npm.cmd`, which cannot run without a shell.",
+      "bun/no-unportable-commands: `&&` is shell syntax, and the shell differs between systems.",
+      "bun/no-unportable-commands: `ls` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` does not exist on Windows.",
+      "bun/no-unportable-commands: `ps` options differ between systems, and `ps` does not exist on Windows.",
+      "bun/no-useless-spread-fallback: This empty object is not needed. Spreading `false`, `null` or `undefined` into an object does nothing.",
+      "bun/prefer-builtin-sleep: This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
+      "bun/prefer-local-module: Import from `@/http` instead of `axios`.",
+      "bun/prefer-timeout-signal: Only a timer aborts this controller. Use `AbortSignal.timeout(ms)` instead.",
+      'bun/prefer-url-for-sibling-files: Bundlers cannot follow this path. Use `new URL("./file", import.meta.url)`.',
+      "bun/react-no-latest-value-ref: This effect only copies a value into `saved.current`. Use `useEffectEvent()` to read the latest values without a ref.",
+      "bun/react-no-latest-value-ref: `saved.current` is set during render. React may render more than once, or throw the result away.",
+      "bun/react-no-local-render-helpers: `renderCell` is created again on every render, and React does not see it as a component. Move it out and make it a component.",
+      'bun/react-no-namespace-hooks: Import `useState` by name from "react".',
+      "bun/react-prefer-updater-function: `rows` may be out of date when `setRows` is called. Pass a function: `setRows(previous => ..)`.",
+      "bun/zod-prefer-lazy-schema: This schema is built as soon as the module is imported. Build it when it is first used.",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun/prefer-local-module skips the files in exemptFiles", async () => {
     const options = { modules: [{ package: "axios", use: "@/http" }], exemptFiles: ["src/http.js"] };
     const code = `import axios from "axios";\n`;
     const files = {
@@ -2313,7 +2669,7 @@ describe.concurrent("the plugin bun", () => {
   });
 });
 
-/** For each rule of `bun:test`: code that it reports, code that it does not, and its options. */
+/** For each `bun:test` rule: code that it reports, code that it doesn't, and its options. */
 const twins: Record<string, [reported: string, clean: string, ...options: unknown[]]> = {
   "consistent-test-filename": [`test("a", () => {});`, `test("a", () => {});`],
   "consistent-test-it": [`it("a", () => {});`, `test("a", () => {});`],
@@ -2472,8 +2828,8 @@ const twins: Record<string, [reported: string, clean: string, ...options: unknow
   "warn-todo": [`test.todo("a");`, `test("a", () => {});`],
 };
 
-/** The rules of oxlint that do not ask what `test` refers to, or that are not about calls: they report in every file. */
-const goByWhatIsWritten = [
+/** oxlint's rules that don't resolve what `test` refers to, or that aren't about calls. They report in every file. */
+const ignoreImportSource = [
   "consistent-test-filename",
   "no-commented-out-tests",
   "no-conditional-in-test",
@@ -2486,16 +2842,16 @@ const goByWhatIsWritten = [
   "require-hook",
 ];
 
-describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () => {
+describe.concurrent("bun:test/, jest/ and vitest/ share one implementation", () => {
   const names =
     "afterAll, afterEach, beforeAll, beforeEach, describe, expect, expectTypeOf, it, jest, test, vi, xdescribe, xit, xtest";
   const sources = ["bun:test", "vitest", "@jest/globals", ""];
 
-  test("each reports what is imported from where it looks", async () => {
+  test("each plugin only reports names imported from its own module", async () => {
     const listed = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
     const all = (JSON.parse(listed.stdout) as { scope: string; value: string }[]).map(it => `${it.scope}/${it.value}`);
     expect(all.filter(it => it.startsWith("bun:test/"))).toEqual(Object.keys(twins).map(it => `bun:test/${it}`));
-    /** The rules of the other two plugins that are the same rule. */
+    /** Returns the same rule's IDs in the other two plugins. */
     const twinsOf = (rule: string) =>
       [`jest/${rule}`, `vitest/${rule.replace("-jest-", "-vi-")}`].filter(it => all.includes(it));
 
@@ -2503,7 +2859,7 @@ describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () =>
     const overrides = Object.entries(twins).map(([rule, [reported, clean, ...options]]) => {
       for (const [index, source] of sources.entries()) {
         const head = source && `import { ${names} } from "${source}";\n`;
-        // `consistent-test-filename` wants `.test.`.
+        // `consistent-test-filename` expects `.test.`.
         files[`${rule}.${index}.reported.${rule === "consistent-test-filename" ? "spec" : "test"}.ts`] =
           head + reported;
         files[`${rule}.${index}.clean.test.ts`] = head + clean;
@@ -2534,26 +2890,111 @@ describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () =>
         kind === "clean"
           ? []
           : index === 0
-            ? [`bun:test/${rule}`, ...(goByWhatIsWritten.includes(rule) ? twinsOf(rule) : [])]
-            : // oxlint has one list of what is imported from either, and of the globals, for both plugins.
+            ? [`bun:test/${rule}`, ...(ignoreImportSource.includes(rule) ? twinsOf(rule) : [])]
+            : // oxlint keeps one list of the names imported from either module, plus the globals, for both plugins.
               twinsOf(rule),
       ),
     );
   });
+
+  // Jest and Vitest accept a promise with or without `.rejects`. `bun test` only accepts one with `.rejects`.
+  test.each([
+    ["bun:test", "bun:test", []],
+    ["jest", "@jest/globals", ["10 load(3)"]],
+    ["vitest", "vitest", ["10 load(3)"]],
+  ])("%s/no-unneeded-async-expect-function: comments and `.rejects`", async (plugin, source, withoutRejects) => {
+    const rule = `${plugin}/no-unneeded-async-expect-function`;
+    const code = `import { expect, test } from "${source}";
+test("a", async () => {
+  await expect(async () => {
+    // @ts-expect-error
+    await load(1);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(2);
+  }).rejects.toThrow();
+  await expect(async () => {
+    await load(3);
+  }).toThrow();
+});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    // The fix would delete the comment, so the first report has no fix.
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "7 load(2)",
+      ...withoutRejects,
+    ]);
+  });
+
+  // For Jest and Vitest, `test` is a global, and a local variable in scope at the call shadows it.
+  test.each([
+    ["jest", "@jest/globals"],
+    ["vitest", "vitest"],
+  ])("%s/consistent-test-it doesn't rename to `test` where `test` is a local variable", async (plugin, source) => {
+    const rule = `${plugin}/consistent-test-it`;
+    const code = `import { it } from "${source}";
+for (const test of cases) {
+  it(test.name, () => {});
+}
+it("a", () => {});
+`;
+    const files = { "bunfig.toml": `[lint.rules]\n"${rule}" = "error"\n`, "a.test.ts": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.ts"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId === rule).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      "3 undefined",
+      "5 test",
+    ]);
+  });
+
+  // Only calls to globals are reported. oxlint 1.87 writes the names regardless of what they refer to.
+  test.each([
+    ["jest", `const { it, describe } = require("@jest/globals");`, true],
+    ["vitest", `const { it, describe } = require("vitest");`, true],
+    ["vitest", `const { it, describe } = require("vite-plus/test");`, true],
+    ["vitest", `const { it, describe } = require("@effect/vitest");`, true],
+    ["vitest", `const { it, describe } = await import("vitest");`, true],
+    ["jest", `const { it, describe } = require("./helpers");`, false],
+    ["jest", `const { test: it, suite: describe } = require("@jest/globals");`, false],
+    ["jest", `const [it, describe] = require("@jest/globals");`, false],
+    ["jest", `const it = require("@jest/globals"), describe = it;`, false],
+  ])("%s: a fix uses the names from `%s`: %p", async (plugin, declaration, isWritten) => {
+    const code = `${declaration}
+xdescribe("a", () => {
+  test("b", () => {});
+});
+function inner() {
+  const { describe } = require("@jest/globals");
+  xdescribe("c", () => {});
+}
+`;
+    const rules = ["consistent-test-it", "no-test-prefixes"].map(rule => `"${plugin}/${rule}" = "error"\n`);
+    const files = { "bunfig.toml": `[lint.rules]\n${rules.join("")}`, "a.test.mjs": code };
+    const { stdout } = await lint(files, ["-f", "json", "a.test.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: Message[] }[];
+    expect(messages.filter(it => it.ruleId.startsWith(plugin)).map(it => `${it.line} ${it.fix?.text}`)).toEqual([
+      `2 ${isWritten ? "describe.skip" : undefined}`,
+      `3 ${isWritten ? "it" : undefined}`,
+      "7 undefined",
+    ]);
+  });
 });
 
-describe.concurrent("the plugin bun:test", () => {
+describe.concurrent("the bun:test plugin", () => {
   const name = "bun:test/no-focused-tests";
   const flat = (rules: unknown) => `export default [{ rules: ${JSON.stringify(rules)} }];\n`;
   const legacy = (rules: unknown) =>
     JSON.stringify({ root: true, parserOptions: { ecmaVersion: 2022, sourceType: "module" }, rules });
   const oxlintrc = (rules: unknown) => JSON.stringify({ rules });
   const only = `import { test } from "bun:test";\ntest.only("a", () => {});\n`;
-  /** The lines of `unix` that are about a rule of the plugin: the line in the file, and what is in the brackets. */
+  /** Returns `line [severity/rule]` for each `unix` format line about one of the plugin's rules. */
   const unix = (stdout: string) =>
     [...stdout.matchAll(/^.*?:(\d+):\d+: .* \[(.*bun:test.*)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
 
-  test("without a configuration file some rules are on", async () => {
+  test("some rules are on without a config file", async () => {
     const code = `import { describe, expect, test } from "bun:test";
 test.only("a", () => {});
 test.skip("b", () => {});
@@ -2566,7 +3007,8 @@ test("f", () => {
   });
 });
 `;
-    // What oxlint has in `correctness` too, and what reports too much that is usual with Bun.
+    // Off by default: other rules that oxlint has in `correctness`, and rules that report too much code that's common
+    // with Bun.
     const quiet = `import { expect, test } from "bun:test";
 test("a", () => {});
 test("test b", () => {
@@ -2593,22 +3035,25 @@ expect(1).toBe(1);
         "8 bun:test/valid-expect-in-promise",
       ]);
       expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
-      // Errors, as what else is on, but for one.
+      // Skipping a test and exporting from a test file are often done on purpose. The rest are errors.
       const files = JSON.parse(stdout) as { messages: { ruleId: string; severity: number }[] }[];
-      const warnings = files.flatMap(it => it.messages).filter(it => it.severity !== 2);
-      expect(warnings.map(it => it.ruleId)).toEqual(["bun:test/no-disabled-tests"]);
+      const bunTestMessages = files.flatMap(it => it.messages).filter(it => it.ruleId.startsWith("bun:test/"));
+      expect(bunTestMessages.filter(it => it.severity !== 2).map(it => it.ruleId)).toEqual([
+        "bun:test/no-disabled-tests",
+        "bun:test/no-export",
+      ]);
     }
-    // A test that is skipped on purpose does not fail the run.
+    // A test that's skipped on purpose doesn't fail the run.
     expect(unix(skipped.stdout)).toEqual(["2 Warning/bun:test/no-disabled-tests"]);
     expect(skipped.exitCode).toBe(0);
   });
 
-  test("a configuration file replaces the defaults", async () => {
+  test("a config file replaces the defaults", async () => {
     const found = await Promise.all([
       lint({ "eslint.config.mjs": flat({}), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
       lint({ ".eslintrc.json": legacy({}), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
       lint({ ".oxlintrc.json": "{}", "a.test.js": only }, ["-f", "unix", "a.test.js"]),
-      // The defaults of oxlint, for a project that depends on it.
+      // A project that depends on oxlint gets oxlint's defaults.
       lint({ "package.json": `{ "devDependencies": { "oxlint": "1.87.0" } }`, "a.test.js": only }, ["-f", "unix", "."]),
       lint({ "a.test.js": only }, ["--no-config-lookup", "-f", "unix", "a.test.js"]),
       lint({ "a.test.js": only }, ["-f", "unix", "a.test.js"]),
@@ -2617,7 +3062,7 @@ expect(1).toBe(1);
     expect(found.map(it => it.exitCode)).toEqual([0, 0, 0, 0, 0, 1]);
   });
 
-  test("no configuration file has to name it", async () => {
+  test("works without being listed in a config file's plugins", async () => {
     const found = await Promise.all([
       lint({ "eslint.config.mjs": flat({ [name]: "error" }), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
       lint({ ".eslintrc.json": legacy({ [name]: "warn" }), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
@@ -2645,7 +3090,7 @@ expect(1).toBe(1);
     ]);
   });
 
-  test("[lint.rules] of bunfig.toml and the command line", async () => {
+  test("[lint.rules] in bunfig.toml and the command line can set its rules", async () => {
     const skipped = `${only}test.skip("b", () => {});\n`;
     const bunfig = `[lint.rules]\n"${name}" = "off"\n"bun:test/no-disabled-tests" = "error"\n`;
     const rule = (text: string) => lint({ "a.test.js": skipped }, ["--rule", text, "-f", "unix", "a.test.js"]);
@@ -2654,7 +3099,7 @@ expect(1).toBe(1);
     const found = await Promise.all([
       lint({ "bunfig.toml": bunfig, "a.test.js": skipped }, ["-f", "unix", "a.test.js"]),
       rule(`"${name}": off`),
-      // ESLint takes the first colon for the end of the name.
+      // ESLint would end the name at the first colon.
       rule(`${name}: off`),
       rule(`${name}:0,bun:test/no-disabled-tests:[2]`),
       rule(`{"${name}": "off"}`),
@@ -2662,7 +3107,7 @@ expect(1).toBe(1);
       filter("-W", name),
       filter(`--deny=${name}`),
       filter("-D", name, "-A", name),
-      // Without the plugin a name is that of a rule of oxlint.
+      // A name without the plugin prefix refers to one of oxlint's rules.
       filter("-D", "no-focused-tests"),
       filter("-D", "all"),
     ]);
@@ -2681,11 +3126,11 @@ expect(1).toBe(1);
     ]);
   });
 
-  test("neither a category nor a plugin of oxlint turns a rule on, and it is no plugin of an .oxlintrc.json", async () => {
+  test("no oxlint category or plugin turns its rules on, and an .oxlintrc.json can't list it in `plugins`", async () => {
     const all = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
     const categories = Object.fromEntries(all.map(it => [it, "error"]));
     const plugins = ["jest", "vitest"];
-    const [everything, andTheRule, named] = await Promise.all([
+    const [everything, andTheRule, listedInPlugins] = await Promise.all([
       lint({ ".oxlintrc.json": JSON.stringify({ plugins, categories }), "a.test.js": only }, [
         "-f",
         "unix",
@@ -2699,8 +3144,26 @@ expect(1).toBe(1);
     ]);
     expect(unix(everything.stdout)).toEqual([]);
     expect(unix(andTheRule.stdout)).toEqual(["2 Warning/bun:test(no-focused-tests)"]);
-    expect(named.stdout).toContain("Unknown plugin: 'bun:test'.");
-    expect(named.exitCode).toBe(1);
+    expect(listedInPlugins.stdout).toContain("Unknown plugin: 'bun:test'.");
+    expect(listedInPlugins.exitCode).toBe(1);
+  });
+
+  test("`settings.vitest` doesn't apply to it", async () => {
+    const code = `import { describe } from "bun:test";\nimport { add } from "./add";\ndescribe("add", () => {});\ndescribe("", () => {});\n`;
+    const config = {
+      settings: { vitest: { typecheck: true } },
+      rules: { "bun:test/prefer-describe-function-title": 2, "bun:test/valid-title": 2 },
+    };
+    const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config), "a.test.ts": code }, ["-f", "unix", "."]);
+    expect(unix(stdout)).toEqual(["3 Error/bun:test(prefer-describe-function-title)", "4 Error/bun:test(valid-title)"]);
+  });
+
+  test("valid-title prints the pattern exactly as the option spells it", async () => {
+    const code = `import { it, test } from "bun:test";\nit("a", () => {});\ntest("b", () => {});\n`;
+    const rules = { "bun:test/valid-title": ["error", { mustMatch: { it: "^should ", test: "/^ADDS /i" } }] };
+    const { stdout } = await lint({ "eslint.config.mjs": flat(rules), "a.test.js": code }, ["-f", "unix", "."]);
+    expect(stdout).toContain(":2:4: it should match ^should  [");
+    expect(stdout).toContain(":3:6: test should match /^ADDS /i [");
   });
 
   test("comments turn a rule off", async () => {
@@ -2744,12 +3207,12 @@ test.only("a", () => {});
     const files = Object.fromEntries(
       [
         `"${name}": "error"`,
-        // ESLint cannot read these: for it the name ends at the first colon.
+        // ESLint can't parse these, because it ends the name at the first colon.
         `${name}: "error"`,
         `${name}:2`,
         `no-var: 2, ${name}: [2]`,
         `${name}: 2 -- why`,
-        // Without commas it is read as JSON.
+        // Without commas, it's parsed as JSON.
         `"${name}": 2 "no-var": 2`,
         `${name}: 2 no-var: 2`,
       ].map((text, index) => [`${index}.test.js`, `/* eslint ${text} */\n${only}`]),
@@ -2758,7 +3221,7 @@ test.only("a", () => {});
     expect(Object.keys(files).map(file => reported(stdout, file))).toEqual(Array(7).fill([`3 ${name}`]));
   });
 
-  test("a comment that disables nothing is reported, and --fix removes the name", async () => {
+  test("an unused disable comment is reported, and --fix removes the rule's name from it", async () => {
     const code = `import { test } from "bun:test";
 // eslint-disable-next-line ${name}, bun:test/no-disabled-tests -- why
 test.only("a", () => {});
@@ -2787,7 +3250,7 @@ var a = b;
     );
   });
 
-  test("suppressions", async () => {
+  test("--suppress-rule works with its rules", async () => {
     for (const [config, text, file] of [
       ["eslint.config.mjs", flat({ [name]: "error" }), "eslint-suppressions.json"],
       [".oxlintrc.json", oxlintrc({ [name]: "error" }), "oxlint-suppressions.json"],
@@ -2810,7 +3273,7 @@ var a = b;
     }
   });
 
-  test("every format", async () => {
+  test("every format prints the rule's name", async () => {
     const formats = ["stylish", "unix", "json", "github", "checkstyle", "junit", "gitlab", "sarif", "pretty", "agent"];
     const print = (files: Record<string, string>) =>
       Promise.all(formats.map(async format => (await lint(files, ["-f", format, "a.test.js"])).stdout));
@@ -2818,13 +3281,13 @@ var a = b;
       print({ "a.test.js": only }),
       print({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": only }),
     ]);
-    /** How the rule is written. */
-    const written = (text: string) => [...new Set(text.match(/bun(:|%3A)test[/(]no-focused-tests\)?/g))];
-    expect(Object.fromEntries(formats.map((format, index) => [format, written(plain[index])]))).toEqual({
+    /** Returns the spellings of the rule's name in the output. */
+    const ruleNamesIn = (text: string) => [...new Set(text.match(/bun(:|%3A)test[/(]no-focused-tests\)?/g))];
+    expect(Object.fromEntries(formats.map((format, index) => [format, ruleNamesIn(plain[index])]))).toEqual({
       stylish: ["bun:test/no-focused-tests"],
       unix: ["bun:test/no-focused-tests"],
       json: ["bun:test/no-focused-tests"],
-      // A colon ends the name of a property there.
+      // In a workflow command, a colon ends a property's name.
       github: ["bun%3Atest/no-focused-tests"],
       checkstyle: ["bun:test(no-focused-tests)"],
       junit: ["bun:test(no-focused-tests)"],
@@ -2833,7 +3296,7 @@ var a = b;
       pretty: ["bun:test/no-focused-tests"],
       agent: ["bun:test/no-focused-tests"],
     });
-    expect(Object.fromEntries(formats.map((format, index) => [format, written(oxlint[index])]))).toEqual({
+    expect(Object.fromEntries(formats.map((format, index) => [format, ruleNamesIn(oxlint[index])]))).toEqual({
       stylish: ["bun:test(no-focused-tests)"],
       unix: ["bun:test(no-focused-tests)"],
       json: ["bun:test(no-focused-tests)"],
@@ -2845,15 +3308,15 @@ var a = b;
       pretty: ["bun:test/no-focused-tests"],
       agent: ["bun:test(no-focused-tests)"],
     });
-    // There is no page about it at oxc.rs.
+    // oxc.rs has no docs page for it, so there's no `url`.
     expect(Object.keys(JSON.parse(oxlint[formats.indexOf("json")]).diagnostics[0])).not.toContain("url");
-    // What to do about it is said whatever the configuration.
+    // The help text is printed with either config.
     for (const text of [plain, oxlint].map(it => it[formats.indexOf("pretty")])) {
       expect(text).toContain("Remove focus from test.");
     }
   });
 
-  test("--print-config has the rules and no plugin", async () => {
+  test("--print-config lists the rules but not the plugin", async () => {
     const [plain, eslint, oxlint] = await Promise.all([
       lint({ "a.test.js": only }, ["--print-config", "a.test.js"]),
       lint({ "eslint.config.mjs": flat({ [name]: "warn" }), "a.test.js": only }, ["--print-config", "a.test.js"]),
@@ -2863,7 +3326,7 @@ var a = b;
     ]);
     expect(Object.entries(JSON.parse(plain.stdout).rules).filter(it => it[0].startsWith("bun:test/"))).toEqual([
       ["bun:test/no-disabled-tests", [1]],
-      ["bun:test/no-export", [2]],
+      ["bun:test/no-export", [1]],
       ["bun:test/no-focused-tests", [2]],
       ["bun:test/valid-describe-callback", [2]],
       ["bun:test/valid-expect", [2]],
@@ -2875,25 +3338,27 @@ var a = b;
     expect(JSON.parse(oxlint.stdout).plugins).toEqual([]);
   });
 
-  test("--rules lists them, without a category and without a page", async () => {
-    const [json, lines, alone] = await Promise.all([
+  test("--rules lists its rules without a category", async () => {
+    const [json, lines, withoutConfig] = await Promise.all([
       lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
       lint({}, ["--rules"]),
       lint({}, ["--rules", "-f", "json"]),
     ]);
-    // `default` is what oxlint turns on without a configuration file, also where some of these rules are on.
-    expect(alone.stdout).toBe(json.stdout);
+    // `default` means that oxlint turns the rule on without a config file, even in a project where `bun lint` turns
+    // some of these rules on.
+    expect(withoutConfig.stdout).toBe(json.stdout);
     const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
     expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
-    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
-      "[null,false,null]",
-    ]);
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default])))]).toEqual(["[null,false]"]);
+    expect(listed.map(it => it.docs_url)).toEqual(
+      listed.map(it => `https://bun.com/docs/lint/rules/bun-test/${it.value}`),
+    );
     expect(lines.stdout.split("\n").filter(it => it.startsWith("bun:test/"))).toEqual(
       Object.keys(twins).map(it => `bun:test/${it}`),
     );
   });
 
-  test("a plugin of the project that is called bun:test hides it", async () => {
+  test("a project's own plugin named bun:test overrides it", async () => {
     const config = `
       const rule = { create: context => ({ Program: node => context.report({ node, message: "theirs" }) }) };
       export default [{ plugins: { "bun:test": { rules: { "no-focused-tests": rule } } }, rules: { "${name}": "error" } }];`;
@@ -2906,26 +3371,26 @@ var a = b;
     expect(messages(ours.stdout)).toEqual(["Unexpected focused test."]);
   });
 
-  test("options that a rule does not have are refused, and a rule that does not exist", async () => {
+  test("rejects options that a rule doesn't have, and a rule that doesn't exist", async () => {
     const check = (rules: unknown) => lint({ "eslint.config.mjs": flat(rules), "a.test.js": only }, ["a.test.js"]);
-    const refused = await Promise.all(
+    const rejected = await Promise.all(
       [
         { "bun:test/max-expects": ["error", { nope: 1 }] },
         { "bun:test/max-expects": ["error", { max: "1" }] },
         { "bun:test/prefer-snapshot-hint": ["error", "sometimes"] },
         { "bun:test/valid-title": ["error", { mustMatch: 1 }] },
-        // It is about `.snap` files, which import nothing.
+        // This option is about `.snap` files, which don't import anything.
         { "bun:test/no-large-snapshots": ["error", { allowedSnapshots: {} }] },
-        // Bun has neither `vi.importActual` nor `vi.importMock`.
+        // Bun doesn't have `vi.importActual` or `vi.importMock`.
         { "bun:test/require-mock-type-parameters": ["error", { checkImportFunctions: true }] },
         { [name]: ["error", {}] },
       ].map(async rules => [Object.keys(rules)[0], await check(rules)] as const),
     );
-    for (const [id, { stderr, exitCode }] of refused) {
+    for (const [id, { stderr, exitCode }] of rejected) {
       expect(stderr).toContain(`Key "rules": Key "${id}":`);
       expect(exitCode).toBe(2);
     }
-    const taken = await check({
+    const accepted = await check({
       "bun:test/max-expects": ["error", { max: 1 }],
       "bun:test/prefer-snapshot-hint": ["error", "always"],
       "bun:test/valid-title": [
@@ -2934,14 +3399,14 @@ var a = b;
       ],
       "bun:test/no-restricted-matchers": ["error", { toBeFalsy: null, "not.toBe": "why" }],
     });
-    expect(taken.stderr).not.toContain("Key");
-    expect(taken.exitCode).toBe(0);
+    expect(accepted.stderr).not.toContain("Key");
+    expect(accepted.exitCode).toBe(0);
     const missing = await check({ "bun:test/no-mocks-import": "error" });
-    expect(missing.stderr).toContain(`1 rule of the plugin "bun:test" did not run: bun:test/no-mocks-import`);
+    expect(missing.stderr).toContain("1 rule in eslint.config.mjs is not supported: bun:test/no-mocks-import");
     expect(missing.exitCode).toBe(2);
   });
 
-  test("what is said is not about Jest or Vitest", async () => {
+  test("messages and help text don't mention Jest or Vitest", async () => {
     const code = `import { expect, jest, test } from "bun:test";
 test("a", () => {
   return expect(1).toBe(1);
@@ -2968,8 +3433,12 @@ test("c", () => {
       "json",
       "a.test.ts",
     ]);
-    const said = (JSON.parse(stdout).diagnostics as Record<string, string>[]).map(it => [it.message, it.help, it.note]);
-    expect(said).toEqual([
+    const printed = (JSON.parse(stdout).diagnostics as Record<string, string>[]).map(it => [
+      it.message,
+      it.help,
+      it.note,
+    ]);
+    expect(printed).toEqual([
       [
         "Test is missing a timeout.",
         "Add a numeric third argument, a `{ timeout }` option object, or call `setDefaultTimeout(..)` before this test.",
@@ -2995,7 +3464,7 @@ test("c", () => {
   });
 });
 
-/** Made-up tests that use what `bun:test` has, in every shape that `bun test` takes. All of them pass. */
+/** Made-up tests that use the `bun:test` API in every form that `bun test` accepts. All of them pass. */
 const valid = {
   "shapes.test.ts": `import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, test } from "bun:test";
 
@@ -3662,8 +4131,8 @@ exports[\`Upper case errors: a hint 1\`] = \`"b"\`;
 `,
 };
 
-describe("code that bun test passes", () => {
-  // With `CI` a snapshot that is not found is a failure, and is not written.
+describe("tests that pass in bun test", () => {
+  // With `CI` set, a missing snapshot is a failure and isn't written.
   async function run(cwd: string, ...cmd: string[]) {
     await using proc = spawn({
       cmd: [bunExe(), ...cmd],
@@ -3678,7 +4147,7 @@ describe("code that bun test passes", () => {
   /** "68 pass", "1 skip", .. */
   const counts = (stderr: string) => stderr.match(/^ *\d+ (pass|skip|todo|fail)$/gm)?.map(it => it.trim());
 
-  test("gets no report without a configuration file", async () => {
+  test("get no reports without a config file", async () => {
     using dir = tempDir("bun-rules", valid);
     const [tests, found] = await Promise.all([run(String(dir), "test"), run(String(dir), "lint", "-f", "unix", ".")]);
     expect(counts(tests.stderr)).toContain("0 fail");
@@ -3687,7 +4156,7 @@ describe("code that bun test passes", () => {
     expect(found.exitCode).toBe(0);
   });
 
-  test("still passes after --fix with every rule on, and nothing that was written is gone", async () => {
+  test("still pass after --fix with every rule on, and keep their messages, titles, timeouts and options", async () => {
     using dir = tempDir("bun-rules", valid);
     const before = await run(String(dir), "test");
     const rules = Object.keys(twins).flatMap(it => ["--rule", `bun:test/${it}: error`]);
@@ -3698,10 +4167,10 @@ describe("code that bun test passes", () => {
     for (const [name, text] of Object.entries(valid)) {
       const fixed = await Bun.file(`${dir}/${name}`).text();
       if (name === "shapes.test.ts") expect(fixed).not.toBe(text);
-      // The messages of `expect`, the titles, the timeouts and the options.
-      const kept = (text: string) =>
+      // `expect` messages, titles, timeouts and options.
+      const literalsIn = (text: string) =>
         (text.match(/"[^"\n]*"|\b1000\b|\{ (timeout|retry|repeats)[^}]*\}/g) ?? []).toSorted();
-      expect(kept(fixed)).toEqual(kept(text));
+      expect(literalsIn(fixed)).toEqual(literalsIn(text));
     }
   });
 });

@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashSet;
+use bun_lint::types::IdSet;
 
 /// Enforce that class methods utilize `this`.
 pub struct ClassMethodsUseThis {
@@ -12,7 +12,7 @@ pub const MISSING_THIS: Message = Message::new(
     "Expected 'this' to be used by class {{name}}.",
 );
 
-/// Which members of a class that has an `implements` clause are left alone.
+/// Selects the members to skip in a class that has an `implements` clause.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum IgnoreClassesWithImplements {
     None,
@@ -20,13 +20,13 @@ pub enum IgnoreClassesWithImplements {
     PublicFields,
 }
 
-/// What this rule and the one of typescript-eslint have in common.
+/// The code this rule shares with typescript-eslint's version.
 pub struct Checker {
     enforce_for_class_fields: bool,
     except_methods: Vec<Vec<u8>>,
     ignore_override_methods: bool,
     ignore_classes_with_implements: IgnoreClassesWithImplements,
-    /// typescript-eslint goes by `private` and `protected` alone.
+    /// typescript-eslint only looks at `private` and `protected`.
     are_private_names_public: bool,
 }
 
@@ -34,31 +34,36 @@ pub struct Checker {
 pub struct State<'a> {
     /// The functions that have to use `this`.
     methods: Vec<Func<'a>>,
-    /// Whether each of them has a `this` or a `super` of its own.
+    /// For each of them, whether it has its own `this` or `super`.
     is_using_this: Vec<bool>,
     /// The other methods, accessors and constructors.
     others: Vec<Func<'a>>,
-    /// The functions of class members with a `this` or a `super` of their own that is written elsewhere.
-    uses_this: FxHashSet<Func<'a>>,
-    /// The function of a class member that a `this` in a node belongs to. `None`: it belongs to
-    /// something else.
+    /// Class member functions whose own `this` or `super` was found outside the span tracked for them.
+    uses_this: IdSet<Func<'a>>,
+    /// The class member function that a `this` inside a node belongs to. `None` if it belongs to something else.
     owners_of_this: AncestorMemo<'a, Option<Func<'a>>>,
 }
 
 impl<'a> State<'a> {
     pub fn methods_without_this(&self) -> impl Iterator<Item = Func<'a>> {
-        let unused = self.methods.iter().zip(&self.is_using_this).filter(|it| !it.1);
-        unused.map(|it| *it.0).filter(|func| !self.uses_this.contains(func))
+        let unused = self
+            .methods
+            .iter()
+            .zip(&self.is_using_this)
+            .filter(|it| !it.1);
+        unused
+            .map(|it| *it.0)
+            .filter(|func| !self.uses_this.contains(*func))
     }
 }
 
-/// Whether `e` is the value or the computed key of `member`, as opposed to a decorator.
+/// True if `e` is `member`'s value or computed key, as opposed to a decorator.
 fn is_value_or_key<'a>(member: Member<'a>, e: Expr<'a>) -> bool {
     member.init() == Some(e)
         || matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e)
 }
 
-/// Whether ESLint's `parent` of `func` is a member of a class.
+/// True if `func`'s ESLint `parent` is a class member.
 fn is_child_of_member(func: Func) -> bool {
     match func.owner() {
         Node::Member(_) => true,
@@ -82,50 +87,69 @@ impl Checker {
         let except_methods = options.strings("exceptMethods");
         Checker {
             enforce_for_class_fields: options.bool_or("enforceForClassFields", true),
-            except_methods: except_methods.iter().map(|name| name.as_bytes().to_vec()).collect(),
+            except_methods: except_methods
+                .iter()
+                .map(|name| name.as_bytes().to_vec())
+                .collect(),
             ignore_override_methods: options.bool_or("ignoreOverrideMethods", false),
             ignore_classes_with_implements,
             are_private_names_public,
         }
     }
 
-    /// Notes which functions of class members the `this` and the `super` of `file` belong to, once the functions that have to use
-    /// `this` are known.
+    /// Records which class member functions the `this` and `super` expressions in `file` belong to. Call it once the
+    /// functions that have to use `this` are known.
     pub fn mark_this_used<'a>(&self, file: &'a File<'a>, state: &mut State<'a>) {
         if state.methods.is_empty() {
             return;
         }
         state.is_using_this = vec![false; state.methods.len()];
-        // For each: where a `this` belongs to it or to what is in it, its index, and whether no more is to be found out.
+        // For each function: the span where a `this` belongs to it or to something nested in it, the function, its
+        // index, and whether nothing more needs to be found out about it.
         let inside = |func: Func<'a>| {
             let whole = func.span();
             let start = match func.open_paren() {
-                Some(open) => func.type_params().first().map_or(open, |it| it.span().start),
+                Some(open) => func
+                    .type_params()
+                    .first()
+                    .map_or(open, |it| it.span().start),
                 None => whole.start,
             };
             Span::new(start, whole.end)
         };
-        let methods = state.methods.iter().enumerate().map(|(index, &func)| (inside(func), func, index, false));
-        let others = state.others.iter().map(|&func| (inside(func), func, usize::MAX, true));
+        let methods = state
+            .methods
+            .iter()
+            .enumerate()
+            .map(|(index, &func)| (inside(func), func, index, false));
+        let others = state
+            .others
+            .iter()
+            .map(|&func| (inside(func), func, usize::MAX, true));
         let mut methods: Vec<_> = methods.chain(others).collect();
-        methods.sort_unstable_by_key(|it| it.0.start);
-        // The last that starts before the `this`.
+        bun_lint::utils::sort::sort_by_key(&mut methods, |it| it.0.start);
+        // The index of the last function that starts before the `this`.
         let mut at = 0;
-        for e in file.exprs_of_kind(ExprTag::This).chain(file.exprs_of_kind(ExprTag::Super)) {
+        for e in file
+            .exprs_of_kind(ExprTag::This)
+            .chain(file.exprs_of_kind(ExprTag::Super))
+        {
             let start = e.span().start;
             let is_at = methods.get(at).is_some_and(|it| it.0.start <= start)
                 && methods.get(at + 1).is_none_or(|it| start < it.0.start);
             if !is_at {
-                at = methods.partition_point(|it| it.0.start <= start).wrapping_sub(1);
+                at = methods
+                    .partition_point(|it| it.0.start <= start)
+                    .wrapping_sub(1);
             }
-            let around = methods.get_mut(at).filter(|it| start < it.0.end);
-            if around.as_ref().is_some_and(|it| it.3) {
+            let enclosing_method = methods.get_mut(at).filter(|it| start < it.0.end);
+            if enclosing_method.as_ref().is_some_and(|it| it.3) {
                 continue;
             }
-            match (self.owner_of_this(e, state), around) {
-                (Some(owner), Some(around)) if around.1 == owner => {
-                    around.3 = true;
-                    if let Some(is_using_this) = state.is_using_this.get_mut(around.2) {
+            match (self.owner_of_this(e, state), enclosing_method) {
+                (Some(owner), Some(enclosing_method)) if enclosing_method.1 == owner => {
+                    enclosing_method.3 = true;
+                    if let Some(is_using_this) = state.is_using_this.get_mut(enclosing_method.2) {
                         *is_using_this = true;
                     }
                 }
@@ -137,15 +161,17 @@ impl Checker {
         }
     }
 
-    /// The function of a class member that `e`, a `this` or a `super`, counts for.
+    /// Returns the class member function that `e`, a `this` or `super`, counts for.
     fn owner_of_this<'a>(&self, e: Expr<'a>, state: &mut State<'a>) -> Option<Func<'a>> {
         let is_oxlint = e.file().language().is_oxlint;
         if e.is_jsx_tag_name() && !is_oxlint {
             return None;
         }
-        // For oxlint a declaration without a body is a function as well.
-        let is_function =
-            |func: Func<'a>| func.has_body() || is_oxlint && !matches!(func.owner(), Node::Member(it) if it.is_signature());
+        // oxlint also treats a declaration without a body as a function.
+        let is_function = |func: Func<'a>| {
+            func.has_body()
+                || is_oxlint && !matches!(func.owner(), Node::Member(it) if it.is_signature())
+        };
         let owner = state.owners_of_this.find(Node::Expr(e), |child, ancestor| match ancestor {
             Node::Func(func) => match func.kind() {
                 FnKind::StaticBlock => Some(None),
@@ -162,13 +188,13 @@ impl Checker {
                 }
                 _ => None,
             },
-            // Of a field oxlint looks at the key alone, and not at that of one with `accessor`.
+            // In a field, oxlint only looks at the key, and not even that if the field has `accessor`.
             Node::Member(member) if is_oxlint && member.kind() == MemberKind::Property && !member.is_signature() => {
                 let is_key = !member.flags().contains(Flags::ACCESSOR)
                     && matches!((member.key().map(Key::kind), child), (Some(KeyKind::Computed(key)), Node::Expr(e)) if key == e);
                 (!is_key).then_some(None)
             }
-            // What follows the key of a field is an implicit function.
+            // Everything after a field's key is an implicit function.
             Node::Member(member)
                 if member.kind() == MemberKind::Property
                     && !member.flags().contains(Flags::ABSTRACT)
@@ -183,21 +209,25 @@ impl Checker {
             }
             _ => None,
         });
-        // oxlint looks at the body alone.
+        // oxlint only looks at the body.
         let body_start = |func: Func<'a>| match func.arrow_span() {
             Some(arrow) => Some(arrow.end),
             None => func.body_span().map(|it| it.start),
         };
-        owner.flatten().filter(|&func| !is_oxlint || body_start(func).is_some_and(|start| start <= e.span().start))
+        owner.flatten().filter(|&func| {
+            !is_oxlint || body_start(func).is_some_and(|start| start <= e.span().start)
+        })
     }
 
-    /// Notes the functions of the members of `class` that have to use `this`, and the others.
+    /// Records which member functions of `class` have to use `this`, and which don't.
     pub fn check_class<'a>(&self, class: Class<'a>, state: &mut State<'a>) {
         for member in class.members() {
             let before = state.methods.len();
             self.check_member(member, class, state);
             if state.methods.len() == before {
-                state.others.extend(member.func().filter(|it| it.has_body()));
+                state
+                    .others
+                    .extend(member.func().filter(|it| it.has_body()));
             }
         }
     }
@@ -213,10 +243,13 @@ impl Checker {
         if flags.intersects(Flags::STATIC | Flags::ABSTRACT) {
             return;
         }
-        // oxlint sees no function in parentheses, and none in a key.
+        // oxlint doesn't see a parenthesized function, or one in a key.
         let is_oxlint = member.file().language().is_oxlint;
         let value = match is_field {
-            true => member.init().filter(|it| !(is_oxlint && it.is_parenthesized())).and_then(Expr::as_fn),
+            true => member
+                .init()
+                .filter(|it| !(is_oxlint && it.is_parenthesized()))
+                .and_then(Expr::as_fn),
             false => member.func(),
         };
         let value = value.filter(|func| func.has_body());
@@ -249,7 +282,9 @@ impl Checker {
                 return;
             }
         }
-        state.methods.extend(value.into_iter().chain(function_in_key));
+        state
+            .methods
+            .extend(value.into_iter().chain(function_in_key));
     }
 }
 
@@ -282,6 +317,7 @@ impl Rule for ClassMethodsUseThis {
         self.checker.mark_this_used(cx.file(), &mut cx.state);
         for func in cx.state.methods_without_this() {
             cx.report(ast_utils::get_function_head_loc(func), MISSING_THIS)
+                .called_with(func.owner())
                 .data("name", ast_utils::get_function_name_with_kind(func));
         }
     }

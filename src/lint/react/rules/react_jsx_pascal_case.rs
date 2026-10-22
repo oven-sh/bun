@@ -1,7 +1,7 @@
 use crate::jsx::get_jsx_element_name;
 use crate::util_jsx::is_dom_component;
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
+use bun_lint::glob::Minimatch;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::text::glob_match;
@@ -16,7 +16,7 @@ pub struct JsxPascalCase {
 
 struct Ignored {
     entry: Box<[u8]>,
-    minimatch: Pattern,
+    minimatch: Minimatch,
 }
 
 const USE_PASCAL_CASE: Message =
@@ -38,7 +38,7 @@ impl Rule for JsxPascalCase {
         let options = options.object(0);
         let ignored = |entry: &str| Ignored {
             entry: entry.as_bytes().into(),
-            minimatch: Pattern::new(entry.as_bytes(), GlobOptions { noglobstar: true, ..GlobOptions::MINIMATCH_3 }),
+            minimatch: Minimatch::new(entry.as_bytes()),
         };
         JsxPascalCase {
             allow_all_caps: options.bool_or("allowAllCaps", false),
@@ -59,12 +59,12 @@ impl Rule for JsxPascalCase {
         };
         let is_oxlint = cx.language().is_oxlint;
         let name = get_jsx_element_name(jsx);
-        // For oxlint every small letter makes a tag of the DOM.
+        // For oxlint any lowercase first letter makes it a DOM tag.
         let is_compat_tag = match is_oxlint {
             true => characters(&name, is_oxlint).next().is_none_or(|it| it == Character::LowerCase),
             false => is_dom_component(jsx),
         };
-        // Most are plain names in Pascal case.
+        // Fast path: most names are plain PascalCase.
         if is_compat_tag || name.len() > 1 && test_pascal_case(&name, is_oxlint) {
             return;
         }
@@ -89,12 +89,12 @@ impl Rule for JsxPascalCase {
                     (true, true) => OXLINT_PASCAL_CASE_OR_ALL_CAPS,
                 };
                 cx.report(jsx.opening_span(), message).data("name", split_name.to_vec());
-                // oxlint goes on to the next part.
+                // oxlint continues with the next part.
                 if !is_oxlint {
                     return;
                 }
             }
-            // Only the first part is looked at.
+            // Only the first part is checked.
             if self.allow_namespace {
                 return;
             }
@@ -105,7 +105,7 @@ impl Rule for JsxPascalCase {
 impl Ignored {
     /// upstream's `ignoreCheck`
     fn matches(&self, name: &[u8], is_oxlint: bool) -> bool {
-        // oxlint has the crate `fast-glob`.
+        // oxlint uses the `fast-glob` crate.
         *self.entry == *name || if is_oxlint { glob_match(&self.entry, name) } else { self.minimatch.matches(name) }
     }
 }
@@ -115,14 +115,14 @@ enum Character {
     UpperCase,
     LowerCase,
     Digit,
-    /// Another letter or number.
+    /// Any other letter or number.
     Alphanumeric,
     Underscore,
     Other,
 }
 
-/// upstream's `testUpperCase`, `testLowerCase`, `testDigit`: by what `toUpperCase` and `toLowerCase` make of a UTF-16
-/// code unit; what both leave alone is not alphanumeric. oxlint goes by the properties of Unicode.
+/// upstream's `testUpperCase`, `testLowerCase`, `testDigit`. They classify a UTF-16 code unit by what `toUpperCase` and
+/// `toLowerCase` do to it, and one that neither changes isn't alphanumeric. oxlint uses Unicode properties.
 fn characters(name: &[u8], is_oxlint: bool) -> impl Iterator<Item = Character> {
     strings::wtf8_codepoints(name).map(move |(_, code_point)| match char::from_u32(code_point) {
         Some('A'..='Z') => Character::UpperCase,
@@ -148,7 +148,7 @@ fn characters(name: &[u8], is_oxlint: bool) -> impl Iterator<Item = Character> {
 }
 
 fn test_all_caps(name: &[u8], is_oxlint: bool) -> bool {
-    // oxlint takes the number of bytes for the number of characters.
+    // oxlint uses the byte count as the character count.
     let length = if is_oxlint { name.len() } else { strings::wtf8_codepoint_count(name) };
     characters(name, is_oxlint).enumerate().all(|(index, it)| match it {
         Character::UpperCase | Character::Digit => true,

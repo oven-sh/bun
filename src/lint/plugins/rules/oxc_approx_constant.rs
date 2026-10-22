@@ -21,7 +21,7 @@ impl Rule for ApproxConstant {
         let Some(value) = value_of(literal) else {
             return;
         };
-        // What is written has three decimals or more. Nothing is formatted for other numbers.
+        // Fast path: a match needs at least three decimals, so skip formatting numbers that aren't close to a constant.
         if !KNOWN_CONSTS.iter().any(|it| (it.0 - value).abs() < 0.002) {
             return;
         }
@@ -46,7 +46,7 @@ fn value_of(literal: Literal) -> Option<f64> {
             ExprKind::Number(value) => return Some(value),
             _ => return None,
         },
-        // The sign is not part of the literal.
+        // The sign isn't part of the literal.
         Node::Type(ty) => match ty.kind() {
             TypeKind::NumberLit(value) => return Some(value.abs()),
             _ => return None,

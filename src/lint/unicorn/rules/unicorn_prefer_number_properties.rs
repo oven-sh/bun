@@ -1,8 +1,8 @@
-use bun_lint_oxlint::ast_util::{as_member_expression, is_global_reference, static_property_name};
 use crate::unicorn::{GLOBAL_OBJECT_NAMES, is_unary_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::{as_member_expression, is_global_reference, static_property_name};
 
 /// Disallows use of `parseInt()`, `parseFloat()`, `isNaN()`, `isFinite()`, `NaN`, `Infinity` and `-Infinity` as global
 /// variables.
@@ -11,22 +11,31 @@ pub struct PreferNumberProperties {
     check_nan: bool,
 }
 
-const PREFER_NUMBER_PROPERTIES: Message =
-    Message::new("", "Use `Number.{{method_name}}` instead of the global `{{method_name}}`");
+const PREFER_NUMBER_PROPERTIES: Message = Message::new(
+    "",
+    "Use `Number.{{method_name}}` instead of the global `{{method_name}}`",
+);
 
 const FUNCTIONS: [&str; 4] = ["isNaN", "isFinite", "parseFloat", "parseInt"];
 
 pub struct State<'a> {
-    /// The nearest unary expression around something.
+    /// Maps a node to the nearest unary expression around it.
     nearest_unary: AncestorMemo<'a, Expr<'a>>,
     functions: [Name<'a>; 4],
 }
 
 impl Rule for PreferNumberProperties {
-    const META: Meta =
-        Meta::oxlint(Plugin::Unicorn, "prefer-number-properties", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On =
-        On::new().members_named(&["NaN", "Infinity"]).exprs(&[ExprTag::Index]).calls_named(&FUNCTIONS).finish();
+    const META: Meta = Meta::oxlint(
+        Plugin::Unicorn,
+        "prefer-number-properties",
+        Kind::Suggestion,
+    )
+    .fixable(Fixable::Code);
+    const ON: On = On::new()
+        .members_named(&["NaN", "Infinity"])
+        .exprs(&[ExprTag::Index])
+        .calls_named(&FUNCTIONS)
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -55,7 +64,10 @@ impl Rule for PreferNumberProperties {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        Some(State { nearest_unary: AncestorMemo::default(), functions: FUNCTIONS.map(|it| file.name_of(it)) })
+        Some(State {
+            nearest_unary: AncestorMemo::default(),
+            functions: FUNCTIONS.map(|it| file.name_of(it)),
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -70,47 +82,79 @@ impl Rule for PreferNumberProperties {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let constants = [("NaN", self.check_nan), ("Infinity", self.check_infinity)];
-        for (name, _) in constants.into_iter().filter(|it| it.1 && file.find_name(it.0).is_some()) {
-            for reference in file.unresolved_references_to(name.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
+        for (name, _) in constants
+            .into_iter()
+            .filter(|it| it.1 && file.find_name(it.0).is_some())
+        {
+            for reference in file
+                .unresolved_references_to(name.as_bytes())
+                .filter(|it| !it.is_jsx_pragma())
+            {
                 let span = reference.span();
-                let is_shorthand = reference.expr().and_then(is_shorthand_of_object_property) == Some(true);
-                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
+                let is_shorthand =
+                    reference.expr().and_then(is_shorthand_of_object_property) == Some(true);
+                let report = cx
+                    .report(span, PREFER_NUMBER_PROPERTIES)
+                    .data("method_name", name);
                 let nearest_unary = &mut cx.state.nearest_unary;
                 report.fix(|fixer| {
                     if name == "NaN" {
-                        return fixer.insert_before(span, if is_shorthand { "NaN: Number." } else { "Number." });
+                        return fixer.insert_before(
+                            span,
+                            if is_shorthand {
+                                "NaN: Number."
+                            } else {
+                                "Number."
+                            },
+                        );
                     }
-                    let is_unary = |_, parent: Node<'a>| parent.as_expr().filter(|it| is_unary_expression(*it));
+                    let is_unary = |_, parent: Node<'a>| {
+                        parent.as_expr().filter(|it| is_unary_expression(*it))
+                    };
                     let unary = nearest_unary.find(reference.node(), is_unary);
                     let negation = unary.filter(|it| it.unary_op() == Some(UnOp::Minus));
                     match (negation, is_shorthand) {
                         (Some(_), true) => fixer.insert_after(span, ": Number.NEGATIVE_INFINITY"),
                         (None, true) => fixer.insert_after(span, ": Number.POSITIVE_INFINITY"),
-                        (Some(negation), false) => fixer.replace(negation, "Number.NEGATIVE_INFINITY"),
+                        (Some(negation), false) => {
+                            fixer.replace(negation, "Number.NEGATIVE_INFINITY")
+                        }
                         (None, false) => fixer.replace(span, "Number.POSITIVE_INFINITY"),
                     }
                 });
             }
         }
-        for name in FUNCTIONS.into_iter().filter(|it| file.find_name(it).is_some()) {
+        for name in FUNCTIONS
+            .into_iter()
+            .filter(|it| file.find_name(it).is_some())
+        {
             for reference in file.unresolved_references_to(name.as_bytes()) {
-                let Some(is_shorthand) = reference.expr().and_then(is_shorthand_of_object_property) else {
+                let Some(is_shorthand) = reference.expr().and_then(is_shorthand_of_object_property)
+                else {
                     continue;
                 };
                 let span = reference.span();
-                let report = cx.report(span, PREFER_NUMBER_PROPERTIES).data("method_name", name);
+                let report = cx
+                    .report(span, PREFER_NUMBER_PROPERTIES)
+                    .data("method_name", name);
                 let fix = |fixer: Fixer<'a>| match is_shorthand {
                     true => fixer.insert_before(span, [name, ": Number."].concat()),
                     false => fixer.insert_before(span, "Number."),
                 };
-                if matches!(name, "isNaN" | "isFinite") { report.fix_dangerously(fix) } else { report.fix(fix) };
+                if matches!(name, "isNaN" | "isFinite") {
+                    report.fix_dangerously(fix)
+                } else {
+                    report.fix(fix)
+                };
             }
         }
     }
 }
 
 fn is_global_object(e: Expr) -> bool {
-    e.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES)) && !e.is_parenthesized()
+    e.as_ident()
+        .is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
+        && !e.is_parenthesized()
 }
 
 impl PreferNumberProperties {
@@ -123,6 +167,7 @@ impl PreferNumberProperties {
             && !member.is_in_type_query()
         {
             cx.report(member, PREFER_NUMBER_PROPERTIES)
+                .called_with(member)
                 .data("method_name", name)
                 .fix(|fixer| fixer.replace(object, "Number"));
         }
@@ -133,7 +178,9 @@ impl PreferNumberProperties {
         let Some(callee) = e.callee() else {
             return;
         };
-        let name = callee.as_ident().or_else(|| callee.member_name().map(Ident::name));
+        let name = callee
+            .as_ident()
+            .or_else(|| callee.member_name().map(Ident::name));
         if name.is_some_and(|it| !cx.state.functions.contains(&it)) || callee.is_parenthesized() {
             return;
         }
@@ -149,17 +196,24 @@ impl PreferNumberProperties {
         if callee.tag() == ExprTag::Ident && !is_global_reference(callee) {
             return;
         }
-        let report = cx.report(callee, PREFER_NUMBER_PROPERTIES).data("method_name", name);
-        // The whole call, so that this and the fix of `prefer-numeric-literals` are not both applied.
+        let report = cx
+            .report(callee, PREFER_NUMBER_PROPERTIES)
+            .called_with(e)
+            .data("method_name", name);
+        // Replaces the whole call, so that this fix and `prefer-numeric-literals`' fix overlap and aren't both applied.
         let fix = |fixer: Fixer<'a>| {
             let arguments = fixer.file().slice(Span::after(callee.span(), e.span().end));
             fixer.replace(e, [&b"Number."[..], name.bytes(), arguments].concat())
         };
-        if name.is_any(&["isNaN", "isFinite"]) { report.fix_dangerously(fix) } else { report.fix(fix) };
+        if name.is_any(&["isNaN", "isFinite"]) {
+            report.fix_dangerously(fix)
+        } else {
+            report.fix(fix)
+        };
     }
 }
 
-/// If `e` is directly the value or the computed key of a property of an object literal: whether that is `{ e }`.
+/// If `e` is directly the value or the computed key of an object literal's property, returns whether that's `{ e }`.
 fn is_shorthand_of_object_property(e: Expr) -> Option<bool> {
     let Node::Prop(prop) = e.parent() else {
         return None;

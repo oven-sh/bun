@@ -1,16 +1,20 @@
-use bun_lint_oxlint::ast_util::plain;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint_oxlint::ast_util::plain;
 
 /// Enforces a convention of using Unicode escapes instead of hexadecimal escapes for consistency and clarity.
 pub struct NoHexEscape;
 
-const NO_HEX_ESCAPE: Message = Message::new("", "Use Unicode escapes instead of hexadecimal escapes.");
+const NO_HEX_ESCAPE: Message =
+    Message::new("", "Use Unicode escapes instead of hexadecimal escapes.");
 
 impl Rule for NoHexEscape {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-hex-escape", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Template, ExprTag::Regex]).string_literals();
+    const META: Meta =
+        Meta::oxlint(Plugin::Unicorn, "no-hex-escape", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Template, ExprTag::Regex])
+        .string_literals();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
@@ -19,7 +23,11 @@ impl Rule for NoHexEscape {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let text = file.text();
-        strings::contains(text.get(strings::index_of_char_usize(text, b'\\')?..)?, b"\\x").then_some(())
+        strings::contains(
+            text.get(strings::index_of_char_usize(text, b'\\')?..)?,
+            b"\\x",
+        )
+        .then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -31,7 +39,7 @@ impl Rule for NoHexEscape {
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
-        // The quotes are part of the place.
+        // The reported span includes the quotes.
         check(literal.span().shrink(1, 1), literal.span(), cx);
     }
 }
@@ -41,7 +49,7 @@ impl NoHexEscape {
         let ExprKind::Template(lit) = e.kind() else {
             return;
         };
-        // Its own text only: templates can be in each other.
+        // Only its own quasis, because templates can nest.
         for i in 0..lit.quasi_count() {
             let start = lit.quasi_span(i).start + 1;
             let quasi = Span::new(start, start + lit.raw(i).len() as u32);
@@ -60,35 +68,46 @@ impl NoHexEscape {
         };
         let (pattern, start) = (regex.pattern(), e.span().start + 1);
         let mut at = 0;
-        while let Some(found) = pattern.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+        while let Some(found) = pattern
+            .get(at..)
+            .and_then(|rest| strings::index_of_char_usize(rest, b'\\'))
+        {
             at += found;
-            // `\x` without two digits is an `x`.
+            // `\x` without two digits is just an `x`.
             if let Some([b'\\', b'x', digits @ ..]) = pattern.get(at..at + 4)
                 && digits.iter().all(u8::is_ascii_hexdigit)
             {
                 let span = Span::new(start + at as u32, start + at as u32 + 4);
-                cx.report(span, NO_HEX_ESCAPE).fix(|fixer| fixer.replace(span, [b"\\u00", digits].concat()));
+                let report = cx.report(span, NO_HEX_ESCAPE).called_with(e);
+                report.fix(|fixer| fixer.replace(span, [b"\\u00", digits].concat()));
             }
             at += 2;
         }
     }
 }
 
-/// `escapes`: where the text with the escapes is.
-fn check<'a>(escapes: Span, place: Span, cx: &Cx<'a, NoHexEscape>) {
+/// `escapes` is the span of the text that has the escapes.
+fn check<'a>(escapes: Span, report_span: Span, cx: &Cx<'a, NoHexEscape>) {
     if let Some(fixed) = check_escape(cx.slice(escapes)) {
-        // With the quotes, as oxlint replaces it.
-        let (before, after) = (Span::new(place.start, escapes.start), Span::new(escapes.end, place.end));
+        // oxlint's fix replaces the quotes too.
+        let (before, after) = (
+            Span::new(report_span.start, escapes.start),
+            Span::new(escapes.end, report_span.end),
+        );
         let fixed = [cx.slice(before), &fixed, cx.slice(after)].concat();
-        cx.report(place, NO_HEX_ESCAPE).fix(|fixer| fixer.replace(place, fixed));
+        cx.report(report_span, NO_HEX_ESCAPE)
+            .fix(|fixer| fixer.replace(report_span, fixed));
     }
 }
 
-/// `value` with `\u00` for each `\x`, if it has one.
+/// Returns `value` with each `\x` replaced by `\u00`, if it has one.
 fn check_escape(value: &[u8]) -> Option<Vec<u8>> {
     let mut fixed = Vec::new();
     let (mut at, mut last) = (0, 0);
-    while let Some(found) = value.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
+    while let Some(found) = value
+        .get(at..)
+        .and_then(|rest| strings::index_of_char_usize(rest, b'\\'))
+    {
         at += found;
         if value.get(at + 1) == Some(&b'x') {
             fixed.extend_from_slice(value.get(last..at).unwrap_or_default());

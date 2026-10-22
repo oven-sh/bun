@@ -7,7 +7,8 @@ pub struct ConsistentAssert;
 const INCONSISTENT_ASSERT_USAGE: Message = Message::new("", "Inconsistent assert usage.");
 
 impl Rule for ConsistentAssert {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "consistent-assert", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta =
+        Meta::oxlint(Plugin::Unicorn, "consistent-assert", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
@@ -16,8 +17,16 @@ impl Rule for ConsistentAssert {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        let modules = ["assert", "node:assert", "assert/strict", "node:assert/strict"];
-        modules.iter().any(|it| file.find_name(it).is_some()).then_some(())
+        let modules = [
+            "assert",
+            "node:assert",
+            "assert/strict",
+            "node:assert/strict",
+        ];
+        modules
+            .iter()
+            .any(|it| file.find_name(it).is_some())
+            .then_some(())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -25,7 +34,11 @@ impl Rule for ConsistentAssert {
             return;
         };
         let is_assert_module = import.spec().is_any(&["assert", "node:assert"]);
-        if !is_assert_module && !import.spec().is_any(&["assert/strict", "node:assert/strict"]) {
+        if !is_assert_module
+            && !import
+                .spec()
+                .is_any(&["assert/strict", "node:assert/strict"])
+        {
             return;
         }
         let file = cx.file();
@@ -45,17 +58,22 @@ impl Rule for ConsistentAssert {
                 continue;
             }
             for reference in symbol.references().filter_map(Reference::expr) {
-                // oxlint reports the callee of the call that the reference is directly in: also the `foo` of
+                // oxlint reports the callee of the call that directly contains the reference, so also the `foo` in
                 // `foo(assert)`.
                 let ident = match reference.parent() {
                     _ if reference.is_parenthesized() => reference,
                     Node::Expr(call) if call.tag() == ExprTag::Call => match call.callee() {
-                        Some(callee) if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() => callee,
+                        Some(callee)
+                            if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() =>
+                        {
+                            callee
+                        }
                         _ => continue,
                     },
                     _ => continue,
                 };
                 cx.report(ident, INCONSISTENT_ASSERT_USAGE)
+                    .called_with(stmt)
                     .data("assert_identifier", ident.text())
                     .fix(|fixer| fixer.insert_after(ident, ".ok"));
             }

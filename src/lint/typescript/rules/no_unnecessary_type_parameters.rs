@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
-use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
+use bun_lint::types::{IdMap, IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
@@ -14,7 +14,7 @@ const REPLACE_USAGES_WITH_CONSTRAINT: Message = Message::new(
 const SOLE: Message =
     Message::new("sole", "Type parameter {{name}} is {{uses}} in the {{descriptor}} signature.");
 
-/// ESLint has a `TSClassImplements` or a `TSInterfaceHeritage` for it, not a `TSTypeReference`.
+/// True if ESLint has a `TSClassImplements` or a `TSInterfaceHeritage` for it, not a `TSTypeReference`.
 fn is_heritage(ty: TypeNode) -> bool {
     match ty.parent() {
         Node::Class(class) => class.extends_args().around(ty.span().start) != Some(ty),
@@ -23,8 +23,8 @@ fn is_heritage(ty: TypeNode) -> bool {
     }
 }
 
-/// Whether the reference is all of a type argument, of anything but `Array` and `ReadonlyArray`,
-/// which are left to the types.
+/// True if the reference is a whole type argument of anything but `Array` and `ReadonlyArray`, which are handled
+/// through the types.
 fn is_type_argument(reference: Reference) -> bool {
     let Node::Type(type_reference) = reference.node() else {
         return false;
@@ -52,6 +52,23 @@ fn is_type_argument(reference: Reference) -> bool {
     }
 }
 
+/// True if tsgolint counts it as a reference: an identifier whose parent is a type node. Not the `T` in `T.Member`,
+/// whose parent is a qualified name.
+fn is_identifier_of_type_node(reference: Reference) -> bool {
+    match reference.node() {
+        Node::Type(ty) => match ty.kind() {
+            TypeKind::Ref { name, .. } => name.len() == 1,
+            TypeKind::Predicate { .. } => true,
+            _ => false,
+        },
+        // `typeof T`, where a value with that name shares a symbol with the type parameter.
+        Node::Expr(expr) => {
+            matches!(expr.parent(), Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }))
+        }
+        _ => false,
+    }
+}
+
 fn is_type_parameter_repeated_in_ast<'a>(
     node: TypeParam<'a>,
     references: impl Iterator<Item = Reference<'a>>,
@@ -62,15 +79,21 @@ fn is_type_parameter_repeated_in_ast<'a>(
     let mut total = 0;
     for reference in references {
         let identifier = reference.span();
-        // What is inside the definition of the type parameter does not count, nor what is outside
-        // the signature, nor a value of the same name.
+        // These don't count: anything inside the type parameter's definition, anything outside the signature, and a
+        // value with the same name.
         if (identifier.start < definition.end && identifier.end > definition.start)
             || identifier.start > start_of_body
-            || !reference.is_type()
         {
             continue;
         }
-        // tsgolint leaves a type argument to the types: in `Missing<T> & { a: 1 }`, which is `any`, there is no `T`.
+        let is_reference = match is_oxlint {
+            true => is_identifier_of_type_node(reference),
+            false => reference.is_type(),
+        };
+        if !is_reference {
+            continue;
+        }
+        // tsgolint handles a type argument through the types: `Missing<T> & { a: 1 }` is `any`, so it has no `T`.
         if !is_oxlint && is_type_argument(reference) {
             return true;
         }
@@ -82,36 +105,36 @@ fn is_type_parameter_repeated_in_ast<'a>(
     false
 }
 
-/// By the declaration of the type parameter.
+/// Keyed by the type parameter's declaration.
 type Counts<'a> = FxHashMap<TsNode<'a>, u32>;
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What has been counted in the type of a function.
-    counts_by_type: FxHashMap<Type<'a>, Rc<Counts<'a>>>,
+    /// The counts for a function's type.
+    counts_by_type: IdMap<Type<'a>, Rc<Counts<'a>>>,
     without_type_parameters: TypesWithoutTypeParameters<'a>,
 }
 
-/// The types that have been gone through to the end, and no type parameter was found. To go through one again counts
-/// nothing, whatever has been visited before, and many functions mention the same large types.
-type TypesWithoutTypeParameters<'a> = FxHashSet<Type<'a>>;
+/// Types that were walked to the end without finding a type parameter. Walking one again wouldn't count anything,
+/// whatever was visited before, and many functions mention the same large types.
+type TypesWithoutTypeParameters<'a> = IdSet<Type<'a>>;
 
 /// Upstream's `collectTypeParameterUsageCounts`: how often each type parameter appears in a type.
 struct UsageCounter<'a, 'c> {
     found_identifier_usages: &'c mut Counts<'a>,
-    /// The type parameters are those of a class, or of one of its methods.
+    /// True if the type parameters belong to a class or one of its methods.
     from_class: bool,
-    /// Upstream has the lists of properties, of which each type has its own.
-    visited_symbol_lists: FxHashSet<Type<'a>>,
-    type_usages: FxHashMap<Type<'a>, u32>,
+    /// Upstream stores the property lists. Each type has its own.
+    visited_symbol_lists: IdSet<Type<'a>>,
+    type_usages: IdMap<Type<'a>, u32>,
     visited_constraints: FxHashSet<TsNode<'a>>,
     visited_default: bool,
     without_type_parameters: &'c mut TypesWithoutTypeParameters<'a>,
-    /// How many type parameters have been found, and how often something was not gone through.
-    found_or_left_out: u32,
+    /// The number of type parameters found, plus the number of times something wasn't walked.
+    found_or_skipped: u32,
 }
 
-/// Upstream's `assumeMultipleUses`: what one appearance of a type parameter counts as.
+/// Upstream's `assumeMultipleUses`: how much one appearance of a type parameter counts.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Uses {
     One,
@@ -120,9 +143,9 @@ enum Uses {
 
 /// Upstream's `isReturnType`.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Place {
+enum TypePosition {
     Return,
-    Elsewhere,
+    Other,
 }
 
 fn get_declared_constraint_type(type_parameter: Type<'_>) -> Option<Type<'_>> {
@@ -132,45 +155,45 @@ fn get_declared_constraint_type(type_parameter: Type<'_>) -> Option<Type<'_>> {
 }
 
 impl<'a> UsageCounter<'a, '_> {
-    fn visit_type(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
-        // The same type more than 3 ** 2 times is likely a recursive type, like
-        // `type T = { [P in keyof T]: T }`. If not, what it refers to has been counted often enough.
-        if self.without_type_parameters.contains(&ty) {
+    fn visit_type(&mut self, ty: Type<'a>, uses: Uses, position: TypePosition) {
+        // Seeing the same type more than 3 ** 2 times probably means it's recursive, like
+        // `type T = { [P in keyof T]: T }`. If not, whatever it refers to has been counted often enough.
+        if self.without_type_parameters.contains(ty) {
             return;
         }
-        let usages = self.type_usages.entry(ty).or_insert(0);
+        let usages = self.type_usages.get_or_insert_with(ty, || 0);
         *usages += 1;
-        if *usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
-            self.found_or_left_out += 1;
+        let usages = *usages;
+        if usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.found_or_skipped += 1;
             return;
         }
-        let before = self.found_or_left_out;
-        self.visit_parts(ty, uses, place);
-        if self.found_or_left_out == before {
+        let before = self.found_or_skipped;
+        self.visit_parts(ty, uses, position);
+        if self.found_or_skipped == before {
             self.without_type_parameters.insert(ty);
         }
     }
 
     fn visit_types_list(&mut self, types: impl IntoIterator<Item = Type<'a>>, uses: Uses) {
         for ty in types {
-            self.visit_type(ty, uses, Place::Elsewhere);
+            self.visit_type(ty, uses, TypePosition::Other);
         }
     }
 
-    fn visit_parts(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
+    fn visit_parts(&mut self, ty: Type<'a>, uses: Uses, position: TypePosition) {
         let flags = ty.flags();
         if flags.contains(TypeFlags::TYPE_PARAMETER) {
             self.visit_type_parameter(ty, uses);
         } else if !ty.alias_type_arguments().is_empty() {
-            // The definition of the type alias is not looked into, so how often it uses them is
-            // not known.
+            // The type alias's definition isn't examined, so we don't know how often it uses them.
             self.visit_types_list(ty.alias_type_arguments(), Uses::Multiple);
         } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
             self.visit_types_list(ty.types(), uses);
         } else if is_type_reference(ty) {
-            // A readonly array or tuple uses the type parameter once. A mutable one uses it
-            // several times if it is returned. Any other reference does.
-            let is_return_type = place == Place::Return;
+            // A readonly array or tuple uses the type parameter once. A mutable one uses it several times if it's
+            // returned. So does any other reference.
+            let is_return_type = position == TypePosition::Return;
             let is_multiple_uses = match ty.tuple_target() {
                 Some(target) => is_return_type && !target.readonly(),
                 None if ty.is_array_type() => {
@@ -183,24 +206,24 @@ impl<'a> UsageCounter<'a, '_> {
                 false => uses,
             };
             for type_argument in ty.get_type_arguments() {
-                self.visit_type(type_argument, uses, place);
+                self.visit_type(type_argument, uses, position);
             }
         } else if flags.contains(TypeFlags::OBJECT) {
             self.visit_object_type(ty);
         } else {
             match ty.structure() {
                 TypeStructure::IndexedAccess { object_type, index_type } => {
-                    self.visit_type(object_type, uses, Place::Elsewhere);
-                    self.visit_type(index_type, uses, Place::Elsewhere);
+                    self.visit_type(object_type, uses, TypePosition::Other);
+                    self.visit_type(index_type, uses, TypePosition::Other);
                 }
                 TypeStructure::TemplateLiteral { types, .. } => self.visit_types_list(types, uses),
                 TypeStructure::Conditional { check_type, extends_type, .. } => {
-                    self.visit_type(check_type, uses, Place::Elsewhere);
-                    self.visit_type(extends_type, uses, Place::Elsewhere);
+                    self.visit_type(check_type, uses, TypePosition::Other);
+                    self.visit_type(extends_type, uses, TypePosition::Other);
                 }
                 // `keyof T`, `Uppercase<T>`
                 TypeStructure::Index { ty } | TypeStructure::StringMapping { ty } => {
-                    self.visit_type(ty, uses, Place::Elsewhere);
+                    self.visit_type(ty, uses, TypePosition::Other);
                 }
                 _ => {}
             }
@@ -208,7 +231,7 @@ impl<'a> UsageCounter<'a, '_> {
     }
 
     fn visit_type_parameter(&mut self, ty: Type<'a>, uses: Uses) {
-        self.found_or_left_out += 1;
+        self.found_or_skipped += 1;
         let Some(declaration) = ty.get_symbol().and_then(|symbol| symbol.declarations().next()) else {
             return;
         };
@@ -224,27 +247,28 @@ impl<'a> UsageCounter<'a, '_> {
         if let Some(constraint) = declaration.constraint()
             && self.visited_constraints.insert(constraint)
         {
-            self.visit_type(constraint.get_type_at_location(), Uses::One, Place::Elsewhere);
+            self.visit_type(constraint.get_type_at_location(), Uses::One, TypePosition::Other);
         }
         if let Some(default) = declaration.default_type()
             && !self.visited_default
         {
             self.visited_default = true;
-            self.visit_type(default.get_type_at_location(), Uses::One, Place::Elsewhere);
+            self.visit_type(default.get_type_at_location(), Uses::One, TypePosition::Other);
         }
     }
 
-    /// What is not a reference: there the properties of a generic interface or class, like
-    /// `Map<K, V>`, are not looked into.
+    /// For anything but a reference. The properties of a generic interface or class reference, like `Map<K, V>`, aren't
+    /// examined.
     fn visit_object_type(&mut self, ty: Type<'a>) {
         let properties = ty.get_properties();
-        // tsgolint looks at the properties each time: `{ a: T }` in a parameter and in what is returned is two uses.
-        if self.visited_symbol_lists.insert(ty) || ty.file().language().is_oxlint {
+        let is_oxlint = ty.file().language().is_oxlint;
+        // tsgolint visits the properties every time, so `{ a: T }` in a parameter and in the return type is two uses.
+        if self.visited_symbol_lists.insert(ty) || is_oxlint {
             for symbol in properties {
-                self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
+                self.visit_type(symbol.get_type(), Uses::One, TypePosition::Other);
             }
         } else {
-            self.found_or_left_out += 1;
+            self.found_or_skipped += 1;
         }
 
         if let TypeStructure::Mapped {
@@ -255,18 +279,28 @@ impl<'a> UsageCounter<'a, '_> {
             ..
         } = ty.structure()
         {
-            self.visit_type(type_parameter, Uses::One, Place::Elsewhere);
-            // `{ [k in "a"]: T }` is like `{ a: T }`: its properties have been counted.
-            if properties.is_empty() {
-                self.visit_type(template_type, Uses::One, Place::Elsewhere);
-                // The declaration of the type parameter has the constraint from before the
-                // instantiation.
+            self.visit_type(type_parameter, Uses::One, TypePosition::Other);
+            // `{ [k in "a"]: T }` is like `{ a: T }`, whose properties have already been counted.
+            if properties.is_empty() && is_oxlint {
+                // tsgolint reads the template type from where the checker stores it, which isn't on an instantiation.
+                // For an instantiation it visits the constraint type instead. An instantiation has its own type
+                // parameter.
+                let declared = type_parameter.get_symbol().map(|symbol| symbol.get_declared_type());
+                let visited = match declared.is_some_and(|declared| declared != type_parameter) {
+                    true => constraint_type,
+                    false => template_type,
+                };
+                self.visit_type(visited, Uses::One, TypePosition::Other);
+            } else if properties.is_empty() {
+                self.visit_type(template_type, Uses::One, TypePosition::Other);
+                // The type parameter's declaration has the constraint from before the instantiation.
                 if get_declared_constraint_type(type_parameter) != Some(constraint_type) {
-                    self.visit_type(constraint_type, Uses::One, Place::Elsewhere);
+                    self.visit_type(constraint_type, Uses::One, TypePosition::Other);
                 }
             }
-            if let Some(name_type) = name_type {
-                self.visit_type(name_type, Uses::One, Place::Elsewhere);
+            // tsgolint doesn't visit the name type.
+            if let Some(name_type) = name_type.filter(|_| !is_oxlint) {
+                self.visit_type(name_type, Uses::One, TypePosition::Other);
             }
         }
 
@@ -283,15 +317,15 @@ impl<'a> UsageCounter<'a, '_> {
 
     fn visit_signature(&mut self, signature: Signature<'a>) {
         if let Some(this_parameter) = signature.this_parameter() {
-            self.visit_type(this_parameter.get_type(), Uses::One, Place::Elsewhere);
+            self.visit_type(this_parameter.get_type(), Uses::One, TypePosition::Other);
         }
         for parameter in signature.parameters() {
-            self.visit_type(parameter.get_type(), Uses::One, Place::Elsewhere);
+            self.visit_type(parameter.get_type(), Uses::One, TypePosition::Other);
         }
         self.visit_types_list(signature.type_parameters(), Uses::One);
 
         let predicate_type = signature.get_type_predicate().and_then(|predicate| predicate.ty());
-        self.visit_type(predicate_type.unwrap_or_else(|| signature.get_return_type()), Uses::One, Place::Return);
+        self.visit_type(predicate_type.unwrap_or_else(|| signature.get_return_type()), Uses::One, TypePosition::Return);
     }
 }
 
@@ -304,12 +338,12 @@ fn collect_type_parameter_usage_counts<'a>(
     let mut counter = UsageCounter {
         found_identifier_usages,
         from_class,
-        visited_symbol_lists: FxHashSet::default(),
-        type_usages: FxHashMap::default(),
+        visited_symbol_lists: IdSet::new(),
+        type_usages: IdMap::new(),
         visited_constraints: FxHashSet::default(),
         visited_default: false,
         without_type_parameters,
-        found_or_left_out: 0,
+        found_or_skipped: 0,
     };
     match node.kind() {
         SyntaxKind::CallSignature | SyntaxKind::Constructor => {
@@ -317,7 +351,7 @@ fn collect_type_parameter_usage_counts<'a>(
                 counter.visit_signature(signature);
             }
         }
-        _ => counter.visit_type(node.get_type_at_location(), Uses::One, Place::Elsewhere),
+        _ => counter.visit_type(node.get_type_at_location(), Uses::One, TypePosition::Other),
     }
 }
 
@@ -347,11 +381,39 @@ fn replace_usages_with_constraint<'a>(
         )
     });
 
+    let removed = if type_parameters.len() == 1 {
+        type_parameters.angle_brackets_span()?
+    } else if type_parameters.first() == Some(es_type_parameter) {
+        let comma_after = file.tokens_after(es_type_parameter).find(|token| token.value() == b",")?;
+        let token_after_comma = file.tokens_after(comma_after).with_comments().next()?;
+        Span::new(es_type_parameter.span().start, token_after_comma.start())
+    } else {
+        let comma_before = file.tokens_before(es_type_parameter).find(|token| token.value() == b",")?;
+        Span::new(comma_before.start(), es_type_parameter.span().end)
+    };
+    let is_oxlint = file.language().is_oxlint;
+
     let mut fixes = Vec::new();
-    for reference in variable.references().filter(|reference| reference.is_type()) {
-        let Node::Type(type_reference) = reference.node() else {
-            continue;
+    for reference in variable.references() {
+        let is_reference = match is_oxlint {
+            true => is_identifier_of_type_node(reference),
+            false => reference.is_type(),
         };
+        let type_reference = match reference.node() {
+            Node::Type(type_reference) if is_reference => type_reference,
+            // tsgolint replaces the identifier's parent, which is the `typeof T` for a value with that name.
+            Node::Expr(operand) if is_reference && is_oxlint => match operand.parent() {
+                Node::Type(type_query) => type_query,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        // tsgolint skips references that are removed along with the type parameter, as in `<T extends { a: T }>`.
+        let identifier = reference.span();
+        if is_oxlint && identifier.start < removed.end && identifier.end > removed.start {
+            continue;
+        }
+        // tsgolint has a node for parentheses, so `(T)[]` doesn't need more of them.
         let is_weak_precedence_type_parent = matches!(
             type_reference.parent(),
             Node::Type(grandparent) if matches!(
@@ -364,23 +426,14 @@ fn replace_usages_with_constraint<'a>(
                     | TypeKind::Keyof(_)
                     | TypeKind::Readonly(_)
             )
-        );
+        ) && !(is_oxlint && type_reference.is_parenthesized());
         fixes.push(match is_weak_precedence_constraint && is_weak_precedence_type_parent {
             true => fixer.replace(type_reference, [&b"("[..], constraint_text, b")"].concat()),
             false => fixer.replace(type_reference, constraint_text),
         });
     }
 
-    fixes.push(if type_parameters.len() == 1 {
-        fixer.remove(type_parameters.angle_brackets_span()?)
-    } else if type_parameters.first() == Some(es_type_parameter) {
-        let comma_after = file.tokens_after(es_type_parameter).find(|token| token.value() == b",")?;
-        let token_after_comma = file.tokens_after(comma_after).with_comments().next()?;
-        fixer.remove(Span::new(es_type_parameter.span().start, token_after_comma.start()))
-    } else {
-        let comma_before = file.tokens_before(es_type_parameter).find(|token| token.value() == b",")?;
-        fixer.remove(Span::new(comma_before.start(), es_type_parameter.span().end))
-    });
+    fixes.push(fixer.remove(removed));
     Some(fixes)
 }
 
@@ -396,25 +449,36 @@ fn check_node<'a>(
         let Some(variable) = type_parameter.symbol() else {
             continue;
         };
-        // If it is written several times, the types need not be asked.
+        // If it's written several times, there's no need to look at the types.
         let is_oxlint = cx.language().is_oxlint;
         if is_type_parameter_repeated_in_ast(type_parameter, variable.references(), start_of_body, is_oxlint) {
             continue;
         }
-        // Inferred types take the type checker.
+        let name = type_parameter.name();
+        // Inferred types need the type checker.
         let counts = counts.get_or_insert_with(|| count_type_parameter_usage(&mut cx.state));
-        let uses = match counts.get(&type_parameter.ts_node()).copied() {
+        // tsgolint counts by symbol, which a class shares with an interface of the same name.
+        let declaration = match is_oxlint {
+            true => {
+                let symbol = type_parameter.ts_node().get_type_at_location().get_symbol();
+                symbol.and_then(|symbol| symbol.declarations().next())
+            }
+            false => Some(type_parameter.ts_node()),
+        };
+        let uses = match declaration.and_then(|declaration| counts.get(&declaration).copied()) {
             Some(1) => "never used",
             Some(2) => "used only once",
             _ => continue,
         };
-        // oxlint points at where it is used.
-        let place = match variable.references().next().filter(|_| cx.language().is_oxlint) {
-            Some(reference) => reference.span(),
-            None if cx.language().is_oxlint => type_parameter.name().span(),
-            None => type_parameter.span(),
+        // oxlint points at the first use.
+        let report_span = match is_oxlint {
+            true => {
+                let in_ast = variable.references().find(|&reference| is_identifier_of_type_node(reference));
+                in_ast.map_or_else(|| name.span(), |reference| reference.span())
+            }
+            false => type_parameter.span(),
         };
-        cx.report(place, SOLE)
+        cx.report(report_span, SOLE)
             .comments_apply_at(type_parameter.span())
             .data("name", type_parameter.name())
             .data("descriptor", descriptor)
@@ -448,12 +512,14 @@ impl Rule for NoUnnecessaryTypeParameters {
 
     fn func<'a>(&self, node: Func<'a>, cx: &mut Cx<'a, Self>) {
         let type_parameters = node.type_params();
-        // Upstream does not listen for a `TSConstructSignatureDeclaration`.
+        // Upstream doesn't listen for a `TSConstructSignatureDeclaration`.
         if type_parameters.is_empty() || node.kind() == FnKind::ConstructSignature {
             return;
         }
         let start_of_body = match node.body() {
             FnBody::Block(_) => node.body_span().map(|body| body.start),
+            // For tsgolint whatever a returned function mentions is part of the signature.
+            FnBody::Expr(body) if cx.language().is_oxlint && body.as_fn().is_some() && !body.is_parenthesized() => None,
             FnBody::Expr(body) => Some(body.span().start),
             FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
         };
@@ -467,8 +533,11 @@ impl Rule for NoUnnecessaryTypeParameters {
             };
             match ts_node.kind() {
                 SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
-                // Each overload of a function has the type of the function, with the signatures of all of them.
-                _ => Rc::clone(counts_by_type.entry(ts_node.get_type_at_location()).or_insert_with(count)),
+                // Each overload of a function has the function's type, with the signatures of all overloads.
+                _ => {
+                    let ty = ts_node.get_type_at_location();
+                    Rc::clone(counts_by_type.get_or_insert_with(ty, count))
+                }
             }
         });
     }
@@ -484,7 +553,8 @@ impl Rule for NoUnnecessaryTypeParameters {
             for type_parameter in type_parameters {
                 collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
             }
-            // tsgolint also looks at what the class extends and implements. Upstream leaves out a type argument.
+            // tsgolint also looks at the `extends` and `implements` clauses. Upstream has already exempted a type
+            // parameter that's used as a type argument.
             let clauses = node.ts_node().children().filter(|it| is_oxlint && it.kind() == SyntaxKind::HeritageClause);
             for heritage_type in clauses.flat_map(|clause| clause.children()) {
                 collect_type_parameter_usage_counts(heritage_type, &mut counts, true, known);

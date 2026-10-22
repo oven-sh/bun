@@ -1,11 +1,13 @@
-use bun_lint_oxlint::ast_util::{as_call_expression, get_inner_expression, is_react_component_name, plain};
-use bun_lint_oxlint::import::{import_declarations, is_export_declaration, module_items};
 use crate::react::is_es6_component;
-use bun_lint_oxlint::text::{file_extension, file_name};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint_oxlint::ast_util::{
+    as_call_expression, get_inner_expression, is_react_component_name, plain,
+};
+use bun_lint_oxlint::import::{import_declarations, is_export_declaration, module_items};
+use bun_lint_oxlint::text::{file_extension, file_name};
 use smallvec::{SmallVec, smallvec};
 
 /// Ensure modules only export React components (and related HMR-safe items) for Fast Refresh compatibility.
@@ -17,20 +19,26 @@ pub struct OnlyExportComponents {
     check_js: bool,
 }
 
-const EXPORT_ALL_COMPONENTS: Message =
-    Message::new("", "This rule can't verify that `export *` only exports components.");
+const EXPORT_ALL_COMPONENTS: Message = Message::new(
+    "",
+    "This rule can't verify that `export *` only exports components.",
+);
 const NAMED_EXPORT_COMPONENTS: Message = Message::new(
     "",
     "Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.",
 );
-const ANONYMOUS_COMPONENTS: Message =
-    Message::new("", "Fast refresh can't handle anonymous components. Add a name to your export.");
+const ANONYMOUS_COMPONENTS: Message = Message::new(
+    "",
+    "Fast refresh can't handle anonymous components. Add a name to your export.",
+);
 const LOCAL_COMPONENTS: Message = Message::new(
     "",
     "Fast refresh only works when a file only exports components. Move your component(s) to a separate file.",
 );
-const NO_EXPORT: Message =
-    Message::new("", "Fast refresh only works when a file has exports. Move your component(s) to a separate file.");
+const NO_EXPORT: Message = Message::new(
+    "",
+    "Fast refresh only works when a file has exports. Move your component(s) to a separate file.",
+);
 const REACT_CONTEXT: Message = Message::new(
     "",
     "Fast refresh only works when a file only exports components. Move your React context(s) to a separate file.",
@@ -43,7 +51,13 @@ impl Rule for OnlyExportComponents {
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
-        let names = |key: &str| options.strings(key).into_iter().map(|it| it.as_bytes().into()).collect();
+        let names = |key: &str| {
+            options
+                .strings(key)
+                .into_iter()
+                .map(|it| it.as_bytes().into())
+                .collect()
+        };
         OnlyExportComponents {
             allow_export_names: names("allowExportNames"),
             allow_constant_export: options.bool_or("allowConstantExport", false),
@@ -55,17 +69,21 @@ impl Rule for OnlyExportComponents {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_extension = |extension: &str| {
-            file_extension(file.path()).is_some_and(|it| it.eq_ignore_ascii_case(extension.as_bytes()))
+            file_extension(file.path())
+                .is_some_and(|it| it.eq_ignore_ascii_case(extension.as_bytes()))
         };
         let filename = file_name(file.path());
         if !(is_extension("tsx") || is_extension("jsx") || self.check_js && is_extension("js"))
-            || [&b".test."[..], b".spec.", b".cy.", b".stories."].into_iter().any(|it| strings::contains(filename, it))
+            || [&b".test."[..], b".spec.", b".cy.", b".stories."]
+                .into_iter()
+                .any(|it| strings::contains(filename, it))
         {
             return None;
         }
-        // Something is imported from it: `import "react"` does not count.
+        // A bare `import "react"` doesn't count. Something has to be imported from it.
         let imports_from_react = |it: Import| {
-            it.spec().is("react") && (it.default().is_some() || it.namespace().is_some() || !it.named().is_empty())
+            it.spec().is("react")
+                && (it.default().is_some() || it.namespace().is_some() || !it.named().is_empty())
         };
         if self.check_js && !import_declarations(file).any(imports_from_react) {
             return None;
@@ -104,10 +122,12 @@ impl ExportAnalysis {
     }
 }
 
-/// `e` of `e as T` and `e satisfies T`. One of them only.
+/// Unwraps one `e as T` or `e satisfies T`. Nested ones stay.
 fn skip_ts_expression(exp: Expr<'_>) -> Expr<'_> {
     match exp.tag() {
-        ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies if !exp.is_parenthesized() => exp.operand().unwrap_or(exp),
+        ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies if !exp.is_parenthesized() => {
+            exp.operand().unwrap_or(exp)
+        }
         _ => exp,
     }
 }
@@ -118,7 +138,9 @@ fn as_identifier(e: Expr<'_>) -> Option<Name<'_>> {
 
 /// `function a() {}`, not `function () {}`
 fn is_named_function_expression(e: Expr) -> bool {
-    plain(e).and_then(Expr::as_fn).is_some_and(|it| it.kind() == FnKind::Expr && it.name().is_some())
+    plain(e)
+        .and_then(Expr::as_fn)
+        .is_some_and(|it| it.kind() == FnKind::Expr && it.name().is_some())
 }
 
 fn is_arrow_function_expression(e: Expr) -> bool {
@@ -129,10 +151,15 @@ fn is_arrow_function_expression(e: Expr) -> bool {
 fn is_constant_export_expression(e: Expr) -> bool {
     !e.is_parenthesized()
         && match e.kind() {
-            ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::Template(_) => {
-                true
-            }
-            ExprKind::Unary { op, .. } => !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec),
+            ExprKind::True
+            | ExprKind::False
+            | ExprKind::Number(_)
+            | ExprKind::String(_)
+            | ExprKind::Template(_) => true,
+            ExprKind::Unary { op, .. } => !matches!(
+                op,
+                UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+            ),
             ExprKind::Binary { op, left, .. } => {
                 !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma)
                     && left.tag() != ExprTag::PrivateIdentifier
@@ -152,7 +179,9 @@ fn is_not_react_component_expression(e: Expr) -> bool {
                     | ExprKind::Object(_)
                     | ExprKind::This => true,
                     ExprKind::Unary { .. } => true,
-                    ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish),
+                    ExprKind::Binary { op, .. } => {
+                        matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish)
+                    }
                     _ => false,
                 })
 }
@@ -181,42 +210,61 @@ impl OnlyExportComponents {
             }
             return;
         }
-        let message = if has_exports { LOCAL_COMPONENTS } else { NO_EXPORT };
-        // What is in an `export`.
+        let message = if has_exports {
+            LOCAL_COMPONENTS
+        } else {
+            NO_EXPORT
+        };
+        // Caches whether a node is inside an `export`.
         let mut exported = AncestorMemo::default();
         let mut is_exported = |node: Node<'a>| {
             let is_export = |node: Node| {
                 matches!(node, Node::Stmt(it)
                     if it.is_exported() || matches!(it.tag(), StmtTag::ExportDefault | StmtTag::ExportNamed))
             };
-            exported.find(node, |child, _| is_export(child).then_some(())).is_some()
+            exported
+                .find(node, |child, _| is_export(child).then_some(()))
+                .is_some()
         };
+        // Start of the declaration or function, and the name's span. Sorted by start, because oxlint reports in node
+        // order.
+        let mut local_components: Vec<(u32, Span)> = Vec::new();
         for declaration in file.stmts_of_kind(StmtTag::Var) {
             let StmtKind::Var(declarators) = declaration.kind() else {
                 continue;
             };
-            // The first of a declaration.
+            // Only the first component of a declaration is reported.
             let is_component = |it: &VarDecl| {
-                it.pat().as_ident().is_some_and(|name| is_react_component_name(name.bytes()))
+                it.pat()
+                    .as_ident()
+                    .is_some_and(|name| is_react_component_name(name.bytes()))
                     && self.can_be_react_function_component(it.init())
             };
             if let Some(declarator) = declarators.iter().find(is_component)
                 && !is_exported(Node::Stmt(declaration))
             {
-                cx.report(declarator.pat().span(), message);
+                local_components.push((declaration.span().start, declarator.pat().span()));
             }
         }
-        for func in file.funcs().filter(|it| matches!(it.kind(), FnKind::Decl | FnKind::Expr)) {
+        for func in file
+            .funcs()
+            .filter(|it| matches!(it.kind(), FnKind::Decl | FnKind::Expr))
+        {
             if let Some(id) = func.name().filter(|id| is_react_component_name(id.bytes()))
                 && !is_exported(Node::Func(func))
             {
-                cx.report(id.span(), message);
+                local_components.push((func.estree_span().start, id.span()));
             }
+        }
+        utils::sort::sort_unstable_by_key(&mut local_components, |it| it.0);
+        for (_, span) in local_components {
+            cx.report(span, message);
         }
     }
 
     fn is_react_hoc(&self, name: Name) -> bool {
-        name.is_any(&["memo", "forwardRef", "lazy"]) || self.custom_hocs.iter().any(|it| **it == *name.bytes())
+        name.is_any(&["memo", "forwardRef", "lazy"])
+            || self.custom_hocs.iter().any(|it| **it == *name.bytes())
     }
 
     fn can_be_react_function_component(&self, init: Option<Expr>) -> bool {
@@ -234,11 +282,11 @@ impl OnlyExportComponents {
         })
     }
 
-    /// `{ Root, Label: () => <a /> }`: every property is a component.
+    /// True if every property is a component, e.g. `{ Root, Label: () => <a /> }`.
     fn is_compound_component<'a>(&self, properties: List<'a, Prop<'a>>) -> bool {
         !properties.is_empty()
             && properties.iter().all(|property| {
-                // A function without a name gets that of the property.
+                // An anonymous function takes the property's name.
                 let has_component_name = matches!(property.key().map(Key::kind),
                     Some(KeyKind::Ident(name) | KeyKind::String(name)) if is_react_component_name(name.bytes()));
                 matches!(property.kind(), PropKind::Init | PropKind::Shorthand | PropKind::Method)
@@ -254,12 +302,18 @@ impl OnlyExportComponents {
             let is_component = !expr.is_chain_root()
                 && match expr.kind() {
                     ExprKind::Ident(name) => is_react_component_name(name.bytes()),
-                    ExprKind::Dot { name, .. } => !expr.is_private_member() && is_react_component_name(name.bytes()),
-                    ExprKind::Fn(func) if func.is_arrow() => takes_props_and_ref(func) && has_component_name,
+                    ExprKind::Dot { name, .. } => {
+                        !expr.is_private_member() && is_react_component_name(name.bytes())
+                    }
+                    ExprKind::Fn(func) if func.is_arrow() => {
+                        takes_props_and_ref(func) && has_component_name
+                    }
                     ExprKind::Fn(func) => {
                         func.has_body()
                             && takes_props_and_ref(func)
-                            && func.name().map_or(has_component_name, |id| is_react_component_name(id.bytes()))
+                            && func.name().map_or(has_component_name, |id| {
+                                is_react_component_name(id.bytes())
+                            })
                     }
                     ExprKind::Cond { yes, no, .. } => {
                         pending.extend([yes, no]);
@@ -267,17 +321,21 @@ impl OnlyExportComponents {
                     }
                     ExprKind::Call(call) => {
                         let callee = call.callee();
-                        // What these two are called with is the component.
+                        // For these two, the first argument is the component.
                         let validate_argument = match plain(callee).map(Expr::kind) {
                             Some(ExprKind::Ident(name)) => name.is_any(&["memo", "forwardRef"]),
-                            Some(ExprKind::Dot { name, .. }) => name.name().is_any(&["memo", "forwardRef"]),
+                            Some(ExprKind::Dot { name, .. }) => {
+                                name.name().is_any(&["memo", "forwardRef"])
+                            }
                             _ => false,
                         };
                         let argument = call.args().first().filter(|it| it.tag() != ExprTag::Spread);
                         pending.extend(argument.filter(|_| validate_argument));
                         self.is_callee_hoc(callee) && (!validate_argument || argument.is_some())
                     }
-                    ExprKind::TaggedTemplate(tagged) => has_component_name && self.is_callee_hoc(tagged.callee()),
+                    ExprKind::TaggedTemplate(tagged) => {
+                        has_component_name && self.is_callee_hoc(tagged.callee())
+                    }
                     _ => false,
                 };
             if !is_component {
@@ -296,9 +354,14 @@ impl OnlyExportComponents {
             }
         };
         match stmt.kind() {
-            StmtKind::ExportStar { type_only: false, .. } => drop(cx.report(stmt, EXPORT_ALL_COMPONENTS)),
+            StmtKind::ExportStar {
+                type_only: false, ..
+            } => drop(cx.report(stmt, EXPORT_ALL_COMPONENTS)),
             StmtKind::ExportDefault(declaration) => {
-                let (expr, object) = (skip_ts_expression(declaration), get_inner_expression(declaration));
+                let (expr, object) = (
+                    skip_ts_expression(declaration),
+                    get_inner_expression(declaration),
+                );
                 if self.allow_compound_components
                     && let ExprKind::Object(properties) = object.kind()
                 {
@@ -306,10 +369,16 @@ impl OnlyExportComponents {
                         true => ExportType::ReactComponent,
                         false => ExportType::NonComponent(object.span()),
                     });
-                } else if as_call_expression(expr).is_some_and(|it| self.is_hoc_call_expression(it)) {
+                } else if as_call_expression(expr).is_some_and(|it| self.is_hoc_call_expression(it))
+                {
                     analysis.has_react_export = true;
                 } else if let Some(name) = as_identifier(expr) {
-                    analysis.add_export(self.classify_export_reference(Some(cx.file()), name, name, expr.span()));
+                    analysis.add_export(self.classify_export_reference(
+                        Some(cx.file()),
+                        name,
+                        name,
+                        expr.span(),
+                    ));
                 } else {
                     cx.report(stmt, ANONYMOUS_COMPONENTS);
                 }
@@ -320,15 +389,26 @@ impl OnlyExportComponents {
                     analysis.add_export(if exported.is_string() {
                         ExportType::NonComponent(local.span())
                     } else {
-                        let name = if exported.name().is("default") { local } else { exported };
+                        let name = if exported.name().is("default") {
+                            local
+                        } else {
+                            exported
+                        };
                         let file = (!export.has_from()).then(|| cx.file());
-                        self.classify_export_reference(file, name.name(), local.name(), local.span())
+                        self.classify_export_reference(
+                            file,
+                            name.name(),
+                            local.name(),
+                            local.span(),
+                        )
                     });
                 }
             }
             kind if stmt.is_default_export() => match kind {
                 StmtKind::Fn(func) => match func.name() {
-                    Some(id) => analysis.add_export(self.classify_export(id.bytes(), id.span(), true, None)),
+                    Some(id) => {
+                        analysis.add_export(self.classify_export(id.bytes(), id.span(), true, None))
+                    }
                     None => drop(cx.report(func.estree_span(), ANONYMOUS_COMPONENTS)),
                 },
                 StmtKind::Class(class) => match class.name() {
@@ -354,7 +434,12 @@ impl OnlyExportComponents {
                 }
                 StmtKind::Fn(func) => {
                     if let Some(id) = func.name() {
-                        analysis.add_export(self.classify_export(id.bytes(), id.span(), true, None));
+                        analysis.add_export(self.classify_export(
+                            id.bytes(),
+                            id.span(),
+                            true,
+                            None,
+                        ));
                     }
                 }
                 StmtKind::Class(class) => {
@@ -362,14 +447,16 @@ impl OnlyExportComponents {
                         analysis.add_export(class_export(class, id));
                     }
                 }
-                StmtKind::Enum(ts_enum) => analysis.add_export(ExportType::NonComponent(ts_enum.name().span())),
+                StmtKind::Enum(ts_enum) => {
+                    analysis.add_export(ExportType::NonComponent(ts_enum.name().span()))
+                }
                 _ => {}
             },
             _ => {}
         }
     }
 
-    /// `file`: where `local_name` is declared. An object that it is declared with counts.
+    /// `file` is the file that declares `local_name`. Its initializer only counts if it's an object literal.
     fn classify_export_reference<'a>(
         &self,
         file: Option<&'a File<'a>>,
@@ -378,8 +465,16 @@ impl OnlyExportComponents {
         span: Span,
     ) -> ExportType {
         let declarator = file.and_then(|file| {
-            match file.top_level_scope().get_name(local_name)?.declarations().next()?.node()? {
-                Node::VarDecl(declarator) => Some(declarator).filter(|it| it.pat().as_ident().is_some()),
+            match file
+                .top_level_scope()
+                .get_name(local_name)?
+                .declarations()
+                .next()?
+                .node()?
+            {
+                Node::VarDecl(declarator) => {
+                    Some(declarator).filter(|it| it.pat().as_ident().is_some())
+                }
                 _ => None,
             }
         });
@@ -387,17 +482,34 @@ impl OnlyExportComponents {
             .and_then(VarDecl::init)
             .map(get_inner_expression)
             .filter(|it| it.tag() == ExprTag::Object);
-        self.classify_export(name.bytes(), span, self.can_be_react_function_component(init), init)
+        self.classify_export(
+            name.bytes(),
+            span,
+            self.can_be_react_function_component(init),
+            init,
+        )
     }
 
-    fn classify_export(&self, name: &[u8], span: Span, is_function: bool, init: Option<Expr>) -> ExportType {
-        let by_name =
-            || if is_react_component_name(name) { ExportType::ReactComponent } else { ExportType::NonComponent(span) };
+    fn classify_export(
+        &self,
+        name: &[u8],
+        span: Span,
+        is_function: bool,
+        init: Option<Expr>,
+    ) -> ExportType {
+        let by_name = || {
+            if is_react_component_name(name) {
+                ExportType::ReactComponent
+            } else {
+                ExportType::NonComponent(span)
+            }
+        };
         let is_object = init.is_some_and(|it| get_inner_expression(it).tag() == ExprTag::Object);
         let init = init.map(skip_ts_expression);
         let call_expr = init.and_then(as_call_expression);
         if is_react_component_name(name)
-            && (call_expr.is_some_and(|it| self.is_callee_hoc(it.callee()) && !it.args().is_empty())
+            && (call_expr
+                .is_some_and(|it| self.is_callee_hoc(it.callee()) && !it.args().is_empty())
                 || matches!(init.and_then(plain).map(Expr::kind), Some(ExprKind::Cond { yes, no, .. })
                     if self.is_react_component_initializer(yes) && self.is_react_component_initializer(no)))
         {
@@ -415,12 +527,17 @@ impl OnlyExportComponents {
             return ExportType::NonComponent(span);
         }
         if let Some(call_expr) = call_expr {
-            let is_create_context = plain(call_expr.callee()).is_some_and(|callee| match callee.kind() {
-                ExprKind::Ident(name) => name.is("createContext"),
-                ExprKind::Dot { name, .. } => name.name().is("createContext"),
-                _ => false,
-            });
-            return if is_create_context { ExportType::ReactContext(span) } else { ExportType::NonComponent(span) };
+            let is_create_context =
+                plain(call_expr.callee()).is_some_and(|callee| match callee.kind() {
+                    ExprKind::Ident(name) => name.is("createContext"),
+                    ExprKind::Dot { name, .. } => name.name().is("createContext"),
+                    _ => false,
+                });
+            return if is_create_context {
+                ExportType::ReactContext(span)
+            } else {
+                ExportType::NonComponent(span)
+            };
         }
         if init.is_some_and(is_not_react_component_expression) {
             return ExportType::NonComponent(span);
@@ -433,10 +550,11 @@ impl OnlyExportComponents {
         is_arrow_function_expression(expr)
             || is_named_function_expression(expr)
             || as_identifier(expr).is_some_and(|it| is_react_component_name(it.bytes()))
-            || as_call_expression(expr).is_some_and(|it| self.is_callee_hoc(it.callee()) && !it.args().is_empty())
+            || as_call_expression(expr)
+                .is_some_and(|it| self.is_callee_hoc(it.callee()) && !it.args().is_empty())
     }
 
-    /// `memo`, `React.memo`, `memo.a`, `connect(..)`, and what is called or taken from the result of calling one of
+    /// `memo`, `React.memo`, `memo.a`, `connect(..)`, and any call or member access on the result of calling one of
     /// them.
     fn is_callee_hoc(&self, callee: Expr) -> bool {
         let mut callee = callee;
@@ -449,7 +567,9 @@ impl OnlyExportComponents {
                     inner_call.callee()
                 }
                 ExprKind::Dot { obj, name, .. } if !at.is_private_member() => {
-                    if self.is_react_hoc(name.name()) || as_identifier(obj).is_some_and(|it| self.is_react_hoc(it)) {
+                    if self.is_react_hoc(name.name())
+                        || as_identifier(obj).is_some_and(|it| self.is_react_hoc(it))
+                    {
                         return true;
                     }
                     match as_call_expression(obj) {
@@ -468,8 +588,11 @@ impl OnlyExportComponents {
     fn is_hoc_call_expression(&self, call_expr: Call) -> bool {
         let mut call_expr = call_expr;
         loop {
-            let Some(expr) =
-                call_expr.args().first().filter(|_| self.is_callee_hoc(call_expr.callee())).map(skip_ts_expression)
+            let Some(expr) = call_expr
+                .args()
+                .first()
+                .filter(|_| self.is_callee_hoc(call_expr.callee()))
+                .map(skip_ts_expression)
             else {
                 return false;
             };

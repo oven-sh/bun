@@ -21,7 +21,7 @@ impl Rule for NoUselessSwitchCase {
         let StmtKind::Switch { cases, .. } = switch_statement.kind() else {
             return;
         };
-        // The only `default` is the last case.
+        // There must be exactly one `default`, and it must be the last case.
         if !cases.last().is_some_and(|it| it.test().is_none()) || cases.iter().filter(|it| it.test().is_none()).count() != 1 {
             return;
         }

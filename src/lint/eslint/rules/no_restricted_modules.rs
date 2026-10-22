@@ -1,10 +1,10 @@
 use bun_core::strings;
-use super::no_restricted_imports::{IgnoreRules, IgnoreSyntax, ignore_rules};
+use super::no_restricted_imports::{IgnoreRules, ignore_rules};
 use bun_lint::prelude::*;
 
 /// Disallow specified modules when loaded by `require`.
 pub struct NoRestrictedModules {
-    /// Each with its custom message. Of two with the same name, the last counts.
+    /// Each path with its custom message. If two have the same name, the last one wins.
     paths: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     patterns: Option<IgnoreRules>,
 }
@@ -41,7 +41,7 @@ impl Rule for NoRestrictedModules {
         });
         NoRestrictedModules {
             paths: paths.collect(),
-            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true, IgnoreSyntax::Npm5)),
+            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true)),
         }
     }
 

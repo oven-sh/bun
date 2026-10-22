@@ -1,6 +1,6 @@
-//! Validates JSON against a JSON schema the way Ajv 6 does with ESLint's options (draft-04,
-//! `useDefaults`, `verbose`, not `allErrors`): the same errors in the same order, with the same
-//! messages. Only the keywords that the schemas of rules use are implemented.
+//! Validates JSON against a JSON schema the way Ajv 6 does with ESLint's options (draft-04, `useDefaults`, `verbose`,
+//! not `allErrors`). It produces the same errors in the same order with the same messages. Only the keywords that rule
+//! schemas use are implemented.
 
 use crate::linter::message::write_json;
 use crate::options::Json;
@@ -8,27 +8,68 @@ use crate::regex::Regex;
 use bun_core::strings;
 use rustc_hash::FxHashMap;
 
-/// An error object of Ajv.
+/// One step of a path into nested arrays and objects.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Step {
+    Index(usize),
+    Key(Vec<u8>),
+}
+
+/// The quantity that a minimum or maximum limits.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(super) enum Of {
+    /// The number itself.
+    Value,
+    Characters,
+    Items,
+    Properties,
+}
+
+/// The reason a schema keyword rejected the data.
+#[derive(Clone, Debug)]
+pub(super) enum Why {
+    /// `type`
+    Type(Vec<Vec<u8>>),
+    /// `enum`, `const`
+    Allowed(Vec<Json>),
+    Most(f64, Of),
+    Least(f64, Of),
+    Pattern(Vec<u8>),
+    Duplicates,
+    /// `required`
+    Missing(Vec<u8>),
+    /// `additionalProperties: false`. Holds the unknown property and the properties the schema has.
+    Unknown(Vec<u8>, Vec<Vec<u8>>),
+    /// `anyOf`, `oneOf`, `not`, `then` or `else` failed. The errors before this one have the details.
+    Composite,
+}
+
+/// An Ajv error object.
 #[derive(Clone, Debug)]
 pub(super) struct SchemaError {
+    /// Path from the root to `data`.
+    pub(super) path: Vec<Step>,
+    pub(super) why: Why,
     /// `error.data`
     pub(super) data: Json,
     /// `error.message`
     pub(super) message: Vec<u8>,
-    /// For `additionalProperties: false`: the property, and the properties that the schema has.
+    /// For `additionalProperties: false`: the unknown property and the properties the schema has.
     pub(super) additional_property: Option<(Vec<u8>, Vec<Vec<u8>>)>,
 }
 
 pub(super) struct Validator<'s> {
     pub(super) root: &'s Json,
     pub(super) errors: Vec<SchemaError>,
+    /// True if the data is nested too deeply for the stack. The validator's other results are meaningless then.
+    pub(super) is_out_of_stack: bool,
 }
 
 #[derive(Copy, Clone)]
 struct Context {
-    /// Inside `anyOf`, `oneOf` or `not`: defaults are not assigned.
+    /// True inside `anyOf`, `oneOf` or `not`, where defaults aren't assigned.
     is_composite: bool,
-    /// Inside `not`: no errors are made.
+    /// False inside `not`, where errors aren't recorded.
     makes_errors: bool,
 }
 
@@ -52,18 +93,31 @@ fn has_type(data: &Json, name: &[u8]) -> bool {
     }
 }
 
-/// `fast-deep-equal`, and the opposite of ESLint's `containsDifferentProperty`: equal, whatever the order of the keys.
+/// `fast-deep-equal`, and the opposite of ESLint's `containsDifferentProperty`. Key order doesn't matter.
 pub(in crate::linter) fn is_equal(a: &Json, b: &Json) -> bool {
-    match (a, b) {
-        (Json::Array(a), Json::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_equal(a, b))
+    let mut unseen = Vec::new();
+    let mut pair = (a, b);
+    loop {
+        match pair {
+            (Json::Array(a), Json::Array(b)) if a.len() == b.len() => {
+                unseen.extend(a.iter().zip(b));
+            }
+            (Json::Object(a), Json::Object(entries)) if a.len() == entries.len() => {
+                for (key, a) in a {
+                    match pair.1.get(key) {
+                        Some(b) => unseen.push((a, b)),
+                        None => return false,
+                    }
+                }
+            }
+            (Json::Array(_) | Json::Object(_), _) => return false,
+            (a, b) if a != b => return false,
+            _ => {}
         }
-        (Json::Object(a), Json::Object(_)) => {
-            a.len() == b.as_object().map_or(0, <[_]>::len)
-                && a.iter()
-                    .all(|(key, a)| b.get(key).is_some_and(|b| is_equal(a, b)))
+        match unseen.pop() {
+            Some(next) => pair = next,
+            None => return true,
         }
-        _ => a == b,
     }
 }
 
@@ -74,8 +128,7 @@ fn number_of(schema: &Json, key: &[u8]) -> Option<f64> {
     }
 }
 
-/// The types that have keywords of their own, in the order in which Ajv checks them, and these
-/// keywords.
+/// The types that have type-specific keywords, each with those keywords, in the order Ajv checks them.
 const GROUPS: [(&[u8], &[&[u8]]); 4] = [
     (
         b"number",
@@ -114,7 +167,7 @@ fn uses_group(schema: &Json, keywords: &[&[u8]]) -> bool {
     keywords.iter().any(|keyword| schema.get(keyword).is_some())
 }
 
-/// Whether there is a `$ref` anywhere in a schema.
+/// True if there's a `$ref` anywhere in the schema.
 fn has_reference(schema: &Json) -> bool {
     match schema {
         _ if !bun_core::StackCheck::init().is_safe_to_recurse() => false,
@@ -126,7 +179,7 @@ fn has_reference(schema: &Json) -> bool {
     }
 }
 
-/// `schemaHasRules`: whether a schema has a keyword that validates.
+/// `schemaHasRules`: true if the schema has a keyword that validates.
 fn has_rules(schema: &Json) -> bool {
     schema
         .as_object()
@@ -153,17 +206,25 @@ fn regex_of(pattern: &[u8]) -> Option<Regex> {
     Regex::new(std::str::from_utf8(pattern).ok()?, "").ok()
 }
 
-fn written(number: f64) -> Vec<u8> {
+fn format_number(number: f64) -> Vec<u8> {
     let mut out = Vec::new();
     write_json(&mut out, &Json::Number(number));
     out
 }
 
 impl<'s> Validator<'s> {
-    fn error(&mut self, cx: Context, data: &Json, message: &[&[u8]]) -> bool {
+    fn error(&mut self, cx: Context, data: &Json, why: Why, message: &[&[u8]]) -> bool {
         if cx.makes_errors {
             self.errors.push(SchemaError {
-                data: data.clone(),
+                path: Vec::new(),
+                why,
+                // Under `anyOf`, every level of the data records an error, and most of them are discarded. So
+                // `validate` copies arrays and objects only at the end. Ajv stores a reference here too.
+                data: match data {
+                    Json::Array(_) => Json::Array(Vec::new()),
+                    Json::Object(_) => Json::Object(Vec::new()),
+                    data => data.clone(),
+                },
                 message: message.concat(),
                 additional_property: None,
             });
@@ -171,7 +232,7 @@ impl<'s> Validator<'s> {
         false
     }
 
-    /// The schema at a reference like `#/definitions/value`.
+    /// Resolves a reference like `#/definitions/value`.
     fn resolve(&self, reference: &[u8]) -> Option<&'s Json> {
         let mut at = self.root;
         for part in strings::split(reference.strip_prefix(b"#")?, b"/").skip(1) {
@@ -187,41 +248,73 @@ impl<'s> Validator<'s> {
         Some(at)
     }
 
-    /// Whether `data` is valid. If not, the errors are added.
+    /// Returns true if `data` is valid. Otherwise adds the errors to `self.errors`.
     pub(super) fn validate(&mut self, schema: &'s Json, data: &mut Json) -> bool {
         let cx = Context {
             is_composite: false,
             makes_errors: true,
         };
-        self.check(schema, data, cx)
+        let is_valid = self.check(schema, data, cx);
+        for error in &mut self.errors {
+            error.path.reverse();
+            let found = error.path.iter().try_fold(&*data, |at, step| match step {
+                Step::Index(index) => at.as_array()?.get(*index),
+                Step::Key(key) => at.get(key),
+            });
+            if let (Json::Array(_) | Json::Object(_), Some(found)) = (&error.data, found) {
+                error.data = found.clone();
+            }
+        }
+        is_valid
+    }
+
+    /// Runs [`Validator::check`] on a child value, one `step` below the current one. Each level appends its step to the
+    /// new errors on the way up, so paths are built in reverse.
+    fn check_in(&mut self, step: &Step, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
+        let errors_before = self.errors.len();
+        let is_valid = self.check(schema, data, cx);
+        for error in self.errors.iter_mut().skip(errors_before) {
+            error.path.push(step.clone());
+        }
+        is_valid
     }
 
     fn check(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
-        if !bun_core::StackCheck::init().is_safe_to_recurse() || schema.as_object().is_none() {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            self.is_out_of_stack = true;
             return true;
         }
-        // Next to `$ref`, other keywords are ignored.
+        if schema.as_object().is_none() {
+            return true;
+        }
+        // Keywords next to `$ref` are ignored.
         if let Some(reference) = schema.get(b"$ref").and_then(Json::as_str) {
             let Some(target) = self.resolve(reference) else {
                 return true;
             };
-            // What has references itself is compiled to a function of its own, which does not know
-            // what it is called from.
+            // Ajv compiles a target that itself has references to a separate function, which doesn't know its caller's
+            // context.
             let is_composite = cx.is_composite && !has_reference(target);
             return self.check(target, data, Context { is_composite, ..cx });
         }
         let types: Vec<&[u8]> = match schema.get(b"type") {
-            // ajv has no code for a type that it does not know: `"any"`. Among several it is one that nothing has.
+            // Ajv generates no check for a single unknown type like `"any"`. In a list of types, an unknown one never
+            // matches.
             Some(Json::String(name)) if !TYPES.contains(&&name[..]) => Vec::new(),
             Some(Json::String(name)) => vec![name],
             Some(Json::Array(names)) => names.iter().filter_map(Json::as_str).collect(),
             _ => Vec::new(),
         };
         if !types.is_empty() && !types.iter().any(|name| has_type(data, name)) {
-            self.error(cx, data, &[b"should be ", &types.join(&b',')]);
-            // The type is checked before everything else unless it is one type that has keywords of
-            // its own in the schema. Nothing stops the keywords of the first group from being
-            // checked after that, where an error does not end the validation.
+            let names = types.iter().map(|it| it.to_vec()).collect();
+            self.error(
+                cx,
+                data,
+                Why::Type(names),
+                &[b"should be ", &types.join(&b',')],
+            );
+            // Ajv checks `type` first, unless it's a single type whose own keywords appear in the schema. Inside a
+            // composite, where an error doesn't stop validation, it still checks the first keyword group afterwards.
             let is_checked_first = schema
                 .get(b"type")
                 .is_some_and(|it| it.as_array().is_some())
@@ -243,7 +336,7 @@ impl<'s> Validator<'s> {
             && self.check_any(schema, data, cx)
     }
 
-    /// The keywords for the values of one type, if `data` is one.
+    /// Checks the keywords specific to one type, if `data` has that type.
     fn check_typed(
         &mut self,
         group: &[u8],
@@ -267,12 +360,14 @@ impl<'s> Validator<'s> {
         if let Some(limit) = number_of(schema, b"maximum")
             && (value > limit || value.is_nan())
         {
-            return self.error(cx, data, &[b"should be <= ", &written(limit)]);
+            let why = Why::Most(limit, Of::Value);
+            return self.error(cx, data, why, &[b"should be <= ", &format_number(limit)]);
         }
         if let Some(limit) = number_of(schema, b"minimum")
             && (value < limit || value.is_nan())
         {
-            return self.error(cx, data, &[b"should be >= ", &written(limit)]);
+            let why = Why::Least(limit, Of::Value);
+            return self.error(cx, data, why, &[b"should be >= ", &format_number(limit)]);
         }
         true
     }
@@ -281,7 +376,7 @@ impl<'s> Validator<'s> {
         let Json::String(value) = data else {
             return true;
         };
-        // `ucs2length`: code points.
+        // `ucs2length` counts code points.
         let length = || bstr::ByteSlice::chars(&value[..]).count() as f64;
         if let Some(limit) = number_of(schema, b"maxLength")
             && length() > limit
@@ -289,9 +384,10 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
+                Why::Most(limit, Of::Characters),
                 &[
                     b"should NOT be longer than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" characters",
                 ],
             );
@@ -302,9 +398,10 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
+                Why::Least(limit, Of::Characters),
                 &[
                     b"should NOT be shorter than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" characters",
                 ],
             );
@@ -312,7 +409,8 @@ impl<'s> Validator<'s> {
         if let Some(pattern) = schema.get(b"pattern").and_then(Json::as_str)
             && regex_of(pattern).is_some_and(|regex| !regex.test(value))
         {
-            return self.error(cx, data, &[b"should match pattern \"", pattern, b"\""]);
+            let why = Why::Pattern(pattern.to_vec());
+            return self.error(cx, data, why, &[b"should match pattern \"", pattern, b"\""]);
         }
         true
     }
@@ -339,7 +437,12 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
-                &[b"should NOT have more than ", &written(limit), b" items"],
+                Why::Most(limit, Of::Items),
+                &[
+                    b"should NOT have more than ",
+                    &format_number(limit),
+                    b" items",
+                ],
             );
         }
         if let Some(limit) = number_of(schema, b"minItems")
@@ -348,7 +451,12 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
-                &[b"should NOT have fewer than ", &written(limit), b" items"],
+                Why::Least(limit, Of::Items),
+                &[
+                    b"should NOT have fewer than ",
+                    &format_number(limit),
+                    b" items",
+                ],
             );
         }
         match items_schema {
@@ -358,9 +466,10 @@ impl<'s> Validator<'s> {
                     return self.error(
                         cx,
                         data,
+                        Why::Most(schemas.len() as f64, Of::Items),
                         &[
                             b"should NOT have more than ",
-                            &written(schemas.len() as f64),
+                            &format_number(schemas.len() as f64),
                             b" items",
                         ],
                     );
@@ -373,7 +482,7 @@ impl<'s> Validator<'s> {
                         .get(i)
                         .or_else(|| additional.filter(|it| it.as_object().is_some()));
                     if let Some(item_schema) = item_schema
-                        && !self.check(item_schema, item, cx)
+                        && !self.check_in(&Step::Index(i), item_schema, item, cx)
                     {
                         return false;
                     }
@@ -383,8 +492,8 @@ impl<'s> Validator<'s> {
                 let Json::Array(items) = data else {
                     return true;
                 };
-                for item in items {
-                    if !self.check(item_schema, item, cx) {
+                for (i, item) in items.iter_mut().enumerate() {
+                    if !self.check_in(&Step::Index(i), item_schema, item, cx) {
                         return false;
                     }
                 }
@@ -396,12 +505,12 @@ impl<'s> Validator<'s> {
         {
             let message =
                 format!("should NOT have duplicate items (items ## {j} and {i} are identical)");
-            return self.error(cx, data, &[message.as_bytes()]);
+            return self.error(cx, data, Why::Duplicates, &[message.as_bytes()]);
         }
         true
     }
 
-    /// The two items that `uniqueItems` names, in the order it names them.
+    /// The two items that the `uniqueItems` error mentions, in the order it mentions them.
     fn duplicate(items_schema: Option<&Json>, items: &[Json]) -> Option<(usize, usize)> {
         let types: Vec<&[u8]> = match items_schema.and_then(|it| it.get(b"type")) {
             Some(Json::String(name)) => vec![name],
@@ -418,8 +527,8 @@ impl<'s> Validator<'s> {
             }
             return None;
         }
-        // Items of simple types are looked up by what they print as, from the end: they are the keys of an object. With several
-        // types, a string is told apart from what prints the same.
+        // Ajv walks items of simple types from the end and uses their string form as keys of an object. With several
+        // types, it prefixes strings so they differ from other values that print the same.
         let key = |value: &Json| {
             let mut out = Vec::new();
             if types.len() > 1 && matches!(value, Json::String(_)) {
@@ -462,9 +571,10 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
+                Why::Most(limit, Of::Properties),
                 &[
                     b"should NOT have more than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" properties",
                 ],
             );
@@ -475,14 +585,15 @@ impl<'s> Validator<'s> {
             return self.error(
                 cx,
                 data,
+                Why::Least(limit, Of::Properties),
                 &[
                     b"should NOT have fewer than ",
-                    &written(limit),
+                    &format_number(limit),
                     b" properties",
                 ],
             );
         }
-        // What has a schema in `properties` is looked for there.
+        // A required property with a schema in `properties` is checked below, together with that schema.
         let required: Vec<&[u8]> = schema
             .get(b"required")
             .and_then(Json::as_array)
@@ -493,7 +604,7 @@ impl<'s> Validator<'s> {
         let has_schema = |name: &[u8]| properties.iter().any(|it| it.0 == name && has_rules(&it.1));
         for name in required.iter().filter(|name| !has_schema(name)) {
             if data.get(name).is_none() {
-                // Here Ajv names the property as it is accessed: `getProperty`.
+                // Here Ajv prints the property as an accessor (`getProperty`).
                 let is_identifier = name
                     .first()
                     .is_some_and(|b| b.is_ascii_alphabetic() || matches!(b, b'$' | b'_'))
@@ -508,6 +619,7 @@ impl<'s> Validator<'s> {
                 return self.error(
                     cx,
                     data,
+                    Why::Missing(name.to_vec()),
                     &[
                         b"should have required property '",
                         before,
@@ -518,8 +630,8 @@ impl<'s> Validator<'s> {
                 );
             }
         }
-        // A schema for the whole object, where it has the property. The other form, a list of
-        // properties, no rule has.
+        // Each dependency is a schema for the whole object that applies if the object has the property. No rule uses
+        // the other form, a list of properties.
         let dependencies = schema.get(b"dependencies").and_then(Json::as_object);
         for (key, dependent) in dependencies.unwrap_or_default() {
             if has_rules(dependent) && data.get(key).is_some() && !self.check(dependent, data, cx) {
@@ -548,7 +660,13 @@ impl<'s> Validator<'s> {
                 .find(|it| is_additional(&it.0))
         {
             let key = key.clone();
-            self.error(cx, data, &[b"should NOT have additional properties"]);
+            let known = properties.iter().map(|it| it.0.clone()).collect();
+            self.error(
+                cx,
+                data,
+                Why::Unknown(key.clone(), known),
+                &[b"should NOT have additional properties"],
+            );
             if cx.makes_errors
                 && schema.get(b"properties").is_some()
                 && let Some(error) = self.errors.last_mut()
@@ -563,7 +681,9 @@ impl<'s> Validator<'s> {
         };
         if let Some(additional @ Json::Object(_)) = additional {
             for (key, value) in entries.iter_mut() {
-                if is_additional(key) && !self.check(additional, value, cx) {
+                if is_additional(key)
+                    && !self.check_in(&Step::Key(key.clone()), additional, value, cx)
+                {
                     return false;
                 }
             }
@@ -571,13 +691,15 @@ impl<'s> Validator<'s> {
         for (key, property) in properties.iter().filter(|it| has_rules(&it.1)) {
             match entries.iter_mut().find(|it| it.0 == *key) {
                 Some((_, value)) => {
-                    if !self.check(property, value, cx) {
+                    if !self.check_in(&Step::Key(key.clone()), property, value, cx) {
                         return false;
                     }
                 }
                 None if required.contains(&&key[..]) => {
                     let data = Json::Object(entries.clone());
-                    return self.error(cx, &data, &[b"should have required property '", key, b"'"]);
+                    let why = Why::Missing(key.clone());
+                    let message: [&[u8]; 3] = [b"should have required property '", key, b"'"];
+                    return self.error(cx, &data, why, &message);
                 }
                 None => {}
             }
@@ -585,7 +707,7 @@ impl<'s> Validator<'s> {
         for (regex, property) in &patterns {
             for (key, value) in entries.iter_mut() {
                 if regex.as_ref().is_some_and(|regex| regex.test(key))
-                    && !self.check(*property, value, cx)
+                    && !self.check_in(&Step::Key(key.clone()), property, value, cx)
                 {
                     return false;
                 }
@@ -594,17 +716,19 @@ impl<'s> Validator<'s> {
         true
     }
 
-    /// The keywords that are for all types.
+    /// Checks the keywords that apply to every type.
     fn check_any(&mut self, schema: &'s Json, data: &mut Json, cx: Context) -> bool {
         if let Some(constant) = schema.get(b"const")
             && !is_equal(data, constant)
         {
-            return self.error(cx, data, &[b"should be equal to constant"]);
+            let why = Why::Allowed(vec![constant.clone()]);
+            return self.error(cx, data, why, &[b"should be equal to constant"]);
         }
         if let Some(allowed) = schema.get(b"enum").and_then(Json::as_array)
             && !allowed.iter().any(|it| is_equal(data, it))
         {
-            return self.error(cx, data, &[b"should be equal to one of the allowed values"]);
+            let message: &[u8] = b"should be equal to one of the allowed values";
+            return self.error(cx, data, Why::Allowed(allowed.to_vec()), &[message]);
         }
         let composite = Context {
             is_composite: true,
@@ -616,7 +740,7 @@ impl<'s> Validator<'s> {
                 ..composite
             };
             if self.check(not, data, silent) {
-                return self.error(cx, data, &[b"should NOT be valid"]);
+                return self.error(cx, data, Why::Composite, &[b"should NOT be valid"]);
             }
         }
         let errors_before = self.errors.len();
@@ -625,7 +749,8 @@ impl<'s> Validator<'s> {
                 .iter()
                 .any(|it| self.check(it, data, composite))
             {
-                return self.error(cx, data, &[b"should match some schema in anyOf"]);
+                let message: &[u8] = b"should match some schema in anyOf";
+                return self.error(cx, data, Why::Composite, &[message]);
             }
             self.errors.truncate(errors_before);
         }
@@ -638,7 +763,8 @@ impl<'s> Validator<'s> {
                 }
             }
             if matching != 1 {
-                return self.error(cx, data, &[b"should match exactly one schema in oneOf"]);
+                let message: &[u8] = b"should match exactly one schema in oneOf";
+                return self.error(cx, data, Why::Composite, &[message]);
             }
             self.errors.truncate(errors_before);
         }
@@ -663,9 +789,9 @@ impl<'s> Validator<'s> {
             if let Some(branch) = schema.get(name)
                 && !self.check(branch, data, cx)
             {
-                // Where the first error ends it all, that of the branch has.
-                return cx.is_composite
-                    && self.error(cx, data, &[b"should match \"", name, b"\" schema"]);
+                // Outside a composite, the first error stops validation, and the branch already recorded it.
+                let message: [&[u8]; 3] = [b"should match \"", name, b"\" schema"];
+                return cx.is_composite && self.error(cx, data, Why::Composite, &message);
             }
         }
         true

@@ -471,6 +471,21 @@ impl Expect {
         }
     }
 
+    /// A Promise subclass can start its work in `then()`, as a `Bun.sql` query does.
+    fn call_then_if_pending(global_this: &JSGlobalObject, value: JSValue, promise: bun_jsc::AnyPromise) -> JsResult<()> {
+        if promise.status() != js_promise::Status::Pending {
+            return Ok(());
+        }
+        let Some(then) = value.get(global_this, "then")? else { return Ok(()) };
+        if !then.is_callable() {
+            return Ok(());
+        }
+        if let Some(derived) = then.call(global_this, value, &[])?.as_any_promise() {
+            derived.set_handled(global_this.vm());
+        }
+        Ok(())
+    }
+
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -488,6 +503,8 @@ impl Expect {
                 if let Some(promise) = value.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
+
+                    Self::call_then_if_pending(global_this, value, promise)?;
 
                     // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
@@ -869,6 +886,10 @@ impl Expect {
         }
 
         if let Some(promise) = return_value.as_any_promise() {
+            if let Err(err) = Self::call_then_if_pending(global_this, return_value, promise) {
+                scope.apply(vm);
+                return Err(err);
+            }
             let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
             waited.map_err(|stopped| stopped.throw(global_this))?;
@@ -1069,7 +1090,7 @@ impl Expect {
         }
 
         if needs_write {
-            if crate::cli::ci_info::is_ci() {
+            if bun_core::ci_info::is_ci() {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
@@ -1458,7 +1479,7 @@ impl Expect {
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    VirtualMachine::get().as_mut().run_error_handler(result, None);
+                    bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,

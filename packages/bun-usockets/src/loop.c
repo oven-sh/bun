@@ -163,6 +163,7 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
 
     us_free(loop->data.recv_buf);
     us_free(loop->data.send_buf);
+    us_free(loop->data.unresumable_sockets);
 
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
@@ -404,8 +405,44 @@ int us_internal_handle_dns_results(struct us_loop_t *loop) {
     return s != NULL;
 }
 
+/* The kernel isn't polling `s`, so wake the loop explicitly. */
+void us_internal_loop_close_unresumable_socket(struct us_loop_t *loop, struct us_socket_t *s, int code) {
+    struct us_internal_loop_data_t *data = &loop->data;
+    struct us_internal_unresumable_socket_t *sockets = us_realloc(data->unresumable_sockets,
+        sizeof(*sockets) * ((size_t) data->num_unresumable_sockets + 1));
+    if (!sockets) Bun__outOfMemory();
+    sockets[data->num_unresumable_sockets].socket = s;
+    sockets[data->num_unresumable_sockets].code = code;
+    data->unresumable_sockets = sockets;
+    data->num_unresumable_sockets++;
+    us_wakeup_loop(loop);
+}
+
+static void us_internal_close_unresumable_sockets(struct us_loop_t *loop) {
+    struct us_internal_loop_data_t *data = &loop->data;
+    /* A close handler can queue another socket or close a queued one. */
+    while (data->num_unresumable_sockets) {
+        struct us_internal_unresumable_socket_t entry = data->unresumable_sockets[--data->num_unresumable_sockets];
+        struct us_socket_t *s = us_internal_socket_follow_adopted(entry.socket);
+        if (s && !us_socket_is_closed(s)) {
+            us_internal_socket_close_raw(s, entry.code, NULL);
+        }
+    }
+}
+
 /* Note: Properly takes the linked list and timeout sweep into account */
 void us_internal_free_closed_sockets(struct us_loop_t *loop) {
+    /* Remove the sockets freed below from the unresumable list. */
+    struct us_internal_loop_data_t *data = &loop->data;
+    for (int i = 0; i < data->num_unresumable_sockets; ) {
+        struct us_socket_t *s = us_internal_socket_follow_adopted(data->unresumable_sockets[i].socket);
+        if (!s || us_socket_is_closed(s)) {
+            data->unresumable_sockets[i] = data->unresumable_sockets[--data->num_unresumable_sockets];
+        } else {
+            data->unresumable_sockets[i++].socket = s;
+        }
+    }
+
     /* Free all closed sockets (maybe it is better to reverse order?) */
     for (struct us_socket_t *s = loop->data.closed_head; s; ) {
         struct us_socket_t *next = s->next;
@@ -458,6 +495,8 @@ void us_internal_loop_post(struct us_loop_t *loop) {
     if (loop->data.quic_head) us_quic_loop_process(loop);
 #endif
     if (loop->data.nq_head) us_nq_loop_flush_if_pending(loop);
+    /* Runs at every tick depth because a nested tick may be waiting for this close. */
+    us_internal_close_unresumable_sockets(loop);
     /* A poll callback may re-enter the loop (e.g. expect().toThrow() →
      * waitForPromise → us_loop_run_bun_tick). The inner tick must not free
      * closed sockets: the outer tick's dispatch is mid-iteration and may still
@@ -802,9 +841,10 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         ) {
                             repeat_recv_count++;
 
-                            // When not hung up, read a maximum of 10 times to avoid starving other sockets
+                            // When not hung up, read a maximum of 10 more times: a peer that refills the receive buffer
+                            // during on_data keeps every read full, and timers only run once we return to the loop.
                             // We don't bother with ioctl(FIONREAD) because we've set MSG_DONTWAIT
-                            if (!(repeat_recv_count > 10 && loop->num_ready_polls > 2)) {
+                            if (repeat_recv_count <= 10) {
                                 continue;
                             }
                         }
@@ -882,9 +922,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * read_eof is set there is nothing left to drain and deferring would only
              * lose the close. Error-flagged events keep the error path. A hangup
              * takes the write side down too, so a hangup_closes_unsent socket does
-             * not wait when the write this event retried failed again. */
+             * not wait when the write this event retried failed again. A TLS socket
+             * retries nothing after a rejected send. */
             const int eof_deferrable = eof && s && !error && !us_socket_is_closed(s) && !s->read_eof;
-            const int unsent_is_lost = hangup && s && s->hangup_closes_unsent && s->flags.last_write_failed;
+            const int unsent_is_lost = hangup && s && s->hangup_closes_unsent &&
+                                       (s->flags.last_write_failed || (s->ssl && s->ssl_send_rejected));
             if (eof_deferrable && s->flags.is_paused && !unsent_is_lost) {
 #ifdef LIBUS_USE_EPOLL
                 /* EPOLLHUP is unmaskable: leave epoll while paused so it cannot re-fire; the unread tail stays in
@@ -926,6 +968,11 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
+                    if (s->ssl && s->ssl_send_rejected && unsent_is_lost) {
+                        /* This owner reads nothing until the lost bytes drain: left open for what is queued, its hangup would fire for ever. */
+                        s = us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                        return;
+                    }
                     s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
                                                        : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;

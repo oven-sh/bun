@@ -1098,7 +1098,36 @@ describe("spyOn", () => {
       obj.original;
       expect(fn).not.toHaveBeenCalled();
     });
+
+    test.each(["$", "sql", "postgres", "SQL"])("spyOn works on Bun.%s", name => {
+      const fn = spyOn(Bun, name).mockImplementation(() => "mocked");
+      expect(Bun[name]).toBe(fn);
+      expect(Bun[name]()).toBe("mocked");
+      fn.mockRestore();
+      expect(Bun[name]).not.toBe(fn);
+      expect(Bun[name]).toBeFunction();
+    });
   }
+
+  test("spyOn throws on a WebAssembly GC object", () => {
+    // (type $s (struct (field (mut i32)))) (type $a (array (mut i32)))
+    // (func (export "s") (result (ref null $s)) struct.new_default $s)
+    // (func (export "a") (result (ref null $a)) i32.const 2 array.new_default $a)
+    // prettier-ignore
+    const bytes = new Uint8Array([
+      0, 0x61, 0x73, 0x6d, 1, 0, 0, 0,
+      1, 18, 4, 0x5f, 1, 0x7f, 1, 0x5e, 0x7f, 1, 0x60, 0, 1, 0x63, 0, 0x60, 0, 1, 0x63, 1,
+      3, 3, 2, 2, 3,
+      7, 9, 2, 1, 0x73, 0, 0, 1, 0x61, 0, 1,
+      10, 15, 2, 5, 0, 0xfb, 1, 0, 0x0b, 7, 0, 0x41, 2, 0xfb, 7, 1, 0x0b,
+    ]);
+    const { s, a } = new WebAssembly.Instance(new WebAssembly.Module(bytes)).exports;
+    for (const target of [s(), a()]) {
+      for (const key of ["x", Symbol("x"), 0]) {
+        expect(() => spyOn(target, key)).toThrow("spyOn(target, prop) does not support WebAssembly GC objects");
+      }
+    }
+  });
 
   test("spyOn twice works", () => {
     var obj = {

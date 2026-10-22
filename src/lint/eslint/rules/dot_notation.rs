@@ -10,12 +10,38 @@ pub struct DotNotation {
 const USE_DOT: Message = Message::new("useDot", "[{{key}}] is better written in dot notation.");
 const USE_BRACKETS: Message = Message::new("useBrackets", ".{{key}} is a syntax error.");
 
-/// Reports the `name` of `object.name`, which is a keyword.
-fn report_keyword<'a, R: Rule>(cx: &Cx<'a, R>, name: Ident<'a>, is_optional: bool, is_after_let: bool) {
+/// True if `e`, an `a.b`, can be written `a["b"]`. It can't in a JSX tag name or in a decorator without parentheses.
+fn can_be_computed(e: Expr<'_>) -> bool {
+    if e.is_jsx_tag_name() {
+        return false;
+    }
+    let mut outermost = e;
+    while !outermost.is_parenthesized()
+        && let Node::Expr(parent) = outermost.parent()
+        && (parent.object() == Some(outermost) || parent.callee() == Some(outermost))
+    {
+        outermost = parent;
+    }
+    outermost.is_parenthesized() || !e.file().token_before(outermost).is_some_and(|token| token.text() == b"@")
+}
+
+/// Reports the `name` of `object.name`, which is a keyword. `member` is the `Dot`, or `None` for a name in a heritage
+/// clause.
+fn report_keyword<'a, R: Rule>(
+    cx: &Cx<'a, R>,
+    name: Ident<'a>,
+    member: Option<Expr<'a>>,
+    is_optional: bool,
+    is_after_let: bool,
+) {
     cx.report(name, USE_BRACKETS).data("key", name).fix(|fixer| {
         let file = fixer.file();
+        // tsgolint adds the brackets even where they're a syntax error.
+        if file.language().is_oxlint && !member.is_some_and(can_be_computed) {
+            return None;
+        }
         let dot = file.token_before(name)?;
-        // A statement that starts with `let[` declares variables. tsgolint does not mind comments.
+        // A statement that starts with `let[` declares variables. tsgolint ignores comments.
         if (is_after_let && !is_optional) || file.comments_exist_between(dot, name) && !file.language().is_oxlint {
             return None;
         }
@@ -28,7 +54,7 @@ fn report_keyword<'a, R: Rule>(cx: &Cx<'a, R>, name: Ident<'a>, is_optional: boo
 }
 
 impl DotNotation {
-    /// ESLint's `checkComputedProperty`, and what decides whether it is called.
+    /// ESLint's `checkComputedProperty`, plus the conditions under which it's called.
     fn check_computed_property<'a, R: Rule>(&self, e: Expr<'a>, cx: &Cx<'a, R>) {
         let ExprKind::Index { obj, index, chain } = e.kind() else {
             return;
@@ -84,16 +110,18 @@ impl DotNotation {
             ExprKind::Dot { obj, name, chain }
                 if !self.allows_keywords
                     && keywords::is_keyword(name.bytes())
-                    && ast_utils::is_member_expression(e) =>
+                    // tsgolint listens for every PropertyAccessExpression, including a JSX tag name.
+                    && (ast_utils::is_member_expression(e)
+                        || (e.is_jsx_tag_name() && e.file().language().is_oxlint)) =>
             {
-                report_keyword(cx, name, chain == Chain::Start, obj.is_ident("let"));
+                report_keyword(cx, name, Some(e), chain == Chain::Start, obj.is_ident("let"));
             }
             _ => {}
         }
     }
 
-    /// The same for the `a.b` of `implements a.b`, and of `extends a.b` of an interface: ESTree has
-    /// a `MemberExpression` there.
+    /// Same for the `a.b` of `implements a.b`, and of an interface's `extends a.b`. ESTree has a `MemberExpression`
+    /// there.
     pub fn check_heritage<'a, R: Rule>(&self, ty: TypeNode<'a>, cx: &Cx<'a, R>) {
         let TypeKind::Ref { name, .. } = ty.kind() else {
             return;
@@ -104,12 +132,12 @@ impl DotNotation {
         for (i, part) in name.parts().enumerate().skip(1) {
             if keywords::is_keyword(part.bytes()) {
                 let is_after_let = i == 1 && name.first().is_some_and(|first| first.name().is("let"));
-                report_keyword(cx, part, false, is_after_let);
+                report_keyword(cx, part, None, false, is_after_let);
             }
         }
     }
 
-    /// Whether a `Dot` can be reported, and [`DotNotation::check_heritage`] can report anything.
+    /// True if a `Dot` can be reported and [`DotNotation::check_heritage`] can report anything.
     pub fn checks_keywords(&self) -> bool {
         !self.allows_keywords
     }

@@ -1,12 +1,13 @@
 //! Statements and declarations.
 
-use super::{ListKind, Parser, ctx, take_span};
-use crate::Refusal;
+use super::declared::Declares;
+use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::token::T;
-use bun_sema::atom::Atom;
+use crate::{Goal, Rejection};
+use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
 
-/// The first token of a node: its start, and `node.Pos()`.
+/// Where a node's first token starts (`pos`), and `node.Pos()` (`full`).
 #[derive(Copy, Clone)]
 pub(crate) struct Start {
     pub(crate) pos: u32,
@@ -35,8 +36,8 @@ pub(crate) fn modifier_flag(token: T) -> Flags {
     }
 }
 
-/// What `is_start_of_declaration` has found for a long run of modifiers: `answer` holds at every
-/// token that starts from `from` to `to`, in `context`.
+/// Caches `is_start_of_declaration`'s result for a long run of modifiers. `answer` applies to every
+/// token that starts between `from` and `to`, in `context`.
 #[derive(Copy, Clone)]
 pub(crate) struct DeclarationScan {
     pub(crate) from: u32,
@@ -45,20 +46,19 @@ pub(crate) struct DeclarationScan {
     pub(crate) answer: bool,
 }
 
-/// What `parseModifiersEx` is told, by what has the modifiers.
+/// `parseModifiersEx`'s arguments, which depend on what the modifiers are on.
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) enum ModifiersOf {
-    /// A statement, a class expression, a parameter or a member of an object literal. Decorators are
-    /// among them.
+    /// A statement, a class expression, a parameter or a member of an object literal. Decorators are allowed.
     Declaration,
-    /// `const` is one.
+    /// `const` is a modifier.
     TypeParameter,
     TypeMember,
-    /// Decorators are among them, `const` is one, and `static {` is none.
+    /// Decorators are allowed, `const` is a modifier, and the `static` of `static {` isn't.
     ClassMember,
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn start(&self) -> Start {
         Start {
@@ -76,6 +76,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         modifiers: Span<ModifierId>,
     ) -> StmtId {
         let id = StmtId(self.f.stmts.len() as u32);
+        self.finish_statement(id, &kind, start.pos, self.prev_end());
         self.f.stmts.push(Stmt {
             kind,
             start: start.pos,
@@ -83,12 +84,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 pos: start.full,
                 end: self.prev_end(),
             },
-            modifiers,
         });
+        if !modifiers.is_empty() {
+            self.f.modifiers_of_stmts.push((id, modifiers));
+        }
         id
     }
 
     /// `parseStatement`
+    ///
+    /// Anything with a large stack frame is kept out of line, because this frame is paid at each
+    /// level of `if (a) if (b) ..`.
     pub(crate) fn statement(&mut self) -> StmtId {
         if self.is_too_deep() {
             return StmtId::NONE;
@@ -121,7 +127,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.semicolon();
                 self.add_stmt(StmtKind::Debugger, start, Span::EMPTY)
             }
-            // Nothing but `function` follows it in a declaration.
+            // In a declaration, only `function` can follow `async`.
             T::Async if self.is_ecmascript && !self.next_is_function_on_same_line() => {
                 self.expression_or_labeled_statement()
             }
@@ -150,6 +156,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::Private | T::Protected | T::Public | T::Accessor | T::Static | T::Readonly
                 if !self.is_ecmascript
                     && !self.recovers()
+                    // oxc treats them as names: `static as any = 1`.
+                    && !self.options.dialect.oxc
                     && self.is_followed_by_word_on_same_line() =>
             {
                 self.fail();
@@ -161,7 +169,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `nextTokenIsBindingIdentifierOrStartOfDestructuring`
     fn is_let_declaration(&mut self) -> bool {
-        let is_ecmascript = self.is_ecmascript;
+        let is_ecmascript = self.is_ecmascript || self.options.dialect.oxc;
         self.look_ahead(|p| {
             p.next();
             match p.token() {
@@ -174,14 +182,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         })
     }
 
-    /// `parseStatement` where a declaration cannot be: the body of an `if`, of a loop, of a `with`
-    /// or of a label. For acorn `let` is a name there, unless a `[` or a name with an escape follows.
+    /// `parseStatement` where a declaration isn't allowed: the body of an `if`, a loop, a `with` or a label. For acorn
+    /// and oxc, `let` is a name there unless a `[` or a name with an escape follows.
     pub(crate) fn embedded_statement(&mut self) -> StmtId {
-        // `let: let: ..` does not get to `statement`.
+        // `let: let: ..` recurses without going through `statement`.
         if self.is_too_deep() {
             return StmtId::NONE;
         }
-        if self.token() == T::Let && self.is_ecmascript {
+        if self.token() == T::Let && (self.is_ecmascript || self.options.dialect.oxc) {
             let is_declaration = self.look_ahead(|p| {
                 p.next();
                 p.token() == T::OpenBracket || p.token() == T::Identifier && p.lx.has_escape
@@ -194,13 +202,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.reads_jsdoc() {
             self.statement_jsdoc(statement);
         }
-        // The other parser takes these for statements of the file if no block is around them.
-        if let Some(Stmt {
-            kind: StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
-            ..
-        }) = self.f.stmts.get(statement.idx())
-        {
-            self.f.has_module_syntax = true;
+        match self.f.stmts.get(statement.idx()).map(|it| it.kind) {
+            // These make the file a module even as the body of an `if`, a loop, a `with` or a label. An
+            // enclosing block undoes that: see `statements_until_close_brace`.
+            Some(StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. }) => {
+                self.f.has_module_syntax = true;
+            }
+            Some(StmtKind::Var(_) | StmtKind::Fn(_) | StmtKind::Class(_)) => {
+                self.f.rare_syntax |= rare::DECLARATION_AS_BODY;
+                if self.reports_like_oxc() {
+                    oxc::declaration_as_body(&mut self.f, statement);
+                }
+            }
+            Some(
+                StmtKind::Interface(_)
+                | StmtKind::TypeAlias(_)
+                | StmtKind::Enum(_)
+                | StmtKind::Module(_),
+            ) if self.reports_like_oxc() => oxc::declaration_as_body(&mut self.f, statement),
+            _ => {}
         }
         statement
     }
@@ -221,21 +241,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn is_await_using_declaration(&mut self) -> bool {
         self.look_ahead(|p| {
             p.next();
-            // Only acorn asks for `using` on the line of `await`.
+            // acorn and oxc require `using` on the same line as `await`.
             p.token() == T::Using
-                && !(p.newline_before() && p.is_ecmascript)
+                && !(p.newline_before() && (p.is_ecmascript || p.options.dialect.oxc))
                 && p.next_is_binding_on_same_line(false)
         })
     }
 
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
-        // The scan steps over one modifier at a time and remembers nothing, so it ends the same way
-        // from each of them. Without this `declare declare ..` is scanned once from each word.
-        // The commonest, for which the text says what the scan would.
-        if self.token() == T::Import && self.is_before(b" {") {
+        // Fast path for the most common case, where the text is enough to know the scan's answer.
+        if self.token() == T::Import && self.is_followed_by(b" {") {
             return true;
         }
+        // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.
+        // Without this cache, `declare declare ..` is scanned once from each word.
         let from = self.pos();
         let context = self.context & (ctx::YIELD | ctx::AWAIT);
         let known = self.declaration_scan;
@@ -262,20 +282,30 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.is_identifier() && !self.newline_before()
     }
 
-    /// `isDeclaration`. `last`: set to the start of the last token at which the loop was.
+    /// `isDeclaration`. `last`: set to the start of the last token the loop looked at.
     fn is_declaration(&mut self, last: &mut u32) -> bool {
+        let first = self.pos();
         loop {
             *last = self.pos();
             match self.token() {
                 T::Var | T::Let | T::Const | T::Function | T::Class | T::Enum => return true,
                 T::Using => return self.is_using_declaration(),
                 T::Await => return self.is_await_using_declaration(),
+                // oxc accepts `type await = 1` and `interface await {}` in an async function.
+                T::Interface | T::Type if self.options.dialect.oxc => {
+                    self.next();
+                    return (self.is_identifier() || self.token() == T::Await)
+                        && !self.newline_before();
+                }
                 T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
                 T::Defer if self.recovers() => return self.next_is_identifier_on_same_line(),
                 T::Module | T::Namespace => {
                     self.next();
+                    // oxc clears the await context for the declaration.
                     return !self.newline_before()
-                        && (self.is_identifier() || self.token() == T::String);
+                        && (self.is_identifier()
+                            || self.token() == T::String
+                            || self.token() == T::Await && self.options.dialect.oxc);
                 }
                 T::Abstract
                 | T::Accessor
@@ -295,8 +325,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         // "If we see 'declare type', then commit to parsing a type alias."
                         return true;
                     }
+                    // Before these, oxc treats a `declare` that starts the statement as a name.
+                    if previous == T::Declare
+                        && matches!(self.token(), T::Using | T::Await)
+                        && *last == first
+                        && self.options.dialect.oxc
+                    {
+                        return false;
+                    }
                     // `declare module.exports: T`
-                    if previous == T::Declare && self.token() == T::Module && self.is_flow {
+                    if previous == T::Declare && self.token() == T::Module && self.is_flow() {
                         return true;
                     }
                 }
@@ -314,7 +352,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.next();
                     let mut current = self.token();
                     if current == T::Type {
-                        // The native parser decides by the token after `type` alone.
+                        // The native parser only looks at the token after `type`.
                         if self.recovers() {
                             self.next();
                             return matches!(self.token(), T::Asterisk | T::OpenBrace)
@@ -330,7 +368,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     }
                 }
                 T::Static => self.next(),
-                _ => return self.is_flow && self.flow_is_at_declaration_word(),
+                _ => return self.is_flow() && self.flow_is_at_declaration_word(),
             }
         }
     }
@@ -350,7 +388,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.token(),
             T::OpenBracket | T::OpenBrace | T::Asterisk | T::DotDotDot
         ) || self.is_literal_property_name()
-            || matches!(self.token(), T::Plus | T::Minus) && self.is_flow
+            || matches!(self.token(), T::Plus | T::Minus) && self.is_flow()
     }
 
     /// `canFollowExportModifier`
@@ -364,7 +402,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn next_can_follow_default_keyword(&mut self) -> bool {
         self.next();
         match self.token() {
-            T::Class | T::Function | T::Interface | T::At => true,
+            T::Class | T::Function | T::At => true,
+            // oxc requires the name on the same line.
+            T::Interface => {
+                !self.options.dialect.oxc
+                    || self.look_ahead(|p| {
+                        p.next();
+                        !p.newline_before()
+                    })
+            }
             T::Abstract => self.look_ahead(|p| {
                 p.next();
                 p.token() == T::Class && !p.newline_before()
@@ -373,12 +419,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 p.next();
                 p.token() == T::Function && !p.newline_before()
             }),
-            T::Enum => self.is_flow,
-            _ => self.is_flow && self.flow_is_at_declaration_word(),
+            T::Enum => self.is_flow(),
+            _ => self.is_flow() && self.flow_is_at_declaration_word(),
         }
     }
 
-    /// `nextTokenCanFollowModifier`. It leaves the parser after the modifier.
+    /// `nextTokenCanFollowModifier`. Leaves the parser positioned after the modifier.
     fn next_can_follow_modifier(&mut self) -> bool {
         match self.token() {
             // "'const' is only a modifier if followed by 'enum'."
@@ -397,7 +443,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     _ => self.can_follow_export_modifier(),
                 }
             }
-            T::Default => self.next_can_follow_default_keyword_without_consuming(),
+            T::Default => self.next_can_follow_default_keyword(),
             T::Static | T::Get | T::Set => {
                 self.next();
                 self.can_follow_modifier()
@@ -409,19 +455,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `nextTokenCanFollowDefaultKeyword` consumes `default` alone.
-    fn next_can_follow_default_keyword_without_consuming(&mut self) -> bool {
-        self.next_can_follow_default_keyword()
-    }
-
-    /// `parseModifiers`: pushes the modifiers at the token on the stack of modifiers. Returns their
-    /// flags. The caller pops them from `base`, the length of the stack before.
+    /// `parseModifiers`: pushes the modifiers at the current token on `s.modifiers` and returns
+    /// their flags. The caller pops them down to `base`, the stack's length before the call.
     pub(crate) fn modifiers(&mut self, of: ModifiersOf) -> Flags {
         use ModifiersOf::*;
         let allow_decorators = matches!(of, Declaration | ClassMember);
         let permit_const = matches!(of, TypeParameter | ClassMember);
         let stop_on_static_block = of == ClassMember;
         let mut flags = Flags::empty();
+        // The modifiers oxc has in the same list as the next one. It starts a new list after `export @d`.
+        let mut seen = Flags::empty();
         // "[...leadingDecorators, ...leadingModifiers, ...trailingDecorators, ...trailingModifiers]"
         let (mut has_trailing_decorators, mut has_trailing_modifiers) = (false, false);
         loop {
@@ -435,6 +478,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     return flags;
                 }
                 has_trailing_decorators = !flags.is_empty();
+                seen = Flags::empty();
                 self.decorator();
                 continue;
             }
@@ -455,6 +499,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     || stop_on_static_block && self.peek() == T::OpenBrace)
             {
                 return flags;
+            } else if token == T::Default && of == ClassMember && self.options.dialect.oxc {
+                // oxc treats it like any other modifier.
+                self.next();
+                !self.newline_before() && self.can_follow_modifier()
             } else {
                 self.next_can_follow_modifier()
             };
@@ -463,6 +511,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 return flags;
             }
             let flag = modifier_flag(token);
+            if !seen.is_empty() && self.is_for_oxc() {
+                oxc::modifier_after(&mut self.f.diagnostics, seen, flag, pos);
+            }
+            seen |= flag;
             flags |= flag;
             has_trailing_modifiers = has_trailing_decorators;
             self.s.modifiers.push(Modifier {
@@ -472,7 +524,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// `tryParseDecorator`: pushes it on the stack of modifiers.
+    /// `tryParseDecorator`: pushes the decorator on `s.modifiers`.
     fn decorator(&mut self) {
         // The expression can be a class with decorators.
         if self.is_too_deep() {
@@ -489,7 +541,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         });
     }
 
-    /// Pops the modifiers from `base` on and makes them a list of the file.
+    /// Pops the modifiers above `base` and moves them into the file.
     pub(crate) fn take_modifiers(&mut self, base: usize) -> Span<ModifierId> {
         if self.s.modifiers.len() == base {
             return Span::EMPTY;
@@ -503,12 +555,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     fn declaration(&mut self) -> StmtId {
         let start = self.start();
         let base = self.s.modifiers.len();
-        // acorn stops here, whatever is wrong further on.
-        if GENERAL && self.lx.is_script && matches!(self.token(), T::Import | T::Export) {
+        // acorn stops here, no matter what else is wrong later.
+        if self.recovers()
+            && self.lx.is_script
+            && !self.options.dialect.oxc
+            && matches!(self.token(), T::Import | T::Export)
+        {
             self.error_at_token(1128, &[]);
         }
-        // The common declarations have no modifier.
-        let flags = match self.token() {
+        // Fast path: the common declarations have no modifiers.
+        let (flags, is_decorated) = match self.token() {
             T::Var
             | T::Let
             | T::Function
@@ -516,25 +572,38 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | T::Enum
             | T::Import
             | T::Interface
-            | T::Type => Flags::empty(),
-            T::Const if self.lx.is_const_before_binding() => Flags::empty(),
-            _ => self.modifiers(ModifiersOf::Declaration),
+            | T::Type => (Flags::empty(), false),
+            T::Const if self.lx.is_const_before_binding() => (Flags::empty(), false),
+            _ => {
+                let flags = self.modifiers(ModifiersOf::Declaration);
+                // Also true if a keyword is repeated.
+                let keywords = flags.bits().count_ones() as usize;
+                (flags, self.s.modifiers.len() - base > keywords)
+            }
         };
-        // No other modifier is before a declaration.
-        if self.is_ecmascript
+        // JavaScript allows no other modifier before a declaration.
+        let is_invalid_javascript = self.is_ecmascript
             && (flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC))
                 || flags.contains(Flags::ASYNC) && self.token() != T::Function
-                || self.has_modifier_twice(base, flags))
-        {
-            match self.is_flow {
+                || self.has_duplicate_modifier(base, flags));
+        if is_invalid_javascript {
+            match self.is_flow() {
                 true => self.flow_declare_before_export(base, flags),
+                // `oxc::declaration` reports what oxc reports.
+                false if self.is_for_oxc() => {}
                 false => self.report(),
             }
         }
         let saved = self.context;
+        if flags.intersects(Flags::AMBIENT | Flags::ABSTRACT) {
+            self.clear_await_like_oxc(flags);
+        }
         if flags.contains(Flags::AMBIENT) {
+            if self.context & (ctx::TOP_LEVEL | ctx::IN_NAMESPACE) != ctx::TOP_LEVEL {
+                self.f.rare_syntax |= rare::NESTED_DECLARE;
+            }
             self.context |= ctx::AMBIENT;
-            // `parseClassDeclarationOrExpression`: no `await` in it has the statement reparsed.
+            // `parseClassDeclarationOrExpression`: an `await` in it never gets the statement reparsed.
             if self.recovers()
                 && self.token() == T::Class
                 && !flags.contains(Flags::EXPORT)
@@ -545,17 +614,35 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
+        let is_odd = match self.options.is_javascript {
+            true => is_invalid_javascript,
+            false => flags.intersects(!(Flags::EXPORT | Flags::DEFAULT)),
+        };
+        if (is_decorated || is_odd) && self.is_for_oxc() {
+            let site = self.call_site();
+            oxc::declaration(&mut self.f, self.lx.src, statement, site);
+        }
         if self.options.is_javascript {
             self.check_js_statement(statement);
         }
         statement
     }
 
-    /// Whether a keyword is more than once among the modifiers from `base` on, which have `flags`.
-    fn has_modifier_twice(&self, base: usize, flags: Flags) -> bool {
-        let written = self.s.modifiers.get(base..).unwrap_or_default();
+    /// True if a keyword is repeated among the modifiers above `base`, whose combined flags are `flags`.
+    fn has_duplicate_modifier(&self, base: usize, flags: Flags) -> bool {
+        let modifier_list = self.s.modifiers.get(base..).unwrap_or_default();
         let is_keyword = |it: &&Modifier| matches!(it.kind, ModifierKind::Keyword(_));
-        written.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
+        modifier_list.iter().filter(is_keyword).count() != flags.bits().count_ones() as usize
+    }
+
+    /// oxc's `parse_ts_declaration_statement` clears the await context before `declare`, `abstract`
+    /// and the TypeScript-only declarations. `export` and `const enum` take a different path.
+    /// `declaration` restores the context.
+    #[inline]
+    fn clear_await_like_oxc(&mut self, flags: Flags) {
+        if self.options.dialect.oxc && !flags.intersects(Flags::EXPORT | Flags::CONST) {
+            self.context &= !ctx::AWAIT;
+        }
     }
 
     /// `parseDeclarationWorker`
@@ -565,34 +652,46 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::Await if !self.recovers() || self.is_await_using_declaration() => {
                 self.variable_statement(start, base, flags)
             }
-            T::Function if flags.contains(Flags::AMBIENT) && self.is_flow => {
+            T::Function if flags.contains(Flags::AMBIENT) && self.is_flow() => {
                 self.flow_declare_function(start, base, flags)
             }
             T::Function => self.function_declaration(start, base, flags),
-            T::Class if flags.contains(Flags::AMBIENT) && self.is_flow => {
+            T::Class if flags.contains(Flags::AMBIENT) && self.is_flow() => {
                 self.flow_declare_class(start, base, flags)
             }
             T::Class => self.class_declaration(start, base, flags),
-            T::Interface if self.is_flow => self.flow_interface(start, base, flags),
-            T::Interface => self.interface_declaration(start, base, flags),
-            T::Type if self.is_flow => self.flow_type_alias(start, base, flags),
-            T::Type => self.type_alias_declaration(start, base, flags),
-            T::Enum if self.is_flow => self.flow_enum(start, base, flags),
-            T::Enum => self.enum_declaration(start, base, flags),
-            T::Module if self.is_flow && self.peek() == T::Dot => {
+            T::Interface if self.is_flow() => self.flow_interface(start, base, flags),
+            T::Interface => {
+                self.clear_await_like_oxc(flags);
+                self.interface_declaration(start, base, flags)
+            }
+            T::Type if self.is_flow() => self.flow_type_alias(start, base, flags),
+            T::Type => {
+                self.clear_await_like_oxc(flags);
+                self.type_alias_declaration(start, base, flags)
+            }
+            T::Enum if self.is_flow() => self.flow_enum(start, base, flags),
+            T::Enum => {
+                self.clear_await_like_oxc(flags);
+                self.enum_declaration(start, base, flags)
+            }
+            T::Module if self.is_flow() && self.peek() == T::Dot => {
                 self.flow_declare_module_exports(start, base)
             }
             T::Global if self.is_ecmascript => {
                 self.fail();
                 StmtId::NONE
             }
-            T::Global | T::Module | T::Namespace => self.module_declaration(start, base, flags),
+            T::Global | T::Module | T::Namespace => {
+                self.clear_await_like_oxc(flags);
+                self.module_declaration(start, base, flags)
+            }
             T::Import => self.import_declaration_or_import_equals(start, base, flags),
             T::Export => {
                 let export = self.pos();
                 self.next();
                 match self.token() {
-                    T::Default if flags.contains(Flags::AMBIENT) && self.is_flow => {
+                    T::Default if flags.contains(Flags::AMBIENT) && self.is_flow() => {
                         self.flow_declare_export_default_type(start, base, export)
                     }
                     T::Default | T::Equals => self.export_assignment(start, base),
@@ -600,13 +699,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     _ => self.export_declaration(start, base),
                 }
             }
-            _ if self.is_flow => self.flow_declaration_at_word(start, base, flags),
+            _ if self.is_flow() => self.flow_declaration_at_word(start, base, flags),
             _ => self.missing_declaration(start, base),
         }
     }
 
-    /// The end of `parseDeclarationWorker`: a `MissingDeclaration`, which is an empty statement.
-    /// Its decorators are statements before it, in the list that is being parsed.
+    /// The tail of `parseDeclarationWorker`: a `MissingDeclaration`, stored as an empty statement.
+    /// Its decorators become statements before it in the list being parsed.
     #[cold]
     #[inline(never)]
     #[track_caller]
@@ -616,7 +715,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return StmtId::NONE;
         }
         let end = self.full_start();
-        self.error(1146, (end, Diagnostic::NO_LENGTH), &[]);
+        match self.is_for_oxc() {
+            true => self.missing_declaration_like_oxc(base),
+            false => self.error(1146, (end, Diagnostic::NO_LENGTH), &[]),
+        }
         let base = base.min(self.s.modifiers.len());
         for modifier in self.s.modifiers.split_off(base) {
             if let ModifierKind::Decorator(expression) = modifier.kind {
@@ -627,16 +729,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::Empty, start, Span::EMPTY)
     }
 
-    /// The statement that `expression` is: that of a decorator which decorates nothing, and which
-    /// `checkDecorators` does not visit. `at`: its `@`. `end`: the end of the decorators.
+    /// Wraps `expression` in a statement. It belongs to a decorator that decorates nothing, which
+    /// `checkDecorators` doesn't visit. `at`: its `@`. `end`: the end of the decorators.
     fn stray_decorator(&mut self, expression: ExprId, at: u32, end: u32) -> StmtId {
-        let written = self.f.exprs.get(expression.idx());
-        let written = written.map_or((at, at), |it| (it.pos, it.end));
+        let expression_span = self.f.exprs.get(expression.idx());
+        let expression_span = expression_span.map_or((at, at), |it| (it.pos, it.end));
         // The outermost parentheses are the last.
-        let is_around = |it: &&(ExprId, u32, u32)| it.0 == expression;
-        let (start, last) = match self.f.parens.iter().rfind(is_around) {
+        let wraps_expression = |it: &&(ExprId, u32, u32)| it.0 == expression;
+        let (start, last) = match self.f.parens.iter().rfind(wraps_expression) {
             Some(&(_, open, close)) => (open, close),
-            None => written,
+            None => expression_span,
         };
         self.f.stray_decorators.push((start, end));
         let id = StmtId(self.f.stmts.len() as u32);
@@ -647,9 +749,43 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 pos: at + 1,
                 end: last,
             },
-            modifiers: Span::EMPTY,
         });
         id
+    }
+
+    /// Parses `Options::part`, at its first token, into the file's only statement. Nothing after it is read.
+    pub(crate) fn part(&mut self, goal: Goal) -> StmtId {
+        let start = self.start();
+        let statement = match goal {
+            Goal::Expression => {
+                let expression = self.expression_allowing_in();
+                self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)
+            }
+            Goal::Declaration => {
+                if !matches!(self.token(), T::Var | T::Let | T::Const) {
+                    self.fail();
+                }
+                let declarations = self.variable_declaration_list(false, Flags::empty());
+                self.add_stmt(StmtKind::Var(declarations), start, Span::EMPTY)
+            }
+            Goal::Type => {
+                let ty = self.ty();
+                let alias = self.f.add_alias(Alias {
+                    name: known::empty,
+                    name_pos: start.pos,
+                    flags: Flags::empty(),
+                    type_params: Span::EMPTY,
+                    ty,
+                    stmt: StmtId::NONE,
+                });
+                let statement = self.add_stmt(StmtKind::TypeAlias(alias), start, Span::EMPTY);
+                self.f[alias].stmt = statement;
+                statement
+            }
+        };
+        self.end = (self.prev_end(), self.lx.end);
+        self.lx.stop();
+        statement
     }
 
     /// `parseVariableStatement`
@@ -666,25 +802,46 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             T::Var => VarKind::Var,
             T::Let => VarKind::Let,
             T::Const => VarKind::Const,
-            T::Using => VarKind::Using,
+            T::Using => {
+                self.f.rare_syntax |= rare::ODD_DECLARATION;
+                self.check_exported_using_like_oxc(flags, self.pos());
+                VarKind::Using
+            }
             _ => {
                 self.note_await();
+                self.suspensions += 1;
+                self.f.rare_syntax |= rare::AWAIT_USING | rare::ODD_DECLARATION;
+                // Same as for an `await` expression: see `operand_of_await_outside_async`.
+                if self.options.dialect.oxc && !self.has_context(ctx::AWAIT) {
+                    self.flag(DiagnosticKind::Grammar, 1308, (self.pos(), 0), &[]);
+                }
+                let keyword = self.pos();
                 self.next();
                 if self.token() != T::Using {
                     self.fail();
                 }
+                self.check_exported_using_like_oxc(flags, keyword);
                 VarKind::AwaitUsing
             }
         };
         self.next();
         // `for (let of X) { }`: the list is empty, and `of` is the keyword.
-        if self.recovers() && self.token() == T::Of && self.is_before_identifier_and_close_paren() {
+        if self.recovers()
+            && self.token() == T::Of
+            && !self.options.dialect.oxc
+            && self.is_before_identifier_and_close_paren()
+        {
+            self.f.rare_syntax |= rare::ODD_DECLARATION;
             return Span::EMPTY;
         }
         let flags = flags | self.ambient();
         let saved = match is_in_for {
             true => self.enter_context(ctx::DISALLOW_IN, 0),
             false => self.enter_context(0, ctx::DISALLOW_IN),
+        };
+        let declares = match kind {
+            VarKind::Var => Declares::Var,
+            _ => Declares::Lexical,
         };
         let base = self.s.var_decls.len();
         let lists = self.enter_list(ListKind::VariableDeclarations);
@@ -696,9 +853,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.token(),
                     T::OpenBracket | T::OpenBrace | T::PrivateIdentifier
                 )
-                && !self.is_ecmascript
+                // The linter reports what follows the comma with oxc's message.
+                && (!self.is_ecmascript
+                    || self.options.dialect.oxc && self.s.var_decls.len() > base)
                 && (self.can_parse_semicolon() || matches!(self.token(), T::In | T::Of))
             {
+                self.f.rare_syntax |= rare::ODD_DECLARATION;
                 break;
             }
             // `parseVariableDeclaration`
@@ -714,6 +874,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 _ => self.identifier_or_pattern(),
             };
+            self.declare_pattern(pat, declares);
             let mut flags = flags;
             if !is_in_for
                 && self.token() == T::Exclamation
@@ -729,12 +890,38 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.next();
                 flags |= Flags::DEFINITE;
             }
-            let ty = self.type_annotation();
-            let init = match self.token() {
-                T::Equals => self.initializer(),
-                _ => ExprId::NONE,
+            let mut ty = self.type_annotation();
+            let is_name = |it: &Pat| matches!(it.kind, PatKind::Ident(_));
+            let init = loop {
+                let token = match self.token() {
+                    T::Equals => break self.initializer(),
+                    // oxc reports the `?` and continues.
+                    T::Question if ty.is_none() && self.reports_like_oxc() => {
+                        let at = (self.lx.start, self.lx.end);
+                        oxc::optional_declaration(&mut self.f.diagnostics, at);
+                        self.next();
+                        ty = self.type_annotation();
+                        continue;
+                    }
+                    token => token,
+                };
+                if !flags.contains(Flags::AMBIENT)
+                    && !(is_in_for && matches!(token, T::Of | T::In))
+                    && (kind == VarKind::Const || !self.f.pats.get(pat.idx()).is_some_and(is_name))
+                {
+                    self.f.rare_syntax |= rare::ODD_DECLARATION;
+                }
+                if self.reports_like_oxc()
+                    && !flags.contains(Flags::AMBIENT)
+                    && !self.f.pats.get(pat.idx()).is_some_and(is_name)
+                    && !(is_in_for && matches!(token, T::Of | T::In))
+                {
+                    let next = self.pos();
+                    oxc::pattern_without_initializer(&mut self.f, pat, next);
+                }
+                break ExprId::NONE;
             };
-            self.s.var_decls.push(VarDecl {
+            let declaration = VarDecl {
                 pat,
                 ty,
                 init,
@@ -744,9 +931,18 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     pos: full,
                     end: self.prev_end(),
                 },
-            });
+            };
+            if flags.intersects(Flags::AMBIENT | Flags::DEFINITE)
+                && (init.is_some()
+                    || flags.contains(Flags::DEFINITE)
+                    || matches!(kind, VarKind::Using | VarKind::AwaitUsing))
+                && self.reports_like_oxc()
+            {
+                oxc::variable(&mut self.f, self.lx.src, &declaration);
+            }
+            self.s.var_decls.push(declaration);
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::VariableDeclarations, full)
+                && !self.continues_without_comma(ListKind::VariableDeclarations, full)
             {
                 break;
             }
@@ -754,6 +950,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.leave_list(lists);
         self.context = saved;
         let decls = take_span!(self, var_decls, base);
+        if decls.len != 1 && (decls.len == 0 || matches!(self.token(), T::Of | T::In)) {
+            self.f.rare_syntax |= rare::ODD_DECLARATION;
+        }
         if self.reads_jsdoc() {
             self.variable_declarations_jsdoc(decls);
         }
@@ -792,13 +991,35 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseEnumDeclaration`
     fn enum_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
+        // `enum` is a reserved word in JavaScript. After `const` it's where a name belongs, which
+        // `oxc::declaration` reports. For `let enum;` it has already been reported.
+        let is_already_reported =
+            |it: &Diagnostic| it.kind == DiagnosticKind::Parse && it.start == self.lx.start;
+        if self.options.is_javascript
+            && !flags.contains(Flags::CONST)
+            && self.is_for_oxc()
+            && !self.f.diagnostics.last().is_some_and(is_already_reported)
+        {
+            self.unexpected_like_oxc();
+        }
         self.next();
+        if self.token() != T::Identifier && self.reports_like_oxc() {
+            self.check_type_name_like_oxc(oxc::TypeName::Enum);
+        }
         let (name, name_pos) = match self.is_identifier() {
             true => self.identifier(),
             false => self.missing_name(),
         };
+        self.declare(
+            name,
+            match flags.contains(Flags::CONST) {
+                true => Declares::ConstEnum,
+                false => Declares::Enum,
+            },
+        );
         let has_members = self.expect(T::OpenBrace);
-        let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
+        self.open_scope();
+        let saved = self.enter_context(0, self.cleared_in_types);
         let members = self.s.enum_members.len();
         let lists = self.enter_list(ListKind::EnumMembers);
         while has_members
@@ -809,13 +1030,26 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let member = self.start();
             // The checker reports a number, a computed name and so on.
             let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
+            let is_odd = matches!(
+                self.token(),
+                T::OpenBracket | T::Number | T::BigInt | T::PrivateIdentifier
+            );
             let (mut key, mut name_kind, _) = self.property_name();
-            if let Some(written) = bigint {
-                key = PropKey::Name(self.atom(written));
+            if is_odd && self.reports_like_oxc() {
+                let name = (member.pos, self.prev_end());
+                oxc::enum_member_name(&mut self.f.diagnostics, self.lx.src, name);
+            }
+            if let Some(bigint_text) = bigint {
+                key = PropKey::Name(self.atom(bigint_text));
             }
             let (name, computed_name) = match key {
-                PropKey::Name(name) | PropKey::Private(name) => (name, ExprId::NONE),
+                PropKey::Name(name) | PropKey::Private(name) => {
+                    self.declare(name, Declares::EnumMember);
+                    (name, ExprId::NONE)
+                }
                 PropKey::Computed(e) => {
+                    // oxc treats `["a"]` as a name.
+                    self.may_redeclare();
                     name_kind = NameKind::Identifier;
                     (Atom::NONE, e)
                 }
@@ -836,15 +1070,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 },
             });
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::EnumMembers, member.full)
+                && !self.continues_without_comma(ListKind::EnumMembers, member.full)
             {
                 break;
             }
         }
         self.leave_list(lists);
         self.context = saved;
+        self.close_scope();
         if has_members {
             self.expect(T::CloseBrace);
+        }
+        if self.reports_like_oxc() {
+            oxc::enum_members(&mut self.f, &self.s.enum_members[members..]);
         }
         let members = take_span!(self, enum_members, members);
         let declaration = self.f.add_enum(Enum {
@@ -874,7 +1112,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             keyword => {
                 self.next();
                 let mut is_string = self.token() == T::String;
-                // Only after `module` is a string a name.
+                // A string is only a valid name after `module`.
                 if is_string && keyword == T::Namespace {
                     match self.recovers() {
                         true => is_string = false,
@@ -884,6 +1122,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 if !is_string {
                     let modifiers = self.take_modifiers(base);
                     let identifier = self.identifier();
+                    self.declare(identifier.0, Declares::Namespace);
                     return self.namespace_declaration(
                         start,
                         modifiers,
@@ -894,7 +1133,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
-                self.next();
+                self.next_after_string();
             }
         }
         let (body, has_body) = match self.token() {
@@ -942,18 +1181,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let body = if self.token() == T::Dot {
             self.next();
-            // The `b` of `namespace a.b` is exported from `a`, and starts with its name.
+            // The `b` of `namespace a.b` is exported from `a`, and its node starts at its name.
             let inner = self.start();
             let nested = self.name_of_nested_namespace();
             let flags = flags & Flags::AMBIENT | Flags::EXPORT;
             let inner =
                 self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module, nested);
+            // ESTree has one declaration for `a.b`.
+            self.unfinish_node(NodeData::Stmt(inner));
             if self.options.is_javascript {
                 self.check_js_statement(inner);
             }
             self.f.list(&[inner])
         } else {
-            self.module_block()
+            let body = self.module_block();
+            if self.reports_like_oxc() {
+                let is_ambient = flags.contains(Flags::AMBIENT);
+                oxc::namespace_body(&mut self.f, self.lx.src, body, is_ambient);
+            }
+            body
         };
         let declaration = self.f.add_module(Module {
             name: ModuleName::Ident(name),
@@ -974,12 +1220,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.expect(T::OpenBrace) {
             return IdList::EMPTY;
         }
-        // It stays in the context of the function around it.
+        // Inside a function it keeps the function's context. oxc treats an `await` in an exported
+        // namespace as a top-level `await`.
         let saved = match self.has_context(ctx::TOP_LEVEL) {
-            true => self.enter_context(0, ctx::TOP_LEVEL | ctx::AWAIT | ctx::YIELD),
+            true if self.options.dialect.oxc && self.has_context(ctx::AWAIT) => self.context,
+            true => self.enter_context(0, ctx::TOP_LEVEL | self.cleared_in_types),
             false => self.context,
         };
+        self.context = self.context & !(ctx::IN_LOOP | ctx::IN_SWITCH) | ctx::IN_NAMESPACE;
+        self.open_scope_for_vars();
         let list = self.statements_until_close_brace();
+        self.close_scope();
         self.context = saved;
         self.expect(T::CloseBrace);
         list
@@ -987,12 +1238,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    /// `parseList(PCBlockStatements, parseStatement)`. It has no frame of its own: one is on the
-    /// stack for each `{` that is open.
+    /// `parseList(PCBlockStatements, parseStatement)`. Always inlined, so an open `{` doesn't cost
+    /// an extra stack frame.
     #[inline(always)]
     pub(crate) fn statements_until_close_brace(&mut self) -> IdList<StmtId> {
         let base = self.s.ids.len();
-        // Only a statement of the file makes it a module.
+        // Only a top-level statement makes the file a module.
         let was_module = self.f.has_module_syntax;
         let lists = self.enter_list(ListKind::BlockStatements);
         let reparsed = self.jsdoc.reparsed.len();
@@ -1013,6 +1264,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// `parseBlock`
     pub(crate) fn block(&mut self) -> StmtId {
+        self.open_scope();
+        let block = self.block_in_open_scope();
+        self.close_scope();
+        block
+    }
+
+    /// `block` for a `catch` block, which shares a scope with the parameter.
+    #[inline(always)]
+    fn block_in_open_scope(&mut self) -> StmtId {
         let start = self.start();
         if !self.expect(T::OpenBrace) {
             return self.add_stmt(StmtKind::Block(IdList::EMPTY), start, Span::EMPTY);
@@ -1025,7 +1285,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
     }
 
-    /// The end of `parseBlock`, at a `=` after the `}`: it is reported and skipped.
+    /// The tail of `parseBlock`, at a `=` after the `}`. Reports and skips it.
     #[cold]
     #[inline(never)]
     pub(crate) fn equals_after_block(&mut self) {
@@ -1056,14 +1316,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::If { test, yes, no }, start, Span::EMPTY)
     }
 
+    #[inline(always)]
+    fn body_of_loop(&mut self) -> StmtId {
+        let saved = self.enter_context(ctx::IN_LOOP, 0);
+        let body = self.embedded_statement();
+        self.context = saved;
+        body
+    }
+
     fn do_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
-        let body = self.embedded_statement();
+        let body = self.body_of_loop();
         self.expect(T::While);
         let test = self.parenthesized_condition();
         // "do;while(0)x will have a semicolon inserted before x."
-        self.eat(T::Semicolon);
+        self.eat_semicolon();
         self.add_stmt(StmtKind::DoWhile { body, test }, start, Span::EMPTY)
     }
 
@@ -1071,11 +1339,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let start = self.start();
         self.next();
         let test = self.parenthesized_condition();
-        let body = self.embedded_statement();
+        let body = self.body_of_loop();
         self.add_stmt(StmtKind::While { test, body }, start, Span::EMPTY)
     }
 
-    /// `parseWithStatement`: a block of the expression, as a statement, and the body.
+    /// `parseWithStatement`. Stored as a block that holds the expression (as a statement) and the body.
+    #[inline(never)]
     fn with_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1097,22 +1366,33 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     /// `parseForOrForInOrForOfStatement`
+    #[inline(never)]
     fn for_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
         let is_await = self.token() == T::Await;
         if is_await {
+            self.f.rare_syntax |= rare::FOR_AWAIT;
+            let before = (self.has_top_level_await, self.has_plain_top_level_await);
             self.note_await();
+            // For oxc, `for await` says nothing about whether the file is a module.
+            if self.options.dialect.oxc {
+                (self.has_top_level_await, self.has_plain_top_level_await) = before;
+            }
             self.next();
         }
         self.expect(T::OpenParen);
+        self.open_scope();
         let mut init = StmtId::NONE;
-        let mut starts_with_let = false;
+        let (mut starts_with_let, mut starts_with_async) = (false, false);
         if self.token() != T::Semicolon {
             let at = self.start();
             starts_with_let = self.token() == T::Let;
+            starts_with_async = self.token() == T::Async;
             let is_declaration = match self.token() {
-                T::Let if self.is_ecmascript => self.is_let_declaration(),
+                T::Let if self.is_ecmascript || self.options.dialect.oxc => {
+                    self.is_let_declaration()
+                }
                 T::Var | T::Let | T::Const => true,
                 T::Using => self.look_ahead(|p| p.next_is_binding_on_same_line(true)),
                 T::Await => self.is_await_using_declaration(),
@@ -1129,18 +1409,51 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             init = self.add_stmt(kind, at, Span::EMPTY);
         }
         let is_expression = |it: &Stmt| matches!(it.kind, StmtKind::Expr(_));
+        // Set in every dialect, because the JavaScript checks and the oxfmt checks read the bit too.
+        if matches!(self.token(), T::Of | T::In)
+            && let Some(StmtKind::Var(list)) = self.f.stmts.get(init.idx()).map(|it| it.kind)
+            && let Some(list) = self.f.var_decls.get(list.range())
+            && list.iter().any(|it| it.init.is_some() || it.ty.is_some())
+        {
+            self.f.rare_syntax |= rare::ODD_LOOP_HEAD;
+        }
+        if starts_with_async
+            && !is_await
+            && self.token() == T::Of
+            && self
+                .f
+                .stmts
+                .get(init.idx())
+                .is_some_and(|it| it.loc.end == it.start + 5)
+            && self.is_for_oxc()
+        {
+            let at = self.prev_end() - 5;
+            oxc::async_before_of(&mut self.f.diagnostics, at);
+        }
+        if matches!(self.token(), T::Of | T::In)
+            && let Some(StmtKind::Expr(target)) = self.f.stmts.get(init.idx()).map(|it| it.kind)
+        {
+            self.note_target(target);
+        }
         if self.token() == T::Of
             && starts_with_let
-            && self.f.stmts.get(init.idx()).is_some_and(is_expression)
+            && let Some(left) = self.f.stmts.get(init.idx()).filter(|it| is_expression(it))
         {
-            self.report();
+            let at = (left.start, left.loc.end);
+            match self.is_for_oxc() {
+                true => oxc::let_before_of(&mut self.f.diagnostics, at),
+                false => self.report(),
+            }
         }
-        let kind = if (is_await || self.token() == T::Of) && self.expect(T::Of) {
+        // oxc also parses the other loop forms after `for await`.
+        let is_other_loop =
+            is_await && matches!(self.token(), T::In | T::Semicolon) && self.is_for_oxc();
+        let kind = if (is_await && !is_other_loop || self.token() == T::Of) && self.expect(T::Of) {
             let saved = self.enter_context(0, ctx::DISALLOW_IN);
             let expr = self.assignment_expression();
             self.context = saved;
             self.expect(T::CloseParen);
-            let body = self.embedded_statement();
+            let body = self.body_of_loop();
             StmtKind::ForOf {
                 left: init,
                 expr,
@@ -1150,7 +1463,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         } else if self.eat(T::In) {
             let expr = self.expression_allowing_in();
             self.expect(T::CloseParen);
-            let body = self.embedded_statement();
+            if is_other_loop {
+                let head = (start.pos, self.prev_end());
+                oxc::await_without_of(&mut self.f.diagnostics, head);
+            }
+            let body = self.body_of_loop();
             StmtKind::ForIn {
                 left: init,
                 expr,
@@ -1168,7 +1485,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 _ => self.expression_allowing_in(),
             };
             self.expect(T::CloseParen);
-            let body = self.embedded_statement();
+            if is_other_loop {
+                let head = (start.pos, self.prev_end());
+                oxc::await_without_of(&mut self.f.diagnostics, head);
+            }
+            let body = self.body_of_loop();
             StmtKind::For {
                 init,
                 test,
@@ -1176,12 +1497,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 body,
             }
         };
+        self.close_scope();
         if init.is_none() && !matches!(kind, StmtKind::For { .. }) {
             self.fail_unless_recovering();
         }
         self.add_stmt(kind, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn break_or_continue(&mut self) -> StmtId {
         let start = self.start();
         let is_break = self.token() == T::Break;
@@ -1190,13 +1513,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             true => Atom::NONE,
             false if !self.is_identifier() => self.missing_identifier(0, 0).0,
             false => {
-                // The reference notes the name at the start of the statement.
+                // `keyword_identifier_positions` may hold the start of the parent node instead of the
+                // identifier's own position. Only the oxc dialect records the label itself.
                 let label = self.lx.atom;
-                self.note_identifier(label, start.pos);
+                let at = match self.options.dialect.oxc {
+                    true => self.pos(),
+                    false => start.pos,
+                };
+                self.note_identifier(label, at);
                 self.next_after_name();
                 label
             }
         };
+        let targets = match is_break {
+            true => ctx::IN_LOOP | ctx::IN_SWITCH,
+            false => ctx::IN_LOOP,
+        };
+        if label.is_some() || !self.has_context(targets) {
+            self.f.rare_syntax |= rare::ODD_JUMP;
+        }
         self.semicolon();
         let kind = match is_break {
             true => StmtKind::Break(label),
@@ -1220,6 +1555,19 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let start = self.start();
         self.next();
         let value = match self.newline_before() {
+            // oxc reports the line break and continues with the expression.
+            true if self.is_for_oxc() => {
+                let next = (self.lx.start, self.lx.end);
+                oxc::line_break_after_throw(&mut self.f.diagnostics, start.pos, next);
+                match self.is_start_of_expression() {
+                    true => self.expression_allowing_in(),
+                    false => {
+                        self.unexpected_like_oxc();
+                        let end = self.prev_end();
+                        self.add_expr(ExprKind::Missing, end, end)
+                    }
+                }
+            }
             // The checker reports the line break.
             true if !self.is_ecmascript => {
                 let end = self.prev_end();
@@ -1231,7 +1579,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             false => self.expression_allowing_in(),
         };
-        if !self.eat(T::Semicolon) && !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             match self.recovers() {
                 true => self.missing_semicolon_after(value),
                 false => self.fail(),
@@ -1240,6 +1588,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_stmt(StmtKind::Throw(value), start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn switch_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1247,6 +1596,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let expr = self.expression_allowing_in();
         self.expect(T::CloseParen);
         self.expect(T::OpenBrace);
+        self.open_scope();
+        let saved = self.enter_context(ctx::IN_SWITCH, 0);
         let base = self.s.cases.len();
         let mut defaults = 0;
         let lists = self.enter_list(ListKind::SwitchClauses);
@@ -1299,27 +1650,37 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             });
         }
         self.leave_list(lists);
+        self.context = saved;
+        self.close_scope();
         self.expect(T::CloseBrace);
         let cases = take_span!(self, cases, base);
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn try_statement(&mut self) -> StmtId {
         let start = self.start();
         self.expect(T::Try);
         let block = self.block();
         let (mut param, mut handler, mut finalizer) = (VarDeclId::NONE, StmtId::NONE, StmtId::NONE);
         if self.eat(T::Catch) {
+            self.open_scope();
             if self.eat(T::OpenParen) {
                 // `parseVariableDeclaration`
                 let full = self.full_start();
                 let pat = self.identifier_or_pattern();
+                let is_name = |it: &Pat| matches!(it.kind, PatKind::Ident(_));
+                let declares = match self.f.pats.get(pat.idx()).is_some_and(is_name) {
+                    true => Declares::Parameter,
+                    false => Declares::Lexical,
+                };
+                self.declare_pattern(pat, declares);
                 let ty = self.type_annotation();
-                // `checkCatchClause` reports it.
+                // `checkCatchClause` reports the initializer.
                 let init = match self.token() {
                     T::Equals if self.recovers() => self.initializer(),
                     T::Equals => {
-                        self.refuse(Refusal::Reported);
+                        self.reject(Rejection::Reported);
                         ExprId::NONE
                     }
                     _ => ExprId::NONE,
@@ -1340,7 +1701,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 self.expect(T::CloseParen);
             }
-            handler = self.block();
+            handler = self.block_in_open_scope();
+            self.close_scope();
         }
         if self.token() == T::Finally || handler.is_none() {
             // The block starts at the keyword.
@@ -1365,10 +1727,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseExpressionOrLabeledStatement`
     fn expression_or_labeled_statement(&mut self) -> StmtId {
         let start = self.start();
-        if self.is_flow {
+        if self.is_flow() {
             self.flow_statement_start = start.pos;
         }
-        // TypeScript 5 has `allowInAnd(parseExpression)` here, the native parser has not.
+        // TypeScript 5 has `allowInAnd(parseExpression)` here, the native parser doesn't.
         let expression = match self.options.dialect.typescript_5 || self.is_ecmascript {
             true => self.expression_allowing_in(),
             false => self.expression(),
@@ -1378,33 +1740,34 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && let Some(&Expr {
                 kind: ExprKind::Ident(label),
                 pos,
-                ..
+                end,
             }) = self.f.exprs.last()
             && pos == start.pos
         {
-            self.f.exprs.pop();
+            self.pop_expr();
+            self.finish_name(pos, end);
             self.next();
             let body = self.embedded_statement();
+            self.f.rare_syntax |= rare::ODD_JUMP;
             return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
         }
         // `parseSemicolon`
-        if self.token() == T::Semicolon {
-            self.next();
-        } else if !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             return self.statement_without_semicolon(start, expression);
         }
         self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)
     }
 
-    /// The token cannot follow the expression statement `expression`.
+    /// The current token can't follow the expression statement `expression`.
     #[cold]
     fn statement_without_semicolon(&mut self, start: Start, expression: ExprId) -> StmtId {
-        if self.is_flow {
+        if self.is_flow() {
             return self.flow_declaration_after_expression(start, expression);
         }
         // `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have
         // emitted a diagnostic already."
         if !self.is_ecmascript
+            && !self.options.dialect.oxc
             && let Some(&Expr {
                 kind: ExprKind::Ident(name),
                 ..

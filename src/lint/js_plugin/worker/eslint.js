@@ -1,4 +1,4 @@
-// ───────────── ESLint's own `Linter` ─────────────
+// ------------- ESLint's own `Linter` -------------
 //
 // A file for which an `eslint.config.js` has a `language` other than JavaScript, or a parser that makes a tree of its own, is linted
 // by the `Linter` of the `eslint` that the project has installed. It is given a configuration that is made here, of what the other
@@ -75,15 +75,71 @@ function longPluginName(name) {
   return normalized.startsWith("eslint-plugin-") ? normalized : `eslint-plugin-${normalized}`;
 }
 
-// An object that the command line adds to the configuration. Its plugins and its parser are names.
-async function reviveOverride(object) {
+// Converts a `[[lint.overrides]]` pattern to a `Bun.Glob` pattern, like `Pattern::of_bunfig` in src/glob/pattern.rs.
+function bunfigGlob(pattern) {
+  // Leading `!`s negate the whole pattern, so they stay in front. The `!` of `!(a|b)` starts a group instead.
+  const bangs = /^!*/u.exec(pattern)[0].length;
+  const negations = bangs > 0 && pattern[bangs] === "(" ? bangs - 1 : bangs;
+  const rest = pattern.slice(negations);
+  // A pattern without a slash matches the file name in any directory.
+  const anywhere = rest.startsWith("./") ? rest.slice(2) : rest.includes("/") ? rest : `**/${rest}`;
+  return pattern.slice(0, negations) + anywhere;
+}
+
+// Builds one matcher function from the globs of a `[[lint.overrides]]` entry, which are relative to `base`. ESLint calls it with
+// an absolute path. It uses Bun's globs, so these files match the same overrides as the files Bun lints itself.
+function bunfigMatcher(patterns, base) {
+  const globs = patterns.map(it => new Bun.Glob(bunfigGlob(it)));
+  return file => {
+    const relative = nodePath.relative(base, file).replaceAll("\\", "/");
+    const isInside = relative !== ".." && !relative.startsWith("../") && !nodePath.isAbsolute(relative);
+    return isInside && globs.some(it => it.match(relative));
+  };
+}
+
+// Rewrites an ESLint ignore pattern that is relative to the directory `from` so that it's relative to `to`.
+function movedPattern(pattern, from, to) {
+  const bang = pattern.startsWith("!") ? "!" : "";
+  const rest = pattern.slice(bang.length).replace(/^\.\//u, "");
+  const down = nodePath.relative(to, from).replaceAll("\\", "/");
+  // A pattern that starts with a slash never matches, whatever it's relative to.
+  if (down === "" || rest.startsWith("/")) return pattern;
+  if (!down.startsWith("..")) return `${bang}${down}/${rest}`;
+  // `to` is below `from`. A pattern that doesn't lead into `to` keeps its `../`, so it matches nothing there.
+  const up = `${nodePath.relative(from, to).replaceAll("\\", "/")}/`;
+  if (rest.startsWith("**/")) return pattern;
+  return rest.startsWith(up) ? bang + rest.slice(up.length) : `${bang}${down}/${rest}`;
+}
+
+// Prepares a config object that the command line or bunfig.toml adds. Its plugins and parser arrive as names. Its `basePath` says
+// what its patterns are relative to, if that isn't `arrayBase`, the base path of the config array. ESLint only knows `basePath`
+// in config objects since 9.30 and rejects unknown keys, so the key is never passed on.
+async function reviveOverride(object, arrayBase) {
   const resolve = createRequire(nodePath.join(cwd, "noop.js")).resolve;
   const importFrom = async name => load(pathToFileURL(resolve(name)).href);
-  const revived = { ...object };
+  const { $globsOfBun: isOfBunfig, $jsPlugins: located = {}, basePath = arrayBase, ...revived } = object;
+  if (isOfBunfig) {
+    revived.files = [bunfigMatcher(object.files, basePath)];
+    if (object.ignores !== undefined) revived.ignores = [bunfigMatcher(object.ignores, basePath)];
+  } else if (object.ignores !== undefined) {
+    revived.ignores = object.ignores.map(it => movedPattern(it, basePath, arrayBase));
+  }
   if (object.plugins !== undefined) {
     revived.plugins = {};
     for (const [prefix, name] of Object.entries(object.plugins)) {
-      const module = await importFrom(longPluginName(name));
+      if (located[prefix] !== undefined) {
+        revived.plugins[prefix] = await locatedPlugin(located[prefix], prefix);
+        continue;
+      }
+      let module;
+      try {
+        module = await importFrom(longPluginName(name));
+      } catch (error) {
+        if (error?.code !== "MODULE_NOT_FOUND") throw error;
+        throw new Error(
+          `${longPluginName(name)} is not installed\n  bun lint has the rules of "${prefix}" built in, but some of your files go to the installed ESLint, which needs the package`,
+        );
+      }
       if (!("default" in module)) {
         throw new Error(
           `"${longPluginName(name)}" cannot be used with the \`--plugin\` option because its default module does not provide a \`default\` export`,
@@ -110,7 +166,9 @@ async function wholeConfiguration({ FlatConfigArray }, { file, basePath, ignores
     if (Array.isArray(exported)) configs.push(...exported);
     else if (exported !== undefined) configs.push(exported);
   }
-  for (const object of added) configs.push(await reviveOverride(object));
+  // The `Linter` turns a plain array into a config array whose base path is its `cwd`.
+  const arrayBase = FlatConfigArray === null ? cwd : basePath;
+  for (const object of added) configs.push(await reviveOverride(object, arrayBase));
   await configs.normalize?.();
   if (configs.getConfig === undefined) return configs;
   return Object.assign([], { getConfig: name => withoutProcessor(configs.getConfig(name)) });
@@ -230,13 +288,11 @@ function isAboutLayout({ ruleId, message }, aboutLayout) {
 // ESLint's `verifyText`, without the fixing, which the other side does. The message: `flags`, the id of the configuration, the length
 // of the path and of what it starts with that is the path of the file on disk, then the path, then the text.
 function lintWithEslint() {
-  const length = ask(MESSAGE);
-  const buffer = buffers[MESSAGE];
-  const [flags, id, pathLength, physicalLength] = new Uint32Array(buffer, 0, 4);
+  const { 0: flags, 1: id, 2: pathLength, 3: physicalLength } = messageWords(4);
   const configuration = eslintConfigurations.get(id);
   if (configuration === undefined) return NEEDS_ESLINT_CONFIGURATION;
   const { linter, configs, options } = configuration;
-  const name = decode(buffer, 16, 16 + pathLength);
+  const name = messageText(16, 16 + pathLength);
   const how = {
     allowInlineConfig: options.allowInlineConfig,
     filename: name,
@@ -245,11 +301,11 @@ function lintWithEslint() {
   // The rules about layout do not run here either.
   how.ruleFilter = ({ ruleId, severity }) =>
     !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2);
-  if (physicalLength !== pathLength) how.physicalFilename = decode(buffer, 16, 16 + physicalLength);
+  if (physicalLength !== pathLength) how.physicalFilename = messageText(16, 16 + physicalLength);
   if ((flags & WITHOUT_FIXES) !== 0) how.disableFixes = true;
   // The `Linter` of ESLint 8 knows no `ruleFilter`: there they have run.
   const isKept = it => !isAboutLayout(it, options.aboutLayout);
-  const messages = linter.verify(decode(buffer, 16 + pathLength, length), configs, how).filter(isKept);
+  const messages = linter.verify(messageText(16 + pathLength), configs, how).filter(isKept);
   const suppressed = linter.getSuppressedMessages().filter(isKept);
   const config = configs.getConfig?.(name);
   return DONE + JSON.stringify([messages, suppressed, config === undefined ? [] : deprecatedRulesOf(config)]);
@@ -257,7 +313,7 @@ function lintWithEslint() {
 
 // What `handle` does with the kinds of calls from `LINT_WITH_ESLINT` on.
 function handleForEslint(kind) {
-  const failed = error => FAILED + String(error?.message ?? error);
+  const failed = error => FAILED + messageOf(error);
   try {
     return kind === LINT_WITH_ESLINT ? lintWithEslint() : configureEslint(askForJson(MESSAGE)).catch(failed);
   } catch (error) {

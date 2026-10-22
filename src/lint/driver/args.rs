@@ -1,12 +1,53 @@
-//! Reads a command line as optionator, which ESLint uses, reads it. The flags are a table of
-//! `bun_clap`, which also prints the help.
+//! Parses a command line the way optionator, ESLint's option parser, does. The flags are a
+//! `bun_clap` table, which also prints the help.
 
 use bun_clap as clap;
 use bun_core::strings;
 
 pub type Param = clap::Param<clap::Help>;
 
-/// Why the command line cannot be used: a line for the user. The exit code is 2, as ESLint's.
+/// The flags under one heading in `--help --all`.
+pub struct Group {
+    pub title: &'static str,
+    pub params: &'static [Param],
+}
+
+/// A command's flags, as `--help` lists them.
+pub struct Help {
+    /// `--help --all` shows all of them.
+    pub groups: &'static [Group],
+    /// Long names of the flags that plain `--help` shows, in display order.
+    pub common: &'static [&'static [u8]],
+}
+
+impl Help {
+    pub fn common(&self) -> Vec<Param> {
+        let find = |name: &&[u8]| {
+            let mut params = self.groups.iter().flat_map(|group| group.params);
+            params.find(|param| param.names.long == Some(*name))
+        };
+        self.common.iter().filter_map(find).copied().collect()
+    }
+
+    pub(crate) const fn describes_every_flag(&self) -> bool {
+        let mut group = 0;
+        while group < self.groups.len() {
+            let params = self.groups[group].params;
+            let mut at = 0;
+            while at < params.len() {
+                if params[at].id.msg.is_empty() {
+                    return false;
+                }
+                at += 1;
+            }
+            group += 1;
+        }
+        true
+    }
+}
+
+/// A one-line message telling the user why the command line is invalid. The exit code is 2, like
+/// ESLint's.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct UsageError(pub Vec<u8>);
 
@@ -14,20 +55,20 @@ pub(crate) fn error<T>(parts: &[&[u8]]) -> Result<T, UsageError> {
     Err(UsageError(parts.concat()))
 }
 
-/// A part of the command line.
+/// One parsed command-line argument.
 pub(crate) enum Argument<'a> {
     Flag {
         /// The long name in the table.
         name: &'static [u8],
-        /// `None` for a flag that takes none.
+        /// `None` for a flag that doesn't take a value.
         value: Option<&'a [u8]>,
-        /// It is not written `--no-..`, or `--..=false`.
+        /// False if it's written `--no-..` or `--..=false`.
         is_on: bool,
     },
     Positional(&'a [u8]),
 }
 
-/// Calls `take` with each part of `args`, in order.
+/// Calls `take` with each parsed argument, in order.
 pub(crate) fn parse<'a>(
     params: &'static [Param],
     args: &[&'a [u8]],
@@ -39,21 +80,21 @@ pub(crate) fn parse<'a>(
         })
     };
     let find_short = |name: u8| params.iter().find(|param| param.names.short == Some(name));
-    let unknown = |written: &[u8], name: &[u8]| {
+    let unknown = |option_text: &[u8], name: &[u8]| {
         let closest = (params.iter().filter_map(|param| param.names.long))
             .min_by_key(|long| strings::edit_distance(name.iter().copied(), *long));
         match closest {
             Some(closest) => error(&[
                 b"Invalid option '",
-                written,
+                option_text,
                 b"' - perhaps you meant '--",
                 closest,
                 b"'?",
             ]),
-            None => error(&[b"Invalid option '", written, b"'."]),
+            None => error(&[b"Invalid option '", option_text, b"'."]),
         }
     };
-    // The flag that the next argument is the value of.
+    // The flag whose value is the next argument.
     let mut awaited: Option<&'static Param> = None;
     let name_of = |param: &'static Param| param.names.long.unwrap_or_default();
     let is_flag = |param: &Param| param.takes_value == clap::Values::None;
@@ -126,7 +167,7 @@ pub(crate) fn parse<'a>(
                 _ => (name, false),
             };
             let Some(param) = find_long(positive) else {
-                return unknown(&[b"--", positive].concat(), positive);
+                return unknown(&[b"--", name].concat(), positive);
             };
             match (is_flag(param), value) {
                 (true, Some(value)) => {
@@ -141,6 +182,9 @@ pub(crate) fn parse<'a>(
                     ]);
                 }
                 (false, Some(value)) => take(flag(param, Some(value), true))?,
+                (false, None) if param.takes_value == clap::Values::OneOptional => {
+                    take(flag(param, None, true))?
+                }
                 (false, None) => awaited = Some(param),
             }
         } else if let [b'-', number @ ..] = arg

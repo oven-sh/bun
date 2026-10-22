@@ -588,7 +588,8 @@ struct HttpResponseData;
          * chunked) is only partially received. Used by onEnd to surface a
          * mid-body FIN as HPE_INVALID_EOF_STATE like Node's parser.finish(). */
         bool hasIncompleteRequestBody() const {
-            return remainingStreamingBytes != 0;
+            /* A data handler that stops the parse at the last chunk leaves STATE_IS_TRAILERS_DONE. */
+            return remainingStreamingBytes != 0 && remainingStreamingBytes != STATE_IS_TRAILERS_DONE;
         }
 
         /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */
@@ -1397,14 +1398,14 @@ struct HttpResponseData;
             }
 
             /* Break if no host header (but we can have empty string which is different from nullptr).
-             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
-             * 'upgrade'/'connect' events before its Host requirement is enforced.
+             * node:http only: Upgrade and CONNECT requests are exempt, because Node.js dispatches
+             * them through the 'upgrade'/'connect' events before its Host requirement is enforced.
              * Checked after the Content-Length / Transfer-Encoding smuggling checks: those are
              * detected while llhttp parses the headers, whereas the Host requirement is a
              * post-completion check, so on doubly-invalid input the framing error wins (Node
              * reports e.g. HPE_INVALID_TRANSFER_ENCODING for such requests). */
             if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
-                && !isConnectRequestLine && !req->getHeader("upgrade").data()) {
+                && !(IsNodeHttp && (isConnectRequestLine || req->getHeader("upgrade").data()))) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
 

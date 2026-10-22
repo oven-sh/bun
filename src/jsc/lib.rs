@@ -165,6 +165,7 @@ pub mod string_builder;
 pub mod strong;
 #[path = "Task.rs"]
 pub mod task;
+mod thread_isolated;
 #[path = "TopExceptionScope.rs"]
 pub mod top_exception_scope;
 #[path = "uuid.rs"]
@@ -203,6 +204,7 @@ pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
+pub use self::thread_isolated::{ThreadIsolated, ThreadIsolatedArg};
 
 /// Trait surface for `write_format`-style hooks on runtime types
 /// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
@@ -405,7 +407,7 @@ pub mod btjs;
 #[path = "CppTask.rs"]
 pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
-pub mod fmt_jsc;
+pub(crate) mod fmt_jsc;
 #[path = "HTTPServerAgent.rs"]
 pub mod http_server_agent;
 #[path = "JSSecrets.rs"]
@@ -458,8 +460,9 @@ pub mod zig_stack_trace;
 pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
+#[cfg(debug_assertions)]
 #[path = "bindgen_test.rs"]
-pub mod bindgen_test;
+pub(crate) mod bindgen_test;
 #[path = "BunCPUProfiler.rs"]
 pub mod bun_cpu_profiler;
 #[path = "BunHeapProfiler.rs"]
@@ -784,10 +787,10 @@ pub use script_execution_context::{
 // re-exported here so `crate::VM` and `crate::vm::VM` name the same nominal
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
-pub use self::js_global_object::{GlobalRef, JSGlobalObject, MicrotaskCallback};
+pub use self::js_global_object::{GlobalRef, JSGlobalObject};
 pub use self::vm::VM;
 
-/// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
+/// Options for `JSGlobalObject::validate_integer_range`.
 /// min/max are `i128` so every
 /// signed/unsigned primitive's bounds + MIN/MAX_SAFE_INTEGER fit without
 /// narrowing. Defined at crate root so `bun_runtime` callers and
@@ -797,7 +800,6 @@ pub struct IntegerRange {
     pub min: i128,
     pub max: i128,
     pub field_name: &'static [u8],
-    pub always_allow_zero: bool,
 }
 impl Default for IntegerRange {
     fn default() -> Self {
@@ -805,7 +807,6 @@ impl Default for IntegerRange {
             min: i128::from(MIN_SAFE_INTEGER),
             max: i128::from(MAX_SAFE_INTEGER),
             field_name: b"",
-            always_allow_zero: false,
         }
     }
 }
@@ -952,7 +953,7 @@ pub enum BuiltinName {
 #[allow(non_upper_case_globals)]
 impl BuiltinName {
     // PascalCase aliases for downstream callers (Response.rs / Request.rs /
-    // streams.rs / fetch.rs / TextDecoder.rs / pretty_format.rs use these).
+    // streams.rs / fetch.rs / pretty_format.rs use these).
     pub const Method: Self = Self::method;
     pub const Headers: Self = Self::headers;
     pub const Url: Self = Self::url;
@@ -1053,7 +1054,7 @@ pub struct GregorianDateTime {
     pub day: i32,
     pub hour: i32,
     pub minute: i32,
-    pub(crate) second: i32,
+    pub second: i32,
     pub weekday: i32,
 }
 
@@ -1592,12 +1593,9 @@ unsafe extern "C" {
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`
-// grows a `.rs` backend (same arrangement as `r#gen` below).
+// grows a `.rs` backend.
 #[path = "generated.rs"]
 pub mod generated;
 
-/// `bun.gen` — bindgen dispatch shims.
-/// Hand-written per-module until `src/codegen/bindgen.ts` grows a `.rs` backend.
-/// (`gen` is a reserved keyword in edition 2024; use `r#gen` at call sites.)
-#[path = "bindings/GeneratedBindings.rs"]
-pub mod r#gen;
+#[path = "generated_bindgen.rs"]
+pub(crate) mod generated_bindgen;

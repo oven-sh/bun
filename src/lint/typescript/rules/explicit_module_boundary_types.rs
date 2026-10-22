@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use bun_lint::utils::oxlint::{member_key_name, property_key_name};
 use bun_lint::utils::ts_scope::{
     ReturnTypeOptions, ancestor_has_return_type, check_function_expression_return_type,
@@ -27,14 +28,16 @@ const ANY_TYPED_ARG_UNNAMED: Message = Message::new(
 );
 const MISSING_ARG_TYPE: Message =
     Message::new("missingArgType", "Argument '{{name}}' should be typed.");
-const MISSING_ARG_TYPE_UNNAMED: Message =
-    Message::new("missingArgTypeUnnamed", "{{type}} argument should be typed.");
+const MISSING_ARG_TYPE_UNNAMED: Message = Message::new(
+    "missingArgTypeUnnamed",
+    "{{type}} argument should be typed.",
+);
 const MISSING_RETURN_TYPE: Message =
     Message::new("missingReturnType", "Missing return type on function.");
 
 impl ExplicitModuleBoundaryTypes {
-    /// Upstream's `isAllowedName`, of the function declaration `func` or of the parent of the
-    /// function expression `func`.
+    /// Upstream's `isAllowedName`, applied to the function declaration `func`, or to the parent of the function
+    /// expression `func`.
     fn is_allowed_name(&self, func: Func) -> bool {
         if self.allowed_names.is_empty() {
             return false;
@@ -61,7 +64,8 @@ impl ExplicitModuleBoundaryTypes {
         name.is_some_and(|name| self.allowed_names.iter().any(|allowed| **allowed == *name))
     }
 
-    /// The parameters without a type, or with `any`, each with the message if it has a name and the one if it has none.
+    /// Returns the parameters that have no type or are typed `any`, each with the message for a named parameter and the
+    /// one for an unnamed parameter.
     fn untyped_parameters<'a>(
         &self,
         func: Func<'a>,
@@ -69,7 +73,7 @@ impl ExplicitModuleBoundaryTypes {
     ) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
         let allows_any = self.allow_arguments_explicitly_typed_as_any;
         func.params_with_this().filter_map(move |param| {
-            // It has the type of its default value. oxlint looks at the annotation first, and not at `this`.
+            // It has its default value's type. oxlint checks the annotation first, and ignores `this`.
             if param.default().is_some() && !(is_oxlint && param.ty().is_some())
                 || is_oxlint && func.this_param() == Some(param)
             {
@@ -77,16 +81,24 @@ impl ExplicitModuleBoundaryTypes {
             }
             match param.ty() {
                 None => Some((param, MISSING_ARG_TYPE, MISSING_ARG_TYPE_UNNAMED)),
-                Some(ty) if !allows_any && ty.is_keyword(Keyword::Any) => Some((param, ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED)),
+                Some(ty) if !allows_any && ty.is_keyword(Keyword::Any) => {
+                    Some((param, ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED))
+                }
                 Some(_) => None,
             }
         })
     }
 
-    fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
+    /// `export` is for oxlint: the export that led to `func`, which is the node oxlint's rule is called with.
+    fn check_parameters<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>, export: Option<Node<'a>>) {
         let is_oxlint = cx.language().is_oxlint;
+        let report = |at: Span, message: Message| match export {
+            Some(export) => cx.report(at, message).called_with(export),
+            None => cx.report(at, message),
+        };
         for (param, named, unnamed) in self.untyped_parameters(func, is_oxlint) {
-            // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
+            // oxlint points at the parameter including its modifiers, and for a rest parameter at the whole parameter
+            // list.
             let at = match (is_oxlint, param.is_rest()) {
                 (false, _) => param.span_without_modifiers(),
                 (true, false) => param.span(),
@@ -94,7 +106,7 @@ impl ExplicitModuleBoundaryTypes {
             };
             let pattern = match (param.pat().kind(), param.is_rest()) {
                 (PatKind::Ident(name), _) => {
-                    cx.report(at, named).data("name", name);
+                    report(at, named).data("name", name);
                     continue;
                 }
                 (PatKind::Missing, _) => continue,
@@ -102,7 +114,7 @@ impl ExplicitModuleBoundaryTypes {
                 (PatKind::Array(_), false) => "Array pattern",
                 (PatKind::Object(_), false) => "Object pattern",
             };
-            cx.report(at, unnamed).data("type", pattern);
+            report(at, unnamed).data("type", pattern);
         }
     }
 }
@@ -113,14 +125,14 @@ struct Checker<'a, 'c> {
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
     /// Upstream's `alreadyVisited`.
     visited: FxHashSet<Node<'a>>,
-    /// The variables whose declarations and values have been checked, which are all in `visited`.
-    followed: FxHashSet<Symbol<'a>>,
-    /// The expressions that are still to be checked.
+    /// The variables whose declarations and values have been checked. Those are all in `visited`.
+    followed: IdSet<Symbol<'a>>,
+    /// Expressions that still have to be checked.
     pending: Vec<Expr<'a>>,
     /// Upstream's `checkedFunctions`.
     checked: Vec<Func<'a>>,
-    /// Upstream collects the `return` statements while it walks the file, and checks what is
-    /// exported when it leaves the export: a function that starts after this has none yet.
+    /// Upstream collects `return` statements while it walks the file, and checks an export when it leaves it. So a
+    /// function that starts after this offset has no `return`s collected yet.
     returns_known_until: u32,
 }
 
@@ -145,8 +157,8 @@ impl<'a> Checker<'a, '_> {
         self.check_pending();
     }
 
-    /// What upstream does at `Program:exit`. It goes up from every function to one that has been
-    /// checked, this goes down from these.
+    /// Upstream's `Program:exit` handler. Upstream walks up from every function to a checked one. This walks down from
+    /// the checked ones.
     fn check_exported_higher_order_functions(&mut self) {
         let mut next = 0;
         while let Some(&func) = self.checked.get(next) {
@@ -158,7 +170,7 @@ impl<'a> Checker<'a, '_> {
                 self.check_expr(body);
             }
             for statement in func.returns() {
-                // Upstream takes the parent of a `return` for the body of the function.
+                // Upstream assumes a `return`'s parent is the function body.
                 if statement.parent() == Node::Func(func)
                     && let StmtKind::Return(Some(value)) = statement.kind()
                 {
@@ -169,9 +181,13 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// `at`: the identifier `name`.
+    /// `at` is the identifier `name`.
     fn follow_reference(&mut self, at: Node<'a>, name: Name<'a>) {
-        let Some(variable) = at.scope().get_name(name).filter(|it| self.followed.insert(*it)) else {
+        let Some(variable) = at
+            .scope()
+            .get_name(name)
+            .filter(|it| self.followed.insert(*it))
+        else {
             return;
         };
         for declaration in variable.declarations() {
@@ -197,8 +213,8 @@ impl<'a> Checker<'a, '_> {
         }
     }
 
-    /// Upstream's `checkNode`, for an expression. It is checked by [`Self::check_pending`]: the order makes no difference, as
-    /// nothing is checked twice.
+    /// Upstream's `checkNode`, for an expression. [`Self::check_pending`] does the actual check. The order doesn't
+    /// matter, since nothing is checked twice.
     fn check_expr(&mut self, e: Expr<'a>) {
         self.pending.push(e);
     }
@@ -258,7 +274,10 @@ impl<'a> Checker<'a, '_> {
                     }
                 }
                 (
-                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor,
+                    MemberKind::Method
+                    | MemberKind::Getter
+                    | MemberKind::Setter
+                    | MemberKind::Constructor,
                     Some(func),
                 ) => match func.has_body() {
                     true => self.check_function_expression(func),
@@ -270,13 +289,16 @@ impl<'a> Checker<'a, '_> {
     }
 
     fn check_empty_body_function_expression(&self, member: Member<'a>, func: Func<'a>) {
-        if !member.is_constructor() && member.kind() != MemberKind::Setter && func.return_type().is_none() {
+        if !member.is_constructor()
+            && member.kind() != MemberKind::Setter
+            && func.return_type().is_none()
+        {
             self.cx.report(func.estree_span(), MISSING_RETURN_TYPE);
         }
         self.check_parameters(func);
     }
 
-    /// The options with which the function is looked at as upstream sees it at this point.
+    /// Returns the options that make the function look the way upstream sees it at this point.
     fn options_for(&self, func: Func<'a>) -> ReturnTypeOptions {
         let mut options = self.rule.options;
         if func.span().start >= self.returns_known_until
@@ -335,18 +357,18 @@ impl<'a> Checker<'a, '_> {
         self.check_parameters(func);
     }
 
-    /// There is nothing to say about it, whatever it is part of.
+    /// True if there's nothing to report about it, whatever it's part of.
     fn is_fully_typed(&self, func: Func<'a>) -> bool {
         func.return_type().is_some() && self.rule.untyped_parameters(func, false).next().is_none()
     }
 
     fn check_parameters(&self, func: Func<'a>) {
-        self.rule.check_parameters(func, self.cx);
+        self.rule.check_parameters(func, self.cx, None);
     }
 }
 
-/// What oxlint points at for a function that has no name, and asks `allowedNames` about: the variable, the class or the
-/// key that it was last under.
+/// The span oxlint points at for a function without a name, and the name it matches `allowedNames` against. Both come
+/// from the last variable, class or key it passed through.
 #[derive(Copy, Clone)]
 struct Target<'a> {
     span: Span,
@@ -361,27 +383,32 @@ enum Step<'a> {
     Statements(List<'a, Stmt<'a>>),
     ForgetTarget,
     InSetter(bool),
-    Overloaded(FxHashSet<Member<'a>>),
-    /// `place`: where it lacks a return type, unless it returns a function.
-    LeaveFunction { place: Option<Span>, forgets_target: bool },
+    Overloaded(IdSet<Member<'a>>),
+    /// `report_span` is where to report a missing return type, unless the function returns a function.
+    LeaveFunction {
+        report_span: Option<Span>,
+        forgets_target: bool,
+    },
     LeaveClass,
 }
 
-/// oxlint's rule, its `ExplicitTypesChecker`. It goes down from what is exported, through every expression but calls and
-/// JSX elements, and judges each function that it comes to. An identifier it follows only where that is the export.
+/// oxlint's rule, its `ExplicitTypesChecker`. It walks down from each export, through every expression except calls and
+/// JSX elements, and checks each function it reaches. It only follows an identifier if that's the export itself.
 struct OxlintChecker<'a, 'c> {
     rule: &'c ExplicitModuleBoundaryTypes,
     cx: &'c Cx<'a, ExplicitModuleBoundaryTypes>,
-    /// What is still to be done, the next at the end.
+    /// The export being checked.
+    export: Node<'a>,
+    /// Remaining work. The next step is at the end.
     steps: Vec<Step<'a>>,
-    /// It is forgotten after what has set it, not set back.
+    /// It's cleared after the node that set it, not restored to the previous value.
     target: Option<Target<'a>>,
-    /// The functions around, and the classes that [`Step::WalkClass`] went into. Whether a `return` of the function
-    /// has a function.
-    around: Vec<bool>,
+    /// One entry per enclosing function, and per class that [`Step::WalkClass`] entered. True if one of the function's
+    /// `return`s returns a function.
+    returns_function_stack: Vec<bool>,
     in_setter: bool,
-    /// With `allowOverloadFunctions`, the methods of the class around that have overload signatures.
-    overloaded: FxHashSet<Member<'a>>,
+    /// With `allowOverloadFunctions`, the enclosing class's methods that have overload signatures.
+    overloaded: IdSet<Member<'a>>,
 }
 
 /// oxlint's `get_typed_inner_expression`
@@ -392,39 +419,56 @@ fn get_typed_inner_expression(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// oxlint's `function_has_overload_signatures`: a declaration of the same variable has no body. For a function without
-/// a name, an `export default function ();` of the file.
+/// oxlint's `function_has_overload_signatures`: true if another declaration of the same variable has no body. For a
+/// function without a name, true if the file has an `export default function ();`.
 fn function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
     let is_signature = |other: Func<'a>| other != func && !other.has_body();
     match func.name() {
         Some(_) => func.symbol().is_some_and(|symbol| {
-            symbol.declarations().any(|it| matches!(it, Declaration::Fn(other) if is_signature(other)))
+            symbol
+                .declarations()
+                .any(|it| matches!(it, Declaration::Fn(other) if is_signature(other)))
         }),
         None => func.file().body().iter().any(|statement| {
             statement.is_default_export()
-                && statement.as_fn().is_some_and(|other| other.name().is_none() && is_signature(other))
+                && statement
+                    .as_fn()
+                    .is_some_and(|other| other.name().is_none() && is_signature(other))
         }),
     }
 }
 
 /// oxlint's `collect_overloaded_methods`
-fn overloaded_methods(class: Class<'_>) -> FxHashSet<Member<'_>> {
+fn overloaded_methods(class: Class<'_>) -> IdSet<Member<'_>> {
     let methods = || {
         class.members().iter().filter_map(|member| {
             let is_method = matches!(
                 member.kind(),
-                MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
+                MemberKind::Method
+                    | MemberKind::Getter
+                    | MemberKind::Setter
+                    | MemberKind::Constructor
             );
-            let func = member.func().filter(|_| is_method && !member.key().is_some_and(Key::is_private))?;
-            Some((member, func.has_body(), (member.is_static(), member_key_name(member)?)))
+            let func = member
+                .func()
+                .filter(|_| is_method && !member.key().is_some_and(Key::is_private))?;
+            Some((
+                member,
+                func.has_body(),
+                (member.is_static(), member_key_name(member)?),
+            ))
         })
     };
     let signatures: FxHashSet<_> = methods().filter(|it| !it.1).map(|it| it.2).collect();
-    methods().filter(|it| it.1 && signatures.contains(&it.2)).map(|it| it.0).collect()
+    methods()
+        .filter(|it| it.1 && signatures.contains(&it.2))
+        .map(|it| it.0)
+        .collect()
 }
 
 impl<'a> OxlintChecker<'a, '_> {
     fn check_export(&mut self, statement: Stmt<'a>) {
+        self.export = Node::Stmt(statement);
         self.visit(statement);
         while let Some(step) = self.steps.pop() {
             let first = self.steps.len();
@@ -440,7 +484,8 @@ impl<'a> OxlintChecker<'a, '_> {
     }
 
     fn visit_all<T: Into<Node<'a>>>(&mut self, nodes: impl IntoIterator<Item = T>) {
-        self.steps.extend(nodes.into_iter().map(|it| Step::Visit(it.into())));
+        self.steps
+            .extend(nodes.into_iter().map(|it| Step::Visit(it.into())));
     }
 
     fn step(&mut self, step: Step<'a>) {
@@ -454,7 +499,7 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::Visit(Node::Member(member)) => self.visit_class_element(member),
             Step::Visit(_) => {}
             Step::WalkClass(class) => {
-                self.around.push(false);
+                self.returns_function_stack.push(false);
                 self.visit_all(class.decorators());
                 self.visit_all(class.extends());
                 self.visit_all(class.members());
@@ -465,17 +510,22 @@ impl<'a> OxlintChecker<'a, '_> {
             Step::ForgetTarget => self.target = None,
             Step::InSetter(was) => self.in_setter = was,
             Step::Overloaded(was) => self.overloaded = was,
-            Step::LeaveFunction { place, forgets_target } => {
-                let returns_function = self.around.pop() == Some(true);
-                if let Some(place) = place.filter(|_| !returns_function) {
-                    self.cx.report(place, MISSING_RETURN_TYPE);
+            Step::LeaveFunction {
+                report_span,
+                forgets_target,
+            } => {
+                let returns_function = self.returns_function_stack.pop() == Some(true);
+                if let Some(report_span) = report_span.filter(|_| !returns_function) {
+                    self.cx
+                        .report(report_span, MISSING_RETURN_TYPE)
+                        .called_with(self.export);
                 }
                 if forgets_target {
                     self.target = None;
                 }
             }
             Step::LeaveClass => {
-                self.around.pop();
+                self.returns_function_stack.pop();
             }
         }
     }
@@ -484,11 +534,17 @@ impl<'a> OxlintChecker<'a, '_> {
         match statement.kind() {
             StmtKind::Var(declarations) => self.visit_all(declarations),
             StmtKind::Fn(func) => self.visit(func),
-            StmtKind::Class(class) if statement.is_default_export() => self.steps.push(Step::WalkClass(class)),
+            StmtKind::Class(class) if statement.is_default_export() => {
+                self.steps.push(Step::WalkClass(class))
+            }
             StmtKind::Class(class) => self.visit(class),
             StmtKind::Enum(it) => self.visit_all(it.members().iter().filter_map(EnumMember::init)),
-            StmtKind::Module(module) => self.steps.push(Step::Statements(module.innermost().body())),
-            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => self.run_on_exported_expression(e, true),
+            StmtKind::Module(module) => {
+                self.steps.push(Step::Statements(module.innermost().body()))
+            }
+            StmtKind::ExportDefault(e) | StmtKind::ExportAssign(e) => {
+                self.run_on_exported_expression(e, true)
+            }
             StmtKind::ExportNamed(export) => {
                 for specifier in export.items() {
                     let scope = Node::ExportSpec(specifier).scope();
@@ -499,7 +555,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// `is_export`: not an element or a property of what is exported.
+    /// `is_export` means it's the export itself, not an element or property of it.
     fn run_on_exported_expression(&mut self, e: Expr<'a>, is_export: bool) {
         let e = get_typed_inner_expression(e);
         match e.kind() {
@@ -521,7 +577,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// It goes by the first declaration.
+    /// Only the first declaration counts.
     fn run_on_identifier_reference(&mut self, symbol: Option<Symbol<'a>>) {
         match symbol.and_then(|it| it.declarations().next()) {
             Some(declaration @ Declaration::Var(_)) if !declaration.is_catch_parameter() => {
@@ -535,27 +591,36 @@ impl<'a> OxlintChecker<'a, '_> {
 
     fn with_target_binding(&mut self, name: Option<Ident<'a>>) -> bool {
         if let Some(name) = name {
-            self.target = Some(Target { span: name.span(), name: name.bytes(), is_property: false });
+            self.target = Some(Target {
+                span: name.span(),
+                name: name.bytes(),
+                is_property: false,
+            });
         }
         name.is_some()
     }
 
-    /// Not with a key whose name is nowhere in the file as it is, that of a number or a regular expression.
+    /// Sets the target to a property key. Skips a key whose name doesn't appear verbatim in the file, like a number's
+    /// or a regular expression's.
     fn with_target_property(&mut self, key: Option<Key<'a>>) -> bool {
         let Some(key) = key else {
             return false;
         };
         let span = key.inner_span(self.cx.file());
-        let is_written = match key.kind() {
+        let is_verbatim = match key.kind() {
             KeyKind::Private(_) | KeyKind::ComputedNumber(_) => false,
             KeyKind::Number(_) => self.cx.file().slice(span).ends_with(b"n"),
             KeyKind::Computed(e) => e.tag() != ExprTag::Regex,
             _ => true,
         };
-        let Some(name) = property_key_name(key).filter(|_| is_written) else {
+        let Some(name) = property_key_name(key).filter(|_| is_verbatim) else {
             return false;
         };
-        self.target = Some(Target { span, name, is_property: true });
+        self.target = Some(Target {
+            span,
+            name,
+            is_property: true,
+        });
         true
     }
 
@@ -566,14 +631,21 @@ impl<'a> OxlintChecker<'a, '_> {
         let (Some(init), pat) = (declarator.init(), declarator.pat()) else {
             return;
         };
-        let Some(name) = pat.as_ident().filter(|it| !self.rule.allows(Some(it.bytes()))) else {
+        let Some(name) = pat
+            .as_ident()
+            .filter(|it| !self.rule.allows(Some(it.bytes())))
+        else {
             return;
         };
         if !matches!(
             get_typed_inner_expression(init).tag(),
             ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies
         ) {
-            self.target = Some(Target { span: pat.span(), name: name.bytes(), is_property: false });
+            self.target = Some(Target {
+                span: pat.span(),
+                name: name.bytes(),
+                is_property: false,
+            });
             self.visit(init);
             self.steps.push(Step::ForgetTarget);
         }
@@ -584,7 +656,9 @@ impl<'a> OxlintChecker<'a, '_> {
             ExprKind::Call(_) => {}
             ExprKind::Jsx(jsx) if !jsx.is_fragment() => {}
             ExprKind::New(call) => self.visit(call.callee()),
-            ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. }
+            ExprKind::As { expr, .. }
+            | ExprKind::AsConst(expr)
+            | ExprKind::Satisfies { expr, .. }
                 if matches!(
                     get_typed_inner_expression(expr).tag(),
                     ExprTag::Fn | ExprTag::Object | ExprTag::Array
@@ -597,15 +671,18 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// The properties of a pattern are no properties for oxlint.
+    /// oxlint doesn't treat a pattern's properties as properties.
     fn visit_assignment_target(&mut self, e: Expr<'a>) {
         match e.kind() {
             _ if e.is_parenthesized() => self.visit_expression(e),
-            ExprKind::Array(elements) => self.steps.extend(elements.iter().map(Step::AssignmentTarget)),
+            ExprKind::Array(elements) => self
+                .steps
+                .extend(elements.iter().map(Step::AssignmentTarget)),
             ExprKind::Object(properties) => {
                 for property in properties {
                     self.visit_all(property.computed_key());
-                    self.steps.extend(property.value().map(Step::AssignmentTarget));
+                    self.steps
+                        .extend(property.value().map(Step::AssignmentTarget));
                 }
             }
             ExprKind::Spread(rest) => self.steps.push(Step::AssignmentTarget(rest)),
@@ -613,7 +690,7 @@ impl<'a> OxlintChecker<'a, '_> {
         }
     }
 
-    /// Of statements it looks at the `return`s, or at the only one.
+    /// In a statement list it only looks at the `return`s, or at the only statement if there's just one.
     fn visit_statements(&mut self, statements: List<'a, Stmt<'a>>) {
         let mut rest = statements.iter().skip_while(|it| it.directive().is_some());
         if let (Some(only), None) = (rest.next(), rest.next())
@@ -624,7 +701,7 @@ impl<'a> OxlintChecker<'a, '_> {
         for value in statements.iter().filter_map(Stmt::as_return).flatten() {
             if value.as_fn().is_some()
                 && !value.is_parenthesized()
-                && let Some(returns_function) = self.around.last_mut()
+                && let Some(returns_function) = self.returns_function_stack.last_mut()
             {
                 *returns_function = true;
             }
@@ -663,33 +740,43 @@ impl<'a> OxlintChecker<'a, '_> {
         let (kind, flags) = (member.kind(), member.flags());
         if flags.contains(Flags::PRIVATE)
             || member.key().is_some_and(Key::is_private)
-            || kind == MemberKind::Property && !flags.contains(Flags::ACCESSOR) && member.ty().is_some()
+            || kind == MemberKind::Property
+                && !flags.contains(Flags::ACCESSOR)
+                && member.ty().is_some()
             || self.rule.allows(member_key_name(member))
         {
             return;
         }
         let has_name = match member.constructor_keyword() {
             Some(keyword) => {
-                self.target = Some(Target { span: keyword.span(), name: keyword.bytes(), is_property: true });
+                self.target = Some(Target {
+                    span: keyword.span(),
+                    name: keyword.bytes(),
+                    is_property: true,
+                });
                 true
             }
             None => self.with_target_property(member.key()),
         };
         match (kind, member.func()) {
             (MemberKind::StaticBlock, Some(block)) => {
-                self.steps.extend(block.body_statements().map(Step::Statements));
+                self.steps
+                    .extend(block.body_statements().map(Step::Statements));
             }
             (MemberKind::Method | MemberKind::Getter | MemberKind::Constructor, Some(func))
-                if !member.is_constructor() && !self.overloaded.contains(&member) =>
+                if !member.is_constructor() && !self.overloaded.contains(member) =>
             {
                 self.visit_all(member.decorators());
                 self.visit_all(member.computed_key());
                 self.visit(func);
             }
             (
-                MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor,
+                MemberKind::Method
+                | MemberKind::Getter
+                | MemberKind::Setter
+                | MemberKind::Constructor,
                 Some(func),
-            ) => self.rule.check_parameters(func, self.cx),
+            ) => self.rule.check_parameters(func, self.cx, Some(self.export)),
             (MemberKind::Property, _) => {
                 self.visit_all(member.decorators());
                 self.visit_all(member.computed_key());
@@ -704,15 +791,18 @@ impl<'a> OxlintChecker<'a, '_> {
 
     fn visit_function(&mut self, func: Func<'a>) {
         let forgets_target = self.with_target_binding(func.name());
-        self.around.push(false);
-        self.rule.check_parameters(func, self.cx);
-        let place = match func.return_type() {
+        self.returns_function_stack.push(false);
+        self.rule.check_parameters(func, self.cx, Some(self.export));
+        let report_span = match func.return_type() {
             Some(_) => None,
             None if func.is_arrow() => self.check_arrow_without_return(func),
             None if self.in_setter => None,
             None => self.check_function_without_return(func),
         };
-        self.steps.push(Step::LeaveFunction { place, forgets_target });
+        self.steps.push(Step::LeaveFunction {
+            report_span,
+            forgets_target,
+        });
     }
 
     fn check_function_without_return(&mut self, func: Func<'a>) -> Option<Span> {
@@ -723,20 +813,28 @@ impl<'a> OxlintChecker<'a, '_> {
         if self.rule.options.allow_higher_order_functions {
             self.steps.push(Step::Statements(body));
         }
-        let name = func.name().map(Ident::bytes).or_else(|| self.target.map(|it| it.name));
+        let name = func
+            .name()
+            .map(Ident::bytes)
+            .or_else(|| self.target.map(|it| it.name));
         let start = func.estree_span().start;
         let keyword = || Span::new(start, start + "function".len() as u32);
         (!self.rule.allows(name)).then(|| self.target.map_or_else(keyword, |it| it.span))
     }
 
     fn check_arrow_without_return(&mut self, arrow: Func<'a>) -> Option<Span> {
-        let place = match self.target {
-            Some(Target { span, is_property: true, .. }) => Some(span),
-            _ if self.around.len() == 1 => arrow.arrow_span(),
+        let report_span = match self.target {
+            Some(Target {
+                span,
+                is_property: true,
+                ..
+            }) => Some(span),
+            _ if self.returns_function_stack.len() == 1 => arrow.arrow_span(),
             Some(target) => Some(target.span),
             None => arrow.params_span().or_else(|| arrow.arrow_span()),
         };
-        let unless_allowed = place.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
+        let unless_allowed =
+            report_span.filter(|_| !self.rule.allows(self.target.map(|it| it.name)));
         let body = match arrow.body() {
             FnBody::Expr(body) if self.rule.options.allow_higher_order_functions => body,
             FnBody::Block(statements) if self.rule.options.allow_higher_order_functions => {
@@ -751,7 +849,10 @@ impl<'a> OxlintChecker<'a, '_> {
         }
         match inner.tag() {
             ExprTag::AsConst
-                if self.rule.options.allow_direct_const_assertion_in_arrow_functions
+                if self
+                    .rule
+                    .options
+                    .allow_direct_const_assertion_in_arrow_functions
                     && !inner.is_angle_bracket_assertion() =>
             {
                 None
@@ -760,13 +861,14 @@ impl<'a> OxlintChecker<'a, '_> {
                 self.visit(body);
                 None
             }
-            // `allowedNames` is not asked.
-            _ => place,
+            // `allowedNames` isn't checked here.
+            _ => report_span,
         }
     }
 }
 impl Rule for ExplicitModuleBoundaryTypes {
-    const META: Meta = Meta::typescript("explicit-module-boundary-types", Kind::Problem).reports_on_exit();
+    const META: Meta =
+        Meta::typescript("explicit-module-boundary-types", Kind::Problem).reports_on_exit();
     const ON: On = On::new()
         .stmts(&[
             StmtTag::Var,
@@ -779,7 +881,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
             StmtTag::ExportNamed,
         ])
         .finish();
-    /// The statements that export something of this file.
+    /// The statements that export something from this file.
     type State<'a> = Vec<Stmt<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -850,13 +952,16 @@ impl Rule for ExplicitModuleBoundaryTypes {
             let mut checker = OxlintChecker {
                 rule: self,
                 cx,
+                export: Node::File(cx.file()),
                 steps: Vec::new(),
                 target: None,
-                around: Vec::new(),
+                returns_function_stack: Vec::new(),
                 in_setter: false,
-                overloaded: FxHashSet::default(),
+                overloaded: IdSet::default(),
             };
-            return exports.into_iter().for_each(|statement| checker.check_export(statement));
+            return exports
+                .into_iter()
+                .for_each(|statement| checker.check_export(statement));
         }
         // The order in which upstream leaves them.
         utils::sort::sort_unstable_by_key(&mut exports, |statement| statement.span().end);
@@ -864,7 +969,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
             rule: self,
             cx,
             visited: FxHashSet::default(),
-            followed: FxHashSet::default(),
+            followed: IdSet::default(),
             pending: Vec::new(),
             checked: Vec::new(),
             returns_known_until: 0,

@@ -1,4 +1,4 @@
-// ───────────── `@rushstack/eslint-patch` ─────────────
+// ------------- `@rushstack/eslint-patch` -------------
 //
 // `eslint-config-next` loads it, and so do others. It changes the ESLint that has loaded the configuration, and looks for it above
 // itself, from `module.parent` to `module.parent`: `@eslint/eslintrc`, then ESLint. Where they are not, it throws, and here nothing

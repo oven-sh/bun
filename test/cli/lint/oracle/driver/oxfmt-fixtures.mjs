@@ -1,8 +1,8 @@
-// Runs every case of oxfmt's own CLI tests (apps/oxfmt/test/cli/*/options.json) with real oxfmt and with `bun format`, on a copy of
+// Runs every case of oxfmt's own CLI tests (apps/oxfmt/test/cli/*/options.json) with real oxfmt and with `bun fmt`, on a copy of
 // the fixtures, and compares the exit code, the files afterwards, and which files `--check` and `--list-different` name.
 //
 //   bun oxfmt-fixtures.mjs --oxc=<checkout of oxc> --oxfmt=<path of oxfmt> --scratch=<directory> \
-//     --bin="bun format" [--only=substring] [--show]
+//     --bin="bun fmt" [--only=substring] [--show]
 //
 // `--record=<file>` writes the fixtures and what oxfmt does with them, for `test/cli/format/oxfmt-cli/oxfmt-cli.test.ts`.
 import { spawnSync } from "node:child_process";
@@ -11,18 +11,18 @@ import path from "node:path";
 
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const tests = path.join(path.resolve(flag("oxc")), "apps/oxfmt/test/cli");
-// Without a configuration file `bun format` is like Prettier. An empty one above the fixtures makes it like oxfmt.
+// Without a configuration file `bun fmt` is like Prettier. An empty one above the fixtures makes it like oxfmt.
 const above = path.join(path.resolve(flag("scratch")), "oxfmt-app");
 const scratch = path.join(above, "fixtures");
 const oxfmt = [path.resolve(flag("oxfmt"))];
-const bin = (flag("bin") ?? "bun format").split(" ");
+const bin = (flag("bin") ?? "bun fmt").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 
-// Commands that `bun format` does not have, what `vp` tells oxfmt through the environment, and Svelte where the configuration has it.
-const leftOut = /^(migrate_|vite_plus|(stdin_)?svelte\/(?!.*fmt-(no|without)-svelte))/;
+// Commands that `bun fmt` does not have, `--init`, which is about bunfig.toml, and what `vp` tells oxfmt through the environment.
+const leftOut = /^(migrate_|init|vite_plus)/;
 const compared =
-  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|mdx?|markdown|hbs|handlebars|html?|vue|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
+  /(\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql|ya?ml|mdx?|markdown|hbs|handlebars|html?|vue|svelte|mjml|toml|toml\.example|toml\.orig)|(^|\/)Pipfile)$/;
 
 function readAll(root) {
   const files = {};
@@ -109,7 +109,7 @@ for (const name of fs.readdirSync(tests).sort()) {
     else {
       failed.push(title);
       console.log(`FAIL ${title}`);
-      if (show) console.log(`${problems.join("\n")}\n--- stderr of oxfmt\n${expected.stderr}\n--- stderr of bun format\n${actual.stderr}\n`);
+      if (show) console.log(`${problems.join("\n")}\n--- stderr of oxfmt\n${expected.stderr}\n--- stderr of bun fmt\n${actual.stderr}\n`);
     }
   }
 }

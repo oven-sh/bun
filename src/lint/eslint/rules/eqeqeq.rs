@@ -26,7 +26,7 @@ fn is_typeof(e: Expr) -> bool {
     e.unary_op() == Some(UnOp::Typeof)
 }
 
-/// What `typeof node.value` is for ESLint's `Literal`, and for a template without substitutions.
+/// Returns `typeof node.value` for ESLint's `Literal`, and for a template without substitutions.
 fn literal_type(e: Expr) -> Option<&'static str> {
     Some(match e.kind() {
         ExprKind::String(_) => "string",
@@ -39,8 +39,8 @@ fn literal_type(e: Expr) -> Option<&'static str> {
     })
 }
 
-/// The sorts of literals that oxlint tells apart, by how they are written. A template can have substitutions.
-fn literal_type_of_oxlint(e: Expr) -> Option<&'static str> {
+/// The kinds of literals that oxlint distinguishes, by syntax. A template can have substitutions.
+fn oxlint_literal_type(e: Expr) -> Option<&'static str> {
     match e.kind() {
         _ if e.is_parenthesized() => None,
         ExprKind::Template(_) => Some("template"),
@@ -56,12 +56,19 @@ impl Eqeqeq {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // oxlint sees nothing in parentheses.
+        // oxlint doesn't look inside parentheses.
         let is_seen = |it: Expr<'a>| !(is_oxlint && it.is_parenthesized());
-        let is_null = [left, right].into_iter().any(|it| it.tag() == ExprTag::Null && is_seen(it));
-        let is_typeof = [left, right].into_iter().any(|it| is_typeof(it) && is_seen(it));
-        let literal_type: fn(Expr<'a>) -> Option<&'static str> =
-            if is_oxlint { literal_type_of_oxlint } else { literal_type };
+        let is_null = [left, right]
+            .into_iter()
+            .any(|it| it.tag() == ExprTag::Null && is_seen(it));
+        let is_typeof = [left, right]
+            .into_iter()
+            .any(|it| is_typeof(it) && is_seen(it));
+        let literal_type: fn(Expr<'a>) -> Option<&'static str> = if is_oxlint {
+            oxlint_literal_type
+        } else {
+            literal_type
+        };
         let are_literals_of_same_type =
             literal_type(left).is_some() && literal_type(left) == literal_type(right);
         let expected = match op {
@@ -76,7 +83,7 @@ impl Eqeqeq {
             BinOp::EqEqEq | BinOp::NotEqEq if is_null && self.null == Null::Never => {
                 if op == BinOp::EqEqEq { "==" } else { "!=" }
             }
-            // oxlint says it of every operator, and expects the operator without its last character.
+            // oxlint reports this for every operator, and expects the operator minus its last character.
             _ if is_oxlint && is_null && self.null == Null::Never => {
                 let text = bin_op_text(op);
                 text.get(..text.len().saturating_sub(1)).unwrap_or_default()
@@ -87,18 +94,22 @@ impl Eqeqeq {
             return;
         };
         let actual = bin_op_text(op);
-        // oxlint points at the whole of `a === null`, and changes nothing there.
+        // oxlint reports all of `a === null`, and offers no fix there.
         let is_whole = is_oxlint && !matches!(op, BinOp::EqEq | BinOp::NotEq);
         let report = cx
             .report(if is_whole { e.span() } else { operator }, UNEXPECTED)
+            .called_with(e)
             .data("expectedOperator", expected)
             .data("actualOperator", actual);
         if is_whole {
             return;
         }
-        // oxlint replaces all that is between the operands.
+        // oxlint replaces everything between the operands.
         let change = |fixer: Fixer<'a>| match is_oxlint {
-            true => fixer.replace(left.outer_span().between(right.outer_span()), [" ", expected, " "].concat()),
+            true => fixer.replace(
+                left.outer_span().between(right.outer_span()),
+                [" ", expected, " "].concat(),
+            ),
             false => fixer.replace(operator, expected),
         };
         // The change is safe if both sides are known to have the same type.

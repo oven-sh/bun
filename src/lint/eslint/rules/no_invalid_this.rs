@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Disallow use of `this` in contexts where the value of `this` is `undefined`.
 pub struct NoInvalidThis {
@@ -9,8 +9,8 @@ pub struct NoInvalidThis {
 
 const UNEXPECTED_THIS: Message = Message::new("unexpectedThis", "Unexpected 'this'.");
 
-/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites what typescript-estree
-/// says with the option it was given: an `import` or an `export` makes no module of a script.
+/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites typescript-estree's value with the option
+/// it was given, so an `import` or `export` doesn't turn a script into a module.
 fn is_module(file: &File<'_>) -> bool {
     file.language().scope_source_type() == SourceType::Module
 }
@@ -22,17 +22,17 @@ fn is_value_of_accessor(func: Func<'_>) -> bool {
             if member.flags().contains(Flags::ACCESSOR) && member.init() == Some(value)))
 }
 
-/// What is known about the `this` of a file.
+/// Cached facts about `this` in a file.
 #[derive(Default)]
 pub struct Known<'a> {
-    /// Whether a `this` at a node is something else than `undefined`.
+    /// For a node, whether a `this` there is something other than `undefined`.
     at: AncestorMemo<'a, bool>,
-    /// The same directly in a function that is not a method.
-    in_function: FxHashMap<Func<'a>, bool>,
+    /// Same for a `this` directly in a function that isn't a method.
+    in_function: IdMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
 }
 
-/// Whether the `this` that is `e` is something else than `undefined`.
+/// True if `e`, a `this`, is something other than `undefined`.
 fn is_valid<'a>(
     e: Expr<'a>,
     cap_is_constructor: bool,
@@ -44,7 +44,7 @@ fn is_valid<'a>(
         Node::Func(func) if !func.is_arrow() && func.has_body() => Some(
             // A method is never called with the default `this`.
             matches!(func.owner(), Node::Member(_))
-                || *in_function.entry(func).or_insert_with(|| {
+                || *in_function.get_or_insert_with(func, || {
                     is_value_of_accessor(func)
                         || !ast_utils::is_default_this_binding_with(func, cap_is_constructor, bindings)
                         || !func.scope().is_some_and(Scope::is_strict)
@@ -54,7 +54,7 @@ fn is_valid<'a>(
             let is_field = !member.is_signature() && !member.flags().contains(Flags::ABSTRACT);
             (member.init().map(Node::Expr) == Some(child) || (is_valid_in_keys_of_fields && is_field)).then_some(true)
         }
-        // At the top level of a script it is the global object.
+        // At the top level of a script, `this` is the global object.
         Node::File(file) => {
             Some(!(is_module(file) || (file.language().global_return && file.top_level_scope().is_strict())))
         }
@@ -63,8 +63,8 @@ fn is_valid<'a>(
     is_valid.unwrap_or(true)
 }
 
-/// `is_valid_in_keys_of_fields`: typescript-eslint accepts `this` anywhere in a field of a class,
-/// not only in its value.
+/// With `is_valid_in_keys_of_fields`, `this` is accepted anywhere in a class field, not only in its value, like in
+/// typescript-eslint.
 pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(
     e: Expr<'a>,
     cap_is_constructor: bool,

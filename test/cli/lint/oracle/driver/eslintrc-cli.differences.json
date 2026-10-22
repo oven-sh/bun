@@ -95,7 +95,6 @@
   "print-config: a directory": "exit",
   "print-config: without a configuration": "exit",
   "print-config: eslint:recommended, env, globals, ignorePatterns": "config",
-  "names: .eslintrc.yml: a key twice": "exit",
   "names: .eslintrc.yml: two documents": "text",
   "names: .eslintrc.yml: a tag of JavaScript": "exit",
   "names: .eslintrc: keys without quotes, single quotes, a comma at the end": "exit",

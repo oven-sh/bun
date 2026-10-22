@@ -8,7 +8,8 @@ pub struct NoNegatedCondition;
 const NO_NEGATED_CONDITION: Message = Message::new("", "Unexpected negated condition.");
 
 impl Rule for NoNegatedCondition {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-negated-condition", Kind::Suggestion).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-negated-condition", Kind::Suggestion)
+        .fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::If]).exprs(&[ExprTag::Cond]);
     no_state!();
 
@@ -21,7 +22,8 @@ impl Rule for NoNegatedCondition {
             && alternate.tag() != StmtTag::If
             && is_negated_expression(test)
         {
-            cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_if_statement(fixer, test, consequent, alternate));
+            let report = cx.report(test, NO_NEGATED_CONDITION).called_with(if_stmt);
+            report.fix(|fixer| fix_if_statement(fixer, test, consequent, alternate));
         }
     }
 
@@ -29,12 +31,14 @@ impl Rule for NoNegatedCondition {
         if let Some((test, yes, no)) = e.as_cond()
             && is_negated_expression(test)
         {
-            cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no));
+            let report = cx.report(test, NO_NEGATED_CONDITION).called_with(e);
+            report.fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no));
         }
     }
 }
 
 /// `!a`, `a != b`, `a !== b`
 fn is_negated_expression(expr: Expr) -> bool {
-    expr.unary_op() == Some(UnOp::Not) || matches!(expr.binary_op(), Some(BinOp::NotEq | BinOp::NotEqEq))
+    expr.unary_op() == Some(UnOp::Not)
+        || matches!(expr.binary_op(), Some(BinOp::NotEq | BinOp::NotEqEq))
 }

@@ -1,13 +1,13 @@
-//! What the rules of `bun` share.
+//! Helpers shared by the `bun` plugin's rules.
 
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap};
 use bun_lint_oxlint::ast_util::is_global_reference;
 
-/// `(function () {})()`, `new (function () {})()`, `(function () {}).call(this)`: the body runs where it is written.
-/// That of a generator does not.
-fn is_called_at_once(func: Func) -> bool {
+/// True for `(function () {})()`, `new (function () {})()` and `(function () {}).call(this)`, where the body runs
+/// immediately. A generator's body doesn't.
+fn is_called_immediately(func: Func) -> bool {
     let Node::Expr(e) = func.owner() else {
         return false;
     };
@@ -22,18 +22,18 @@ fn is_called_at_once(func: Func) -> bool {
     !func.is_generator() && (parent.callee() == Some(e) || is_called_through_method())
 }
 
-/// What is known about which nodes run later than the module is evaluated: the state of a rule that asks.
+/// The memo for [`runs_while_module_is_evaluated`]. A rule that calls it keeps one in its state.
 pub(crate) type RunsLater<'a> = AncestorMemo<'a, ()>;
 
-/// Whether `node` runs while the module is evaluated: no function around it is called later, and it is not in what a
-/// field of an instance starts with.
+/// True if `node` runs while the module is evaluated. That means it isn't inside a function that's called later, or
+/// inside an instance field's initializer.
 pub(crate) fn runs_while_module_is_evaluated<'a>(
     node: Node<'a>,
     known: &mut RunsLater<'a>,
 ) -> bool {
     let runs_later = known.find(node, |child, parent| {
         let is_later = match parent {
-            Node::Func(func) => func.kind() != FnKind::StaticBlock && !is_called_at_once(func),
+            Node::Func(func) => func.kind() != FnKind::StaticBlock && !is_called_immediately(func),
             Node::Member(member) => {
                 !member.is_static() && member.init().map(Node::Expr) == Some(child)
             }
@@ -44,12 +44,12 @@ pub(crate) fn runs_while_module_is_evaluated<'a>(
     runs_later.is_none()
 }
 
-/// The strings of the option `key` of the first object, or `default` if it is not there.
+/// The strings in the option `key` of the first options object, or `default` if the key is missing.
 pub(crate) fn list_option(options: &Options, key: &str, default: &[&str]) -> Box<[Box<[u8]>]> {
     let config = options.object(0);
-    let written = config.strings(key);
+    let configured = config.strings(key);
     let names = if config.has(key) {
-        &written[..]
+        &configured[..]
     } else {
         default
     };
@@ -60,8 +60,8 @@ pub(crate) fn is_listed(list: &[Box<[u8]>], name: &[u8]) -> bool {
     list.iter().any(|it| **it == *name)
 }
 
-/// What a string or a template starts with, as far as it is written out, and whether that is all of it.
-pub(crate) fn written_start(e: Expr<'_>) -> Option<(&[u8], bool)> {
+/// The static prefix of a string or a template, and true if that's the whole value.
+pub(crate) fn static_prefix(e: Expr<'_>) -> Option<(&[u8], bool)> {
     match e.kind() {
         ExprKind::String(value) => Some((value.bytes(), true)),
         ExprKind::Template(template) => {
@@ -71,7 +71,7 @@ pub(crate) fn written_start(e: Expr<'_>) -> Option<(&[u8], bool)> {
     }
 }
 
-/// What a chain of calls and member accesses starts with: the `z` of `z.object({}).strict()`.
+/// The root of a chain of calls and member accesses: the `z` in `z.object({}).strict()`.
 pub(crate) fn chain_start(mut e: Expr<'_>) -> Expr<'_> {
     loop {
         e = match e.kind() {
@@ -86,7 +86,7 @@ pub(crate) fn chain_start(mut e: Expr<'_>) -> Expr<'_> {
 /// `{ [CALL]: true }`
 pub(crate) const CALLED: TraceMap<'static, ()> = TraceMap::EMPTY.call(());
 
-/// A trace map in which each of `names` leads to `then`.
+/// A trace map that maps each of `names` to `then`.
 pub(crate) struct Each<'m> {
     pub(crate) names: &'m [&'m str],
     pub(crate) then: &'m dyn Trace<'m>,
@@ -109,8 +109,9 @@ impl<'m> Trace<'m> for Each<'m> {
     }
 }
 
-/// The calls that `modules` asks for, however a module is loaded, each with the last name on the way to it.
-pub(crate) fn calls_of_modules<'a, 'm>(
+/// The calls that match the trace map `modules`, whether the module is imported or required. Each comes with the last
+/// name on its path.
+pub(crate) fn module_calls<'a, 'm>(
     file: &'a File<'a>,
     modules: &'m dyn Trace<'m>,
 ) -> Vec<(Expr<'a>, &'m str)> {
@@ -125,8 +126,8 @@ pub(crate) fn calls_of_modules<'a, 'm>(
         .collect()
 }
 
-/// The calls of `Bun.name()` for one of `names`, each with the name.
-pub(crate) fn calls_of_bun<'a>(
+/// The `Bun.name()` calls where `name` is one of `names`, each with that name.
+pub(crate) fn bun_calls<'a>(
     file: &'a File<'a>,
     names: &'static [&'static str],
 ) -> Vec<(Expr<'a>, &'static str)> {
@@ -170,26 +171,26 @@ const CHILD_PROCESS: Each<'static> = Each {
     },
 };
 
-/// Whether [`launches`] can find something.
+/// A cheap check that's false if [`launches`] can't find anything.
 pub(crate) fn can_launch(file: &File) -> bool {
     file.mentions("Bun") || CHILD_PROCESS.names.iter().any(|it| file.mentions(it))
 }
 
 /// The calls that start a process: those of `node:child_process`, `Bun.spawn()` and `Bun.spawnSync()`.
 pub(crate) fn launches<'a>(file: &'a File<'a>) -> Vec<(Call<'a>, Starter)> {
-    let of_node = match CHILD_PROCESS.names.iter().any(|it| file.mentions(it)) {
-        true => calls_of_modules(file, &CHILD_PROCESS),
+    let node_calls = match CHILD_PROCESS.names.iter().any(|it| file.mentions(it)) {
+        true => module_calls(file, &CHILD_PROCESS),
         false => Vec::new(),
     };
-    let of_node = of_node.into_iter().map(|(e, name)| match name {
+    let node_calls = node_calls.into_iter().map(|(e, name)| match name {
         "exec" | "execSync" => (e, Starter::Shell),
         _ => (e, Starter::File),
     });
-    let of_bun = calls_of_bun(file, &["spawn", "spawnSync"])
+    let bun_spawn_calls = bun_calls(file, &["spawn", "spawnSync"])
         .into_iter()
         .map(|(e, _)| (e, Starter::Bun));
-    of_node
-        .chain(of_bun)
+    node_calls
+        .chain(bun_spawn_calls)
         .filter_map(|(e, starter)| Some((e.as_call()?, starter)))
         .collect()
 }
@@ -198,14 +199,14 @@ pub(crate) fn launches<'a>(file: &'a File<'a>) -> Vec<(Call<'a>, Starter)> {
 pub(crate) enum LaunchOptions<'a> {
     None,
     /// An object literal in which nothing is spread.
-    Written(List<'a, Prop<'a>>),
-    /// What they are is not to be seen in the call.
+    Literal(List<'a, Prop<'a>>),
+    /// The options can't be determined from the call.
     Unknown,
 }
 
 impl<'a> LaunchOptions<'a> {
     pub(crate) fn of(call: Call<'a>, starter: Starter) -> Self {
-        // After the command there can be a list of arguments before them, and a callback after them.
+        // After the command, an argument list can come before the options and a callback after them.
         let is_list = call
             .args()
             .first()
@@ -217,7 +218,7 @@ impl<'a> LaunchOptions<'a> {
                 ExprKind::Object(properties)
                     if properties.iter().all(|it| it.kind() != PropKind::Spread) =>
                 {
-                    return LaunchOptions::Written(properties);
+                    return LaunchOptions::Literal(properties);
                 }
                 _ => return LaunchOptions::Unknown,
             }
@@ -227,7 +228,7 @@ impl<'a> LaunchOptions<'a> {
 
     fn property(&self, name: &str) -> Option<Prop<'a>> {
         match self {
-            LaunchOptions::Written(properties) => properties
+            LaunchOptions::Literal(properties) => properties
                 .iter()
                 .find(|it| it.key().is_some_and(|key| key.is(name))),
             _ => None,
@@ -243,8 +244,8 @@ impl<'a> LaunchOptions<'a> {
         self.property(name)?.value()
     }
 
-    /// Whether one of the streams of the process is that of its parent.
-    pub(crate) fn shares_a_stream(&self) -> bool {
+    /// True if the process inherits one of its parent's streams.
+    pub(crate) fn inherits_a_stream(&self) -> bool {
         let is_inherit = |e: Expr| e.as_string().is_some_and(|it| it.is("inherit"));
         let mut streams = ["stdio", "stdin", "stdout", "stderr"]
             .into_iter()
@@ -256,10 +257,10 @@ impl<'a> LaunchOptions<'a> {
     }
 }
 
-/// Modules, each with the names of what it exports. Without a name: the module itself.
+/// Modules, each with a list of export names. An empty list means the module itself.
 pub(crate) type Exports = Box<[(Box<str>, Box<[Box<str>]>)]>;
 
-/// The option `key` of the first object: `[{ "module": "m", "names": ["a"] }]`.
+/// The option `key` of the first options object: `[{ "module": "m", "names": ["a"] }]`.
 pub(crate) fn exports_option(options: &Options, key: &str) -> Exports {
     let listed = options.object(0).array(key).iter().filter_map(|it| {
         let entry = Object::of(Some(it));
@@ -269,8 +270,8 @@ pub(crate) fn exports_option(options: &Options, key: &str) -> Exports {
     listed.collect()
 }
 
-/// Calls `each` with the calls that `then` asks for of each of `exports`, as [`calls_of_modules`] has them.
-pub(crate) fn each_call_of_exports<'a>(
+/// Calls `each` with every call that matches `then` on one of `exports`, in the form [`module_calls`] returns.
+pub(crate) fn for_each_export_call<'a>(
     file: &'a File<'a>,
     exports: &Exports,
     then: TraceMap<'_, ()>,
@@ -283,13 +284,14 @@ pub(crate) fn each_call_of_exports<'a>(
             false => TraceMap::new(&members),
         };
         let modules = [(&**module, exported)];
-        for (e, name) in calls_of_modules(file, &TraceMap::new(&modules)) {
+        for (e, name) in module_calls(file, &TraceMap::new(&modules)) {
             each(e, name);
         }
     }
 }
 
-/// Whether `path` ends with `end`, which begins a name: `src/a.ts` with `a.ts`, not with `.ts`.
+/// True if `path` ends with `end`, and `end` starts at a path component: `src/a.ts` ends with `a.ts` but not with
+/// `.ts`.
 pub(crate) fn is_end_of_path(path: &[u8], end: &[u8]) -> bool {
     let before = path.strip_suffix(end);
     before.is_some_and(|it| matches!(it.last(), None | Some(b'/' | b'\\')))

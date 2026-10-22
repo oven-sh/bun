@@ -3,7 +3,7 @@
 
 use bun_lint::options::Json;
 
-/// What kind of import it is, or where it is from. In the order of their priority.
+/// The kind of import, or where it comes from. In priority order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Selector {
     Type,
@@ -45,7 +45,7 @@ impl Selector {
     }
 }
 
-/// How an import is written. In the order of their priority.
+/// How an import is written. In priority order.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(super) enum Modifier {
     SideEffect,
@@ -105,13 +105,13 @@ impl GroupName {
     }
 }
 
-/// An element of `customGroups` that `groups` has.
+/// A `customGroups` element that `groups` refers to.
 #[derive(Debug)]
 struct CustomGroup {
     element_name_pattern: Vec<Vec<u8>>,
     selector: Option<Selector>,
     modifiers: u8,
-    /// Where it is in `groups`.
+    /// Its index in `groups`.
     group: usize,
 }
 
@@ -124,22 +124,23 @@ pub(crate) struct Options {
     pub(super) ignore_case: bool,
     pub(super) newlines_between: bool,
     pub(super) internal_pattern: Vec<Vec<u8>>,
-    /// For each boundary between two groups, what a `{ "newlinesBetween": .. }` there says.
-    /// Empty if there is none.
+    /// For each boundary between two groups, the value of a `{ "newlinesBetween": .. }` marker there. Empty if there
+    /// are none.
     pub(super) newline_boundary_overrides: Vec<Option<bool>>,
     custom_groups: Vec<CustomGroup>,
-    /// By priority: a selector, modifiers, and where it is in `groups`.
+    /// By priority: a selector, modifiers, and the index in `groups`.
     predefined_groups: Vec<(Selector, u8, usize)>,
     unknown_group: usize,
-    /// A group takes all imports with side effects, so they are moved there even though they are
-    /// not sorted.
+    /// A group matches all side-effect imports, so they're moved there even though they aren't sorted.
     pub(super) regroups_side_effect: bool,
     pub(super) regroups_side_effect_style: bool,
+    /// Treat side-effect imports as barriers. oxfmt only keeps them at their index and lets other imports move past them.
+    pub(super) stops_at_side_effects: bool,
 }
 
-/// `fast_glob::glob_match`: `bun_glob` is a port of the same `glob-match`.
+/// `fast_glob::glob_match`. `bun_glob` is a port of the same `glob-match`.
 fn glob_match(pattern: &[u8], source: &[u8]) -> bool {
-    bun_glob::r#match(pattern, source).matches()
+    bun_glob::pattern::fast_glob_match(pattern, source)
 }
 
 impl Options {
@@ -175,35 +176,38 @@ fn boolean(config: &Json, name: &str, default: bool) -> Result<bool, Vec<u8>> {
     match config.get(name.as_bytes()) {
         None | Some(Json::Null) => Ok(default),
         Some(Json::Bool(value)) => Ok(*value),
-        Some(_) => Err(invalid(&format!("`{name}` has to be a boolean"))),
+        Some(_) => Err(invalid(&format!("`{name}` must be a boolean"))),
     }
 }
 
 fn strings(value: &Json, name: &str) -> Result<Vec<Vec<u8>>, Vec<u8>> {
     let items = value
         .as_array()
-        .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))?;
+        .ok_or_else(|| invalid(&format!("`{name}` must be an array of strings")))?;
     items
         .iter()
         .map(|item| {
             item.as_str()
                 .map(<[u8]>::to_vec)
-                .ok_or_else(|| invalid(&format!("`{name}` has to be an array of strings")))
+                .ok_or_else(|| invalid(&format!("`{name}` must be an array of strings")))
         })
         .collect()
 }
 
-fn shown(name: &[u8]) -> &bstr::BStr {
+fn printable(name: &[u8]) -> &bstr::BStr {
     bstr::BStr::new(name)
 }
 
-/// `value`: as it is written in JSON. `None`: imports are left as they are.
-pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
+/// `value` is the raw JSON. Returns `None` if imports are left as they are.
+pub(crate) fn compile(
+    value: &[u8],
+    stops_at_side_effects: bool,
+) -> Result<Option<Options>, Vec<u8>> {
     let config = match bun_lint::json::parse(value) {
         Some(Json::Bool(false)) => return Ok(None),
         Some(Json::Bool(true)) => Json::Object(Vec::new()),
         Some(config @ Json::Object(_)) => config,
-        _ => return Err(invalid("it has to be a boolean or an object")),
+        _ => return Err(invalid("it must be a boolean or an object")),
     };
     let present = |name: &str| {
         config
@@ -233,7 +237,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         Some(value) => {
             let items = value
                 .as_array()
-                .ok_or_else(|| invalid("`groups` has to be an array"))?;
+                .ok_or_else(|| invalid("`groups` must be an array"))?;
             let is_marker = |item: &Json| matches!(item, Json::Object(_));
             if items.first().is_some_and(is_marker) {
                 return Err(invalid(
@@ -261,7 +265,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
                         let marker = item.get(b"newlinesBetween").and_then(Json::as_bool);
                         pending_override = Some(marker.ok_or_else(|| {
                             invalid(
-                                "a marker in `groups` has to be `{ \"newlinesBetween\": boolean }`",
+                                "a marker in `groups` must be `{ \"newlinesBetween\": boolean }`",
                             )
                         })?);
                         continue;
@@ -288,7 +292,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         .map(|value| {
             value
                 .as_array()
-                .ok_or_else(|| invalid("`customGroups` has to be an array"))
+                .ok_or_else(|| invalid("`customGroups` must be an array"))
         })
         .transpose()?
         .unwrap_or_default()
@@ -329,6 +333,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
 
     let partition_by_newline = boolean(&config, "partitionByNewline", false)?;
     let newlines_between = boolean(&config, "newlinesBetween", true)?;
+    let sort_side_effects = boolean(&config, "sortSideEffects", false)?;
 
     // `SortImportsOptions::validate`
     if partition_by_newline && newline_boundary_overrides.iter().any(Option::is_some) {
@@ -349,7 +354,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         {
             return Err(invalid(&format!(
                 "unknown group name `{}` in `groups`",
-                shown(name)
+                printable(name)
             )));
         }
     }
@@ -359,7 +364,7 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
     {
         return Err(invalid(&format!(
             "`customGroups` name `{}` conflicts with a predefined group name; predefined names and `unknown` cannot be used as `groupName`",
-            shown(&definition.name)
+            printable(&definition.name)
         )));
     }
 
@@ -409,11 +414,11 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
     Ok(Some(Options {
         partition_by_newline,
         partition_by_comment: boolean(&config, "partitionByComment", false)?,
-        sort_side_effects: boolean(&config, "sortSideEffects", false)?,
+        sort_side_effects,
         is_descending: match present("order").map(|value| value.as_str()) {
             None | Some(Some(b"asc")) => false,
             Some(Some(b"desc")) => true,
-            Some(_) => return Err(invalid("`order` has to be \"asc\" or \"desc\"")),
+            Some(_) => return Err(invalid("`order` must be \"asc\" or \"desc\"")),
         },
         ignore_case: boolean(&config, "ignoreCase", true)?,
         newlines_between,
@@ -423,6 +428,10 @@ pub(crate) fn compile(value: &[u8]) -> Result<Option<Options>, Vec<u8>> {
         },
         regroups_side_effect: has_catch_all_group_for(Selector::SideEffect),
         regroups_side_effect_style: has_catch_all_group_for(Selector::SideEffectStyle),
+        stops_at_side_effects: stops_at_side_effects
+            && !sort_side_effects
+            && !has_catch_all_group_for(Selector::SideEffect)
+            && !has_catch_all_group_for(Selector::SideEffectStyle),
         newline_boundary_overrides,
         predefined_groups: predefined
             .into_iter()

@@ -1484,7 +1484,11 @@ it(
       hostname: "127.0.0.1",
       port,
       tls: { ca: tls.cert },
-      socket: { data: (_socket, chunk) => resolve(chunk.toString()), error: (_socket, error) => reject(error) },
+      socket: {
+        data: (_socket, chunk) => resolve(chunk.toString()),
+        error: (_socket, error) => reject(error),
+        close: () => reject(new Error("closed before the greeting")),
+      },
     });
     expect(await greeting).toBe("run 1");
   },

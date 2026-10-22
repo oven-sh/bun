@@ -1,8 +1,11 @@
 use core::ptr::NonNull;
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _, JsResult, SysErrorJsc as _,
+};
 use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
@@ -10,10 +13,6 @@ use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
     NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
 };
-
-/// Signature of every generated NodeFS host function.
-pub(crate) type NodeFSFunction =
-    fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
 // The (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples are
 // spelled out once in `node_fs.rs` (the `NodeFS::dispatch` table +
@@ -26,16 +25,15 @@ pub(crate) type NodeFSFunction =
 /// `Bindings(FunctionEnum).runSync`.
 fn run_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>(
     this: &Binding,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
 ) -> JsResult<JSValue>
 where
     Op<{ F }>: NodeFSDispatch<R, A>,
 {
-    // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine`; borrowed only
-    // for the duration of argument parsing on the JS thread.
+    let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let args = <A as FsArgument>::from_js(global, &mut slice)?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
@@ -62,10 +60,10 @@ enum AsyncArm {
 /// The arguments of the operation, and the callback for [`AsyncArm::Callback`].
 fn split_callback<'a>(
     global: &JSGlobalObject,
-    frame: &'a CallFrame,
+    args: &'a [JsLocal<'_>],
     arm: AsyncArm,
 ) -> JsResult<(Option<JSValue>, &'a [JSValue])> {
-    let arguments = frame.arguments();
+    let arguments = JsLocal::to_js_slice(args);
     match arm {
         AsyncArm::Promise => Ok((None, arguments)),
         AsyncArm::Callback => match arguments.split_first() {
@@ -84,8 +82,8 @@ fn split_callback<'a>(
 /// `async_::*` type aliases rather than derivable from `F` alone.
 fn run_async<A: FsArgument>(
     this: &Binding,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
     arm: AsyncArm,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
@@ -95,19 +93,15 @@ fn run_async<A: FsArgument>(
         Option<JSValue>,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
-    let (callback, arguments) = split_callback(global, frame, arm)?;
+    let cx = cx.js_thread();
+    let global = cx.global();
+    let (callback, arguments) = split_callback(global, args, arm)?;
     let args = match parse_async_args::<A>(global, arguments)? {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
     let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-    Ok(create_task(
-        &global.js_thread_of_caller(frame),
-        this,
-        args,
-        vm,
-        callback,
-    ))
+    Ok(create_task(&cx, this, args, vm, callback))
 }
 
 enum ParsedAsyncArgs<A> {
@@ -154,93 +148,50 @@ fn reject_before_schedule(
     }
 }
 
-#[inline(always)]
-const fn call_sync<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum>() -> NodeFSFunction
-where
-    Op<{ F }>: NodeFSDispatch<R, A>,
-{
-    run_sync::<R, A, F>
-}
-
-// R-2 (host-fn re-entrancy): every JS-exposed binding takes `&self`; the
+// Every JS-exposed binding takes `&self`; the
 // single mutable field `node_fs` is wrapped in `JsCell` so the
 // `sync_error_buf` scratch buffer and `&mut NodeFS` syscall dispatches are
-// projected through interior mutability instead of `&mut Binding`. The
-// codegen shim still emits `this: &mut NodeJSFS` — `&mut T` auto-coerces to
-// `&T` so the impls below compile against either.
-#[bun_jsc::JsClass(name = "NodeJSFS", no_constructor)]
+// projected through interior mutability instead of `&mut Binding`.
 #[derive(Default)]
 pub(crate) struct Binding {
     pub(crate) node_fs: JsCell<NodeFS>,
 }
 
 impl Binding {
-    // `pub const js = jsc.Codegen.JSNodeJSFS;` + `toJS`/`fromJS`/`fromJSDirect`
-    // → provided by `#[bun_jsc::JsClass]` derive.
-
-    // `pub const new = bun.TrivialNew(@This());`
-    pub(crate) fn new(init: Self) -> Box<Self> {
-        Box::new(init)
+    pub(crate) fn get_dirent(&self, cx: &mut JsScope<'_>) -> JSValue {
+        crate::node::Dirent::get_constructor(cx.global())
     }
 
-    pub(crate) fn finalize(self: Box<Self>) {
-        if self.node_fs.get().vm.is_some() {
-            // `node_fs.vm` is always the per-thread VM when set; route the
-            // read through the safe singleton accessor.
-            let vm_node_fs = VirtualMachine::get().node_fs;
-            // `JsCell` is `repr(transparent)` over `UnsafeCell<NodeFS>`, so
-            // `as_ptr()` yields the same address the VM stored at init time.
-            if vm_node_fs == Some(self.node_fs.as_ptr().cast()) {
-                // VM-owned singleton — keep alive.
-                let _ = bun_core::heap::release(self);
-                return;
-            }
-        }
-        drop(self);
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_dirent(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::node::Dirent::get_constructor(global))
-    }
-
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stats(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(crate::node::StatsSmall::get_constructor(global))
+    pub(crate) fn get_stats(&self, cx: &mut JsScope<'_>) -> JSValue {
+        crate::node::StatsSmall::get_constructor(cx.global())
     }
 
     // ── Hand-written bindings for ops outside `NodeFSFunctionEnum` ────────
 
     /// `callAsync(.cp)`.
-    pub(crate) fn cp(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let cp_args = match parse_async_args::<args::Cp<'static>>(global, frame.arguments())? {
+    pub(crate) fn cp(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let arguments = JsLocal::to_js_slice(args);
+        let cp_args = match parse_async_args::<args::Cp<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(
-            &global.js_thread_of_caller(frame),
-            this,
-            cp_args,
-            vm,
-        ))
+        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
     }
 
     /// `callSync(.cp)`.
-    pub(crate) fn cp_sync(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM.
+    pub(crate) fn cp_sync(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global = cx.global();
         let vm: &VirtualMachine = global.bun_vm();
-        let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+        let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
 
         // `defer args.deinit()` → `Drop` on `cp_args` (its `PathLike` fields).
         let cp_args = args::Cp::from_js(global, &mut slice)?;
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
-        match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
+        match self.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
             Err(ref err) => Err(global.throw_value(err.to_js(global))),
             Ok(()) => Ok(JSValue::UNDEFINED),
         }
@@ -248,29 +199,27 @@ impl Binding {
 
     /// `callAsync(.readdir)` — `args.recursive` selects
     /// `AsyncReaddirRecursiveTask` instead of the generic `AsyncFSTask`.
-    pub(crate) fn readdir(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Self::run_readdir(this, global, frame, AsyncArm::Promise)
+    pub(crate) fn readdir(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        self.run_readdir(cx, args, AsyncArm::Promise)
     }
 
     pub(crate) fn readdir_cb(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        Self::run_readdir(this, global, frame, AsyncArm::Callback)
+        self.run_readdir(cx, args, AsyncArm::Callback)
     }
 
     fn run_readdir(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
         arm: AsyncArm,
     ) -> JsResult<JSValue> {
-        let (callback, arguments) = split_callback(global, frame, arm)?;
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let (callback, arguments) = split_callback(global, args, arm)?;
         let rd_args = match parse_async_args::<args::Readdir<'static>>(global, arguments)? {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
@@ -283,40 +232,24 @@ impl Binding {
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                &global.js_thread_of_caller(frame),
-                rd_args,
-                vm,
-                callback,
+                &cx, rd_args, vm, callback,
             ));
         }
-        Ok(async_::Readdir::create(
-            &global.js_thread_of_caller(frame),
-            this,
-            rd_args,
-            vm,
-            callback,
-        ))
+        Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))
     }
 
     /// `callSync(.watch)` — `args::Watch` borrows `globalThis` so it can't go
     /// through `FsArgument`/`dispatch`; call the inherent method directly.
-    pub(crate) fn watch(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = global.bun_vm();
-        let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    pub(crate) fn watch(&self, cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
-        let watch_args = fs::Watcher::Arguments::from_js(
-            &global.js_thread(vm.context_of_caller(frame)),
-            &mut slice,
-        )?;
+        let watch_args = fs::Watcher::Arguments::from_js(&cx, &mut slice)?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
-        match this
+        match self
             .node_fs
             .with_mut(|nfs| nfs.watch(&watch_args, Flavor::Sync))
         {
@@ -327,20 +260,17 @@ impl Binding {
 
     /// `callSync(.watchFile)`.
     pub(crate) fn watch_file(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        // SAFETY: JS-thread borrow of the per-thread VM.
-        let vm: &VirtualMachine = global.bun_vm();
-        let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let mut slice = ArgumentsSlice::init(cx.vm(), JsLocal::to_js_slice(args));
 
-        let wf_args = fs::StatWatcher::Arguments::from_js(
-            &global.js_thread(vm.context_of_caller(frame)),
-            &mut slice,
-        )?;
+        let wf_args = fs::StatWatcher::Arguments::from_js(&cx, &mut slice)?;
 
-        match this
+        match self
             .node_fs
             .with_mut(|nfs| nfs.watch_file(wf_args, Flavor::Sync))
         {
@@ -350,27 +280,32 @@ impl Binding {
     }
 }
 
-/// Generates the `pub const <name> = call{Async,Sync}(.<fn>)` block.
+/// Generates the sync, promise and callback member of each op.
 /// Each row supplies the `(args, ret, NodeFSFunctionEnum)` triple for one op.
 macro_rules! node_fs_bindings {
     ( $( $sync:ident / $async_:ident / $callback:ident => $F:ident, $Args:ty, $Ret:ty ; )* ) => {
         impl Binding {
             $(
-                pub(crate) const $sync: NodeFSFunction =
-                    call_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>();
-                pub(crate) fn $async_(
-                    this: &Self,
-                    global: &JSGlobalObject,
-                    frame: &CallFrame,
+                pub(crate) fn $sync(
+                    &self,
+                    cx: &mut JsScope<'_>,
+                    args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, AsyncArm::Promise, async_::$F::create)
+                    run_sync::<$Ret, $Args, { NodeFSFunctionEnum::$F }>(self, cx, args)
+                }
+                pub(crate) fn $async_(
+                    &self,
+                    cx: &mut JsScope<'_>,
+                    args: &[JsLocal<'_>],
+                ) -> JsResult<JSValue> {
+                    run_async::<$Args>(self, cx, args, AsyncArm::Promise, async_::$F::create)
                 }
                 pub(crate) fn $callback(
-                    this: &Self,
-                    global: &JSGlobalObject,
-                    frame: &CallFrame,
+                    &self,
+                    cx: &mut JsScope<'_>,
+                    args: &[JsLocal<'_>],
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(this, global, frame, AsyncArm::Callback, async_::$F::create)
+                    run_async::<$Args>(self, cx, args, AsyncArm::Callback, async_::$F::create)
                 }
             )*
         }
@@ -424,23 +359,27 @@ node_fs_bindings! {
 // `readdirSync` goes through the generic sync path; only the async side is
 // special-cased above.
 impl Binding {
-    pub(crate) const readdir_sync: NodeFSFunction =
-        call_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>();
+    pub(crate) fn readdir_sync(
+        &self,
+        cx: &mut JsScope<'_>,
+        args: &[JsLocal<'_>],
+    ) -> JsResult<JSValue> {
+        run_sync::<ret::Readdir, args::Readdir<'static>, { NodeFSFunctionEnum::Readdir }>(
+            self, cx, args,
+        )
+    }
     // pub const statfs = callAsync(.statfs);
     // pub const statfsSync = callSync(.statfs);
 }
 
 pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
-    let module = Binding::new(Binding::default());
-
-    let vm = global.bun_vm_ptr();
-    // R-2: init-time write before the JS wrapper exists; `with_mut` here is
-    // trivially un-aliased (sole owner of the fresh `Box`).
-    module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
-
-    // `module` was `Box::new`-allocated; ownership transfers to the GC
-    // wrapper, which calls `Binding::finalize` to reclaim it.
-    Binding::to_js_boxed(module, global)
+    Binding {
+        node_fs: JsCell::new(NodeFS {
+            vm: NonNull::new(global.bun_vm_ptr()),
+            ..Default::default()
+        }),
+    }
+    .to_js(global)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
@@ -452,8 +391,6 @@ pub(crate) fn rm_options_for_testing(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // SAFETY: `bun_vm()` returns the live VM; borrowed only while parsing on
-    // the JS thread (same contract as `run_sync` above).
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, frame.arguments());
     let parsed = args::Rm::from_js(global, &mut slice)?;

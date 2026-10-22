@@ -5936,7 +5936,7 @@ impl Resolver {
 // ───────── JS host-fn FFI exports ─────────
 // The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
 // re-export each under its JS2Native link name. Mirrors the proc-macro's
-// shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
+// shim body (see `bun_jsc_macros::host_fn`).
 macro_rules! export_host_fn {
     ($scope:ident :: $f:ident, $name:literal) => {
         const _: () = {
@@ -5948,7 +5948,7 @@ macro_rules! export_host_fn {
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
+                ::bun_jsc::host_fn::host_fn_result(g, || $scope::$f(g, f))
             }
             #[cfg(not(all(windows, target_arch = "x86_64")))]
             #[unsafe(export_name = $name)]
@@ -5958,7 +5958,7 @@ macro_rules! export_host_fn {
             ) -> ::bun_jsc::JSValue {
                 // SAFETY: JSC guarantees both pointers are live for the call.
                 let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::__macro_support::host_fn_result(g, || $scope::$f(g, f))
+                ::bun_jsc::host_fn::host_fn_result(g, || $scope::$f(g, f))
             }
         };
     };

@@ -285,7 +285,7 @@ let NativeSecureContext;
  */
 function processPfxOptions(options) {
   if (options == null || options.pfx == null) return options;
-  NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+  NativeSecureContext ??= $bindgen("SecureContext.bind.ts", "SecureContext");
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];

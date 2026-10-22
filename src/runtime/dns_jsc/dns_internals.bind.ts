@@ -31,7 +31,6 @@ const setServers = { ...method, args: { servers: b.any } } as const;
 export const DNSResolver = b.class({
   rustPath: "crate::dns_jsc::Resolver",
   refCounted: true,
-  configurable: false,
   proto: {
     cancel: method,
     getServers,

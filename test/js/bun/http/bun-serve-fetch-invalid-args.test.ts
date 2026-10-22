@@ -80,7 +80,7 @@ describe.concurrent("server.fetch early rejections are tracked", () => {
   }
 
   test.each([
-    ["no arguments", respond, `server.fetch()`, "fetch() expects a string but received no arguments"],
+    ["no arguments", respond, `server.fetch()`, "fetch() expects a string, but received Undefined"],
     ["a blank URL", respond, `server.fetch("")`, "fetch() URL must not be a blank string"],
     ["a non-string argument", respond, `server.fetch(1)`, "fetch() expects a string, but received Number"],
     [
@@ -135,7 +135,7 @@ describe.concurrent("server.fetch early rejections are tracked", () => {
       using server = Bun.serve({ port: 0, ${respond} });
       server.fetch().catch(e => console.log("caught:", e.message));
     `);
-    expect(stdout).toBe("caught: fetch() expects a string but received no arguments.\n");
+    expect(stdout).toBe("caught: fetch() expects a string, but received Undefined\n");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

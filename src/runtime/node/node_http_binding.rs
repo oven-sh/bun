@@ -11,7 +11,7 @@ use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::node_http_binding::{
     BunServer, BunTLSServer, DeflateParams, UpgradeResponse,
 };
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer, ServerWebSocket};
+use crate::server::{AnyServer, ServerWebSocket};
 
 pub(crate) fn get_bun_server_all_closed_promise(
     global: &JSGlobalObject,
@@ -28,30 +28,17 @@ pub(crate) fn get_bun_server_all_closed_promise(
 
     let value = arguments[0];
 
-    // Try each heterogeneous server type in turn.
-    macro_rules! try_server {
-        ($ty:ty) => {
-            if let Some(server) = value.as_::<$ty>() {
-                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
-                // JS-owned server instance; we hold the JS thread for the duration
-                // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
-            }
-        };
-    }
-    try_server!(HTTPServer);
-    try_server!(HTTPSServer);
-    try_server!(DebugHTTPServer);
-    try_server!(DebugHTTPSServer);
-
-    Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
+    let Some(server) = AnyServer::from_js(value) else {
+        return Err(global.throw_invalid_argument_type_value("server", "bun.Server", value));
+    };
+    Ok(server.get_all_closed_promise(global))
 }
 
 /// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.
 pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
     macro_rules! open_count {
         ($server:expr) => {
-            $server.pending_requests.get() as f64
+            f64::from($server.pending_requests.get())
                 + f64::from($server.active_sockets_count())
                 + f64::from($server.active_connection_count.get())
         };
@@ -67,8 +54,10 @@ pub(crate) fn get_bun_server_open_count(server: BunServer<'_>) -> f64 {
 /// `None` once the server has stopped listening.
 fn tls_listen_socket(server: BunTLSServer<'_>) -> Option<&mut bun_uws_sys::ListenSocket> {
     let listener = match server {
-        BunTLSServer::Https(server) => server.listener?.cast::<bun_uws_sys::ListenSocket>(),
-        BunTLSServer::DebugHttps(server) => server.listener?.cast::<bun_uws_sys::ListenSocket>(),
+        BunTLSServer::Https(server) => server.listener.get()?.cast::<bun_uws_sys::ListenSocket>(),
+        BunTLSServer::DebugHttps(server) => {
+            server.listener.get()?.cast::<bun_uws_sys::ListenSocket>()
+        }
     };
     Some(bun_opaque::opaque_deref_mut(listener))
 }

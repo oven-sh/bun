@@ -3,6 +3,7 @@
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
+#include <JavaScriptCore/ArgList.h>
 #include <concepts>
 #include <cstddef>
 #include <span>
@@ -24,6 +25,9 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     using NullableInnerParameterType = JSC::JSValue;
     static JSC::JSValue nullValue() { return {}; }
 };
+
+// An argument and every one after it, read in place from the call frame.
+struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
@@ -146,7 +150,7 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     static JSClass* nullValue() { return nullptr; }
 };
 
-// An instance of a class of a `.classes.ts` file, as what it wraps. The caller's frame keeps the cell alive.
+// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
 template<typename JSClass, auto name>
 struct IDLWrappedInterface : WebCore::IDLType<void*> {
     using SequenceStorageType = void;

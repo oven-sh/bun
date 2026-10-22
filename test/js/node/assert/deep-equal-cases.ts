@@ -416,6 +416,7 @@ export const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "two null-prototype objects with the same keys",
@@ -433,6 +434,7 @@ export const cases: Case[] = [
     b: () => ({ a: 1 }),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "instances of two differently named classes",
@@ -446,6 +448,7 @@ export const cases: Case[] = [
       })(),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "instances of two distinct anonymous classes",
@@ -453,6 +456,7 @@ export const cases: Case[] = [
     b: anonymousClassInstance,
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "instances of two distinct identically named classes",
@@ -460,6 +464,7 @@ export const cases: Case[] = [
     b: sameNameClassInstance,
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "an Array subclass instance and an array",
@@ -467,6 +472,7 @@ export const cases: Case[] = [
     b: () => [],
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "[] and Object.create(Array.prototype)",
@@ -518,6 +524,7 @@ export const cases: Case[] = [
     b: () => new Map(),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   // An own "constructor" property only short-circuits the prototype
   // comparison when its value is a well-known built-in constructor.
@@ -534,6 +541,7 @@ export const cases: Case[] = [
     b: () => Object.create({ w: 2 }, { constructor: { value: sharedConstructor } }),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "own constructor: a user function on objects with the same prototype",
@@ -583,6 +591,8 @@ export const cases: Case[] = [
     b: () => Object.create(null),
     strict: false,
     loose: true,
+    skipPrototype: true,
+    swapped: { strict: true },
   },
   {
     name: "a Proxy with an own constructor: Object and an object with another prototype and the same own constructor",
@@ -619,6 +629,7 @@ export const cases: Case[] = [
     b: () => withOwnConstructor({ w: 2 }, TypeError),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "own non-enumerable constructor: Object and Array on the same structure",
@@ -626,6 +637,7 @@ export const cases: Case[] = [
     b: () => withHiddenProperty({}, "constructor", Array),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "objects with different prototypes whose inherited constructor is undefined",
@@ -633,6 +645,7 @@ export const cases: Case[] = [
     b: () => Object.create(withOwnConstructor(null, undefined)),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "Object.setPrototypeOf([], null) and []",
@@ -640,6 +653,7 @@ export const cases: Case[] = [
     b: () => [],
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "{} and Object.create(Object.create(Object.prototype))",
@@ -718,6 +732,7 @@ export const cases: Case[] = [
     b: () => new (class extends Date {})(0),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "a boxed string and a null-prototype boxed string",
@@ -725,6 +740,7 @@ export const cases: Case[] = [
     b: () => Object.setPrototypeOf(new String("a"), null),
     strict: false,
     loose: true,
+    skipPrototype: true,
     looseBug: "throws a TypeError",
   },
   {
@@ -1035,6 +1051,7 @@ export const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "a typed array with an extra own property",
@@ -1246,6 +1263,7 @@ export const cases: Case[] = [
     b: () => new ErrorWithInheritedSymbol("m"),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "two objects differing only in a symbol-keyed value",
@@ -1493,6 +1511,7 @@ export const cases: Case[] = [
     b: () => new AlsoTaggedA(),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "an instance of a class with a Symbol.toStringTag getter and {}",
@@ -1969,6 +1988,7 @@ export const cases: Case[] = [
     b: () => new Set([0, "0"]),
     strict: false,
     loose: true,
+    swapped: { loose: false },
   },
   {
     name: "sets holding 0, '0' and 0, null",
@@ -1976,13 +1996,14 @@ export const cases: Case[] = [
     b: () => new Set([0, null]),
     strict: false,
     loose: false,
+    swapped: { loose: true },
   },
   {
     name: "sets holding 1, '1' and 1, 1n",
     a: () => new Set([1, "1"]),
     b: () => new Set([1, 1n]),
     strict: false,
-    loose: true,
+    loose: false,
   },
   {
     name: "sets holding 5, { a: 1 } and { a: 1 }, 5",
@@ -2018,6 +2039,7 @@ export const cases: Case[] = [
     b: () => new Set([false, "1", ""]),
     strict: false,
     loose: false,
+    swapped: { loose: true },
   },
   {
     name: "sets holding false, '1', '' and 1, 0, '0'",
@@ -2025,6 +2047,7 @@ export const cases: Case[] = [
     b: () => new Set([1, 0, "0"]),
     strict: false,
     loose: true,
+    swapped: { loose: false },
   },
   {
     name: "sets holding 0, '0', false and '0', 1, ''",
@@ -2039,6 +2062,7 @@ export const cases: Case[] = [
     b: () => new Set(["1", 1]),
     strict: false,
     loose: true,
+    swapped: { loose: false },
   },
   {
     name: "maps holding null => '', undefined => 'a' and undefined => 0, null => 'a'",
@@ -2053,7 +2077,7 @@ export const cases: Case[] = [
         [null, "a"],
       ]),
     strict: false,
-    loose: true,
+    loose: false,
   },
   {
     name: "maps holding 1 => 1n, 1n => true and 1n => 'a', true => true",
@@ -2086,6 +2110,7 @@ export const cases: Case[] = [
       ]),
     strict: false,
     loose: false,
+    swapped: { loose: true },
   },
   // node compares the values under one number key three times at each level. Bun compares them once.
   {
@@ -2147,13 +2172,34 @@ export const cases: Case[] = [
   },
 
   // node accepts every element against a null one in loose mode, until the expected array has a hole (nodejs/node#61587).
-  { name: "[5] and [null]", a: () => [5], b: () => [null], strict: false, loose: true },
-  { name: "[null] and [5]", a: () => [null], b: () => [5], strict: false, loose: false },
+  { name: "[5] and [null]", a: () => [5], b: () => [null], strict: false, loose: true, swapped: { loose: false } },
+  { name: "[null] and [5]", a: () => [null], b: () => [5], strict: false, loose: false, swapped: { loose: true } },
   { name: "[undefined] and [null]", a: () => [undefined], b: () => [null], strict: false, loose: true },
-  { name: "[{ a: 1 }, 2] and [null, 2]", a: () => [{ a: 1 }, 2], b: () => [null, 2], strict: false, loose: true },
-  { name: "a hole and a null element", a: () => [,], b: () => [null], strict: false, loose: true },
+  {
+    name: "[{ a: 1 }, 2] and [null, 2]",
+    a: () => [{ a: 1 }, 2],
+    b: () => [null, 2],
+    strict: false,
+    loose: true,
+    swapped: { loose: false },
+  },
+  {
+    name: "a hole and a null element",
+    a: () => [,],
+    b: () => [null],
+    strict: false,
+    loose: true,
+    swapped: { loose: false },
+  },
   { name: "[, 5] and [, null]", a: () => [, 5], b: () => [, null], strict: false, loose: false },
-  { name: "[5, , 7] and [null, , 7]", a: () => [5, , 7], b: () => [null, , 7], strict: false, loose: true },
+  {
+    name: "[5, , 7] and [null, , 7]",
+    a: () => [5, , 7],
+    b: () => [null, , 7],
+    strict: false,
+    loose: true,
+    swapped: { loose: false },
+  },
   { name: "{ a: 5 } and { a: null }", a: () => ({ a: 5 }), b: () => ({ a: null }), strict: false, loose: false },
   // node compares `lastIndex` with ===.
   {
@@ -2186,6 +2232,7 @@ export const cases: Case[] = [
     b: () => new Error("x"),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "an Error with an undefined cause and an Error without a cause",
@@ -2200,6 +2247,7 @@ export const cases: Case[] = [
     b: () => new (class Sub extends Error {})("m"),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "AggregateErrors with different errors",
@@ -2290,6 +2338,7 @@ export const cases: Case[] = [
     b: () => new String("a"),
     strict: false,
     loose: true,
+    skipPrototype: true,
   },
   {
     name: "URLs with different hrefs",
@@ -2320,9 +2369,24 @@ export const cases: Case[] = [
     b: () => [[], null, ,],
     strict: false,
     loose: true,
+    swapped: { loose: false },
   },
-  { name: "[ , 1] and [null, , ]", a: () => [, 1], b: () => [null, ,], strict: false, loose: true },
-  { name: "[ , 2, 3] and [null, , 3]", a: () => [, 2, 3], b: () => [null, , 3], strict: false, loose: true },
+  {
+    name: "[ , 1] and [null, , ]",
+    a: () => [, 1],
+    b: () => [null, ,],
+    strict: false,
+    loose: true,
+    swapped: { loose: false },
+  },
+  {
+    name: "[ , 2, 3] and [null, , 3]",
+    a: () => [, 2, 3],
+    b: () => [null, , 3],
+    strict: false,
+    loose: true,
+    swapped: { loose: false },
+  },
   { name: "[1, , , 3] and [1, , , 3]", a: () => [1, , , 3], b: () => [1, , , 3], strict: true, loose: true },
   {
     name: "[1, , , 3] and [1, , , 3, , , ]",
@@ -2369,6 +2433,7 @@ export const cases: Case[] = [
     b: () => [null],
     strict: false,
     loose: true,
+    swapped: { loose: false },
     looseBug: "reports not equal",
   },
 
@@ -2519,6 +2584,7 @@ export const cases: Case[] = [
     b: () => new Set([sharedObject, { a: 1 }]),
     strict: true,
     loose: true,
+    swapped: { loose: false, strict: false },
   },
 
   // The value of an Error's `stack` never compares in Bun, and the loose mode does not count the key.

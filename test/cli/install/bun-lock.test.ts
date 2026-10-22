@@ -1216,17 +1216,17 @@ it("names folder and tarball packages without a package.json name after their fo
 
         "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", {}],
 
-        "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", {}, "<integrity>"],
+        "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", { "version": "1.0.0" }, "<integrity>"],
 
         "hash-folder-dep": ["c#-utils@file:pkgs/c#-utils", {}],
 
         "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", {}],
 
-        "remote-dep": ["remote-pkg@http://localhost:1234/remote-pkg.tgz", {}, "<integrity>"],
+        "remote-dep": ["remote-pkg@http://localhost:1234/remote-pkg.tgz", { "version": "1.0.0" }, "<integrity>"],
 
-        "signed-url-dep": ["signed-pkg@http://localhost:1234/signed-pkg.tgz?token=abc/def", {}, "<integrity>"],
+        "signed-url-dep": ["signed-pkg@http://localhost:1234/signed-pkg.tgz?token=abc/def", { "version": "1.0.0" }, "<integrity>"],
 
-        "tarball-dep": ["tarball-pkg@./tarball-pkg.tgz", {}, "<integrity>"],
+        "tarball-dep": ["tarball-pkg@./tarball-pkg.tgz", { "version": "1.0.0" }, "<integrity>"],
       }
     }
     "

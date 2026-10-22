@@ -426,6 +426,19 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> sys::Maybe<Dir> {
     }
 }
 
+/// The directory that `get_cache_directory` opens, if it exists. It creates nothing and changes no option.
+pub(crate) fn open_existing_cache(this: &PackageManager) -> Option<Dir> {
+    if this.options.enable.contains(Enable::CACHE)
+        && let Ok(cache_dir) =
+            fetch_cache_directory_path(this.env_mut(), Some(this.options.cache_directory))
+        && let Ok(dir) = Dir::open(&cache_dir.path)
+    {
+        return Some(dir);
+    }
+    // Where `ensure_cache_directory` puts the cache when it cannot use the configured one.
+    Dir::cwd().open_at(b"node_modules/.cache").ok()
+}
+
 pub struct CacheDir {
     pub path: Vec<u8>,
     /// True if no cache directory is configured, so `path` is below the working directory, whoever
@@ -904,6 +917,35 @@ pub fn cached_tarball_folder_name(
     print(!has_verified_base, patch_hash)
 }
 
+/// The cache entry with the bytes that bun.lock pins for a tarball, git or GitHub row. Empty for a tarball row with no integrity.
+pub(crate) fn cached_pinned_folder_name(
+    this: &PackageManager,
+    resolution: &Resolution,
+    integrity: &Integrity,
+) -> &'static ZStr {
+    match resolution.tag {
+        ResolutionTag::Git => cached_git_folder_name(this, resolution.git(), None),
+        ResolutionTag::Github => cached_github_folder_name(this, resolution.github(), None),
+        ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball
+            if integrity.tag.is_supported() =>
+        {
+            let url = match resolution.tag {
+                ResolutionTag::LocalTarball => resolution.local_tarball(),
+                _ => resolution.remote_tarball(),
+            };
+            cached_tarball_folder_name_print(
+                cached_package_folder_name_buf(),
+                integrity,
+                false,
+                resolution.tag,
+                this.lockfile.str(url),
+                None,
+            )
+        }
+        _ => ZStr::EMPTY,
+    }
+}
+
 impl PackageManager {
     /// Returns true if what this run reads from a `file:` path or URL can become the integrity in
     /// bun.lock.
@@ -1362,7 +1404,7 @@ pub fn save_lockfile(
         this.progress.refresh();
     }
 
-    let wrote = this.lockfile.save_to_disk(load_result, &this.options);
+    let wrote = write_lockfile(this, load_result);
 
     // delete binary lockfile if saving text lockfile
     if save_format == LockfileFormat::Text && load_result.loaded_from_binary_lockfile() {
@@ -1407,6 +1449,12 @@ pub fn save_lockfile(
     }
 
     Ok(wrote)
+}
+
+/// Every save of the lockfile goes through here, so that none skips `record_versions_from_cache`.
+pub fn write_lockfile(this: &mut PackageManager, load_result: &LoadResult) -> bool {
+    bun_core::handle_oom(this.record_versions_from_cache());
+    this.lockfile.save_to_disk(load_result, &this.options)
 }
 
 pub fn update_lockfile_if_needed(

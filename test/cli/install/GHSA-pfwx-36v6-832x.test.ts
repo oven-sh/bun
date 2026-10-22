@@ -125,7 +125,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
     expect(exitCode).toBe(0);
 
     expect(github.requests).toEqual([tarballPath]);
-    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, { version: "1.0.0" }, resolved, integrity]);
     expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
@@ -136,7 +136,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
     const first = await github.install();
     expect(first.stderr).not.toContain("error:");
     expect(first.exitCode).toBe(0);
-    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, { version: "1.0.0" }, resolved, integrity]);
 
     await rm(join(String(dir), ".bun-cache"), { recursive: true, force: true });
     await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
@@ -147,7 +147,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
     expect(second.exitCode).toBe(0);
 
     expect(github.requests).toEqual([tarballPath, tarballPath]);
-    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, { version: "1.0.0" }, resolved, integrity]);
     expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
@@ -178,7 +178,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
     expect(exitCode).toBe(0);
 
     expect(github.requests).toEqual([tarballPath]);
-    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved, integrity]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, { version: "1.0.0" }, resolved, integrity]);
     expect(existsSync(join(String(dir), "node_modules", name, "index.js"))).toBeTrue();
   });
 
@@ -194,7 +194,7 @@ describe.each(variants)("GitHub tarball integrity ($variant extraction)", ({ var
     await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
     const lockfile = join(String(dir), "bun.lock");
     await Bun.write(lockfile, (await Bun.file(lockfile).text()).replace(`, "${integrity}"`, ""));
-    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, {}, resolved]);
+    expect(await lockedEntry(String(dir))).toEqual([lockedPackage, { version: "1.0.0" }, resolved]);
 
     const second = await github.install();
     expect(second.stderr).not.toContain(extracted);

@@ -103,3 +103,35 @@ tsd.expectType(Bun.mmap("./data.bin", { size: 1024 })).is<Uint8Array<ArrayBuffer
 declare const webview: Bun.WebView;
 tsd.expectType(webview.goBack()).is<Promise<void>>();
 tsd.expectType(webview.goForward()).is<Promise<void>>();
+
+// bun.lock: the row of a tarball, git or github package has the package.json version in its info object.
+declare const lockfile: Bun.BunLockFile;
+const tarballRow = [
+  "pkg@https://example.com/pkg.tgz",
+  { version: "1.2.3" },
+  "sha512-AAAA",
+] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(tarballRow[1].version).is<string>();
+const gitRow = [
+  "pkg@git+https://example.com/pkg.git#abc",
+  { version: "" },
+  "abc",
+] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(gitRow[2]).is<string>();
+const githubRow = [
+  "pkg@github:owner/pkg#abc1234",
+  { version: "1.2.3" },
+  "owner-pkg-abc1234",
+  "sha512-AAAA",
+] satisfies Bun.BunLockFilePackageArray;
+tsd.expectType(githubRow[1].version).is<string>();
+// A registry row has its version in the resolution, and a tarball row with no integrity has none.
+// @ts-expect-error
+["pkg@1.2.3", "", { version: "1.2.3" }, "sha512-AAAA"] satisfies Bun.BunLockFilePackageArray;
+// @ts-expect-error
+["pkg@https://example.com/pkg.tgz", { version: "1.2.3" }] satisfies Bun.BunLockFilePackageArray;
+for (const row of Object.values(lockfile.packages)) {
+  if (row.length === 3) {
+    tsd.expectType(row[1].version).is<string | undefined>();
+  }
+}

@@ -10694,10 +10694,13 @@ declare module "bun" {
      * symlink     -> [ "name@link:path", INFO ]
      * folder      -> [ "name@file:path", INFO ]
      * workspace   -> [ "name@workspace:path" ] // workspace is only path
-     * tarball     -> [ "name@tarball", INFO ]
+     * tarball     -> [ "name@tarball", INFO, integrity ]
      * root        -> [ "name@root:", { bin, binDir } ]
      * git         -> [ "name@git+repo", INFO, .bun-tag string (TODO: remove this) ]
      * github      -> [ "name@github:user/repo", INFO, .bun-tag string (TODO: remove this) ]
+     *
+     * // tarball, git, github: INFO starts with the version of the package.json
+     * // github: the integrity of its tarball comes last, when bun has it
      * ```
      */
     packages: {
@@ -10729,16 +10732,26 @@ declare module "bun" {
     bundled?: true;
   };
 
+  /** A tarball, git or github package. Its resolution is a URL or a commit, so the version is here. */
+  type BunLockFileFetchedPackageInfo = BunLockFilePackageInfo & {
+    /** The `version` of its `package.json`, `""` when it has none. An older Bun did not write it. */
+    version?: string;
+  };
+
   /** @see {@link BunLockFile.packages} */
   type BunLockFilePackageArray =
     /** npm */
     | [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string]
-    /** symlink, folder, tarball */
+    /** symlink, folder, a tarball with no integrity */
     | [pkg: string, info: BunLockFilePackageInfo]
     /** workspace */
     | [pkg: string]
+    /** tarball */
+    | [pkg: string, info: BunLockFileFetchedPackageInfo, integrity: string]
     /** git, github */
-    | [pkg: string, info: BunLockFilePackageInfo, bunTag: string]
+    | [pkg: string, info: BunLockFileFetchedPackageInfo, bunTag: string]
+    /** github with an integrity */
+    | [pkg: string, info: BunLockFileFetchedPackageInfo, bunTag: string, integrity: string]
     /** root */
     | [pkg: string, info: Pick<BunLockFileBasePackageInfo, "bin" | "binDir">];
 

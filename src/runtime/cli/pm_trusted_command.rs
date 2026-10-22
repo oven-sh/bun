@@ -663,11 +663,14 @@ impl TrustCommand {
         )?;
 
         if total_scripts_ran > 0 {
-            // SAFETY: `save_to_disk` reads `load_lockfile` only for `save_format()` (scalar fields).
+            // SAFETY: the save reads `load_lockfile` only for `save_format()` (scalar fields).
             unsafe {
                 let lf: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 (*lf).trusted_dependencies = Some(ran);
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
+                bun_install::package_manager_real::directories::write_lockfile(
+                    &mut *pm_raw,
+                    &load_lockfile,
+                );
             }
         }
 

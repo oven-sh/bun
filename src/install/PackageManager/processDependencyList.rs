@@ -10,7 +10,9 @@ use crate::dependency::{TagExt as _, VersionTag};
 use crate::lockfile_real::package::{Diff, Package, PackageColumns, ResolverContext};
 use crate::lockfile_real::{DependencySlice, Lockfile, PackageIDSlice, QueuedRows, StringBuilder};
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{ArrivedPackage, PackageManager, RemoteTurn, enqueue, run_tasks};
+use crate::package_manager_real::{
+    ArrivedPackage, PackageManager, RemoteTurn, directories, enqueue, run_tasks,
+};
 use crate::package_manager_task as Task;
 use crate::repository_real::{RepositoryExt as _, locked_scp_like};
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
@@ -151,6 +153,14 @@ fn read_contained_package_json(package_dir: &[u8], folder: &[u8]) -> bun_sys::Ma
     crate::git_runner::read_package_json_in(&dir)
 }
 
+/// Why `record_versions_from_cache` left a row with no version.
+enum Unrecorded {
+    /// The cache has no entry with the bytes that the row pins.
+    NotInCache,
+    Unreadable(bun_sys::Error),
+    Package(crate::lockfile_real::package::NoRowVersion),
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // PackageManager impl
 // ──────────────────────────────────────────────────────────────────────────
@@ -180,6 +190,15 @@ impl PackageManager {
                 _ => false,
             };
             if !(from_lockfile && moved) {
+                // The row has no version, or one that a migrator took from another lockfile.
+                let buf = self.lockfile.buffers.string_bytes.as_slice();
+                let version = package.meta.recorded_version(buf);
+                if version.is_some() && version != existing.meta.recorded_version(buf) {
+                    existing
+                        .meta
+                        .record_version(package.meta.package_json_version);
+                    self.lockfile.packages.set(existing_id as usize, existing);
+                }
                 return existing;
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
@@ -204,6 +223,8 @@ impl PackageManager {
             existing.dependencies = package.dependencies;
             existing.resolutions = package.resolutions;
             existing.bin = package.bin;
+            existing.meta.package_json_version = package.meta.package_json_version;
+            existing.meta.version_record = package.meta.version_record;
             if data.integrity.tag.is_supported() {
                 existing.meta.integrity = data.integrity;
             }
@@ -463,6 +484,7 @@ impl PackageManager {
                         pkg.resolution = resolver
                             .resolve(&mut builder, &Expr::default())
                             .expect("unreachable");
+                        pkg.meta.record_version(SemverString::default());
                     }
 
                     pkg
@@ -495,6 +517,143 @@ impl PackageManager {
             }
             _ => None,
         }
+    }
+
+    /// Before the lockfile is saved: a row with no version takes it from the package.json of its cache entry.
+    pub(crate) fn record_versions_from_cache(&mut self) -> Result<(), bun_alloc::AllocError> {
+        let mut opened: Option<Option<bun_sys::Dir>> = None;
+        let mut versions: Vec<(PackageID, Box<[u8]>)> = Vec::new();
+        let mut not_in_cache = false;
+        for id in 0..self.lockfile.packages.len() {
+            let tag = self.lockfile.packages.items_resolution()[id].tag;
+            if !tag.records_package_json_version() {
+                continue;
+            }
+            let meta = &mut self.lockfile.packages.items_meta_mut()[id];
+            if !meta.pins(tag) {
+                // The next install can get other bytes for this row.
+                meta.forget_version();
+                continue;
+            }
+            if meta.has_recorded_version() {
+                continue;
+            }
+            // An install has the cache open. Nothing creates it here.
+            let cache_dir = match &self.cache_directory {
+                Some(dir) => Some(dir.fd()),
+                None => (opened.get_or_insert_with(|| directories::open_existing_cache(self)))
+                    .as_ref()
+                    .map(bun_sys::Dir::fd),
+            };
+            let read = match cache_dir {
+                Some(cache_dir) => self.version_in_cache(cache_dir, id as PackageID),
+                None => Err(Unrecorded::NotInCache),
+            };
+            match read {
+                Ok(version) => versions.push((id as PackageID, version)),
+                Err(why) => not_in_cache |= self.report_unrecorded(id as PackageID, &why),
+            }
+        }
+        if not_in_cache {
+            bun_core::note!("run 'bun pm fetch' first");
+            Output::flush();
+        }
+        if versions.is_empty() {
+            return Ok(());
+        }
+        let before = self.lockfile.buffers.string_bytes.as_ptr();
+        for (package_id, version) in versions {
+            let version = self.lockfile.string_buf().append(&version)?;
+            self.lockfile.packages.items_meta_mut()[package_id as usize].record_version(version);
+        }
+        // An append can move the buffer that `UpdateRequest::version_buf` views.
+        let after = bun_ptr::RawSlice::new(self.lockfile.buffers.string_bytes.as_slice());
+        for request in &mut self.update_requests {
+            if request.version_buf.as_ptr().cast::<u8>() == before {
+                request.version_buf = after;
+            }
+        }
+        Ok(())
+    }
+
+    /// Reads as the resolver does: no symlink is followed, so the file is inside the cache entry.
+    fn version_in_cache(
+        &self,
+        cache_dir: bun_sys::Fd,
+        package_id: PackageID,
+    ) -> Result<Box<[u8]>, Unrecorded> {
+        use bun_sys::{E, O};
+        let resolution = self.lockfile.packages.items_resolution()[package_id as usize];
+        let integrity = self.lockfile.packages.items_meta()[package_id as usize].integrity;
+        let folder = directories::cached_pinned_folder_name(self, &resolution, &integrity);
+        let missing = |err: bun_sys::Error| match err.get_errno() {
+            E::ENOENT | E::ENOTDIR => Unrecorded::NotInCache,
+            _ => Unrecorded::Unreadable(err),
+        };
+        let entry = bun_sys::Dir::borrow(&cache_dir)
+            .open_at_with(folder.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
+            .map_err(missing)?;
+        // A checkout is complete only when it has `.bun-tag`, which is written last.
+        if !directories::is_package_in_cache_at(cache_dir, folder, resolution.tag) {
+            return Err(Unrecorded::NotInCache);
+        }
+        let json = crate::git_runner::read_package_json_in(&entry).map_err(missing)?;
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let name = self.lockfile.packages.items_name()[package_id as usize].slice(buf);
+        crate::lockfile_real::package::version_for_row(&json, name).map_err(Unrecorded::Package)
+    }
+
+    /// Returns true when the remedy is to put the package in the cache.
+    fn report_unrecorded(&self, package_id: PackageID, why: &Unrecorded) -> bool {
+        use crate::lockfile_real::package::NoRowVersion;
+        // `bun install --lockfile-only` is what `bun audit` names for these rows. Other saves stay quiet about a row that they cannot complete.
+        let asked = self.options.lockfile_only;
+        let expected = matches!(
+            why,
+            Unrecorded::NotInCache | Unrecorded::Package(NoRowVersion::OtherName(_))
+        );
+        if self.options.log_level == LogLevel::Silent || (expected && !asked) {
+            return false;
+        }
+        let buf = self.lockfile.buffers.string_bytes.as_slice();
+        let name = self.lockfile.packages.items_name()[package_id as usize].slice(buf);
+        let row = format!(
+            "{}@{}",
+            bun_core::fmt::escape_control_chars(name),
+            bun_core::fmt::escape_control_chars(&crate::audit_fix::redacted_resolution(
+                &self.lockfile,
+                package_id
+            )),
+        );
+        Output::flush();
+        match why {
+            Unrecorded::NotInCache => {
+                bun_core::warn!("no version recorded for {}: it is not in the cache", row);
+            }
+            Unrecorded::Package(NoRowVersion::OtherName(declared)) => {
+                bun_core::warn!(
+                    "no version recorded for {}: its package.json declares the name {}",
+                    row,
+                    bun_core::fmt::quote(declared)
+                );
+                bun_core::note!("'bun update' of the dependency resolves it under that name");
+            }
+            Unrecorded::Package(NoRowVersion::NotJson) => {
+                bun_core::warn!(
+                    "no version recorded for {}: its package.json in the cache is not JSON",
+                    row
+                );
+            }
+            Unrecorded::Unreadable(err) => {
+                bun_core::warn!(
+                    "no version recorded for {}: cannot read its package.json in the cache: {}",
+                    row,
+                    bstr::BStr::new(err.name())
+                );
+            }
+        }
+        Output::flush();
+        matches!(why, Unrecorded::NotInCache)
     }
 
     /// Returns true if the package that `task_id` downloaded has to wait for its turn. See

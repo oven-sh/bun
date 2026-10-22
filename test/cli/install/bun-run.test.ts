@@ -748,7 +748,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    // What is not a workspace flag of this `npm run`, or cannot be told, stays where it is.
+    // Anything that isn't a workspace flag of this `npm run`, or that's ambiguous, is left where it is.
     it.each([
       "npm run greet -- -w app",
       "npm run greet -w --if-present",
@@ -764,7 +764,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it("leaves a redirect that is glued to the workspace", async () => {
+    it("doesn't change a redirect that's attached to the workspace name", async () => {
       const { dir, stderr, exitCode } = await runStart("npm run greet -w app>out.txt");
       using _ = dir;
       expect(stderr).not.toContain("--filter");
@@ -772,7 +772,7 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     });
 
-    it.skipIf(isWindows)("leaves an `npm run` that is only quoted text", async () => {
+    it.skipIf(isWindows)("doesn't change an `npm run` that's only quoted text", async () => {
       const { dir, stdout, exitCode } = await runStart("echo 'step: npm run build -w app' && echo 'ok; done'");
       using _ = dir;
       expect(stdout).toContain("-w app");
@@ -1449,7 +1449,7 @@ describe.concurrent("bun run", () => {
       // Takes the name of the directory.
       "blocked/bun-node": "not a directory",
     });
-    // A bun.exe of its own, so that nothing is written beside the one under test.
+    // Uses its own copy of bun.exe, so that nothing is written next to the one being tested.
     const ownBun = (folder: string) => {
       const exe = join(String(dir), folder, "bun.exe");
       try {

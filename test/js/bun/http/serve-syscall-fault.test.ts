@@ -1,7 +1,8 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
+import { bunEnv, bunExe, tls as certs, isLinux, isWindows, tempDir } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
 
@@ -260,5 +261,32 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
     }
     expect(proc.signalCode).toBeNull();
     expect(proc.exitCode).toBe(0);
+  });
+});
+
+// The dispatcher removes a paused socket from the epoll set when its peer hangs up, so resuming it
+// is a new EPOLL_CTL_ADD that can fail. kqueue and libuv never do that.
+describe.skipIf(skip || !isLinux)("Bun.serve: resuming a request socket fails in the kernel", () => {
+  const ping = "HTTP/1.1 200 OK, pong";
+  const bodyFails = [`before: ${ping}`, "abort", "body: rejected AbortError", `after: ${ping}`, "done"];
+
+  test.each([
+    ["body-buffered", bodyFails],
+    ["body-stream", bodyFails],
+    ["response-ends", [`before: ${ping}`, `after: ${ping}`, "done"]],
+  ])("%s", async (mode, expected) => {
+    using dir = tempDir("serve-resume-fault", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "serve-resume-fault-fixture.ts"), mode, join(String(dir), "s.sock")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr: exitCode === 0 ? "" : stderr.slice(-3000) }).toEqual({
+      stdout: expected,
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

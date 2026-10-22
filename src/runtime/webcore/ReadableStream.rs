@@ -23,8 +23,9 @@ pub enum NativeWireResult {
     /// The sink was installed on the native source; the source will call
     /// `SinkHandle::end` itself when it's done.
     Wired,
-    /// Not a native source (no `Bytes`/`File` backing, or it already has a
-    /// sink). Fall through to the JS-pump path.
+    /// Not a native source this sink can use (no `Bytes`/`File` backing, it
+    /// already has a sink, or a consumer has started or locked the stream).
+    /// Nothing was written. Fall through to the JS-pump path.
     NotNative,
     /// The source was already done or errored. The sink was not left
     /// installed; the caller runs its own end-of-stream handling.
@@ -149,6 +150,7 @@ unsafe extern "C" {
     safe fn ReadableStream__markConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__closeConsumedAsBody(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
+    safe fn ReadableStream__tryLockNative(stream: JSValue, global: &JSGlobalObject) -> bool;
     /// BunStreamSource.cpp: queue the adapter's close on the microtask queue.
     safe fn Bun__NativeStreamSourceAdapter__onClose(global: &JSGlobalObject, adapter: JSValue);
     safe fn ZigGlobalObject__createNativeReadableStream(
@@ -307,9 +309,16 @@ impl ReadableStream {
     /// Mark the stream disturbed + locked-without-reader. Called by native
     /// fast-paths after wiring a `SinkHandle` directly so `.locked`,
     /// `.getReader()`, and body-mixin disturbed checks behave as they would
-    /// after `readStreamIntoSink` acquires a reader.
+    /// after `readStreamIntoSink` acquires a reader. It doesn't check the
+    /// stream's state, so callers must do that first.
     pub fn lock_native(&self, global_object: &JSGlobalObject) {
         ReadableStream__lockNative(self.value, global_object);
+    }
+
+    /// Calls [`Self::lock_native`] if the stream hasn't been started or locked.
+    /// Otherwise returns `false` without touching the stream.
+    pub(crate) fn try_lock_native(&self, global_object: &JSGlobalObject) -> bool {
+        ReadableStream__tryLockNative(self.value, global_object)
     }
 
     /// Wire `sink` directly to this stream's native `ByteStream`/`FileReader`
@@ -329,11 +338,13 @@ impl ReadableStream {
 
         if let Some(byte_stream) = self.ptr.bytes() {
             if byte_stream.sink.get().is_none() {
+                if !self.try_lock_native(global) {
+                    return NativeWireResult::NotNative;
+                }
                 set_source(SourceHandle::ByteStream(byte_stream));
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
-                self.lock_native(global);
                 byte_stream.signal_consumer_attached();
 
                 if let Some(err) = byte_stream.take_pending_error() {
@@ -373,6 +384,9 @@ impl ReadableStream {
 
         if let Some(file_reader) = self.ptr.file() {
             if !file_reader.done.get() && file_reader.sink.get().is_none() {
+                if !self.try_lock_native(global) {
+                    return NativeWireResult::NotNative;
+                }
                 match file_reader.start_for_sink(global) {
                     Some(Start::Err(e)) => {
                         use bun_sys_jsc::SystemErrorJsc;
@@ -380,12 +394,10 @@ impl ReadableStream {
                         err_js.ensure_still_alive();
                         let err =
                             StreamError::JSValue(jsc::strong::Optional::create(err_js, global));
-                        self.lock_native(global);
                         file_reader.parent_const().end_locked_stream(Some(&err));
                         return NativeWireResult::EndedInline(Some(err));
                     }
                     Some(Start::OwnedAndDone(bytes)) => {
-                        self.lock_native(global);
                         let _ = sink.write(&StreamResult::OwnedAndDone(bytes));
                         file_reader.parent_const().end_locked_stream(None);
                         return NativeWireResult::EndedInline(None);
@@ -396,7 +408,6 @@ impl ReadableStream {
                 file_reader.parent_const().set_sink_owner(owner_cell);
                 file_reader.sink.set(sink);
                 file_reader.sink_paused.set(true);
-                self.lock_native(global);
                 file_reader.pull_into_sink();
                 return NativeWireResult::Wired;
             }
@@ -1419,7 +1430,10 @@ impl<C: SourceContext> NewSource<C> {
             streams::Result::TemporaryAndDone(_)
             | streams::Result::OwnedAndDone(_)
             | streams::Result::IntoArrayAndDone(_) => {
-                flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                // `flags` is a `pull()` argument. Bun's callers pass an array, but other code can pass anything.
+                if flags.is_array() {
+                    flags.put_index(cx.global(), 0, JSValue::TRUE)?;
+                }
                 result.to_js(cx)
             }
             _ => result.to_js(cx),

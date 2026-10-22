@@ -32,7 +32,7 @@ const USE_DESTRUCT_ASSIGNMENT: Message =
 const DESTRUCTURE_IN_SIGNATURE: Message =
     Message::new("destructureInSignature", "Must destructure props in the function signature.");
 
-/// What can follow `this.`. The `name` of a `PrivateIdentifier` is without the `#`.
+/// The names that can follow `this.`. A `PrivateIdentifier`'s `name` doesn't include the `#`.
 const THIS_MEMBERS: [u32; 6] = [
     mention_bit(b"props"),
     mention_bit(b"context"),
@@ -41,10 +41,10 @@ const THIS_MEMBERS: [u32; 6] = [
     mention_bit(b"#context"),
     mention_bit(b"#state"),
 ];
-/// Where upstream calls `getRelatedComponent`, which makes a component of any function.
+/// The names for which upstream calls `getRelatedComponent`, which turns any function into a component.
 const RELATED: [u32; 3] = [mention_bit(b"propTypes"), mention_bit(b"defaultProps"), mention_bit(b"getDefaultProps")];
 
-/// An element of what upstream's `evalParams` returns.
+/// One element of the array that upstream's `evalParams` returns.
 #[derive(Copy, Clone)]
 enum EvaluatedParam<'a> {
     Destructuring,
@@ -53,7 +53,7 @@ enum EvaluatedParam<'a> {
 }
 
 impl<'a> EvaluatedParam<'a> {
-    fn of(param: Param<'a>) -> EvaluatedParam<'a> {
+    fn from_param(param: Param<'a>) -> EvaluatedParam<'a> {
         // An `AssignmentPattern`, a `RestElement`, a `TSParameterProperty`.
         if param.default().is_some() || param.is_rest() || param.is_parameter_property() {
             return EvaluatedParam::Other;
@@ -73,9 +73,9 @@ impl<'a> EvaluatedParam<'a> {
     }
 }
 
-/// What is said of a component with the parameters of `func`, if it is never to destructure.
+/// Returns the message for a component with `func`'s parameters under the `never` option.
 fn message_about_params(func: Func<'_>) -> Option<Message> {
-    let mut params = func.params_with_this().map(EvaluatedParam::of);
+    let mut params = func.params_with_this().map(EvaluatedParam::from_param);
     match (params.next(), params.next()) {
         (Some(EvaluatedParam::Destructuring), _) => Some(NO_DESTRUCT_PROPS_IN_SFC_ARG),
         (_, Some(EvaluatedParam::Destructuring)) => Some(NO_DESTRUCT_CONTEXT_IN_SFC_ARG),
@@ -83,7 +83,8 @@ fn message_about_params(func: Func<'_>) -> Option<Message> {
     }
 }
 
-/// `node.property.name` of a `this.props`, a `this.context` or a `this.state` that is reached from above.
+/// `node.property.name` of a `this.props`, `this.context` or `this.state`. Not for the root of an optional chain, which
+/// is a `ChainExpression` when seen from its parent.
 fn name_of_this_member(node: Expr<'_>) -> Option<&[u8]> {
     if node.object()?.tag() != ExprTag::This || node.is_chain_root() {
         return None;
@@ -91,7 +92,7 @@ fn name_of_this_member(node: Expr<'_>) -> Option<&[u8]> {
     get_property_name(Node::Expr(node)).filter(|it| matches!(*it, b"props" | b"context" | b"state"))
 }
 
-/// What a `VariableDeclarator` destructures.
+/// The object that a `VariableDeclarator` destructures.
 #[derive(Copy, Clone)]
 enum Destructured<'a> {
     /// let {foo} = props;
@@ -101,7 +102,7 @@ enum Destructured<'a> {
 }
 
 impl<'a> Destructured<'a> {
-    fn by(declarator: VarDecl<'a>) -> Option<Destructured<'a>> {
+    fn from_declarator(declarator: VarDecl<'a>) -> Option<Destructured<'a>> {
         let init = declarator.init().filter(|_| declarator.pat().tag() == PatTag::Object)?;
         match init.as_ident() {
             Some(name) => name.is_any(&["props", "context"]).then_some(Destructured::Sfc(name)),
@@ -110,7 +111,7 @@ impl<'a> Destructured<'a> {
     }
 }
 
-/// What upstream's `sfcParams` answers while a function is the first in its queue.
+/// The names that upstream's `sfcParams` returns while a function is first in its queue.
 #[derive(Copy, Clone, Default)]
 struct SfcParams<'a> {
     props_name: Option<Name<'a>>,
@@ -119,21 +120,21 @@ struct SfcParams<'a> {
 
 pub struct State<'a> {
     components: Components<'a>,
-    /// What is reported if it is in a component.
+    /// Nodes that are reported if they turn out to be in a component.
     candidates: Vec<Node<'a>>,
     sfc_params: Vec<SfcParams<'a>>,
-    /// What is in a `PropertyDefinition`.
+    /// Caches whether a node is inside a `PropertyDefinition`.
     class_properties: AncestorMemo<'a, ()>,
 }
 
 impl<'a> State<'a> {
-    /// Makes a candidate of each `x.a` where `sfcParams` can answer `x`. Whether there is one.
+    /// Adds a candidate for each `x.a` where `sfcParams` can return `x`. Returns true if it added any.
     fn add_sfc_usages(&mut self, file: &'a File<'a>) -> bool {
         let is_any_related = RELATED.iter().any(|&bit| file.mentions_bit(bit));
         let mut names_of_params = FxHashSet::default();
         for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
             let node = Node::Func(func);
-            let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
+            let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::from_param(it).name());
             let mut names = names.peekable();
             if names.peek().is_some()
                 && (is_any_related || self.components.get_stateless_component(node) == Some(node))
@@ -144,14 +145,14 @@ impl<'a> State<'a> {
         if names_of_params.is_empty() {
             return false;
         }
-        let others = self.candidates.len();
+        let previous_count = self.candidates.len();
         let members = [ExprTag::Dot, ExprTag::Index].map(|tag| file.exprs_of_kind(tag));
         for e in members.into_iter().flatten() {
             if e.object().and_then(Expr::as_ident).is_some_and(|it| names_of_params.contains(&it)) {
                 self.candidates.push(Node::Expr(e));
             }
         }
-        self.candidates.len() > others
+        self.candidates.len() > previous_count
     }
 
     fn is_in_class_property(&mut self, node: Expr<'a>) -> bool {
@@ -218,7 +219,7 @@ impl Rule for DestructuringAssignment {
     }
 
     fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        let is_candidate = match Destructured::by(declarator) {
+        let is_candidate = match Destructured::from_declarator(declarator) {
             Some(Destructured::Sfc(name)) => self.configuration == Configuration::Never || name.is("props"),
             Some(Destructured::Class(_)) => self.configuration == Configuration::Never,
             None => false,
@@ -228,7 +229,7 @@ impl Rule for DestructuringAssignment {
         }
     }
 
-    /// The candidates in the order of ESLint's walk, each when the list of components is what it is then.
+    /// Handles the candidates in ESLint's traversal order, each with the component list as it is at that point.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let has_sfc_usages = self.configuration == Configuration::Always && cx.state.add_sfc_usages(file);
@@ -239,7 +240,7 @@ impl Rule for DestructuringAssignment {
         for node in std::mem::take(&mut cx.state.candidates) {
             queue.push(At::enter(node), 0, node);
         }
-        // For `sfcParams`.
+        // `sfcParams` needs the functions' enter and exit events.
         if has_sfc_usages {
             let functions = file.funcs().filter(|it| ast_utils::is_function_with_body(*it));
             for node in functions.map(Node::Func) {
@@ -275,12 +276,12 @@ impl DestructuringAssignment {
             cx.state.sfc_params.pop();
             return;
         }
-        // The first in the queue that has a name is asked.
-        let around = cx.state.sfc_params.last().copied().unwrap_or_default();
-        let mut names = func.params_with_this().map(|it| EvaluatedParam::of(it).name());
+        // Upstream uses the first function in the queue that has a name for the parameter.
+        let outer_params = cx.state.sfc_params.last().copied().unwrap_or_default();
+        let mut names = func.params_with_this().map(|it| EvaluatedParam::from_param(it).name());
         cx.state.sfc_params.push(SfcParams {
-            props_name: names.next().flatten().or(around.props_name),
-            context_name: names.next().flatten().or(around.context_name),
+            props_name: names.next().flatten().or(outer_params.props_name),
+            context_name: names.next().flatten().or(outer_params.context_name),
         });
     }
 
@@ -311,7 +312,7 @@ impl DestructuringAssignment {
 
     fn handle_variable_declarator<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         let node = Node::VarDecl(declarator);
-        let name = match Destructured::by(declarator) {
+        let name = match Destructured::from_declarator(declarator) {
             Some(Destructured::Sfc(name)) => name,
             Some(Destructured::Class(name)) => {
                 if cx.state.components.get_parent_component(node).is_some() {
@@ -337,7 +338,7 @@ impl DestructuringAssignment {
         cx.report(declarator, DESTRUCTURE_IN_SIGNATURE).fix(|fixer| {
             let param = sfc_component.as_func()?.params_with_this().next()?;
             let whole = estree_span(Node::Param(param));
-            // That of a parameter with a default belongs to the left of the `AssignmentPattern`.
+            // The annotation of a parameter with a default belongs to the left side of the `AssignmentPattern`.
             let has_annotation = param.default().is_none() && !param.is_parameter_property();
             let annotation = param.ty().filter(|_| has_annotation);
             let name_end = annotation.map_or(whole.end, |it| it.annotation_span().start);
@@ -347,7 +348,7 @@ impl DestructuringAssignment {
     }
 }
 
-/// `props.aProp`, `context.aProp`, and the `props.a` of `typeof props.a.b`
+/// `props.aProp`, `context.aProp`, and the `props.a` in `typeof props.a.b`
 fn handle_sfc_usage<'a>(node: Expr<'a>, name: Name<'a>, cx: &mut Cx<'a, DestructuringAssignment>) {
     let Some(sfc_params) = cx.state.sfc_params.last() else {
         return;

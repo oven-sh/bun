@@ -20,21 +20,23 @@ impl Rule for Unambiguous {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_unambiguous = match file.language().is_oxlint {
-            // oxlint asks about a script too. For its parser `import.meta` and `await` make a module as well.
+            // oxlint also checks scripts. For its parser `import.meta` and `await` make a file a module too.
             true => has_module_syntax(file),
-            false => !file.is_module_program() || is_module(file),
+            // Don't use `File::language` here. A file that's CommonJS only because it has no `import` is exactly what
+            // this rule reports.
+            false => file.configured_language().scope_source_type() != SourceType::Module || is_module(file),
         };
         (!is_unambiguous).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         if cx.language().is_oxlint {
-            // oxlint points at the start of the file.
+            // oxlint reports the start of the file.
             cx.report(Span::default(), OXLINT);
         } else if cx.uses_typescript_parser() {
             cx.report(cx.program_span(), AMBIGUOUS);
         } else {
-            // espree's `Program` is the whole text.
+            // espree's `Program` spans the whole text.
             cx.report(cx.file().span(), AMBIGUOUS);
         }
     }

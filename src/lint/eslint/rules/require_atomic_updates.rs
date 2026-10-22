@@ -18,13 +18,13 @@ const NON_ATOMIC_OBJECT_UPDATE: Message = Message::new(
     "Possible race condition: `{{value}}` might be assigned based on an outdated state of `{{object}}`.",
 );
 
-/// A reference, and what it refers to.
+/// A reference and the variable it resolves to.
 type Resolved<'a> = (Reference<'a>, Variable<'a>);
 
-/// By where the identifier starts.
+/// Keyed by the identifier's start offset.
 type ReferenceMap<'a> = FxHashMap<u32, Resolved<'a>>;
 
-/// The references in `scope`, which is that of a function, without those in nested functions.
+/// Collects the references in the function scope `scope`, excluding nested functions.
 fn create_reference_map<'a>(scope: Scope<'a>) -> ReferenceMap<'a> {
     let mut map = ReferenceMap::default();
     let mut scopes: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
@@ -45,7 +45,7 @@ fn create_reference_map<'a>(scope: Scope<'a>) -> ReferenceMap<'a> {
     map
 }
 
-/// What is assigned. For the `a` of `a.b = c`, which is read, it is `c`.
+/// Returns the assigned expression. For the `a` of `a.b = c`, which is a read, that's `c`.
 fn get_write_expr<'a>(reference: Reference<'a>) -> Option<Expr<'a>> {
     if let Some(write_expr) = reference.write_expr() {
         return Some(write_expr);
@@ -77,8 +77,8 @@ fn is_right_of_plain_assignment(write_expr: Expr) -> bool {
         if matches!(parent.kind(), ExprKind::Assign { op: None, value, .. } if value == write_expr))
 }
 
-/// The node of ESLint that an expression is the `right` of: an `AssignmentExpression`, an
-/// `AssignmentPattern`, a `ForInStatement` or a `ForOfStatement`.
+/// The ESLint node that has an expression as its `right`: an `AssignmentExpression`, an `AssignmentPattern`, a
+/// `ForInStatement` or a `ForOfStatement`.
 struct Assignment {
     span: Span,
     left: Span,
@@ -125,9 +125,9 @@ fn assignment_of<'a>(right: Expr<'a>) -> Option<Assignment> {
     }
 }
 
-/// Whether the variable can only be observed within the function that declares it.
+/// True if the variable can only be observed within the function that declares it.
 fn is_local_variable_without_escape(variable: Variable, is_member_access: bool) -> bool {
-    // It is referred to from a function, which is not where it is declared.
+    // Any other kind of variable isn't declared in the function that references it.
     let VariableKind::Declared(symbol) = variable.kind() else {
         return false;
     };
@@ -152,7 +152,7 @@ struct SegmentInfo<'a> {
 
 struct Frame<'a> {
     code_path: CodePath<'a>,
-    /// Of an async function or a generator.
+    /// Only set for an async function or a generator.
     reference_map: Option<ReferenceMap<'a>>,
 }
 
@@ -161,11 +161,11 @@ pub struct State<'a> {
     stack: Vec<Frame<'a>>,
     /// For the reachable segments of async functions and generators.
     segment_info: IdMap<Segment<'a>, SegmentInfo<'a>>,
-    /// The current segments where the `ChainExpression` that is being left is left.
+    /// The current segments at the point where ESLint exits the `ChainExpression` being handled.
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
-    /// By what is assigned: the references to verify once that has been evaluated.
+    /// Keyed by the assigned expression: the references to verify once it has been evaluated.
     assignment_references: IdMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
-    /// Where the `await` and the `yield` expressions of the file start, in ascending order.
+    /// The start offsets of the file's `await` and `yield` expressions, in ascending order.
     pauses: Option<Vec<u32>>,
 }
 
@@ -184,7 +184,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// What `:expression` matches.
+/// The tags that `:expression` matches.
 const EXPRESSIONS: [ExprTag; 33] = [
     ExprTag::Ident,
     ExprTag::This,
@@ -222,25 +222,25 @@ const EXPRESSIONS: [ExprTag; 33] = [
 ];
 
 impl RequireAtomicUpdates {
-    /// Checks an async function or a generator, with the functions in it: what is assigned can be
-    /// one of them, and is then looked at where it ends.
+    /// Checks an async function or a generator, including the functions nested in it. An assigned value can be one of
+    /// those, and it's handled on exit from it.
     fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !cx.state.has_pause_in(cx.file(), func.span()) {
             return;
         }
-        // By the scopes, of which there are fewer around it than nodes.
-        let is_in_another = func.scope().is_some_and(|scope| {
+        // Walk the scope chain, which is shorter than the ancestor chain.
+        let is_nested_in_checked_function = func.scope().is_some_and(|scope| {
             scope.chain().any(|it| match it.node() {
                 Node::Func(outer) => outer != func && (outer.is_async() || outer.is_generator()),
                 _ => false,
             })
         });
-        if is_in_another {
+        if is_nested_in_checked_function {
             return;
         }
-        // ESLint leaves the `ChainExpression` around an optional chain where the ways through it have
-        // joined, which is after its outermost expression has been left. That the last of the
-        // events for that has been seen is only known when the segments have changed again.
+        // ESLint exits the `ChainExpression` around an optional chain after the paths through it have joined, which is
+        // after the exit from its outermost expression. The last of the join's events is only recognizable once a step
+        // arrives that isn't one of them.
         let mut chain = None;
         for step in func.code_path_steps(NodeTags::PAT | ExprTag::Ident.into(), EXPRESSIONS) {
             let is_join = matches!(
@@ -360,7 +360,7 @@ impl RequireAtomicUpdates {
             for segment in code_path.current_segments() {
                 if let Some(info) = state.segment_info.get_mut(segment) {
                     info.fresh_read_variables.insert(variable);
-                    // What is freshly read again is no longer outdated.
+                    // A variable that's freshly read again is no longer outdated.
                     info.outdated_read_variables.remove(&variable);
                 }
             }
@@ -399,7 +399,7 @@ impl RequireAtomicUpdates {
             }
         }
 
-        // `<T>e` is a `TSTypeAssertion`, which `:expression` does not match.
+        // `<T>e` is a `TSTypeAssertion`, which `:expression` doesn't match.
         if state.assignment_references.is_empty() || e.is_angle_bracket_assertion() {
             return;
         }
@@ -446,7 +446,7 @@ impl Rule for RequireAtomicUpdates {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        // Nothing is outdated without one of them.
+        // Nothing can be outdated without an `await` or a `yield`.
         if !file.has_exprs([ExprTag::Await, ExprTag::Yield]) {
             return None;
         }

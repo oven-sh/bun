@@ -171,6 +171,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
+        /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
+        HTTP_NODE_HALF_CLOSED = 1 << 23,
         /* HttpResponse::setTimeout() replaced the server's idle timeout in
          * idleTimeoutInForce for the response in flight. Not derivable from the
          * byte: before the first request it is 10, whatever the server's value. */
@@ -185,7 +187,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HTTP_CONNECTION_SCOPED = HTTP_NODE_PARSING_STOPPED | HTTP_NODE_READS_PAUSED
             | HTTP_NODE_TUNNEL_AFTER_BODY | HTTP_NODE_RECEIVED_FIN | HTTP_CLOSE_WHEN_IDLE
-            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED,
+            | HTTP_NODE_CLOSE_AFTER_MESSAGE | HTTP_NODE_CLOSE_AFTER_DRAIN | HTTP_NODE_PEER_ENDED
+            | HTTP_NODE_HALF_CLOSED,
     };
 
     /* Begin a new response on this connection. Clearing the word in one go is

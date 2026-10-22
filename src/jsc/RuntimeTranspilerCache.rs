@@ -73,7 +73,10 @@ bun_core::declare_scope!(cache, visible);
 /// Version 40: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
 /// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
 /// participates in the features hash.
-const EXPECTED_VERSION: u32 = 40;
+/// Version 41: `case` and `default` are mapped.
+/// Version 42: The body of a class with lowered class decorators names the class by the
+/// binding that holds what the decorators return.
+const EXPECTED_VERSION: u32 = 42;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

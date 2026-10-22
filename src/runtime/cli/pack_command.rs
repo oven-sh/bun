@@ -2851,10 +2851,11 @@ impl Pattern {
             return None;
         }
 
-        let negation: &[u8] = if flags.contains(PatternFlags::NEGATED) {
-            b"!"
-        } else {
-            b""
+        let negation: &[u8] = match flags.contains(PatternFlags::NEGATED) {
+            // In npm and git this `!` negates and the `(` is a plain character. Side by side they would start a group.
+            true if remain.starts_with(b"(") => b"!\\",
+            true => b"!",
+            false => b"",
         };
         Some(Pattern {
             glob: glob::Prepared::new(CowString::init_owned(

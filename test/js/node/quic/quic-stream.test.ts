@@ -179,6 +179,59 @@ describe("HTTP/3 header encoding", () => {
     expect(seen.length).toBe(1);
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
+
+  test("reports request headers that can't be sent", async () => {
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" }, { terminal: true });
+        },
+      },
+    );
+    const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+    // lsxpack holds the length of a value in 16 bits.
+    const headers = { ...request, "x-value": Buffer.alloc(70_000, "v").toString() };
+
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    } as SessionOptions);
+    // These wait for the handshake, so only `closed` can report them.
+    const queued = await client.createBidirectionalStream({ headers });
+    expect(
+      await queued.closed.then(
+        () => "closed",
+        err => `${err.code} ${err.errorCode}`,
+      ),
+    ).toBe("ERR_QUIC_APPLICATION_ERROR 258");
+
+    await client.opened;
+    expect(
+      await client.createBidirectionalStream({ headers }).then(
+        () => "opened",
+        err => err.code,
+      ),
+    ).toBe("ERR_QUIC_OPEN_STREAM_FAILED");
+
+    const answered = Promise.withResolvers<string>();
+    await client.createBidirectionalStream({
+      headers: request,
+      onheaders(received: Record<string, any>) {
+        answered.resolve(received[":status"]);
+      },
+    });
+    expect(await answered.promise).toBe("200");
+    client.close();
+  });
 });
 
 // lsquic decodes a header block that follows another one while the stream is

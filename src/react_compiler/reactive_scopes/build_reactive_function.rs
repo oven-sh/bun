@@ -490,6 +490,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                         reactive_cases.push(ReactiveSwitchCase {
                             test: case.test.clone(),
                             block: Some(consequent),
+                            loc: case.loc,
                         });
                     }
                     reactive_cases.reverse();
@@ -929,6 +930,8 @@ impl<'a, 'b> Driver<'a, 'b> {
                     block: try_block,
                     handler_binding,
                     handler,
+                    handler_loc,
+                    handler_body_loc,
                     fallthrough,
                     id,
                     loc,
@@ -953,6 +956,8 @@ impl<'a, 'b> Driver<'a, 'b> {
                             block: try_body,
                             handler_binding: handler_binding.clone(),
                             handler: handler_body,
+                            handler_loc: *handler_loc,
+                            handler_body_loc: *handler_body_loc,
                             id: *id,
                             loc: *loc,
                         },

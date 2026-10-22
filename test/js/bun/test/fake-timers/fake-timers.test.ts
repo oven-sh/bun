@@ -141,6 +141,111 @@ describe("advanceTimersByTime", () => {
     expect(Date.now()).toBe(1000);
     expect(performance.now()).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/45906
+  test("advanceTimersByTime(0) fires a zero-delay timer and does not move the clock", () => {
+    vi.useFakeTimers({ now: 1000 });
+    let fired = 0;
+    setTimeout(() => fired++, 0);
+    vi.advanceTimersByTime(0);
+    expect({ fired, now: Date.now(), perf: performance.now() }).toEqual({ fired: 1, now: 1000, perf: 0 });
+  });
+
+  test("advanceTimersByTime(0) with no timer does not move the clock", () => {
+    vi.useFakeTimers({ now: 1000 });
+    vi.advanceTimersByTime(0);
+    expect(Date.now()).toBe(1000);
+    expect(performance.now()).toBe(0);
+  });
+
+  test("advanceTimersByTime(0) leaves a zero-delay timer armed inside a callback for the next ms", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const at: number[] = [];
+    setTimeout(() => {
+      at.push(Date.now());
+      setTimeout(() => at.push(Date.now()), 0);
+    }, 0);
+    vi.advanceTimersByTime(0);
+    expect({ at, now: Date.now(), pending: vi.getTimerCount() }).toEqual({ at: [1000], now: 1000, pending: 1 });
+    vi.advanceTimersByTime(1);
+    expect({ at, now: Date.now(), pending: vi.getTimerCount() }).toEqual({ at: [1000, 1001], now: 1001, pending: 0 });
+  });
+
+  test.each(["advanceTimersToNextTimer", "runOnlyPendingTimers", "runAllTimers"] as const)(
+    "%s fires setTimeout(fn, 0) without moving the clock",
+    control => {
+      vi.useFakeTimers({ now: 1000 });
+      const at: number[] = [];
+      setTimeout(() => at.push(Date.now()), 0);
+      vi[control]();
+      expect({ at, now: Date.now() }).toEqual({ at: [1000], now: 1000 });
+    },
+  );
+
+  test("a refreshed zero-delay timer is due at the current fake time", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const at: number[] = [];
+    const t = setTimeout(() => at.push(Date.now()), 0);
+    vi.advanceTimersByTime(0);
+    t.refresh();
+    vi.advanceTimersByTime(0);
+    expect({ at, now: Date.now() }).toEqual({ at: [1000, 1000], now: 1000 });
+  });
+
+  test("setInterval(fn, 0) still waits 1ms and advanceTimersByTime(0) does not fire it", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const at: number[] = [];
+    setInterval(() => at.push(Date.now()), 0);
+    vi.advanceTimersByTime(0);
+    expect({ at, now: Date.now() }).toEqual({ at: [], now: 1000 });
+    vi.advanceTimersByTime(3);
+    expect({ at, now: Date.now(), pending: vi.getTimerCount() }).toEqual({
+      at: [1001, 1002, 1003],
+      now: 1003,
+      pending: 1,
+    });
+  });
+
+  test("setTimeout(fn, 0) armed before setTimeout(fn, 1) fires first, as in sinon", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const order: string[] = [];
+    setTimeout(() => order.push("1ms"), 1);
+    setTimeout(() => order.push("0ms"), 0);
+    vi.advanceTimersByTime(0);
+    expect({ order, now: Date.now() }).toEqual({ order: ["0ms"], now: 1000 });
+    vi.advanceTimersByTime(1);
+    expect({ order, now: Date.now() }).toEqual({ order: ["0ms", "1ms"], now: 1001 });
+  });
+
+  test("a delay that is NaN or negative is due at the current fake time, an overflow is due 1ms later", () => {
+    vi.useFakeTimers({ now: 1000 });
+    const at: Record<string, number> = {};
+    setTimeout(() => (at.nan = Date.now()), NaN);
+    setTimeout(() => (at.negative = Date.now()), -5);
+    setTimeout(() => (at.overflow = Date.now()), 2 ** 31);
+    vi.advanceTimersByTime(0);
+    expect({ at, pending: vi.getTimerCount() }).toEqual({ at: { nan: 1000, negative: 1000 }, pending: 1 });
+    vi.advanceTimersByTime(1);
+    expect({ at, pending: vi.getTimerCount() }).toEqual({
+      at: { nan: 1000, negative: 1000, overflow: 1001 },
+      pending: 0,
+    });
+  });
+
+  // @testing-library/user-event awaits a zero-delay timer after each step and
+  // advances the fake clock by 0 from a microtask.
+  test("a chain of zero-delay waits advanced by 0 completes without moving the clock", async () => {
+    vi.useFakeTimers({ now: 1000 });
+    const wait = () =>
+      Promise.all([
+        new Promise<void>(resolve => setTimeout(resolve, 0)),
+        Promise.resolve().then(() => vi.advanceTimersByTime(0)),
+      ]);
+    await wait();
+    await wait();
+    await wait();
+    expect(Date.now()).toBe(1000);
+  });
 });
 describe("runOnlyPendingTimers", () => {
   test("two setIntervals", () => {
@@ -329,8 +434,8 @@ describe("AbortSignal.timeout", () => {
 // later, as in @sinonjs/fake-timers. At the current instant it is due again
 // within the advanceTimersByTime() / runOnlyPendingTimers() call that runs the
 // callback, and a callback that re-arms itself that way keeps the call from
-// ever returning. setTimeout(fn, 0) is always 1ms; AbortSignal.timeout(0) and
-// Bun.sleep(0) are the timers that can have no delay.
+// ever returning. setInterval(fn, 0) is always 1ms; under fake timers
+// setTimeout(fn, 0), AbortSignal.timeout(0) and Bun.sleep(0) have no delay.
 describe("a zero-delay timer armed by a timer callback", () => {
   // Ends a chain of re-armed timers, so a drain that keeps firing them at one
   // instant fails an assertion and does not spin.

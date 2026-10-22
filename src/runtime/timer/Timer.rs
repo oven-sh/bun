@@ -114,6 +114,7 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
+        minimum_ms: u32,
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
@@ -159,7 +160,8 @@ impl All {
                             )?;
                         }
                     }
-                    1
+                    let is_too_long = countdown_double > i32::MAX as f64;
+                    if is_too_long { 1 } else { minimum_ms }
                 } else {
                     countdown_double as u32
                 }
@@ -186,6 +188,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::Clamp,
+            0,
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
@@ -225,10 +228,13 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // A fake timer without a delay is due now, as in @sinonjs/fake-timers.
+        let minimum_ms = if all.fake_timers.is_active() { 0 } else { 1 };
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            minimum_ms,
             true,
         )?;
         Ok(TimeoutObject::init(
@@ -253,10 +259,12 @@ impl All {
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // Never 0: a 0 interval would be due again at the time it fired.
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            1,
             true,
         )?;
         Ok(TimeoutObject::init(

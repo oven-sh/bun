@@ -730,7 +730,7 @@ export type SocketFaultSyscall =
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"

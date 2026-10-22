@@ -4948,11 +4948,13 @@ pub(crate) mod testing_apis {
                 fi::ACTION_SHORT
             } else if action_str.eq_ascii(b"zero") {
                 fi::ACTION_ZERO
+            } else if action_str.eq_ascii(b"excess") {
+                fi::ACTION_EXCESS
             } else if action_str.eq_ascii(b"none") {
                 fi::ACTION_NONE
             } else {
                 return Err(global.throw(format_args!(
-                    "rule.action must be one of: errno, short, zero, none"
+                    "rule.action must be one of: errno, short, zero, excess, none"
                 )));
             };
 
@@ -4978,6 +4980,12 @@ pub(crate) mod testing_apis {
             {
                 return Err(global.throw(format_args!(
                     "rule.action \"zero\" is only supported for syscall \"recv\", \"send\", \"writev\", \"sendmsg\" or \"recvmsg\""
+                )));
+            }
+
+            if action == fi::ACTION_EXCESS && syscall != fi::SEND && syscall != fi::WRITEV {
+                return Err(global.throw(format_args!(
+                    "rule.action \"excess\" is only supported for syscall \"send\" or \"writev\""
                 )));
             }
 

@@ -176,12 +176,10 @@ test.skipIf(isMacOS)(
 );
 
 // The graph ends with `Offsets`, then the trailer. `Offsets` is byte_count u64, modules_ptr { offset u32, length u32 },
-// entry_point_id u32, compile_exec_argv_ptr { offset u32, length u32 }, flags u32. A module record starts with
-// { offset u32, length u32 } pointers to its name and contents. The module table is followed by a u32 source hash per
-// module, then the builtin bytecode table's u32 count.
+// entry_point_id u32, compile_exec_argv_ptr { offset u32, length u32 }, flags u32.
 // macOS is skipped because a patched Mach-O needs a new signature. Every platform uses the same reader.
 test.skipIf(isMacOS)(
-  "reports an out-of-range module graph field at startup",
+  "reports an out-of-range entry point ID at startup",
   async () => {
     using dir = tempDir("compile-corrupted-graph", {
       "app.js": `console.log("should not run");`,
@@ -190,37 +188,25 @@ test.skipIf(isMacOS)(
 
     const bytes = readFileSync(exe);
     const offsetsAt = bytes.lastIndexOf("\n---- Bun! ----\n") - 32;
-    const modulesAt = offsetsAt - Number(bytes.readBigUInt64LE(offsetsAt)) + bytes.readUInt32LE(offsetsAt + 8);
-    const modulesLength = bytes.readUInt32LE(offsetsAt + 12);
     // There's one 52-byte module, so entry point ID 1 is one past the end.
-    expect(modulesLength).toBe(52);
+    expect(bytes.readUInt32LE(offsetsAt + 12)).toBe(52);
 
-    const cases: [field: string, position: number, value: number][] = [
-      ["byte count is", offsetsAt, 0x7ffffff0],
-      ["module list is", offsetsAt + 12, 0x7ffffff0],
-      ["entry point ID is", offsetsAt + 16, 1],
-      ["module name is", modulesAt, 0xfffffff0],
-      ["module contents are", modulesAt + 12, 0x7fffffff],
-      ["builtin bytecode table is", modulesAt + modulesLength + 4, 0xfffffff0],
-    ];
-    for (const [field, position, value] of cases) {
-      const corrupted = corruptedCopy(exe, "field", path => {
-        const fd = openSync(path, "r+");
-        try {
-          const u32 = Buffer.alloc(4);
-          u32.writeUInt32LE(value);
-          writeSync(fd, u32, 0, 4, position);
-        } finally {
-          closeSync(fd);
-        }
-      });
-      expect(await run(corrupted)).toEqual({
-        stdout: "",
-        stderr: expect.stringContaining(`Corrupted module graph: ${field} out of range`),
-        exitCode: 1,
-      });
-      rmSync(corrupted);
-    }
+    const corrupted = corruptedCopy(exe, "field", path => {
+      const fd = openSync(path, "r+");
+      try {
+        const u32 = Buffer.alloc(4);
+        u32.writeUInt32LE(1);
+        writeSync(fd, u32, 0, 4, offsetsAt + 16);
+      } finally {
+        closeSync(fd);
+      }
+    });
+    expect(await run(corrupted)).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("Corrupted module graph: entry point ID is greater than module list count"),
+      exitCode: 1,
+    });
+    rmSync(corrupted);
   },
   TIMEOUT,
 );

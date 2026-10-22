@@ -8262,7 +8262,8 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         };
         let tuple = *parts.iter().find(|&&part| self.is_tuple(part))?;
-        let members = self.members_with_this(tuple, ty)?;
+        let this_argument = ty;
+        let members = self.members_with_this(tuple, this_argument)?;
         let prop = members.resolved.prop(name)?;
         for &part in parts.iter() {
             if part != tuple && self.get_property_of_type(part, name).is_some() {

@@ -2358,7 +2358,8 @@ describe.concurrent("an install without bun.lock over the node_modules of an ear
     l1: { "1.0.0": {}, "1.1.0": {} },
     i0: { "1.1.0": { dependencies: { l1: "^1.0.0" } }, "2.0.0": { dependencies: { l1: "1.0.0" } } },
     h0: { "1.1.0": { dependencies: { i0: "^1.0.0" } } },
-    h1: { "1.0.0": { dependencies: { i0: "*" } } },
+    h1: { "1.0.0": { dependencies: { i0: "*" } }, "2.0.0": {} },
+    top: { "1.0.0": { dependencies: { h1: "1.0.0" } } },
     other: { "1.0.0": {} },
   };
   const nested = ["h0@1.1.0", "h1@1.0.0", "h1/i0@2.0.0", "i0@1.1.0", "l1@1.0.0"];
@@ -2405,6 +2406,57 @@ describe.concurrent("an install without bun.lock over the node_modules of an ear
     rmSync(join(dir, "bun.lock"));
     await run(dir, "install");
     expect(layout(dir)).toEqual([...placed.slice(0, 2), "hoist-lockfile-3/by-hand@0.0.0", placed[2]]);
+  });
+
+  // The h1@2.0.0 of the root keeps the h1@1.0.0 of `top`, or of the workspace, below its dependent.
+  test.each(["a package", "a workspace"])("removes the copy below a package in the node_modules of %s", async owner => {
+    const member = owner === "a workspace";
+    using server = await serveGraph(graph);
+    using tmp = tempDir("hoist-no-lockfile-deeper", {
+      "bunfig.toml": bunfig(server),
+      ...(member && { "pk/w/package.json": json("w", { h1: "1.0.0" }) }),
+    });
+    const dir = String(tmp);
+    const root = (more: object) =>
+      member
+        ? json("root", { h1: "2.0.0", ...more }, { workspaces: ["pk/*"] })
+        : json("root", { h1: "2.0.0", top: "1.0.0", ...more });
+    const placed = (l1: string) => [
+      ...["h0@1.1.0", "h1@2.0.0", "i0@1.1.0", `l1@${l1}`],
+      ...(member ? ["pk/w/h1@1.0.0"] : ["top@1.0.0", "top/h1@1.0.0"]),
+    ];
+    await write(join(dir, "package.json"), root({}));
+    await run(dir, "install");
+    await write(join(dir, "package.json"), root({ h0: "1.1.0" }));
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual([...placed("1.0.0"), `${member ? "pk/w" : "top"}/h1/i0@2.0.0`]);
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(layout(dir, "pk/w")).toEqual(placed("1.1.0"));
+  });
+
+  // two-range-deps accepts the @types/is-number@1.0.0 of the root.
+  test("removes the copy of a scoped package, and its scope", async () => {
+    const dir = await createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": json("root", { "two-range-deps": "1.0.0" }) },
+    });
+    const versions = () =>
+      [[], ["two-range-deps", "node_modules"]].map(above => {
+        const scope = join(dir, "node_modules", ...above, "@types");
+        return existsSync(scope)
+          ? readdirSync(scope).map(name => JSON.parse(readFileSync(join(scope, name, "package.json"), "utf8")).version)
+          : null;
+      });
+    await run(dir, "install");
+    await write(join(dir, "package.json"), json("root", { "@types/is-number": "1.0.0", "two-range-deps": "1.0.0" }));
+    await run(dir, "install");
+    expect(versions()).toEqual([["1.0.0"], ["2.0.0"]]);
+
+    rmSync(join(dir, "bun.lock"));
+    await run(dir, "install");
+    expect(versions()).toEqual([["1.0.0"], null]);
   });
 
   test("removes the copy in the node_modules of a workspace", async () => {

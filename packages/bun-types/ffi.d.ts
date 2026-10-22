@@ -540,6 +540,25 @@ declare module "bun:ffi" {
      * Calling a symbol from a closed {@link dlopen} or {@link linkSymbols} library is undefined behavior.
      */
     close(): void;
+
+    /**
+     * Closes the library at the end of a `using` block (explicit resource management).
+     *
+     * Equivalent to calling {@link Library.close}.
+     *
+     * @example
+     * ```ts
+     * import { dlopen, FFIType, suffix } from "bun:ffi";
+     *
+     * {
+     *   using lib = dlopen(`libsqlite3.${suffix}`, {
+     *     sqlite3_libversion: { args: [], returns: FFIType.cstring },
+     *   });
+     *   console.log(lib.symbols.sqlite3_libversion());
+     * } // lib.close() is called automatically here
+     * ```
+     */
+    [Symbol.dispose](): void;
   }
 
   type ToFFIType<T extends FFITypeOrString> = T extends FFIType ? T : T extends string ? FFITypeStringToType[T] : never;
@@ -723,9 +742,17 @@ declare module "bun:ffi" {
    */
   function CFunction(fn: FFIFunction & { ptr: Pointer | number | bigint }): CallableFunction & {
     /**
-     * Free the memory allocated by the wrapping function
+     * Provided for symmetry with {@link Library.close}. The wrapping function is
+     * managed by the garbage collector, so this is currently a no-op.
      */
     close(): void;
+
+    /**
+     * Lets a `CFunction` be declared with `using` (explicit resource management).
+     *
+     * Equivalent to calling `close()`, which is currently a no-op.
+     */
+    [Symbol.dispose](): void;
   };
 
   /**
@@ -1088,6 +1115,23 @@ declare module "bun:ffi" {
      * If called multiple times, does nothing after the first call.
      */
     close(): void;
+
+    /**
+     * Frees the callback at the end of a `using` block (explicit resource management).
+     *
+     * Equivalent to calling {@link JSCallback.close}.
+     *
+     * @example
+     * ```ts
+     * import { JSCallback } from "bun:ffi";
+     *
+     * {
+     *   using callback = new JSCallback(() => 42, { returns: "int32_t", args: [] });
+     *   nativeFunction(callback.ptr);
+     * } // callback.close() is called automatically here
+     * ```
+     */
+    [Symbol.dispose](): void;
   }
 
   /**

@@ -2773,7 +2773,7 @@ impl<'p, 's> Checker<'p, 's> {
         let ty = if self.is_rechecking() {
             self.check_expression_ex(file, e, check_mode)
         } else {
-            self.type_of_expr(file, e)
+            self.check_expression_again(file, e)
         };
         self.check_expression_in_flow_loop(file, e);
         self.type_only_node = outside;

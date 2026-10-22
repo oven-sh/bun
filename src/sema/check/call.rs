@@ -1159,7 +1159,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         };
         let callee = self.hir(file)[c].callee;
-        let called = self.type_of_expr(file, callee);
+        let called = self.check_expression_again(file, callee);
         let func_type = self.check_non_null_type(file, callee, called);
         self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Construct)
     }
@@ -1180,7 +1180,7 @@ impl<'p, 's> Checker<'p, 's> {
         if hir[c].chain != Chain::No {
             return self.return_type_of_single_non_generic_signature_of_call_chain(file, c);
         }
-        let called = self.type_of_expr(file, callee);
+        let called = self.check_expression_again(file, callee);
         let func_type = self.check_non_null_type(file, callee, called);
         self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)
     }
@@ -1206,7 +1206,7 @@ impl<'p, 's> Checker<'p, 's> {
         c: CallId,
     ) -> Option<TypeId> {
         let Call { callee, chain, .. } = self.hir(file)[c];
-        let func_type = self.type_of_expr(file, callee);
+        let func_type = self.check_expression_again(file, callee);
         let return_type =
             self.return_type_of_single_non_generic_signature(func_type, SignatureKind::Call)?;
         // `nonOptionalType != funcType`, `propagateOptionalTypeMarker`

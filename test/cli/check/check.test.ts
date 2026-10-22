@@ -10461,6 +10461,57 @@ export function k(o: { p: number }) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the expression of a case clause again for the types of the clauses", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+export function access(o: { p: boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p:
+  }
+}
+export function call(o: { p(): boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p():
+  }
+}
+export function chain(o: { p(): boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p?.():
+  }
+}
+export function argument(o: { p: boolean }, is: (value: boolean) => boolean) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case is(o.p):
+  }
+}
+export function withDefault(o: { p: boolean }) {
+  fail();
+  while (c && c) {}
+  switch (true) {
+    case o.p:
+    default:
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,12): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(14,12): error TS2339: Property 'p' does not exist on type 'never'.
+        a.ts(21,12): error TS2339: Property 'p' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

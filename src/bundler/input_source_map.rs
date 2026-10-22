@@ -1,17 +1,37 @@
 //! Loads the source map an input file's `sourceMappingURL` comment names.
 
 use bun_ast::{Log, Source, Span};
+use bun_core::UnwrapOrOom;
 use bun_sourcemap::InputSourceMap;
 use bun_sourcemap::input_source_map::{path_from_file_url, url_scheme};
 
 bun_core::declare_scope!(InputSourceMap, hidden);
 
+/// What a `sourceMappingURL` comment loads. `sidecar` is the file the comment names, for the watcher.
+#[derive(Default)]
+pub(crate) struct Loaded {
+    pub(crate) map: Option<Box<InputSourceMap>>,
+    pub(crate) sidecar: Option<Box<[u8]>>,
+}
+
 /// A map that cannot be loaded is a warning on `log`; the file then maps to itself.
-pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<InputSourceMap>> {
+pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Loaded {
     let url: &[u8] = comment.text.slice();
     if url.is_empty() {
-        return None;
+        return Loaded::default();
     }
+    let mut loaded = Loaded::default();
+    loaded.map = load_map(log, source, comment, url, &mut loaded.sidecar);
+    loaded
+}
+
+fn load_map(
+    log: &mut Log,
+    source: &Source,
+    comment: Span,
+    url: &[u8],
+    sidecar: &mut Option<Box<[u8]>>,
+) -> Option<Box<InputSourceMap>> {
     let source_dir: Option<&[u8]> = source
         .path
         .is_file()
@@ -20,7 +40,6 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
     let json: Vec<u8>;
     let map_dir: Option<Box<[u8]>>;
     let map_name: Box<[u8]>;
-    let mut map_path: Option<Box<[u8]>> = None;
     match bun_resolver::DataURL::parse(url) {
         Ok(Some(data_url)) => {
             match data_url.decode_data() {
@@ -55,6 +74,7 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
                     bun_paths::resolve_path::platform::Auto,
                 >(source_dir, &mut buf[..], &[&decoded])?)
             };
+            *sidecar = Some(sidecar_path.clone());
 
             json = match read_regular_file(&sidecar_path) {
                 Ok(Some(bytes)) => bytes,
@@ -94,17 +114,13 @@ pub(crate) fn load(log: &mut Log, source: &Source, comment: Span) -> Option<Box<
             map_dir = Some(Box::from(bun_paths::resolve_path::dirname::<
                 bun_paths::resolve_path::platform::Auto,
             >(&sidecar_path)));
-            map_name = sidecar_path.clone();
-            map_path = Some(sidecar_path);
+            map_name = sidecar_path;
         }
     }
 
     let mut read_file = |path: &[u8]| read_regular_file(path).ok().flatten();
     match InputSourceMap::parse(&json, map_dir.as_deref(), &mut read_file) {
-        Ok(Some(mut map)) => {
-            map.map_path = map_path;
-            Some(Box::new(map))
-        }
+        Ok(Some(map)) => Some(Box::new(map)),
         Ok(None) => None,
         Err(err) => {
             log.add_range_warning_fmt(
@@ -134,9 +150,7 @@ fn read_regular_file(path: &[u8]) -> bun_sys::Maybe<Option<Vec<u8>>> {
     }
     let size = file.get_end_pos()?;
     let mut bytes: Vec<u8> = Vec::new();
-    if bytes.try_reserve_exact(size).is_err() {
-        return Err(bun_sys::Error::oom());
-    }
+    bytes.try_reserve_exact(size).unwrap_or_oom();
     bytes.resize(size, 0);
     let read = file.read_all(&mut bytes)?;
     bytes.truncate(read);

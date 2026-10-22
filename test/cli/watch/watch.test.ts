@@ -785,13 +785,11 @@ it("bun build --watch rebuilds when an input's sidecar source map changes", asyn
     }
   };
   const waitForSources = async (expected: string[]) => {
-    const deadline = Date.now() + 4_000;
-    while (Date.now() < deadline) {
+    while (true) {
       const sources = await sourcesOf();
       if (sources && Bun.deepEquals(sources, expected)) return;
       await Bun.sleep(50);
     }
-    throw new Error(`expected sources ${JSON.stringify(expected)}, got ${JSON.stringify(await sourcesOf())}`);
   };
 
   await using bundler = spawn({
@@ -805,5 +803,4 @@ it("bun build --watch rebuilds when an input's sidecar source map changes", asyn
   await waitForSources(["../src/v1.ts", "../entry.js"]);
   await Bun.write(join(String(dir), "lib/lib.js.map"), map("../src/v2.ts"));
   await waitForSources(["../src/v2.ts", "../entry.js"]);
-  bundler.kill();
 });

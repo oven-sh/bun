@@ -199,6 +199,7 @@ fn task_callback(
         content_hash_for_additional_file: 0,
         package_name: bun_ast::StoreStr::EMPTY,
         input_source_map: None,
+        input_source_map_sidecar: None,
     })
 }
 

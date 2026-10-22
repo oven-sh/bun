@@ -212,6 +212,8 @@ pub(crate) struct Success {
 
     /// See `InputFile::input_source_map`, where this moves on completion.
     pub(crate) input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
+    /// The sidecar map file the source names, loaded or not, for `--watch`.
+    pub(crate) input_source_map_sidecar: Option<Box<[u8]>>,
 }
 
 pub(crate) struct ResultError {
@@ -2793,7 +2795,7 @@ pub mod parse_worker {
             Some(comment) if use_input_source_maps => {
                 crate::input_source_map::load(log, source, comment)
             }
-            _ => None,
+            _ => crate::input_source_map::Loaded::default(),
         };
 
         Ok(Success {
@@ -2809,7 +2811,8 @@ pub mod parse_worker {
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
 
-            input_source_map,
+            input_source_map: input_source_map.map,
+            input_source_map_sidecar: input_source_map.sidecar,
         })
     }
 

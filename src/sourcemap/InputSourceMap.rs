@@ -15,8 +15,6 @@ pub struct InputSourceMap {
     pub sources: Box<[InputSource]>,
     /// `sourcesContent` per source as JSON: `"..."` or `null`.
     pub quoted_sources_content: Box<[Box<[u8]>]>,
-    /// The sidecar file the map was read from, for the watcher. `None` for a `data:` URL.
-    pub map_path: Option<Box<[u8]>>,
 }
 
 pub struct InputSource {
@@ -266,7 +264,6 @@ impl InputSourceMap {
             mappings,
             sources: sources.into_boxed_slice(),
             quoted_sources_content: quoted_sources_content.into_boxed_slice(),
-            map_path: None,
         }))
     }
 

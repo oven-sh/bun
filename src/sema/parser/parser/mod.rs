@@ -706,6 +706,9 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
+        if self.has_top_level_await {
+            self.f.rare_syntax |= rare::TOP_LEVEL_AWAIT;
+        }
         *file = self.f;
         let harvest = Harvest {
             lx: self.lx,

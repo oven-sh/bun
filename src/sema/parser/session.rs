@@ -388,4 +388,19 @@ mod tests {
         assert_eq!(file.body.len, body.len);
         assert_eq!(session.parts.len(), 1);
     }
+
+    #[test]
+    fn a_top_level_await_is_noted_and_forgotten_with_its_part() {
+        use bun_sema::hir::rare::TOP_LEVEL_AWAIT;
+        let text = b"<p>{await a}</p>";
+        let Some(mut session) = Session::begin(text, Dialect::default()) else {
+            panic!("the text is not too large");
+        };
+        let mark = session.mark();
+        let part = session.part_at(Goal::Expression, true, 4, text.len() as u32);
+        assert!(part.is_ok(), "{part:?}");
+        assert_ne!(session.file().rare_syntax & TOP_LEVEL_AWAIT, 0);
+        session.rollback(&mark);
+        assert_eq!(session.file().rare_syntax & TOP_LEVEL_AWAIT, 0);
+    }
 }

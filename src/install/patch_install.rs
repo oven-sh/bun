@@ -820,7 +820,7 @@ impl PatchTask {
 pub(crate) struct PatchStamp;
 
 /// What an installed copy names, see [`PatchStamp::name`]. Empty when it names nothing.
-pub(crate) type PatchName = bun_core::BoundedArray<u8, 33>;
+pub(crate) type PatchName = bun_core::BoundedArray<u8, { crate::bun_json::PATCH_HASH_MAX_LEN }>;
 
 impl PatchStamp {
     fn in_bun_tag(tag: ResolutionTag) -> bool {

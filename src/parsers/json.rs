@@ -666,7 +666,7 @@ fn parse_auto_quoted_string(
 }
 
 /// Two `u64` in hex with a `.` between them: the hash of the patch, and the bytes of the integrity that it is written for.
-const PATCH_HASH_MAX_LEN: usize = 16 + 1 + 16;
+pub const PATCH_HASH_MAX_LEN: usize = 16 + 1 + 16;
 
 /// Extracts the top-level `name` and `version` strings from a package.json, and the patch hash under its first key.
 pub struct PackageJSONVersionChecker<'a> {

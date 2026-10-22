@@ -7,7 +7,7 @@ use bun_core::Utf8Bytes;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
 use bun_jsc::ref_string::{RefString, StringTooLong};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JsCell, JsResult, LogJsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, LogJsc};
 use bun_paths::{self as path, MAX_PATH_BYTES};
 use bun_ptr::BackRef;
 
@@ -19,8 +19,7 @@ use bun_url::{CombinedScanner, QueryStringMap, URL, route_param};
 
 use crate::api::bun_object;
 use crate::generated_bindgen::filesystem_router::{
-    FileSystemRouterClass, FileSystemRouterInternalFields as _, FileSystemRouterOptions,
-    MatchedRouteClass, Routable, RouteKind, RouterStyle,
+    FileSystemRouterOptions, Routable, RouteKind, RouterStyle, js_FileSystemRouter,
 };
 use crate::node::types::Valid;
 
@@ -229,10 +228,8 @@ impl FileSystemRouter {
     }
 }
 
-impl FileSystemRouterClass for FileSystemRouter {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn constructor<'a>(
+impl FileSystemRouter {
+    pub(crate) fn constructor<'a>(
         cx: &mut JsScope<'a>,
         options: &FileSystemRouterOptions<'a>,
     ) -> bindgen::Result<'a, Self> {
@@ -323,11 +320,11 @@ impl FileSystemRouterClass for FileSystemRouter {
         })
     }
 
-    fn asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
+    pub(crate) fn get_asset_prefix(&self) -> Option<impl AsRef<[u8]>> {
         self.asset_prefix.as_ref().map(RefCountedString::bytes)
     }
 
-    fn r#match<'a>(
+    pub(crate) fn r#match<'a>(
         &self,
         heap: &JsHeap<'a>,
         input: Routable<'a>,
@@ -406,11 +403,11 @@ impl FileSystemRouterClass for FileSystemRouter {
         Ok(Some(matched.into_js(heap)))
     }
 
-    fn origin(&self) -> Option<impl AsRef<[u8]>> {
+    pub(crate) fn get_origin(&self) -> Option<impl AsRef<[u8]>> {
         self.origin.as_ref().map(RefCountedString::bytes)
     }
 
-    fn reload<'a>(
+    pub(crate) fn reload<'a>(
         this: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> bindgen::Result<'a, JsWrapper<'a, Self>> {
@@ -424,16 +421,18 @@ impl FileSystemRouterClass for FileSystemRouter {
             }));
         };
         this.with_mut(&mut cx.payloads, |this| this.router = router);
-        this.set_routes_field(&cx.heap, JsLocal::UNDEFINED);
+        js_FileSystemRouter::routes_set_cached(this.to_js(), cx.global(), JSValue::ZERO);
         Ok(this)
     }
 
-    fn routes(&self) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
+    pub(crate) fn get_routes(
+        &self,
+    ) -> impl IntoIterator<Item = (impl AsRef<[u8]>, impl AsRef<[u8]>)> {
         let names = self.router.get_names();
         names.iter().zip(self.router.get_entry_points())
     }
 
-    fn style(&self) -> RouterStyle {
+    pub(crate) fn get_style(&self) -> RouterStyle {
         RouterStyle::Nextjs
     }
 }
@@ -484,14 +483,12 @@ impl MatchedRoute {
     }
 }
 
-impl MatchedRouteClass for MatchedRoute {
-    type Error<'a> = bindgen::Error<'a>;
-
-    fn file_path(&self) -> impl AsRef<[u8]> {
+impl MatchedRoute {
+    pub(crate) fn get_file_path(&self) -> impl AsRef<[u8]> {
         self.file_path
     }
 
-    fn kind(&self) -> RouteKind {
+    pub(crate) fn get_kind(&self) -> RouteKind {
         let name = self.name;
         if strings::contains(name, b"[[...") {
             RouteKind::OptionalCatchAll
@@ -504,11 +501,11 @@ impl MatchedRouteClass for MatchedRoute {
         }
     }
 
-    fn name(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_name(&self) -> impl AsRef<[u8]> {
         self.name
     }
 
-    fn params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_params<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         if self.params_list.is_empty() {
             return Self::create_query_object(heap, None);
         }
@@ -527,14 +524,14 @@ impl MatchedRouteClass for MatchedRoute {
         Self::create_query_object(heap, self.param_map.get().as_ref())
     }
 
-    fn pathname(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_pathname(&self) -> impl AsRef<[u8]> {
         self.pathname.slice()
     }
 
-    fn query<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
+    pub(crate) fn get_query<'a>(&self, heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let query_string = &self.pathname.slice()[self.query_start..];
         if query_string.is_empty() {
-            return self.params(heap);
+            return self.get_params(heap);
         }
 
         let map = if self.params_list.is_empty() {
@@ -550,11 +547,11 @@ impl MatchedRouteClass for MatchedRoute {
         Self::create_query_object(heap, map.as_ref())
     }
 
-    fn script_src(&self) -> impl AsRef<[u8]> {
-        self.src()
+    pub(crate) fn get_script_src(&self) -> impl AsRef<[u8]> {
+        self.get_src()
     }
 
-    fn src(&self) -> impl AsRef<[u8]> {
+    pub(crate) fn get_src(&self) -> impl AsRef<[u8]> {
         let mut src: Vec<u8> = Vec::new();
         let origin_url = self
             .origin

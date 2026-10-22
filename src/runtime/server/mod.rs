@@ -233,6 +233,9 @@ pub(crate) struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// negotiate "h2" (ALPN) or open with the cleartext preface.
     pub(crate) h2_app: Option<*mut uws_sys::h2::App>,
     pub(crate) h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
+    /// `h3_listener` after a graceful stop. It lives as long as `h3_app`, and a
+    /// later abrupt stop closes the connections that are still draining through it.
+    pub(crate) h3_draining_listener: Option<*mut uws_sys::h3::ListenSocket>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub(crate) h3_alt_svc: Box<[u8]>,
@@ -1717,19 +1720,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if Self::HAS_H3 {
-            if let Some(h3l) = self.h3_listener.take() {
-                // Graceful: GOAWAY + drain via the still-open UDP socket; the
-                // engine rejects new conns and the timer keeps in-flight streams
-                // progressing until deinit. Abrupt: close the fd now.
-                if !abrupt {
-                    if let Some(h3a) = self.h3_app {
-                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                        bun_opaque::opaque_deref_mut(h3a).close();
-                    }
-                } else {
-                    // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(h3l).close();
+            let h3l = self.h3_listener.take();
+            // Graceful: GOAWAY + drain via the still-open UDP socket; the
+            // engine rejects new conns and the timer keeps in-flight streams
+            // progressing until deinit. Abrupt: close the fd now.
+            if !abrupt {
+                if let (Some(h3l), Some(h3a)) = (h3l, self.h3_app) {
+                    // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                    bun_opaque::opaque_deref_mut(h3a).close();
+                    self.h3_draining_listener = Some(h3l);
                 }
+            } else if let Some(h3l) = h3l.or_else(|| self.h3_draining_listener.take()) {
+                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                bun_opaque::opaque_deref_mut(h3l).close();
             }
         }
 
@@ -2197,6 +2200,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_app: None,
             h2_app: None,
             h3_listener: None,
+            h3_draining_listener: None,
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),

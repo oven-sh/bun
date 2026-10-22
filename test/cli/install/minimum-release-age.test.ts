@@ -1643,7 +1643,7 @@ describe("minimum-release-age", () => {
         expect(resolved).toEqual({
           // Too recent for the gate, but listed.
           "excluded-package": "excluded-package@1.0.1",
-          // Not listed: still gated (3.0.0 is 1 day old).
+          // It isn't listed, so it's still gated (3.0.0 is 1 day old).
           "regular-package": "regular-package@2.1.0",
         });
         // Installing a listed version is not a downgrade, so only

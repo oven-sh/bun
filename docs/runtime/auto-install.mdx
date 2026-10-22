@@ -15,7 +15,7 @@ foo();
 
 The first time you run this script, Bun auto-installs `"foo"` and caches it. Later runs use the cached version.
 
-Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory or the importing file up to the [project root](#project-root). It is also off when one of those files, a `.npmrc`, or a `package.json` that Bun reads to find the project root cannot be read or parsed. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
+Auto-install is off when a [security scanner](/runtime/bunfig#install-security-scanner) is configured in the global `.bunfig.toml`, or in a `bunfig.toml` from the working directory or the importing file up to the [project root](#project-root). It is also off when one of those files can't be parsed, or when a `package.json` that Bun reads to find the project root can't be read or parsed. `-i` and `--install` do not turn it back on. The import fails and tells you to run `bun install`.
 
 ---
 
@@ -64,7 +64,7 @@ The first import of a package that is not in the cache blocks the thread until t
 
 The import fails if the registry sends nothing for about 30 seconds (`BUN_CONFIG_HTTP_IDLE_TIMEOUT` changes that).
 
-When the registry answers that a package does not exist (404), Bun does not ask for it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure of a lookup or a download, such as a 5xx or a dropped connection, Bun retries the request a few times. If the import still fails, an import in a later turn of the event loop (after a timer or I/O) asks again.
+When the registry responds that a package doesn't exist (404), Bun doesn't request it again for 5 minutes, or less if the response's `Cache-Control` says so. After any other failure of a lookup or a download, such as a 5xx or a dropped connection, Bun retries the request a few times. If the import still fails, an import in a later turn of the event loop (after a timer or I/O) sends the request again.
 
 When Bun cannot write to the cache, on a read-only file system for example, packages that are already in the cache still load. An import that needs a download throws the same error as an import of a missing package, with the reason as a note.
 
@@ -89,7 +89,7 @@ Auto-install replaces `${NAME}` with a variable from the environment of the scri
 
 Bun installs and caches packages into `<cache>/<pkg>@<version>`, so Bun can cache multiple versions of the same package at once. It also creates a symlink under `<cache>/<pkg>/<version>` to speed up looking up all cached versions of a package.
 
-A package whose tarball ships a `node_modules` folder (`bundledDependencies`) loads what is in that folder from there, and its other dependencies from the cache.
+A package whose tarball ships a `node_modules` folder (`bundledDependencies`) loads the packages in that folder from there, and its other dependencies from the cache.
 
 ---
 

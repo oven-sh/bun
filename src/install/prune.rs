@@ -73,9 +73,11 @@ struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
     checked: usize,
-    /// No install is linking: a `StagingPath` or an `OldModules` is what one that died left.
+    /// True if no install is running, so any `StagingPath` or `OldModules` folder was left behind
+    /// by an install that was killed.
     leftovers: bool,
-    /// What `open_workspace_folder` refused. A plan with one is not executed.
+    /// The folders that `open_workspace_folder` refused to open. If there are any, the plan isn't
+    /// executed.
     linked_folders: Vec<Box<[u8]>>,
     /// bun.lock used to place a package in one of `linked_folders` and no longer does, so a stale
     /// copy may still be there.
@@ -816,9 +818,11 @@ fn with_install_features<T>(
 }
 
 /// The tree the lockfile saves (`Lockfile::resolve`), held while `manager.lockfile` carries the install tree.
+/// Hoisting can change what a peer resolves to, so what the dependencies resolve to is held too.
 struct SavedTree {
     trees: tree::List,
     hoisted_dependencies: Vec<DependencyID>,
+    resolutions: Vec<PackageID>,
 }
 
 /// Replaces the tree in `manager.lockfile` with the one that an install of every workspace uses
@@ -840,6 +844,7 @@ fn hoist_tree(
     let saved = SavedTree {
         trees: core::mem::take(&mut manager.lockfile.buffers.trees),
         hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
+        resolutions: manager.lockfile.buffers.resolutions.clone(),
     };
     let pm: *mut PackageManager = manager;
     // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box`
@@ -869,6 +874,7 @@ fn hoist_tree(
 fn restore_tree(lockfile: &mut Lockfile, saved: SavedTree) {
     lockfile.buffers.trees = saved.trees;
     lockfile.buffers.hoisted_dependencies = saved.hoisted_dependencies;
+    lockfile.buffers.resolutions = saved.resolutions;
 }
 
 /// Runs `f` while `manager.lockfile` holds the install tree with every row (see
@@ -1057,8 +1063,8 @@ impl<'a> HoistedTree<'a> {
         })
     }
 
-    /// Returns false if a package that contains `tree_id`'s folder is not the one that the tree
-    /// places there. What is inside that package was then installed for another version.
+    /// Returns false if one of the packages that contain `tree_id`'s folder isn't the version the
+    /// tree expects there. Its contents were then installed for a different version.
     fn owners_installed(&self, mut tree_id: tree::Id) -> bool {
         let lockfile = self.lockfile;
         let deps = lockfile.buffers.dependencies.as_slice();
@@ -1217,8 +1223,8 @@ fn plan_hoisted(
     let trees = lockfile.buffers.trees.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
 
-    // Leaves out a tree with no rows left, and the tree of an unlinked workspace, whose folder is
-    // in the workspace and not under `node_modules/<name>`.
+    // Skips trees with no rows left. Also skips the tree of an unlinked workspace, because its
+    // folder is inside the workspace and not under `node_modules/<name>`.
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let mut nested_trees: Vec<(tree::Id, &[u8])> = trees
         .iter()
@@ -1416,7 +1422,8 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
     (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
 }
 
-/// Removes what `before` placed and the install tree of all dependency types and platforms lacks.
+/// Removes the packages that `before` placed and that aren't in the install tree for any dependency
+/// type or platform.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
     let Ok(saved) = hoist_install_tree(manager, true) else {
         return;
@@ -1616,7 +1623,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         plan.retain(folder_idx, dir);
     }
 
-    // No bun.lock says that bun placed the other entries of a workspace's `node_modules`.
+    // No bun.lock records whether Bun installed the other entries in a workspace's `node_modules`.
     let removes_other_entries = matches!(
         manager.subcommand,
         crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
@@ -1741,8 +1748,6 @@ pub(crate) fn remove_copies_of_the_older_layout(
         return;
     };
     places.sort_unstable_by_key(|&(key, _)| key);
-    // Hoisting can change what a peer resolves to, so the resolutions are restored afterwards.
-    let resolutions = manager.lockfile.buffers.resolutions.clone();
     if let Ok(saved) = hoist_tree(
         manager,
         false,
@@ -1753,7 +1758,6 @@ pub(crate) fn remove_copies_of_the_older_layout(
         remove_from_older_places(manager, &places, cache);
         restore_tree(&mut manager.lockfile, saved);
     }
-    manager.lockfile.buffers.resolutions = resolutions;
 }
 
 /// Returns true if `node_modules/<alias>` may have shipped inside the package's own tarball, so it
@@ -1884,7 +1888,8 @@ fn remove_planned(mut plan: Plan, layout: Layout, manager: &PackageManager) {
     housekeeping(&plan, layout, manager);
 }
 
-/// Whether the symlink `entry` points to where the isolated linker links the package `pkg_id`.
+/// Returns true if the symlink `entry` points to where the isolated linker links the package
+/// `pkg_id`.
 fn links_package(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -2017,8 +2022,8 @@ pub(crate) fn unlink_dropped_dependencies(manager: &mut PackageManager, before: 
                     store_entry::fmt_store_path(entry_id, &store, after)
                 )
                 .expect("Vec<u8> write is infallible");
-                // An entry that is a symlink into the global store is skipped. There, a package
-                // with other dependencies gets another entry.
+                // Skip entries that are symlinks into the global store. In the global store, a
+                // package with different dependencies gets a different entry.
                 let Some(dir) = open_real_subdir(&store_dir, &name)
                     .and_then(|entry| open_real_subdir(&entry, b"node_modules"))
                 else {
@@ -2128,7 +2133,7 @@ pub(crate) struct LinkedNodeModules {
 }
 
 impl LinkedNodeModules {
-    /// Whether `node_modules` is a symlink. `None` if nothing exists at that path.
+    /// Returns whether `node_modules` is a symlink, or `None` if nothing exists at that path.
     pub(crate) fn is_at(node_modules: &ZStr) -> Option<bool> {
         let st = sys::lstat(node_modules).ok()?;
         Some(sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink)
@@ -2253,7 +2258,7 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     read_entries_and_leftovers(dir, false)
 }
 
-/// Whether `name` is a temporary name that an interrupted install can leave behind: a
+/// Returns true if `name` is a temporary name that an interrupted install can leave behind: a
 /// `StagingPath`, an `OldModules`, or something that `move_aside` renamed.
 pub(crate) fn is_leftover(name: &[u8]) -> bool {
     name.starts_with(StagingPath::PREFIX.as_bytes())
@@ -2580,8 +2585,9 @@ fn plan_isolated(
     }
 }
 
-/// Whether `entry` is a copy that `bun patch` made for editing, which `bun patch --commit` removes.
-/// Such a copy only exists for a package whose store entry is a symlink into the global store.
+/// Returns true if `entry` is a copy that `bun patch` made for editing, which `bun patch --commit`
+/// removes. Such a copy only exists for a package whose store entry is a symlink into the global
+/// store.
 fn is_patch_copy(manager: &PackageManager, entry: &Entry) -> bool {
     if entry.kind != EntryKind::Directory {
         return false;
@@ -2654,11 +2660,13 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     result
 }
 
-/// `path` is a directory the installer makes for itself: a link there came with the project.
+/// `path` is a directory that the installer creates itself, so a symlink at that path came with the
+/// project.
 pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     #[cfg(not(windows))]
     let (stat, remove) = (sys::lstatat(dir, path), || sys::unlinkat(dir, path));
-    // `lstatat` takes a junction for a directory. Every caller there names `path` from the cwd.
+    // `lstatat` reports a junction as a directory. On Windows, every caller passes a `path` that's
+    // relative to the cwd.
     #[cfg(windows)]
     let (stat, remove) = (sys::lstat(path), || {
         let _ = dir;
@@ -2833,8 +2841,9 @@ pub(crate) fn prune_bins(node_modules: &Dir) -> bool {
         .is_some_and(|bin| remove_dangling_bins(&bin, node_modules, None))
 }
 
-/// Whether the package that should contain `path`, which is relative to `node_modules`, exists. Its
-/// folder follows the last `node_modules` component of `path`, because it can be in a store entry.
+/// Returns true if the package that should contain `path` exists. `path` is relative to
+/// `node_modules`. The package's folder comes after the last `node_modules` component of `path`,
+/// because it can be in a store entry.
 fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
     let (mut package, mut at) = (0, 0);
     while let Some(end) = strings::index_of_any_pos(path, b"/\\", at) {
@@ -2855,7 +2864,8 @@ fn leads_into_package(node_modules: &Dir, path: &[u8]) -> bool {
     !is_dangling(node_modules, &path[..end])
 }
 
-/// The folder also holds what is not bun's: only a link into `global_node_modules` goes.
+/// The folder also has files that Bun didn't create, so only links into `global_node_modules` are
+/// removed.
 pub(crate) fn prune_global_bins(bin_path: &[u8], global_node_modules: &[u8]) {
     let Some(parent) = bun_paths::dirname(bin_path).and_then(|parent| Dir::open(parent).ok())
     else {
@@ -2908,7 +2918,8 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
     removed
 }
 
-// `.bunx` layout: windows-shim/BinLinkingShim.rs. Only bun writes one, also in the global folder.
+// For the `.bunx` layout, see windows-shim/BinLinkingShim.rs. Only Bun writes these files,
+// including in the global folder.
 #[cfg(windows)]
 fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>) -> bool {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
@@ -2946,7 +2957,8 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
     removed
 }
 
-/// `dest` is a copy of the folder `src` without its `node_modules`. What cannot be listed stays.
+/// `dest` is a copy of the folder `src` without its `node_modules`. Entries in a folder that can't
+/// be listed are kept.
 pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
     fn list(dir: &Dir) -> Option<Vec<(Box<[u8]>, EntryKind)>> {
         let mut entries = Vec::new();
@@ -3029,8 +3041,8 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) -> Vec<us
     lost_bins
 }
 
-/// Relinks the names in `.bin` and in `node_modules/.bun/node_modules` that a removed package owned
-/// to the packages that an install with this run's options would give them to.
+/// A removed package may have owned names in `.bin` and in `node_modules/.bun/node_modules`.
+/// Relinks those names to the packages that an install with this run's options would link them to.
 fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &PackageManager) {
     use crate::bin_real::{LinkOrder, link_free_bins};
     let lockfile: &Lockfile = &manager.lockfile;
@@ -3152,7 +3164,8 @@ fn hand_over_names(plan: &Plan, lost_bins: &[usize], layout: Layout, manager: &P
     }
 }
 
-/// The `node_modules/.old_modules-<hex>` that holds the other linker's tree.
+/// The `node_modules/.old_modules-<hex>` folder, which contains the tree that the other linker
+/// installed.
 pub(crate) struct OldModules(pub(crate) Box<[u8]>);
 
 /// Dropping it waits for the deletion to end.
@@ -3161,7 +3174,8 @@ pub(crate) struct OldModulesRemoval(Arc<WaitGroup>);
 impl OldModules {
     pub(crate) const PREFIX: &'static str = ".old_modules-";
 
-    /// Deletes it on another thread. What cannot be deleted stays until `bun prune`.
+    /// Deletes it on another thread. Anything that can't be deleted stays until the next `bun
+    /// prune`.
     pub(crate) fn remove(&self) -> OldModulesRemoval {
         let done = Arc::new(WaitGroup::init_with_count(1));
         handle_oom(WorkPool::go(

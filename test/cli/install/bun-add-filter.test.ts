@@ -1044,19 +1044,16 @@ test.concurrent("add/remove --filter updates bun.lock for a workspace outside th
   const root = join(String(dir), "root");
   const x = () => file(join(String(dir), "x", "package.json")).json();
   const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
-  async function runOk(args: string[], note = "") {
+  async function runOk(args: string[]) {
     const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
-    expect(stderr).toBe(note + "Saved lockfile\n");
+    expect(stderr).toBe("Saved lockfile\n");
     expect(exitCode).toBe(0);
   }
 
   await runOk(["install"]);
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
 
-  await runOk(
-    ["add", "--filter", "x", "y@workspace:*"],
-    'note: skipping dependencies and scripts of 1 workspace outside the project: "../x"\n',
-  );
+  await runOk(["add", "--filter", "x", "y@workspace:*"]);
   expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
   expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
 
@@ -1339,7 +1336,8 @@ test.concurrent("remove --filter re-links only the selected workspace", async ()
 
   const { stdout, stderr, exitCode } = await run(["remove", "no-deps", "--filter", "api"], dir, { linker: "hoisted" });
   expect(stderr).toBe("Saved lockfile\n");
-  // As with an unfiltered remove, the summary is the install count once something had to be linked: here api alone.
+  // Like with an unfiltered remove, the summary is the install count once something had to be linked, which here is
+  // only api.
   expect(stdoutLines(stdout)).toStrictEqual([HEADER("remove"), "", "1 package installed"]);
   expect(exitCode).toBe(0);
 
@@ -2016,8 +2014,8 @@ test.concurrent.each(
     const fresh = await run(["install", omit], dir, { linker });
     expect(fresh.stderr).not.toContain("error:");
     const { packages, bins } = await topLevel();
-    // `add` takes out the folders of the packages it names. What they depend on is in a place that the run leaves out,
-    // and no install removes that: `bun prune` does.
+    // `add` removes the folders of the packages that it's given. Their dependencies are in a slot that this install
+    // skips, and no install removes that. `bun prune` does.
     expect(after).toStrictEqual({ packages: linker === "hoisted" ? [...packages, "no-deps"].sort() : packages, bins });
     expect(after.packages).not.toContain("one-fixed-dep");
     expect(fresh.exitCode).toBe(0);

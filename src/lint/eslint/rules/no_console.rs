@@ -17,7 +17,7 @@ const REMOVE_CONSOLE: Message =
 const REMOVE_METHOD_CALL: Message =
     Message::new("removeMethodCall", "Remove the console method call.");
 
-/// Whether removing `statement` could make what follows it a continuation of what precedes it.
+/// True if removing `statement` could make the code after it continue the code before it.
 fn maybe_asi_hazard(statement: Stmt<'_>) -> bool {
     let file = statement.file();
     let (Some(before), Some(after)) = (file.token_before(statement), file.token_after(statement))
@@ -30,7 +30,7 @@ fn maybe_asi_hazard(statement: Stmt<'_>) -> bool {
         && !matches!(before.text(), b":" | b";" | b"{")
 }
 
-/// The statement that consists of a call of `member`, if it can be removed.
+/// Returns the statement that consists of a call to `member`, if it can be removed.
 fn removable_statement(member: Expr<'_>) -> Option<Stmt<'_>> {
     let call = member.parent().as_expr()?;
     if call.as_call()?.callee() != member || call.is_in_optional_chain() {
@@ -43,9 +43,10 @@ fn removable_statement(member: Expr<'_>) -> Option<Stmt<'_>> {
     .then_some(statement)
 }
 
-/// oxlint's `remove_console`: what it puts where, for a `member` that is directly in a call. Nothing in the place of a
-/// statement, a block where there has to be a statement or a body, and `undefined` where there has to be a value.
-fn change_of_oxlint(member: Expr) -> Option<(Span, &'static str)> {
+/// oxlint's `remove_console`, for a `member` that's directly in a call. Returns the span to replace and the
+/// replacement: nothing for a statement, a block where a statement or body is required, and `undefined` where a value
+/// is required.
+fn oxlint_replacement(member: Expr) -> Option<(Span, &'static str)> {
     let call = parent_node(member)?.as_expr().filter(|it| it.tag() == ExprTag::Call)?;
     if call.is_chain_root() {
         return Some((call.span(), ""));
@@ -99,7 +100,7 @@ impl Rule for NoConsole {
         if obj.as_ident() != Some(cx.state) || self.is_allowed(member) || member.is_jsx_tag_name() {
             return;
         }
-        // oxlint says nothing about `console[a]` and `console[0]`.
+        // oxlint doesn't report `console[a]` or `console[0]`.
         if cx.language().is_oxlint && member.tag() == ExprTag::Index && static_property_name(member).is_none() {
             return;
         }
@@ -109,17 +110,17 @@ impl Rule for NoConsole {
         if reference.symbol().is_some() || reference_contains_type_query(reference) {
             return;
         }
-        // For oxlint it ends with the name: before the `]`.
-        let place = match member.kind() {
+        // For oxlint the span ends with the name, before the `]`.
+        let report_span = match member.kind() {
             ExprKind::Index { index, .. } if cx.language().is_oxlint => member.span().to(index.span()),
             _ => member.span(),
         };
         let report = match self.allowed.is_empty() {
-            true => cx.report(place, UNEXPECTED),
-            false => cx.report(place, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
+            true => cx.report(report_span, UNEXPECTED),
+            false => cx.report(report_span, LIMITED).data("allowed", self.allowed.join(&b", "[..])),
         };
         if cx.language().is_oxlint {
-            if let Some((at, text)) = change_of_oxlint(member) {
+            if let Some((at, text)) = oxlint_replacement(member) {
                 match text {
                     "undefined" => report.suggest_dangerously(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),
                     _ => report.suggest(REMOVE_METHOD_CALL, |fixer| fixer.replace(at, text)),

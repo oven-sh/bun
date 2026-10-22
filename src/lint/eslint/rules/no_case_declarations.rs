@@ -9,7 +9,7 @@ const UNEXPECTED: Message =
 
 fn is_lexical_declaration(statement: Stmt) -> bool {
     match statement.kind() {
-        // Without a body it is a `TSDeclareFunction`.
+        // Without a body it's a `TSDeclareFunction`.
         StmtKind::Fn(func) => func.has_body(),
         StmtKind::Class(_) => true,
         StmtKind::Var(declarations) => {
@@ -19,7 +19,7 @@ fn is_lexical_declaration(statement: Stmt) -> bool {
     }
 }
 
-/// Where oxlint points: as many bytes from the start as `function`, `class`, `let`, `const`, `using` have, or
+/// Where oxlint reports: as many bytes from the start as the length of `function`, `class`, `let`, `const`, `using` or
 /// `await using`.
 fn keyword(statement: Stmt) -> Span {
     let whole = statement.span();
@@ -55,9 +55,9 @@ impl Rule for NoCaseDeclarations {
             if !is_lexical_declaration(statement) {
                 continue;
             }
-            let place = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
-            let report = cx.report(place, UNEXPECTED).hint("Every case of the switch can see it. Wrap this case in { }.");
-            report.suggest_change_of_behavior(ADD_BRACKETS, &[], |fixer| {
+            let report_span = if cx.language().is_oxlint { keyword(statement) } else { statement.span() };
+            let report = cx.report(report_span, UNEXPECTED).hint("Every case of the switch can see it. Wrap this case in { }.");
+            report.suggest_behavior_change(ADD_BRACKETS, &[], |fixer| {
                 Some([
                     fixer.insert_before(body.first()?, "{ "),
                     fixer.insert_after(body.last()?, " }"),

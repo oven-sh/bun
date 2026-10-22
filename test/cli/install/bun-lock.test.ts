@@ -775,7 +775,7 @@ it("should include unused resolutions in the lockfile", async () => {
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
 
-// None of the `zz-` names is in the registry: asking for one fails the install.
+// None of the `zz-` names are in the registry, so requesting one fails the install.
 describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides, %s linker", linker => {
   const host = (name: string, version = "1.0.0") => ({ name, version });
   type Shape = {
@@ -918,7 +918,7 @@ describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides,
     expect(await downloaded()).toEqual([]);
     expect(await file(join(packageDir, "bun.lock")).text()).not.toContain('"no-deps@1.1.0"');
 
-    // A provider that this install leaves out does not count.
+    // The peer still uses the folder when this install omits the group that lists it.
     await Promise.all([
       write(packageJson, JSON.stringify(manifest("devDependencies"))),
       rm(join(packageDir, "bun.lock")),
@@ -933,7 +933,11 @@ describe.each(["hoisted", "isolated"])("a peer that a file: dependency provides,
     });
     const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
     expect(err).not.toContain("error:");
-    expect(await downloaded()).not.toEqual([]);
+    expect(await downloaded()).toEqual([]);
+    let dir = realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"));
+    while (dir !== dirname(dir) && !existsSync(join(dir, "node_modules", "no-deps", "package.json")))
+      dir = dirname(dir);
+    expect((await file(join(dir, "node_modules", "no-deps", "package.json")).json()).version).toBe("1.0.5");
     expect(exitCode).toBe(0);
   });
 });
@@ -1168,7 +1172,7 @@ it("names folder and tarball packages without a package.json name after their fo
     { "package/package.json": noName },
     { compress: "gzip" },
   );
-  // Serves that tarball under other file names: remote packages are named after the URL.
+  // Serves that tarball under other file names, because remote packages are named after the URL.
   await using server = Bun.serve({
     port: 0,
     fetch: () => new Response(file(join(packageDir, "tarball-pkg.tgz"))),
@@ -1300,7 +1304,7 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
 });
 
 describe.concurrent("yarn.lock and --dry-run", () => {
-  // A way to ask for a yarn.lock: flags, an environment variable, or bunfig.
+  // The ways to ask for a yarn.lock: flags, an environment variable, or bunfig.
   type Route = { flags: string[]; env?: Record<string, string>; bunfig?: string };
   const yarnBunfig = '\n[install.lockfile]\nprint = "yarn"\n';
 
@@ -1423,9 +1427,9 @@ describe.concurrent.each([
   });
 });
 
-// The first install prints what it resolved, the second what it loaded from bun.lock.
+// The first install prints what it resolved, and the second prints what it loaded from bun.lock.
 it.concurrent.each([true, false])(
-  "an install that changes nothing leaves yarn.lock alone (saveTextLockfile = %p)",
+  "an install that changes nothing doesn't touch yarn.lock (saveTextLockfile = %p)",
   async saveTextLockfile => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { saveTextLockfile },
@@ -1464,7 +1468,7 @@ it.concurrent.each([true, false])(
 );
 
 // one-dep depends on no-deps@1.0.1. An `npm:` alias that bun knows sends a plain dependency of that name to its target.
-describe.concurrent("an npm: alias that only the lockfile has", () => {
+describe.concurrent("an npm: alias that's only in the lockfile", () => {
   const overrides = { "no-deps": "npm:a-dep@1.0.1" };
   const app = { name: "app", dependencies: { "one-dep": "1.0.0" } };
   const installedAsNoDeps = async (dir: string) =>
@@ -1492,7 +1496,7 @@ describe.concurrent("an npm: alias that only the lockfile has", () => {
           configVersion: 1,
           workspaces: { "": app },
           overrides,
-          // refused: not from the registry, and no integrity
+          // Refused, because it isn't from the registry and has no integrity.
           packages: { "one-dep": ["one-dep@1.0.0", "http://elsewhere.invalid/one-dep-1.0.0.tgz", {}, ""] },
         }),
       },
@@ -1881,8 +1885,8 @@ describe.concurrent("a bun.lock that does not parse", () => {
   });
 });
 
-// One `dependencies` line can be in the lockfile twice: a merge resolved by hand keeps it from
-// both sides, or bun saves it that way while package.json repeats the line.
+// The same `dependencies` line can be in the lockfile twice. A merge that was resolved by hand can keep it from both
+// sides, and Bun saves it that way if package.json repeats the line.
 describe.concurrent("a new dependency next to a lockfile that repeats a dependency line", () => {
   async function exec(projectDir: string, cwd: string, ...args: string[]) {
     await using proc = spawn({
@@ -1935,7 +1939,7 @@ describe.concurrent("a new dependency next to a lockfile that repeats a dependen
       it("bun add installs the new dependency", async () => {
         const { packageDir, manifestPath, manifest, lockfilePath, repeated } = await projectWithRepeatedLine(member);
 
-        // The repeated line alone is not a change.
+        // The repeated line alone doesn't count as a change.
         await run(packageDir, packageDir, "install", "--frozen-lockfile");
         expect(await file(lockfilePath).text()).toBe(repeated);
 
@@ -2216,7 +2220,7 @@ it("--frozen-lockfile keeps a package that an older lockfile lists only as an op
 // Same entries, but the install that re-resolves and saves: a package.json change
 // unrelated to them (here a dependency bun.lock already has) must not prune them
 // either. Only a package whose real dependent leaves is dropped (the tests above).
-it("a re-resolving install keeps the packages an older lockfile holds through optional peers alone", async () => {
+it("an install that resolves again keeps the packages that an older lockfile only has through optional peers", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
   });
@@ -2392,7 +2396,7 @@ it.each([
 // peer was first bound to has left the project. The record only holds while nothing in the
 // file satisfies the range: once a satisfying version enters the file, loading binds the peer
 // to it by version (as a fresh install would) and the next save drops the recorded copy.
-describe("loading bun.lock keeps a peer nothing in the file satisfies where the file records it", () => {
+describe("loading bun.lock keeps a peer that no version in the file satisfies on the version that the file records", () => {
   const pkg = (nameAndVersion: string, info: object = {}) => [nameAndVersion, "", info, ""];
   const oneDep = pkg("one-dep@1.0.0", { dependencies: { "no-deps": "1.0.1" } });
   const strictPeerDep = pkg("strict-peer-dep@1.0.0", { peerDependencies: { "no-deps": "^2.0.0" } });
@@ -2559,7 +2563,7 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       absent: ["no-deps@1.0.0"],
     }));
 
-  it("a package's peer on the root's own out-of-range copy binds to it, not to the higher version nested elsewhere", async () => {
+  it("a package's peer binds to the root's own out-of-range copy, not to the higher version nested elsewhere", async () => {
     // Nothing is printed for this edge: either binding dedupes onto the root's copy when the
     // tree is built, so the file is the same both ways and both linkers install the root's copy.
     // The binding itself is what `pm why` reports (and what a tree built without the root's
@@ -2618,8 +2622,8 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
     });
   });
 
-  // An out-of-range binding is a record of what the dependent was given, not a reason to keep it:
-  // once the row that really held the version leaves package.json, the version goes with it.
+  // An out-of-range binding records what the dependent was given. It isn't a reason to keep that version: once the
+  // dependency that really needed the version leaves package.json, the version is removed too.
   describe("after package.json changes", () => {
     const twoPeers = pkg("2-peer-deps-c@1.0.0", { peerDependencies: { "a-dep": "1.0.10", "no-deps": "1.0.0" } });
     const fixedDep = pkg("one-fixed-dep@2.0.0", { dependencies: { "no-deps": "2.0.0" } });
@@ -2646,7 +2650,7 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       expect(await file(join(packageDir, "bun.lock")).text()).toBe(saved);
     }
 
-    // The dependent is laid out before or after one-fixed-dep, which is what places no-deps@2.0.0.
+    // The dependent is placed before or after one-fixed-dep, which is what places no-deps@2.0.0.
     it.each([
       ["2-peer-deps-c", "1.0.0"],
       ["z-two-peers", "npm:2-peer-deps-c@1.0.0"],
@@ -2702,7 +2706,7 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       );
     });
 
-    it("the peer keeps a version nothing else held when the file was loaded", async () => {
+    it("the peer keeps a version that nothing else used when the file was loaded", async () => {
       const dependencies = { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" };
       await resaveFor(
         { dependencies: { ...dependencies, "a-dep": "1.0.1" } },
@@ -2725,7 +2729,8 @@ describe("loading bun.lock keeps a peer nothing in the file satisfies where the 
       );
     });
 
-    // Nothing resolves an unbound peer again, so dropping the only copy would leave the dependent without one for good.
+    // Nothing ever resolves an unbound peer again, so dropping the only copy would leave the dependent without one for
+    // good.
     it("the peer keeps the root's version once the root drops it if no other version is left", async () => {
       const dependencies = { "2-peer-deps-c": "1.0.0" };
       await resaveFor(
@@ -3134,8 +3139,8 @@ it.concurrent("the isolated linker never links an unmet optional dependency of t
   expect(await readdirSorted(nodeModules)).toEqual([".bun", "p1"]);
 });
 
-// Handed the root's plugin@2.0.0 on load, host got a copy of its own, as plugin's peer takes another
-// lib under host than at the root, and the next save printed that copy as "host/plugin".
+// On load, host was given the root's plugin@2.0.0. It then got its own copy, because plugin's peer resolves to a
+// different lib under host than at the root, and the next save printed that copy as "host/plugin".
 it.concurrent.each(["hoisted", "isolated"] as const)(
   "an unmet optional dependency gets no copy of the version the root depends on (%s linker)",
   async linker => {
@@ -3192,9 +3197,9 @@ it.concurrent.each(["hoisted", "isolated"] as const)(
   },
 );
 
-// Only the registry answers a range, so the install that writes bun.lock leaves this one unresolved.
-// Loading bun.lock used to hand it the root's package of that name: a second copy of a folder, which
-// never hoists, or (isolated) a link the first install did not make.
+// Only the registry can resolve a range, so the install that writes bun.lock leaves this one unresolved. Loading
+// bun.lock used to bind it to the root's package with that name. That gave a second copy of a folder, which never
+// hoists, or (with the isolated linker) a link that the first install didn't create.
 describe.each(["hoisted", "isolated"] as const)(
   "optional dependency the registry does not have, with a local package of that name at the root (%s linker)",
   linker => {
@@ -3304,7 +3309,7 @@ describe.each(["hoisted", "isolated"] as const)("optional dependencies of every 
 
   // Each of these has the name of a package that is in bun.lock for someone else:
   // `<who has the name>-<how the row asks>`. bun.lock lists them as "unresolved".
-  it.concurrent("one that does not resolve is not handed the package that has its name", async () => {
+  it.concurrent("one that doesn't resolve isn't bound to the package with the same name", async () => {
     const kinds = ["range", "alias", "catalog", "tarball", "url", "folder", "link", "workspace", "tag"] as const;
     const named = (holder: string) => kinds.map(kind => `${holder}-${kind}`);
     const each = <T>(names: string[], value: (name: string) => T) =>
@@ -3437,8 +3442,8 @@ ${await entry("tool-native", "{}")}  }
     expect(await file(lockfilePath).text()).toBe(older);
   });
 
-  // `gone` needs no entry: nothing has its name, so no load can hand it anything.
-  it.concurrent("bun.lock lists the ones that do not resolve where they are declared", async () => {
+  // `gone` needs no entry. No package has its name, so loading can't bind it to anything.
+  it.concurrent("bun.lock lists the ones that don't resolve where they're declared", async () => {
     using registry = await serveRegistry({
       host: { "1.0.0": { optionalDependencies: { gone: "^1.0.0", p2: "missing-tag" } } },
       p1: { "1.0.0": { dependencies: { p2: "^2.0.0" } } },
@@ -3528,8 +3533,8 @@ ${await entry("tool-native", "{}")}  }
     expect(installedIn(String(dir))).toEqual(fresh);
   });
 
-  // Like npm: the registry has no alpha, and beta@1.0.0 is in both ranges. A tag asks the registry.
-  it.concurrent("a range takes the package that the project's npm: alias put under its name", async () => {
+  // Like npm: the registry has no alpha, and beta@1.0.0 is in both ranges. A tag is always looked up in the registry.
+  it.concurrent("a range uses the package that the project's npm: alias installed under its name", async () => {
     using registry = await serveRegistry({
       beta: { "1.0.0": {} },
       ranged: { "1.0.0": { optionalDependencies: { alpha: "*" } } },
@@ -3591,8 +3596,8 @@ ${await entry("tool-native", "{}")}  }
   });
 });
 
-// Nothing binds an optional peer before the tree is built: building it does, to the copy found above
-// the peer's package. The installer and every load of bun.lock build the tree with the peer bound.
+// An optional peer isn't bound until the tree is built, which binds it to the copy found above the peer's package. The
+// installer and every load of bun.lock build the tree with the peer already bound.
 describe("the tree a fresh install saves is the tree built with its optional peers bound", () => {
   const optionalPeer = (name: string, range: string) => ({
     peerDependencies: { [name]: range },
@@ -3634,7 +3639,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
     },
   );
 
-  // What the install just wrote and laid out is what the next commands want.
+  // The next commands should accept what the install just wrote and installed.
   async function expectSettled(cwd: string) {
     const lockfile = await file(join(cwd, "bun.lock")).text();
     const installed = installedIn(cwd);
@@ -3646,11 +3651,11 @@ describe("the tree a fresh install saves is the tree built with its optional pee
     expect(await file(join(cwd, "bun.lock")).text()).toBe(lockfile);
   }
 
-  // dup@2.0.0 has one row for its peer and two places. It is laid out under `unmet` first, where the
-  // nearest peer-target is the root's 2.0.0, and that place binds the row. The dup under met shares
-  // the 1.0.0 next to it, which the range accepts, and leaves the row alone: moving it gave the dup
-  // under `unmet` a copy of 1.0.0 that bun.lock did not list. `unmet` is read first or last.
-  describe.each(["a-unmet", "z-unmet"])("the first place of a package binds its optional peer, under %s", unmet => {
+  // dup@2.0.0 has one peer dependency and is placed twice. It's placed under `unmet` first, where the nearest
+  // peer-target is the root's 2.0.0, and that placement binds the peer. The dup under met shares the 1.0.0 next to it,
+  // which the range accepts, and doesn't rebind the peer. Rebinding it gave the dup under `unmet` a copy of 1.0.0 that
+  // bun.lock didn't list. `unmet` is read first or last.
+  describe.each(["a-unmet", "z-unmet"])("the first placement of a package binds its optional peer, under %s", unmet => {
     const manifests: Manifests = {
       "peer-target": { "1.0.0": {}, "2.0.0": {} },
       "dup": { "1.0.0": {}, "2.0.0": optionalPeer("peer-target", "^1.0.0") },
@@ -3695,7 +3700,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
   // either. Its row is also what puts k at the root. Moved from place to place, it changed the root's
   // k after a@2.5.0 had taken it for its own `^1.1.0`, and the tree built from bun.lock was never the
   // tree built from that one. The names decide the order of the walk.
-  it.concurrent("a row that put its package in the tree is not moved by a later place", async () => {
+  it.concurrent("a dependency that placed its package in the tree isn't rebound by a later placement", async () => {
     using registry = await serveRegistry({
       "a": {
         "1.1.0": {},
@@ -3723,11 +3728,11 @@ describe("the tree a fresh install saves is the tree built with its optional pee
     await expectSettled(String(dir));
   });
 
-  // one is at the root first, where nothing provides host, so its peer stays unbound. The one below al
-  // shares the host next to it. Binding the row there put a host at the root, for nobody, and without
-  // the inner that it bundles: with no "host/inner" bun.lock did not load.
+  // one is placed at the root first, where nothing provides host, so its peer stays unbound. The copy below al shares
+  // the host next to it. Binding the peer there used to put a host at the root that nobody needed, without the inner
+  // that it bundles. With no "host/inner", bun.lock didn't load.
   it.concurrent.each(["hoisted", "isolated"] as const)(
-    "an optional peer that nothing provides at the first place of its package stays unbound (%s linker)",
+    "an optional peer stays unbound if nothing provides it where its package is placed first (%s linker)",
     async linker => {
       using registry = await serveRegistry({
         one: { "1.0.0": optionalPeer("host", "*") },
@@ -3747,9 +3752,9 @@ describe("the tree a fresh install saves is the tree built with its optional pee
     },
   );
 
-  // plugin is at the root and, for inner, below host, next to the inner that host bundles. That place
-  // bound plugin's peer, which turned the row waiting at the root into an inner nobody had walked:
-  // bun.lock listed "inner" with no leaf for it to find, and did not load. Nobody asked for either.
+  // plugin is at the root and, for inner, below host, next to the inner that host bundles. That placement bound
+  // plugin's peer, which turned the dependency waiting at the root into an inner whose dependencies were never walked.
+  // bun.lock then listed "inner" with no leaf for it to find, and didn't load. Nobody needed either of them.
   it.concurrent.each(["hoisted", "isolated"] as const)(
     "bun.lock loads when a bundled package needs a plugin that has an optional peer on it (%s linker)",
     async linker => {
@@ -3813,7 +3818,7 @@ describe("the tree a fresh install saves is the tree built with its optional pee
 // are in the file once, so loading binds them once per printed path, and the paths can find
 // different copies of a peer; the path printed last used to win, so what an edge loaded as
 // depended on how its dependents' parents happened to sort.
-describe("loading bun.lock binds the edges of a package printed at several paths", () => {
+describe("loading bun.lock binds the dependencies of a package that's printed at several paths", () => {
   /** `path -> "name@version"` for every row of the packages object. */
   const printedPackages = (lockfile: string) =>
     Object.fromEntries(Array.from(lockfile.matchAll(/^ {4}"([^"]+)": \["([^"]+)"/gm), m => [m[1], m[2]]));
@@ -4117,7 +4122,7 @@ async function freshInstallLock(server: Bun.Server, files: Record<string, object
   return await installAndReadLock(String(dir));
 }
 
-// `{ "z": "z@1.0.0", "b/z": "z@1.1.0" }`: every instance of `name`, keyed by where it is placed.
+// Returns every instance of `name`, keyed by where it's placed, e.g. `{ "z": "z@1.0.0", "b/z": "z@1.1.0" }`.
 function instancesOf(lock: string, name: string): Record<string, string> {
   const { packages } = Bun.JSONC.parse(lock) as { packages: Record<string, [string, ...unknown[]]> };
   return Object.fromEntries(
@@ -4344,8 +4349,8 @@ it.each<OrderedShape>([
     },
     z: { "z": "z@1.1.0" },
   })),
-  // Peers nothing provides are installed once every regular row is resolved: the newest version that
-  // every package asking for it accepts.
+  // Peers that nothing provides are installed once every regular dependency is resolved. They get the newest version
+  // that every package with that peer dependency accepts.
   {
     shape: "a peers z@>=1.0.0 next to b peers z@^1.0.0",
     manifests: {
@@ -4376,7 +4381,8 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.0" },
   },
   {
-    // No version suits both. The first in the order of the packages that declare them decides, not the first to arrive.
+    // No version satisfies both, so they share one copy. The first package in declaration order decides which one, not
+    // the first manifest to arrive.
     shape: "a peers z@^1.0.0 next to b peers z@^2.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
@@ -4391,8 +4397,8 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0" },
   },
   {
-    // m is itself installed as a peer, so whether its range is known when z is picked depends on which manifest
-    // arrives first. It does not count.
+    // m is itself installed as a peer, so its range may not be known yet when z is first picked. Once it is, all three
+    // packages settle on the one version that satisfies them all.
     shape: "a peers m@1.0.0 and z@>=1.0.0, b peers z@>=1.0.5, m peers z@~1.0.0",
     manifests: {
       a: { "1.0.0": { peerDependencies: { m: "1.0.0", z: ">=1.0.0" } } },
@@ -4405,7 +4411,7 @@ it.each<OrderedShape>([
       "m's manifest last": [{ manifest: "m", until: "/z" }],
       "z's manifest last": [{ manifest: "z", until: "/m-1.0.0.tgz" }],
     },
-    z: { "z": "z@2.0.0" },
+    z: { "z": "z@1.0.5" },
   },
   {
     shape: "a peers z@^1.0.0 next to b peers z@>=1.0.0",
@@ -4440,7 +4446,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.1.0" },
   },
   {
-    // Nothing satisfies a's peer. It is bound to the highest z there is, which includes the one w asks for.
+    // a isn't below w, so w's z doesn't provide a's peer. No installed version satisfies it, so it gets its own.
     shape: "workspace w peers z@latest, a peers z@1.0.0, o -> z@1.0.5",
     manifests: {
       a: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
@@ -4455,10 +4461,10 @@ it.each<OrderedShape>([
       "a's manifest last": [{ manifest: "a", until: "/z" }],
       "o's manifest last": [{ manifest: "o", until: "/a-1.0.0.tgz" }],
     },
-    z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
+    z: { "z": "z@2.0.0", "a/z": "z@1.0.0", "o/z": "z@1.0.5" },
   },
   {
-    // kit and its dependency r should share one z. o's z@1.0.5 satisfies kit's range, so both use it.
+    // No version satisfies both kit and its dependency r, so r follows kit. o's z@1.0.5 satisfies kit's range.
     shape: "kit peers z@~1.0.0 and -> r, r peers z@^2.0.0, o -> z@1.0.5",
     manifests: {
       kit: { "1.0.0": { dependencies: { r: "1.0.0" }, peerDependencies: { z: "~1.0.0" } } },
@@ -4490,7 +4496,7 @@ it.each<OrderedShape>([
     z: { "z": "z@1.0.5", "p/z": "z@2.0.0", "r/z": "z@2.0.0" },
   },
   {
-    // s and its dependency b share one z. A second z for p would be hoisted to the top, where b would load it.
+    // p gets a z in its range. b stays next to s, so it keeps loading the same z as s.
     shape: "s -> z@^1.0.0 and b, b peers z@>=1.0.0, p peers z@^2.0.0",
     manifests: {
       b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
@@ -4503,7 +4509,7 @@ it.each<OrderedShape>([
       "s's manifest last": [{ manifest: "s", until: "/p-1.0.0.tgz" }],
       "p's manifest last": [{ manifest: "p", until: "/s" }],
     },
-    z: { "z": "z@1.1.0" },
+    z: { "z": "z@2.0.0", "s/z": "z@1.1.0" },
   },
   {
     // t depends on r and has the same peer range. o's z doesn't satisfy either of them.
@@ -4745,7 +4751,7 @@ it("a tarball dependency is downloaded while the dependency before it waits for 
   expect(instancesOf(lock, "x")).toEqual({ "x": `x@${server.url.origin}/x-1.0.0.tgz` });
 });
 
-it("what a file: folder depends on is requested while the dependency before it waits for its manifest", async () => {
+it("the dependencies of a file: folder are requested while the dependency before it waits for its manifest", async () => {
   const ordered = await registryWithHolds({ a: { "1.0.0": {} }, y: { "1.0.0": {} } });
   using server = ordered.server;
   ordered.hold([{ manifest: "a", until: "/y" }]);
@@ -4781,7 +4787,7 @@ it("an override that no version of an installed peer matches is a warning, as on
   expect(await lockfile()).toBe(overLockfile);
 });
 
-it("a peer no version in the tree satisfies stays on the one it was bound to", async () => {
+it("a peer that no version in the tree satisfies stays on the version it was bound to", async () => {
   using server = (
     await registryWithHolds({
       a: { "1.0.0": { dependencies: { z: "1.0.0" } } },
@@ -5205,7 +5211,7 @@ describe.each(["hoisted", "isolated"] as const)(
   linker => {
     const pkg = (name: string, extra: object) => JSON.stringify({ name, version: "1.0.0", ...extra });
 
-    // `shape` lists lockfile entries that show the graph is what the name says.
+    // `shape` lists lockfile entries which show that the graph is what the name says.
     const projects: Record<string, { files: Record<string, string>; shape: string[] }> = {
       "multiple versions of one transitive dependency": {
         files: {
@@ -5308,8 +5314,9 @@ describe.each(["hoisted", "isolated"] as const)(
           '"pkg-b/no-deps": ["no-deps@2.0.0"',
         ],
       },
-      // Who owns `node_modules/<name>` of the root when a workspace has that name: the root's own dependency of that
-      // name if it is a registry range the workspace does not satisfy, else the workspace. An alias installs elsewhere.
+      // Decides who owns the root's `node_modules/<name>` when a workspace has that name. It's the root's own
+      // dependency with that name if that's a registry range that the workspace doesn't satisfy, and the workspace
+      // otherwise. An alias is installed under a different name.
       "a root dependency on the published version of a workspace": {
         files: {
           "package.json": pkg("app", { workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
@@ -5396,7 +5403,7 @@ describe.each(["hoisted", "isolated"] as const)(
             peerDependenciesMeta: { "only-in-meta": { optional: true } },
           }),
           "packages/pkg-a/cli.js": "#!/usr/bin/env node\n",
-          // Neither of the two runs for a workspace.
+          // Neither of the two scripts runs for a workspace.
           "packages/pkg-b/package.json": pkg("pkg-b", {
             directories: { bin: "./bin" },
             scripts: { preprepare: "exit 0", postprepare: "exit 0" },
@@ -5588,7 +5595,7 @@ describe.concurrent("a file: folder listed in both dependencies and devDependenc
       let { err } = await install(String(dir));
       expect(err).toContain("Saved lockfile");
       const lockfile = await file(lockfilePath).text();
-      // one key, not two: a duplicate object key is rejected by bun's own lockfile parser
+      // One key, not two, because Bun's own lockfile parser rejects a duplicate object key.
       expect(packageKeys(lockfile)).toEqual(['    "a": [']);
 
       ({ err } = await install(String(dir), "--frozen-lockfile"));
@@ -5704,7 +5711,7 @@ describe.each(["hoisted", "isolated"] as const)(
         await using proc = spawn({
           cmd: [bunExe(), ...args],
           cwd: packageDir,
-          // A cache per project: the environment's cache dir takes precedence over bunfig.
+          // One cache per project, because the cache directory in the environment takes precedence over bunfig.
           env: { ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
           stdout: "pipe",
           stderr: "pipe",
@@ -5723,7 +5730,7 @@ describe.each(["hoisted", "isolated"] as const)(
           expect(err).toContain("Saved lockfile");
           expect({ out, err, code }).toMatchObject({ code: 0 });
         },
-        // No earlier version read the directory again, so a lockfile that is behind it is common: not a failure.
+        // No earlier version read the directory again, so lockfiles that are behind it are common. It isn't a failure.
         async expectFrozenLockfileToWarn() {
           const before = await lock();
           const { out, err, code } = await bun("install", "--frozen-lockfile");
@@ -5806,7 +5813,7 @@ describe.each(["hoisted", "isolated"] as const)(
       await project.expectInstallToBeANoop();
     });
 
-    // Not a dependency: a frozen install accepts it.
+    // It isn't a dependency, so a frozen install accepts it.
     it.concurrent("an added bin is recorded and linked", async () => {
       const project = await createProject("root");
 

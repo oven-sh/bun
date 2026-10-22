@@ -82,7 +82,7 @@ pub struct PostgresSQLConnection {
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     read_buffer: JsCell<OffsetByteList>,
-    last_message_start: Cell<u32>,
+    last_message_start: Cell<usize>,
     pub(crate) requests: JsCell<PostgresRequest::Queue>,
     /// number of requests in flight whose Bind and Execute are written
     pub(crate) pipelined_requests: Cell<u32>,
@@ -474,9 +474,9 @@ impl PostgresSQLConnection {
         });
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
-            SocketMonitor::write(&chunk[..usize::try_from(wrote).expect("int cast")]);
-            self.write_buffer
-                .with_mut(|b| b.consume(u32::try_from(wrote).expect("int cast")));
+            let wrote = usize::try_from(wrote).expect("int cast");
+            SocketMonitor::write(&chunk[..wrote]);
+            self.write_buffer.with_mut(|b| b.consume(wrote));
         }
     }
 
@@ -1638,7 +1638,7 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) // unnamed statements are not pipelinable
             && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
-            && (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
+            && self.write_buffer.get().len() < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
 }
 
@@ -1659,14 +1659,14 @@ impl protocol::WriterContext for Writer {
 
     fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
         self.connection.write_buffer.with_mut(|b| {
-            let index = b.head as usize + index;
+            let index = b.head + index;
             b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         });
         Ok(())
     }
 
     fn offset(self) -> usize {
-        self.connection.write_buffer.get().len() as usize
+        self.connection.write_buffer.get().len()
     }
 }
 
@@ -1705,13 +1705,13 @@ impl protocol::ReaderContext for Reader {
 
     fn skip(&mut self, count: usize) {
         self.connection.read_buffer.with_mut(|buf| {
-            buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
+            buf.head = buf.head.saturating_add(count).min(buf.byte_list.len());
         });
     }
 
     fn ensure_length(&mut self, count: usize) -> bool {
         let buf = self.read_buffer();
-        (buf.head as usize) + count <= buf.byte_list.len()
+        buf.head + count <= buf.byte_list.len()
     }
 
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
@@ -1919,7 +1919,8 @@ impl PostgresSQLConnection {
                     return true;
                 }
                 // Whether an unnamed statement is described before its Bind depends on the values.
-                let formats = if unnamed {
+                // A statement without parameters is prepared before its RowDescription arrives.
+                let formats = if unnamed || statement.fields.is_empty() {
                     ResultFormats::Text
                 } else if req.flags.get().result_mode == SQLQueryResultMode::Raw {
                     ResultFormats::Raw

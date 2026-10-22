@@ -33,7 +33,75 @@ impl SafeFileId {
     }
 }
 
+/// The page and layout files of a route whose router type also runs them in the browser
+/// (`client_pages`), as absolute paths. Empty for any other route.
+#[derive(Default)]
+pub(crate) struct ClientPageFiles {
+    pub(crate) page: Option<Box<[u8]>>,
+    /// From the inner-most layout to the root one.
+    pub(crate) layouts: Vec<Box<[u8]>>,
+}
+
+impl ClientPageFiles {
+    pub(super) fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.page.iter().chain(self.layouts.iter()).map(|p| &**p)
+    }
+}
+
+/// The server matches its own routes first, so it never serves this page.
+fn report_hidden_page(route_path: &[u8], rel_path: &[u8]) {
+    Output::err_generic(
+        "The server has a route \"{}\", which hides the page {}",
+        (bstr::BStr::new(route_path), bstr::BStr::new(rel_path)),
+    );
+    Output::flush();
+}
+
 impl DevServer {
+    /// Reports each page that a route of the server hides: a route with the same path as a page
+    /// that has no parameter.
+    pub(super) fn report_pages_hidden_by_server_routes(&self) {
+        let Some(server) = self.server else { return };
+        let keys = self.server_graph.bundled_files.keys();
+        for (route_path, route_index) in self.router.static_routes.iter() {
+            if !server.has_route(route_path) {
+                continue;
+            }
+            let Some(page) = self.router.route_ptr(*route_index).file_page else {
+                continue;
+            };
+            let mut buf = paths::path_buffer_pool::get();
+            let rel_path = self.relative_path(
+                &mut *buf,
+                &keys[from_opaque_file_id::<{ bake::Side::Server }>(page).get() as usize],
+            );
+            report_hidden_page(route_path, rel_path);
+        }
+    }
+
+    pub(super) fn client_page_files(&self, route_index: router::RouteIndex) -> ClientPageFiles {
+        let mut route = self.router.route_ptr(route_index);
+        if !self.router.type_ptr_const(route.r#type).client_pages {
+            return ClientPageFiles::default();
+        }
+        let keys = self.server_graph.bundled_files.keys();
+        let path = |id: OpaqueFileId| -> Box<[u8]> {
+            Box::from(&*keys[from_opaque_file_id::<{ bake::Side::Server }>(id).get() as usize])
+        };
+        let mut files = ClientPageFiles {
+            page: route.file_page.map(path),
+            layouts: Vec::new(),
+        };
+        loop {
+            if let Some(id) = route.file_layout {
+                files.layouts.push(path(id));
+            }
+            let Some(parent) = route.parent else { break };
+            route = self.router.route_ptr(parent);
+        }
+        files
+    }
+
     /// Interface function for FrameworkRouter
     pub(crate) fn get_file_id_for_router(
         &mut self,

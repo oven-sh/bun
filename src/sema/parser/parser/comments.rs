@@ -4,18 +4,19 @@
 //!
 //! How it works: the parser calls [`Parser::finish_node`] each time it finishes a node. A comment is "pending" from the
 //! moment the lexer scans it until a node that contains it is finished. Nodes finish from the inside out, so the first
-//! such node is the smallest one: the enclosing node. While a comment is pending, every finished node that ends before it
-//! is a candidate for the preceding node, and every finished node that starts after it is a candidate for the following
-//! node. The closest candidate wins, and the larger one if two are equally close.
+//! such node is the smallest one: the enclosing node. While a comment is pending, every finished node that ends before
+//! it is a candidate for the preceding node, and every finished node that starts after it is a candidate for the
+//! following node. The closest candidate wins, and the larger one if two are equally close.
 //!
-//! A finished node is only compared with the closest pending comment before it. Say comment 1 is before comment 2, which is
-//! before the node. Either the enclosing node of 2 starts after 1, and then that node is closer to 1. Or it is the enclosing
-//! node of 1 too, and then 1 takes the following node of 2 if nothing starts between them. So nested code with a comment at
-//! each level takes linear time.
+//! A finished node is only compared with the closest pending comment before it. Say comment 1 is before comment 2,
+//! which is before the node. Either the enclosing node of 2 starts after 1, and then that node is closer to 1. Or it's
+//! the enclosing node of 1 too, and then 1 takes the following node of 2 if nothing starts between them. So nested code
+//! with a comment at each level takes linear time.
 //!
 //! This only compares offsets. It knows nothing about the grammar.
 //!
-//! All of it is behind the parameter `COMMENTS` of the [`Parser`], so who does not ask for the nodes runs code without it.
+//! All of it is behind the [`Parser`]'s `COMMENTS` parameter, so callers that don't need these nodes run code compiled
+//! without it.
 
 use super::{Checkpoint, Parser};
 use bun_sema::atom::Atom;
@@ -35,7 +36,7 @@ impl Candidate {
         self.node == NodeOrName::None
     }
 
-    /// An identifier can be reported both as a name and as the node that consists of it. The node counts.
+    /// An identifier can be reported both as a name and as the node that consists of it. The node wins.
     #[inline(always)]
     fn is_name_of(self, other: Candidate) -> bool {
         matches!(self.node, NodeOrName::Name(_))
@@ -43,8 +44,8 @@ impl Candidate {
             && (self.start, self.end) == (other.start, other.end)
     }
 
-    /// Both end before the comment. The better one ends later. If they end at the same offset, one contains the other, and
-    /// the outer one is better.
+    /// Both end before the comment. The better one ends later. If they end at the same offset, one contains the other,
+    /// and the outer one is better.
     #[inline(always)]
     fn is_better_preceding_node_than(self, other: Candidate) -> bool {
         if self.is_name_of(other) {
@@ -72,8 +73,8 @@ impl Candidate {
     }
 }
 
-/// The comments between two tokens, whose enclosing node is not finished yet. Nodes start and end at tokens, so the same nodes
-/// are around all of them.
+/// The comments between two tokens, whose enclosing node isn't finished yet. Nodes start and end at tokens, so all of
+/// these comments have the same surrounding nodes.
 #[derive(Copy, Clone)]
 struct PendingComments {
     first_id: u32,
@@ -84,8 +85,8 @@ struct PendingComments {
     following: Candidate,
 }
 
-/// The index of the last element of a growing list that meets a condition. Each call only looks at the elements that were added
-/// since the previous call, so that a long run of elements that do not meet the condition is not walked again and again.
+/// The index of the last element of a growing list that meets a condition. Each call only looks at the elements added
+/// since the previous call, so a long run of elements that don't meet the condition isn't rescanned every time.
 #[derive(Default)]
 struct LastMatch {
     checked_len: usize,
@@ -103,7 +104,7 @@ impl LastMatch {
         self.index
     }
 
-    /// Call when the list is cut to `len` elements.
+    /// Call when the list is truncated to `len` elements.
     #[inline(always)]
     fn truncate(&mut self, len: usize) {
         if self.checked_len > len {
@@ -118,7 +119,7 @@ pub(crate) struct CommentTracker {
     pending: Vec<PendingComments>,
     /// See `finish_list!`. The last pending comments, in reverse order. Empty at any other time.
     set_aside: Vec<PendingComments>,
-    /// How many comments of the lexer have been added to `pending` so far.
+    /// How many of the lexer's comments have been added to `pending` so far.
     tracked_count: u32,
     /// The previous value of every pending comment that was changed or removed, so that a rollback can restore it.
     undo_log: Vec<PendingComments>,
@@ -127,19 +128,20 @@ pub(crate) struct CommentTracker {
     /// The last node that changed a pending comment, and the length of `undo_log` before it did. See
     /// [`Parser::unfinish_node`].
     last_finished: (NodeOrName, usize),
-    /// A hole in an array literal and the `{}` of `<a>{}</a>` are expressions without a width.
+    /// A hole in an array literal and the `{}` of `<a>{}</a>` are zero-width expressions.
     last_expr_with_width: LastMatch,
     last_non_empty_stmt: LastMatch,
 }
 
 impl CommentTracker {
-    /// Restores the pending comments to what they were when `undo_log` had `len` entries. Not those from `forgotten_from` on.
-    fn undo_until(&mut self, len: usize, forgotten_from: u32) {
+    /// Restores the pending comments to what they were when `undo_log` had `len` entries, except for the comments from
+    /// `discarded_from` on.
+    fn undo_until(&mut self, len: usize, discarded_from: u32) {
         while self.undo_log.len() > len {
             let Some(previous) = self.undo_log.pop() else {
                 break;
             };
-            if previous.first_id >= forgotten_from {
+            if previous.first_id >= discarded_from {
                 continue;
             }
             let pending = &mut self.pending;
@@ -151,15 +153,17 @@ impl CommentTracker {
         self.last_finished = (NodeOrName::None, 0);
     }
 
-    /// Most finished nodes that matter are after the last pending comments, or before them and no closer to the comments
-    /// before those. Then all that can change is one node of the last ones. Returns false for any other node.
+    /// The fast path. Most finished nodes that matter are either after the last pending comments, or before them and no
+    /// closer to the comments before those. In both cases only one candidate of the last pending comments can change.
+    /// Returns false for any other node.
     #[inline(always)]
     fn update_only_last_pending_comments(&mut self, finished: Candidate) -> bool {
         let Some((last, earlier)) = self.pending.split_last_mut() else {
             return false;
         };
         let is_after_last = finished.start > last.start;
-        // The comments before have a following node that starts earlier, so they are before `finished`, which is not closer.
+        // The earlier comments already have a following node that starts before `finished`, so `finished` isn't closer
+        // to them.
         let is_only_before_last = finished.end <= last.start
             && (earlier.last()).is_none_or(|comments| {
                 !comments.following.is_none() && comments.following.start < finished.start
@@ -182,8 +186,8 @@ impl CommentTracker {
         true
     }
 
-    /// For a node that [`CommentTracker::update_only_last_pending_comments`] returns false for. It is not empty. `comments`: all
-    /// comments of the file so far.
+    /// The slow path, for a node that [`CommentTracker::update_only_last_pending_comments`] returned false for. The
+    /// node isn't empty. `comments` is all of the file's comments so far.
     #[inline(never)]
     fn update_all_pending_comments(&mut self, finished: Candidate, comments: &mut [Comment]) {
         let Candidate { node, start, end } = finished;
@@ -199,9 +203,10 @@ impl CommentTracker {
             }
             _ => pending.len(),
         };
-        // The preceding node of a later comment ends at least as late as that of an earlier one. So if the node is not
-        // better for one comment, it is not better for the comments after it. Without this, a long list in which every
-        // element has a comment would take quadratic time, because its elements are finished after the whole list.
+        // The preceding node of a later comment ends at least as late as that of an earlier one. So if the node isn't
+        // better for one comment, it isn't better for the comments after it either. Without this, a long list in which
+        // every element has a comment would take quadratic time, because its elements are finished after the whole
+        // list.
         for comment in pending.get_mut(after_node..).unwrap_or_default() {
             if !finished.is_better_preceding_node_than(comment.preceding) {
                 break;
@@ -215,7 +220,7 @@ impl CommentTracker {
             index -= 1;
         }
         if index < after_node {
-            // A candidate outside the enclosing node is not one of its children.
+            // A candidate outside the enclosing node isn't one of its children.
             let child_or_none = |candidate: Candidate| match candidate.is_inside(start, end) {
                 true => candidate.node,
                 false => NodeOrName::None,
@@ -243,10 +248,10 @@ impl CommentTracker {
         }
     }
 
-    /// Forgets the comments from `first_id` on. They are added again when the next node is finished.
-    fn forget_comments_from(&mut self, first_id: u32) {
-        let kept = (self.pending).partition_point(|comments| comments.first_id < first_id);
-        self.pending.truncate(kept);
+    /// Drops the comments from `first_id` on. They're added again when the next node is finished.
+    fn discard_comments_from(&mut self, first_id: u32) {
+        let keep_len = (self.pending).partition_point(|comments| comments.first_id < first_id);
+        self.pending.truncate(keep_len);
         self.tracked_count = first_id;
     }
 }
@@ -259,10 +264,10 @@ pub(crate) struct CommentCheckpoint {
     last_name: (u32, u32),
 }
 
-/// An element of one of the parser's temporary stacks. List elements such as properties and parameters stay on a stack until
-/// the whole list is parsed, and only then get their ids.
+/// An element of one of the parser's temporary stacks. List elements such as properties and parameters stay on a stack
+/// until the whole list is parsed, and only then get their ids.
 pub(crate) trait ListElement {
-    /// The node at `index` of its list, with its start and end. `None` if this kind of element is not a node.
+    /// Returns the node at `index` of its list, with its start and end, or `None` if this kind of element isn't a node.
     fn as_node(&self, index: u32, file: &FileBuilder) -> Option<(NodeData, u32, u32)>;
 }
 
@@ -311,13 +316,13 @@ list_elements! {
     (Atom, u32) => |_element, _index, _file| None,
 }
 
-/// Calls [`Parser::finish_node`] for the `len` elements that `take_span!` just moved into the list `$field`, starting at index
-/// `start`. The elements are in source order, so if the first one starts too late to matter, they all do.
+/// Calls [`Parser::finish_node`] for the `len` elements that `take_span!` just moved into the list `$field`, starting
+/// at index `start`. The elements are in source order, so if the first one starts too late to matter, they all do.
 ///
-/// By now the comments of the whole list are pending. An element takes the comments inside it out of `pending`, which moves
-/// everything after them. So the elements are finished from the last to the first, and the comments after an element that is
-/// done are set aside: no earlier element is closer to them. Then what is taken out is always at the end, and a list of
-/// thousands of elements with comments takes linear time.
+/// At this point the whole list's comments are pending. Finishing an element removes the comments inside it from
+/// `pending`, which shifts everything after them. So the elements are finished last to first, and the comments after a
+/// finished element are set aside, since no earlier element is closer to them. That way removals always happen at the
+/// end, and a list of thousands of elements with comments takes linear time.
 macro_rules! finish_list {
     ($p:expr, $field:ident, $start:expr, $len:expr) => {{
         use $crate::parser::comments::ListElement;
@@ -335,8 +340,8 @@ macro_rules! finish_list {
 pub(crate) use finish_list;
 
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
-    /// Must be called for every node, before the node is pushed to its list. This is on the hot path: it is one comparison
-    /// unless the node can affect a pending comment.
+    /// Must be called for every node, before the node is pushed to its list. This is on the hot path. It's one
+    /// comparison unless the node can affect a pending comment.
     #[inline(always)]
     pub(crate) fn finish_node(&mut self, node: NodeData, start: u32, end: u32) {
         if COMMENTS && start <= self.lx.max_relevant_node_start {
@@ -363,17 +368,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.comments.last_name = (start, end);
     }
 
-    /// Whether the last call of [`Parser::finish_name`] was for a name that ends at `end`.
+    /// True if the last call to [`Parser::finish_name`] was for a name that ends at `end`.
     #[inline(always)]
     pub(crate) fn has_finished_name_that_ends_at(&self, end: u32) -> bool {
         COMMENTS && self.comments.last_name.1 == end
     }
 
-    /// Takes back [`Parser::finish_node`] for the node that was finished last.
+    /// Undoes [`Parser::finish_node`] for the most recently finished node.
     ///
-    /// Call it when the parser removes that node because it turns out to be something else. For example, the `a` of `a: b` is
-    /// parsed as an expression before the `:` shows that it is a label. The id of the removed node will be used again, so no
-    /// comment may keep it. Also call it for a node that stays but is not a node in ESTree, or has another range there.
+    /// Call it when the parser removes that node because it turns out to be something else. For example, the `a` of
+    /// `a: b` is parsed as an expression before the `:` shows that it's a label. The removed node's id will be reused,
+    /// so no comment may keep it. Also call it for a node that stays but isn't a node in ESTree, or has a different
+    /// range there.
     #[inline(always)]
     pub(crate) fn unfinish_node(&mut self, node: NodeData) {
         if COMMENTS && self.comments.last_finished.0 == NodeOrName::Node(node) {
@@ -389,6 +395,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.unfinish_node(NodeData::Expr(ExprId(last as u32)));
             self.comments.last_expr_with_width.truncate(last);
         }
+        if (self.f.far_names.last()).is_some_and(|it| it.0.idx() == last) {
+            self.f.far_names.pop();
+        }
         self.f.exprs.pop()
     }
 
@@ -400,7 +409,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.f.types.pop()
     }
 
-    /// The same for a word that was taken as a name and turns out to be a keyword: `import type a = b`.
+    /// The same for a word that was parsed as a name and turns out to be a keyword: `import type a = b`.
     #[inline(always)]
     pub(crate) fn unfinish_name(&mut self, start: u32) {
         if !COMMENTS {
@@ -432,13 +441,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn update_pending_comments_for_statement(
         &mut self,
         id: StmtId,
-        // Not by value: the copy would be on the stack of `Parser::statement`, at each level of what is nested.
+        // Not by value, because the copy would sit in the frame of `Parser::statement` at every nesting level.
         kind: &StmtKind,
         start: u32,
         end: u32,
     ) {
         let kind = *kind;
-        // Prettier never attaches a comment to a stray `;` in a list of statements.
+        // Prettier never attaches a comment to a stray `;` in a statement list.
         if !self.options.attach_comments || matches!(kind, StmtKind::Empty) {
             return;
         }
@@ -483,8 +492,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.update_pending_comments(NodeOrName::Node(NodeData::Stmt(id)), start, end);
     }
 
-    /// Prettier treats the `;` that terminates a JavaScript statement as outside the statement, so a comment right before the
-    /// `;` comes after the statement. Such a comment has recorded where the statement's last real token ends.
+    /// Prettier treats the `;` that terminates a JavaScript statement as outside the statement, so a comment right
+    /// before the `;` comes after the statement. Such a comment has recorded where the statement's last real token
+    /// ends.
     fn end_without_semicolon(&self, mut kind: StmtKind, end: u32) -> u32 {
         if self.lx.src.get((end as usize).wrapping_sub(1)) != Some(&b';') {
             return end;
@@ -511,7 +521,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 | StmtKind::ForOf { body, .. }
                 | StmtKind::While { body, .. }
                 | StmtKind::Labeled { body, .. } => body,
-                // `with (a) b;` is stored as a block of `a` and `b;`. A real block ends with `}`, so it is not affected.
+                // `with (a) b;` is stored as a block of `a` and `b;`. A real block ends with `}`, so it isn't affected.
                 StmtKind::Block(statements) => match self.f.ids(statements).last() {
                     Some(last) => last,
                     None => return end,
@@ -535,8 +545,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// Call before the end of a finished node is moved. The comments after it are looked at when the next node is finished, and
-    /// by then they would be inside this one.
+    /// Call before moving a finished node's end. The comments after it aren't processed until the next node is
+    /// finished, and by then they'd be inside this one.
     #[inline(always)]
     pub(crate) fn before_node_grows(&mut self) {
         if COMMENTS && self.options.attach_comments {
@@ -544,7 +554,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// Adds the comments that the lexer has scanned since the last call. `finished` is the node that is being finished.
+    /// Adds the comments that the lexer has scanned since the last call. `finished` is the node being finished.
     #[inline(always)]
     fn add_new_pending_comments(&mut self, finished: Candidate) {
         if self.comments.tracked_count as usize != self.lx.comments.len() {
@@ -554,11 +564,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
 
     #[inline(never)]
     fn add_pending_comments_since(&mut self, first_new: usize, finished: Candidate) {
-        // The usual case, `a; // comment`: the node that is being finished ends at the token before the comments. No node ends
-        // later, and this one is around all that ended there before, so it is the preceding node. The caller sets it.
-        // Not for an expression or a type: [`Parser::unfinish_node`] would leave the comments without the node that was best
-        // before. The one other node that is taken back is the inner statement of `namespace a.b {}`, and the outer one ends
-        // at the same offset.
+        // The usual case, `a; // comment`: the node being finished ends at the token before the comments. No node ends
+        // later, and this one contains every node that ended there earlier, so it's the preceding node. The caller sets
+        // it.
+        // This doesn't apply to an expression or a type: [`Parser::unfinish_node`] would leave the comments without the
+        // previous best node. The only other node that gets unfinished is the inner statement of `namespace a.b {}`,
+        // and the outer one ends at the same offset.
         if let Some(first) = self.lx.comments.get(first_new)
             && first.prev_token_end == finished.end
             && finished.start < finished.end
@@ -580,8 +591,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_pending_comments_after_any_node(first_new);
     }
 
-    /// No node was finished since the lexer scanned the comments, so the best preceding node so far is the most recently
-    /// finished node, which is the last element of one of the node lists.
+    /// No node was finished since the lexer scanned the comments, so the best preceding node so far is the most
+    /// recently finished node, which is the last element of one of the node lists.
     #[inline(never)]
     fn add_pending_comments_after_any_node(&mut self, first_new: usize) {
         fn last_index<T>(list: &[T]) -> u32 {
@@ -673,8 +684,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.comments.tracked_count = self.lx.comments.len() as u32;
     }
 
-    /// A node from `start` to `end` was finished. The call is cold for `bun lint` and `bun check`, which never make it. The work
-    /// is in a function of its own, so that it is not compiled like cold code.
+    /// Called when a node from `start` to `end` is finished. The call is cold for `bun lint` and `bun check`, which
+    /// never make it. The work is in a separate function so that it isn't optimized as cold code.
     #[cold]
     #[inline(never)]
     fn update_pending_comments(&mut self, node: NodeOrName, start: u32, end: u32) {
@@ -696,8 +707,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.update_max_relevant_node_start();
     }
 
-    /// See `finish_list!`. Not inlined: lists are finished in functions that call themselves for what is nested, and what this
-    /// needs of the stack would be taken at each level.
+    /// See `finish_list!`. Not inlined, because lists are finished in recursive functions and inlining would add this
+    /// function's stack usage to every nesting level.
     #[inline(never)]
     pub(crate) fn finish_list_elements(
         &mut self,
@@ -708,7 +719,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         for index in (start..start + len).rev() {
             if let Some((node, node_start, node_end)) = as_node(&self.f, index) {
                 self.finish_node(node, node_start, node_end);
-                // A hole in an array has no width and is next to no comment: `[a, , /* comment */ b]`.
+                // A hole in an array has zero width and doesn't count as a comment's neighbor:
+                // `[a, , /* comment */ b]`.
                 if node_start < node_end {
                     self.set_aside_pending_comments_after(node_start);
                 }
@@ -735,8 +747,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.update_max_relevant_node_start();
     }
 
-    /// A node that starts after the following node of the last pending comment is not inside, before or directly after any
-    /// pending comment, so [`Parser::finish_node`] can skip it.
+    /// A node that starts after the following node of the last pending comment isn't inside, before or directly after
+    /// any pending comment, so [`Parser::finish_node`] can skip it.
     fn update_max_relevant_node_start(&mut self) {
         self.lx.max_relevant_node_start = match self.comments.pending.last() {
             None => 0,
@@ -745,7 +757,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
     }
 
-    /// Call at the end of the file. The comments that are still pending are not inside any node.
+    /// Call at the end of the file. The comments that are still pending aren't inside any node.
     pub(crate) fn resolve_top_level_comments(&mut self) {
         if !COMMENTS || !self.options.attach_comments {
             return;
@@ -783,9 +795,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !COMMENTS || !self.options.attach_comments {
             return;
         }
-        // Comments that were first seen after the checkpoint will be seen again. There can be thousands, so they are not
-        // restored first.
-        (self.comments).forget_comments_from(to.comments.tracked_count);
+        // Comments that were first seen after the checkpoint will be seen again. There can be thousands, so drop them
+        // without restoring them first.
+        (self.comments).discard_comments_from(to.comments.tracked_count);
         (self.comments).undo_until(to.comments.undo_log_len as usize, to.comments.tracked_count);
         self.comments
             .last_expr_with_width

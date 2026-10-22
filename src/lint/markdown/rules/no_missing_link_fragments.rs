@@ -15,7 +15,7 @@ const INVALID_FRAGMENT: Message = Message::new(
 
 static GITHUB_LINE_REFERENCE: LazyLock<Regex> =
     LazyLock::new(|| Regex::literal(r"/^L\d+(?:C\d+)?(?:-L\d+(?:C\d+)?)?$/u"));
-/// Upstream's regex starts with `(?<!<)` instead of `^` and has the `g` flag: see `html_ids`.
+/// Upstream's regex starts with `(?<!<)` instead of `^` and has the `g` flag. See `html_ids`.
 static HTML_ID_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(r#"/^<[^>]+\s(?:id|name)\s*=\s*["']?(?<id>[^"'\s>]+)["']?/iu"#)
 });

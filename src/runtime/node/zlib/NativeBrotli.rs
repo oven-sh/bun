@@ -89,6 +89,8 @@ mod _impl {
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
+        /// Copy of the pending `write()`'s input, if a pin can't keep the input mapped.
+        pub input_copy: JsCell<crate::node::node_zlib_binding::InputCopy>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -152,6 +154,7 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
+                input_copy: JsCell::new(Default::default()),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // .callback = undefined — overwritten before WorkPool::schedule()
@@ -711,6 +714,7 @@ mod _impl {
             E::ERROR_FORMAT_PADDING_1 => c"ERR__ERROR_FORMAT_PADDING_1",
             E::ERROR_FORMAT_PADDING_2 => c"ERR__ERROR_FORMAT_PADDING_2",
             E::ERROR_FORMAT_DISTANCE => c"ERR__ERROR_FORMAT_DISTANCE",
+            E::ERROR_FORMAT_BLOCK_SWITCH => c"ERR__ERROR_FORMAT_BLOCK_SWITCH",
             E::ERROR_COMPOUND_DICTIONARY => c"ERR__ERROR_COMPOUND_DICTIONARY",
             E::ERROR_DICTIONARY_NOT_SET => c"ERR__ERROR_DICTIONARY_NOT_SET",
             E::ERROR_INVALID_ARGUMENTS => c"ERR__ERROR_INVALID_ARGUMENTS",

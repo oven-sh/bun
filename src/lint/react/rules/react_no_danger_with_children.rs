@@ -1,6 +1,6 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, static_name};
 use crate::jsx::{as_jsx_element, children};
-use crate::react::{FlagsOfVariables, Variables, is_padding_spaces};
+use crate::react::{VariableFlags, Variables, is_padding_spaces};
 use crate::util_ast::name_of_key;
 use crate::util_is_create_element::is_member_called;
 use crate::util_variable::get_variable_from_context;
@@ -16,13 +16,13 @@ const DANGER_WITH_CHILDREN: Message =
 const NO_DANGER_WITH_CHILDREN: Message =
     Message::new("", "Only set one of `children` or `props.dangerouslySetInnerHTML`");
 
-/// Which of the two something has.
+/// Flags for which of the two props something has.
 const CHILDREN: u8 = 1 << 0;
 const DANGER: u8 = 1 << 1;
 
 #[derive(Default)]
 pub struct State<'a> {
-    props_of_variables: FlagsOfVariables<'a>,
+    props_of_variables: VariableFlags<'a>,
 }
 
 impl Rule for NoDangerWithChildren {
@@ -36,7 +36,7 @@ impl Rule for NoDangerWithChildren {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        // For upstream `a.#createElement` has that name too.
+        // For upstream `a.#createElement` counts too.
         if !file.mentions("createElement") && (file.language().is_oxlint || !file.mentions("#createElement")) {
             return on;
         }
@@ -69,7 +69,7 @@ impl NoDangerWithChildren {
         }
         let is_oxlint = cx.language().is_oxlint;
         let props = props_of_element(e, jsx, &mut cx.state.props_of_variables, is_oxlint);
-        // Children are passed as `children={}` or are between the tags.
+        // Children are either passed as `children={}` or placed between the tags.
         let has_children = || match is_oxlint {
             true => children(cx.file(), jsx).next().is_some_and(|first| !is_padding_spaces(first)),
             false => jsx.children_with_whitespace().next().is_some_and(|first| !is_line_break(cx.file(), first)),
@@ -85,7 +85,7 @@ impl NoDangerWithChildren {
         };
         let is_oxlint = cx.language().is_oxlint;
         let (arguments, callee) = (call.args(), call.callee());
-        // For oxlint parentheses are a node, and it is `a.createElement` alone.
+        // oxlint's AST has a node for parentheses, and it only accepts `a.createElement`.
         let is_create_element = || match callee.member_name() {
             Some(name) if is_oxlint => name.name().is("createElement") && !callee.is_parenthesized(),
             _ => !is_oxlint && is_member_called(callee, "createElement"),
@@ -93,13 +93,13 @@ impl NoDangerWithChildren {
         if arguments.len() <= 1 || !is_create_element() {
             return;
         }
-        let is_seen = |it: &Expr| it.tag() != ExprTag::Spread && !(is_oxlint && it.is_parenthesized());
-        let Some(props) = arguments.get(1).filter(is_seen) else {
+        let is_plain = |it: &Expr| it.tag() != ExprTag::Spread && !(is_oxlint && it.is_parenthesized());
+        let Some(props) = arguments.get(1).filter(is_plain) else {
             return;
         };
         let known = &mut cx.state.props_of_variables;
         let props = match props.kind() {
-            // oxlint does not follow what is spread here.
+            // oxlint doesn't follow spreads here.
             ExprKind::Object(properties) if is_oxlint => props_of_object(properties, is_oxlint),
             ExprKind::Object(properties) => {
                 let spread = variables_spread_in(props, properties, is_oxlint).into_iter();
@@ -131,16 +131,16 @@ fn prop(name: &[u8]) -> u8 {
 }
 
 fn is_line_break<'a>(file: &'a File<'a>, child: JsxChild<'a>) -> bool {
-    let (written, value) = match child {
+    let (raw_text, value) = match child {
         JsxChild::Whitespace(span) => (file.slice(span), None),
         JsxChild::Expr(e) if e.is_jsx_text() => (e.text(), e.jsx_text_value()),
         JsxChild::Expr(_) => return false,
     };
-    strings::contains_js_line_break(written) && strings::is_all_js_whitespace(value.as_deref().unwrap_or(written))
+    strings::contains_js_line_break(raw_text) && strings::is_all_js_whitespace(value.as_deref().unwrap_or(raw_text))
 }
 
-/// The attributes that the element has, and the properties of the variables that it spreads.
-fn props_of_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, known: &mut FlagsOfVariables<'a>, is_oxlint: bool) -> u8 {
+/// Returns the flags for the element's own attributes plus the properties of the variables it spreads.
+fn props_of_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, known: &mut VariableFlags<'a>, is_oxlint: bool) -> u8 {
     jsx.attrs().iter().fold(0, |props, attribute| {
         props
             | match attribute.kind() {
@@ -152,18 +152,18 @@ fn props_of_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, known: &mut FlagsOfVariables<
     })
 }
 
-/// The variable that `ident` names where `node` is.
+/// Returns the variable that `ident` refers to at `node`.
 fn variable<'a>(ident: Expr<'a>, node: Node<'a>, is_oxlint: bool) -> Option<Symbol<'a>> {
-    // oxlint looks through parentheses and the wrappers of TypeScript.
+    // oxlint looks through parentheses and TypeScript wrappers.
     if is_oxlint {
         return get_inner_expression(ident).symbol();
     }
     get_variable_from_context(node, ident.as_ident()?)
 }
 
-/// Of a variable that is declared with an object: the properties of the object, and those of such variables that it
-/// spreads.
-fn props_of_variable<'a>(variable: Symbol<'a>, known: &mut FlagsOfVariables<'a>, is_oxlint: bool) -> u8 {
+/// For a variable initialized with an object literal: returns the flags for the object's properties, plus those of the
+/// variables it spreads.
+fn props_of_variable<'a>(variable: Symbol<'a>, known: &mut VariableFlags<'a>, is_oxlint: bool) -> u8 {
     known.of_variable(variable, |it| declared_with(it, is_oxlint))
 }
 
@@ -186,7 +186,7 @@ fn variables_spread_in<'a>(object: Expr<'a>, properties: List<'a, Prop<'a>>, is_
 }
 
 fn props_of_object<'a>(properties: List<'a, Prop<'a>>, is_oxlint: bool) -> u8 {
-    // For oxlint it is what the key says, for upstream the name that is written: `[children]`, not `"children"`.
+    // oxlint uses the key's static value, upstream the name as written: `[children]`, not `"children"`.
     let name = |key: Key<'a>| if is_oxlint { static_name(key).map(Name::bytes) } else { name_of_key(key) };
     properties.iter().filter_map(|it| it.key().and_then(name)).fold(0, |props, key| props | prop(key))
 }

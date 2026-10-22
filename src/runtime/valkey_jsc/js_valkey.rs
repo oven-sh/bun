@@ -1863,6 +1863,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 }
             }
             this.client_mut().start()?;
+        } else if this.client.get().status == valkey::Status::Connected
+            && this.client.get().flags.enable_auto_reconnect
+        {
+            // uSockets reports a fatal error on an established session as a failed handshake. Before
+            // the reply to HELLO it is one: a TLS 1.3 server refuses a client certificate after our
+            // Finished. With no reconnect to follow, failing tells the queued commands why too.
+            return this.client_mut().on_tls_session_error(&ssl_error);
         } else if ssl_error.error_no == uws::us_bun_verify_error_t::HOSTNAME_MISMATCH {
             // The same check, made inside the handshake (`server_identity`).
             let hostname = Self::configured_hostname(this);

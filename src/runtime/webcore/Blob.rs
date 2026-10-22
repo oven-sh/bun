@@ -157,11 +157,14 @@ pub(crate) trait BlobExt {
         cx: &bun_jsc::JsThread<'_>,
     );
     fn get_content_type(&self) -> Option<Utf8Bytes<'_>>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
-    -> crate::Result<()>;
+    fn _on_structured_clone_serialize<W: bun_io::Write>(
+        &self,
+        store_tag: store::SerializeTag,
+        writer: &mut W,
+    ) -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     );
@@ -683,13 +686,10 @@ impl BlobExt for Blob {
     }
     fn _on_structured_clone_serialize<W: bun_io::Write>(
         &self,
+        store_tag: store::SerializeTag,
         writer: &mut W,
     ) -> crate::Result<()> {
-        let is_memory_backed = if let Some(store) = self.store.get() {
-            matches!(store.data, store::Data::Bytes(_))
-        } else {
-            false
-        };
+        let is_memory_backed = matches!(store_tag, store::SerializeTag::Bytes);
 
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
         writer.write_int_le::<u64>(if is_memory_backed {
@@ -702,16 +702,6 @@ impl BlobExt for Blob {
         writer.write_int_le::<u32>(ct.len() as u32)?;
         writer.write_all(ct)?;
         writer.write_int_le::<u8>(self.content_type_was_set.get() as u8)?;
-
-        let store_tag: store::SerializeTag = if let Some(store) = self.store.get() {
-            if matches!(store.data, store::Data::File(_)) {
-                store::SerializeTag::File
-            } else {
-                store::SerializeTag::Bytes
-            }
-        } else {
-            store::SerializeTag::Empty
-        };
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
@@ -730,7 +720,8 @@ impl BlobExt for Blob {
                 // on the wire and the receiver stats it locally, like v3.
                 writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
-                store.serialize(writer)?;
+                // resolve_size() writes into this store: borrow the File only after it.
+                store.data.as_file().serialize(writer)?;
             }
         }
 
@@ -753,15 +744,25 @@ impl BlobExt for Blob {
 
     fn on_structured_clone_serialize(
         &self,
-        _global_this: &JSGlobalObject,
+        global_this: &JSGlobalObject,
         ctx: *mut c_void,
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
+        let Some(store_tag) = structured_clone_store_tag(self) else {
+            // CloneSerializer runs RETURN_IF_EXCEPTION right after this hook returns.
+            let _ = global_this.throw_dom_exception(
+                bun_jsc::DOMExceptionCode::DataCloneError,
+                format_args!(
+                    "S3File cannot be cloned: it is bound to the credentials and options of the S3Client that created it. Pass the key instead and open it again with s3.file() where it is needed."
+                ),
+            );
+            return;
+        };
         let mut writer = StructuredCloneWriter {
             ctx,
             impl_: write_bytes,
         };
-        let _ = self._on_structured_clone_serialize(&mut writer);
+        let _ = self._on_structured_clone_serialize(store_tag, &mut writer);
     }
 
     fn on_structured_clone_deserialize(
@@ -3749,6 +3750,18 @@ impl bun_io::Write for StructuredCloneWriter {
     }
 }
 
+/// `None` for an S3 store, whatever wraps it: the record cannot carry the client's credentials.
+fn structured_clone_store_tag(blob: &Blob) -> Option<store::SerializeTag> {
+    let Some(store) = blob.store() else {
+        return Some(store::SerializeTag::Empty);
+    };
+    match store.data.tag() {
+        store::DataTag::Bytes => Some(store::SerializeTag::Bytes),
+        store::DataTag::File => Some(store::SerializeTag::File),
+        store::DataTag::S3 => None,
+    }
+}
+
 // Only ever called with f64 (Blob.last_modified). A concrete impl
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
@@ -3856,7 +3869,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut path_or_fd,
                         global_this,
-                        true,
+                        false,
                     ));
                 }
                 PathOrFileDescriptorSerializeTag::Path => {
@@ -3873,7 +3886,7 @@ fn on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
                         global_this,
-                        true,
+                        false,
                     ));
                 }
             }

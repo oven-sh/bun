@@ -1247,55 +1247,66 @@ fn match_slowly(
     let is_kept = groups.prepared.is_some();
     let parsed = groups.parsed(glob);
     if parsed.has_missed_matches
-        && let Some(matched) = match_alternatives(glob, parsed, path, mode)
+        && let Some(matched) = match_alternatives(
+            &glob[glob_start as usize..],
+            State::at(0, 0, Seen::Odd),
+            path,
+            mode,
+        )
     {
         return matched;
     }
     match_groups(glob, glob_start, path, parsed, dots, is_kept, is_windows)
 }
 
-/// Matches `*{y,[!x]}*` like `*y*` and `*[!x]*`: writes the first group out. Returns `None` if that can't be done.
+/// Matches `*{y,[!x]}*` like `*y*` and `*[!x]*`: runs the loop on from `state`, and writes out the group where it stops.
+/// Returns `None` if that can't be done.
 #[cold]
 #[inline(never)]
-fn match_alternatives(glob: &[u8], parsed: &Parsed, path: &[u8], mode: Mode) -> Option<bool> {
-    const MOST_PATTERNS: usize = 256;
-    let alternatives = &*parsed.alternatives;
-    let of_group = |first| {
-        std::iter::successors(Some(first), |it: &&Alternative| {
-            alternatives.get(it.next as usize)
-        })
-    };
-    // Each group multiplies the number of patterns to write out, and is one more call inside this one.
-    let groups = alternatives.iter().filter(|it| it.close > 0);
-    let patterns = groups.fold(1_usize, |so_far, it| {
-        so_far.saturating_mul(of_group(it).count().max(2))
-    });
-    let first = alternatives.first()?;
-    if patterns > MOST_PATTERNS
-        || first.next == Alternative::IS_SEQUENCE
-        || std::str::from_utf8(glob).is_err()
-    {
-        return None;
+fn match_alternatives(glob: &[u8], mut state: State, path: &[u8], mode: Mode) -> Option<bool> {
+    match_more(glob, None, path, Start::of(mode), Some(&mut state));
+    match state.outcome {
+        Outcome::No => return Some(false),
+        // The loop ignores the rules for dot segments.
+        Outcome::Yes => return Some(mode.dots == Dots::Match || match_written(glob, path, mode)),
+        Outcome::Group if glob[state.glob_index as usize] == b'{' => {}
+        _ => return None,
     }
-    let before = &glob[parsed.top as usize..first.start as usize - 1];
-    let after = &glob[first.close as usize + 1..];
-    let mut written: SmallVec<[u8; 64]> = SmallVec::new();
-    for it in of_group(first) {
+    let open = state.glob_index as usize;
+    // Where its alternatives end.
+    let mut ends: SmallVec<[usize; 8]> = SmallVec::new();
+    let (mut at, mut depth) = (open + 1, 0);
+    loop {
+        match *glob.get(at)? {
+            b'{' => depth += 1,
+            b',' if depth == 0 => ends.push(at),
+            b'}' if depth == 0 => break,
+            b'}' => depth -= 1,
+            b'\\' => at += 1,
+            b'[' => at = class_end(glob, at)? - 1,
+            _ => {}
+        }
+        at += 1;
+    }
+    ends.push(at);
+    let mut written: SmallVec<[u8; 128]> = SmallVec::new();
+    let mut start = open + 1;
+    for end in ends {
         written.clear();
-        for mut part in [before, &glob[it.start as usize..it.end as usize], after] {
-            match (written.last(), part.first()) {
-                // Two `*` that come to stand side by side would be a `**`.
-                (Some(b'*'), Some(b'*')) if !written.ends_with(b"\\*") => part = &part[1..],
-                (Some(b'?' | b'*' | b'+' | b'@' | b'!'), Some(b'(')) => return None,
-                _ => {}
+        for mut part in [&glob[..open], &glob[start..end], &glob[at + 1..]] {
+            // Two `*` that come to stand side by side would be a `**`.
+            if written.ends_with(b"*") && !written.ends_with(b"\\*") && part.first() == Some(&b'*')
+            {
+                part = &part[1..];
             }
             written.extend_from_slice(part);
         }
+        start = end + 1;
         // A leading `!` would mean something else in a pattern of its own, and `**/*` at the end has a rule of its own.
         if written.first() == Some(&b'!') || written.ends_with(b"**/*") {
             return None;
         }
-        if match_written(&written, path, mode) {
+        if match_alternatives(&written, state, path, mode)? {
             return Some(true);
         }
     }
@@ -3653,7 +3664,7 @@ struct Parsed {
     /// All that keeps it from being regular are classes that can match a separator. It has neither `*` nor groups, so there's only
     /// one way to match it, and the loop finds that.
     is_fixed: bool,
-    /// One of those classes comes after a `*`, so the loop misses matches. All its groups are `{a,b}`. See [`match_alternatives`].
+    /// One of those classes comes after a `*`, so the loop misses matches, and [`match_alternatives`] can write its groups out.
     has_missed_matches: bool,
     /// It has only literal bytes that need no second look, which nothing compares faster than the loop.
     is_plain_text: bool,
@@ -3709,6 +3720,8 @@ static IS_TEXT: [bool; 256] = {
 };
 
 impl Parsed {
+    const MOST_WRITTEN_OUT: usize = 64;
+
     #[inline(always)]
     fn new() -> Parsed {
         Parsed {
@@ -3789,7 +3802,9 @@ impl Parsed {
         self.is_plain_text = i == glob.len();
         let (mut has_star, mut has_separator_class) = (false, false);
         // A `*` that isn't part of a `**`, and a class after it that can match a separator.
-        let (mut has_lone_star, mut has_missed_matches, mut has_extglob) = (false, false, false);
+        let (mut has_lone_star, mut has_missed_matches) = (false, false);
+        // A group that isn't `{a,b}`.
+        let mut has_other_group = false;
         let mut is_one_segment = !strings::contains_char(&glob[top..i], b'/');
         while let Some(&ch) = glob.get(i) {
             if IS_TEXT[ch as usize] {
@@ -3837,7 +3852,7 @@ impl Parsed {
                 {
                     let at = if ch == b'(' { i - 1 } else { i };
                     is_one_segment &= glob[at] != b'!';
-                    has_extglob |= ch == b'(';
+                    has_other_group |= ch == b'(';
                     let inner = Open {
                         is_brace: ch == b'{',
                         is_plain: ch == b'{' || matches!(glob[i - 1], b'@' | b'?'),
@@ -3898,6 +3913,7 @@ impl Parsed {
                         && Sequence::read(&glob[it.start as usize..i]).is_some()
                     {
                         it.next = Alternative::IS_SEQUENCE;
+                        has_other_group = true;
                     }
                     if let Some(it) = outer.pop() {
                         group = it;
@@ -3942,7 +3958,20 @@ impl Parsed {
             i += 1;
         }
         self.is_fixed = is_regular && depth == 0 && !has_star && found.is_empty();
-        self.has_missed_matches = is_regular && depth == 0 && has_missed_matches && !has_extglob;
+        // Each group multiplies the number of patterns to write out, and is one more call inside the last.
+        let patterns = || {
+            let groups = found.iter().filter(|it| it.close > 0);
+            groups.fold(1_usize, |so_far, first| {
+                let rest = std::iter::successors(Some(first), |it| found.get(it.next as usize));
+                so_far.saturating_mul(rest.count().max(2))
+            })
+        };
+        self.has_missed_matches = is_regular
+            && depth == 0
+            && has_missed_matches
+            && !has_other_group
+            && patterns() <= Parsed::MOST_WRITTEN_OUT
+            && std::str::from_utf8(glob).is_ok();
         self.is_regular = is_regular && depth == 0 && !has_separator_class;
         self.has_group = has_group || has_choice && !self.is_regular;
         self.is_one_segment = is_one_segment;

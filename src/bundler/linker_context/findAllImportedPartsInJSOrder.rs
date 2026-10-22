@@ -351,6 +351,12 @@ impl WalkPlan {
             if !owned.has_cycle || chunks[chunk_index].entry_bits().count() < 2 {
                 continue;
             }
+            // Such a chunk loads only with its owner, so no other order ever runs.
+            let flags = this.graph.meta.items_flags();
+            let mut files = owned.runs.iter().map(|run| run.source_index as usize);
+            if files.any(|file| flags[file].moved_out_of_entry_chunk) {
+                continue;
+            }
             let reads = reads.get_or_insert_with(|| LoadTimeReads::new(this));
             if !reads.is_broken_by(this, &owned.runs) {
                 continue;

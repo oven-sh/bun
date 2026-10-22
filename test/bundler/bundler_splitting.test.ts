@@ -695,6 +695,28 @@ describe("bundler", () => {
       `"index"`,
       {},
     ],
+    // `handlers` names `format`, which names `Store`, so the order of settings.js (store.js, then format.js) looks safer.
+    [
+      "PrecedesSharedFilesInImportCycle",
+      {
+        "/store.js": /* js */ `
+          import { format } from "./format.js";
+          const NAME = globalThis.APP.name;
+          console.log("store");
+          export class Store { name = NAME; toString() { return format(this); } }
+        `,
+        "/format.js": /* js */ `
+          import { Store } from "./store.js";
+          export function format(value) { return value instanceof Store ? value.name : String(value); }
+          globalThis.handlers = { format };
+          console.log("format");
+        `,
+        "/settings.js": `import "./format.js";\n` + setupBeforeShared["/settings.js"],
+      },
+      "format\nstore\nindex app\nsettings app",
+      `"index"`,
+      {},
+    ],
     [
       "ImportedByOtherFile",
       {

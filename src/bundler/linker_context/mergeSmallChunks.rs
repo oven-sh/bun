@@ -1357,6 +1357,7 @@ pub(crate) fn merge_small_chunks(
     // A member that can be evaluating when an entry of the class loads stays
     // out (rule 1 in the doc comment above).
     let mut folded_same = 0usize;
+    let mut moved_out_of_entry_chunk: Vec<u32> = Vec::new();
     for (class_key, (class, members)) in classes.keys().iter().zip(classes.values()) {
         let unpinned = || {
             members.iter().copied().filter(|&i| {
@@ -1400,9 +1401,10 @@ pub(crate) fn merge_small_chunks(
                     merge_sorted(&mut parent.deps, &deps);
                     parent.deps.retain(|&dep| dep != target_index);
                 }
-                for file in moved {
+                for &file in &moved {
                     group_of_file[file as usize] = target_index;
                 }
+                moved_out_of_entry_chunk.extend(moved);
             }
         }
         for &member in members {
@@ -1422,7 +1424,12 @@ pub(crate) fn merge_small_chunks(
         }
     }
     if !fold_pure {
-        rekey_files(this, group_of_file, groups.values())?;
+        rekey_files(
+            this,
+            group_of_file,
+            groups.values(),
+            &moved_out_of_entry_chunk,
+        )?;
         debug!(
             "mergeSmallChunks: {} chunks folded into chunks with the same load conditions",
             folded_same
@@ -1817,7 +1824,7 @@ pub(crate) fn merge_small_chunks(
         this.inits_already_done = Some(done);
     }
 
-    rekey_files(this, group_of_file, groups)?;
+    rekey_files(this, group_of_file, groups, &moved_out_of_entry_chunk)?;
     debug!(
         "mergeSmallChunks: {} chunks folded into chunks with the same load conditions, {} side-effect-free chunks folded into a superset in {} passes (min size {} bytes)",
         folded_same, folded_pure, passes, min_chunk_size
@@ -1829,7 +1836,12 @@ fn rekey_files(
     this: &mut LinkerContext,
     group_of_file: &[usize],
     groups: &[Group],
+    moved_out_of_entry_chunk: &[u32],
 ) -> crate::Result<()> {
+    let flags = this.graph.meta.items_flags_mut();
+    for &file in moved_out_of_entry_chunk {
+        flags[file as usize].moved_out_of_entry_chunk = true;
+    }
     let file_entry_bits = this.graph.files.items_entry_bits_mut();
     for (source_index, &group_index) in group_of_file.iter().enumerate() {
         if group_index == usize::MAX {

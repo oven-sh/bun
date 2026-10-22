@@ -1102,6 +1102,19 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("a control byte inside an open bracket does not end the entry", async () => {
+      // There it can be in a comment or in a regex literal.
+      const { outputs, stderr, exitCode } = await runRepl([
+        "[1, // a\x01b",
+        '/c\x02d/.test("c\x02d"),',
+        "3].join()",
+        ".exit",
+      ]);
+      expect(outputs).toEqual(['"1,true,3"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     // The REPL reads 256 bytes at a time. A comment line puts the byte under test on that boundary.
     test("a character that is cut by the end of a read stays whole", async () => {
       using dir = tempDir("repl-read-boundary", {
@@ -3023,6 +3036,26 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         },
         { env: { NO_COLOR: undefined, FORCE_COLOR: "1" } },
       );
+    });
+  });
+
+  test("a recalled entry with more lines than the terminal has rows shows the lines around the cursor", async () => {
+    await withTerminalRepl(async ({ send, waitForScreen }) => {
+      // 50 lines on a terminal of 40 rows: a redraw cannot go back to a row that scrolled off the top.
+      send(["[0,", ...Array(48).fill("1,"), "0].length"].join("\n") + "\n");
+      const top = (await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "50")).rows.length - 1;
+      // Up: the cursor is at the end, so the last 38 lines are drawn.
+      send("\x1b[A");
+      let screen = await waitForScreen(s => s.rows.at(-1) === "... 0].length");
+      expect(screen.rows.slice(top)).toEqual([...Array(37).fill("... 1,"), "... 0].length"]);
+      // A key redraws the same rows.
+      send("x");
+      screen = await waitForScreen(s => s.rows.at(-1) === "... 0].lengthx");
+      expect(screen.rows.slice(top)).toEqual([...Array(37).fill("... 1,"), "... 0].lengthx"]);
+      // Ctrl+A goes to the first line: now the first 38 lines are drawn.
+      send("\x01");
+      screen = await waitForScreen(s => s.rows.at(top) === "> [0," && s.cursor.row === top && s.cursor.col === 2);
+      expect(screen.rows.slice(top)).toEqual(["> [0,", ...Array(37).fill("... 1,")]);
     });
   });
 

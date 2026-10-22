@@ -982,6 +982,8 @@ impl Layout {
 struct Drawing {
     /// Last width the terminal reported.
     width: u16,
+    /// Last height the terminal reported.
+    height: u16,
     /// Where the terminal cursor was left.
     cursor: ScreenPos,
     /// The cell after the last character of the line (the ghost text is not counted).
@@ -992,15 +994,19 @@ impl Drawing {
     fn new() -> Drawing {
         Drawing {
             width: 80,
+            height: 24,
             cursor: ScreenPos::default(),
             end: ScreenPos::default(),
         }
     }
 
-    fn update_width(&mut self) {
+    fn update_size(&mut self) {
         if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
             if size.col > 0 {
                 self.width = size.col;
+            }
+            if size.row > 0 {
+                self.height = size.row;
             }
         }
     }
@@ -1490,11 +1496,11 @@ impl<'a> Repl<'a> {
         Output::flush();
 
         // Every redraw, so that a resize is picked up.
-        drawing.update_width();
+        drawing.update_size();
         let width = usize::from(drawing.width);
 
-        let prompt = self.get_prompt();
-        let prompt_len = self.get_prompt_length();
+        let mut prompt = self.get_prompt();
+        let mut prompt_len = self.get_prompt_length();
         let line = self.line_editor.get_line();
         let edit_cursor = self.line_editor.cursor;
         // What the terminal gets for the line, and where the edit cursor is in that.
@@ -1505,7 +1511,13 @@ impl<'a> Repl<'a> {
             push_display_form(&mut display_form, &line[..edit_cursor], &mut column);
             let cursor_at = display_form.len();
             push_display_form(&mut display_form, &line[edit_cursor..], &mut column);
-            (display_form.as_slice(), cursor_at)
+            let height = usize::from(drawing.height);
+            let visible = visible_lines(&display_form, cursor_at, prompt_len, width, height);
+            if visible.start > 0 {
+                prompt = self.continuation_prompt();
+                prompt_len = CONTINUATION_COLUMNS;
+            }
+            (&display_form[visible.clone()], cursor_at - visible.start)
         } else {
             (line, edit_cursor)
         };
@@ -3164,6 +3176,53 @@ fn is_control_byte(byte: u8) -> bool {
     byte < 0x20 || byte == 0x7f
 }
 
+/// The lines of `text` around `cursor` that fit on a terminal of `height` rows: a redraw cannot go back to a row that scrolled off the top.
+fn visible_lines(
+    text: &[u8],
+    cursor: usize,
+    first_prefix: usize,
+    width: usize,
+    height: usize,
+) -> core::ops::Range<usize> {
+    // Two rows stay free: one for ghost text that wraps, one for the cursor after a full last row.
+    let budget = height.saturating_sub(2).max(1);
+    let rows_of = |start: usize, end: usize| {
+        let prefix = if start == 0 {
+            first_prefix
+        } else {
+            CONTINUATION_COLUMNS
+        };
+        let cells = prefix + strings::visible::width::exclude_ansi_colors::utf8(&text[start..end]);
+        cells.div_ceil(width).max(1)
+    };
+    let mut start = strings::last_index_of_char(&text[..cursor], b'\n').map_or(0, |lf| lf + 1);
+    let mut end =
+        strings::index_of_char_usize(&text[cursor..], b'\n').map_or(text.len(), |lf| cursor + lf);
+    let mut rows = rows_of(start, end);
+    // The lines below the cursor first, then the lines above it.
+    while end < text.len() {
+        let next = end + 1;
+        let next_end =
+            strings::index_of_char_usize(&text[next..], b'\n').map_or(text.len(), |lf| next + lf);
+        rows += rows_of(next, next_end);
+        if rows > budget {
+            break;
+        }
+        end = next_end;
+    }
+    while start > 0 && rows <= budget {
+        let previous_end = start - 1;
+        let previous =
+            strings::last_index_of_char(&text[..previous_end], b'\n').map_or(0, |lf| lf + 1);
+        rows += rows_of(previous, previous_end);
+        if rows > budget {
+            break;
+        }
+        start = previous;
+    }
+    start..end
+}
+
 /// Appends part of the input line as the terminal gets it: TAB as blanks to the next tab stop, other control characters spelled out.
 fn push_display_form(out: &mut Vec<u8>, text: &[u8], column: &mut usize) {
     const TAB_STOP: usize = 8;
@@ -3422,8 +3481,12 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 
         // Count brackets
         match ch {
-            // No later line completes a control byte outside a string (a piped `ESC [ A`): run it now, so that it fails.
-            0x00..=0x08 | 0x0e..=0x1f | 0x7f => return false,
+            // No later line completes a control byte at the top level (a piped `ESC [ A`): run it now, so that it fails. Inside a bracket it can be in a comment or a regex literal.
+            0x00..=0x08 | 0x0e..=0x1f | 0x7f
+                if brace_count <= 0 && bracket_count <= 0 && paren_count <= 0 =>
+            {
+                return false;
+            }
             b'{' => brace_count += 1,
             b'}' => brace_count -= 1,
             b'[' => bracket_count += 1,

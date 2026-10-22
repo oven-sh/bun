@@ -1,11 +1,6 @@
 //! Host function wrappers — the glue between Rust functions and JSC native callbacks.
 //!
-//! The fn-wrapping machinery lives in the `#[bun_jsc::host_fn]` /
-//! `#[bun_jsc::host_call]` proc-macro attributes. This file keeps:
-//!   - the runtime result-mapping helpers the macros call into,
-//!   - the FFI surface for `JSFunction` creation,
-//! and stubs the reflection-driven generators (callers hand-write the
-//! equivalent decode/dispatch glue until the proc-macros grow those modes).
+//! The result-mapping helpers that generated thunks call into, and the FFI surface for `JSFunction` creation.
 
 use core::ffi::c_void;
 
@@ -42,9 +37,6 @@ pub type JsHostFn = unsafe extern "sysv64" fn(*mut JSGlobalObject, *mut CallFram
 #[cfg(not(all(windows, target_arch = "x86_64")))]
 pub type JsHostFn = unsafe extern "C" fn(*mut JSGlobalObject, *mut CallFrame) -> JSValue;
 
-/// Safe host-function shape; `#[bun_jsc::host_fn]` wraps it into a `JsHostFn`.
-pub type JsHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
-
 /// Expand to the JSC host-function ABI string for the current target. Rust
 /// forbids macros in `extern "<abi>"` position, but *does* accept them as the
 /// whole `extern` token sequence inside an item — so callers spell:
@@ -68,66 +60,8 @@ macro_rules! jsc_host_abi {
     };
 }
 
-/// Re-exported for [`jsc_promise_handler!`] expansions so callers need no
-/// direct `bun_opaque` dep. Not public API.
-#[doc(hidden)]
-pub use bun_opaque::opaque_deref as __opaque_deref;
-
-/// Define a `JsHostFn`-shaped promise-reaction shim that forwards to a safe
-/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>` body.
-///
-/// Expands to a [`jsc_host_abi!`] `extern fn` whose signature matches
-/// [`JsHostFn`] (so the fn item coerces to the `JSValue::then`/`then2`
-/// callback slot and to `Zig::GlobalObject::promiseHandlerID`'s address
-/// comparison). The `*mut → &` derefs and `JsResult → JSValue` mapping are
-/// centralised here so the caller spells zero `unsafe`.
-///
-/// Two forms:
-///
-/// ```ignore
-/// // `#[unsafe(export_name = "Link__Symbol")]` on a locally-named shim:
-/// bun_jsc::jsc_promise_handler!(
-///     pub(crate) fn on_resolve_shim = "Link__Symbol" => on_resolve
-/// );
-///
-/// // `#[unsafe(no_mangle)]` — the shim ident IS the link symbol:
-/// bun_jsc::jsc_promise_handler!(
-///     pub fn Link__Symbol => on_resolve
-/// );
-/// ```
-#[macro_export]
-macro_rules! jsc_promise_handler {
-    ($vis:vis fn $shim:ident = $link:literal => $body:path) => {
-        $crate::jsc_host_abi! {
-            #[unsafe(export_name = $link)]
-            $vis unsafe fn $shim(
-                g: *mut $crate::JSGlobalObject,
-                cf: *mut $crate::CallFrame,
-            ) -> $crate::JSValue {
-                let g = $crate::host_fn::__opaque_deref(g);
-                let cf = $crate::host_fn::__opaque_deref(cf);
-                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
-            }
-        }
-    };
-    ($vis:vis fn $shim:ident => $body:path) => {
-        $crate::jsc_host_abi! {
-            #[unsafe(no_mangle)]
-            $vis unsafe fn $shim(
-                g: *mut $crate::JSGlobalObject,
-                cf: *mut $crate::CallFrame,
-            ) -> $crate::JSValue {
-                let g = $crate::host_fn::__opaque_deref(g);
-                let cf = $crate::host_fn::__opaque_deref(cf);
-                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
-            }
-        }
-    };
-}
-
-// Capitalized re-exports — enough call sites (and the crate-root re-export in
-// lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
-pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
+// Enough call sites use the acronym-caps spelling that both must resolve.
+pub use JsHostFn as JSHostFn;
 
 // ─────────────────────── host-fn wrapping (proc-macro) ───────────────────────
 
@@ -197,7 +131,7 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
 
 // ──────────────────────── codegen-thunk dispatch helpers ────────────────────────
 //
-// The thunks of `#[bun_jsc::host_fn]`, `generate-host-exports.ts`, `generate-js2native.ts` and `generate-jssink.ts` call these.
+// The thunks of `generate-host-exports.ts` and `generate-jssink.ts` call these.
 
 /// Normalize a host-fn body's return type to `JsResult<JSValue>`.
 pub trait IntoHostFnReturn {
@@ -237,73 +171,6 @@ pub fn host_fn_static<R: IntoHostFnReturn>(
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
     host_fn_result(global, || f(global, callframe))
-}
-
-/// No exception scope. For `host`-shape exports whose
-/// impl returns bare `JSValue` (e.g. `Bun__drainMicrotasksFromJS`) — wrapping
-/// these in `to_js_host_call` would trip the return/exception biconditional
-/// when the body legitimately leaves an exception pending.
-#[inline]
-pub(crate) fn host_fn_static_passthrough(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
-) -> JSValue {
-    f(global, callframe)
-}
-
-/// Raw-pointer entry for `host`-shape exports whose `#[no_mangle]` thunk must
-/// keep `(*mut JSGlobalObject, *mut CallFrame)` params so the symbol coerces
-/// to [`JsHostFn`] when Rust passes it as a callback (e.g. `JSValue::then2`).
-/// All other thunks take references directly.
-///
-/// Both are `opaque_ffi!` ZST handles, so the `*mut → &` conversion is the
-/// centralised [`bun_opaque::opaque_deref_nn`] proof (zero-byte deref). JSC's
-/// host-call ABI never passes null for either argument — `globalObject` comes
-/// from the running VM and `callFrame` is the on-stack frame pointer — so the
-/// unchecked `_nn` variant is used to drop the two `testq; je <panic>` pairs
-/// from every `HOST_EXPORT` entry (`debug_assert!`ed in debug builds).
-///
-/// # Safety
-/// `global` and `callframe` must be non-null and valid for the duration of the
-/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
-#[track_caller]
-#[inline]
-pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
-) -> JSValue {
-    // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) = unsafe {
-        (
-            JSGlobalObject::opaque_ref_nn(global),
-            CallFrame::opaque_ref_nn(callframe),
-        )
-    };
-    host_fn_static(global, callframe, f)
-}
-
-/// Raw-pointer entry for `host`-shape exports, no exception scope.
-/// See [`host_fn_static_raw`].
-///
-/// # Safety
-/// `global` and `callframe` must be non-null and valid for the duration of the
-/// call (guaranteed by the JSC host-function ABI for every `JsHostFn` thunk).
-#[inline]
-pub unsafe fn host_fn_static_passthrough_raw(
-    global: *mut JSGlobalObject,
-    callframe: *mut CallFrame,
-    f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
-) -> JSValue {
-    // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) = unsafe {
-        (
-            JSGlobalObject::opaque_ref_nn(global),
-            CallFrame::opaque_ref_nn(callframe),
-        )
-    };
-    host_fn_static_passthrough(global, callframe, f)
 }
 
 /// Lazy property creator / free getter: `fn(&JSGlobalObject) -> R`. Used by
@@ -468,7 +335,6 @@ pub fn new_function_with_data(
     data: *mut c_void,
 ) -> JSValue {
     jsc::mark_binding();
-    // The caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
     private::Bun__CreateFFIFunctionWithDataValue(
         global_object,
         symbol_name,

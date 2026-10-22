@@ -9,14 +9,12 @@
 //
 // Marker grammar (one line, immediately preceding `pub fn`):
 //
-//     // HOST_EXPORT(Bun__drainMicrotasksFromJS)
-//     pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame)
-//         -> JsResult<JSValue> { … }
+//     // HOST_EXPORT(BunObject__createBunStdin)
+//     pub fn create_bun_stdin(global: &JSGlobalObject) -> JSValue { … }
 //
 // Optional second arg selects the calling convention:
-//   - `jsc`  (default for `(global, callframe) -> JSValue` shape) → JSC sysv64
-//     on win-x64, `extern "C"` elsewhere; dispatched via `host_fn::host_fn_static`.
-//   - `c`    → plain `extern "C"`; raw pointer thunk, no panic barrier.
+//   - `jsc`  → JSC sysv64 on win-x64, `extern "C"` elsewhere.
+//   - `c`    (default) → plain `extern "C"`; raw pointer thunk, no panic barrier.
 //   - `rust` → `extern "Rust"`; for link-time `extern "Rust" {}` consumers
 //     (cycle-breaking hooks). No pointer rewriting — signature is forwarded
 //     verbatim.
@@ -25,8 +23,6 @@
 //
 //   shape        impl signature                                          → thunk
 //   ──────────── ─────────────────────────────────────────────────────────────────
-//   host         (&JSGlobalObject, &CallFrame) -> JsResult<JSValue>|JSValue
-//                  → host_fn::host_fn_static(g, cf, path::name)
 //   lazy         (&JSGlobalObject) -> JsResult<JSValue>|JSValue
 //                  → host_fn::host_fn_lazy(g, path::name)
 //   generic      (T0, T1, …) -> R   where Tn ∈ {&X, &mut X, *T, scalar}
@@ -121,7 +117,7 @@ interface Export {
   modPath: string; // `crate::…` (relative to bun_runtime) or `bun_jsc::…`
   params: Param[];
   ret: string;
-  shape: "host" | "reaction" | "lazy" | "generic" | "rust";
+  shape: "lazy" | "generic" | "rust";
   isUnsafe: boolean;
 }
 
@@ -279,26 +275,7 @@ for (const { dir, crate } of scanRoots) {
       const isJsRet = ret === "JSValue" || /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(ret);
       let shape: Export["shape"];
       if (abi === "rust") shape = "rust";
-      else if (
-        params.length === 3 &&
-        /^(?:(?:::)?bun_ptr::)?ThisPtr\s*</.test(params[0].ty) &&
-        /JSGlobalObject$/.test(params[1].ty) &&
-        /CallFrame$/.test(params[2].ty) &&
-        isJsRet
-      ) {
-        // Promise reaction: `JSValue::then(global, ctx, resolve, reject)` stashes
-        // `ctx` as the trailing argument; the thunk hands it back typed.
-        shape = "reaction";
-        abi ??= "jsc";
-      } else if (
-        params.length === 2 &&
-        /JSGlobalObject$/.test(params[0].ty) &&
-        /CallFrame$/.test(params[1].ty) &&
-        isJsRet
-      ) {
-        shape = "host";
-        abi ??= "jsc";
-      } else if (params.length === 1 && /JSGlobalObject$/.test(params[0].ty) && isJsRet) {
+      else if (params.length === 1 && /JSGlobalObject$/.test(params[0].ty) && isJsRet) {
         shape = "lazy";
         // Lazy property creators are direct C++ calls (e.g. ZigGlobalObject.cpp
         // declares `extern "C" JSC::EncodedJSValue BunObject__createBunStd*`),
@@ -416,42 +393,10 @@ function emitThunk(e: Export): string {
   // panic barrier + Err→empty mapping). Plain-`JSValue` impls are bare
   // host-call-ABI bodies (no exception-scope wrapper) — wrap them and you trip
   // `assert_exception_presence_matches(false)` whenever the body legitimately
-  // leaves an exception pending while returning non-empty (e.g.
-  // `Bun__drainMicrotasksFromJS`). Match `#[bun_jsc::host_call]`: deref + call,
-  // no scope.
+  // leaves an exception pending while returning non-empty. Match
+  // `#[bun_jsc::host_call]`: deref + call, no scope.
   const retIsJsResult = /^(?:bun_jsc::)?JsResult\s*<\s*JSValue\s*>$/.test(e.ret);
   switch (e.shape) {
-    case "host": {
-      // JSC host fn: `(g, cf) -> JSValue`. Always JSC ABI — these are
-      // dispatched through `JSC::JSFunction` (`BUN_DECLARE_HOST_FUNCTION`).
-      // Keep raw `*mut` params so the symbol coerces to `host_fn::JSHostFn`
-      // when Rust code passes it as a callback (e.g. `JSValue::then2`). The
-      // thunk is `pub unsafe extern fn` (matches `JSHostFn`'s `unsafe`
-      // qualifier) and routes through the `_raw` helper that derefs under a
-      // documented safety contract — so no safe `pub fn` derefs a raw ptr.
-      const body = retIsJsResult
-        ? `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_raw(g, cf, ${impl}) }`
-        : `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid.\n    unsafe { host_fn::host_fn_static_passthrough_raw(g, cf, ${impl}) }`;
-      return `
-// ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
-    }
-    case "reaction": {
-      const wrap = retIsJsResult ? "host_fn::host_fn_static_raw" : "host_fn::host_fn_static_passthrough_raw";
-      const body = `    // SAFETY: JSC trampoline guarantees g/cf are non-null and valid; the
-    // trailing argument is the \`ctx\` this reaction was registered with via
-    // \`JSValue::then\`, on which the registrant holds a ref until it runs.
-    unsafe {
-        ${wrap}(g, cf, |g, cf| {
-            let args = cf.arguments();
-            let this = ::bun_ptr::ThisPtr::new(args[args.len() - 1].as_promise_ptr());
-            ${impl}(this, g, cf)
-        })
-    }`;
-      return `
-// ${loc}
-${emitNoMangle(e.abi, e.symbol, "g: *mut JSGlobalObject, cf: *mut CallFrame", "JSValue", body, /*unsafeFn*/ true)}`;
-    }
     case "lazy": {
       // Lazy property creator: `(g) -> JSValue`. ABI is whatever the C++ decl
       // uses — `e.abi` (default `c` for direct `extern "C"` calls; `jsc` for
@@ -531,8 +476,7 @@ const header = `// Auto-generated by src/codegen/generate-host-exports.ts — DO
 //
 // Centralised \`#[unsafe(no_mangle)] extern "C"\` thunks for hand-written host
 // exports. Each thunk derefs the raw C pointers and calls the safe-signature
-// \`pub fn …_impl(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>\` (or
-// shape-appropriate variant) via \`bun_jsc::host_fn::*\`, so the source files
+// \`pub fn\` via \`bun_jsc::host_fn::*\`, so the source files
 // contain zero \`#[no_mangle]\` and zero raw-pointer-deref boilerplate.
 //
 // Adding an export: put \`// HOST_EXPORT(SymbolName)\` on the line above the
@@ -553,7 +497,6 @@ const importCandidates: Array<[string, string]> = [
   ["core::ffi", "c_int"],
   ["core::ffi", "c_void"],
   ["bun_jsc", "host_fn"],
-  ["bun_jsc", "CallFrame"],
   ["bun_jsc", "JSGlobalObject"],
   ["bun_jsc", "JSValue"],
   ["bun_jsc", "JsResult"],
@@ -587,8 +530,7 @@ writeIfNotChanged(path.join(outBase, "generated_host_exports.rs"), header + impo
 
 console.log(
   `generated_host_exports.rs: ${exportsFound.length} exports ` +
-    `(host=${exportsFound.filter(e => e.shape === "host" || e.shape === "reaction").length}, ` +
-    `lazy=${exportsFound.filter(e => e.shape === "lazy").length}, ` +
+    `(lazy=${exportsFound.filter(e => e.shape === "lazy").length}, ` +
     `generic=${exportsFound.filter(e => e.shape === "generic").length}, ` +
     `rust=${exportsFound.filter(e => e.shape === "rust").length}); ` +
     `${externTotal} extern-C blocks audited`,

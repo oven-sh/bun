@@ -6,9 +6,10 @@
 use crate::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
+use bun_jsc::bindgen::{JsLocal, JsScope};
 #[cfg(windows)]
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
 use crate::api::bun::subprocess::Subprocess;
@@ -49,14 +50,8 @@ pub(crate) fn attach_windows_socket_payload(
     Ok(Some(hex))
 }
 
-#[bun_jsc::host_fn]
-fn emit_process_error_event(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [ex] = callframe.arguments_as_array::<1>();
-    Process__emitErrorEvent(global_this, ex);
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn emit_process_error_event<'a>(cx: &mut JsScope<'a>, error: JsLocal<'a>) {
+    Process__emitErrorEvent(cx.global(), error.to_js());
 }
 
 fn do_send_err(
@@ -73,9 +68,7 @@ fn do_send_err(
         let target = bun_jsc::JSFunction::create(
             global_object,
             "",
-            // `#[bun_jsc::host_fn]` emits the C-ABI shim under this name; the
-            // safe `emit_process_error_event` is `JSHostFnZig`, not `JSHostFn`.
-            __jsc_host_emit_process_error_event,
+            crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessErrorEvent,
             1,
             Default::default(),
         );
@@ -301,12 +294,14 @@ pub(crate) fn do_send(
     Ok(status == SerializeAndSendResult::Success)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn emit_handle_ipc_message(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [target, message, handle] = callframe.arguments_as_array::<3>();
+pub(crate) fn emit_handle_ipc_message<'a>(
+    cx: &mut JsScope<'a>,
+    target: JsLocal<'a>,
+    message: JsLocal<'a>,
+    handle: JsLocal<'a>,
+) -> JsResult<()> {
+    let global_this = cx.global();
+    let [target, message, handle] = [target.to_js(), message.to_js(), handle.to_js()];
     if target.is_null() {
         // Cluster-internal replies that carried a descriptor (shared dgram
         // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
@@ -322,7 +317,7 @@ pub(crate) fn emit_handle_ipc_message(
                             message,
                             handle,
                         )?;
-                        return Ok(JSValue::UNDEFINED);
+                        return Ok(());
                     }
                 }
             }
@@ -331,34 +326,33 @@ pub(crate) fn emit_handle_ipc_message(
         let Some(ipc) = get_ipc_instance(vm) else {
             // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
             Process__emitMessageEvent(global_this, message, handle);
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
         unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
     } else {
         if !target.is_cell() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let Some(subprocess) = Subprocess::from_js_direct(target) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
         unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-// The #[bun_jsc::host_fn] attribute emits the jsc-callconv shim and the
-// `Bun__Process__send` export.
-//
-// LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
-// body — via `do_send` — names `Listener` (`bun_runtime`). The export is a
-// link-time `#[no_mangle]` symbol, so the defining crate does not matter to
-// the C++ caller.
-#[bun_jsc::host_fn(export = "Bun__Process__send")]
-fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send<'a>(
+    cx: &mut JsScope<'a>,
+    message: JsLocal<'a>,
+    handle: JsLocal<'a>,
+    options: JsLocal<'a>,
+    callback: JsLocal<'a>,
+) -> JsResult<bool> {
     bun_jsc::mark_binding!();
+    let global = cx.global();
     let vm = global.bun_vm().as_mut();
     // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance` (or
     // `None`); the instance is heap-allocated, not embedded in `vm`.
@@ -378,11 +372,15 @@ fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     do_send(
         ipc,
         global,
-        frame.arguments_as_array::<4>(),
+        [
+            message.to_js(),
+            handle.to_js(),
+            options.to_js(),
+            callback.to_js(),
+        ],
         FromEnum::Process,
         peer_pid,
     )
-    .map(JSValue::from)
 }
 
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so

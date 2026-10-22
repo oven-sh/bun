@@ -1,7 +1,9 @@
 //! JSC bridges for `bun_install::hosted_git_info`.
 
+use bun_core::String as BunString;
+use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Extension trait providing `.to_js()` on `HostedGitInfo`.
 trait HostedGitInfoJsc {
@@ -10,7 +12,6 @@ trait HostedGitInfoJsc {
 
 impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue> {
-        use bun_core::String as BunString;
         let obj = JSValue::create_empty_object(go, 6);
         obj.put(
             go,
@@ -56,73 +57,41 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
     }
 }
 
-pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_url<'a>(heap: &JsHeap<'a>, url: &BunString) -> bindgen::Result<'a, BunString> {
     use bun_install::hosted_git_info as hgi;
-    if callframe.arguments_count() != 1 {
-        return Err(go.throw(format_args!(
-            "hostedGitInfo.prototype.parseUrl takes exactly 1 argument"
-        )));
-    }
 
-    let arg0 = callframe.argument(0);
-    if !arg0.is_string() {
-        return Err(go.throw(format_args!(concat!(
-            "hostedGitInfo.prototype.parseUrl takes a string as its ",
-            "first argument",
-        ))));
-    }
-
-    // TODO(markovejnovic): This feels like there's too much going on all
-    // to give us a slice. Maybe there's a better way to code this up.
-    let npa_str = arg0.to_bun_string(go)?;
-    let as_utf8 = npa_str.to_utf8();
+    let as_utf8 = url.to_utf8();
     let parsed = match hgi::parse_url(as_utf8.slice()) {
         Ok(p) => p,
         Err(err) => {
-            return Err(go.throw(format_args!(
+            return Err(heap.error(format_args!(
                 "Invalid Git URL: {}",
                 bstr::BStr::new(<&'static str>::from(err))
             )));
         }
     };
 
-    // `parsed.url` is `Box<WhatwgUrl>` (C++-owned WTF::URL); `href()` yields a
-    // `bun_core::String`. `defer parsed.url.deinit()` deleted — Box Drop frees.
-    parsed.url.href().to_js(go)
+    Ok(parsed.url.href())
 }
 
-pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn from_url<'a>(heap: &JsHeap<'a>, url: &BunString) -> bindgen::Result<'a, JSValue> {
     use bun_install::hosted_git_info::HostedGitInfo;
     // TODO(markovejnovic): The original hosted-git-info actually takes another argument that
     //                      allows you to inject options. Seems untested so we didn't implement
     //                      it.
-    if callframe.arguments_count() != 1 {
-        return Err(go.throw(format_args!(
-            "hostedGitInfo.prototype.fromUrl takes exactly 1 argument"
-        )));
-    }
 
-    let arg0 = callframe.argument(0);
-    if !arg0.is_string() {
-        return Err(go.throw(format_args!(
-            "hostedGitInfo.prototype.fromUrl takes a string as its first argument"
-        )));
-    }
-
-    // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
-    // Maybe there's a better way to code this up.
-    let npa_str = arg0.to_bun_string(go)?;
-    let as_utf8 = npa_str.to_utf8();
+    let as_utf8 = url.to_utf8();
     let parsed = match HostedGitInfo::from_url(as_utf8.slice()) {
         Ok(Some(p)) => p,
         Ok(None) => return Ok(JSValue::NULL),
         Err(err) => {
-            return Err(go.throw(format_args!(
+            return Err(heap.error(format_args!(
                 "Invalid Git URL: {}",
                 bstr::BStr::new(<&'static str>::from(err))
             )));
         }
     };
 
-    parsed.to_js(go)
+    // SAFETY: the object is new and plain, and its properties are defined and not set.
+    Ok(parsed.to_js(unsafe { heap.global() })?)
 }

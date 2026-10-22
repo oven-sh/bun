@@ -1,13 +1,13 @@
 use bun_collections::VecExt;
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    self as jsc, AutoFlush, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    self as jsc, AutoFlush, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
@@ -842,12 +842,16 @@ impl PostgresSQLConnection {
     }
 }
 
-#[bun_jsc::host_fn(export = "PostgresSQLConnection__createInstance")]
-pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn create_connection<'a>(
+    cx: &mut JsScope<'a>,
+    args: &'a [JsLocal<'a>],
+) -> JsResult<JSValue> {
+    let global_object = cx.global();
     let vm = global_object.bun_vm().as_mut();
     // The connection is the calling script's.
-    let context = global_object.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
+    let context = global_object.bun_vm().context_of_caller_no_frame();
+    let arguments = JsLocal::to_js_slice(args);
+    let argument = |i: usize| arguments.get(i).copied().unwrap_or(JSValue::UNDEFINED);
     let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
         return Ok(JSValue::ZERO);
     };
@@ -855,10 +859,10 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // Next to `rejectUnauthorized: false` it is not asked, as in Node.
     let check_server_identity = server_identity::callback_of(global_object, arguments[6])?
         .filter(|_| verifies_certificate(&tls_config, args.ssl_mode));
-    let channel_binding = ChannelBinding::from_js(global_object, callframe.argument(18))?;
+    let channel_binding = ChannelBinding::from_js(global_object, argument(18))?;
 
     let options_str = arguments[7].to_bun_string(global_object)?;
-    let scram_password_str = callframe.argument(20).to_bun_string(global_object)?;
+    let scram_password_str = argument(20).to_bun_string(global_object)?;
     let (username, password, scram_password, database, options, path) = (
         args.username_str.to_utf8(),
         args.password_str.to_utf8(),
@@ -910,8 +914,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             use_unnamed_prepared_statements: arguments[14].as_boolean(),
             on_connect: arguments[9],
             on_close: arguments[10],
-            on_retire: callframe.argument(16),
-            column_transform: callframe.argument(19),
+            on_retire: argument(16),
+            column_transform: argument(19),
             check_server_identity,
             cancel: None,
         },

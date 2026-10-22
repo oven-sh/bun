@@ -15,13 +15,15 @@
 use core::cell::Cell;
 use core::ffi::{CStr, c_uint, c_void};
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::DuplexUpgradeContext;
 use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
+use crate::generated_bindgen::upgraded_duplex as listeners;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
@@ -49,7 +51,7 @@ pub(crate) struct UpgradedDuplex {
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
-    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
     /// `on_open` cannot re-enter JS before the caller holds the handle), but the
     /// JS caller attaches its `data` listener as soon as that function returns.
     /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
@@ -81,7 +83,7 @@ pub(crate) struct CertError {
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
 
 /// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
-/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// `upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
 /// Ignored for client upgrades.
 #[derive(Clone, Copy)]
 pub(crate) struct ServerVerify {
@@ -512,7 +514,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_data_set_cached,
                 global,
-                __jsc_host_on_received_data,
+                listeners::Bun__UpgradedDuplex__onReceivedData,
                 this_ptr,
             ),
         )?;
@@ -524,7 +526,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_end_set_cached,
                 global,
-                __jsc_host_on_end,
+                listeners::Bun__UpgradedDuplex__onEnd,
                 this_ptr,
             ),
         )?;
@@ -536,7 +538,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_writable_set_cached,
                 global,
-                __jsc_host_on_writable,
+                listeners::Bun__UpgradedDuplex__onWritable,
                 this_ptr,
             ),
         )?;
@@ -548,7 +550,7 @@ impl UpgradedDuplex {
                 js_wrapper,
                 js_TLSSocket::duplex_on_close_set_cached,
                 global,
-                __jsc_host_on_close_js,
+                listeners::Bun__UpgradedDuplex__onCloseJS,
                 this_ptr,
             ),
         )?;
@@ -787,71 +789,61 @@ impl Drop for UpgradedDuplex {
     }
 }
 
-// SAFETY (all four host fns): the function data is the `*mut UpgradedDuplex`
+// SAFETY (all four listeners): the function data is the `*mut UpgradedDuplex`
 // installed by `get_js_handlers`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
-#[bun_jsc::host_fn]
-fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_received_data<'a>(cx: &mut JsScope<'a>, callee: JsLocal<'a>, data: JsLocal<'a>) {
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
-    let function = frame.callee();
-    let [data_arg] = frame.arguments_as_array::<1>();
+    let global = cx.global();
+    let data_arg = data.to_js();
 
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
-        if frame.arguments_count() >= 1 {
-            if !this.origin.get().is_empty() {
-                if data_arg.is_empty_or_undefined_or_null() {
-                    return Ok(JSValue::UNDEFINED);
-                }
-                if let Some(array_buffer) = data_arg.as_array_buffer(global) {
-                    // yay we can read the data
-                    let payload = array_buffer.slice();
-                    this.on_internal_receive_data(payload);
-                } else {
-                    // node.js errors in this case with the same error, lets keep it consistent
-                    let error_value = global
-                        .err(
-                            bun_jsc::ErrorCode::STREAM_WRAP,
-                            format_args!("Stream has StringDecoder set or is in objectMode"),
-                        )
-                        .to_js();
-                    error_value.ensure_still_alive();
-                    (this.handlers.on_error)(this.handlers.ctx, error_value);
-                }
+        if !this.origin.get().is_empty() {
+            if data_arg.is_empty_or_undefined_or_null() {
+                return;
+            }
+            if let Some(array_buffer) = data_arg.as_array_buffer(global) {
+                // yay we can read the data
+                let payload = array_buffer.slice();
+                this.on_internal_receive_data(payload);
+            } else {
+                // node.js errors in this case with the same error, lets keep it consistent
+                let error_value = global
+                    .err(
+                        bun_jsc::ErrorCode::STREAM_WRAP,
+                        format_args!("Stream has StringDecoder set or is in objectMode"),
+                    )
+                    .to_js();
+                error_value.ensure_still_alive();
+                (this.handlers.on_error)(this.handlers.ctx, error_value);
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_end(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onEnd");
-    let function = frame.callee();
 
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
 
         // Like node's JSStreamSocket. Ahead of staged bytes too: no handshake can complete after it.
         (this.handlers.on_end)(this.handlers.ctx);
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_writable(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onWritable");
 
-    let function = frame.callee();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
         // flush pending data
@@ -861,24 +853,17 @@ fn on_writable(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
         // call onWritable (will flush on demand)
         (this.handlers.on_writable)(this.handlers.ctx);
     }
-
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn]
-fn on_close_js(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
     bun_output::scoped_log!(UpgradedDuplex, "onCloseJS");
 
-    let function = frame.callee();
-
-    if let Some(self_ptr) = host_fn::get_function_data(function) {
-        // SAFETY: see host-fn note above.
+    if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
+        // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         // flush pending data
         this.close();
     }
-
-    Ok(JSValue::UNDEFINED)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -2,7 +2,8 @@
 
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{EncodedSlice, Utf8Bytes, strings};
-use bun_jsc::{AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{AnyPromise, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
 
@@ -100,9 +101,14 @@ impl FormData {
     }
 }
 
-#[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
-pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
+/// `FormData.from(input, boundary)`
+pub(crate) fn from(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    boundary: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let (input_value, boundary_value) = (input.to_js(), boundary.to_js());
     let boundary_slice: Utf8Bytes;
 
     let mut encoding = Encoding::URLEncoded;

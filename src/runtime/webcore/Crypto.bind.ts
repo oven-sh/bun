@@ -21,6 +21,16 @@ export const randomUUIDv5 = b.fn({
   rustPath: "crate::webcore::crypto::random_uuid_v5",
 });
 
+/** `randomUUIDv7(timestamp)` takes the timestamp. `randomUUIDv7(timestamp, undefined)` takes the clock's. */
+export const randomUUIDv7 = b.fn({
+  args: { args: b.any.variadic },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  length: 2,
+  rustPath: "crate::webcore::crypto::random_uuid_v7",
+});
+
 const buffer = b.bytes({ from: ["buffer"] });
 const anyBuffer = (name: string) =>
   `The "${name}" argument must be an instance of ArrayBuffer, Buffer, TypedArray, or DataView.`;

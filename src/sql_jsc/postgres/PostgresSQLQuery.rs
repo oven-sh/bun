@@ -1,6 +1,6 @@
 use core::cell::Cell;
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
+use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
 use crate::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
@@ -374,16 +374,29 @@ impl PostgresSQLQuery {
         0
     }
 
-    // Registered directly as `createQuery` via
-    // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
-    pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn create_query<'a>(
+        cx: &mut JsScope<'a>,
+        query: JsLocal<'a>,
+        values: JsLocal<'a>,
+        pending_value: JsLocal<'a>,
+        bigint: JsLocal<'a>,
+        simple: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let QueryCtorArgs {
             query,
             values,
             pending_value,
             bigint,
             simple,
-        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
+        } = QueryCtorArgs::parse(
+            global_this,
+            query.to_js(),
+            values.to_js(),
+            pending_value.to_js(),
+            bigint.to_js(),
+            simple.to_js(),
+        )?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 

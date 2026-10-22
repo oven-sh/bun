@@ -1,53 +1,42 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
-use bun_jsc::bun_string_jsc;
-use bun_jsc::{ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, SysErrorJsc};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc};
 use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
 pub(crate) struct TestingAPIs;
 
 impl TestingAPIs {
-    // `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
-    // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
-    // shim is emitted at module scope below (`__jsc_host_*`).
-    pub(crate) fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
-        // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
-
-        let Some(old_folder_jsval) = arguments.next_eat() else {
-            return Err(global.throw(format_args!("expected 2 strings")));
-        };
-        let old_folder_bunstr = old_folder_jsval.to_bun_string(global)?;
-
-        let Some(new_folder_jsval) = arguments.next_eat() else {
-            return Err(global.throw(format_args!("expected 2 strings")));
-        };
-        let new_folder_bunstr = new_folder_jsval.to_bun_string(global)?;
-
-        let old_folder = old_folder_bunstr.to_utf8();
-        let new_folder = new_folder_bunstr.to_utf8();
-
+    pub(crate) fn make_diff(
+        cx: &mut JsScope<'_>,
+        old_folder: &[u8],
+        new_folder: &[u8],
+    ) -> JsResult<Vec<u8>> {
+        let global = cx.global();
         // `git_diff_internal` routes through `bun_spawn::sync`, which on
         // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
         // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
-        let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
+        let diff = match git_diff_internal(old_folder, new_folder, &mut loop_) {
             Ok(d) => d,
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),
         };
-        match diff {
-            Ok(s) => bun_string_jsc::create_utf8_for_js(global, s.as_slice()),
-            Err(e) => Err(global.throw(format_args!(
+        diff.map_err(|e| {
+            global.throw(format_args!(
                 "failed to make diff: {}",
                 bstr::BStr::new(e.as_slice())
-            ))),
-        }
+            ))
+        })
     }
 
-    pub(crate) fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = Self::parse_apply_args(global, frame)?;
+    pub(crate) fn apply<'a>(
+        cx: &mut JsScope<'a>,
+        patchfile: JsLocal<'a>,
+        dir: JsLocal<'a>,
+    ) -> JsResult<bool> {
+        let global = cx.global();
+        let args = Self::parse_apply_args(global, patchfile.to_js(), dir.to_js())?;
 
         let patchfile: PatchFile<'_> =
             parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
@@ -62,26 +51,16 @@ impl TestingAPIs {
             }
         }
 
-        Ok(JSValue::TRUE)
+        Ok(true)
     }
 
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
-        // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
-
-        let Some(patchfile_src_js) = arguments.next_eat() else {
-            return Err(global.throw(format_args!(
-                "TestingAPIs.parse: expected at least 1 argument, got 0"
-            )));
-        };
-        let patchfile_src_bunstr = patchfile_src_js.to_bun_string(global)?;
-        let patchfile_src = patchfile_src_bunstr.to_utf8();
-
-        let patchfile = match parse_patch_file(patchfile_src.slice()) {
+    pub(crate) fn parse(heap: &JsHeap<'_>, patchfile_src: &[u8]) -> JsResult<Vec<u8>> {
+        let patchfile = match parse_patch_file(patchfile_src) {
             Ok(p) => p,
             Err(ParseErrAt { err: e, .. }) => {
+                // SAFETY: it throws, and the body returns.
+                let global = unsafe { heap.global() };
                 if e == ParseErr::hunk_header_integrity_check_failed {
                     return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
@@ -97,24 +76,15 @@ impl TestingAPIs {
             use std::io::Write as _;
             write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
         }
-        let js = bun_string_jsc::create_utf8_for_js(global, &str)?;
-        drop(patchfile);
-        Ok(js)
+        Ok(str)
     }
 
     pub(crate) fn parse_apply_args(
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        patchfile_js: JSValue,
+        dir_js: JSValue,
     ) -> JsResult<ApplyArgs> {
-        // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the VM
-        // outlives this call frame.
-        let mut arguments = ArgumentsSlice::init(global.bun_vm(), frame.arguments());
-
-        let Some(patchfile_js) = arguments.next_eat() else {
-            return Err(global.throw(format_args!("apply: expected at least 1 argument, got 0")));
-        };
-
-        let dir_fd = if let Some(dir_js) = arguments.next_eat() {
+        let dir_fd = if !dir_js.is_undefined() {
             let bunstr = dir_js.to_bun_string(global)?;
             let path = bunstr.to_owned_slice_z();
 
@@ -166,7 +136,7 @@ impl TestingAPIs {
     }
 }
 
-pub struct ApplyArgs {
+pub(crate) struct ApplyArgs {
     patchfile_txt: Vec<u8>,
     dirfd: Fd,
 }
@@ -179,29 +149,4 @@ impl Drop for ApplyArgs {
             self.dirfd.close();
         }
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// C-ABI host-fn shims
-//
-// `#[bun_jsc::host_fn]` (Free kind) emits an unqualified `fn_name(g, f)` call
-// in its generated shim body, so it can't wrap an associated fn directly.
-// These module-scope thunks forward to `TestingAPIs::*` so the proc-macro can
-// generate the JSC-calling-convention `__jsc_host_*` exports the codegen side
-// links against.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[bun_jsc::host_fn]
-pub fn patch_make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    TestingAPIs::make_diff(global, frame)
-}
-
-#[bun_jsc::host_fn]
-pub fn patch_apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    TestingAPIs::apply(global, frame)
-}
-
-#[bun_jsc::host_fn]
-pub fn patch_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    TestingAPIs::parse(global, frame)
 }

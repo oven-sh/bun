@@ -4,15 +4,16 @@
 use crate::HostReturn as _;
 use bstr::BStr;
 
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::bindgen::{JsLocal, JsScope};
+use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::{String as BunString, strings};
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP, SEP_STR};
 
-#[crate::host_fn(export = "Resolver__nodeModulePathsForJS")]
-fn node_module_paths_for_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn node_module_paths<'a>(cx: &mut JsScope<'a>, path: JsLocal<'a>) -> JsResult<JSValue> {
     crate::mark_binding!();
-    let argument: JSValue = frame.argument(0);
+    let global = cx.global();
+    let argument: JSValue = path.to_js();
 
     if argument.is_empty() || !argument.is_string() {
         return Err(global.throw_invalid_argument_type("nodeModulePaths", "path", "string"));

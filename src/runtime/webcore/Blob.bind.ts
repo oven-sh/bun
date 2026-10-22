@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::webcore::blob" });
+
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any, ...js } as const;
 const unlink = { ...method, args: { options: b.any }, length: 0 } as const;
@@ -35,3 +37,6 @@ export const Blob = b.class({
     writer: { ...method, args: { options: b.any } },
   },
 });
+
+export const file = b.fn({ ...method, args: { path: b.any, options: b.any }, length: 1 });
+export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any }, length: 1 });

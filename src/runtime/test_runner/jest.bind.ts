@@ -5,10 +5,21 @@ export default b.module({ rustPath: "crate::test_runner::jest" });
 export const fileGeneration = b.fn({ returns: b.u32 });
 export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
+const js = { capability: "js", throws: true } as const;
+
+/** `Bun.jest(path)` is what `import "bun:test"` gives the file at `path`. */
+export const jest = b.fn({ args: { path: b.any }, returns: b.any, ...js });
+/** Also `jest.setTimeout`. */
+export const setDefaultTimeout = b.fn({
+  export: "Bun__Jest__setDefaultTimeout",
+  args: { milliseconds: b.any },
+  capability: "heap",
+  throws: true,
+});
+
 /** The bound `this` of the `done` a test callback takes. */
 export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
 
-const js = { capability: "js", throws: true } as const;
 const modifier = { getter: b.any, cache: true, ...js } as const;
 const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any, ...js } as const;
 

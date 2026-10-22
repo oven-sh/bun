@@ -3,32 +3,24 @@
 //! transport: `upgradeNodeHTTPResponseToWebSocket` / `sendWebSocketFrame`.
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSValue, JsResult};
 use bun_uws_sys::Opcode;
 use bun_uws_sys::response::PerMessageDeflateParams;
 
 use crate::generated_bindgen::node_http_binding::{BunServer, DeflateParams, UpgradeResponse};
-use crate::server::{AnyServer, ServerWebSocket};
+use crate::server::ServerWebSocket;
 
-pub(crate) fn get_bun_server_all_closed_promise(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments(
-            "getBunServerAllClosePromise",
-            1,
-            arguments.len(),
-        ));
+pub(crate) fn get_bun_server_all_closed_promise<'a>(
+    cx: &mut JsScope<'a>,
+    server: BunServer<'a>,
+) -> JSValue {
+    let global = cx.global();
+    match server {
+        BunServer::Http(server) => server.get_all_closed_promise(global),
+        BunServer::Https(server) => server.get_all_closed_promise(global),
+        BunServer::DebugHttp(server) => server.get_all_closed_promise(global),
+        BunServer::DebugHttps(server) => server.get_all_closed_promise(global),
     }
-
-    let value = arguments[0];
-
-    let Some(server) = AnyServer::from_js(value) else {
-        return Err(global.throw_invalid_argument_type_value("server", "bun.Server", value));
-    };
-    Ok(server.get_all_closed_promise(global))
 }
 
 /// What keeps the server open besides its listener: the connections (counted from accept), WebSockets and requests.

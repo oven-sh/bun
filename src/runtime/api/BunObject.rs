@@ -67,8 +67,8 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorCode, JSFunction, JSGlobalObject,
-    JSObject, JSPromise, JSString, JSValue, JsResult,
+    self as jsc, ArrayBuffer, ConsoleObject, ErrorCode, JSFunction, JSGlobalObject, JSObject,
+    JSPromise, JSString, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -80,113 +80,26 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
 use crate::node;
-use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, EditorOptions, MMapOptions, WhichOptions, ZlibCompressionOptions,
-    ZlibDecompressionOptions, ZstdCompressionOptions,
+    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, MMapOptions,
+    WhichOptions, ZlibCompressionOptions, ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
-// ─── wrap_static_method adapters ───────────────────────────────────────────
-// `#[bun_jsc::host_fn(static)]` is not yet emitted,
-// so hand-roll the arg-extraction shims for the six call sites below.
-mod static_adapters {
-    use super::*;
-
-    pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [a0] = cf.arguments_as_array::<1>();
-        let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(&g.js_thread_of_caller(cf), a0, a1)
-    }
-
-    pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [a0] = cf.arguments_as_array::<1>();
-        let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(&g.js_thread_of_caller(cf), a0, a1)
-    }
-
-    pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        crate::api::js_bundler::JSBundler::build_fn(g, cf)
-    }
-    /// `Bun.$` parsed-script constructor — wraps the marked-argument-buffer host fn.
-    pub(super) fn parsed_shell_script_create(
-        g: &JSGlobalObject,
-        cf: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // `CREATE_PARSED_SHELL_SCRIPT` is the safe `JSHostFnZig` produced by
-        // `marked_argument_buffer_wrap!` (the C-ABI shim is exported separately
-        // by the macro); call it directly.
-        crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT(g, cf)
-    }
-}
-
-/// How to add a new function or property to the Bun global
+/// How to add a new property to the Bun global (a function goes in `BunObject.bind.ts`)
 ///
-/// - Add a callback or property to the below struct
-/// - @export it in the appropriate place
+/// - Add a property to `export_lazy_prop_callbacks!` below
 /// - Update "@begin bunObjectTable" in BunObject.cpp
-///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
+///     - Getters use a generated wrapper function `BunObject_lazyPropCb_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
 pub(crate) mod bun_object {
     use super::*;
-
-    // Each callback is exported under
-    // `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`. The
-    // two `macro_rules!` below expand the static export tables.
-    // ABI check vs the C++ declarations (BunObject+exports.h:90):
-    // `extern "C" EncodedJSValue SYSV_ABI (JSGlobalObject*, JSObject*)` for the
-    // property variants — matched here by `jsc_host_abi!` (`extern "sysv64"`
-    // on Windows-x64, `extern "C"` elsewhere) returning `JSValue`, which is
-    // `#[repr(transparent)]` over `EncodedJSValue`.
-
-    // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
-    // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
-    // export symbol is supplied verbatim by the caller (same pattern as
-    // `lazy_prop!` above).
-    macro_rules! export_callbacks {
-        ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
-            $(
-                // C++ declares
-                // these via `BUN_DECLARE_HOST_FUNCTION` → `JSC_HOST_CALL_ATTRIBUTES`
-                // = SysV on Windows-x64. Mismatching `extern "C"` here puts
-                // `globalObject` in RCX vs C++'s RDI → garbage deref.
-                bun_jsc::jsc_host_abi! {
-                    $(#[$attr])*
-                    #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        g: *mut JSGlobalObject,
-                        f: *mut CallFrame,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, f) = unsafe { (&*g, &*f) };
-                        bun_jsc::to_js_host_call(g, || $target(g, f))
-                    }
-                }
-            )*
-        };
-    }
 
     /// Adapter so `export_lazy_prop_callbacks!` accepts targets returning either
     /// a bare `JSValue` (most getters) or a `JsResult<JSValue>` (e.g.
@@ -211,7 +124,7 @@ pub(crate) mod bun_object {
         ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
                 // C++ declares the extern as `SYSV_ABI`
-                // (`BunObject+exports.h:91`); on Windows-x64 that's RDI/RSI,
+                // (`BunObject+exports.h`); on Windows-x64 that's RDI/RSI,
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
@@ -230,32 +143,9 @@ pub(crate) mod bun_object {
         };
     }
 
-    // --- Callbacks ---
-    export_callbacks! {
-        BunObject_callback_build => super::static_adapters::js_bundler_build,
-        BunObject_callback_color => bun_css_jsc::js_function_color,
-        BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_file => crate::webcore::blob::construct_bun_file,
-        BunObject_callback_jest => Jest::call,
-        BunObject_callback_listen => super::static_adapters::listener_listen,
-        BunObject_callback_resolve => super::resolve,
-        BunObject_callback_resolveSync => super::resolve_sync,
-        BunObject_callback_serve => super::serve,
-        BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
-        BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
-        BunObject_callback_udpSocket => super::static_adapters::udp_socket,
-        BunObject_callback_write => crate::webcore::blob::write_file,
-    }
-    // Its body is already `JSHostFnZig`-shaped, so it goes through the same `to_js_host_call` thunk as the callbacks above.
-    export_callbacks! {
-        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-    }
-    // --- Callbacks ---
-
     // --- Lazy property callbacks ---
     export_lazy_prop_callbacks! {
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
-        BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
@@ -279,7 +169,7 @@ pub(crate) mod bun_object {
     // are spelled out verbatim in the `export_*!` macro invocations above.
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
-    // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
+    // (the `callconv(jsc.conv)` ABI is emitted by the macro above;
     // see PORTING.md §FFI — cannot write `extern jsc_conv!()` in Rust.)
 
     // --- LazyProperty initializers ---
@@ -445,18 +335,23 @@ pub(crate) fn which<'a>(
         .transpose()
 }
 
-#[bun_jsc::host_fn]
-fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let mut args_buf = callframe.arguments_undef::<5>();
-    let all_arguments = args_buf.mut_();
+/// `Bun.inspect.table`
+pub(crate) fn table(
+    cx: &mut JsScope<'_>,
+    tabular_data: JsLocal<'_>,
+    properties: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let mut all_arguments = [tabular_data.to_js(), properties.to_js(), options.to_js()];
     if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
-        return Ok(JSValue::js_empty_string(global_this));
+        return Ok(Vec::new());
     }
 
-    // NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
+    // NOTE: protect/unprotect over a copied [JSValue; 3]; the borrow of
     // `all_arguments` cannot escape into a guard closure, so copy out into an
     // array of RAII guards.
-    let _prot: [bun_jsc::ProtectedJSValue; 5] =
+    let _prot: [bun_jsc::ProtectedJSValue; 3] =
         core::array::from_fn(|i| all_arguments[i].protected());
 
     let arguments = &mut all_arguments[..];
@@ -511,14 +406,14 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
 
-    bun_string_jsc::create_utf8_for_js(global_this, &array)
+    Ok(array)
 }
 
-#[bun_jsc::host_fn]
-fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
+pub(crate) fn inspect(cx: &mut JsScope<'_>, arguments: &[JsLocal<'_>]) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let arguments = JsLocal::to_js_slice(arguments);
     if arguments.is_empty() {
-        return Ok(JSValue::js_empty_string(global_this));
+        return Ok(Vec::new());
     }
 
     for arg in arguments {
@@ -571,7 +466,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     }
     // writer.flush(): Vec<u8> is unbuffered.
 
-    bun_string_jsc::create_utf8_for_js(global_this, &array)
+    Ok(array)
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
@@ -607,7 +502,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     let fun = JSFunction::create(
         global_object,
         "inspect",
-        __jsc_host_inspect,
+        Bun__BunObject__inspect,
         2,
         Default::default(),
     );
@@ -622,7 +517,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         JSFunction::create(
             global_object,
             "table",
-            __jsc_host_inspect_table,
+            Bun__BunObject__table,
             3,
             Default::default(),
         ),
@@ -903,31 +798,24 @@ pub(crate) fn shrink(cx: &mut JsScope<'_>) {
     cx.global().vm().shrink_footprint();
 }
 
-fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
-    // SAFETY: bun_vm() returns the live per-thread singleton.
-    let vm = global_this.bun_vm();
-    let mut args = ArgumentsSlice::init(vm, arguments);
-    let Some(specifier) = args.next_eat() else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
-    };
-
+fn do_resolve(
+    global_this: &JSGlobalObject,
+    specifier: JSValue,
+    from: JSValue,
+    esm: JSValue,
+) -> JsResult<JSValue> {
     if specifier.is_undefined_or_null() {
         return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
     }
-
-    let Some(from) = args.next_eat() else {
-        return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
-    };
 
     if from.is_undefined_or_null() {
         return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
     }
 
     let mut mode = ResolveMode::Esm;
-    if let Some(next) = args.next_eat() {
-        if next.is_boolean() {
-            mode = if next.to_boolean() {
+    if !esm.is_undefined() {
+        if esm.is_boolean() {
+            mode = if esm.to_boolean() {
                 ResolveMode::Esm
             } else {
                 ResolveMode::Require
@@ -1004,14 +892,23 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
     Ok(Resolved::Found(result_value.into_js(ctx)?))
 }
 
-#[bun_jsc::host_fn]
-fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    do_resolve(global_object, callframe.arguments())
+pub(crate) fn resolve_sync(
+    cx: &mut JsScope<'_>,
+    specifier: JsLocal<'_>,
+    from: JsLocal<'_>,
+    esm: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    do_resolve(cx.global(), specifier.to_js(), from.to_js(), esm.to_js())
 }
 
-#[bun_jsc::host_fn]
-fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let value = match do_resolve(global_object, callframe.arguments()) {
+pub(crate) fn resolve(
+    cx: &mut JsScope<'_>,
+    specifier: JsLocal<'_>,
+    from: JsLocal<'_>,
+    esm: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global_object = cx.global();
+    let value = match do_resolve(global_object, specifier.to_js(), from.to_js(), esm.to_js()) {
         Ok(v) => v,
         Err(e) => {
             return Ok(
@@ -1187,13 +1084,13 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     }
 }
 
-#[bun_jsc::host_fn]
-fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    let global_object = cx.global();
     // The server is the calling script's.
-    let context = global_object.bun_vm().context_of_caller(callframe);
+    let context = global_object.bun_vm().context_of_caller_no_frame();
     let mut config = crate::server::ServerConfig::from_js(
         global_object,
-        callframe.argument(0),
+        options.to_js(),
         crate::server::server_config::FromJSOptions {
             allow_bake_config: bun_core::FeatureFlags::bake(),
             is_fetch_required: true,
@@ -1478,10 +1375,6 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             )
         }
     }
-}
-
-fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
 }
 
 fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {

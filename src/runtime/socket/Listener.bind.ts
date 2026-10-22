@@ -23,6 +23,10 @@ export const Listener = b.class({
   },
 });
 
+const fromOptions = { args: { options: b.any }, returns: b.any, capability: "js", throws: true } as const;
+export const connect = b.fn({ ...fromOptions, rustPath: "crate::socket::Listener::connect" });
+export const listen = b.fn({ ...fromOptions, rustPath: "crate::socket::Listener::listen" });
+
 export const addServerName = b.fn({
   args: { listener: Listener, hostname: b.string.utf8, tls: b.any },
   capability: "js",

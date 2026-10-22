@@ -95,7 +95,7 @@ impl JSGlobalObject {
 
     pub fn throw_stack_overflow(&self) -> JsError {
         // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
-        // The Rust `#[bun_jsc::host_fn]` thunk inserts an `ExceptionValidationScope`
+        // A generated thunk inserts an `ExceptionValidationScope`
         // one frame above us; with that scope
         // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
         // longer sees its previous scope as above `topEntryFrame`, so it

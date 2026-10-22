@@ -1778,6 +1778,16 @@ export interface SignatureOptions {
   expected?: Record<string, readonly string[] | string>;
 }
 
+/** What `b.fn` takes, and each function of a `b.namespace`. */
+export interface FunctionOptions extends SignatureOptions {
+  /** Also pass `this`, `this_value: JsLocal<'a>`. */
+  passThis?: boolean;
+  /** Also pass the function that was called, `callee: JsLocal<'a>`. */
+  passCallee?: boolean;
+  /** The host function has C linkage under this name. C++ declares it with `BUN_DECLARE_HOST_FUNCTION`, and in Rust it is a `JSHostFn` of the generated module. */
+  export?: string;
+}
+
 export class Signature {
   readonly args: readonly { name: string; type: Type; expected?: readonly string[] | string }[];
   readonly returns: Type;
@@ -1865,10 +1875,20 @@ export type OverloadDispatch = Signature | { argument: number; byKind: Map<Value
 export class FunctionDefinition {
   readonly signatures: readonly Signature[];
   readonly dispatch: OverloadDispatch;
+  readonly passThis: boolean;
+  readonly passCallee: boolean;
+  readonly exportName: string | undefined;
   name = "";
   origin: Origin | null = null;
-  constructor(signatures: readonly (SignatureOptions | Signature)[]) {
+  constructor(signatures: readonly (SignatureOptions | Signature)[], options: FunctionOptions = {}) {
     assert(signatures.length > 0, "b.overloads needs at least one signature");
+    this.passThis = options.passThis ?? false;
+    this.passCallee = options.passCallee ?? false;
+    this.exportName = options.export;
+    assert(
+      this.exportName === undefined || /^[A-Za-z_]\w*$/.test(this.exportName),
+      `export: ${this.exportName} is not a C identifier`,
+    );
     this.signatures = signatures.map(options => (options instanceof Signature ? options : new Signature(options)));
     assert(this.signatures.filter(signature => signature.length !== undefined).length <= 1, "length is given once");
     const nodes = new Map<string, OverloadDispatch>();
@@ -2375,11 +2395,11 @@ export class NamespaceDefinition {
   readonly functions: readonly FunctionDefinition[];
   readonly call: FunctionDefinition | undefined;
   name = "";
-  constructor(functions: Record<string, SignatureOptions>, options: NamespaceOptions = {}) {
+  constructor(functions: Record<string, FunctionOptions>, options: NamespaceOptions = {}) {
     this.functions = Object.entries(functions).map(([name, options]) => {
       assert(/^[A-Za-z_$][\w$]*$/.test(name), `${name}: a function is named by an identifier`);
       assert(!(options instanceof FunctionDefinition), `${name}: write what b.fn takes, without b.fn`);
-      const fn = new FunctionDefinition([options]);
+      const fn = new FunctionDefinition([options], options);
       fn.name = name;
       return fn;
     });

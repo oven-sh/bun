@@ -1,4 +1,5 @@
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::bindgen::JsHeap;
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -32,11 +33,9 @@ impl Counters {
     }
 }
 
-// Called through the `$rust(...)` js2native codegen, which emits the extern
-// trampoline (`generate-js2native.ts` wraps this in `host_fn::host_fn_static`),
-// so no `#[bun_jsc::host_fn]` attribute is needed here.
-pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    // SAFETY: bun_vm() returns the per-thread VirtualMachine singleton; caller is on the JS thread.
+pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> JsResult<JSValue> {
+    // SAFETY: the object is new and plain, and its properties are defined and not set.
+    let global = unsafe { heap.global() };
     global.bun_vm().counters.to_js(global)
 }
 

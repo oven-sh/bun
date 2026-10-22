@@ -1,35 +1,10 @@
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _};
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{JSValue, StringJsc as _};
 
-pub mod bun_install_js_bindings {
+pub(crate) mod bun_install_js_bindings {
     use super::*;
 
-    pub fn generate(global: &JSGlobalObject) -> JSValue {
-        use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
-        obj.put(
-            global,
-            b"parseLockfile",
-            JSFunction::create(
-                global,
-                "parseLockfile",
-                // `#[bun_jsc::host_fn]` on the module-scope `js_parse_lockfile`
-                // emits this `JSHostFn`-ABI shim.
-                __jsc_host_js_parse_lockfile,
-                1,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-
-    // Lives at module scope (not in an `impl`) because the
-    // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
-    // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
-    #[bun_jsc::host_fn]
-    fn js_parse_lockfile(
-        global: &JSGlobalObject,
-        frame: &bun_jsc::CallFrame,
-    ) -> bun_jsc::JsResult<JSValue> {
+    pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsResult<JSValue> {
         use core::ptr::NonNull;
 
         use bstr::BStr;
@@ -41,18 +16,16 @@ pub mod bun_install_js_bindings {
         use bun_paths::resolve_path;
         use bun_sys::FdExt as _;
 
+        let global = cx.global();
         let mut log = bun_ast::Log::init();
 
-        let args = frame.arguments();
-        let cwd = args[0].to_utf8(global)?;
-
-        let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd.slice()) {
+        let dir = match bun_sys::open_dir_absolute_not_for_deleting_or_renaming(cwd) {
             Ok(d) => d,
             Err(err) => {
                 return Err(global.throw(format_args!(
                     "failed to open: {}, '{}'",
                     BStr::new(err.name()),
-                    BStr::new(cwd.slice()),
+                    BStr::new(cwd),
                 )));
             }
         };
@@ -60,7 +33,7 @@ pub mod bun_install_js_bindings {
         let dir = scopeguard::guard(dir, |d| d.close());
 
         let lockfile_path = resolve_path::join_abs_string_z::<resolve_path::platform::Auto>(
-            cwd.slice(),
+            cwd,
             &[b"bun.lockb".as_slice()],
         );
 

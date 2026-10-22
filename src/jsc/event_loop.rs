@@ -17,7 +17,7 @@ use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
 use crate::virtual_machine::VirtualMachine;
-use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
@@ -1380,9 +1380,9 @@ impl EventLoop {
 }
 
 /// Testing API to expose event loop state
-#[bun_jsc::host_fn]
-pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    // fields and call &-methods on it for the duration of this host fn.
+pub(crate) fn get_active_tasks(heap: &crate::bindgen::JsHeap<'_>) -> JSValue {
+    // SAFETY: the object is new and plain, and its properties are defined and not set.
+    let global_object = unsafe { heap.global() };
     let vm_ref = global_object.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
     let result = JSValue::create_empty_object(global_object, 9);
@@ -1442,7 +1442,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
         // SAFETY: usockets_loop() returns the live process-global loop.
         JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
     );
-    Ok(result)
+    result
 }
 
 #[cfg(windows)]

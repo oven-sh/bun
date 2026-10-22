@@ -31,8 +31,6 @@ pub(crate) mod process;
 
 #[path = "node/node_crypto_binding.rs"]
 pub(crate) mod crypto;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use crypto as node_crypto_binding;
 
 #[cfg(target_os = "macos")]
 #[path = "node/fs_events.rs"]

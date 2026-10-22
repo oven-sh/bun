@@ -10,6 +10,7 @@
 
 pub mod error_jsc;
 pub mod fd_jsc;
+pub(crate) mod generated_bindgen;
 pub mod signal_code_jsc;
 
 pub use error_jsc::ErrorJsc;
@@ -17,8 +18,8 @@ pub use fd_jsc::FdJsc;
 
 // Re-export the JSC types this crate's API surface needs.
 pub use bun_jsc::{
-    CallFrame, FromJsEnum, JSGlobalObject, JSPromise, JSString, JSValue, JsError, JsResult,
-    RangeErrorOptions, SystemError, VM,
+    FromJsEnum, JSGlobalObject, JSPromise, JSString, JSValue, JsError, JsResult, RangeErrorOptions,
+    SystemError, VM,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

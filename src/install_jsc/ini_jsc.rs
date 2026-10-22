@@ -1,29 +1,16 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
-
-/// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
-/// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
-/// aren't importable items).
-#[inline]
-pub fn ini_testing_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    IniTestingAPIs::parse(global, frame)
-}
-#[inline]
-pub fn ini_testing_load_npmrc_from_js(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    IniTestingAPIs::load_npmrc_from_js(global, frame)
-}
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, LogJsc as _, StringJsc};
 
 pub(crate) struct IniTestingAPIs;
 
 impl IniTestingAPIs {
-    pub(crate) fn load_npmrc_from_js(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+    pub(crate) fn load_npmrc<'a>(
+        cx: &mut JsScope<'a>,
+        contents: &[u8],
+        env: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
@@ -32,14 +19,12 @@ impl IniTestingAPIs {
         use bun_install::npm::Registry;
         use bun_options_types::schema::api::{BunInstall, NpmRegistry};
 
-        let arg = frame.argument(0);
-        let npmrc_contents = arg.to_js_string_view(global)?;
-        let npmrc_utf8 = npmrc_contents.to_utf8();
-        let source = Source::init_path_string(b"<js>", npmrc_utf8.slice());
+        let global = cx.global();
+        let source = Source::init_path_string(b"<js>", contents);
 
         let mut log = Log::init();
 
-        let envjs = frame.argument(1);
+        let envjs = env.to_js();
         // The loader is either VM-owned or built locally; keep local storage in
         // an `Option` so both arms yield the same `&Loader` type.
         let mut env_storage: Option<dotenv::Loader> = None;
@@ -199,19 +184,16 @@ impl IniTestingAPIs {
         Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
     }
 
-    pub(crate) fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn parse(heap: &JsHeap<'_>, source: &[u8]) -> JsResult<JSValue> {
         use bun_ast::ToJSError;
         use bun_ini::Parser;
         use bun_jsc::JsError;
 
-        let arguments = frame.arguments();
-
-        let jsstr = arguments[0];
-        let bunstr = jsstr.to_js_string_view(global)?;
-        let utf8str = bunstr.to_utf8();
-
+        // SAFETY: neither parsing nor `expr_to_js` runs JavaScript: the keys are strings and the
+        // properties are defined, not set. What throws returns.
+        let global = unsafe { heap.global() };
         let env = global.bun_vm().as_mut().transpiler.env();
-        let source = bun_ast::Source::init_path_string(b"<src>", utf8str.slice());
+        let source = bun_ast::Source::init_path_string(b"<src>", source);
         let arena = bun_alloc::Arena::new();
         let mut parser = Parser::init(&source, env);
         parser.parse(&arena)?;

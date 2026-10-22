@@ -5,8 +5,8 @@ use core::cell::Cell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::JsScope;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
@@ -86,15 +86,13 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [prev, opts] = frame.arguments_as_array::<2>();
+pub(crate) fn do_connect<'a>(
+    cx: &mut JsScope<'a>,
+    prev: JsLocal<'a>,
+    opts: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let prev = prev.to_js();
     let maybe_tcp = prev.as_::<TCPSocket>();
     let maybe_tls = prev.as_::<TLSSocket>();
-    Listener::connect_inner(
-        &global.js_thread_of_caller(frame),
-        maybe_tcp,
-        maybe_tls,
-        opts,
-    )
+    Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, opts.to_js())
 }

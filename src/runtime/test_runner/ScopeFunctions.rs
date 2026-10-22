@@ -2,10 +2,11 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
 use crate::generated_bindgen::jest::js_ScopeFunctions as js;
+use crate::generated_bindgen::scope_functions::Bun__ScopeFunctions__callAsFunction;
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::jest;
@@ -119,14 +120,20 @@ impl ScopeFunctions {
     }
 }
 
-#[bun_jsc::host_fn]
-fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn call_as_function(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    description: JsLocal<'_>,
+    callback: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<()> {
     let _g = group_log::begin();
 
-    let Some(this) = frame.this().as_class_ref::<ScopeFunctions>() else {
+    let global = cx.global();
+    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    let line_no = jest::capture_test_line_number(frame, global);
+    let line_no = jest::capture_test_line_number(global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
@@ -138,7 +145,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
 
     let args = parse_arguments(
         global,
-        frame,
+        [description.to_js(), callback.to_js(), options.to_js()],
         Signature::ScopeFunctions(this),
         ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
     )?;
@@ -197,7 +204,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     // (it is reused on later loop iterations).
                     &mut *bun_test_ptr,
                     global,
-                    frame,
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
@@ -212,7 +218,6 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         this.enqueue_describe_or_test_callback(
             bun_test_ptr,
             global,
-            frame,
             args.callback,
             args.description.as_deref(),
             &args.options,
@@ -221,7 +226,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         )?;
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 trait WriteEnd {
@@ -276,7 +281,6 @@ impl ScopeFunctions {
         &self,
         bun_test: &mut BunTest,
         global: &JSGlobalObject,
-        frame: &CallFrame,
         callback: Option<JSValue>,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
@@ -317,7 +321,6 @@ impl ScopeFunctions {
                     -1
                 };
                 debugger.test_reporter_agent.report_test_found(
-                    frame,
                     id,
                     &name,
                     match self.mode {
@@ -539,12 +542,10 @@ fn get_description(
 
 pub(crate) fn parse_arguments(
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    [a1, a2, a3]: [JSValue; 3],
     signature: Signature,
     cfg: ParseArgumentsCfg,
 ) -> JsResult<ParseArgumentsResult> {
-    let [a1, a2, a3] = frame.arguments_as_array::<3>();
-
     #[derive(Copy, Clone)]
     enum Len { Three, Two, One, Zero }
     let len: Len = if !a3.is_undefined_or_null() {
@@ -731,10 +732,7 @@ fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseS
 }
 
 fn bind(value: JSValue, global: &JSGlobalObject, name: &'static str) -> JsResult<JSValue> {
-    // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
-    // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
-    // `JSHostFn` shape, not the safe Rust signature.
-    let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
+    let call_fn = bun_jsc::JSFunction::create(global, name, Bun__ScopeFunctions__callAsFunction, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &BunString::static_(name), 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)

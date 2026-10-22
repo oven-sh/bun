@@ -1,7 +1,8 @@
 //! The `node:quic` native binding object — Bun's equivalent of Node's
 //! `internalBinding('quic')` (reference: node/src/quic/*, v26.3.0).
 
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 use super::quic::{callbacks, endpoint, session, stream};
 
@@ -32,8 +33,8 @@ const QUIC_CALLBACK_NAMES: &[&str] = &[
     "StreamTrailers",
 ];
 
-#[bun_jsc::host_fn]
-fn set_callbacks(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn set_callbacks<'a>(cx: &mut JsScope<'a>, callbacks: JsLocal<'a>) -> JsResult<()> {
+    let global = cx.global();
     // Only the first call takes effect; subsequent calls are ignored
     // (node/src/quic/bindingdata.cc `BindingData::SetCallbacks`).
     if global
@@ -44,9 +45,9 @@ fn set_callbacks(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         .get()
         .is_some()
     {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
-    let callbacks_obj = frame.arguments_as_array::<1>()[0];
+    let callbacks_obj = callbacks.to_js();
     if !callbacks_obj.is_object() {
         return Err(global
             .err(
@@ -71,7 +72,7 @@ fn set_callbacks(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
     }
     callbacks::set(global, callbacks_obj);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn put_num(obj: JSValue, global: &JSGlobalObject, key: &str, value: u64) {
@@ -101,7 +102,8 @@ macro_rules! put_state_offsets_with_size {
     };
 }
 
-pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn create_binding(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+    let global = cx.global();
     let obj = JSValue::create_empty_object(global, 16);
 
     obj.put(
@@ -115,7 +117,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
         JSFunction::create(
             global,
             "setCallbacks",
-            __jsc_host_set_callbacks,
+            crate::generated_bindgen::node_quic_binding::Bun__NodeQuicBinding__setCallbacks,
             1,
             Default::default(),
         ),

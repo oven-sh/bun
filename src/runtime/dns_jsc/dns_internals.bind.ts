@@ -50,6 +50,8 @@ export const DNSResolver = b.class({
   },
 });
 
+export const newResolver = b.fn({ ...method, args: { options: b.any }, returns: b.any });
+
 // The undocumented `Bun.dns.*` functions: the same queries on the VM's global resolver.
 export const getGlobalServers = b.fn(getServers);
 export const globalResolve = b.fn(resolve);
@@ -71,4 +73,29 @@ export const globalLookupService = b.fn({
   args: { address: b.string.utf8, port: b.f64 },
   expected: { address: ["string"], port: ["number"] },
   returns: b.any,
+});
+
+// `bun:internal-for-testing`
+export const seedCacheForTesting = b.fn({
+  ...method,
+  args: { hostname: b.string, addresses: b.any },
+  returns: b.any,
+  rustPath: "crate::dns_jsc::internal::seed_cache_for_testing",
+});
+export const isLocalhostNameForTesting = b.fn({
+  args: { hostname: b.string },
+  returns: b.bool,
+  rustPath: "crate::dns_jsc::internal::is_localhost_name_for_testing",
+});
+export const isAllLoopbackOfOneFamilyForTesting = b.fn({
+  ...method,
+  args: { addresses: b.any },
+  returns: b.bool,
+  rustPath: "crate::dns_jsc::internal::is_all_loopback_of_one_family_for_testing",
+});
+export const getaddrinfoErrorForTesting = b.fn({
+  ...method,
+  args: { code: b.string, hostname: b.string },
+  returns: b.any,
+  rustPath: "crate::dns_jsc::internal::getaddrinfo_error_for_testing",
 });

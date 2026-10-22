@@ -3,14 +3,14 @@
 
 use core::ffi::{c_char, c_void};
 
-// `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` host fn below.
+// `rust-argon2` exports its lib as crate `argon2`; alias past the `argon2` fn below.
 use ::argon2 as rust_argon2;
 use bun_boringssl as boringssl;
 use bun_collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_jsc::bun_string_jsc;
+use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult,
-    JsThread, Protected, Strong,
+    self as jsc, ArrayBuffer, JSGlobalObject, JSValue, Job, JobContext, JsPtr, JsResult, JsThread,
+    Protected, Strong,
 };
 
 use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
@@ -299,16 +299,15 @@ pub(crate) mod random {
     }
 
     fn schedule(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
+        cx: &JsThread<'_>,
         callback: JSValue,
         job: RandomFillJob,
         value: JSValue,
         memory: Option<JSValue>,
     ) {
-        let cx = global.js_thread_of_caller(call_frame);
+        let global = cx.global();
         Job::<RandomFillJob>::schedule(
-            &cx,
+            cx,
             job,
             RandomFillJs {
                 callback: Strong::create(callback.with_async_context_if_needed(global), global),
@@ -322,11 +321,17 @@ pub(crate) mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
+        use bun_jsc::{JSType, UUID, UUID7};
 
-        #[bun_jsc::host_fn]
-        fn random_int(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let [mut min_value, mut max_value, mut callback] = call_frame.arguments_as_array::<3>();
+        pub(crate) fn random_int<'a>(
+            cx: &mut JsScope<'a>,
+            min: JsLocal<'a>,
+            max: JsLocal<'a>,
+            callback: JsLocal<'a>,
+        ) -> JsResult<Option<f64>> {
+            let global = cx.global();
+            let [mut min_value, mut max_value, mut callback] =
+                [min.to_js(), max.to_js(), callback.to_js()];
 
             let mut min_specified = true;
             if max_value.is_undefined() || max_value.is_callable() {
@@ -444,35 +449,35 @@ pub(crate) mod random {
                     JSValue::UNDEFINED,
                     JSValue::js_number(res as f64),
                 )?;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(None);
             }
 
-            Ok(JSValue::js_number(res as f64))
+            Ok(Some(res as f64))
         }
 
-        #[bun_jsc::host_fn]
-        fn random_uuid(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let args = call_frame.arguments();
+        pub(crate) fn random_uuid<'a>(
+            cx: &mut JsScope<'a>,
+            options: JsLocal<'a>,
+        ) -> JsResult<BunString> {
+            let global = cx.global();
+            let options = options.to_js();
 
             let mut disable_entropy_cache = false;
-            if !args.is_empty() {
-                let options = args[0];
-                if !options.is_undefined() {
-                    validators::validate_object(
+            if !options.is_undefined() {
+                validators::validate_object(
+                    global,
+                    options,
+                    format_args!("options"),
+                    Default::default(),
+                )?;
+                if let Some(disable_entropy_cache_value) =
+                    options.get(global, "disableEntropyCache")?
+                {
+                    disable_entropy_cache = validators::validate_boolean(
                         global,
-                        options,
-                        format_args!("options"),
-                        Default::default(),
+                        disable_entropy_cache_value,
+                        format_args!("options.disableEntropyCache"),
                     )?;
-                    if let Some(disable_entropy_cache_value) =
-                        options.get(global, "disableEntropyCache")?
-                    {
-                        disable_entropy_cache = validators::validate_boolean(
-                            global,
-                            disable_entropy_cache_value,
-                            format_args!("options.disableEntropyCache"),
-                        )?;
-                    }
                 }
             }
 
@@ -489,32 +494,32 @@ pub(crate) mod random {
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.into_js(global)
+            Ok(str)
         }
 
-        #[bun_jsc::host_fn]
-        fn random_uuid_v7(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let args = call_frame.arguments();
+        pub(crate) fn random_uuid_v7<'a>(
+            cx: &mut JsScope<'a>,
+            options: JsLocal<'a>,
+        ) -> JsResult<BunString> {
+            let global = cx.global();
+            let options = options.to_js();
 
             let mut disable_entropy_cache = false;
-            if !args.is_empty() {
-                let options = args[0];
-                if !options.is_undefined() {
-                    validators::validate_object(
+            if !options.is_undefined() {
+                validators::validate_object(
+                    global,
+                    options,
+                    format_args!("options"),
+                    Default::default(),
+                )?;
+                if let Some(disable_entropy_cache_value) =
+                    options.get(global, "disableEntropyCache")?
+                {
+                    disable_entropy_cache = validators::validate_boolean(
                         global,
-                        options,
-                        format_args!("options"),
-                        Default::default(),
+                        disable_entropy_cache_value,
+                        format_args!("options.disableEntropyCache"),
                     )?;
-                    if let Some(disable_entropy_cache_value) =
-                        options.get(global, "disableEntropyCache")?
-                    {
-                        disable_entropy_cache = validators::validate_boolean(
-                            global,
-                            disable_entropy_cache_value,
-                            format_args!("options.disableEntropyCache"),
-                        )?;
-                    }
                 }
             }
 
@@ -536,7 +541,7 @@ pub(crate) mod random {
                     .try_into()
                     .expect("infallible: size matches"),
             );
-            str.into_js(global)
+            Ok(str)
         }
 
         fn assert_offset(
@@ -608,9 +613,13 @@ pub(crate) mod random {
             Ok(size as u32)
         }
 
-        #[bun_jsc::host_fn]
-        fn random_bytes(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let [size_value, callback] = call_frame.arguments_as_array::<2>();
+        pub(crate) fn random_bytes<'a>(
+            cx: &mut JsScope<'a>,
+            size: JsLocal<'a>,
+            callback: JsLocal<'a>,
+        ) -> JsResult<JSValue> {
+            let global = cx.global();
+            let [size_value, callback] = [size.to_js(), callback.to_js()];
 
             let size = assert_size(global, size_value, 1, 0, MAX_POSSIBLE_LENGTH + 1)?;
 
@@ -627,8 +636,7 @@ pub(crate) mod random {
             }
 
             schedule(
-                global,
-                call_frame,
+                &cx.js_thread(),
                 callback,
                 RandomFillJob::InPlace {
                     // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
@@ -645,9 +653,14 @@ pub(crate) mod random {
             Ok(JSValue::UNDEFINED)
         }
 
-        #[bun_jsc::host_fn]
-        fn random_fill_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-            let [buf_value, offset_value, size_value] = call_frame.arguments_as_array::<3>();
+        pub(crate) fn random_fill_sync<'a>(
+            cx: &mut JsScope<'a>,
+            buf: JsLocal<'a>,
+            offset: JsLocal<'a>,
+            size: JsLocal<'a>,
+        ) -> JsResult<JSValue> {
+            let global = cx.global();
+            let [buf_value, offset_value, size_value] = [buf.to_js(), offset.to_js(), size.to_js()];
 
             let Some(mut buf) = buf_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
@@ -689,10 +702,16 @@ pub(crate) mod random {
             Ok(buf_value)
         }
 
-        #[bun_jsc::host_fn]
-        fn random_fill(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        pub(crate) fn random_fill<'a>(
+            cx: &mut JsScope<'a>,
+            buf: JsLocal<'a>,
+            offset: JsLocal<'a>,
+            size: JsLocal<'a>,
+            callback: JsLocal<'a>,
+        ) -> JsResult<()> {
+            let global = cx.global();
             let [buf_value, offset_value, mut size_value, mut callback] =
-                call_frame.arguments_as_array::<4>();
+                [buf.to_js(), offset.to_js(), size.to_js(), callback.to_js()];
 
             let Some(buf) = buf_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
@@ -734,7 +753,7 @@ pub(crate) mod random {
 
             if size == 0 {
                 let _ = callback.call(global, JSValue::UNDEFINED, &[JSValue::NULL, buf_value])?;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
 
             // `vec![0u8; size]` aborts the process on OOM. The 3-arg overload
@@ -748,8 +767,7 @@ pub(crate) mod random {
 
             let (memory, view_offset) = buf.find_wasm_memory().unzip();
             schedule(
-                global,
-                call_frame,
+                &cx.js_thread(),
                 callback,
                 RandomFillJob::Scratch {
                     scratch,
@@ -760,7 +778,7 @@ pub(crate) mod random {
                 memory,
             );
 
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
     } // mod _hostfns
 
@@ -807,7 +825,7 @@ pub(crate) struct Argon2 {
 mod _impl {
     use super::*;
     use crate::node::util::validators;
-    use bun_jsc::{ErrorCode, JSFunction, JSType};
+    use bun_jsc::{ErrorCode, JSType};
 
     use crate::crypto::pbkdf2::{self, PBKDF2};
 
@@ -816,15 +834,12 @@ mod _impl {
         /// returns `(Self, JSValue)`; the sync caller ignores the second element.
         fn from_js<const IS_ASYNC: bool>(
             global: &JSGlobalObject,
-            call_frame: &CallFrame,
+            password_value: JSValue,
+            salt_value: JSValue,
+            keylen_value: JSValue,
+            options_arg: JSValue,
+            callback_arg: JSValue,
         ) -> JsResult<(Self, JSValue)> {
-            let [
-                password_value,
-                salt_value,
-                keylen_value,
-                options_arg,
-                callback_arg,
-            ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
 
@@ -999,9 +1014,14 @@ mod _impl {
         /// `from_js::<true>` for the work-pool job, with its callback.
         fn from_js_async(
             global: &JSGlobalObject,
-            call_frame: &CallFrame,
+            password: JSValue,
+            salt: JSValue,
+            keylen: JSValue,
+            options: JSValue,
+            callback: JSValue,
         ) -> JsResult<(ThreadIsolated<Self>, JSValue)> {
-            let (ctx, callback) = Self::from_js::<true>(global, call_frame)?;
+            let (ctx, callback) =
+                Self::from_js::<true>(global, password, salt, keylen, options, callback)?;
             // SAFETY: `from_js::<true>` copied the buffers and thread-isolated the strings.
             Ok((unsafe { ThreadIsolated::new(ctx) }, callback))
         }
@@ -1146,18 +1166,49 @@ mod _impl {
         }
     }
 
-    #[bun_jsc::host_fn]
-    fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (data, callback) = PBKDF2::from_js_async(global_this, call_frame)?;
-        pbkdf2::create_job(&global_this.js_thread_of_caller(call_frame), data, callback);
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn pbkdf2<'a>(
+        cx: &mut JsScope<'a>,
+        password: JsLocal<'a>,
+        salt: JsLocal<'a>,
+        iterations: JsLocal<'a>,
+        keylen: JsLocal<'a>,
+        digest: JsLocal<'a>,
+        callback: JsLocal<'a>,
+    ) -> JsResult<()> {
+        let (data, callback) = PBKDF2::from_js_async(
+            cx.global(),
+            password.to_js(),
+            salt.to_js(),
+            iterations.to_js(),
+            keylen.to_js(),
+            digest.to_js(),
+            callback.to_js(),
+        )?;
+        pbkdf2::create_job(&cx.js_thread(), data, callback);
+        Ok(())
     }
 
-    #[bun_jsc::host_fn]
-    fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn pbkdf2_sync<'a>(
+        cx: &mut JsScope<'a>,
+        password: JsLocal<'a>,
+        salt: JsLocal<'a>,
+        iterations: JsLocal<'a>,
+        keylen: JsLocal<'a>,
+        digest: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
-        let (mut data, _) = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
+        let (mut data, _) = PBKDF2::from_js(
+            global_this,
+            password.to_js(),
+            salt.to_js(),
+            iterations.to_js(),
+            keylen.to_js(),
+            digest.to_js(),
+            JSValue::UNDEFINED,
+            Flavor::Sync,
+        )?;
         // `create_buffer_from_length` → `JSBuffer__bufferFromLength`, which constructs
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
@@ -1176,29 +1227,19 @@ mod _impl {
         Ok(out_arraybuffer)
     }
 
-    #[bun_jsc::host_fn]
-    fn secure_heap_used(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn secure_heap_used() {}
+
+    pub(crate) fn get_fips() -> i32 {
+        0
     }
 
-    #[bun_jsc::host_fn]
-    fn get_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(0.0))
-    }
+    pub(crate) fn set_fips() {}
 
-    #[bun_jsc::host_fn]
-    fn set_fips(_: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn]
-    fn set_engine(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
-        Err(global
-            .err(
-                ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
-                format_args!("Custom engines not supported by BoringSSL"),
-            )
-            .throw())
+    pub(crate) fn set_engine<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, ()> {
+        Err(heap.error_with_code(
+            ErrorCode::CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED,
+            format_args!("Custom engines not supported by BoringSSL"),
+        ))
     }
 
     extern "C" fn for_each_hash(
@@ -1219,8 +1260,7 @@ mod _impl {
         bun_core::handle_oom(hashes.put(from_bytes, ()));
     }
 
-    #[bun_jsc::host_fn]
-    fn get_hashes(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn get_hashes<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, JsLocal<'a>> {
         let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
             CaseInsensitiveAsciiStringArrayHashMap::new();
 
@@ -1231,24 +1271,31 @@ mod _impl {
             boringssl::c::EVP_MD_do_all_sorted(for_each_hash, (&raw mut hashes).cast::<c_void>());
         }
 
-        let array = JSValue::create_empty_array(global, hashes.count())?;
-
-        for (i, hash) in hashes.keys().iter().enumerate() {
-            let str = bun_string_jsc::create_utf8_for_js(global, hash)?;
-            array.put_index(global, u32::try_from(i).expect("int cast"), str)?;
-        }
-
-        Ok(array)
+        bindgen::to_js::array(heap, hashes.keys(), bindgen::to_js::utf8)
     }
 
-    #[bun_jsc::host_fn]
-    fn scrypt(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (params, callback) = Scrypt::from_js_async(global, call_frame)?;
+    pub(crate) fn scrypt<'a>(
+        cx: &mut JsScope<'a>,
+        password: JsLocal<'a>,
+        salt: JsLocal<'a>,
+        keylen: JsLocal<'a>,
+        options: JsLocal<'a>,
+        callback: JsLocal<'a>,
+    ) -> JsResult<()> {
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let (params, callback) = Scrypt::from_js_async(
+            global,
+            password.to_js(),
+            salt.to_js(),
+            keylen.to_js(),
+            options.to_js(),
+            callback.to_js(),
+        )?;
         if params.keylen as usize > jsc::virtual_machine::synthetic_allocation_limit() {
             return Err(global.throw_out_of_memory());
         }
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, params.keylen)?;
-        let cx = global.js_thread_of_caller(call_frame);
         Job::<ScryptJob>::schedule(
             &cx,
             ScryptJob {
@@ -1262,13 +1309,26 @@ mod _impl {
                 buf: Strong::create(buf, global),
             },
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn]
-    fn scrypt_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn scrypt_sync<'a>(
+        cx: &mut JsScope<'a>,
+        password: JsLocal<'a>,
+        salt: JsLocal<'a>,
+        keylen: JsLocal<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
         // `password`/`salt` release on drop; nothing was protected on this path.
-        let (ctx, _) = Scrypt::from_js::<false>(global, call_frame)?;
+        let (ctx, _) = Scrypt::from_js::<false>(
+            global,
+            password.to_js(),
+            salt.to_js(),
+            keylen.to_js(),
+            options.to_js(),
+            JSValue::UNDEFINED,
+        )?;
         let (buf, bytes) = ArrayBuffer::alloc::<{ JSType::ArrayBuffer }>(global, ctx.keylen)?;
         if ctx.run_task_impl(bytes).is_some() {
             return Err(global
@@ -1284,7 +1344,18 @@ mod _impl {
     impl Argon2 {
         /// Arguments arrive pre-validated from `checkArgon2()` in `crypto.ts`;
         /// the checks here only defend the internal binding itself.
-        fn from_js(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<(Self, JSValue)> {
+        fn from_js(
+            global: &JSGlobalObject,
+            message_value: JSValue,
+            nonce_value: JSValue,
+            parallelism_value: JSValue,
+            tag_length_value: JSValue,
+            memory_value: JSValue,
+            passes_value: JSValue,
+            secret_value: JSValue,
+            associated_data_value: JSValue,
+            variant_value: JSValue,
+        ) -> JsResult<Self> {
             fn copy_buffer_arg(
                 global: &JSGlobalObject,
                 value: JSValue,
@@ -1305,19 +1376,6 @@ mod _impl {
                 copy.extend_from_slice(bytes);
                 Ok(copy)
             }
-
-            let [
-                message_value,
-                nonce_value,
-                parallelism_value,
-                tag_length_value,
-                memory_value,
-                passes_value,
-                secret_value,
-                associated_data_value,
-                variant_value,
-                callback,
-            ] = call_frame.arguments_as_array::<10>();
 
             let parallelism = validators::validate_uint32(
                 global,
@@ -1367,7 +1425,7 @@ mod _impl {
             let failed =
                 (memory as usize).saturating_mul(1024) > limit || tag_length as usize > limit;
 
-            let ctx = Argon2 {
+            Ok(Argon2 {
                 message: copy_buffer_arg(global, message_value, b"message")?,
                 nonce: copy_buffer_arg(global, nonce_value, b"nonce")?,
                 secret: copy_buffer_arg(global, secret_value, b"secret")?,
@@ -1379,8 +1437,7 @@ mod _impl {
                 variant,
                 output: Vec::new(),
                 failed,
-            };
-            Ok((ctx, callback))
+            })
         }
 
         fn run(&mut self) {
@@ -1471,11 +1528,35 @@ mod _impl {
         }
     }
 
-    #[bun_jsc::host_fn]
-    fn argon2(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (ctx, callback) = Argon2::from_js(global, call_frame)?;
+    pub(crate) fn argon2<'a>(
+        cx: &mut JsScope<'a>,
+        message: JsLocal<'a>,
+        nonce: JsLocal<'a>,
+        parallelism: JsLocal<'a>,
+        tag_length: JsLocal<'a>,
+        memory: JsLocal<'a>,
+        passes: JsLocal<'a>,
+        secret: JsLocal<'a>,
+        associated_data: JsLocal<'a>,
+        variant: JsLocal<'a>,
+        callback: JsLocal<'a>,
+    ) -> JsResult<()> {
+        let cx = cx.js_thread();
+        let global = cx.global();
+        let callback = callback.to_js();
+        let ctx = Argon2::from_js(
+            global,
+            message.to_js(),
+            nonce.to_js(),
+            parallelism.to_js(),
+            tag_length.to_js(),
+            memory.to_js(),
+            passes.to_js(),
+            secret.to_js(),
+            associated_data.to_js(),
+            variant.to_js(),
+        )?;
         let _ = validators::validate_function(global, "callback", callback)?;
-        let cx = global.js_thread_of_caller(call_frame);
         Job::<Argon2>::schedule(
             &cx,
             ctx,
@@ -1483,12 +1564,34 @@ mod _impl {
                 callback: Strong::create(callback.with_async_context_if_needed(global), global),
             },
         );
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
-    #[bun_jsc::host_fn]
-    fn argon2_sync(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let (mut ctx, _) = Argon2::from_js(global, call_frame)?;
+    pub(crate) fn argon2_sync<'a>(
+        cx: &mut JsScope<'a>,
+        message: JsLocal<'a>,
+        nonce: JsLocal<'a>,
+        parallelism: JsLocal<'a>,
+        tag_length: JsLocal<'a>,
+        memory: JsLocal<'a>,
+        passes: JsLocal<'a>,
+        secret: JsLocal<'a>,
+        associated_data: JsLocal<'a>,
+        variant: JsLocal<'a>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let mut ctx = Argon2::from_js(
+            global,
+            message.to_js(),
+            nonce.to_js(),
+            parallelism.to_js(),
+            tag_length.to_js(),
+            memory.to_js(),
+            passes.to_js(),
+            secret.to_js(),
+            associated_data.to_js(),
+            variant.to_js(),
+        )?;
         ctx.run();
         if ctx.failed {
             let err = global.create_error_instance(format_args!("Argon2 derivation failed"));
@@ -1497,188 +1600,12 @@ mod _impl {
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator).
         JSValue::create_buffer(global, ctx.output.leak())
     }
-
-    pub(crate) fn create_node_crypto_binding_zig(global: &JSGlobalObject) -> JSValue {
-        let crypto = JSValue::create_empty_object(global, 17);
-
-        // `#[bun_jsc::host_fn]` emits a `__jsc_host_{name}` shim with the raw `JSHostFn` ABI;
-        // pass that (not the safe-Rust body) to `JSFunction::create`.
-        crypto.put(
-            global,
-            b"pbkdf2",
-            JSFunction::create(global, "pbkdf2", __jsc_host_pbkdf2, 6, Default::default()),
-        );
-        crypto.put(
-            global,
-            b"pbkdf2Sync",
-            JSFunction::create(
-                global,
-                "pbkdf2Sync",
-                __jsc_host_pbkdf2_sync,
-                5,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomInt",
-            JSFunction::create(
-                global,
-                "randomInt",
-                random::__jsc_host_random_int,
-                2,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomFill",
-            JSFunction::create(
-                global,
-                "randomFill",
-                random::__jsc_host_random_fill,
-                4,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomFillSync",
-            JSFunction::create(
-                global,
-                "randomFillSync",
-                random::__jsc_host_random_fill_sync,
-                3,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomUUID",
-            JSFunction::create(
-                global,
-                "randomUUID",
-                random::__jsc_host_random_uuid,
-                1,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomUUIDv7",
-            JSFunction::create(
-                global,
-                "randomUUIDv7",
-                random::__jsc_host_random_uuid_v7,
-                1,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"randomBytes",
-            JSFunction::create(
-                global,
-                "randomBytes",
-                random::__jsc_host_random_bytes,
-                2,
-                Default::default(),
-            ),
-        );
-
-        crypto.put(
-            global,
-            b"secureHeapUsed",
-            JSFunction::create(
-                global,
-                "secureHeapUsed",
-                __jsc_host_secure_heap_used,
-                0,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"getFips",
-            JSFunction::create(
-                global,
-                "getFips",
-                __jsc_host_get_fips,
-                0,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"setFips",
-            JSFunction::create(
-                global,
-                "setFips",
-                __jsc_host_set_fips,
-                1,
-                Default::default(),
-            ),
-        );
-        crypto.put(
-            global,
-            b"setEngine",
-            JSFunction::create(
-                global,
-                "setEngine",
-                __jsc_host_set_engine,
-                2,
-                Default::default(),
-            ),
-        );
-
-        crypto.put(
-            global,
-            b"getHashes",
-            JSFunction::create(
-                global,
-                "getHashes",
-                __jsc_host_get_hashes,
-                0,
-                Default::default(),
-            ),
-        );
-
-        crypto.put(
-            global,
-            b"scrypt",
-            JSFunction::create(global, "scrypt", __jsc_host_scrypt, 5, Default::default()),
-        );
-        crypto.put(
-            global,
-            b"scryptSync",
-            JSFunction::create(
-                global,
-                "scryptSync",
-                __jsc_host_scrypt_sync,
-                4,
-                Default::default(),
-            ),
-        );
-
-        crypto.put(
-            global,
-            b"argon2",
-            JSFunction::create(global, "argon2", __jsc_host_argon2, 10, Default::default()),
-        );
-        crypto.put(
-            global,
-            b"argon2Sync",
-            JSFunction::create(
-                global,
-                "argon2Sync",
-                __jsc_host_argon2_sync,
-                9,
-                Default::default(),
-            ),
-        );
-
-        crypto
-    }
 } // mod _impl
 
-pub(crate) use _impl::create_node_crypto_binding_zig;
+pub(crate) use _impl::{
+    argon2, argon2_sync, get_fips, get_hashes, pbkdf2, pbkdf2_sync, scrypt, scrypt_sync,
+    secure_heap_used, set_engine, set_fips,
+};
+pub(crate) use random::{
+    random_bytes, random_fill, random_fill_sync, random_int, random_uuid, random_uuid_v7,
+};

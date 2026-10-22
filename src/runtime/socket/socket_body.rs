@@ -19,7 +19,7 @@ use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
@@ -4190,7 +4190,7 @@ impl DuplexUpgradeContext {
             // `has_handlers() == false` in `onOpen`.
             //
             // Refcount: `tls.socket` is `InternalSocket::UpgradedDuplex`
-            // here (assigned in `js_upgrade_duplex_to_tls` *before*
+            // here (assigned in `upgrade_duplex_to_tls` *before*
             // `start_tls()` enqueues anything and before any duplex
             // callback can dispatch), so `handle_connect_error`'s
             // `needs_deref = !is_detached()` is `true` and it consumes
@@ -4337,7 +4337,7 @@ impl DuplexUpgradeContext {
     }
 
     /// process-lifetime per-thread singleton stored at construction
-    /// (`js_upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor.
+    /// (`upgrade_duplex_to_tls`); `event_loop_mut()` is the safe accessor.
     /// Takes `ThisPtr<Self>` so the queued task carries the allocation's root
     /// pointer (the task's `run_event` may free it).
     #[inline]
@@ -4358,7 +4358,7 @@ impl DuplexUpgradeContext {
 
     /// # Safety
     /// `this` must be the unique live pointer to the heap allocation produced
-    /// in `js_upgrade_duplex_to_tls`, with a ref count of zero. Frees the
+    /// in `upgrade_duplex_to_tls`, with a ref count of zero. Frees the
     /// allocation; callers must not
     /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
     /// be a Stacked Borrows protector violation when the backing `Box` is
@@ -4378,7 +4378,7 @@ impl DuplexUpgradeContext {
         // `UpgradedDuplex` cleanup
         // runs via `Drop` when `heap::take(this)` frees the containing
         // struct below; an explicit call here would double-free.
-        // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
+        // SAFETY: heap-allocated in `upgrade_duplex_to_tls`; this is the
         // matching free. No `&`/`&mut Self` survives past this point.
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -4429,19 +4429,18 @@ pub(crate) fn first_flight_before_fin(socket: SocketHandle<'_>) {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_upgrade_duplex_to_tls(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn upgrade_duplex_to_tls<'a>(
+    cx: &mut JsScope<'a>,
+    duplex: JsLocal<'a>,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
+    let global = cx.global();
     // The upgraded socket is the calling script's.
-    let context = global.bun_vm().context_of_caller(callframe);
+    let context = global.bun_vm().context_of_caller_no_frame();
 
-    let [duplex, opts] = callframe.arguments_as_array::<2>();
-    if callframe.arguments_count() < 2 {
-        return Err(global.throw(format_args!("Expected 2 arguments")));
-    }
+    let duplex = duplex.to_js();
+    let opts = options.to_js();
     // TODO: do better type checking
     if duplex.is_empty_or_undefined_or_null() {
         return Err(global.throw(format_args!("Expected a Duplex instance")));
@@ -4728,12 +4727,9 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_create_socket_pair(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     jsc::mark_binding!();
+    let global = cx.global();
 
     #[cfg(windows)]
     {
@@ -4754,10 +4750,7 @@ pub(crate) fn js_create_socket_pair(
         let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
         let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
 
-        let array = JSValue::create_empty_array(global, 2)?;
-        array.put_index(global, 0, JSValue::js_number(fds_[0] as f64))?;
-        array.put_index(global, 1, JSValue::js_number(fds_[1] as f64))?;
-        Ok(array)
+        Ok(fds_)
     }
 }
 
@@ -4769,18 +4762,14 @@ unsafe extern "C" {
 
 /// `setSocketOptions(socket, 1 | 2, size)` of `bun:internal-for-testing`: SO_SNDBUF (1) or
 /// SO_RCVBUF (2).
-#[bun_jsc::host_fn]
-pub(crate) fn js_set_socket_options(
-    global: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-
-    if arguments.len() < 3 {
-        return Err(global.throw_not_enough_arguments("setSocketOptions", 3, arguments.len()));
-    }
-
-    let target = arguments[0];
+pub(crate) fn set_socket_options<'a>(
+    cx: &mut JsScope<'a>,
+    socket: JsLocal<'a>,
+    option: JsLocal<'a>,
+    size: JsLocal<'a>,
+) -> JsResult<()> {
+    let global = cx.global();
+    let target = socket.to_js();
     let socket = if let Some(socket) = target.as_class_ref::<TCPSocket>() {
         socket.socket.get().socket.get()
     } else if let Some(socket) = target.as_class_ref::<TLSSocket>() {
@@ -4794,7 +4783,7 @@ pub(crate) fn js_set_socket_options(
         return Err(global.throw(format_args!("Expected a connected socket")));
     };
 
-    let is_recv = match arguments[1].to_int32() {
+    let is_recv = match option.to_js().to_int32() {
         1 => false,
         2 => true,
         _ => {
@@ -4807,78 +4796,61 @@ pub(crate) fn js_set_socket_options(
     let mut value: c_int = 0;
     let res = uws::us_socket_t::opaque_mut(socket).buffer_size(
         is_recv,
-        arguments[2].to_int32(),
+        size.to_js().to_int32(),
         &mut value,
     );
     if let Some(err) = get_us_error::<true>(res, sys::Tag::setsockopt) {
         return Err(global.throw_value(err.to_js(global)));
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 pub(crate) mod testing_apis {
     use super::*;
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_socket_fault_injection_available(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(cfg!(socket_fault_injection)))
+    pub(crate) fn socket_fault_injection_available() -> bool {
+        cfg!(socket_fault_injection)
     }
 
     /// Live `WindowsNamedPipeContext`s (one per connected or accepted socket
     /// over a Windows named pipe); always 0 elsewhere.
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_named_pipe_context_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn named_pipe_context_live_count() -> usize {
         #[cfg(windows)]
-        let count = crate::socket::windows_named_pipe_context::LIVE_COUNT
-            .load(core::sync::atomic::Ordering::Relaxed);
+        {
+            crate::socket::windows_named_pipe_context::LIVE_COUNT
+                .load(core::sync::atomic::Ordering::Relaxed)
+        }
         #[cfg(not(windows))]
-        let count = 0usize;
-        Ok(JSValue::js_number(count as f64))
+        {
+            0
+        }
     }
 
     /// Live `DuplexUpgradeContext`s (one per TLS socket over a JS stream).
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_duplex_upgrade_context_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let count = DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-        Ok(JSValue::js_number(count as f64))
+    pub(crate) fn duplex_upgrade_context_live_count() -> usize {
+        DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.load(core::sync::atomic::Ordering::Relaxed)
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_clear_socket_faults(
-        global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn clear_socket_faults(cx: &mut JsScope<'_>) -> JsResult<()> {
         #[cfg(socket_fault_injection)]
         {
-            let _ = global;
+            let _ = cx;
             bun_uws_sys::fault_inject::us_fault_clear_all();
-            Ok(JSValue::UNDEFINED)
+            Ok(())
         }
         #[cfg(not(socket_fault_injection))]
-        Err(global.throw(format_args!(
+        Err(cx.global().throw(format_args!(
             "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
         )))
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_set_socket_fault(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn set_socket_fault<'a>(cx: &mut JsScope<'a>, rule: JsLocal<'a>) -> JsResult<bool> {
         jsc::mark_binding!();
+        let global = cx.global();
         #[cfg(not(socket_fault_injection))]
         {
-            let _ = frame;
+            let _ = rule;
             return Err(global.throw(format_args!(
                 "socket fault injection was not compiled into this build (build with --socket-fault-injection=on)"
             )));
@@ -4887,7 +4859,7 @@ pub(crate) mod testing_apis {
         {
             use bun_uws_sys::fault_inject as fi;
 
-            let [opts] = frame.arguments_as_array::<1>();
+            let opts = rule.to_js();
             if !opts.is_object() {
                 return Err(global.throw_invalid_argument_type_value("rule", "object", opts));
             }
@@ -5050,7 +5022,7 @@ pub(crate) mod testing_apis {
 
             // SAFETY: rule is a valid stack pointer for the duration of the call.
             unsafe { fi::us_fault_set(syscall, &rule) };
-            Ok(JSValue::TRUE)
+            Ok(true)
         }
     }
 
@@ -5098,4 +5070,3 @@ pub(crate) mod testing_apis {
         None
     }
 }
-pub(crate) use testing_apis as testing_ap_is;

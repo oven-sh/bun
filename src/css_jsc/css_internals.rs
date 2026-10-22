@@ -1,8 +1,10 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
+use bun_core::String as BunString;
 use bun_css::targets::{Browsers, Targets};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
@@ -23,70 +25,123 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
-// These test-only wrappers are consumed as plain safe fns through
-// `dispatch_js2native.rs` re-exports, so they don't use the
-// `#[bun_jsc::host_fn]` C-ABI shim.
-
-pub fn minify_error_test_with_options(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+pub(crate) fn minify_error_test_with_options<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Minify, TestCategory::ParserOptions)
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Minify,
+        TestCategory::ParserOptions,
+    )
 }
 
-pub fn minify_test_with_options(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Minify, TestCategory::ParserOptions)
+pub(crate) fn minify_test_with_options<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Minify,
+        TestCategory::ParserOptions,
+    )
 }
 
-pub fn prefix_test_with_options(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Prefix, TestCategory::ParserOptions)
+pub(crate) fn prefix_test_with_options<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Prefix,
+        TestCategory::ParserOptions,
+    )
 }
 
-pub fn test_with_options(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Normal, TestCategory::ParserOptions)
+pub(crate) fn test_with_options<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Normal,
+        TestCategory::ParserOptions,
+    )
 }
 
-pub fn minify_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Minify, TestCategory::Normal)
+pub(crate) fn minify_test<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Minify,
+        TestCategory::Normal,
+    )
 }
 
-pub fn prefix_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Prefix, TestCategory::Normal)
+pub(crate) fn prefix_test<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Prefix,
+        TestCategory::Normal,
+    )
 }
 
-pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    testing_impl(global, frame, TestKind::Normal, TestCategory::Normal)
-}
-
-/// Shared arg-validation for the test-only CSS internals: pulls the next arg,
-/// throws "{fn_name}: expected {expected_n} arguments, got {got_n}" if absent,
-/// throws "{fn_name}: expected {arg_label} to be a string" if not a string,
-/// otherwise returns the +1-ref `bun_core::String`.
-/// Caller does `.to_utf8()` (borrows the bun_core::String, so can't be returned here).
-fn eat_string_arg(
-    arguments: &mut bun_jsc::ArgumentsSlice<'_>,
-    global: &JSGlobalObject,
-    fn_name: &str,
-    expected_n: u32,
-    got_n: u32,
-    arg_label: &str,
-) -> JsResult<bun_core::String> {
-    let Some(arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!(
-            "{fn_name}: expected {expected_n} arguments, got {got_n}"
-        )));
-    };
-    if !arg.is_string() {
-        return Err(global.throw(format_args!(
-            "{fn_name}: expected {arg_label} to be a string"
-        )));
-    }
-    arg.to_bun_string(global)
+pub(crate) fn test<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    options: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    testing_impl(
+        cx.global(),
+        source,
+        expected,
+        options.to_js(),
+        TestKind::Normal,
+        TestCategory::Normal,
+    )
 }
 
 fn testing_impl(
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    source: &BunString,
+    expected: &BunString,
+    options: JSValue,
     test_kind: TestKind,
     test_category: TestCategory,
 ) -> JsResult<JSValue> {
@@ -106,30 +161,8 @@ fn testing_impl(
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
-    // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
-    let source_bunstr = eat_string_arg(
-        &mut arguments,
-        global,
-        "minifyTestWithOptions",
-        2,
-        0,
-        "source",
-    )?;
-    let source = source_bunstr.to_utf8();
-
-    let expected_bunstr = eat_string_arg(
-        &mut arguments,
-        global,
-        "minifyTestWithOptions",
-        2,
-        1,
-        "`expected` arg",
-    )?;
-    let _expected = expected_bunstr.to_utf8();
-
-    let browser_options_arg = arguments.next_eat();
+    let source = source.to_utf8();
+    let _expected = expected.to_utf8();
 
     let mut log = Log::init();
 
@@ -140,17 +173,13 @@ fn testing_impl(
 
         match test_category {
             TestCategory::Normal => {
-                if let Some(optargs) = browser_options_arg {
-                    if optargs.is_object() {
-                        browsers = Some(targets_from_js(global, optargs)?);
-                    }
+                if options.is_object() {
+                    browsers = Some(targets_from_js(global, options)?);
                 }
             }
             TestCategory::ParserOptions => {
-                if let Some(optargs) = browser_options_arg {
-                    if optargs.is_object() {
-                        parser_options_from_js(global, &arena, &mut opts, optargs)?;
-                    }
+                if options.is_object() {
+                    parser_options_from_js(global, &arena, &mut opts, options)?;
                 }
             }
         }
@@ -276,7 +305,13 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
     Ok(targets)
 }
 
-pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn attr_test<'a>(
+    cx: &mut JsScope<'a>,
+    source: &BunString,
+    expected: &BunString,
+    minify: JsLocal<'a>,
+    targets: JsLocal<'a>,
+) -> JsResult<JSValue> {
     use bun_ast::ImportRecord;
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
@@ -293,25 +328,17 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), frame.arguments());
-    let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
-    let source = source_bunstr.to_utf8();
+    let global = cx.global();
+    let source = source.to_utf8();
+    let _expected = expected.to_utf8();
 
-    let expected_bunstr =
-        eat_string_arg(&mut arguments, global, "attrTest", 3, 1, "`expected` arg")?;
-    let _expected = expected_bunstr.to_utf8();
-
-    let Some(minify_arg) = arguments.next_eat() else {
-        return Err(global.throw(format_args!("attrTest: expected 3 arguments, got 2")));
-    };
+    let minify_arg = minify.to_js();
     let minify = minify_arg.is_boolean() && minify_arg.to_boolean();
 
+    let targets_arg = targets.to_js();
     let mut targets = Targets::default();
-    if let Some(arg) = arguments.next_eat() {
-        if arg.is_object() {
-            targets.browsers = Some(targets_from_js(global, arg)?);
-        }
+    if targets_arg.is_object() {
+        targets.browsers = Some(targets_from_js(global, targets_arg)?);
     }
 
     let mut log = Log::init();

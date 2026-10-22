@@ -1,7 +1,8 @@
 //! Stats and BigIntStats classes from node:fs
 
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 // `bun.sys.PosixStat` — uv-shaped stat struct. Re-exported from `bun_sys` now
 // that the crate declares it; `PosixStat::init(&bun_sys::Stat)` handles the
@@ -171,16 +172,15 @@ pub(crate) type StatsBig = StatType<true>;
 /// Test-only: build a Stats/BigIntStats from a raw u64 ino via the real
 /// statToJS path, so regression tests can exercise high-inode values without
 /// a filesystem that hands them out.
-#[bun_jsc::host_fn]
-pub(crate) fn create_stats_for_ino(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+pub(crate) fn create_stats_for_ino<'a>(
+    cx: &mut JsScope<'a>,
+    ino: JsLocal<'a>,
+    big: bool,
 ) -> JsResult<JSValue> {
-    let [ino_arg, big_arg] = frame.arguments_as_array::<2>();
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();
-    stat_.ino = ino_arg.to_uint64_no_truncate();
-    Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(global)
+    stat_.ino = ino.to_js().to_uint64_no_truncate();
+    Stats::init(&stat_, big).to_js_newly_created(cx.global())
 }
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime

@@ -18,6 +18,7 @@ export const BunServer = b.union({
   debugHttp: DebugHTTPServer,
   debugHttps: DebugHTTPSServer,
 });
+export const getBunServerAllClosedPromise = b.fn({ args: { server: BunServer }, returns: b.any, capability: "js" });
 export const getBunServerOpenCount = b.fn({ args: { server: BunServer }, returns: b.f64 });
 
 /** `kInternalSocketData` of the socket given to `handleUpgrade()` of `ws`, which can be any `Duplex`. */

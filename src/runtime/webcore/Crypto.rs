@@ -2,7 +2,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSValue, JsClass as _, JsResult, StringJsc};
+use bun_jsc::{JSGlobalObject, JSType, JSValue, JsClass as _, JsResult, StringJsc};
 
 use crate::generated_bindgen::crypto::{EncodedUUID, UUIDEncoding};
 use crate::node::Encoding;
@@ -104,19 +104,17 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
     }
 }
 
-// The #[bun_jsc::host_fn] attribute macro emits the `extern "C"` shim with the
-// correct calling convention and `#[unsafe(no_mangle)]` under the exported name.
-#[bun_jsc::host_fn(export = "Bun__randomUUIDv7")]
-fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_undef::<2>();
+pub(crate) fn random_uuid_v7(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+    let global = cx.global();
+    let arguments = JsLocal::to_js_slice(args);
 
     let mut encoding_value: JSValue = JSValue::UNDEFINED;
 
     let encoding: Encoding = 'brk: {
-        if arguments.len > 0 {
-            if !arguments.ptr[0].is_undefined() {
-                if arguments.ptr[0].is_string() {
-                    encoding_value = arguments.ptr[0];
+        if !arguments.is_empty() {
+            if !arguments[0].is_undefined() {
+                if arguments[0].is_string() {
+                    encoding_value = arguments[0];
                     break 'brk match Encoding::from_js(encoding_value, global)? {
                         Some(e) => e,
                         None => {
@@ -138,10 +136,10 @@ fn bun_random_uuid_v7(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     };
 
     let (timestamp, timestamp_source): (u64, uuid::TimestampSource) = 'brk: {
-        let timestamp_value: JSValue = if arguments.len > 1 {
-            arguments.ptr[1]
-        } else if arguments.len == 1 && encoding_value.is_undefined() {
-            arguments.ptr[0]
+        let timestamp_value: JSValue = if arguments.len() > 1 {
+            arguments[1]
+        } else if arguments.len() == 1 && encoding_value.is_undefined() {
+            arguments[0]
         } else {
             JSValue::UNDEFINED
         };

@@ -15,6 +15,7 @@ import {
   DoubleType,
   EnumerationType,
   FunctionDefinition,
+  type FunctionOptions,
   integers,
   type MemberOptions,
   ModuleDefinition,
@@ -91,13 +92,13 @@ export { class_ as class };
 /** The class being declared, in its own signatures: a `JsWrapper<'a, Self>`. */
 export { selfType as self } from "./bindgen-lib-internal.ts";
 
-export const fn = (signature: SignatureOptions) => new FunctionDefinition([signature]);
+export const fn = (options: FunctionOptions) => new FunctionDefinition([options], options);
 
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
 export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
 
 /** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. */
-export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
+export const namespace = (functions: Record<string, FunctionOptions>, options?: NamespaceOptions) =>
   new NamespaceDefinition(functions, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */

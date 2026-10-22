@@ -12,7 +12,7 @@ use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
@@ -3378,20 +3378,17 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
+use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::simple_request::S3UploadResult;
 use crate::webcore::s3_file as S3File;
-use bun_core::string_joiner::StringJoiner;
-use bun_jsc::SysErrorJsc as _;
-// The `write_file` module name coexists with `pub fn write_file` below (module
-// vs value namespace); alias the module so the call sites read unambiguously.
-use self::write_file as write_file_mod;
-use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
+use bun_core::string_joiner::StringJoiner;
 use bun_jsc::JsClass as _;
+use bun_jsc::SysErrorJsc as _;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
@@ -4302,7 +4299,7 @@ pub(crate) fn write_file_with_source_destination(
                     .promise
                     .set(cx.global(), promise_value)
             };
-            match write_file_mod::WriteFileWindows::create(
+            match write_file::WriteFileWindows::create(
                 cx.vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
@@ -4311,8 +4308,8 @@ pub(crate) fn write_file_with_source_destination(
                 WriteFilePromise::run,
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
-                Err(write_file_mod::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
-                Err(write_file_mod::WriteFileWindowsError::Js(err)) => return Err(err),
+                Err(write_file::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
+                Err(write_file::WriteFileWindowsError::Js(err)) => return Err(err),
                 Ok(_) => {}
             }
             return Ok(promise_value);
@@ -4320,7 +4317,7 @@ pub(crate) fn write_file_with_source_destination(
 
         #[cfg(not(windows))]
         {
-            let file_copier = write_file_mod::WriteFile::create(
+            let file_copier = write_file::WriteFile::create(
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
@@ -4332,7 +4329,7 @@ pub(crate) fn write_file_with_source_destination(
             write_file_promise.promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = write_file_promise.promise.value();
             promise_value.ensure_still_alive();
-            write_file_mod::WriteFile::schedule(file_copier, write_file_promise, cx);
+            write_file::WriteFile::schedule(file_copier, write_file_promise, cx);
             return Ok(promise_value);
         }
     }
@@ -5007,22 +5004,23 @@ fn set_content_type_from_js(
 }
 
 /// `Bun.write(destination, input, options?)`
-pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let context = global_this.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
-    let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+pub(crate) fn write(
+    cx: &mut JsScope<'_>,
+    destination: JsLocal<'_>,
+    data: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let cx = cx.js_thread();
+    let global_this = cx.global();
+    let destination = destination.to_js();
+    let mut args =
+        jsc::ArgumentsSlice::init(global_this.bun_vm(), core::slice::from_ref(&destination));
 
     let mut path_or_blob = write_destination_from_js(global_this, &mut args)?;
 
-    let Some(data) = args.next_eat() else {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
-        )));
-    };
     let mut mkdirp_if_not_exists: Option<bool> = None;
     let mut mode: Option<bun_sys::Mode> = None;
-    let options = args.next_eat();
+    let options = (!options.is_undefined()).then(|| options.to_js());
     if let Some(options_object) = options {
         if options_object.is_object() {
             if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
@@ -5064,9 +5062,9 @@ pub(crate) fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) ->
         }
     }
     write_file_internal(
-        &global_this.js_thread(context),
+        &cx,
         &mut path_or_blob,
-        data,
+        data.to_js(),
         WriteFileOptions {
             mkdirp_if_not_exists,
             extra_options: options,
@@ -5242,9 +5240,11 @@ bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
     pub unsafe fn JSDOMFile__construct(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        bits: JSValue,
+        name: JSValue,
+        options: JSValue,
     ) -> Option<NonNull<Blob>> {
-        match jsdom_file_construct(global_this, callframe) {
+        match jsdom_file_construct(global_this, bits, name, options) {
             Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
             Err(jsc::JsError::Thrown) => None,
             Err(jsc::JsError::Terminated) => {
@@ -5262,55 +5262,47 @@ bun_jsc::jsc_host_abi! {
 
 pub(crate) fn jsdom_file_construct(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    bits: JSValue,
+    name: JSValue,
+    options: JSValue,
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
-    let args = callframe.arguments();
 
-    if args.len() < 2 {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "new File(bits, name) expects at least 2 arguments"
-        )));
-    }
-    let name = BunString::from_js(args[1], global_this)?;
-    let blob = Blob::get::<false, true>(global_this, args[0])?;
+    let name = BunString::from_js(name, global_this)?;
+    let blob = Blob::get::<false, true>(global_this, bits)?;
     // The store may be shared with the source blob (`dupe()`); never rename it.
     blob.name.set(name);
 
     let mut set_last_modified = false;
 
-    if args.len() > 2 {
-        let options = args[2];
-        if options.is_object() {
-            // type, the ASCII-encoded string in lower case
-            // representing the media type of the Blob.
-            if let Some(content_type) = options.get(global_this, "type")? {
-                'inner: {
-                    if content_type.is_string() {
-                        let content_type_str = content_type.to_utf8(global_this)?;
-                        let slice = content_type_str.slice();
-                        if !is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+    if options.is_object() {
+        // type, the ASCII-encoded string in lower case
+        // representing the media type of the Blob.
+        if let Some(content_type) = options.get(global_this, "type")? {
+            'inner: {
+                if content_type.is_string() {
+                    let content_type_str = content_type.to_utf8(global_this)?;
+                    let slice = content_type_str.slice();
+                    if !is_valid_blob_type(slice) {
+                        break 'inner;
                     }
+                    blob.content_type_was_set.set(true);
+                    blob.content_type
+                        .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                            Some(mime) => BlobContentType::from(mime),
+                            None => BlobContentType::from_lowercased(slice),
+                        });
                 }
             }
+        }
 
-            // WebIDL dictionary member: only `undefined` / not-present falls
-            // through to the Date.now() default. Any present value (including
-            // `null`) goes through ToNumber, with NaN normalized to 0.
-            if let Some(last_modified) = options.get(global_this, "lastModified")? {
-                set_last_modified = true;
-                let n = last_modified.to_number(global_this)?;
-                blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
-            }
+        // WebIDL dictionary member: only `undefined` / not-present falls
+        // through to the Date.now() default. Any present value (including
+        // `null`) goes through ToNumber, with NaN normalized to 0.
+        if let Some(last_modified) = options.get(global_this, "lastModified")? {
+            set_last_modified = true;
+            let n = last_modified.to_number(global_this)?;
+            blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
         }
     }
 
@@ -5339,25 +5331,23 @@ pub(crate) fn jsdom_file_construct(
 // `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
 // later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
-pub(crate) fn construct_bun_file(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn file(
+    cx: &mut JsScope<'_>,
+    path: JsLocal<'_>,
+    options: JsLocal<'_>,
 ) -> JsResult<JSValue> {
+    let global_object = cx.global();
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = global_object.bun_vm();
-    let arguments_slice = callframe.arguments();
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+    let path = path.to_js();
+    let mut args = jsc::ArgumentsSlice::init(vm, core::slice::from_ref(&path));
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
         return Err(global_object.throw_invalid_arguments(format_args!(
             "Expected file path string or file descriptor"
         )));
     };
-    let options = if arguments_slice.len() >= 2 {
-        Some(arguments_slice[1])
-    } else {
-        None
-    };
+    let options = (!options.is_undefined()).then(|| options.to_js());
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {

@@ -1,92 +1,56 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
-//! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
+//! no `JSValue`/`JSGlobalObject` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use bun_core::String as BunString;
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::{JSValue, JsResult, StringJsc as _};
 
-pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn operating_system_is_match<'a>(
+    cx: &mut JsScope<'a>,
+    names: JsLocal<'a>,
+) -> JsResult<bool> {
     use bun_install::npm;
-    let [arg] = frame.arguments_as_array::<1>();
+    let global = cx.global();
     let mut operating_system = npm::OperatingSystem::NONE.negatable();
-    let mut iter = arg.array_iterator(global)?;
+    let mut iter = names.to_js().array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_utf8(global)?;
         operating_system.apply(slice.slice());
     }
-    Ok(JSValue::js_boolean(
-        operating_system
-            .combine()
-            .is_match(npm::OperatingSystem::CURRENT),
-    ))
+    Ok(operating_system
+        .combine()
+        .is_match(npm::OperatingSystem::CURRENT))
 }
 
-pub fn architecture_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn architecture_is_match<'a>(
+    cx: &mut JsScope<'a>,
+    names: JsLocal<'a>,
+) -> JsResult<bool> {
     use bun_install::npm;
-    let [arg] = frame.arguments_as_array::<1>();
+    let global = cx.global();
     let mut architecture = npm::Architecture::NONE.negatable();
-    let mut iter = arg.array_iterator(global)?;
+    let mut iter = names.to_js().array_iterator(global)?;
     while let Some(item) = iter.next()? {
         let slice = item.to_utf8(global)?;
         architecture.apply(slice.slice());
     }
-    Ok(JSValue::js_boolean(
-        architecture.combine().is_match(npm::Architecture::CURRENT),
-    ))
+    Ok(architecture.combine().is_match(npm::Architecture::CURRENT))
 }
 
-/// Free-fn alias of [`ManifestBindings::generate`] so `bun_runtime::dispatch::js2native`
-/// can `pub use` it (associated fns aren't importable items).
-#[inline]
-pub fn package_manifest_bindings_generate(global: &JSGlobalObject) -> JSValue {
-    ManifestBindings::generate(global)
-}
-
-/// Formerly `npm.PackageManifest.bindings` — testing-only (`internal-for-testing.ts`).
-pub(crate) struct ManifestBindings;
-
-impl ManifestBindings {
-    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-        use bun_jsc::JSFunction;
-        let obj = JSValue::create_empty_object(global, 1);
-        obj.put(
-            global,
-            b"parseManifest",
-            JSFunction::create(
-                global,
-                "parseManifest",
-                // `#[bun_jsc::host_fn]` on the module-scope `js_parse_manifest`
-                // emits this `JSHostFn`-ABI shim.
-                __jsc_host_js_parse_manifest,
-                2,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-}
-
-// Lives at module scope (not `impl ManifestBindings`) because the
-// `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
-// a `Self::` qualifier, so the wrapped fn must resolve unqualified.
-#[bun_jsc::host_fn]
-fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn parse_manifest(
+    heap: &JsHeap<'_>,
+    manifest_filename: &BunString,
+    registry: &BunString,
+) -> JsResult<JSValue> {
     use bstr::BStr;
-    use bun_core::String as BunString;
     use bun_install::npm;
     use bun_jsc::JsError;
     use std::io::Write as _;
 
-    let args = frame.arguments();
-    if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
-        return Err(global.throw(format_args!(
-            "expected manifest filename and registry string arguments"
-        )));
-    }
-
-    let manifest_filename_str = args[0].to_bun_string(global)?;
-    let manifest_filename = manifest_filename_str.to_utf8();
-
-    let registry_str = args[1].to_bun_string(global)?;
-    let registry = registry_str.to_utf8();
+    // SAFETY: `JSON.parse` without a reviver runs no JavaScript, and what throws returns.
+    let global = unsafe { heap.global() };
+    let manifest_filename = manifest_filename.to_utf8();
+    let registry = registry.to_utf8();
 
     let manifest_file = match bun_sys::openat_a(
         bun_sys::Fd::cwd(),

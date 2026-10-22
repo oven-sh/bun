@@ -690,6 +690,35 @@ describe("b.any.variadic", () => {
   });
 });
 
+describe("functions", () => {
+  it("passThis and passCallee come before the arguments", () => {
+    const receiver = {};
+    const [thisValue, callee, value] = bindgen.thisAndCallee.call(receiver, 1);
+    expect(thisValue).toBe(receiver);
+    expect(callee).toBe(bindgen.thisAndCallee);
+    expect(value).toBe(1);
+    expect(bindgen.thisAndCallee.call(5, 1)[0]).toBe(5);
+    expect((0, bindgen.thisAndCallee)(1)[0]).toBeUndefined();
+    expect(bindgen.thisAndCallee.length).toBe(1);
+  });
+
+  it("export names the host function for Rust", () => {
+    expect(bindgen.doubled(21)).toBe(42);
+    const made = bindgen.makeDoubled();
+    expect(made).not.toBe(bindgen.doubled);
+    expect(made.name).toBe("doubled");
+    expect(made(21)).toBe(42);
+    expect(() => made("21")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() => b.fn({ export: "not a name" })).toThrow("export: not a name is not a C identifier");
+  });
+
+  it("$bindgen gives a namespace as an object", () => {
+    expect(Object.keys(bindgen.testNamespace)).toEqual(["increment", "decrement"]);
+    expect(bindgen.testNamespace.increment(1)).toBe(2);
+    expect(bindgen.testNamespace.decrement(1)).toBe(0);
+  });
+});
+
 describe("enumerations", () => {
   it("parses and returns the canonical spelling", () => {
     expect(bindgen.nextColor("red")).toBe("green");

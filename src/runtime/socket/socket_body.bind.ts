@@ -107,3 +107,28 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+export const upgradeDuplexToTLS = b.fn({ ...method, args: { duplex: b.any, options: b.any } });
+
+// `bun:internal-for-testing`
+export const createSocketPair = b.fn({ ...js, returns: b.array(b.i32) });
+export const setSocketOptions = b.fn({ ...js, args: { socket: b.any, option: b.any, size: b.any } });
+const testing = (name: string) => `crate::socket::socket_body::testing_apis::${name}`;
+export const socketFaultInjectionAvailable = b.fn({
+  returns: b.bool,
+  rustPath: testing("socket_fault_injection_available"),
+});
+export const namedPipeContextLiveCount = b.fn({
+  returns: b.usize,
+  rustPath: testing("named_pipe_context_live_count"),
+});
+export const duplexUpgradeContextLiveCount = b.fn({
+  returns: b.usize,
+  rustPath: testing("duplex_upgrade_context_live_count"),
+});
+export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });
+export const setSocketFault = b.fn({
+  ...js,
+  args: { rule: b.any },
+  returns: b.bool,
+  rustPath: testing("set_socket_fault"),
+});

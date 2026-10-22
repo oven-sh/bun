@@ -1,5 +1,7 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 
+export default b.module({ rustPath: "crate::api::js_source_map" });
+
 const find = { returns: b.any, capability: "js", throws: true } as const;
 
 export const SourceMap = b.class({
@@ -20,3 +22,5 @@ export const SourceMap = b.class({
     payload: { internalField: "payload" },
   },
 });
+
+export const findSourceMap = b.fn({ args: { path: b.any }, returns: b.any, capability: "js", throws: true });

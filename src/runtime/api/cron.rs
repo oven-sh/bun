@@ -22,11 +22,11 @@ use bun_core::EncodedSlice;
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
 use bun_io::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::bindgen::JsWrapper;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
-    self as jsc, CallFrame, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction,
-    JSGlobalObject, JSObject, JSValue, JsCell, JsRef, JsResult,
+    self as jsc, EncodedSliceJsc as _, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject,
+    JSObject, JSValue, JsCell, JsRef, JsResult,
 };
 use bun_paths as path;
 use bun_ptr::{BackRef, RefPtr, ThisPtr};
@@ -39,7 +39,10 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
     self as spawn, Process, ProcessHandle, Rusage, SpawnOptions, Status,
 };
-use crate::generated_bindgen::cron::js_CronJob as js;
+use crate::generated_bindgen::cron::{
+    Bun__Cron__cron, Bun__Cron__parse, Bun__Cron__remove, Bun__CronJob__onPromiseReject,
+    Bun__CronJob__onPromiseResolve, js_CronJob as js,
+};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
 use bun_core::strings;
@@ -745,17 +748,26 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
     )))
 }
 
-// -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
+// -- JS entry point --
 
-#[bun_jsc::host_fn]
-pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<3>();
+pub(crate) fn cron(
+    cx: &mut JsScope<'_>,
+    path_or_schedule: JsLocal<'_>,
+    schedule_or_handler: JsLocal<'_>,
+    title_or_options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let args = [
+        path_or_schedule.to_js(),
+        schedule_or_handler.to_js(),
+        title_or_options.to_js(),
+    ];
 
     // In-process callback cron: Bun.cron(schedule, handler, opts?)
     if args[1].is_callable() {
-        let tz = resolve_cron_tz(global, args[2])?;
-        return CronJob::register(&global.js_thread_of_caller(frame), args[0], args[1], tz);
+        let tz = resolve_cron_tz(cx.global(), args[2])?;
+        return CronJob::register(&cx.js_thread(), args[0], args[1], tz);
     }
+    let global = cx.global();
     if args[0].is_string() && args[2].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
             "Bun.cron(schedule, handler) expects a function handler as the second argument"
@@ -806,7 +818,7 @@ pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
     let mut fmt_buf = [0u8; 512];
     let normalized_schedule = parsed.format_numeric(&mut fmt_buf);
 
-    let abs_path = match resolve_path(global, frame, path_slice.slice()) {
+    let abs_path = match resolve_path(global, path_slice.slice()) {
         Ok(p) => p,
         Err(_) => {
             return Err(global.throw_invalid_arguments(format_args!("Failed to resolve path")));
@@ -1278,17 +1290,9 @@ impl CronRemoveJob {
     }
 }
 
-// free fn: `#[host_fn]` Free shim calls bare `cron_remove(..)`
-#[bun_jsc::host_fn]
-pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<1>();
-    if !args[0].is_string() {
-        return Err(global
-            .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
-    }
-
-    let title_str = args[0].to_bun_string(global)?;
-    let title_slice = title_str.to_utf8();
+pub(crate) fn remove(cx: &mut JsScope<'_>, title: &bun_core::String) -> JsResult<JSValue> {
+    let global = cx.global();
+    let title_slice = title.to_utf8();
 
     if !validate_title(title_slice.slice()) {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -1710,8 +1714,8 @@ impl CronJob {
                     result.then_with_value(
                         &this.global,
                         Self::create_tick_cell(this),
-                        crate::generated_host_exports::Bun__CronJob__onPromiseResolve,
-                        crate::generated_host_exports::Bun__CronJob__onPromiseReject,
+                        Bun__CronJob__onPromiseResolve,
+                        Bun__CronJob__onPromiseReject,
                     );
                     // `then_with_value()` returns `()`, so re-check the VM status and recover on
                     // termination: the reactions will not run.
@@ -1855,15 +1859,10 @@ impl CronJob {
     }
 }
 
-// C++ `promiseHandlerID` compares the handler passed to `JSValue::then` against
-// these symbols by address, so they must stay function exports.
-// HOST_EXPORT(Bun__CronJob__onPromiseResolve, jsc)
-pub(crate) fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments();
+pub(crate) fn on_promise_resolve(_: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
     // The cell hands back the job's ref. None: the claim was taken back (the VM is going).
-    let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])
-    else {
-        return Ok(JSValue::UNDEFINED);
+    let Some(job) = crate::api::native_promise_context::take::<CronJob>(context.to_js()) else {
+        return;
     };
     // SAFETY: the claim the cell handed back is a ref on the live job.
     let this = unsafe { ThisPtr::new(job.as_ptr()) };
@@ -1873,22 +1872,18 @@ pub(crate) fn on_promise_resolve(_global: &JSGlobalObject, frame: &CallFrame) ->
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
-    Ok(JSValue::UNDEFINED)
 }
 
-// HOST_EXPORT(Bun__CronJob__onPromiseReject, jsc)
-pub(crate) fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments();
+pub(crate) fn on_promise_reject(_: &mut JsScope<'_>, reason: JsLocal<'_>, context: JsLocal<'_>) {
     // As `on_promise_resolve`.
-    let Some(job) = crate::api::native_promise_context::take::<CronJob>(args[args.len() - 1])
-    else {
-        return Ok(JSValue::UNDEFINED);
+    let Some(job) = crate::api::native_promise_context::take::<CronJob>(context.to_js()) else {
+        return;
     };
     // SAFETY: the claim the cell handed back is a ref on the live job.
     let this = unsafe { ThisPtr::new(job.as_ptr()) };
     let _guard = scopeguard::guard(this, CronJob::tick_settled);
     let vm = this.global.bun_vm().as_mut();
-    let err = args[0];
+    let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
     if let Some(js_this) = this.this_value.get().try_get() {
         promise_value = js::pending_promise_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
@@ -1899,7 +1894,6 @@ pub(crate) fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> 
     let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
-    Ok(JSValue::UNDEFINED)
 }
 
 // ============================================================================
@@ -1907,25 +1901,18 @@ pub(crate) fn on_promise_reject(_global: &JSGlobalObject, frame: &CallFrame) -> 
 // ============================================================================
 
 pub(crate) fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue {
-    // `#[bun_jsc::host_fn]` emits the C-ABI shim as `__jsc_host_<name>`.
-    let cron_fn = JSFunction::create(
-        global_this,
-        "cron",
-        __jsc_host_cron_register,
-        3,
-        Default::default(),
-    );
+    let cron_fn = JSFunction::create(global_this, "cron", Bun__Cron__cron, 3, Default::default());
     let remove_fn = JSFunction::create(
         global_this,
         "remove",
-        __jsc_host_cron_remove,
+        Bun__Cron__remove,
         1,
         Default::default(),
     );
     let parse_fn = JSFunction::create(
         global_this,
         "parse",
-        __jsc_host_cron_parse,
+        Bun__Cron__parse,
         1,
         Default::default(),
     );
@@ -1934,18 +1921,15 @@ pub(crate) fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> 
     cron_fn
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<3>();
-
-    if !args[0].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.cron.parse() expects a string cron expression as the first argument"
-        )));
-    }
-
-    let expr_str = args[0].to_bun_string(global)?;
-    let expr_slice = expr_str.to_utf8();
+pub(crate) fn parse(
+    cx: &mut JsScope<'_>,
+    expression: &bun_core::String,
+    from: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<Option<f64>> {
+    let global = cx.global();
+    let from = from.to_js();
+    let expr_slice = expression.to_utf8();
 
     let parsed = match CronExpression::parse(expr_slice.slice()) {
         Ok(p) => p,
@@ -1957,10 +1941,9 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
     };
 
-    let from_ms: f64 = if !args[1].is_empty() && !args[1].is_undefined() && args[1] != JSValue::NULL
-    {
-        if args[1].is_number() || args[1].js_type() == jsc::JSType::JSDate {
-            args[1].to_number(global)?
+    let from_ms: f64 = if !from.is_empty() && !from.is_undefined() && from != JSValue::NULL {
+        if from.is_number() || from.js_type() == jsc::JSType::JSDate {
+            from.to_number(global)?
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)"
@@ -1975,12 +1958,9 @@ pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         return Err(global.throw_invalid_arguments(format_args!("Invalid date value")));
     }
 
-    let tz = resolve_cron_tz(global, args[2])?;
+    let tz = resolve_cron_tz(global, options.to_js())?;
 
-    let Some(next_ms) = parsed.next(global, from_ms, tz)? else {
-        return Ok(JSValue::NULL);
-    };
-    Ok(JSValue::from_date_number(global, next_ms))
+    parsed.next(global, from_ms, tz)
 }
 
 // ============================================================================
@@ -2286,13 +2266,9 @@ fn find_crontab() -> Option<ZString> {
     }
 }
 
-fn resolve_path(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-    path_: &[u8],
-) -> crate::Result<ZString> {
+fn resolve_path(global: &JSGlobalObject, path_: &[u8]) -> crate::Result<ZString> {
     let vm = global.bun_vm().as_mut();
-    let srcloc = frame.get_caller_src_loc(global);
+    let srcloc = global.get_caller_src_loc();
     let caller_utf8 = srcloc.str.to_utf8();
     let raw_dir = path::resolve_path::dirname::<path::platform::Auto>(caller_utf8.slice());
     let source_dir: &[u8] = if raw_dir.is_empty() { b"." } else { raw_dir };

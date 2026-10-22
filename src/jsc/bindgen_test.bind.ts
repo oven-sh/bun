@@ -380,6 +380,23 @@ export const afterFirst = b.fn({
   throws: true,
 });
 
+/** `[this, the function itself, value]`. */
+export const thisAndCallee = b.fn({
+  passThis: true,
+  passCallee: true,
+  args: { value: b.any },
+  returns: b.any,
+  capability: "heap",
+  throws: true,
+});
+export const doubled = b.fn({ export: "Bun__BindgenTest__doubled", args: { value: b.i32 }, returns: b.i32 });
+/** A new function, made in Rust, that runs `doubled`. */
+export const makeDoubled = b.fn({ returns: b.any, capability: "js" });
+export const testNamespace = b.namespace({
+  increment: { args: { value: b.i32 }, returns: b.i32 },
+  decrement: { args: { value: b.i32 }, returns: b.i32 },
+});
+
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });
 export const looseInteger = b.fn({ args: { value: b.u16.loose }, returns: b.u16 });
 export const looseIntegerOrBigInt = b.fn({ args: { value: b.u16.loose.allowBigInt }, returns: b.u16 });

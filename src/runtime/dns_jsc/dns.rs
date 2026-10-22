@@ -25,7 +25,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
+    self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
 };
 use bun_ptr::RefPtr;
 #[cfg(windows)]
@@ -2844,45 +2844,33 @@ pub(crate) mod internal {
     }
 
     /// `bun:internal-for-testing`: [`is_localhost_name`] for one hostname.
-    pub(crate) fn is_localhost_name_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let hostname = frame.argument(0);
-        if !hostname.is_string() {
-            return Err(global.throw_invalid_arguments(format_args!("expected (hostname: string)")));
-        }
-        let hostname = hostname.to_utf8(global)?;
-        Ok(JSValue::js_boolean(is_localhost_name(hostname.slice())))
+    pub(crate) fn is_localhost_name_for_testing(hostname: &bun::String) -> bool {
+        is_localhost_name(hostname.to_utf8().slice())
     }
 
     /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
-    pub(crate) fn is_all_loopback_of_one_family_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut addrs = addresses_for_testing(global, frame.argument(0))?;
+    pub(crate) fn is_all_loopback_of_one_family_for_testing<'a>(
+        cx: &mut JsScope<'a>,
+        addresses: JsLocal<'a>,
+    ) -> JsResult<bool> {
+        let mut addrs = addresses_for_testing(cx.global(), addresses.to_js())?;
         let chain = addrinfo_chain(&mut addrs);
         let head = chain.first().map_or(ptr::null(), ptr::from_ref);
-        Ok(JSValue::js_boolean(is_all_loopback_of_one_family(head)))
+        Ok(is_all_loopback_of_one_family(head))
     }
 
     /// `bun:internal-for-testing`: seed the connect-path DNS cache for `hostname`
     /// by running `addresses` through the real [`process_results`] interleave and
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
-    pub(crate) fn seed_cache_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+    pub(crate) fn seed_cache_for_testing<'a>(
+        cx: &mut JsScope<'a>,
+        hostname: &bun::String,
+        addresses: JsLocal<'a>,
     ) -> JsResult<JSValue> {
-        let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected (hostname: string, addresses: string[])"
-            )));
-        }
-        let hostname_slice = args[0].to_utf8(global)?;
+        let global = cx.global();
+        let hostname_slice = hostname.to_utf8();
         let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
-        let mut addrs = addresses_for_testing(global, args[1])?;
+        let mut addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
@@ -2925,17 +2913,13 @@ pub(crate) mod internal {
     /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
     /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
     pub(crate) fn getaddrinfo_error_for_testing(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: &mut JsScope<'_>,
+        code: &bun::String,
+        hostname: &bun::String,
     ) -> JsResult<JSValue> {
-        let args = frame.arguments();
-        if args.len() < 2 || !args[0].is_string() || !args[1].is_string() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected (code: string, hostname: string)"
-            )));
-        }
-        let code = args[0].to_utf8(global)?;
-        let hostname = args[1].to_utf8(global)?;
+        let global = cx.global();
+        let code = code.to_utf8();
+        let hostname = hostname.to_utf8();
         let Some(rc) = c_ares::Error::eai_raw_by_name(code.slice()) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "unknown getaddrinfo status name: {}",
@@ -5754,18 +5738,18 @@ impl Resolver {
         )
     }
 
-    // FFI shim emitted by `export_host_fn!` below (JS2Native link name).
-    pub(crate) fn new_resolver(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn new_resolver<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
     ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
             global_this.bun_vm(),
-            Some(global_this.bun_vm().context_of_caller(callframe).id()),
+            Some(global_this.bun_vm().context_of_caller_no_frame().id()),
         );
 
-        let options = callframe.argument(0);
+        let options = options.to_js();
         if options.is_object() {
             // SAFETY: `resolver` is the heap allocation from `init`; not yet
             // wrapped in JS so exclusively owned here.
@@ -5895,55 +5879,3 @@ impl Resolver {
         bun::String::static_(<&'static str>::from(order))
     }
 }
-
-// ───────── JS host-fn FFI exports ─────────
-// The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
-// re-export each under its JS2Native link name. Mirrors the proc-macro's
-// shim body (see `bun_jsc_macros::host_fn`).
-macro_rules! export_host_fn {
-    ($scope:ident :: $f:ident, $name:literal) => {
-        const _: () = {
-            #[cfg(all(windows, target_arch = "x86_64"))]
-            #[unsafe(export_name = $name)]
-            pub(crate) unsafe extern "sysv64" fn __shim(
-                g: *mut ::bun_jsc::JSGlobalObject,
-                f: *mut ::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::host_fn::host_fn_result(g, || $scope::$f(g, f))
-            }
-            #[cfg(not(all(windows, target_arch = "x86_64")))]
-            #[unsafe(export_name = $name)]
-            pub(crate) unsafe extern "C" fn __shim(
-                g: *mut ::bun_jsc::JSGlobalObject,
-                f: *mut ::bun_jsc::CallFrame,
-            ) -> ::bun_jsc::JSValue {
-                // SAFETY: JSC guarantees both pointers are live for the call.
-                let (g, f) = unsafe { (&*g, &*f) };
-                ::bun_jsc::host_fn::host_fn_result(g, || $scope::$f(g, f))
-            }
-        };
-    };
-}
-// JS2Native ($newRustFunction) entry points — see GeneratedJS2Native.h
-export_host_fn!(
-    Resolver::new_resolver,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver"
-);
-export_host_fn!(
-    internal::seed_cache_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting"
-);
-export_host_fn!(
-    internal::is_localhost_name_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting"
-);
-export_host_fn!(
-    internal::is_all_loopback_of_one_family_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isAllLoopbackOfOneFamilyForTesting"
-);
-export_host_fn!(
-    internal::getaddrinfo_error_for_testing,
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_getaddrinfoErrorForTesting"
-);

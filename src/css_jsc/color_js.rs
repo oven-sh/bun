@@ -4,8 +4,9 @@ use bun_alloc::Arena;
 use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
@@ -210,7 +211,11 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
-pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn color<'a>(
+    cx: &mut JsScope<'a>,
+    input: JsLocal<'a>,
+    format: JsLocal<'a>,
+) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::Utf8Bytes;
     use bun_css as css;
@@ -218,7 +223,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
     use bun_jsc::StringJsc as _;
 
-    let args = frame.arguments_as_array::<2>();
+    let global = cx.global();
+    let args = [input.to_js(), format.to_js()];
     if args[0].is_undefined() {
         return Err(global.throw_invalid_argument_type(
             "color",

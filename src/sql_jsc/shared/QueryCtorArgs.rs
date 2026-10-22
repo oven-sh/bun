@@ -13,15 +13,14 @@ pub(crate) struct QueryCtorArgs {
 }
 
 impl QueryCtorArgs {
-    pub(crate) fn parse(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<Self> {
-        let mut args = arguments.iter().copied();
-        let Some(query) = args.next() else {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        };
-        let Some(values) = args.next() else {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        };
-
+    pub(crate) fn parse(
+        global_this: &JSGlobalObject,
+        query: JSValue,
+        values: JSValue,
+        pending_value: JSValue,
+        js_bigint: JSValue,
+        js_simple: JSValue,
+    ) -> JsResult<Self> {
         if !query.is_string() {
             return Err(global_this.throw(format_args!("query must be a string")));
         }
@@ -29,10 +28,6 @@ impl QueryCtorArgs {
         if values.js_type() != JSType::Array {
             return Err(global_this.throw(format_args!("values must be an array")));
         }
-
-        let pending_value: JSValue = args.next().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next().unwrap_or(JSValue::FALSE);
 
         let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
         let simple = js_simple.is_boolean() && js_simple.as_boolean();

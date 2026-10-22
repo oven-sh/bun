@@ -5,13 +5,17 @@ use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;
+use crate::generated_bindgen::bun_test::{
+    Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
+};
 use super::execution::TimespecExt as _;
 
 bun_core::declare_scope!(bun_test_group, hidden);
@@ -121,7 +125,7 @@ pub(crate) mod js_fns {
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
     // was a const-generic param (`adt_const_params` is unstable);
-    // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
+    // reshaped to runtime dispatch with per-tag thin wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
         #[strum(serialize = "beforeAll")]
@@ -158,24 +162,24 @@ pub(crate) mod js_fns {
     }
 
     // `adt_const_params` is unstable, so the body takes `tag` at runtime and
-    // 5 thin `#[host_fn]` wrappers below supply the per-tag entry points
+    // 5 thin wrappers below supply the per-tag entry points
     // (one fn per JS function so JSFunction::create gets a distinct address).
     pub(crate) fn generic_hook_impl(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+        arguments: [JSValue; 3],
+    ) -> JsResult<()> {
         let _g = group_begin!();
         // Run the body in a closure so every error exit funnels through the
         // log below before the group guard closes.
-        let result = (|| -> JsResult<JSValue> {
+        let result = (|| -> JsResult<()> {
 
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
 
             let args = ScopeFunctions::parse_arguments(
                 global_this,
-                call_frame,
+                arguments,
                 Signature::Str(sig_bytes),
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
@@ -210,7 +214,7 @@ pub(crate) mod js_fns {
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
                 )?;
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             };
 
             match bun_test.phase {
@@ -228,7 +232,7 @@ pub(crate) mod js_fns {
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
                     )?;
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Execution => {
                     let active = bun_test.get_current_state_data();
@@ -310,7 +314,7 @@ pub(crate) mod js_fns {
                     }
                     bun_test.extra_execution_entries.push(new_item_ptr);
 
-                    Ok(JSValue::UNDEFINED)
+                    Ok(())
                 }
                 Phase::Done => Err(global_this.throw(format_args!(
                     "Cannot call {}() after the test run has completed",
@@ -324,18 +328,23 @@ pub(crate) mod js_fns {
         result
     }
 
-    /// Per-tag `#[host_fn]` entry points (one fn per JS function so
+    /// Per-tag entry points (one fn per JS function so
     /// `JSFunction::create` gets a distinct address).
     pub(crate) mod generic_hook {
         use super::*;
         macro_rules! hook {
             ($name:ident, $tag:ident) => {
-                #[bun_jsc::host_fn]
                 pub(crate) fn $name(
-                    global_this: &JSGlobalObject,
-                    call_frame: &CallFrame,
-                ) -> JsResult<JSValue> {
-                    super::generic_hook_impl(GenericHookTag::$tag, global_this, call_frame)
+                    cx: &mut JsScope<'_>,
+                    description: JsLocal<'_>,
+                    callback: JsLocal<'_>,
+                    options: JsLocal<'_>,
+                ) -> JsResult<()> {
+                    super::generic_hook_impl(
+                        GenericHookTag::$tag,
+                        cx.global(),
+                        [description.to_js(), callback.to_js(), options.to_js()],
+                    )
                 }
             };
         }
@@ -738,12 +747,12 @@ impl BunTest {
 
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+        result: JSValue,
+        this_ptr: JSValue,
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let [result, this_ptr] = callframe.arguments_as_array::<2>();
         if this_ptr.is_empty_or_undefined_or_null() {
             return Ok(());
         }
@@ -782,32 +791,35 @@ impl BunTest {
         Ok(())
     }
 
-    // `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
-    // calls the annotated item by bare name; that lookup fails for associated
-    // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
-    // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
-    // attribute is dropped here — these are plain JsResult fns.
-    fn bun_test_then(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, false)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_then(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: JsLocal<'_>,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context.to_js(), false)
     }
 
-    fn bun_test_catch(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        Self::bun_test_then_or_catch(global_this, callframe, true)?;
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn bun_test_catch(
+        cx: &mut JsScope<'_>,
+        value: JsLocal<'_>,
+        context: JsLocal<'_>,
+    ) -> JsResult<()> {
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context.to_js(), true)
     }
 
     pub(crate) fn bun_test_done_callback(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        this_value: JsLocal<'_>,
+        error: JsLocal<'_>,
+    ) -> JsResult<()> {
         let _g = group_begin!();
 
-        let Some(this) = callframe.this().as_class_ref::<DoneCallback>() else {
+        let global_this = cx.global();
+        let Some(this) = this_value.to_js().as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
-        let [value] = callframe.arguments_as_array::<1>();
+        let value = error.to_js();
 
         let was_error = !value.is_empty_or_undefined_or_null();
         if this.called.get() {
@@ -822,7 +834,7 @@ impl BunTest {
         }
         this.called.set(true);
         let Some(ref_in) = this.r#ref.take() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
 
         // dupe the ref and enqueue a task to call the done callback.
@@ -832,18 +844,18 @@ impl BunTest {
         let should_run = has_one_ref || was_error;
 
         if !should_run {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         let Some(strong): Option<BunTestPtr> = ref_in.buntest_weak.upgrade() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
         strong.get().add_result(ref_in.phase);
         Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn bun_test_timeout_callback(
@@ -1384,35 +1396,6 @@ impl Drop for BunTest {
             let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically
-    }
-}
-
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
-// `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
-// identity, so the Rust thunk MUST be the symbol itself — exporting a
-// `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address
-// C++ sees never matches the local thunk we hand to `.then()`, tripping the
-// `RELEASE_ASSERT_NOT_REACHED` at the bottom of `promiseHandlerID`.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestThen(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_then(global, frame))
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(no_mangle)]
-    pub unsafe fn Bun__TestScope__Describe2__bunTestCatch(
-        global: *mut JSGlobalObject,
-        frame: *mut CallFrame,
-    ) -> JSValue {
-        // SAFETY: JSC passes non-null live pointers for both.
-        let (global, frame) = unsafe { (&*global, &*frame) };
-        jsc::host_fn::to_js_host_fn_result(global, BunTest::bun_test_catch(global, frame))
     }
 }
 

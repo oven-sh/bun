@@ -391,8 +391,9 @@ export function cppHeader(file: SchemaFile): string {
     ...file.namespaces.map(cppNamespaceSignature),
     ...file.types.filter(type => type instanceof ClassType && type.construct).map(cppConstructorSignature),
   ];
+  const exported = file.functions.filter(fn => fn.exportName);
   const declarations = [
-    ...file.functions.map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`),
+    ...file.functions.filter(fn => !fn.exportName).map(fn => `JSC_DECLARE_HOST_FUNCTION(${hostFunctionName(fn)});`),
     ...propertyCallbacks.map(signature => `// A PropertyCallback of a static property table.\n${signature};`),
   ];
   return `${banner(file.origin)}#pragma once
@@ -402,6 +403,8 @@ export function cppHeader(file: SchemaFile): string {
 #include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertEnumeration.h"
 ${[...headers].map(header => `#include "${header}"\n`).join("")}${file.types.map(cppHeaderForType).join("")}${
+    exported.length > 0 ? `\n${exported.map(fn => `BUN_DECLARE_HOST_FUNCTION(${fn.exportName});`).join("\n")}\n` : ""
+  }${
     declarations.length > 0
       ? `
 namespace Bun::Bindgen::Generated::${file.origin.namespace} {
@@ -412,7 +415,7 @@ ${declarations.join("\n")}
   }`;
 }
 
-const hostFunctionName = (fn: FunctionDefinition) => `js${cap(fn.name.replace(/^_+/, ""))}`;
+const hostFunctionName = (fn: FunctionDefinition) => fn.exportName ?? `js${cap(fn.name.replace(/^_+/, ""))}`;
 
 const cppNamespaceSignature = (namespace: NamespaceDefinition) =>
   `JSC::JSValue create${cap(namespace.name)}(JSC::VM& vm, JSC::JSObject* owner)`;
@@ -438,6 +441,10 @@ ${namespace.functions
   .join("\n")}
     return object;
 }
+}
+extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${origin.stem}_${namespace.name}(Zig::GlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(Bun::Bindgen::Generated::${origin.namespace}::create${cap(namespace.name)}(JSC::getVM(globalObject), globalObject));
 }
 `;
 }
@@ -1151,15 +1158,21 @@ const offsetOfPayload = (type: ClassType) => offsetOfInternalField(type.internal
 const maxCellSize = 8000;
 
 /** Defines the host function `name`. `takeThis` declares `thisObject`, which is then the thunks' first argument. */
+/** `passThis` and `passCallee`, which come before the arguments. */
+const cppLeadingOfFunction = (fn: FunctionDefinition) => [
+  ...(fn.passThis ? ["JSC::JSValue::encode(callFrame->thisValue())"] : []),
+  ...(fn.passCallee ? ["JSC::JSValue::encode(callFrame->jsCallee())"] : []),
+];
+
 function cppHostFunction(
   name: string,
   fn: FunctionDefinition,
   symbol: (signature: Signature) => string,
   takeThis = "",
 ): string {
-  const leading = takeThis ? ["thisObject"] : [];
+  const leading = takeThis ? ["thisObject"] : cppLeadingOfFunction(fn);
   if (fn.signatures.length === 1) {
-    return `JSC_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    return `${fn.exportName ? "BUN" : "JSC"}_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 ${cppPrologue}
 ${takeThis}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
@@ -1199,14 +1212,15 @@ ${takeThis}${indent(cppDispatch(fn.dispatch), 4)}
 
 function cppSourceForFunction(fn: FunctionDefinition): string {
   const name = hostFunctionName(fn);
+  const leading = cppLeadingOfFunction(fn).map(() => "JSC::EncodedJSValue");
+  assert(fn.signatures.length === 1 || (leading.length === 0 && !fn.exportName), `${fn.name}: not with overloads`);
+  const hostFunction = cppHostFunction(name, fn, signature => thunkSymbol(fn, signature));
   return `
-${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature)).join("\n")}
-namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {
-${cppHostFunction(name, fn, signature => thunkSymbol(fn, signature))}
-}
+${fn.signatures.map(signature => cppExtern(thunkSymbol(fn, signature), signature, leading)).join("\n")}
+${fn.exportName ? hostFunction : `namespace Bun::Bindgen::Generated::${fn.origin!.namespace} {\n${hostFunction}\n}`}
 extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${fn.origin!.stem}_${fn.name}(Zig::GlobalObject* globalObject)
 {
-    return JSC::JSValue::encode(JSC::JSFunction::create(JSC::getVM(globalObject), globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, Bun::Bindgen::Generated::${fn.origin!.namespace}::${name}, JSC::ImplementationVisibility::Public));
+    return JSC::JSValue::encode(JSC::JSFunction::create(JSC::getVM(globalObject), globalObject, ${fn.length}, ${asciiLiteral(fn.name)}, ${fn.exportName ?? `Bun::Bindgen::Generated::${fn.origin!.namespace}::${name}`}, JSC::ImplementationVisibility::Public));
 }
 `;
 }
@@ -1306,7 +1320,7 @@ function rustLayoutAssert(rustType: string, type: Type): string {
 }
 
 /** Names the generated thunks use themselves. */
-const reservedArgumentNames = new Set(["global", "this", "structure", "cx", "heap", "result"]);
+const reservedArgumentNames = new Set(["global", "this", "this_value", "callee", "structure", "cx", "heap", "result"]);
 
 function rustArgumentName(arg: { name: string }): string {
   const name = snakeCase(arg.name);
@@ -1832,27 +1846,38 @@ ${
 
 function rustForFunction(fn: FunctionDefinition, file: SchemaFile): string {
   const scope = file.origin;
-  return fn.signatures
-    .map(signature => {
-      let path = signature.rustPath;
-      if (!path) {
-        assert(fn.signatures.length === 1, `${fn.name}: each overload has a rustPath of its own`);
-        assert(
-          file.moduleDefinition,
-          `${scope.stem}.bind.ts: export default b.module({ rustPath }) or give ${fn.name} a rustPath`,
-        );
-        path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name))}`;
-      }
-      const call = `${path}(${[...capabilityArgument[signature.capability], ...rustArguments(signature)].join(", ")})`;
-      return rustThunk(
-        thunkSymbol(fn, signature),
-        rustExternParameters(signature, scope),
-        "JSValue",
-        `${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws, signature.returns)};
+  const leading = [...(fn.passThis ? ["this_value"] : []), ...(fn.passCallee ? ["callee"] : [])];
+  const hostFunction = fn.exportName
+    ? `
+bun_jsc::jsc_abi_extern! {
+    pub fn ${fn.exportName}(global: *mut JSGlobalObject, frame: *mut bun_jsc::CallFrame) -> JSValue;
+}
+`
+    : "";
+  return (
+    hostFunction +
+    fn.signatures
+      .map(signature => {
+        let path = signature.rustPath;
+        if (!path) {
+          assert(fn.signatures.length === 1, `${fn.name}: each overload has a rustPath of its own`);
+          assert(
+            file.moduleDefinition,
+            `${scope.stem}.bind.ts: export default b.module({ rustPath }) or give ${fn.name} a rustPath`,
+          );
+          path = `${file.moduleDefinition.rustPath}::${rustIdent(snakeCase(fn.name))}`;
+        }
+        const call = `${path}(${[...capabilityArgument[signature.capability], ...leading, ...rustArguments(signature)].join(", ")})`;
+        return rustThunk(
+          thunkSymbol(fn, signature),
+          [...leading.map(name => `${name}: JSValue`), ...rustExternParameters(signature, scope)],
+          "JSValue",
+          `${leading.map(name => `let ${name} = bindgen::JsLocal::new(&cx.heap, ${name});\n`).join("")}${rustTakeArguments(signature.args, scope)}let result = ${infallible(call, signature.throws, signature.returns)};
 bindgen::host_fn_return(cx, result, |heap, value| ${signature.returns.rustToJS("value", scope)})`,
-      );
-    })
-    .join("");
+        );
+      })
+      .join("")
+  );
 }
 
 /** Once each: two classes of a file may name the same trait. */
@@ -1976,6 +2001,21 @@ ${declarations.filter(text => text.length > 0).join("\n")}
 ${files
   .filter(file => exported(file).length > 0)
   .map(file => `    ${JSON.stringify(`${file.origin.stem}.bind.ts`)}: {\n${exported(file).join("\n")}\n    };`)
+  .join("\n")}
+  }
+  /** The namespaces, which it returns too. */
+  interface Namespaces {
+${files
+  .filter(file => file.namespaces.length > 0)
+  .map(file => {
+    const functions = `Exports[${JSON.stringify(`${file.origin.stem}.bind.ts`)}]`;
+    return `    ${JSON.stringify(`${file.origin.stem}.bind.ts`)}: {\n${file.namespaces
+      .map(
+        namespace =>
+          `      ${JSON.stringify(namespace.name)}: ${namespace.call ? `${functions}[${JSON.stringify(namespace.call.name)}] & ` : ""}Pick<${functions}, ${namespace.functions.map(fn => JSON.stringify(fn.name)).join(" | ")}>;`,
+      )
+      .join("\n")}\n    };`;
+  })
   .join("\n")}
   }
 }

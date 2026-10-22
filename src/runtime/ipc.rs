@@ -12,6 +12,7 @@ use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -828,9 +829,9 @@ impl SendHandle {
     }
 }
 
-#[bun_jsc::host_fn]
-fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsResult<JSValue> {
-    let [js] = callframe.arguments_as_array::<1>();
+pub(crate) fn close_sent_handle<'a>(cx: &mut JsScope<'a>, handle: JsLocal<'a>) -> JsResult<()> {
+    let global = cx.global();
+    let js = handle.to_js();
     if js.is_object() {
         if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
@@ -838,14 +839,14 @@ fn close_sent_handle(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JsR
             }
         }
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
     jsc::JSFunction::create(
         global,
         "",
-        __jsc_host_close_sent_handle,
+        crate::generated_bindgen::ipc::Bun__IPC__closeSentHandle,
         1,
         Default::default(),
     )

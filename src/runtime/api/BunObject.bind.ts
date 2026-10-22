@@ -93,6 +93,16 @@ export const indexOfLine = b.fn({
 
 export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
 
+/** `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is `"undefined"`. */
+export const inspect = b.fn({
+  export: "Bun__BunObject__inspect",
+  args: { arguments: b.any.variadic },
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
+  length: 2,
+});
+
 export const MMapOptions = b.dictionary(
   {
     shared: b.bool.loose.default(true),
@@ -132,6 +142,18 @@ export const openInEditor = b.fn({
   length: 1,
 });
 
+const resolver = {
+  args: { specifier: b.any, from: b.any, esm: b.any },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  length: 1,
+} as const;
+export const resolve = b.fn(resolver);
+export const resolveSync = b.fn(resolver);
+
+export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
+
 export const shellEscape = b.fn({
   args: { input: b.string.loose },
   returns: b.string,
@@ -144,6 +166,15 @@ export const shrink = b.fn({ capability: "js" });
 export const sleepSync = b.fn({
   args: { milliseconds: b.f64 },
   capability: "heap",
+  throws: true,
+});
+
+/** `Bun.inspect.table` */
+export const table = b.fn({
+  export: "Bun__BunObject__table",
+  args: { tabularData: b.any, properties: b.any, options: b.any },
+  returns: b.string.utf8,
+  capability: "js",
   throws: true,
 });
 

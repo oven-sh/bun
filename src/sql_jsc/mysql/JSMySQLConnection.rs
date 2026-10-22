@@ -1,13 +1,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_jsc::bindgen::JsScope;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
-    AutoFlush, CallFrame, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject,
-    JSValue, JsCell, JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _,
-    run_callback,
+    AutoFlush, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsCell,
+    JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -251,14 +250,16 @@ impl JSMySQLConnection {
         self.poll_ref.with_mut(|p| p.unref(ctx));
     }
 
-    pub(crate) fn create_instance(
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn create_connection<'a>(
+        cx: &mut JsScope<'a>,
+        args: &'a [JsLocal<'a>],
     ) -> JsResult<JSValue> {
+        let global_object = cx.global();
         let vm = global_object.bun_vm().as_mut();
         // The connection is the calling script's.
-        let context = global_object.bun_vm().context_of_caller(callframe);
-        let arguments = callframe.arguments();
+        let context = global_object.bun_vm().context_of_caller_no_frame();
+        let arguments = JsLocal::to_js_slice(args);
+        let argument = |i: usize| arguments.get(i).copied().unwrap_or(JSValue::UNDEFINED);
         let Some(args) = ConnectionCtorArgs::parse(global_object, &mut *vm, arguments)? else {
             return Ok(JSValue::ZERO);
         };
@@ -285,9 +286,9 @@ impl JSMySQLConnection {
 
         let on_connect = arguments[9];
         let on_close = arguments[10];
-        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
-        let on_retire = callframe.argument(16);
-        let found_rows = callframe.argument(17).to_boolean();
+        let allow_public_key_retrieval = argument(15).to_boolean();
+        let on_retire = argument(16);
+        let found_rows = argument(17).to_boolean();
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
@@ -374,7 +375,7 @@ impl JSMySQLConnection {
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));
         js::onconnect_set_cached(js_value, global_object, on_connect);
-        let column_transform = callframe.argument(19);
+        let column_transform = argument(19);
         if column_transform.is_callable() {
             js::column_transform_set_cached(js_value, global_object, column_transform);
         }

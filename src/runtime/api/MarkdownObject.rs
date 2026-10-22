@@ -1,10 +1,11 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer,
-    RangeErrorOptions, StringJsc as _,
+    JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, PinnedArrayBuffer, RangeErrorOptions,
+    StringJsc as _,
 };
 // Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
@@ -75,48 +76,24 @@ fn pin(global: &JSGlobalObject, input: &StringOrBuffer) -> JsResult<Option<Pinne
     }
 }
 
-pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
-        global_this,
-        &[
-            ("html", __jsc_host_render_to_html, 1),
-            ("ansi", __jsc_host_render_to_ansi, 2),
-            ("render", __jsc_host_render, 3),
-            ("react", __jsc_host_render_react, 3),
-        ],
-    )
-}
-
 /// `bun:internal-for-testing`'s `setMaxMarkdownBlockBytesForTesting(limit)`:
 /// shrink the parser's block-metadata cap so its `TooManyBlocks` error is
 /// testable without 4 GiB of input. Returns the previous limit.
-#[bun_jsc::host_fn]
-pub(crate) fn set_max_markdown_block_bytes_for_testing(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [limit_value] = callframe.arguments_as_array::<1>();
-    if !limit_value.is_number() {
-        return Err(global_this.throw_invalid_arguments(format_args!(
-            "setMaxMarkdownBlockBytesForTesting expects a number"
-        )));
-    }
-    let limit = usize::try_from(limit_value.coerce_to_int64(global_this)?.max(0))
-        .expect("non-negative i64 fits usize");
-    let prev = bun_md::parser::set_max_block_bytes_for_testing(limit);
-    Ok(JSValue::js_number(prev as f64))
+pub(crate) fn set_max_markdown_block_bytes_for_testing(limit: f64) -> usize {
+    bun_md::parser::set_max_block_bytes_for_testing(limit as usize)
 }
 
 /// `Bun.markdown.ansi(text, theme?)` — render markdown to an ANSI-colored
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
-#[bun_jsc::host_fn]
-pub(crate) fn render_to_ansi(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let [input_value, theme_value] = callframe.arguments_as_array::<2>();
+pub(crate) fn ansi(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    theme: JsLocal<'_>,
+) -> JsResult<Box<[u8]>> {
+    let global_this = cx.global();
+    let [input_value, theme_value] = [input.to_js(), theme.to_js()];
 
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
@@ -168,23 +145,25 @@ pub(crate) fn render_to_ansi(
         }
     }
 
-    let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
-        Ok(Some(r)) => r,
+    match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
+        Ok(Some(r)) => Ok(r),
         Ok(None) => {
             // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
-            return Err(global_this.throw_out_of_memory());
+            Err(global_this.throw_out_of_memory())
         }
-        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
-    };
-
-    bun_string_jsc::create_utf8_for_js(global_this, &result)
+        Err(err) => Err(parser_err_to_js(global_this, err, input.len())),
+    }
 }
 
-#[bun_jsc::host_fn]
-fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, opts_value] = callframe.arguments_as_array::<2>();
+pub(crate) fn html(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<Box<[u8]>> {
+    let global_this = cx.global();
+    let [input_value, opts_value] = [input.to_js(), options.to_js()];
 
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
@@ -204,12 +183,8 @@ fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResu
 
     let options = parse_options(global_this, opts_value)?;
 
-    let result = match md::render_to_html_with_options(input, options) {
-        Ok(r) => r,
-        Err(err) => return Err(parser_err_to_js(global_this, err, input.len())),
-    };
-
-    bun_string_jsc::create_utf8_for_js(global_this, &result)
+    md::render_to_html_with_options(input, options)
+        .map_err(|err| parser_err_to_js(global_this, err, input.len()))
 }
 
 fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<md::Options> {
@@ -285,9 +260,15 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
-#[bun_jsc::host_fn]
-fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
+pub(crate) fn render(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    callbacks: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global_this = cx.global();
+    let [input_value, callbacks_value, opts_value] =
+        [input.to_js(), callbacks.to_js(), options.to_js()];
 
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
@@ -335,9 +316,20 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 /// containing the parsed markdown as children.
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
-#[bun_jsc::host_fn]
-fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
+pub(crate) fn react(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    components: JsLocal<'_>,
+    options: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    let global_this = cx.global();
+    MarkedArgumentBuffer::new(|marked_args| {
+        render_react_impl(
+            global_this,
+            [input.to_js(), components.to_js(), options.to_js()],
+            marked_args,
+        )
+    })
 }
 
 unsafe extern "C" {
@@ -350,10 +342,9 @@ unsafe extern "C" {
 
 fn render_react_impl(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    args: [JSValue; 3],
     marked_args: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_as_array::<3>();
     let opts_value = args[2]; // options are the 3rd argument
 
     let mut react_version: u8 = 1; // default: react.transitional.element (React 19+)
@@ -368,7 +359,7 @@ fn render_react_impl(
         }
     }
 
-    let children = render_ast(global_this, callframe, marked_args, Some(react_version))?;
+    let children = render_ast(global_this, args, marked_args, Some(react_version))?;
     let fragment = JSReactElement__createFragment(global_this, react_version, children);
     marked_args.append(fragment);
     Ok(fragment)
@@ -376,12 +367,10 @@ fn render_react_impl(
 
 fn render_ast(
     global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+    [input_value, components_value, opts_value]: [JSValue; 3],
     marked_args: &mut MarkedArgumentBuffer,
     react_version: Option<u8>,
 ) -> JsResult<JSValue> {
-    let [input_value, components_value, opts_value] = callframe.arguments_as_array::<3>();
-
     if input_value.is_empty_or_undefined_or_null() {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));

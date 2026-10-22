@@ -17,3 +17,4 @@ export const setDefaultAutoSelectFamilyAttemptTimeout = b.fn({
 });
 
 export const newDetachedSocket = b.fn({ args: { isSSL: b.bool }, returns: b.any, capability: "js" });
+export const doConnect = b.fn({ args: { prev: b.any, opts: b.any }, returns: b.any, capability: "js", throws: true });

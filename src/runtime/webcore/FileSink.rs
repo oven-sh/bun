@@ -5,11 +5,15 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
-use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::generated_bindgen::file_sink::{
+    Bun__FileSink__onRejectStream, Bun__FileSink__onResolveStream,
+};
+use crate::webcore::jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsError, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
@@ -83,19 +87,9 @@ pub struct FileSink {
 /// `heapStats()` (which only counts JS wrapper objects).
 pub(crate) static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
-pub(crate) mod testing_apis {
-    use super::*;
-
-    pub(crate) fn file_sink_live_count(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
-    }
+pub(crate) fn live_count() -> i32 {
+    LIVE_COUNT.load(Ordering::Relaxed)
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (acronym splitter treats `AP|Is` as two words); alias so both resolve.
-pub(crate) use testing_apis as testing_ap_is;
 
 /// `bun_sys` does not yet export
 /// an isPollable helper, so re-derive it locally from `S_IFMT`. Windows always
@@ -1744,33 +1738,32 @@ impl FileSink {
     }
 }
 
-fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
     bun_core::scoped_log!(FileSink, "onResolveStream");
-    let args = callframe.arguments();
-    let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
+    let this: *mut FileSink = context.to_js().as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
         (*this).pump_promise_ref.set(false);
-        (*this).handle_resolve_stream(global_this);
+        (*this).handle_resolve_stream(cx.global());
     }
-    Ok(JSValue::UNDEFINED)
 }
 
-fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_reject_stream(
+    cx: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    context: JsLocal<'_>,
+) -> JsResult<()> {
     bun_core::scoped_log!(FileSink, "onRejectStream");
-    let args = callframe.arguments();
-    let this: *mut FileSink = args[args.len() - 1].as_promise_ptr::<FileSink>();
-    let err = args[0];
+    let this: *mut FileSink = context.to_js().as_promise_ptr::<FileSink>();
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { RefPtr::from_raw(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
         (*this).pump_promise_ref.set(false);
-        (*this).handle_reject_stream(global_this, err)?;
+        (*this).handle_reject_stream(cx.global(), err.to_js())
     }
-    Ok(JSValue::UNDEFINED)
 }
 
 impl FileSink {
@@ -1936,8 +1929,8 @@ impl FileSink {
                 promise_result.then(
                     global_this,
                     std::ptr::from_mut::<FileSink>(self),
-                    on_resolve_stream_shim,
-                    on_reject_stream_shim,
+                    Bun__FileSink__onResolveStream,
+                    Bun__FileSink__onRejectStream,
                 );
             }
             bun_jsc::js_promise::Status::Fulfilled => {
@@ -1952,47 +1945,5 @@ impl FileSink {
         }
 
         Ok(promise_result)
-    }
-}
-
-// `#[bun_jsc::host_fn]` proc-macro is not yet ported, so emit the
-// JSC host-function ABI shim by hand and export under the C symbol names the
-// C++ side expects.
-//
-// IMPORTANT: these MUST be exported as *function* symbols (not as `static`
-// function-pointer variables). C++ declares them via
-// `BUN_DECLARE_HOST_FUNCTION(Bun__FileSink__onResolveStream)` and compares the
-// resulting symbol address against the handler passed to `JSValue::then` in
-// `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
-// exports the address of an 8-byte data slot, which never equals the shim's
-// code address → RELEASE_ASSERT_NOT_REACHED at runtime.
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
-    unsafe fn on_resolve_stream_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref`. Kept as raw `JsHostFn` shape so
-        // the fn-item coerces to `.then()`'s `JsHostFn` pointer slot without a
-        // transmute.
-        match on_resolve_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
-    }
-}
-bun_jsc::jsc_host_abi! {
-    #[unsafe(export_name = "Bun__FileSink__onRejectStream")]
-    unsafe fn on_reject_stream_shim(
-        g: *mut JSGlobalObject,
-        cf: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref`.
-        match on_reject_stream(bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(cf)) {
-            Ok(v) => v,
-            Err(_) => JSValue::ZERO,
-        }
     }
 }

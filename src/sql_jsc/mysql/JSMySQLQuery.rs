@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
 use crate::jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
+    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, VirtualMachine,
     VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use crate::shared::cached_structure::Undescribed;
@@ -52,18 +52,29 @@ impl JSMySQLQuery {
         self.this_value.with_mut(|v| v.finalize());
     }
 
-    // Reached from JS via `put_host_functions!` in `mysql.rs`.
-    pub(crate) fn create_instance(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn create_query<'a>(
+        cx: &mut JsScope<'a>,
+        query: JsLocal<'a>,
+        values: JsLocal<'a>,
+        pending_value: JsLocal<'a>,
+        bigint: JsLocal<'a>,
+        simple: JsLocal<'a>,
     ) -> JsResult<JSValue> {
+        let global_this = cx.global();
         let QueryCtorArgs {
             query,
             values,
             pending_value,
             bigint,
             simple,
-        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
+        } = QueryCtorArgs::parse(
+            global_this,
+            query.to_js(),
+            values.to_js(),
+            pending_value.to_js(),
+            bigint.to_js(),
+            simple.to_js(),
+        )?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),

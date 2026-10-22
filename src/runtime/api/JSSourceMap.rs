@@ -7,9 +7,7 @@ use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _, bun_string_jsc,
-};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 use crate::generated_bindgen::sourcemap::js_SourceMap as js;
@@ -24,8 +22,7 @@ pub(crate) struct JSSourceMap {
 // Mutable global; AtomicBool for safe mutation.
 static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
-#[bun_jsc::host_fn(export = "Bun__JSSourceMap__find")]
-fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn find_source_map(cx: &mut JsScope<'_>, path: JsLocal<'_>) -> JsResult<JSValue> {
     // Node.js doesn't enable source maps by default.
     // In Bun, we do use them for almost all files since we transpile almost all files
     // If we enable this by default, we don't have a `payload` object since we don't internally create one.
@@ -35,7 +32,8 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         return Ok(JSValue::UNDEFINED);
     }
 
-    let source_url_value = frame.argument(0);
+    let global = cx.global();
+    let source_url_value = path.to_js();
     if !source_url_value.is_string() {
         return Ok(JSValue::UNDEFINED);
     }

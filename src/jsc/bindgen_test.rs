@@ -9,9 +9,10 @@ use crate::bindgen::{
     JsScope, JsStructure, JsWrapper, PinnedBytes, StringOrJsBytes,
 };
 use crate::generated_bindgen::bindgen_test::{
-    TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest, TestFailure, TestFlag,
-    TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes, TestValue, js_TestCounter,
-    js_TestError, js_TestNonFinal, js_TestNote, js_TestRefCounted, js_TestRefCountedNote,
+    Bun__BindgenTest__doubled, TestAnything, TestBare, TestChoice, TestColor, TestColorOrRest,
+    TestFailure, TestFlag, TestNames, TestOptions, TestOptionsEcho, TestOuter, TestTextOrBytes,
+    TestValue, js_TestCounter, js_TestError, js_TestNonFinal, js_TestNote, js_TestRefCounted,
+    js_TestRefCountedNote,
 };
 use crate::{JSGlobalObject, JSString, JSValue, JsClass, JsResult};
 use bun_ptr::{AsCtxPtr as _, RefPtr};
@@ -795,6 +796,37 @@ pub(crate) fn after_first<'a>(
     rest: &'a [JsLocal<'a>],
 ) -> bindgen::Result<'a, JsLocal<'a>> {
     bindgen::to_js::array(heap, rest.iter().copied(), bindgen::to_js::any)
+}
+
+pub(crate) fn this_and_callee<'a>(
+    heap: &JsHeap<'a>,
+    this_value: JsLocal<'a>,
+    callee: JsLocal<'a>,
+    value: JsLocal<'a>,
+) -> bindgen::Result<'a, JsLocal<'a>> {
+    bindgen::to_js::array(heap, [this_value, callee, value], bindgen::to_js::any)
+}
+
+pub(crate) fn doubled(value: i32) -> i32 {
+    value.wrapping_mul(2)
+}
+
+pub(crate) fn make_doubled(cx: &mut JsScope<'_>) -> JSValue {
+    crate::JSFunction::create(
+        cx.global(),
+        "doubled",
+        Bun__BindgenTest__doubled,
+        1,
+        Default::default(),
+    )
+}
+
+pub(crate) fn increment(value: i32) -> i32 {
+    value.wrapping_add(1)
+}
+
+pub(crate) fn decrement(value: i32) -> i32 {
+    value.wrapping_sub(1)
 }
 
 pub(crate) struct TestError {

@@ -1,15 +1,16 @@
 //! Implements prompt, alert, and confirm Web API
 
-use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::webcore::jsc::{JSValue, JsResult};
 use bun_collections::VecExt as _;
 use bun_core::EncodedSlice;
 use bun_core::Output;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-#[bun_jsc::host_fn(export = "WebCore__alert")]
-fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+pub(crate) fn alert(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<()> {
+    let global = cx.global();
+    let arguments = JsLocal::to_js_slice(args);
     let output = Output::writer();
     let has_message = !arguments.is_empty();
 
@@ -27,7 +28,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // 5. Show message to the user, treating U+000A LF as a line break.
             if output.write_all(message.slice()).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return Ok(JSValue::UNDEFINED);
+                return Ok(());
             }
         }
     }
@@ -41,7 +42,7 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -60,12 +61,12 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
 
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
-#[bun_jsc::host_fn(export = "WebCore__confirm")]
-fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
+pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bool> {
+    let global = cx.global();
+    let arguments = JsLocal::to_js_slice(args);
     let output = Output::writer();
     let has_message = !arguments.is_empty();
 
@@ -79,7 +80,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         if output.write_all(message.slice()).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         }
     }
 
@@ -95,7 +96,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(JSValue::FALSE);
+        return Ok(false);
     }
 
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
@@ -106,7 +107,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
-        return Ok(JSValue::FALSE);
+        return Ok(false);
     };
 
     // 7. Invoke WebDriver BiDi user prompt closed with this, and true if
@@ -114,34 +115,34 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // *  Not relevant in a server context.
 
     match first_byte {
-        b'\n' => return Ok(JSValue::FALSE),
+        b'\n' => return Ok(false),
         b'\r' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
-                return Ok(JSValue::FALSE);
+                return Ok(false);
             };
             if next_byte == b'\n' {
-                return Ok(JSValue::FALSE);
+                return Ok(false);
             }
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
 
-                return Ok(JSValue::FALSE);
+                return Ok(false);
             };
 
             if next_byte == b'\n' {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return Ok(JSValue::TRUE);
+                return Ok(true);
             } else if next_byte == b'\r' {
                 // Check Windows style
                 let Ok(second_byte) = reader.take_byte() else {
-                    return Ok(JSValue::FALSE);
+                    return Ok(false);
                 };
                 if second_byte == b'\n' {
-                    return Ok(JSValue::TRUE);
+                    return Ok(true);
                 }
             }
         }
@@ -156,7 +157,7 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     // 8. If the user responded positively, return true; otherwise, the user
     //    responded negatively: return false.
-    Ok(JSValue::FALSE)
+    Ok(false)
 }
 
 pub(crate) mod prompt {
@@ -228,9 +229,9 @@ pub(crate) mod prompt {
     }
 
     /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-    #[bun_jsc::host_fn(export = "WebCore__prompt")]
-    fn call(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
+    pub(crate) fn prompt(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+        let global = cx.global();
+        let arguments = JsLocal::to_js_slice(args);
         let output = Output::writer();
         let has_message = !arguments.is_empty();
         let has_default = arguments.len() >= 2;

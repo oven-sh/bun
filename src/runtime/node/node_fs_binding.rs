@@ -1,11 +1,9 @@
 use core::ptr::NonNull;
 
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _, JsResult, SysErrorJsc as _,
-};
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
 use crate::node::ThreadIsolated;
@@ -372,27 +370,27 @@ impl Binding {
     // pub const statfsSync = callSync(.statfs);
 }
 
-pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
+pub(crate) fn create_binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     Binding {
         node_fs: JsCell::new(NodeFS {
-            vm: NonNull::new(global.bun_vm_ptr()),
+            vm: NonNull::new(cx.global().bun_vm_ptr()),
             ..Default::default()
         }),
     }
-    .to_js(global)
+    .into_js(&cx.heap)
 }
 
 /// Test-only (`bun:internal-for-testing`): run `(path, options)` through the
 /// exact argument parser `fs.rm` uses and return the parsed options, so node's
 /// `internal/fs/utils` `validateRmOptionsSync` tests exercise the production
 /// validation (including its rejection of own-but-`undefined` booleans).
-#[bun_jsc::host_fn]
 pub(crate) fn rm_options_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
 ) -> JsResult<JSValue> {
+    let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
-    let mut slice = ArgumentsSlice::init(vm, frame.arguments());
+    let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let parsed = args::Rm::from_js(global, &mut slice)?;
     let obj = JSValue::create_empty_object(global, 4);
     obj.put(
@@ -413,14 +411,12 @@ pub(crate) fn rm_options_for_testing(
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same
 /// parser `fs.open` uses and return the numeric O_* mask, so node's
 /// `internal/fs/utils` `stringToFlags` tests can assert the production mapping.
-#[bun_jsc::host_fn]
 pub(crate) fn string_to_flags_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    flags: JsLocal<'_>,
+) -> JsResult<i32> {
     use crate::node::types::FileSystemFlags;
-    let [val] = frame.arguments_as_array::<1>();
-    let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
+    let flags = FileSystemFlags::from_js(cx.global(), flags.to_js())?.unwrap_or(FileSystemFlags::R);
     // On Windows the internal bun.O bits are POSIX-shaped and translated to the
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
     // fs.constants both speak MSVCRT, so translate here too.
@@ -428,19 +424,17 @@ pub(crate) fn string_to_flags_for_testing(
     let bits = bun_sys::windows::libuv::O::from_bun_o(flags.as_int());
     #[cfg(not(windows))]
     let bits = flags.as_int();
-    Ok(JSValue::js_number_from_int32(bits))
+    Ok(bits)
 }
 
-#[bun_jsc::host_fn]
 pub(crate) fn create_memfd_for_testing(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let [size_arg] = frame.arguments_as_array::<1>();
-
-    if frame.arguments_count() < 1 {
-        return Ok(JSValue::UNDEFINED);
-    }
+    cx: &mut JsScope<'_>,
+    size: &[JsLocal<'_>],
+) -> JsResult<Option<i32>> {
+    let global = cx.global();
+    let Some(size_arg) = size.first() else {
+        return Ok(None);
+    };
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
@@ -452,11 +446,11 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = size_arg.to_int64();
+        let size = size_arg.to_js().to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);
-                Ok(JSValue::js_number_from_int32(fd.native() as i32))
+                Ok(Some(fd.native() as i32))
             }
             Err(err) => Err(global.throw_value(err.to_js(global))),
         }

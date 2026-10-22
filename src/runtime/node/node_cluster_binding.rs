@@ -7,7 +7,7 @@
 use crate::ipc::{IsInternal, SerializeAndSendResult};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StrongOptional};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::generated_bindgen::node_cluster_binding::ProcessHandle;
@@ -66,25 +66,28 @@ pub(crate) fn handle_internal_message_child(
     child_singleton().dispatch(message, handle, global)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn send_helper_primary<'a>(
+    cx: &mut JsScope<'a>,
+    process_handle: ProcessHandle<'a>,
+    message: JsLocal<'a>,
+    handle: JsLocal<'a>,
+    callback: JsLocal<'a>,
+) -> JsResult<Option<bool>> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_as_array::<4>();
-    // `as_class_ref` is the safe shared-borrow downcast (centralised deref
-    // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
     // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
     // is `undefined` unless `cluster.fork()` created the process; Node's
     // `sendHelper` returns false for a worker with no IPC channel.
-    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
-        return Ok(JSValue::NULL);
+    let ProcessHandle::Subprocess(subprocess) = process_handle else {
+        return Ok(None);
     };
-    let message = arguments[1];
-    let handle = arguments[2];
-    let callback = arguments[3];
+    let global = cx.global();
+    let message = message.to_js();
+    let handle = handle.to_js();
+    let callback = callback.to_js();
 
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::NULL);
+        return Ok(None);
     };
 
     if message.is_undefined() {
@@ -105,7 +108,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         let native_fd = {
             let raw_fd = fd_value.to_int32();
             if raw_fd < 0 {
-                return Ok(JSValue::NULL);
+                return Ok(None);
             }
             bun_sys::Fd::from_uv(raw_fd)
         };
@@ -113,7 +116,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         let native_fd = {
             let raw = fd_value.to_number(global)?;
             if !(raw.is_finite() && raw >= 0.0) {
-                return Ok(JSValue::NULL);
+                return Ok(None);
             }
             bun_sys::Fd::from_system(raw as u64 as usize as *mut core::ffi::c_void)
         };
@@ -125,7 +128,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
                 global, message, native_fd, peer_pid,
             )?
             else {
-                return Ok(JSValue::NULL);
+                return Ok(None);
             };
             let mut h = crate::ipc::Handle::init(native_fd, handle);
             h.win_export_hex = Some(hex);
@@ -136,7 +139,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         {
             native_handle = match crate::ipc::Handle::init_dup(native_fd, handle, false) {
                 Ok(h) => Some(h),
-                Err(_) => return Ok(JSValue::NULL),
+                Err(_) => return Ok(None),
             };
         }
     }
@@ -178,9 +181,9 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         native_handle,
     );
     Ok(match success {
-        SerializeAndSendResult::Success => JSValue::TRUE,
-        SerializeAndSendResult::Backoff => JSValue::FALSE,
-        SerializeAndSendResult::Failure => JSValue::NULL,
+        SerializeAndSendResult::Success => Some(true),
+        SerializeAndSendResult::Backoff => Some(false),
+        SerializeAndSendResult::Failure => None,
     })
 }
 
@@ -305,16 +308,21 @@ pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObjec
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn cluster_raw_bind<'a>(
+    cx: &mut JsScope<'a>,
+    address_type: JsLocal<'a>,
+    address: JsLocal<'a>,
+    port: JsLocal<'a>,
+    flags: JsLocal<'a>,
+) -> JsResult<JSValue> {
+    let global = cx.global();
+    let address_type = address_type.to_js();
+    let address = address.to_js();
+    let port = port.to_js().to_int32();
+    let flags = flags.to_js().to_int32();
+
     #[cfg(windows)]
     {
-        let arguments = frame.arguments_as_array::<4>();
-        let address_type = arguments[0];
-        let address = arguments[1];
-        let port = arguments[2].to_int32();
-        let flags = arguments[3].to_int32();
-
         if address_type.is_string() || (address_type.is_int32() && address_type.as_int32() == -1) {
             return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::NOTSUP));
         }
@@ -396,12 +404,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     #[cfg(not(windows))]
     {
         use core::ffi::c_int;
-
-        let arguments = frame.arguments_as_array::<4>();
-        let address_type = arguments[0];
-        let address = arguments[1];
-        let port = arguments[2].to_int32();
-        let flags = arguments[3].to_int32();
 
         let mut is_udp = false;
         let atype: i32;

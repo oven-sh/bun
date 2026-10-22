@@ -3147,22 +3147,14 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 pub(crate) mod bindings {
     use super::*;
     use bun_core::String as BunString;
-    use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
-    };
+    use bun_jsc::bindgen::JsScope;
+    use bun_jsc::{JSArray, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_read_tarball(
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
+    pub(crate) fn read_tarball(
+        cx: &mut JsScope<'_>,
+        tarball_path_str: &BunString,
     ) -> JsResult<JSValue> {
-        let args = call_frame.arguments();
-        if args.len() < 1 || !args[0].is_string() {
-            return Err(global.throw(format_args!("expected tarball path string argument")));
-        }
-
-        let tarball_path_str = args[0].to_bun_string(global)?;
-
+        let global = cx.global();
         let tarball_path = tarball_path_str.to_utf8();
 
         let tarball_file = match bun_sys::open_file(tarball_path.slice(), Default::default()) {

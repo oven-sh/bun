@@ -8,6 +8,9 @@ use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
 use crate::generated_bindgen::server::ServerProtocol;
+use crate::generated_bindgen::server_body::{
+    BunServe__onRejectPlugins, BunServe__onResolvePlugins,
+};
 use crate::node::types::PathLikeExt as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
@@ -26,8 +29,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
-    JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
+    Node, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -1046,7 +1049,7 @@ impl ServePlugins {
                 match promise.status() {
                     // promise not fulfilled yet
                     jsc::js_promise::Status::Pending => {
-                        // The reaction's ref, adopted by `on_resolve_impl`/`on_reject_impl`.
+                        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
                         self.ref_();
                         let promise_value = promise.as_value();
                         if let ServePluginsState::Pending {
@@ -1059,8 +1062,8 @@ impl ServePlugins {
                         promise_value.then(
                             global,
                             std::ptr::from_mut::<Self>(self),
-                            __jsc_host_on_resolve_impl,
-                            __jsc_host_on_reject_impl,
+                            BunServe__onResolvePlugins,
+                            BunServe__onRejectPlugins,
                         );
                         return Ok(());
                     }
@@ -1167,34 +1170,34 @@ impl Drop for ServePlugins {
     }
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onResolvePlugins")]
-fn on_resolve_impl(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_resolve_plugins(
+    _: &mut JsScope<'_>,
+    plugins_result: JsLocal<'_>,
+    plugins_js: JsLocal<'_>,
+) {
     ctx_log!("onResolve");
 
-    let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
+    let plugins = plugins_js.to_js().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(plugins) };
-    plugins_result.ensure_still_alive();
+    plugins_result.to_js().ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_resolve();
-
-    Ok(JSValue::UNDEFINED)
 }
 
-#[bun_jsc::host_fn(export = "BunServe__onRejectPlugins")]
-fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn on_reject_plugins(
+    cx: &mut JsScope<'_>,
+    error_js: JsLocal<'_>,
+    plugin_js: JsLocal<'_>,
+) {
     ctx_log!("onReject");
 
-    let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
-    let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
+    let plugins = plugin_js.to_js().as_promise_ptr::<ServePlugins>();
     // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
     let _guard = unsafe { RefPtr::from_raw(plugins) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_reject(global, error_js);
-
-    Ok(JSValue::UNDEFINED)
+    unsafe { &mut *plugins }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.

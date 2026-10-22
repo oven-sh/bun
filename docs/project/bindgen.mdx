@@ -18,10 +18,7 @@ The generator lives in `src/codegen/bindgen*.ts`, the Rust it generates against 
 `src/jsc/bindgen.rs`, and the C++ in `src/jsc/bindings/Bindgen/` and
 `src/jsc/bindings/BunIDL*.h`.
 
-The body of a binding is always Rust. These do overlapping work:
-
-- "JS2Native", allowing ad-hoc calls from `src/js` to native code (`$rust`, `$cpp`).
-- `#[bun_jsc::host_fn]` functions, which take a `CallFrame`.
+The body of a binding is always Rust. `$cpp` and `$newCppFunction` reach a function written in C++ from `src/js`.
 
 ## Functions
 
@@ -79,7 +76,15 @@ not compile.
 To reach the function:
 
 - from `src/js`: `$bindgen("bindgen_test.bind.ts", "add")`, which is typed from the schema. An argument's type is what it takes, so one that coerces (`.loose`, `.wrap`, `.enforceRange()`) is `any`. A `.nullable` result, and a `.nullable` getter without a setter, is `T | null`;
-- from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`.
+- from a C++ static property table: `Bun::Bindgen::Generated::BindgenTest::jsAdd` in `GeneratedBindgenTest.h`;
+- from Rust, or from C++ that compares host functions: `export: "Bun__CronJob__onPromiseResolve"` gives the host function C
+  linkage under that name. The generated header declares it, and in Rust it is a `JSHostFn`,
+  `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`.
+
+`passThis: true` adds `this_value: JsLocal<'a>` before the arguments, and `passCallee: true` adds `callee: JsLocal<'a>`, the
+function that was called, after it. Neither goes with overloads.
+
+The caller's source location is `global.get_caller_src_loc()`: inside a host function `vm.topCallFrame` is its own frame.
 
 ### Namespaces
 
@@ -99,7 +104,7 @@ export const semver = b.namespace({
 
 `Bun::Bindgen::Generated::SemverObject::createSemver` makes the object. It has the signature of
 a `PropertyCallback` of a static property table, so the object is made when the property is
-first read.
+first read. `$bindgen("SemverObject.bind.ts", "semver")` makes one for `src/js`.
 
 A namespace that can itself be called, like `Bun.hash`, names the function that a call runs:
 `b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
@@ -316,7 +321,7 @@ The second argument of `b.dictionary` takes:
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
-| `fromJS`           | also generates `Name::from_js(global, value)`, for a `#[host_fn]` body; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                           |
+| `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                   |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                            |
 
 ### Enumerations

@@ -1,9 +1,7 @@
 use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
-use bun_jsc::{
-    ArrayBuffer, CallFrame, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong,
-};
+use bun_jsc::{ArrayBuffer, JSGlobalObject, JSValue, Job, JobContext, JsResult, JsThread, Strong};
 
 use crate::node::{Flavor, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg};
 
@@ -60,23 +58,27 @@ impl PBKDF2 {
     /// `JSValue::UNDEFINED` on `Sync` (as `Scrypt::from_js`).
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        password: JSValue,
+        salt: JSValue,
+        iterations: JSValue,
+        keylen: JSValue,
+        mut digest: JSValue,
+        mut callback: JSValue,
         flavor: Flavor,
     ) -> JsResult<(PBKDF2, JSValue)> {
-        let [arg0, arg1, arg2, arg3, mut arg4, mut arg5] = call_frame.arguments_as_array::<6>();
         // pbkdf2(password, salt, iterations, keylen, callback): digest omitted.
-        if flavor == Flavor::Async && arg4.is_function() {
-            arg5 = arg4;
-            arg4 = JSValue::UNDEFINED;
+        if flavor == Flavor::Async && digest.is_function() {
+            callback = digest;
+            digest = JSValue::UNDEFINED;
         }
 
-        if !arg3.is_number() {
-            return Err(global_this.throw_invalid_argument_type_value(b"keylen", b"number", arg3));
+        if !keylen.is_number() {
+            return Err(global_this.throw_invalid_argument_type_value(b"keylen", b"number", keylen));
         }
 
-        let keylen_num = arg3.as_number();
+        let keylen_num = keylen.as_number();
 
-        if !arg3.is_integer() {
+        if !keylen.is_integer() {
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
@@ -102,17 +104,17 @@ impl PBKDF2 {
         // 0..=i32::MAX was checked above.
         let keylen = keylen_num as usize;
 
-        if !arg2.is_number() {
+        if !iterations.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"iterations",
                 b"number",
-                arg2,
+                iterations,
             ));
         }
 
-        let iterations_num = arg2.as_number();
+        let iterations_num = iterations.as_number();
 
-        if !arg2.is_integer() {
+        if !iterations.is_integer() {
             return Err(global_this.throw_range_error(
                 iterations_num,
                 bun_jsc::RangeErrorOptions {
@@ -138,14 +140,14 @@ impl PBKDF2 {
         let iteration_count: i64 = iterations_num as i64;
 
         let algorithm = 'brk: {
-            if !arg4.is_string() {
+            if !digest.is_string() {
                 return Err(
-                    global_this.throw_invalid_argument_type_value(b"digest", b"string", arg4)
+                    global_this.throw_invalid_argument_type_value(b"digest", b"string", digest)
                 );
             }
 
             'invalid: {
-                let slice = arg4.to_utf8(global_this)?;
+                let slice = digest.to_utf8(global_this)?;
                 match evp::lookup_ignore_case(slice.slice()) {
                     Some(alg) => match alg {
                         Algorithm::Shake128 | Algorithm::Shake256 => break 'invalid,
@@ -156,7 +158,7 @@ impl PBKDF2 {
                 }
             }
 
-            let slice = arg4.to_utf8(global_this)?;
+            let slice = digest.to_utf8(global_this)?;
             let name = slice.slice();
             return Err(global_this
                 .err(
@@ -173,13 +175,13 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        out.salt = match StringOrBuffer::from_js(global_this, arg1)? {
+        out.salt = match StringOrBuffer::from_js(global_this, salt)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"salt",
                     b"string or buffer",
-                    arg1,
+                    salt,
                 ));
             }
         };
@@ -188,13 +190,13 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("salt is too long")));
         }
 
-        out.password = match StringOrBuffer::from_js(global_this, arg0)? {
+        out.password = match StringOrBuffer::from_js(global_this, password)? {
             Some(v) => v,
             None => {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"password",
                     b"string or buffer",
-                    arg0,
+                    password,
                 ));
             }
         };
@@ -205,14 +207,14 @@ impl PBKDF2 {
 
         let callback = match flavor {
             Flavor::Async => {
-                if !arg5.is_function() {
+                if !callback.is_function() {
                     return Err(global_this.throw_invalid_argument_type_value(
                         b"callback",
                         b"function",
-                        arg5,
+                        callback,
                     ));
                 }
-                arg5
+                callback
             }
             Flavor::Sync => JSValue::UNDEFINED,
         };
@@ -236,9 +238,23 @@ impl PBKDF2 {
     /// [`from_js`](Self::from_js) for the work-pool job, with its validated callback.
     pub(crate) fn from_js_async(
         global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
+        password: JSValue,
+        salt: JSValue,
+        iterations: JSValue,
+        keylen: JSValue,
+        digest: JSValue,
+        callback: JSValue,
     ) -> JsResult<(ThreadIsolated<PBKDF2>, JSValue)> {
-        let (data, callback) = Self::from_js(global_this, call_frame, Flavor::Async)?;
+        let (data, callback) = Self::from_js(
+            global_this,
+            password,
+            salt,
+            iterations,
+            keylen,
+            digest,
+            callback,
+            Flavor::Async,
+        )?;
         // SAFETY: `Flavor::Async` copied the buffers and thread-isolated the strings.
         Ok((unsafe { ThreadIsolated::new(data) }, callback))
     }

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCanary, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -529,6 +529,31 @@ describe("bun", () => {
       for (const re of expected) expect(out).toMatch(re);
       expect(out).not.toContain("bun list ");
       expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.concurrent("bun lint is a command in canary builds only", () => {
+    test("bun --help lists it there", async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
+      expect(listed).toEqual(isCanary ? ["check", "lint", "fmt"] : ["check", "fmt"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("elsewhere bun lint looks for a script", async () => {
+      using dir = tempDir("bun-lint-canary-only", { "package.json": "{}", "a.js": "debugger;\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "a.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (isCanary) expect(stdout).toContain("no-debugger");
+      else expect({ stdout, stderr }).toEqual({ stdout: "", stderr: 'error: Script not found "lint"\n' });
+      expect(exitCode).toBe(1);
     });
   });
 

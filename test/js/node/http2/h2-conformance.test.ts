@@ -1074,6 +1074,22 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
     expect({ destroyed: pushed.destroyed, pushedClosed }).toEqual({ destroyed: true, pushedClosed: true });
   });
 
+  // Node emits 'error' on the pushed stream here, which is uncaught.
+  test("a GOAWAY with an error code closes a pushed stream that has no 'error' listener", async () => {
+    using ctx = await openRequest();
+    const { raw, client, req } = ctx;
+    client.on("error", () => {});
+    req.on("error", () => {});
+    raw.socket!.write(pushPromise(2));
+    const [pushed] = await once(client, "stream");
+    // Not once(), which adds an 'error' listener.
+    const pushedClosed = Promise.withResolvers<void>();
+    pushed.on("close", pushedClosed.resolve);
+    raw.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.from([0, 0, 0, 1, 0, 0, 0, 11]));
+    await pushedClosed.promise;
+    expect({ destroyed: pushed.destroyed, errored: pushed.errored }).toEqual({ destroyed: true, errored: null });
+  });
+
   /** Sends DATA on pushed stream 2 for as long as the client grants window, up to `limit` bytes. Returns the bytes sent. */
   async function sendWhileWindowOpens(raw: RawH2Server, limit: number): Promise<number> {
     const credit = { 0: 65535, 2: 65535 };

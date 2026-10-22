@@ -9680,6 +9680,22 @@ describe.concurrent("RST_STREAM from the peer while the readable side is open", 
     });
   });
 
+  // A server that answers an upload early ends the response and then sends RST_STREAM(NO_ERROR) (RFC 9113 §8.1).
+  it("emits 'end', 'aborted', 'finish' and 'close' when the peer ends the response and then resets an open request", async () => {
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    const completeResponseThenReset = id => [
+      new http2utils.HeadersFrame(id, RESPONSE_HEADERS, 0, true).data,
+      new http2utils.DataFrame(id, BODY, 0, true).data,
+      rstStream(id, NGHTTP2_NO_ERROR),
+    ];
+    await withRawServer(completeResponseThenReset, requestArgs, async (client, req, events) => {
+      req.on("finish", () => events.push("finish"));
+      req.resume();
+      await closed(req);
+      expect(events.filter(name => name !== "response")).toEqual(["end", "aborted", "finish", "close"]);
+    });
+  });
+
   it("state, endAfterHeaders and util.inspect() don't throw while a reset stream waits for its reader", async () => {
     await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), [{ ":path": "/" }], async (client, req) => {
       await once(req, "response");

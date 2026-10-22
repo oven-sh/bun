@@ -2099,9 +2099,9 @@ function endReadableAtHalfClose(stream: Http2Stream) {
   endInboundHalf(stream);
   stream.read(0);
 }
-function endServerReadableAtClose(stream: Http2Stream) {
+function endReadableAtClose(stream: Http2Stream) {
   endInboundHalf(stream);
-  if (stream.readableFlowing === null) {
+  if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null) {
     // Like node's onStreamClose, dump a request nobody tried to read so the stream can finish.
     stream.resume();
   } else if (stream.writableFinished) {
@@ -2768,6 +2768,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     ) {
       err = null;
     }
+    // The client didn't ask for a pushed stream, so the peer's GOAWAY or reset isn't an uncaught exception when it has no 'error' listener.
+    if (err != null && this[kPush] && this.listenerCount("error") === 0) err = null;
 
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
@@ -3884,14 +3886,7 @@ function closeStreamResetWithNoError(session: Http2Session, stream: Http2Stream)
   }
   // An 'aborted' listener or a close-channel subscriber can destroy the stream.
   if (stream.destroyed) return;
-  pushToStream(stream, null);
-  if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null) {
-    stream.resume();
-  } else if (stream.writableFinished) {
-    stream.read(0);
-  } else {
-    stream.once("finish", readNothing);
-  }
+  endReadableAtClose(stream);
   destroyClosedStream(session, stream);
 }
 
@@ -3925,7 +3920,13 @@ function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
         error_instance = error;
       }
     }
-    if (destroy && error === NGHTTP2_NO_ERROR && stream.readable && !self.destroyed) {
+    // A stream that already emitted 'end' goes this way too while its writable side is open, so end() still emits 'finish'.
+    if (
+      destroy &&
+      error === NGHTTP2_NO_ERROR &&
+      !self.destroyed &&
+      (stream.readable || !stream._writableState.ending)
+    ) {
       closeStreamResetWithNoError(self, stream);
     } else if (destroy) {
       // node marks the stream closed (and publishes the close diagnostics channel) from inside
@@ -4262,7 +4263,7 @@ class ServerHttp2Session extends Http2Session {
         endReadableAtHalfClose(stream);
       } else if (state == 7 && stream.readable) {
         // Keep the 'end' this schedules out of the AsyncLocalStorage store of the respond(), end() or close() call that closed the stream.
-        runInFrame(stream[bunHTTP2AsyncContextFrame], endServerReadableAtClose, undefined, stream);
+        runInFrame(stream[bunHTTP2AsyncContextFrame], endReadableAtClose, undefined, stream);
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {

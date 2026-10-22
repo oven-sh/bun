@@ -2659,6 +2659,7 @@ impl<'p, 's> Checker<'p, 's> {
         // - It does without the base constraint that's being resolved.
         // - It finds the members in place, the intersection as is, no equivalent base type, no type predicate, or a
         //   function that gets its type immediately.
+        // - It finds a loop in `flowLoopCache` that wasn't there for the first visit.
         // - It's below a stale entry, where `findResolutionCycleStartIndex` stops.
         // - It reaches the `typeToStringEx` call that led here, with no type resolution on the way, and
         //   prints one serialization level higher. That can close a cycle through what the first call
@@ -2680,6 +2681,7 @@ impl<'p, 's> Checker<'p, 's> {
                 || self.ends_at_default_in_progress(i)
                 || self.ends_at_identical_base_type_in_progress(i)
                 || self.ends_at_function_in_context_check(i)
+                || self.is_flow_loop_cached_since(self.frames[i].serial)
                 || self.is_below_stale_resolution(i))
         {
             return false;

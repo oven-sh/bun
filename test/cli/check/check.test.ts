@@ -11068,6 +11068,32 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("checks a reference again that is being checked if a loop has been analyzed in the meantime", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = "a";
+  for (const item of list) {
+    for (; y === x; x = next[y]) {}
+    z = (() => y)();
+    for (; next[y] === z; x = z) {}
+    x = (() => x)();
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(11,12): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap.
+        a.ts(12,10): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

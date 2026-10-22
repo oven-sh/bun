@@ -17,7 +17,8 @@
 // release paths are also checked for use-after-free and leaks. Builds with
 // debug assertions only (debug, ASAN): the gate does not exist in release.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isAndroid, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
 import fs from "node:fs";
 import path from "node:path";
 import type { ReadableStreamDefaultReader } from "node:stream/web";
@@ -269,6 +270,45 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
   }
 });
 
+const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a worker's final GC", async () => {
+  using dir = tempDir("worker-late-napi", {});
+  const addon = path.join(String(dir), "addon.node");
+  await using build = Bun.spawn({
+    cmd: [
+      cc!,
+      "-shared",
+      "-fPIC",
+      ...(isMacOS ? ["-undefined", "dynamic_lookup"] : []),
+      `-I${path.resolve(import.meta.dir, "../../../../src/runtime/napi")}`,
+      path.join(import.meta.dir, "worker-late-completion-napi-fixture.c"),
+      "-o",
+      addon,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect(await build.exited).toBe(0);
+  // The worker keeps the external reachable, so it's only finalized when the worker's heap is destroyed.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `new (require("node:worker_threads").Worker)(
+        "globalThis.keep = require(" + JSON.stringify(process.argv[1]) + ").queueFromFinalizer();",
+        { eval: true },
+      );`,
+      addon,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // 23 is napi_cannot_run_js.
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "queued from finalizer: 23\n", stderr: "", exitCode: 0 });
+});
+
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet
 // parks on the io loop instead of blocking a pool thread, so terminate() can
 // and does cancel it: the worker goes away promptly and the read never settles.
@@ -414,5 +454,75 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// The upload has a ref on the fetch. Destroying the heap drops it for a JS-pumped body, but the stop phase has to
+// drop it for a body streamed from a native source. Otherwise LeakSanitizer reports the leaked request.
+describe.skipIf(!isASAN || isWindows)("terminating a worker while a request body is still uploading", () => {
+  const host = (body: string, fifo: string) => `
+    const { Worker } = require("node:worker_threads");
+    const fs = require("node:fs");
+    const fifo = ${JSON.stringify(fifo)};
+    const fifoFd = fs.openSync(fifo, "r+");
+    fs.writeSync(fifoFd, Buffer.alloc(64, 1));
+    const firstChunk = Promise.withResolvers();
+    const target = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.body.getReader().read();
+        firstChunk.resolve();
+        return new Promise(() => {});
+      },
+    });
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({
+        start(c) { c.enqueue(new Uint8Array(1024)); },
+        pull() { return new Promise(() => {}); },
+      })),
+    });
+    const worker = new Worker(
+      'const { workerData } = require("node:worker_threads");' +
+      '(async () => { const body = ' + ${JSON.stringify(body)} + '; fetch(workerData.target, { method: "POST", body }).catch(() => {}); })();',
+      { eval: true, workerData: { target: target.url.href, upstream: upstream.url.href, fifo } },
+    );
+    const exited = new Promise(resolve => worker.on("exit", resolve));
+    await firstChunk.promise;
+    worker.terminate();
+    console.log("worker exit code:", await exited);
+    fs.closeSync(fifoFd);
+    target.stop(true);
+    upstream.stop(true);
+  `;
+
+  test.concurrent.each([
+    [
+      "a JS pull stream",
+      `new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(16)); return new Promise(() => {}); } })`,
+    ],
+    ["another response's body", `(await fetch(workerData.upstream)).body`],
+    ["Bun.file(fifo).stream()", `Bun.file(workerData.fifo).stream()`],
+  ])("doesn't leak the request when the body is %s", async (_, body) => {
+    using dir = tempDir("worker-upload-teardown", {});
+    const fifo = path.join(String(dir), "fifo");
+    mkfifo(fifo);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", host(body, fifo)],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, leak: stderr.includes("LeakSanitizer") ? stderr : "" }).toEqual({
+      stdout: "worker exit code: 1\n",
+      leak: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });

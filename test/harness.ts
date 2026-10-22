@@ -75,6 +75,16 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
+// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
+export const isCanary = detectCanary();
+
+function detectCanary(): boolean {
+  try {
+    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
+  } catch {}
+  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
+}
+
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
@@ -611,10 +621,29 @@ export function tempDirWithFiles(
 
 class DisposableString extends String {
   [Symbol.dispose]() {
-    fs.rmSync(this + "", { recursive: true, force: true });
+    // On Windows a process that was just killed can hold the folder for a moment: a child that a job
+    // object ends after its parent, for one. `rmSync` does not act on `maxRetries`.
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        fs.rmSync(this + "", { recursive: true, force: true });
+        return;
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        sleepSync(50);
+      }
+    }
   }
-  [Symbol.asyncDispose]() {
-    return fs.promises.rm(this + "", { recursive: true, force: true });
+  async [Symbol.asyncDispose]() {
+    const deadline = Date.now() + 5000;
+    while (true) {
+      try {
+        return await fs.promises.rm(this + "", { recursive: true, force: true });
+      } catch (error: any) {
+        if (!isWindows || error?.code !== "EBUSY" || Date.now() > deadline) throw error;
+        await Bun.sleep(50);
+      }
+    }
   }
 }
 

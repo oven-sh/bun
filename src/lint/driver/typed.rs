@@ -1,17 +1,16 @@
-//! Lints the files that have rules which need types.
+//! Lints the files whose rules need types.
 //!
-//! Each is type checked with the `tsconfig.json` that an editor uses for it, or with the first that includes it of those
-//! that `parserOptions.project` names, and as an editor does
-//! it: what it imports is only looked at as far as its types are asked for, and a project that is
-//! referenced is read from its sources. A file is linted right after it is checked, by the thread
-//! that checked it, while its types are there. Type errors are not reported, that is what
-//! `bun check` is for, unless oxlint's `--type-check` asks for them.
+//! Each file is type checked with the `tsconfig.json` an editor would use for it, or with the first project listed in
+//! `parserOptions.project` that includes it. It's checked the way an editor does it: imported files are only examined
+//! as far as their types are needed, and a referenced project is read from its sources. A file is linted right after
+//! it's checked, by the same thread, while its types are still in memory. Type errors aren't reported, because that's
+//! what `bun check` is for, unless oxlint's `--type-check` is passed.
 //!
 //! # Fixes
 //!
-//! ESLint lints a file again after it has fixed it, up to ten times. So it is here, for all files
-//! at once: the files that have changed are checked again, with their new text in place of what is
-//! on the disk, until none changes. The files that import them are not linted again.
+//! ESLint lints a file again after fixing it, up to ten times. This does the same for all files at once: changed files
+//! are checked again, with their new text instead of what's on disk, until nothing changes. Files that import them
+//! aren't linted again.
 
 use crate::lint::Context;
 use crate::results::{Counts, FileResult};
@@ -24,14 +23,14 @@ use bun_lint::linter::config::strings_of;
 use bun_lint::linter::globals::{InferredGlobal, InferredGlobals, ProgramGlobals};
 use bun_lint::linter::{
     Details, LintMessage, LintOptions, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId,
-    apply_fixes, is_parse_error,
+    apply_fixes, breaks_syntax,
 };
 use bun_sema::json::Json;
 use bun_sema::program::{FileId, Files};
 use bun_sema::resolve::{inside, is_same_path, to_file_name_lower_case};
 use bun_sema::util::{FxHashMap, FxHashSet};
-use bun_sema_driver::host::{AlreadyRead, Provided, from_native, is_bundled, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs, Refused, WithoutInclude};
+use bun_sema_driver::host::{AlreadyRead, Provided, as_read, from_native, is_bundled, to_native};
+use bun_sema_driver::{Category, Diagnostic, Libs, RejectedProgram, WithoutInclude};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -39,15 +38,15 @@ use std::sync::{Arc, OnceLock};
 pub(crate) struct Typed<'t> {
     pub(crate) path: &'t [u8],
     pub(crate) config: &'t Arc<ResolvedConfig>,
-    /// Its text, if that is not what is on the disk: standard input.
+    /// Its text, if it comes from standard input instead of the disk.
     pub(crate) text: Option<Vec<u8>>,
 }
 
-/// What is reported about a file, and its text if that is needed.
+/// A file's lint result, and its text if that's needed.
 type Linted = (LintResult, Option<Vec<u8>>);
 
-/// Checks the programs of `files`, and lints those at `indices`. `None` for a file that is in no
-/// program, or that cannot be linted as it is there.
+/// Type checks the programs that `files` belong to and lints the files at `indices`. `None` for a file that's in no
+/// program, or that can't be linted there.
 fn check_and_lint(
     context: &Context,
     environment: &Environment,
@@ -56,7 +55,7 @@ fn check_and_lint(
     already_read: AlreadyRead,
     is_first_pass: bool,
 ) -> Vec<Option<Linted>> {
-    // tsgolint chooses the project of each file itself: oxlint does not tell it about `--tsconfig`.
+    // tsgolint picks each file's project itself. oxlint doesn't pass it `--tsconfig`.
     let (like_oxlint, others): (Vec<usize>, Vec<usize>) =
         (0..indices.len()).partition(|&at| files[indices[at]].config.language.is_oxlint);
     if like_oxlint.is_empty() {
@@ -72,10 +71,10 @@ fn check_and_lint(
         .0;
     }
     let mut linted: Vec<Option<Linted>> = indices.iter().map(|_| None).collect();
-    // Returns the files that no project includes, and whether one of them is not linted.
+    // Returns the files that no project includes, and whether any of them wasn't linted.
     let mut check = |positions: &[usize], already_read: AlreadyRead, project: Project<'_>| {
         let some: Vec<usize> = positions.iter().map(|&at| indices[at]).collect();
-        let (of_some, place) = check_and_lint_in(
+        let (batch_results, program_kind) = check_and_lint_in(
             context,
             environment,
             files,
@@ -84,16 +83,18 @@ fn check_and_lint(
             project,
             is_first_pass,
         );
-        let (mut in_no_project, mut is_one_left) = (Vec::new(), false);
-        for ((&at, of_one), place) in positions.iter().zip(of_some).zip(place) {
-            let is_left = of_one.is_none() && place != Place::Refused;
-            if is_left || place == Place::InNoProject {
+        let (mut in_no_project, mut has_unlinted) = (Vec::new(), false);
+        for ((&at, linted_file), program_kind) in
+            positions.iter().zip(batch_results).zip(program_kind)
+        {
+            let is_unlinted = linted_file.is_none() && program_kind != ProgramKind::ProjectRejected;
+            if is_unlinted || program_kind == ProgramKind::InNoProject {
                 in_no_project.push(at);
             }
-            is_one_left |= is_left;
-            linted[at] = of_one;
+            has_unlinted |= is_unlinted;
+            linted[at] = linted_file;
         }
-        (in_no_project, is_one_left)
+        (in_no_project, has_unlinted)
     };
     if !others.is_empty() {
         check(&others, already_read.clone(), Project::Nearest);
@@ -103,55 +104,57 @@ fn check_and_lint(
         b"tsconfig.of-no-project.json",
     );
     let mut already_read = already_read;
-    already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.to_vec());
-    let (in_no_project, is_one_left) = check(
+    already_read.insert(config.clone(), INFERRED_PROJECT_OPTIONS.to_vec());
+    let (in_no_project, has_unlinted) = check(
         &like_oxlint,
         already_read.clone(),
         Project::Including(&config),
     );
-    // Its project could not lint it, so it counts as in no project too. All of those are one program, which is made again.
-    if is_one_left {
+    // A file that its project couldn't lint also counts as in no project. All such files form one program, so it's
+    // built again.
+    if has_unlinted {
         check(&in_no_project, already_read, Project::This(&config));
     }
     linted
 }
 
-/// Where a file was looked at.
+/// The kind of program a file was checked in.
 #[derive(Clone, Copy, PartialEq)]
-enum Place {
+enum ProgramKind {
     InAProject,
-    /// In the program of those that no project includes.
+    /// In the program made of the files that no project includes.
     InNoProject,
-    /// Its project is refused. It is linted without types.
-    Refused,
+    /// Its project was rejected, so it's linted without types.
+    ProjectRejected,
 }
 
-/// `CreateInferredProjectProgram` of tsgolint: one program for all files that no project includes, JavaScript too.
-const OPTIONS_OF_NO_PROJECT: &[u8] = br#"{"compilerOptions":{"allowJs":true,"module":"esnext","moduleResolution":"bundler","target":"es2022","jsx":"react-jsx","allowImportingTsExtensions":true,"strictNullChecks":true,"strictFunctionTypes":true,"esModuleInterop":true,"resolveJsonModule":true,"noEmit":true},"files":[]}"#;
+/// tsgolint's `CreateInferredProjectProgram`: one program for all files that no project includes, including JavaScript.
+const INFERRED_PROJECT_OPTIONS: &[u8] = br#"{"compilerOptions":{"allowJs":true,"module":"esnext","moduleResolution":"bundler","target":"es2022","jsx":"react-jsx","allowImportingTsExtensions":true,"strictNullChecks":true,"strictFunctionTypes":true,"esModuleInterop":true,"resolveJsonModule":true,"noEmit":true},"files":[]}"#;
 
-/// In which project a file is checked.
+/// Selects the project a file is checked in.
 #[derive(Clone, Copy)]
 enum Project<'a> {
-    /// As an editor chooses it, or `-p`. A file that no project includes is in that of the nearest configuration file.
+    /// The one an editor would pick, or `-p`. A file that no project includes goes into the nearest config file's
+    /// project.
     Nearest,
-    /// As tsgolint chooses it: see `PlanOptions::only_in_a_project_that_includes`. A file that no project includes is in that of
-    /// this configuration file.
+    /// The one tsgolint would pick. See `PlanOptions::requires_including_project`. A file that no project includes
+    /// goes into this config file's project.
     Including(&'a [u8]),
-    /// That of this configuration file.
+    /// This config file's project.
     This(&'a [u8]),
 }
 
-/// Where the files to lint are in a list, by `tspath.Path`: where the file system folds case, a program need not spell a file
-/// as the argument or the working directory that led to it does.
+/// Maps a `tspath.Path` to the index of a file to lint. On a case-insensitive file system, a program may spell a file
+/// differently from the argument or working directory that led to it.
 struct ByPath {
-    /// By the path in the checker's format.
+    /// Keyed by the path in the checker's format.
     exact: FxHashMap<Vec<u8>, usize>,
-    /// The same in lower case. Made when a name is asked for that `exact` does not have.
+    /// The same map with lowercase keys. Built on the first lookup that misses in `exact`.
     folded: OnceLock<FxHashMap<Vec<u8>, usize>>,
 }
 
 impl ByPath {
-    /// `name`: of a file of a program.
+    /// `name` is a program's name for a file.
     fn get(&self, name: &[u8], is_case_sensitive: bool) -> Option<usize> {
         if let Some(&at) = self.exact.get(name) {
             return Some(at);
@@ -160,9 +163,10 @@ impl ByPath {
             return None;
         }
         let folded = self.folded.get_or_init(|| {
-            // Of two that differ in case alone, the first counts.
-            let exact =
-                bun_lint::utils::sort::in_order_of(&self.exact, |it| std::cmp::Reverse(*it.1));
+            // If two paths differ only in case, the first one wins.
+            let exact = bun_lint::utils::sort::collect_sorted_by_key(&self.exact, |it| {
+                std::cmp::Reverse(*it.1)
+            });
             (exact.into_iter())
                 .map(|(path, &at)| (to_file_name_lower_case(path), at))
                 .collect()
@@ -171,29 +175,29 @@ impl ByPath {
     }
 }
 
-/// `parserOptions.project` where it names files.
+/// `parserOptions.project`, when it lists config files.
 struct Listed<'t> {
     by_path: &'t ByPath,
-    /// For each file in `by_path`, where its list is in `lists`.
-    of_file: Vec<usize>,
+    /// For each file in `by_path`, the index of its list in `lists`.
+    list_indices: Vec<usize>,
     lists: Vec<Vec<Vec<u8>>>,
 }
 
 impl bun_sema_driver::ListedProjects for Listed<'_> {
     fn of(&self, path: &[u8], is_case_sensitive: bool) -> &[Vec<u8>] {
         let at = self.by_path.get(path, is_case_sensitive);
-        at.map_or(&[], |at| &self.lists[self.of_file[at]])
+        at.map_or(&[], |at| &self.lists[self.list_indices[at]])
     }
 }
 
 impl<'t> Listed<'t> {
     fn new(by_path: &'t ByPath, files: &[Typed], indices: &[usize], cwd: &[u8]) -> Listed<'t> {
         let cwd = crate::paths::from_native(cwd);
-        // The files of one configuration have one list, and so have the configurations that say the same.
+        // Files with the same config share a list, and so do configs with the same options.
         let mut by_config: FxHashMap<*const ResolvedConfig, usize> = FxHashMap::default();
         let mut by_text: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
         let mut lists = Vec::new();
-        let of_file = indices.iter().map(|&index| {
+        let list_indices = indices.iter().map(|&index| {
             let config = files[index].config;
             *by_config.entry(Arc::as_ptr(config)).or_insert_with(|| {
                 let options = &config.language.parser_options;
@@ -218,17 +222,18 @@ impl<'t> Listed<'t> {
         });
         Listed {
             by_path,
-            of_file: of_file.collect(),
+            list_indices: list_indices.collect(),
             lists,
         }
     }
 }
 
-/// `resolveProjectList` of typescript-estree 8.71: the names that are no patterns first, in their order, wherever they stand,
-/// then what each pattern finds. In the checker's format. Empty: `project` names nothing, or `projectService` overrides it.
+/// typescript-estree 8.71's `resolveProjectList`: entries that aren't globs come first, in order, wherever they are in
+/// the list, followed by each glob's matches. Paths are in the checker's format. Empty if `project` lists nothing or
+/// `projectService` overrides it.
 fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
-    let written = strings_of(options.get(b"project"));
-    if written.is_empty() || options.get(b"projectService").is_some_and(Json::is_truthy) {
+    let project_entries = strings_of(options.get(b"project"));
+    if project_entries.is_empty() || options.get(b"projectService").is_some_and(Json::is_truthy) {
         return Vec::new();
     }
     let root = match options.get(b"tsconfigRootDir").and_then(Json::as_str) {
@@ -240,7 +245,7 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
         _ => vec![&b"**/node_modules/**"[..]],
     };
     let (patterns, names): (Vec<&[u8]>, Vec<&[u8]>) =
-        (written.iter().copied()).partition(|it| bun_glob::scan::is_glob(it));
+        (project_entries.iter().copied()).partition(|it| bun_glob::scan::is_glob(it));
     let names = names.iter();
     let mut list: Vec<Vec<u8>> = names
         .map(|it| crate::paths::resolve(&root, &crate::paths::portable(&root, it)))
@@ -250,15 +255,15 @@ fn resolve_project_list(options: &Json, cwd: &[u8]) -> Vec<Vec<u8>> {
     }
     let mut seen = bun_sema::util::FxHashSet::default();
     list.retain(|it| seen.insert(it.clone()));
-    let in_the_format_of_the_checker = |it: Vec<u8>| from_native(&crate::paths::to_native(it));
-    list.into_iter().map(in_the_format_of_the_checker).collect()
+    let to_checker_format = |it: Vec<u8>| from_native(&crate::paths::to_native(it));
+    list.into_iter().map(to_checker_format).collect()
 }
 
-/// What tinyglobby finds for `pattern` below `root`, sorted: it has them in the order in which it reads the directories.
-/// A link to a directory is not followed.
+/// Returns what tinyglobby finds for `pattern` under `root`, sorted. tinyglobby itself returns them in the order it
+/// reads the directories. A symlink to a directory isn't followed.
 fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec<u8>> {
     let mut pattern = pattern.strip_prefix(b"./").unwrap_or(pattern);
-    // It starts as far up as the pattern goes.
+    // The search starts as far up as the pattern's leading `../` go.
     while let Some(rest) = pattern.strip_prefix(b"../") {
         (root, pattern) = (crate::paths::dirname(root), rest);
     }
@@ -272,7 +277,7 @@ fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec
     let ignored: Vec<bun_glob::Pattern> = ignored.iter().map(|it| read(it)).collect();
     let is_ignored = |relative: &[u8]| ignored.iter().any(|it| it.matches(relative));
     let mut found = Vec::new();
-    // From `root`. A loop: directories can be nested to any depth.
+    // Paths relative to `root`. A loop instead of recursion, because directories can be nested to any depth.
     let mut pending: Vec<Vec<u8>> = vec![Vec::new()];
     while let Some(directory) = pending.pop() {
         let path = crate::paths::resolve(root, &directory);
@@ -301,18 +306,18 @@ fn files_matching(mut root: &[u8], pattern: &[u8], ignored: &[&[u8]]) -> Vec<Vec
     found
 }
 
-/// The globals of a program that is loaded anyway.
-struct OfProgram {
-    /// `None`: see `Files::global_names`.
+/// The globals of a program that's loaded anyway.
+struct LoadedProgramGlobals {
+    /// For `None`, see `Files::global_names`.
     names: Option<Vec<InferredGlobal>>,
     checks_javascript: bool,
-    /// The files that are in it only because they are linted, each by the name that the program has for it: the project does
-    /// not include them, so they are not written for its libraries.
+    /// Files that are in the program only because they're being linted, by the program's name for them. The project
+    /// doesn't include them, so they weren't written for its libraries.
     added: FxHashSet<Vec<u8>>,
 }
 
-impl OfProgram {
-    fn new(program: &Files<'_>) -> OfProgram {
+impl LoadedProgramGlobals {
+    fn new(program: &Files<'_>) -> LoadedProgramGlobals {
         let inferred = |it: bun_sema::program::GlobalName| InferredGlobal {
             name: it.name,
             is_value: it.is_value,
@@ -322,7 +327,7 @@ impl OfProgram {
         let names = program.global_names();
         let options = program.options;
         let added = options.own_roots.and_then(|own| options.files.get(own..));
-        OfProgram {
+        LoadedProgramGlobals {
             names: names.map(|it| it.into_iter().map(inferred).collect()),
             checks_javascript: options.check_js == Some(true),
             added: added.unwrap_or_default().iter().cloned().collect(),
@@ -330,10 +335,10 @@ impl OfProgram {
     }
 }
 
-/// What [`OfProgram`] has for one file.
-struct OfFile<'p>(Option<ProgramGlobals<'p>>);
+/// [`LoadedProgramGlobals`]'s globals for one file.
+struct FileGlobals<'p>(Option<ProgramGlobals<'p>>);
 
-impl InferredGlobals for OfFile<'_> {
+impl InferredGlobals for FileGlobals<'_> {
     fn of(&self, _: &[u8]) -> Option<ProgramGlobals<'_>> {
         self.0
     }
@@ -347,7 +352,7 @@ fn check_and_lint_in(
     already_read: AlreadyRead,
     project: Project<'_>,
     is_first_pass: bool,
-) -> (Vec<Option<Linted>>, Vec<Place>) {
+) -> (Vec<Option<Linted>>, Vec<ProgramKind>) {
     let by_path = ByPath {
         exact: indices
             .iter()
@@ -359,7 +364,7 @@ fn check_and_lint_in(
     let mut results: Guarded<Vec<Option<Linted>>> =
         Guarded::new(indices.iter().map(|_| None).collect());
     let options = context.lint_options();
-    // The text of a file of TypeScript's library, which the checker does not keep.
+    // Reads a TypeScript library file's text, which the checker doesn't keep.
     let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| match environment.libs {
         Libs::Bundled(libs) if is_bundled(path) => {
             if let Some(text) = (libs.read)(crate::paths::basename(path)) {
@@ -372,9 +377,10 @@ fn check_and_lint_in(
             }
         }
     };
-    // By configuration file.
-    let of_programs: Guarded<Vec<(Vec<u8>, Arc<OfProgram>)>> = Guarded::new(Vec::new());
-    let mut places = Guarded::new(vec![Place::InAProject; indices.len()]);
+    // Keyed by config file.
+    let program_globals: Guarded<Vec<(Vec<u8>, Arc<LoadedProgramGlobals>)>> =
+        Guarded::new(Vec::new());
+    let mut program_kinds = Guarded::new(vec![ProgramKind::InAProject; indices.len()]);
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
         let program = checker.p.files;
         let name = program.module(file).file_name();
@@ -388,24 +394,26 @@ fn check_and_lint_in(
             Project::Including(rest)
                 if is_same_path(project_of_file, rest, program.is_case_sensitive) =>
             {
-                places.lock()[at] = Place::InNoProject;
+                program_kinds.lock()[at] = ProgramKind::InNoProject;
                 false
             }
             Project::Including(_) | Project::Nearest => !project_of_file.is_empty(),
         };
         let is_javascript = bun_sema::resolve::is_javascript(name);
         let infers = config.language.infers_globals.is_for(is_javascript);
-        let of_program = (infers && is_in_a_project).then(|| {
-            let mut known = of_programs.lock();
+        let loaded_globals = (infers && is_in_a_project).then(|| {
+            let mut known = program_globals.lock();
             if let Some(found) = known.iter().find(|it| it.0 == *project_of_file) {
                 return Arc::clone(&found.1);
             }
-            let made = Arc::new(OfProgram::new(program));
+            let made = Arc::new(LoadedProgramGlobals::new(program));
             known.push((project_of_file.clone(), Arc::clone(&made)));
             made
         });
-        let of_program = of_program.as_ref().filter(|it| !it.added.contains(name));
-        let of_file = OfFile(of_program.and_then(|it| {
+        let loaded_globals = loaded_globals
+            .as_ref()
+            .filter(|it| !it.added.contains(name));
+        let file_globals = FileGlobals(loaded_globals.and_then(|it| {
             Some(ProgramGlobals {
                 names: it.names.as_deref()?,
                 checks_javascript: it.checks_javascript,
@@ -420,7 +428,7 @@ fn check_and_lint_in(
             Some(&read_library),
             Some(context.modules),
             Some(context.formatter),
-            Some(&of_file),
+            Some(&file_globals),
             |file| {
                 let text = file.text();
                 let parse_again = |then: &mut dyn for<'f> FnMut(&'f File<'f>)| {
@@ -438,7 +446,9 @@ fn check_and_lint_in(
                     crate::lint::unused_directives_as_oxlint(&mut result, false);
                 }
                 context.promote_suggestions(&mut result);
-                // What the type checker reports is known when all files are checked.
+                // After the first pass, only files that were fixed are linted.
+                context.count_redeclarations(file, &mut result, !is_first_pass);
+                // The type checker's errors are only known once all files are checked.
                 let is_reported = !result.messages.is_empty()
                     || !result.suppressed.is_empty()
                     || context.checks_types;
@@ -448,10 +458,10 @@ fn check_and_lint_in(
             },
         );
         context.timing.add(&context.timing.rules, started);
-        // A task of the checker can run again: the last time counts.
+        // A checker task can run more than once. The last run wins.
         match linted {
             Some(linted) => results.lock()[at] = Some(linted),
-            // It is linted without types. Of a tree that is too deep for the parser the linter says so itself.
+            // It'll be linted without types. If the tree is too deep for the parser, the linter reports that itself.
             None if !checker.hir(file).ran_out_of_stack && checker.bound(file).ran_out_of_stack => {
                 context.out_of_stack.lock().push(path.to_vec());
             }
@@ -483,65 +493,64 @@ fn check_and_lint_in(
         threads: context.options.threads,
         libs: environment.libs,
         progress: None,
-        only: None,
         order: 1,
-        digests: false,
-        task_clock: None,
         plan_options: bun_sema_driver::PlanOptions {
-            after_file_is_for_checked_files: true,
-            // As in an editor, which is what `projectService` of typescript-eslint is.
-            checks_only_named: true,
+            after_file_only_for_checked_files: true,
+            // Like an editor, which is how typescript-eslint's `projectService` works.
+            checks_only_requested_paths: true,
             reads_sources_of_references: true,
-            current_directory_is_of_the_project: true,
-            reports_nothing_about_files: !context.checks_types,
-            only_in_a_project_that_includes: matches!(project, Project::Including(_)),
-            project_is_for_the_rest: matches!(project, Project::Including(_)),
+            uses_project_directory_as_cwd: true,
+            skips_file_diagnostics: !context.checks_types,
+            requires_including_project: matches!(project, Project::Including(_)),
+            project_is_fallback: matches!(project, Project::Including(_)),
             memory: environment.memory,
             shares_every_file: true,
-            refuses_broken_configurations: matches!(project, Project::Including(_)),
-            // typescript-eslint checks with the compiler of the project. tsgolint has its own files.
-            prefers_the_library_of_the_project: matches!(project, Project::Nearest),
+            rejects_broken_configurations: matches!(project, Project::Including(_)),
+            // typescript-eslint uses the project's own compiler. tsgolint bundles its own library files.
+            prefers_project_typescript_libs: matches!(project, Project::Nearest),
             ..Default::default()
         },
-        retains_everything: false,
-        // A syntax error in one file does not keep the others from being linted.
+        // A syntax error in one file doesn't stop the others from being linted.
         stops_like_tsc: false,
         uses_typescript_wording: false,
-        loaded: None,
-        checked: None,
         after_file: Some(&after_file),
-        declaration_file_emitted: None,
     };
     let provided = Provided {
         already_read,
         keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused, without_include) =
-        bun_sema_driver::check_provided_then(&request, provided, |report| {
-            (
-                report.is_case_sensitive,
-                report.unreadable,
-                report.diagnostics,
-                report.incomplete,
-                report.refused,
-                report.without_include,
-            )
-        });
+    let (
+        is_case_sensitive,
+        unreadable,
+        diagnostics,
+        incomplete,
+        rejected_projects,
+        without_include,
+    ) = bun_sema_driver::check_provided_then(&request, provided, |report| {
+        (
+            report.is_case_sensitive,
+            report.unreadable,
+            report.diagnostics,
+            report.incomplete,
+            report.rejected_programs,
+            report.without_include,
+        )
+    });
     // The later passes of `--fix` lint some of the same files again.
     if is_first_pass {
         let mut noted = context.without_include.lock();
         for program in without_include {
             let config_path = to_native(&program.config_path).to_vec();
-            // Each kind of configuration loads it for its own files.
+            // Each kind of config loads the program for its own files.
             match noted.iter_mut().find(|it| it.config_path == config_path) {
                 Some(known) => {
-                    known.asked_for += program.asked_for;
+                    known.requested_files += program.requested_files;
                     known.load_time += program.load_time;
                 }
                 None => noted.push(WithoutInclude {
                     config_path,
-                    // As it is spelled by who named it.
+                    // Spelled the way the caller passed it.
                     example: match by_path.get(&program.example, is_case_sensitive) {
                         Some(at) => files[indices[at]].path.to_vec(),
                         None => to_native(&program.example).to_vec(),
@@ -551,21 +560,22 @@ fn check_and_lint_in(
             }
         }
     }
-    // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
-    let mut places = std::mem::take(places.get_mut());
-    for refused in &refused {
-        for path in &refused.files {
+    // These files belong to a project, so they don't go into the program for files that no project includes. They're
+    // linted without types.
+    let mut program_kinds = std::mem::take(program_kinds.get_mut());
+    for rejected in &rejected_projects {
+        for path in &rejected.files {
             if let Some(at) = by_path.get(path, is_case_sensitive) {
-                places[at] = Place::Refused;
+                program_kinds[at] = ProgramKind::ProjectRejected;
             }
         }
-        note_invalid_tsconfig(context, refused);
+        note_invalid_tsconfig(context, rejected);
     }
-    // Of code that is nested too deeply for the parser the linter says so itself.
+    // The linter itself reports code that's nested too deeply for the parser.
     let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
     (context.out_of_stack.lock()).extend(out_of_stack.map(|it| to_native(&it.path).to_vec()));
     let mut results = std::mem::take(results.get_mut());
-    // Each was checked, and linted, as an empty file. Who lints it without types says why it cannot be read.
+    // Each of these was checked and linted as an empty file. Linting it without types reports why it can't be read.
     for path in &unreadable {
         let at = by_path.get(path, is_case_sensitive);
         if let Some(result) = at.and_then(|at| results.get_mut(at)) {
@@ -586,32 +596,34 @@ fn check_and_lint_in(
             LintMessage::sort(&mut result.messages);
         }
     }
-    (results, places)
+    (results, program_kinds)
 }
 
-/// Whether nearly all of the time went into files that nobody asked about: a thousand or more, and a hundred for each
-/// that was linted. A `tsconfig.json` at the top of a repository is like that for a file that its own package leaves out.
+/// True if nearly all the time went into files that weren't requested: at least a thousand, and at least a hundred per
+/// linted file. That happens with a `tsconfig.json` at the top of a repository when a file isn't included by its own
+/// package's project.
 pub(crate) fn is_out_of_proportion(program: &WithoutInclude) -> bool {
-    program.included >= 1000 && program.included >= 100 * program.asked_for
+    program.included >= 1000 && program.included >= 100 * program.requested_files
 }
 
-/// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's
-/// text as the help, at TypeScript's place in the file that TypeScript names, or else in the configuration file without a place.
-fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
+/// Reports each error that stops tsgolint from building a program (`CreateProgram`) the way oxlint does: "Invalid
+/// tsconfig", with TypeScript's text as the help, at TypeScript's location if it has one, otherwise in the config file
+/// without a location.
+fn note_invalid_tsconfig(context: &Context, rejected: &RejectedProgram) {
     let mut noted = context.invalid_tsconfigs.lock();
     // Each pass of `--fix` finds it again.
-    if noted.of.contains(&refused.config_path) {
+    if noted.config_paths.contains(&rejected.config_path) {
         return;
     }
-    noted.of.push(refused.config_path.clone());
+    noted.config_paths.push(rejected.config_path.clone());
     let noted = &mut noted.results;
-    for diagnostic in &refused.diagnostics {
-        let has_place = !diagnostic.path.is_empty();
-        let path = to_native(match has_place {
+    for diagnostic in &rejected.diagnostics {
+        let has_location = !diagnostic.path.is_empty();
+        let path = to_native(match has_location {
             true => &diagnostic.path,
-            false => &refused.config_path,
+            false => &rejected.config_path,
         });
-        // `GetDiagnosticMessage`: without what is chained to it.
+        // `GetDiagnosticMessage`: without the chained messages.
         let text = &diagnostic.text[..];
         let text = &text[..strings::index_of_char_usize(text, b'\n').unwrap_or(text.len())];
         let mut help = bstr::BStr::new(text).to_string();
@@ -621,17 +633,25 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
                 "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.",
             );
         }
+        // The `stylish`, `unix` and `json` formats don't show help text, so outside oxlint mode the message includes
+        // it.
+        let is_oxlint = context.oxlint_config.is_some();
         let message = LintMessage {
             rule_id: Some(RuleId::Unknown(b"typescript/tsconfig-error"[..].into())),
             severity: Severity::Error,
-            message: b"Invalid tsconfig".to_vec(),
+            message: match is_oxlint {
+                true => b"Invalid tsconfig".to_vec(),
+                false => [&b"Invalid tsconfig: "[..], text].concat(),
+            },
             line: diagnostic.line,
             column: diagnostic.column,
-            end: has_place.then_some((diagnostic.end_line, diagnostic.end_column)),
-            details: Some(Box::new(Details {
-                help: help.into(),
-                ..Details::default()
-            })),
+            end: has_location.then_some((diagnostic.end_line, diagnostic.end_column)),
+            details: is_oxlint.then(|| {
+                Box::new(Details {
+                    help: help.into(),
+                    ..Details::default()
+                })
+            }),
             ..LintMessage::default()
         };
         let at = match noted.iter().position(|it| it.path == path) {
@@ -639,16 +659,16 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             None => {
                 noted.push(FileResult {
                     messages: Vec::new(),
-                    text: crate::fs::read(path).ok(),
+                    text: crate::git::read(context.only, &crate::paths::from_native(path)).ok(),
                     ..FileResult::ignored(path.to_vec(), b"")
                 });
                 noted.len() - 1
             }
         };
         let result = &mut noted[at];
-        // What two programs have from one base file is said once for each.
+        // An error that two programs inherit from a shared base config is reported once per program.
         result.messages.push(message);
-        // `SortAndDeduplicateDiagnostics`: those without a place first, by their text.
+        // `SortAndDeduplicateDiagnostics`: those without a location first, sorted by text.
         let help_of = |it: &LintMessage| it.details.as_ref().map(|it| it.help.clone());
         bun_lint::utils::sort::sort_by(&mut result.messages, |a, b| {
             (a.line, a.column, help_of(a)).cmp(&(b.line, b.column, help_of(b)))
@@ -660,17 +680,19 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
 /// `Context::invalid_tsconfigs`
 #[derive(Default)]
 pub(crate) struct InvalidTsconfigs {
-    /// By file.
+    /// One result per file.
     pub(crate) results: Vec<FileResult>,
-    /// The configuration files of the programs that `results` is about.
-    of: Vec<Vec<u8>>,
+    /// The config files of the programs that `results` covers.
+    config_paths: Vec<Vec<u8>>,
 }
 
-/// What oxlint makes of an error of the type checker: `typescript(TS2322)`, with the first line of the text. No comment disables it.
+/// Converts a type checker error the way oxlint does: `typescript(TS2322)`, with the first line of the text. No comment
+/// can disable it.
 fn type_error(diagnostic: &Diagnostic) -> LintMessage {
     let text = &diagnostic.text[..];
     let end = strings::index_of_char_usize(text, b'\n').unwrap_or(text.len());
-    // TypeScript drops the byte order mark, which the text that is checked here has: it is no character of the first line.
+    // TypeScript strips the byte order mark, but the text checked here keeps it. It doesn't count as a character of the
+    // first line.
     let has_mark = diagnostic.source_line == 1
         && (diagnostic.source.first()).is_some_and(|it| it.starts_with(b"\xEF\xBB\xBF"));
     let column = |line: u32, column: u32| match has_mark && line == 1 {
@@ -694,14 +716,15 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
     }
 }
 
-/// Whether [`type_error`] made `message`.
+/// True if [`type_error`] made `message`.
 pub(crate) fn is_type_error(message: &LintMessage) -> bool {
     message.message_id.is_none()
         && matches!(&message.rule_id, Some(RuleId::Unknown(id)) if id.starts_with(b"typescript/TS"))
 }
 
-/// What is said about a file for which [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis)
-/// holds. typescript-eslint says nothing.
+/// The warning for a file where
+/// [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis) is true.
+/// typescript-eslint reports nothing.
 fn too_large_for_flow_analysis() -> LintMessage {
     LintMessage {
         severity: Severity::Warn,
@@ -713,23 +736,25 @@ fn too_large_for_flow_analysis() -> LintMessage {
     }
 }
 
-/// Where ESLint's `verifyAndFix` is with a file.
+/// The state of ESLint's `verifyAndFix` loop for one file.
 #[derive(Default)]
 struct Fixing {
-    /// `None`: what is on the disk.
+    /// `None` means the text on disk.
     current: Option<Vec<u8>>,
     previous: Option<Vec<u8>>,
     passes: usize,
     is_fixed: bool,
     /// Number of fixes applied to get `current`.
     fixes: usize,
-    /// Nothing more is fixed: only the messages about `current` are missing.
-    is_over: bool,
+    /// No more fixes are applied. Only the messages for `current` are still needed.
+    is_done: bool,
     /// The rules whose fixes the last pass applied, then `is_fixed` and `fixes` as they were before that pass.
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
+    /// [`LintResult::tolerated_errors`] of `previous`.
+    tolerated_before: usize,
 }
 
-/// Lints `files` with types. `None` for a file that has to be linted without.
+/// Lints `files` with types. `None` for a file that has to be linted without them.
 pub(crate) fn lint(
     context: &Context,
     environment: &Environment,
@@ -743,13 +768,19 @@ pub(crate) fn lint(
     };
     let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
+    let mut staged = (context.only).map_or_else(AlreadyRead::default, |it| it.already_read(true));
+    // Also add each staged text under the path the file is linted as, which may contain a symlink.
+    staged.extend(files.iter().filter_map(|file| {
+        let text = context.only?.staged_text(file.path)?.to_vec();
+        Some((from_native(file.path), as_read(file.path, text, true)))
+    }));
     let mut is_first_pass = true;
     while !pending.is_empty() {
         let changed = states
             .iter()
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
-        let changed = changed.collect();
+        let changed = staged.clone().into_iter().chain(changed).collect();
         let linted = check_and_lint(
             context,
             environment,
@@ -766,14 +797,13 @@ pub(crate) fn lint(
                 (Some(linted), _) => linted,
                 // It was in a program before it was fixed.
                 (None, Some(current)) => (
-                    context.verify(file.path, current, file.config),
+                    context.verify_pass(file.path, current, file.config, state.previous.is_some()),
                     Some(current.clone()),
                 ),
                 (None, None) => continue,
             };
-            // The fixes of the last pass are taken back.
-            if !result.messages.is_empty()
-                && result.messages.iter().all(is_parse_error)
+            // Revert the last pass's fixes.
+            if breaks_syntax(&result, state.tolerated_before)
                 && let (Some(before), Some((rules, was_fixed, fixes))) =
                     (state.previous.take(), state.last_pass.take())
             {
@@ -782,7 +812,7 @@ pub(crate) fn lint(
                     current: Some(before),
                     is_fixed: was_fixed,
                     fixes,
-                    is_over: true,
+                    is_done: true,
                     ..Fixing::default()
                 };
                 next.push(index);
@@ -790,7 +820,7 @@ pub(crate) fn lint(
             }
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, fixed: (bool, usize)| {
                 let (is_fixed, fixes) = fixed;
-                // What is not there is not written.
+                // Without a text there's nothing to write.
                 let is_fixed = is_fixed && text.is_some();
                 let mut result = context.result(
                     crate::paths::to_native(file.path.to_vec()),
@@ -804,7 +834,7 @@ pub(crate) fn lint(
                 done[index] = Some(result);
             };
             let has_fixes = context.fixes_file(file.path)
-                && !state.is_over
+                && !state.is_done
                 && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
@@ -815,13 +845,13 @@ pub(crate) fn lint(
             if file.config.language.is_oxlint {
                 crate::lint::order_fixes_as_oxlint(&mut result.messages);
             }
-            let was_refused = result.messages.iter().any(|it| it.is_fatal);
+            let was_rejected = result.messages.iter().any(|it| it.is_fatal);
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
                 context.should_fix(message)
             });
             result.messages = fixed.remaining;
             if file.config.language.is_oxlint {
-                // They are by place now.
+                // They're sorted by location now, so put them back in reported order.
                 bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
             }
             if !fixed.is_fixed {
@@ -829,17 +859,17 @@ pub(crate) fn lint(
                 finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             }
-            // oxlint fixes once.
+            // oxlint only runs one fix pass.
             if file.config.language.is_oxlint {
-                // A file that oxc refuses keeps what tsgolint fixes in it.
-                if !was_refused
+                // If oxc already rejected the file, tsgolint's fixes are kept anyway.
+                if !was_rejected
                     && !context.parses(file.path, &fixed.output, file.config)
                     && context.parses(file.path, text, file.config)
                 {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),
-                        is_over: true,
+                        is_done: true,
                         ..Fixing::default()
                     };
                     next.push(index);
@@ -854,13 +884,14 @@ pub(crate) fn lint(
             state.last_pass = Some((fixed.applied, state.is_fixed, state.fixes));
             state.is_fixed = true;
             state.fixes += fixed.count;
-            let before_the_last = state.previous.replace(text.clone());
-            let is_circular = state.passes > 1 && before_the_last.as_ref() == Some(&fixed.output);
+            let two_passes_ago = state.previous.replace(text.clone());
+            state.tolerated_before = result.tolerated_errors;
+            let is_circular = state.passes > 1 && two_passes_ago.as_ref() == Some(&fixed.output);
             if is_circular {
                 on_circular_fixes(file.path);
             }
             state.current = Some(fixed.output);
-            state.is_over = is_circular || state.passes >= MAX_AUTOFIX_PASSES;
+            state.is_done = is_circular || state.passes >= MAX_AUTOFIX_PASSES;
             next.push(index);
         }
         pending = next;

@@ -51,6 +51,8 @@ pub(crate) mod shell;
 // cycle the `bun_bun_js` shims were papering over.
 #[path = "api.rs"]
 pub(crate) mod api;
+#[cfg(debug_assertions)]
+pub(crate) mod class_ref_test;
 pub(crate) mod dispatch;
 pub(crate) mod hw_exports;
 pub(crate) mod ipc;

@@ -130,7 +130,8 @@ pub struct DedupeMapEntry {
     pub(crate) missing_until: u32,
 }
 
-/// A version that a cached copy of a manifest lacks may have been published since.
+/// Where a manifest came from. If a cached copy doesn't have a version, the version may have been
+/// published since.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestOrigin {
     /// The disk cache, also after a 304.
@@ -138,7 +139,7 @@ pub enum ManifestOrigin {
     Cache,
     /// `refetch_stale_manifest` asked for it again without conditional headers.
     Refetching,
-    /// The registry sent the document, so what it lacks does not exist.
+    /// The registry sent the document in this run, so a version that it doesn't have doesn't exist.
     Registry,
 }
 /// `Id` is already a wyhash output, so identity hashing
@@ -400,7 +401,7 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 );
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
-/// What `Scope::authorization_parts` returned for the URL of the request.
+/// The result of `Scope::authorization_parts` for the request's URL.
 type AuthorizationParts<'a> = Option<(&'static [u8], &'a [u8])>;
 
 fn append_auth(header_builder: &mut HeaderBuilder, authorization: AuthorizationParts<'_>) {
@@ -484,7 +485,7 @@ pub(crate) fn add_error_or_warning(
     }
 }
 
-/// Redacted before `quote()`: the password scan only recognizes an unquoted URL.
+/// Redact before calling `quote()`, because the password scan only recognizes an unquoted URL.
 fn redacted_url(url: &[u8]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
     let _ = write!(out, "{}", redacted_npm_url(url));
@@ -492,7 +493,7 @@ fn redacted_url(url: &[u8]) -> Vec<u8> {
 }
 
 impl NetworkTask {
-    /// `needs_extended`: the caller cannot use the abbreviated document.
+    /// `needs_extended` means the caller can't use the abbreviated document.
     pub(crate) fn for_manifest(
         &mut self,
         name: &[u8],
@@ -508,7 +509,8 @@ impl NetworkTask {
             is_optional,
             needs_extended || npm::name_suggests_libc(name),
         )?;
-        // Not dropped: the old value is uninitialized or a stale bitwise copy from `notify`.
+        // The old value isn't dropped, because it's either uninitialized or a stale bitwise copy
+        // from `notify`.
         self.unsafe_http_client = MaybeUninit::new(request);
         Ok(())
     }

@@ -78,7 +78,7 @@ impl JSFrameworkRouter {
             paths::platform::Auto,
         >(
             // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir,
+            bun_resolver::fs::FileSystem::get().top_level_dir(),
             root.slice(),
         ))
         .into();
@@ -94,6 +94,7 @@ impl JSFrameworkRouter {
             ]),
             style,
             allow_layouts: true,
+            client_pages: false,
             // Unused by JSFrameworkRouter
             client_file: None,
             server_file: OpaqueFileId::init(0),
@@ -163,11 +164,12 @@ impl JSFrameworkRouter {
                         JSValue::create_empty_object(global, params_out.params.len() as usize);
                     for param in params_out.params.slice() {
                         // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        params_obj.put(
+                        // A file named `[0].tsx` produces a param name that's an array index.
+                        params_obj.put_may_be_index(
                             global,
-                            param.key.slice(),
+                            &bun_core::String::borrow_utf8(param.key.slice()),
                             bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
-                        );
+                        )?;
                     }
                     params_obj
                 } else {

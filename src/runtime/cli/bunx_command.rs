@@ -12,6 +12,7 @@ use bun_ast::ExprData;
 use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
+use bun_install::CommandLineArguments;
 use bun_install::dependency::VersionTag;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -25,6 +26,8 @@ use crate::api::bun::process::Status as SpawnStatus;
 use crate::api::bun::process::sync as proc_sync;
 
 bun_output::declare_scope!(bunx, visible);
+
+const SEP: &[u8] = &[bun_paths::SEP];
 
 pub(crate) struct BunxCommand;
 
@@ -61,7 +64,8 @@ enum Tree {
     Fresh,
 }
 
-/// The directory that holds every tree of this user; see [`BunxCommand::cache_dir`]. Windows has none.
+/// Returns the name of the directory that contains all of this user's trees. See
+/// [`BunxCommand::cache_dir`]. Windows doesn't have one.
 pub(crate) fn cache_root_name() -> Vec<u8> {
     #[cfg(unix)]
     let uid = bun_sys::c::getuid();
@@ -70,9 +74,8 @@ pub(crate) fn cache_root_name() -> Vec<u8> {
     format!(".bunx-{uid}").into_bytes()
 }
 
-/// How many packages `<base>/.bunx-<uid>` holds. The packages of one scope count as one.
+/// Returns how many packages are in `<base>/.bunx-<uid>`. All packages of one scope count as one.
 pub(crate) fn count_cached_packages(base: &[u8]) -> usize {
-    const SEP: &[u8] = &[bun_paths::SEP];
     let root = [base, SEP, cache_root_name().as_slice()].concat();
     let Ok(root) = bun_sys::Dir::open(&root) else {
         return 0;
@@ -102,10 +105,17 @@ pub(crate) struct Options {
     pub(crate) silent_install: bool,
     /// Only run the target command if it is already downloaded; otherwise `bunx` exits with an error.
     pub(crate) no_install: bool,
-    /// `bun add --trust`: the lifecycle scripts of the package and of everything it depends on run.
+    /// Passes `--trust` to `bun add`, so the lifecycle scripts of the package and of everything it
+    /// depends on run.
     pub(crate) trust: bool,
-    /// Seconds, as typed: forwarded to `bun add` and part of the cache directory's name.
+    /// Passes `--ignore-scripts` to `bun add`, which wins over `--trust`.
+    pub(crate) ignore_scripts: bool,
+    /// In seconds, as typed. It's forwarded to `bun add` and is part of the cache directory's name.
     pub(crate) minimum_release_age: Option<&'static [u8]>,
+    /// Forwarded to `bun add`, like `ca` and `cafile`. It's part of the cache directory's name.
+    pub(crate) registry: Option<&'static [u8]>,
+    pub(crate) ca: Vec<&'static [u8]>,
+    pub(crate) cafile: Option<&'static [u8]>,
 }
 
 impl Options {
@@ -145,7 +155,8 @@ impl Options {
         let mut opts = Options::default();
         opts.passthrough_list.reserve_exact(argv.len());
 
-        // `BUN_OPTIONS` is for every command: what bunx does not know there is not for it.
+        // `BUN_OPTIONS` applies to every command, so flags in it that bunx doesn't know are meant
+        // for something else.
         let bun_options = (bun_core::argv().as_slice())
             .get(1..1 + bun_core::bun_options_argc())
             .unwrap_or_default();
@@ -172,7 +183,11 @@ impl Options {
                     opts.silent_install = true;
                 } else if positional == b"--bun" || positional == b"-b" {
                     ctx.debug.run_in_bun = true;
-                } else if positional == b"--no-install" {
+                } else if matches!(
+                    positional,
+                    // The others are npm's names for it.
+                    b"--no-install" | b"--no" | b"--no-yes" | b"--yes=false" | b"-n" | b"--offline"
+                ) {
                     opts.no_install = true;
                 } else if positional == b"--package" || positional == b"-p" {
                     i += 1;
@@ -186,8 +201,15 @@ impl Options {
                     .or_else(|| positional.strip_prefix(b"-p="))
                 {
                     opts.specified_package = Some(Self::non_empty_package(package));
+                } else if positional == b"--yes"
+                    && (argv.get(i + 1)).is_some_and(|next| next.as_bytes() == b"false")
+                {
+                    opts.no_install = true;
+                    i += 1;
                 } else if positional == b"--trust" {
                     opts.trust = true;
+                } else if matches!(positional, b"--ignore-scripts" | b"--ignore-scripts=true") {
+                    opts.ignore_scripts = true;
                 } else if let Some(file) = Self::flag_value(argv, &mut i, "--env-file") {
                     ctx.args.env_files.push(Box::<[u8]>::from(file));
                 } else if let Some(dir) = Self::flag_value(argv, &mut i, "--cwd") {
@@ -200,7 +222,8 @@ impl Options {
                         Global::exit(1);
                     }
                 } else if let Some(age) = Self::flag_value(argv, &mut i, "--minimum-release-age") {
-                    // The whole value, as for `bun add`: it names a directory.
+                    // Validate the whole value, like `bun add` does, because it becomes part of a
+                    // directory name.
                     if bun_core::fmt::parse_seconds(age).is_none() {
                         Output::err_generic(
                             "Expected --minimum-release-age to be a positive number: {}",
@@ -209,12 +232,26 @@ impl Options {
                         Global::exit(1);
                     }
                     opts.minimum_release_age = Some(age);
+                } else if let Some(url) = Self::flag_value(argv, &mut i, "--registry")
+                    // The names that npm and pnpm also have for it.
+                    .or_else(|| Self::flag_value(argv, &mut i, "--reg"))
+                    .or_else(|| Self::flag_value(argv, &mut i, "--config.registry"))
+                {
+                    opts.registry = Some(url);
+                } else if let Some(ca) = Self::flag_value(argv, &mut i, "--ca") {
+                    opts.ca.push(ca);
+                } else if let Some(path) = Self::flag_value(argv, &mut i, "--cafile") {
+                    opts.cafile = Some(path);
                 } else if positional == b"--help" || positional == b"-h" {
                     crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
                     Global::exit(0);
-                } else if !matches!(positional, b"--" | b"--yes" | b"-y")
-                    && !is_from_bun_options(argv[i])
-                {
+                } else if positional == b"--" || is_from_bun_options(argv[i]) {
+                } else if let Some(value_is_next_arg) = CommandLineArguments::bunx_skips_flag(
+                    positional,
+                    argv.get(i + 1).map_or(b"".as_slice(), |arg| arg.as_bytes()),
+                ) {
+                    i += usize::from(value_is_next_arg);
+                } else {
                     // Skipping it would make the value of `--flag value` the package that is downloaded and run.
                     Output::err_generic(
                         "bunx has no <b>{}<r> flag. Flags for the package go after its name.",
@@ -401,7 +438,6 @@ impl BunxCommand {
         bin_name: &[u8],
         only_that_bin: bool,
     ) -> crate::Result<Option<ZBox>> {
-        const SEP: &[u8] = &[bun_paths::SEP];
         let project = strings::without_trailing_slash(project);
         let mut next_dir = Some(cwd);
         while let Some(dir) = next_dir.map(strings::without_trailing_slash) {
@@ -475,22 +511,30 @@ impl BunxCommand {
         package_name: &[u8],
         preferred: &[u8],
     ) -> crate::Result<Box<[u8]>> {
-        let mut subpath = bun_paths::path_buffer_pool::get();
-        let subpath_z = bun_core::fmt::buf_print_z(
-            &mut subpath[..],
-            format_args!(
-                "{cache}{sep}node_modules{sep}{pkg}{sep}package.json",
-                cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-                pkg = BStr::new(package_name),
-            ),
-        )
-        .map_err(|_| crate::Error::PathTooLong)?;
-        Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), subpath_z, preferred)?.name)
+        let subpath = Self::path_in_cache(&[
+            bunx_cache_dir,
+            SEP,
+            b"node_modules",
+            SEP,
+            package_name,
+            SEP,
+            b"package.json",
+        ])?;
+        Ok(Self::get_bin_from_subpath(transpiler, Fd::cwd(), &subpath, preferred)?.name)
     }
 
-    /// `.bunx-<uid>`, this user's with mode 0700, is the trust boundary: nothing below is checked.
-    /// `configured` is the result of `user_cache_directory`.
+    /// Concatenates raw bytes. Formatting the path would replace invalid UTF-8 and point at a
+    /// different directory.
+    fn path_in_cache(parts: &[&[u8]]) -> crate::Result<ZBox> {
+        let path = parts.concat();
+        if path.len() >= bun_paths::MAX_PATH_BYTES {
+            return Err(crate::Error::PathTooLong);
+        }
+        Ok(ZBox::from_vec(path))
+    }
+
+    /// `.bunx-<uid>`, owned by this user with mode 0700, is the trust boundary. Nothing below it is
+    /// checked. `configured` is the result of `user_cache_directory`.
     #[cfg(unix)]
     fn cache_dir(
         env: &mut bun_dotenv::Loader,
@@ -533,7 +577,8 @@ impl BunxCommand {
                 bun_core::warn!(
                     "no usable private cache directory, installing into shared temp directory. Set <b>BUN_INSTALL_CACHE_DIR<r> to a directory only you can write."
                 );
-                // macOS replaces this process with the tool, which drops what is still buffered.
+                // macOS replaces this process with the tool, which would drop anything that's still
+                // buffered.
                 Output::flush();
             }
             return Some([root.as_bytes(), b"/", package_fmt].concat());
@@ -558,7 +603,6 @@ impl BunxCommand {
         bunx_cache_dir: &[u8],
         path: &[u8],
     ) -> crate::Result<()> {
-        const SEP: &[u8] = &[bun_paths::SEP];
         let mut new_path = [bunx_cache_dir, SEP, b"node_modules", SEP, b".bin"].concat();
         if !path.is_empty() {
             new_path.push(DELIMITER);
@@ -574,18 +618,16 @@ impl BunxCommand {
         cwd: &[u8],
         bin_name: &[u8],
     ) -> crate::Result<Option<&'a ZStr>> {
-        let mut absolute_buf = bun_paths::path_buffer_pool::get();
-        let absolute = bun_core::fmt::buf_print_z(
-            &mut absolute_buf[..],
-            format_args!(
-                "{cache}{sep}node_modules{sep}.bin{sep}{bin}{exe}",
-                cache = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-                bin = BStr::new(bin_name),
-                exe = EXE_SUFFIX,
-            ),
-        )
-        .map_err(|_| crate::Error::PathTooLong)?;
+        let absolute = Self::path_in_cache(&[
+            bunx_cache_dir,
+            SEP,
+            b"node_modules",
+            SEP,
+            b".bin",
+            SEP,
+            bin_name,
+            EXE_SUFFIX.as_bytes(),
+        ])?;
         Ok(bun_which::which(
             buf,
             bunx_cache_dir,
@@ -789,13 +831,19 @@ impl BunxCommand {
             )
         };
         let mut package_fmt: Vec<u8> = package_fmt.into_bytes();
-        // What decides the content of a tree is part of its name.
+        // Every option that affects a tree's contents is part of its name.
         if opts.trust {
             package_fmt.extend_from_slice(b"+trust");
+        }
+        if opts.ignore_scripts {
+            package_fmt.extend_from_slice(b"+ignore-scripts");
         }
         if let Some(age) = opts.minimum_release_age {
             package_fmt.extend_from_slice(b"+min-age=");
             package_fmt.extend_from_slice(age);
+        }
+        if let Some(registry) = opts.registry {
+            package_fmt.extend_from_slice(format!("+registry={:x}", hash(registry)).as_bytes());
         }
         bun_output::scoped_log!(bunx, "package_fmt: {}", BStr::new(&package_fmt));
 
@@ -840,7 +888,7 @@ impl BunxCommand {
         };
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir;
+        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir();
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
             top_level_dir
         } else {
@@ -976,7 +1024,7 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // The install cache comes first again, whichever root the lookups above found.
+        // The install cache comes first again, regardless of which root the lookups above found.
         let Some(bunx_cache_dir) =
             Self::cache_dir(env_loader, configured_cache, &package_fmt, true)
         else {
@@ -990,10 +1038,12 @@ impl BunxCommand {
         Self::prepend_to_path(env_loader, bunx_cache_dir, &path)?;
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
-        // Held through the install and the bin lookups, until exec. Unlockable: install without it.
+        // Held during the install and the bin lookups, until exec. If the lock can't be taken,
+        // install without it.
         let mut install_lock = InstallLock::acquire(bunx_cache_dir);
 
-        // Looked at under the lock: the holder this run queued behind may just have installed the tree.
+        // Checked under the lock, because the process that held it before may have just installed
+        // the tree.
         let tree = Self::tree_state(bunx_cache_dir);
         let installed = if tree == Tree::Fresh {
             match Self::find_in_cache(
@@ -1056,9 +1106,23 @@ impl BunxCommand {
             .then(|| bun_sys::stat(&package_json_path).ok())
             .flatten();
 
-        let minimum_release_age_arg = opts
-            .minimum_release_age
-            .map(|age| [b"--minimum-release-age=".as_slice(), age].concat());
+        // `bun add` runs in another directory.
+        let cafile = opts.cafile.map(|path| {
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(top_level_dir, path)
+                .to_vec()
+        });
+        let flags_with_value: Vec<Vec<u8>> = [
+            (
+                b"--minimum-release-age=".as_slice(),
+                opts.minimum_release_age,
+            ),
+            (b"--registry=", opts.registry),
+            (b"--cafile=", cafile.as_deref()),
+        ]
+        .into_iter()
+        .chain(opts.ca.iter().map(|ca| (b"--ca=".as_slice(), Some(*ca))))
+        .filter_map(|(name, value)| Some([name, value?].concat()))
+        .collect();
         let mut args: Vec<&[u8]> = vec![
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
@@ -1082,9 +1146,10 @@ impl BunxCommand {
         if opts.trust {
             args.push(b"--trust");
         }
-        if let Some(arg) = &minimum_release_age_arg {
-            args.push(arg);
+        if opts.ignore_scripts {
+            args.push(b"--ignore-scripts");
         }
+        args.extend(flags_with_value.iter().map(Vec::as_slice));
 
         bun_output::scoped_log!(
             bunx,
@@ -1143,7 +1208,7 @@ impl BunxCommand {
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
         env_loader.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
 
-        /// The raw byte: `signal_code()` would drop RT signals (>31).
+        /// Takes the raw byte, because `signal_code()` would drop real-time signals (>31).
         fn raise(signal: u8) -> ! {
             if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN
                 .get()

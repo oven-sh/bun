@@ -10,7 +10,7 @@ use bun_lint::utils::estree_compat::estree_parent;
 /// Prefer exact proptype definitions
 pub struct PreferExactProps;
 
-// upstream's `flow`, and what it asks about components, is for the types of Flow: no parser here has them.
+// Upstream's `flow` message and its component checks only apply to Flow types, which no parser here produces.
 const PROP_TYPES: Message =
     Message::new("propTypes", "Component propTypes should be exact by using {{exactPropWrappers}}.");
 
@@ -24,7 +24,7 @@ impl Rule for PreferExactProps {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        // upstream takes a private name for its text.
+        // Upstream treats `#propTypes` like `propTypes`.
         if file.mentions_any(&["propTypes", "#propTypes"]) {
             On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members()
         } else if file.mentions_any(&["props", "#props"]) {
@@ -64,7 +64,7 @@ impl Rule for PreferExactProps {
     }
 }
 
-/// `node.parent.right`. `None`: the parent has none, and upstream throws.
+/// `node.parent.right`. `None` if the parent has no `right`, where upstream throws.
 fn right_of_parent(node: Expr<'_>) -> Option<Expr<'_>> {
     if node.is_chain_root() {
         return None;

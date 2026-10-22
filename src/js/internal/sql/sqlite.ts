@@ -69,7 +69,7 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
               } else if (mode === SQLQueryResultMode.raw) {
                 rows = stmt.raw(values);
               } else {
-                const columnFrom = adapter.connectionInfo.transform?.column.from;
+                const columnFrom = $getByIdDirect(adapter.connectionInfo, "transform")?.column.from;
                 if (columnFrom !== undefined) stmt.native.$setColumnNameTransform(columnFrom);
                 rows = stmt.all(values);
               }
@@ -131,16 +131,25 @@ class SQLiteAdapter
     super();
     this.connectionInfo = connectionInfo;
 
-    const { filename, readonly, create, safeIntegers, strict, onconnect } = connectionInfo;
+    const { filename, readonly, create, safeIntegers, strict, onconnect } = {
+      __proto__: null,
+      ...connectionInfo,
+    } as unknown as typeof connectionInfo;
     try {
       // not before an SQLite client is made
       const { Database } = require("../../bun/sqlite.ts") as typeof BunSQLiteModule;
       this.db = new Database(
         filename,
         // Read-only wins over `create` and `readwrite`. Else a file that is not there is made, unless `create` is false.
-        readonly
-          ? { readonly: true, safeIntegers, strict }
-          : { readwrite: true, create: create !== false, safeIntegers, strict },
+        (readonly
+          ? { __proto__: null, readonly: true, safeIntegers, strict }
+          : {
+              __proto__: null,
+              readwrite: true,
+              create: create !== false,
+              safeIntegers,
+              strict,
+            }) as unknown as BunSQLiteModule.DatabaseOptions,
       );
     } catch (err) {
       // A mistake in the options, not a database that cannot be opened: `new SQL()` throws it.
@@ -229,7 +238,7 @@ class SQLiteAdapter
     }
 
     try {
-      const onclose = this.connectionInfo.onclose;
+      const onclose = $getByIdDirect(this.connectionInfo, "onclose");
       if (onclose) onclose(this.storedError);
     } catch (thrown) {
       reportError(thrown);

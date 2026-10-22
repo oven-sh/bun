@@ -174,7 +174,9 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 bun install --frozen-lockfile
 ```
 
-`package.json` disagrees with `bun.lock` when a dependency would resolve to a different package, and also when a dependency of the root or of a workspace was added, removed, moved to another group or given another range (`^1.0.0` to `>=1.0.0`) while every package stays as locked. The same goes for `overrides` and `catalog`. Run `bun install` and commit the updated `bun.lock` to fix it. Other edits, such as a workspace's `version`, `bin` or `scripts`, `trustedDependencies` and `patchedDependencies`, do not fail the install. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what is locked.
+`package.json` disagrees with `bun.lock` when an edit adds a package, removes one, or changes a version. The error names the first dependency that changed. Run `bun install` and commit the updated `bun.lock` to fix it.
+
+Edits that keep every package at its locked version don't fail the install. For example, you can change `^1.0.0` to `>=1.0.0`, move a dependency to another group, or add a dependency that another workspace already has. The same goes for a workspace's `version`, `bin` and `scripts`, and for `trustedDependencies` and `patchedDependencies`. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what's locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
@@ -410,7 +412,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
 | `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 50)          |
 
-A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries immediately. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule, but give up after one timeout or a 501. `bun publish` uploads a package once and never retries the upload.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
@@ -496,9 +498,17 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 ## Peer dependencies?
 
-Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
+`bun install` installs peer dependencies automatically, and picks versions much like pnpm does:
 
-If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. With `--verbose`, an install that resolves dependencies prints which package gets which copy:
+1. If a package above the one with the peer dependency depends on that name, the peer uses that version. "Above" means its parent, its parent's parent, and so on up to your workspace and the root `package.json`. This applies even if the version is out of range: if your app depends on `react@17`, every library that it uses gets `react@17`.
+2. Otherwise, Bun picks one version that satisfies every package with a peer dependency on that name. It prefers a version that's already installed, then the newest matching version in the registry.
+3. If no version satisfies all of them, Bun doesn't install a copy for each one, because packages like `react` or `graphql` break when two copies are loaded. Each package uses an installed version that satisfies its range if there is one. Otherwise, it shares the version that the others use, which is out of its range.
+
+The isolated linker applies these rules everywhere a package is used. The hoisted linker usually installs a package once, and that copy loads whichever version of the peer is nearest to it in `node_modules`. If another version of the peer is at the top of `node_modules`, the packages that need the peer can each get their own copy of it.
+
+If a peer dependency is marked optional in `peerDependenciesMeta`, Bun doesn't install it, but uses a version that's already installed if there is one.
+
+With `--verbose`, an install that resolves dependencies prints every peer dependency that ended up out of range:
 
 ```txt
 warn: incorrect peer dependency "react@17.0.2": "react-dom@18.3.1" requires "react@^18.3.1"
@@ -592,9 +602,9 @@ These files live in `~/.bun/install/cache/*.npm`. The filename pattern is `${has
 
 Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but means Bun may be about 5 minutes behind the latest package version metadata from npm.
 
-## Flags from npm
+## Flags from npm, Yarn and pnpm
 
-A flag that `bun install` does not know is an error. So that a command line written for npm, Yarn or pnpm keeps working, `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` also take these:
+Command lines written for npm, Yarn or pnpm keep working. `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` translate these flags:
 
 | Flag                                                           | What Bun does                                   |
 | -------------------------------------------------------------- | ----------------------------------------------- |
@@ -604,7 +614,11 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--production=true`                                            | `--production`                                  |
 | `--package-lock-only`                                          | `--lockfile-only`                               |
 | `--immutable`                                                  | `--frozen-lockfile`                             |
+| `--location=global`                                            | `--global`                                      |
+| `--save-catalog`                                               | `--catalog`                                     |
 | `--shamefully-hoist`                                           | `--linker=hoisted`                              |
+| `--node-linker=hoisted`, `--install-strategy=hoisted`          | `--linker=hoisted`                              |
+| `--node-linker=isolated`, `--install-strategy=linked`          | `--linker=isolated`                             |
 | `--progress=false`                                             | `--no-progress`                                 |
 | `--loglevel=silent`                                            | `--silent`                                      |
 | `--loglevel=error`, `--loglevel=warn`                          | `--quiet`: hides the progress bar, not warnings |
@@ -617,15 +631,17 @@ A flag that `bun install` does not know is an error. So that a command line writ
 | `--non-interactive`                                            | Nothing: an install asks no questions           |
 | `--prefer-frozen-lockfile`                                     | Nothing: the default                            |
 
-`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value takes none: `--legacy-peer-deps=true` is an error. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
+`--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. A flag that the table shows without a value is ignored if it has one, like `--legacy-peer-deps=true`. Bun still installs peer dependencies with `--legacy-peer-deps`; use `--omit=peer` to skip them.
 
-`bun remove` saves no dependency, so it ignores the four `--save-*` flags. On `bun update`, `--dev`, `--production` and `--no-optional` choose what is updated, so three rows differ:
+`bun remove` doesn't save any dependency, so it ignores the `--save-*` flags. For `bun update`, `--dev`, `--production` and `--no-optional` choose what gets updated, so three rows differ:
 
-- `--save-exact` is `--exact`. `--save-dev`, `--save-optional` and `--save-peer` do nothing.
+- `--save-exact` is `--exact`. `--save-dev`, `--save-optional`, `--save-peer` and `--save-catalog` do nothing.
 - `--production=true` is an error.
 - `--no-optional` does not update `optionalDependencies`, but it installs them. `--ignore-optional` is `--omit=optional`.
 
-Flags that have no exact counterpart stay errors. For some of them the error names the closest flag, such as `--no-save` for `--no-package-lock`: it does not write `bun.lock`, but it does not update `package.json` either.
+Other flags from those tools that Bun has no equivalent for are ignored, for example `--ci`, `--no-color`, `--no-package-lock`, `--network-timeout=100000` and `--reporter=silent`.
+
+A flag that none of these tools has is an error, so a typo like `--frozen-lockfil` doesn't go unnoticed.
 
 ## pnpm migration
 

@@ -17,7 +17,7 @@ impl PasswordMessage {
         let mut header = [0u8; 5];
         header[0] = b'p';
         // `int32(count)` returns the big-endian `[u8; 4]`.
-        header[1..5].copy_from_slice(&int32(count));
+        header[1..5].copy_from_slice(&int32(count)?);
         writer.write(&header)?;
         writer.string(password)?;
         Ok(())

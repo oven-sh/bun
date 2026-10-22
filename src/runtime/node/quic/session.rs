@@ -50,7 +50,22 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 
 /// HTTP/3 application error codes (RFC 9114 §8.1).
 const H3_NO_ERROR: u64 = 0x100;
-const H3_INTERNAL_ERROR: u64 = 0x102;
+pub(super) const H3_INTERNAL_ERROR: u64 = 0x102;
+
+/// Mirrors node's `Session::Application::Type` (node/src/quic/application.h).
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(super) enum Application {
+    /// Used by version-negotiation probes, which have no engine and never handshake.
+    None = 0,
+    /// Raw QUIC (node's `DefaultApplication`).
+    Default = 1,
+    Http3 = 2,
+}
+
+/// Mirrors node's `HeadersSupportState`. 0 means no application.
+const HEADERS_SUPPORTED: u8 = 1;
+const HEADERS_UNSUPPORTED: u8 = 2;
 
 /// Node's DefaultApplication normalized option defaults
 /// (node/src/quic/session.cc).
@@ -243,6 +258,7 @@ pub(crate) const SESSION_STATS_FIELDS: &[&str] = &[
     "PKT_DISCARDED",
 ];
 
+/// Copied in the lsquic callback because the conn can be freed before the handshake event is dispatched.
 pub(super) struct HskSnapshot {
     sni: Option<Vec<u8>>,
     cipher: Option<Vec<u8>>,
@@ -254,6 +270,8 @@ pub(super) struct HskSnapshot {
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
     /// `(early_data_attempted, early_data_accepted)` (RFC 8446 §2.3).
     early_data: (bool, bool),
+    /// Backs `session.remoteTransportParams` and `state.max_datagram_size`.
+    peer_transport_params: Option<lsquic::NqTransportParams>,
 }
 
 pub(super) struct DeferredAbort {
@@ -277,31 +295,31 @@ pub(super) enum SessionEvent {
     },
     Closed,
     StreamReady {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
         remote: bool,
     },
     StreamWake {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
     },
     StreamDrain {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
     },
     StreamBlocked {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
     },
     StreamReset {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
         code: u64,
     },
     StreamStopSending {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
         code: u64,
     },
     StreamWantsTrailers {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
     },
     StreamHeaders {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
         pairs: Vec<Vec<u8>>,
         kind: u32,
     },
@@ -309,7 +327,7 @@ pub(super) enum SessionEvent {
     Keylog(Vec<u8>),
     SessionResume(Vec<u8>),
     StreamClosed {
-        stream: *mut super::stream::QuicStream,
+        stream: super::stream::Key,
     },
     HandshakeConfirmed,
     GoawayReceived,
@@ -382,9 +400,10 @@ pub(crate) struct QuicSession {
     pending_tickets: JsCell<VecDeque<(u64, Vec<u8>)>>,
     close_after_streams: Cell<bool>,
     final_conn_status: JsCell<Option<(c_int, Vec<u8>)>>,
-    pending_local_bidi: JsCell<VecDeque<*mut super::stream::QuicStream>>,
-    pending_local_uni: JsCell<VecDeque<*mut super::stream::QuicStream>>,
-    streams: JsCell<Vec<*mut super::stream::QuicStream>>,
+    pending_local_bidi: JsCell<VecDeque<super::stream::Key>>,
+    pending_local_uni: JsCell<VecDeque<super::stream::Key>>,
+    streams: JsCell<Vec<(super::stream::Key, *mut super::stream::QuicStream)>>,
+    next_stream_key: Cell<u64>,
     handshake_reported: Cell<bool>,
     new_token_reported: Cell<bool>,
     close_when_bound: Cell<bool>,
@@ -433,6 +452,7 @@ impl QuicSession {
             pending_local_bidi: JsCell::new(VecDeque::new()),
             pending_local_uni: JsCell::new(VecDeque::new()),
             streams: JsCell::new(Vec::new()),
+            next_stream_key: Cell::new(0),
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
             close_when_bound: Cell::new(false),
@@ -456,6 +476,7 @@ impl QuicSession {
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
         is_server: bool,
+        application: Application,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
         let handle = crate::generated_classes::js_QuicSession::to_js(raw, global);
@@ -482,11 +503,22 @@ impl QuicSession {
             reason = "`state_ptr` is the base of a fresh JSC ArrayBuffer (byteOffset 0); JSC allocates its backing store through Gigacage/fastMalloc, which is at least 16-byte aligned"
         )]
         this.state.set(state_ptr.cast::<SessionState>());
+        // This is the only write to the application fields, like node's `Session::SetApplication`.
         this.with_state(|s| {
             s.no_error_code = 0;
             s.internal_error_code = 1;
             s.stream_open_allowed = 1;
-            s.headers_supported = 0;
+            s.application_type = application as u8;
+            match application {
+                Application::None => {}
+                Application::Default => s.headers_supported = HEADERS_UNSUPPORTED,
+                Application::Http3 => {
+                    s.headers_supported = HEADERS_SUPPORTED;
+                    s.priority_supported = 1;
+                    s.no_error_code = H3_NO_ERROR;
+                    s.internal_error_code = H3_INTERNAL_ERROR;
+                }
+            }
         });
         #[expect(
             clippy::cast_ptr_alignment,
@@ -617,6 +649,11 @@ impl QuicSession {
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
+    /// Called from the lsquic callback that completes the handshake, while `conn` is still alive.
+    pub(super) fn note_handshake_ok(&self, conn: lsquic::Conn) {
+        self.capture_hsk_snapshot(conn);
+        self.push_event(SessionEvent::HandshakeDone { ok: true });
+    }
     /// The `endpoint_js` Strong keeps it alive while this session holds the
     /// back-pointer; teardown nulls the pointer before that Strong is
     /// dropped, so a non-null pointer is always dereferenceable on the JS
@@ -698,30 +735,37 @@ impl QuicSession {
         } else {
             &self.pending_local_bidi
         };
-        // Skip the tombstones `remove_stream` leaves: stopping at the first
+        // Skip streams that `remove_stream` removed. Stopping at the first
         // one would strand the live request behind it until the next
         // MAX_STREAMS grant.
-        while let Some(p) = queue.with_mut(VecDeque::pop_front) {
-            if !p.is_null() && self.streams.get().contains(&p) {
-                return Some(p);
+        while let Some(key) = queue.with_mut(VecDeque::pop_front) {
+            if let Some(stream) = self.stream_ptr(key) {
+                return Some(stream);
             }
         }
         None
     }
-    pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
-        self.streams.with_mut(|v| v.retain(|&s| s != stream));
-        // Null the slot rather than drop it: these are positional FIFOs
-        // lsquic fulfils in order, and a recycled allocation at the same
-        // address would otherwise bind to the wrong wrapper.
-        for queue in [&self.pending_local_bidi, &self.pending_local_uni] {
-            queue.with_mut(|v| {
-                for slot in v.iter_mut() {
-                    if *slot == stream {
-                        *slot = null_mut();
-                    }
-                }
-            });
-        }
+    /// Creates a stream for this session and registers it.
+    fn create_stream(
+        &self,
+        global: &JSGlobalObject,
+        session_handle: JSValue,
+        raw: *mut lsquic::lsquic_stream,
+    ) -> JsResult<(super::stream::Key, *mut super::stream::QuicStream, JSValue)> {
+        let key = super::stream::Key(self.next_stream_key.replace(self.next_stream_key.get() + 1));
+        let (qs, handle) = super::stream::QuicStream::create(
+            global,
+            self.vtable,
+            core::ptr::from_ref(self).cast_mut(),
+            key,
+            session_handle,
+            raw,
+        )?;
+        self.streams.with_mut(|v| v.push((key, qs)));
+        Ok((key, qs, handle))
+    }
+    pub(super) fn remove_stream(&self, key: super::stream::Key) {
+        self.streams.with_mut(|v| v.retain(|&(k, _)| k != key));
     }
     fn bump_stream_stat(&self, id: u64, local: bool) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
@@ -752,15 +796,8 @@ impl QuicSession {
         }
         // SAFETY: sessions only exist on the JS thread of this realm.
         let global = unsafe { &*global_ptr };
-        match super::stream::QuicStream::create(
-            global,
-            self.vtable,
-            core::ptr::from_ref(self).cast_mut(),
-            self.handle(),
-            raw,
-        ) {
-            Ok((qs, _handle)) => {
-                self.streams.with_mut(|v| v.push(qs));
+        match self.create_stream(global, self.handle(), raw) {
+            Ok((key, qs, _handle)) => {
                 // SAFETY: `qs` was just created.
                 unsafe { (*qs).mark_wrote_to_lsquic() };
                 // SAFETY: `raw` is the live stream lsquic just created.
@@ -768,12 +805,12 @@ impl QuicSession {
                     self.bump_stream_stat(s.id(), false);
                 }
                 self.push_event(SessionEvent::StreamReady {
-                    stream: qs,
+                    stream: key,
                     remote: true,
                 });
                 // SAFETY: `qs` was just created.
                 if let Some(code) = unsafe { (*qs).pre_reset_code() } {
-                    self.push_event(SessionEvent::StreamReset { stream: qs, code });
+                    self.push_event(SessionEvent::StreamReset { stream: key, code });
                 }
                 qs
             }
@@ -813,25 +850,21 @@ impl QuicSession {
         }
     }
 
-    fn stream_is_live(&self, stream: *mut super::stream::QuicStream) -> bool {
-        self.streams.get().contains(&stream)
+    fn stream_ptr(&self, key: super::stream::Key) -> Option<*mut super::stream::QuicStream> {
+        let streams = self.streams.get();
+        streams.iter().find_map(|&(k, s)| (k == key).then_some(s))
     }
-    /// Teardown removes a stream from the registry before its allocation is
-    /// freed, so a registered pointer is live on the JS thread.
-    fn live_stream(&self, p: *mut super::stream::QuicStream) -> Option<&super::stream::QuicStream> {
-        // SAFETY: see doc comment.
-        self.stream_is_live(p).then(|| unsafe { &*p })
+    fn live_stream(&self, key: super::stream::Key) -> Option<&super::stream::QuicStream> {
+        // SAFETY: teardown unregisters a stream before freeing it, so a
+        // registered pointer is live on the JS thread.
+        self.stream_ptr(key).map(|stream| unsafe { &*stream })
     }
 
     pub(super) fn apply_peer_datagram_budget(&self) {
         let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
             return;
         };
-        let sz = tp
-            .max_datagram_frame_size
-            .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
-            .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
-        self.with_state(|s| s.max_datagram_size = sz);
+        self.with_state(|s| s.max_datagram_size = datagram_budget(&tp));
     }
 
     fn deliver_pending_tickets(&self, global: &JSGlobalObject) {
@@ -934,7 +967,6 @@ impl QuicSession {
         match event {
             SessionEvent::HandshakeDone { ok } => {
                 if ok {
-                    self.capture_hsk_snapshot();
                     if self.is_server.get() || self.peer_verification_refused() {
                         // Node's server reports at handshake COMPLETION
                         // (session.cc: server completion == confirmation
@@ -1278,9 +1310,10 @@ impl QuicSession {
                         1
                     }
                 });
-                let streams: Vec<*mut super::stream::QuicStream> = self.streams.get().clone();
-                for sp in streams {
-                    if let Some(stream) = self.live_stream(sp) {
+                let keys: Vec<super::stream::Key> =
+                    self.streams.get().iter().map(|&(key, _)| key).collect();
+                for key in keys {
+                    if let Some(stream) = self.live_stream(key) {
                         stream.cancel_early_rejected(code);
                     }
                 }
@@ -1449,8 +1482,8 @@ impl QuicSession {
                 };
                 stream.apply_peer_stop_sending(code);
             }
-            SessionEvent::StreamClosed { stream: stream_ptr } => {
-                let Some(stream) = self.live_stream(stream_ptr) else {
+            SessionEvent::StreamClosed { stream: key } => {
+                let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
                 if stream.mark_close_reported() {
@@ -1460,7 +1493,7 @@ impl QuicSession {
                 // no onStreamClose -- but it still has to leave `streams`
                 // and drop its self-root, or it lives until teardown.
                 if stream.is_announce_suppressed() {
-                    self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                    self.remove_stream(key);
                     stream.release_close_root();
                     return Ok(());
                 }
@@ -1468,7 +1501,7 @@ impl QuicSession {
                 // this stream and let GC free it. Re-acquire before any
                 // further use; `mark_close_reported` above already fired.
                 stream.end_read_side(global);
-                let Some(stream) = self.live_stream(stream_ptr) else {
+                let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
                 let handle = stream.handle();
@@ -1484,10 +1517,10 @@ impl QuicSession {
                 }
                 // onStreamClose is user JS too: re-acquire before the
                 // `release_close_root` below, as above.
-                let Some(stream) = self.live_stream(stream_ptr) else {
+                let Some(stream) = self.live_stream(key) else {
                     return Ok(());
                 };
-                self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                self.remove_stream(key);
                 // Nothing else reaches this stream now, so drop the
                 // self-root; `stream` stays valid because the retain above
                 // only dropped a pointer.
@@ -1500,9 +1533,6 @@ impl QuicSession {
     fn maybe_report_handshake(&self, global: &JSGlobalObject, ok: bool) {
         if self.handshake_reported.replace(true) || self.destroyed.get() {
             return;
-        }
-        if ok {
-            self.capture_hsk_snapshot();
         }
         let cert_ok = {
             if let Some(endpoint) = self.endpoint_ref().filter(|_| ok && self.is_server.get()) {
@@ -1521,22 +1551,18 @@ impl QuicSession {
             self.peer_cert_rejected.set(true);
         }
         let open_allowed = ok && !self.peer_cert_rejected.get();
-        let peer_frame_size = if !ok || self.conn.get().is_null() {
-            0
-        } else {
-            // SAFETY: `conn` is live (handshake just reported on it).
-            unsafe { lsquic::Conn::from_raw(self.conn.get()) }
-                .and_then(|c| c.peer_transport_params())
-                .map(|tp| tp.max_datagram_frame_size)
-                .unwrap_or(0)
-        };
+        let max_datagram_size = self
+            .hsk_snapshot
+            .get()
+            .as_ref()
+            .filter(|_| ok)
+            .and_then(|s| s.peer_transport_params.as_ref())
+            .map_or(0, datagram_budget);
         self.with_state(|s| {
             s.handshake_completed = ok as u8;
             s.handshake_confirmed = ok as u8;
             s.stream_open_allowed = open_allowed as u8;
-            s.max_datagram_size = peer_frame_size
-                .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
-                .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
+            s.max_datagram_size = max_datagram_size;
         });
         if !ok {
             return;
@@ -1562,28 +1588,6 @@ impl QuicSession {
         };
         let sni = opt_bytes_to_js(global, snap_sni.as_deref());
         let cipher = opt_bytes_to_js(global, snap_cipher.as_deref());
-        // HTTP/3 application bits: when the engine runs in `LSENG_HTTP` mode
-        // (and ALPN confirms it), enable headers/priority and switch the
-        // close-error codes to RFC 9114's H3_NO_ERROR / H3_INTERNAL_ERROR.
-        let is_http = self
-            .endpoint_ref()
-            .map(|ep| ep.is_http(self.is_server.get()))
-            .unwrap_or(false)
-            && alpn_bytes
-                .as_deref()
-                .map(|a| a == b"h3" || a.starts_with(b"h3-"))
-                .unwrap_or(false);
-        if is_http {
-            self.with_state(|s| {
-                s.headers_supported = 1;
-                s.application_type = 1;
-                s.priority_supported = 1;
-                s.no_error_code = H3_NO_ERROR;
-                s.internal_error_code = H3_INTERNAL_ERROR;
-            });
-        } else {
-            self.with_state(|s| s.headers_supported = 2);
-        }
         let alpn = alpn_bytes
             .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
@@ -1685,13 +1689,7 @@ impl QuicSession {
                 .is_some_and(|s| s.validation.is_some())
     }
 
-    fn capture_hsk_snapshot(&self) {
-        if self.hsk_snapshot.get().is_some() {
-            return;
-        }
-        let Some(conn) = self.conn() else {
-            return;
-        };
+    fn capture_hsk_snapshot(&self, conn: lsquic::Conn) {
         let sni = conn.sni().map(|s| s.to_bytes().to_vec());
         let cipher = conn.cipher().map(|s| s.to_bytes().to_vec());
         let ssl = conn.ssl().cast();
@@ -1704,6 +1702,7 @@ impl QuicSession {
         let local_cert_der = tls::local_certificate_der(ssl);
         let ephemeral = tls::ephemeral_key_info(ssl);
         let early_data = tls::early_data_info(ssl);
+        let peer_transport_params = conn.peer_transport_params();
         self.hsk_snapshot.with_mut(|s| {
             *s = Some(HskSnapshot {
                 sni,
@@ -1714,6 +1713,7 @@ impl QuicSession {
                 local_cert_der,
                 ephemeral,
                 early_data,
+                peer_transport_params,
             });
         });
     }
@@ -1828,13 +1828,13 @@ impl QuicSession {
         // root every wrapper up front.
         let _roots: Vec<Strong> = streams
             .iter()
-            .map(|&qs| {
+            .map(|&(_, qs)| {
                 // SAFETY: entries are live here -- a stream is only downgraded
                 // after `remove_stream` drops it from `self.streams`.
                 Strong::create(unsafe { (*qs).handle() }, _global)
             })
             .collect();
-        for qs in streams {
+        for (_, qs) in streams {
             // SAFETY: rooted by `_roots` above; teardown is idempotent.
             unsafe { (*qs).teardown(_global) };
         }
@@ -1911,8 +1911,9 @@ impl QuicSession {
             .endpoint_ref()
             .map(|ep| ep.is_http(self.is_server.get()))
             .unwrap_or(false);
-        if is_http && !app && code == 0 && !self.streams.get().is_empty() {
-            // RFC 9114 §5.2.
+        if is_http && !app && code == 0 && self.has_opened_stream() {
+            // RFC 9114 §5.2. lsquic can't send a GOAWAY until the handshake creates the
+            // control stream. An opened stream proves the handshake finished.
             if let Some(c) = self.conn() {
                 c.going_away();
             }
@@ -1959,11 +1960,19 @@ impl QuicSession {
         Ok(())
     }
 
-    fn any_stream_undelivered(&self) -> bool {
-        self.streams.get().iter().any(|&s| {
+    /// True if lsquic has opened a stream. Like Node, pending streams don't delay a graceful close.
+    fn has_opened_stream(&self) -> bool {
+        self.streams.get().iter().any(|&(_, s)| {
             // SAFETY: pointers in `streams` are unregistered before their
             // owner is destroyed (registry invariant).
-            unsafe { (*s).has_undelivered_outbound() }
+            unsafe { !(*s).is_pending() }
+        })
+    }
+
+    fn any_stream_undelivered(&self) -> bool {
+        self.streams.get().iter().any(|&(_, s)| {
+            // SAFETY: as in `has_opened_stream`.
+            unsafe { !(*s).is_pending() && (*s).has_undelivered_outbound() }
         })
     }
 
@@ -1974,7 +1983,7 @@ impl QuicSession {
         if self.any_stream_undelivered() {
             return;
         }
-        if self.close_after_streams.get() && !self.streams.get().is_empty() {
+        if self.close_after_streams.get() && self.has_opened_stream() {
             return;
         }
         if let Some((app, code, reason)) = self.deferred_close.with_mut(Option::take) {
@@ -2067,19 +2076,12 @@ impl QuicSession {
         }
         let [direction, body] = frame.arguments_as_array::<2>();
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
-        let (qs, handle) = super::stream::QuicStream::create(
-            global,
-            self.vtable,
-            core::ptr::from_ref(self).cast_mut(),
-            frame.this(),
-            null_mut(),
-        )?;
+        let (key, qs, handle) = self.create_stream(global, frame.this(), null_mut())?;
         if unidirectional {
-            self.pending_local_uni.with_mut(|q| q.push_back(qs));
+            self.pending_local_uni.with_mut(|q| q.push_back(key));
         } else {
-            self.pending_local_bidi.with_mut(|q| q.push_back(qs));
+            self.pending_local_bidi.with_mut(|q| q.push_back(key));
         }
-        self.streams.with_mut(|v| v.push(qs));
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         if let Some(buf) = body.as_array_buffer(global) {
             // SAFETY: `qs` was just created.
@@ -2355,6 +2357,13 @@ impl QuicSession {
     }
 }
 
+/// Returns the largest DATAGRAM payload the peer's transport parameters allow.
+fn datagram_budget(tp: &lsquic::NqTransportParams) -> u16 {
+    tp.max_datagram_frame_size
+        .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
+        .min(DATAGRAM_PAYLOAD_BUDGET) as u16
+}
+
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
         Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
@@ -2392,17 +2401,39 @@ impl QuicSession {
         global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        let conn = self.conn.get();
-        if conn.is_null() {
-            return Ok(JSValue::UNDEFINED);
+        if let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) {
+            return Self::transport_params_to_js(global, &tp);
         }
-        // SAFETY: `conn` is live until on_conn_closed clears it.
-        let Some(tp) =
-            (unsafe { lsquic::Conn::from_raw(conn) }).and_then(|c| c.peer_transport_params())
-        else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        Self::transport_params_to_js(global, &tp)
+        match self
+            .hsk_snapshot
+            .get()
+            .as_ref()
+            .and_then(|s| s.peer_transport_params.as_ref())
+        {
+            Some(tp) => Self::transport_params_to_js(global, tp),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    }
+
+    /// Replaces `on_conn_closed` after `QuicEndpoint::detach_for_finalize`.
+    pub(super) unsafe extern "C" fn on_closed_detached(ctx: *mut c_void) {
+        // SAFETY: `finalize` nulls the lsquic ctx, so a non-null ctx is live.
+        // `endpoint` and `streams` may be freed, so only touch `conn`.
+        if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
+            session.conn.set(null_mut());
+        }
+    }
+
+    #[expect(
+        clippy::boxed_local,
+        reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
+    )]
+    pub(crate) fn finalize(self: Box<Self>) {
+        let conn = self.conn.get();
+        if !conn.is_null() {
+            // SAFETY: `on_conn_closed` and `teardown` null `conn`, so a non-null `conn` is live.
+            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+        }
     }
 }
 
@@ -2427,27 +2458,26 @@ lsquic_callback! {
 
     pub(super) fn on_hsk_done(session: &QuicSession, status: c_int) {
         let ok = status == lsquic::LSQ_HSK_OK || status == lsquic::LSQ_HSK_RESUMED_OK;
-        if ok && !session.is_server.get() && session.reject_unverified_peer.get() {
-            session.capture_hsk_snapshot();
-            if session.peer_verification_refused() {
-                session.peer_cert_rejected.set(true);
-                session.self_close.with_mut(|s| {
-                    *s = Some((
-                        false,
-                        CRYPTO_ERROR_BAD_CERTIFICATE,
-                        b"peer certificate verification failed".to_vec(),
-                    ));
-                });
-                if let Some(c) = session.conn() {
-                    c.abort_error(
-                        false,
-                        CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
-                        c"peer certificate verification failed",
-                    );
-                }
-            }
+        let Some(conn) = session.conn().filter(|_| ok) else {
+            session.push_event(SessionEvent::HandshakeDone { ok: false });
+            return;
+        };
+        session.note_handshake_ok(conn);
+        if session.peer_verification_refused() {
+            session.peer_cert_rejected.set(true);
+            session.self_close.with_mut(|s| {
+                *s = Some((
+                    false,
+                    CRYPTO_ERROR_BAD_CERTIFICATE,
+                    b"peer certificate verification failed".to_vec(),
+                ));
+            });
+            conn.abort_error(
+                false,
+                CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
+                c"peer certificate verification failed",
+            );
         }
-        session.push_event(SessionEvent::HandshakeDone { ok });
     }
 }
 

@@ -1,6 +1,7 @@
-// `bun test --isolate` (and `bun build --compile` output) hands JSC a
+// Every runtime ES module (and `bun build --compile` output) hands JSC a
 // SourceProvider tagged BunTranspiledModule instead of Module so Bun's
-// pre-computed module record is reused. That tag must behave like Module at
+// pre-computed module record is reused; this file checks the `bun test`
+// paths, inspect-module-breakpoints.test.ts checks `bun run`. That tag must behave like Module at
 // every `sourceType()` switch in JSC's debugger/inspector; when it falls
 // through, `Debugger.scriptParsed` reports a non-module `scriptType` and
 // `Debugger.setBreakpoint` replies "Could not resolve breakpoint".
@@ -238,9 +239,8 @@ test.concurrent("bun test --isolate: Debugger.scriptParsed reports a module and 
   await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
 });
 
-// Sanity: without --isolate the provider is plain Module, the isolation cache
-// is empty (hence null), and this has always worked; pinning it alongside
-// ensures the --isolate case is being compared against the correct baseline.
+// Without --isolate the isolation cache is empty (hence null): the provider is
+// still BunTranspiledModule, it is just not shared across globals.
 test.concurrent("bun test (no --isolate): Debugger.scriptParsed reports a module and breakpoints resolve", async () => {
   await runDebuggerProbe([], null);
 });

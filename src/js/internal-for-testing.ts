@@ -971,6 +971,13 @@ export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
 
+/** ES module records (ModuleInfo) the runtime holds right now. Every record a loaded graph built is freed once its module evaluates. */
+export const moduleInfoLiveCount = $newRustFunction(
+  "runtime/jsc_hooks.rs",
+  "TestingAPIs.moduleInfoLiveCount",
+  0,
+) as () => number;
+
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy

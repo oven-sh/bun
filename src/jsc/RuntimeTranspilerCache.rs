@@ -76,7 +76,8 @@ bun_core::declare_scope!(cache, visible);
 /// Version 41: `case` and `default` are mapped.
 /// Version 42: The body of a class with lowered class decorators names the class by the
 /// binding that holds what the decorators return.
-const EXPECTED_VERSION: u32 = 42;
+/// Version 43: Every runtime ESM entry carries an esm_record, not only those written under --isolate.
+const EXPECTED_VERSION: u32 = 43;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -905,6 +906,10 @@ impl RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // Decides whether the entry carries an esm_record.
+        features_hasher.update(&[u8::from(
+            crate::virtual_machine::VirtualMachine::use_module_info_for_esm(),
+        )]);
         self.features_hash = Some(features_hasher.final_());
 
         self.entry = match Self::from_file(

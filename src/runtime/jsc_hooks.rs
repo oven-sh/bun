@@ -2907,16 +2907,14 @@ fn transpile_source_code_of_any_provenance(
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                     );
-                    // Rebuild the cached ESM record for the
-                    // isolation source-provider cache (same shape as
-                    // `RuntimeTranspilerStore`).
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    let module_info = if unsafe { &*jsc_vm }.use_isolation_source_provider_cache()
+                    // Rebuild the cached ESM record so JSC can skip its own
+                    // analyze pass (same shape as `RuntimeTranspilerStore`).
+                    let module_info = if VirtualMachine::use_module_info_for_esm()
                         && entry.metadata.module_type != CacheModuleType::Cjs
                         && !entry.esm_record.is_empty()
                     {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
-                            &entry.esm_record,
+                            core::mem::take(&mut entry.esm_record),
                         )
                     } else {
                         None
@@ -3057,12 +3055,12 @@ fn transpile_source_code_of_any_provenance(
 
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                // Collect the ESM record while printing, for the isolation
-                // source-provider cache (same shape as `RuntimeTranspilerStore`).
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                // Collect the ESM record while printing so JSC builds the
+                // JSModuleRecord from Bun's output instead of re-parsing (same
+                // shape as `RuntimeTranspilerStore`).
                 let mut module_info: Option<
                     Box<bun_bundler::analyze_transpiled_module::ModuleInfo>,
-                > = if unsafe { &*jsc_vm }.use_isolation_source_provider_cache()
+                > = if VirtualMachine::use_module_info_for_esm()
                     && !is_commonjs_module
                     && loader.is_java_script_like()
                 {
@@ -4881,3 +4879,20 @@ fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
         Store::deref(this);
     }
 }
+
+pub(crate) mod testing_apis {
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+
+    /// `ModuleInfoDeserialized` records alive right now.
+    pub(crate) fn module_info_live_count(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        use core::sync::atomic::Ordering;
+        Ok(JSValue::js_number(
+            bun_bundler::analyze_transpiled_module::LIVE_COUNT.load(Ordering::Relaxed) as f64,
+        ))
+    }
+}
+// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`.
+pub(crate) use testing_apis as testing_ap_is;

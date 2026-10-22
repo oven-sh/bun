@@ -5811,6 +5811,21 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// Attach `ModuleInfo` to runtime-transpiled ESM so JSC builds the module
+    /// record from Bun's output (keeps TypeScript type-only re-exports linkable,
+    /// #7384). Process-wide so `RuntimeTranspilerCache` can hash it into its key.
+    pub fn use_module_info_for_esm() -> bool {
+        !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
+            .unwrap_or(false)
+    }
+
+    /// Cross-check every record against JSC's own analysis in a release build.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__validateRuntimeModuleInfo() -> bool {
+        bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO::get()
+            .unwrap_or(false)
+    }
+
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,

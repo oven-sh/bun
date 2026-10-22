@@ -481,6 +481,7 @@ pub mod analyze_transpiled_module {
         pub flags: Flags,
         exported_names: HashMap<StringID, ()>,
         pub finalized: bool,
+        serialized: Option<Box<[u8]>>,
     }
 
     impl ModuleInfo {
@@ -501,6 +502,7 @@ pub mod analyze_transpiled_module {
                 },
                 exported_names: HashMap::default(),
                 finalized: false,
+                serialized: None,
             }
         }
         pub fn as_deserialized(&self) -> ModuleInfoDeserialized<'_> {
@@ -861,8 +863,89 @@ pub mod analyze_transpiled_module {
                     self.record_kinds[idx] = RecordKind::ImportInfoSingleTypeScript;
                 }
             }
+            self.move_local_exports_last_in_name_order();
+            // Build-time indexes only; drop them now.
+            self.strings_map = HashMap::default();
+            self.exported_names = HashMap::default();
+            self.requested_modules.index = HashMap::default();
             self.finalized = true;
             Ok(())
+        }
+
+        /// The record's wire form, serialized once for the cache entry and the runtime.
+        pub fn serialized(&mut self) -> Option<&[u8]> {
+            if !self.finalized && self.finalize().is_err() {
+                return None;
+            }
+            if self.serialized.is_none() {
+                let mut buf: Vec<u8> = Vec::new();
+                self.as_deserialized().serialize(&mut buf).ok()?;
+                self.serialized = Some(buf.into_boxed_slice());
+            }
+            self.serialized.as_deref()
+        }
+
+        /// Moves the bytes `serialized` produced out of the builder.
+        pub fn take_serialized(&mut self) -> Option<Box<[u8]>> {
+            self.serialized()?;
+            self.serialized.take()
+        }
+
+        /// JSC `std::sort`s the export entries, in insertion order, every time it
+        /// builds a namespace object; source order (`a0, a1, ..., a9999`) drives
+        /// that sort into its heapsort fallback, pre-sorted input is its best
+        /// case. The record order is not observable otherwise: the non-local
+        /// records keep their relative order, so error reporting is unchanged.
+        fn move_local_exports_last_in_name_order(&mut self) {
+            let is_local = |k: &RecordKind| *k == RecordKind::ExportInfoLocal;
+            if self.record_kinds.iter().filter(|k| is_local(k)).count() < 2 {
+                return;
+            }
+
+            let mut record_offsets: Vec<usize> = Vec::with_capacity(self.record_kinds.len());
+            let mut offset = 0usize;
+            for k in &self.record_kinds {
+                record_offsets.push(offset);
+                offset += k.len();
+            }
+
+            let mut string_offsets: Vec<usize> = Vec::with_capacity(self.strings_lens.len() + 1);
+            let mut string_end = 0usize;
+            string_offsets.push(string_end);
+            for &len in &self.strings_lens {
+                string_end += len as usize;
+                string_offsets.push(string_end);
+            }
+            let strings_buf = &self.strings_buf;
+            let name = |id: StringID| -> &[u8] {
+                match (
+                    string_offsets.get(id.0 as usize),
+                    string_offsets.get(id.0 as usize + 1),
+                ) {
+                    (Some(&start), Some(&end)) => &strings_buf[start..end],
+                    _ => &[],
+                }
+            };
+
+            let kinds = &self.record_kinds;
+            let buffer = &self.buffer;
+            // Export name is the first slot of every export record.
+            let export_name = |record: usize| name(buffer[record_offsets[record]]);
+            let mut locals: Vec<usize> =
+                (0..kinds.len()).filter(|&r| is_local(&kinds[r])).collect();
+            locals.sort_by(|&a, &b| export_name(a).cmp(export_name(b)));
+
+            let mut new_kinds: Vec<RecordKind> = Vec::with_capacity(kinds.len());
+            let mut new_buffer: Vec<StringID> = Vec::with_capacity(buffer.len());
+            let others = (0..kinds.len()).filter(|&r| !is_local(&kinds[r]));
+            for record in others.chain(locals.iter().copied()) {
+                let kind = kinds[record];
+                let start = record_offsets[record];
+                new_kinds.push(kind);
+                new_buffer.extend_from_slice(&buffer[start..start + kind.len()]);
+            }
+            self.record_kinds = new_kinds;
+            self.buffer = new_buffer;
         }
     }
 }
@@ -7924,16 +8007,16 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     };
 
     if let Some(cache) = printer.options.runtime_transpiler_cache {
-        let mut srlz_res: Vec<u8> = Vec::new();
-        if have_module_info {
+        let esm_record: &[u8] = if have_module_info {
             printer
                 .module_info
-                .as_ref()
+                .as_deref_mut()
                 .unwrap()
-                .as_deserialized()
-                .serialize(&mut srlz_res)
-                .map_err(|_| crate::Error::WriteFailed)?;
-        }
+                .serialized()
+                .ok_or(crate::Error::WriteFailed)?
+        } else {
+            b""
+        };
         // SAFETY: caller guarantees the cache outlives the print call.
         unsafe { &mut *cache.as_ptr() }.put(
             printer.writer.slice(),
@@ -7941,7 +8024,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
                 .as_ref()
                 .map(|c| c.buffer.list.as_slice())
                 .unwrap_or(b""),
-            &srlz_res,
+            esm_record,
         );
     }
 
@@ -8157,25 +8240,6 @@ pub(crate) fn print_with_writer_and_platform<
         code: buffer.take_slice().into(),
         source_map,
     })
-}
-
-/// Serializes ModuleInfo (its own string table, then its body) to an owned
-/// byte slice. Returns `None` on failure.
-pub fn serialize_module_info(
-    module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
-) -> Option<Box<[u8]>> {
-    let mi = module_info?;
-    if !mi.finalized {
-        if mi.finalize().is_err() {
-            return None;
-        }
-    }
-    let deserialized = mi.as_deserialized();
-    let mut buf: Vec<u8> = Vec::new();
-    if deserialized.serialize(&mut buf).is_err() {
-        return None;
-    }
-    Some(buf.into_boxed_slice())
 }
 
 /// Serializes only ModuleInfo's body, with its strings referenced through

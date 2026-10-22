@@ -197,7 +197,52 @@ extern "C" void JSC_JSModuleRecord__addImportEntryNamespaceDefer(JSModuleRecord*
     });
 }
 
+} // namespace JSC
+
+void Bun::releaseModuleInfoAfterLink(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue moduleRecordValue)
+{
+    auto* moduleRecord = dynamicDowncast<JSC::JSModuleRecord>(moduleRecordValue);
+    if (!moduleRecord)
+        return;
+    auto* provider = moduleRecord->sourceCode().provider();
+    if (!provider || provider->sourceType() != JSC::SourceProviderSourceType::BunTranspiledModule)
+        return;
+    if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM()))
+        return;
+    auto* zigProvider = static_cast<Zig::SourceProvider*>(provider);
+    if (zigProvider->m_moduleInfo) {
+        zig__ModuleInfoDeserialized__deinit(zigProvider->m_moduleInfo);
+        zigProvider->m_moduleInfo = nullptr;
+    }
+}
+
+namespace JSC {
+
 extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::GlobalObject*, JSModuleLoader*, const Identifier& key, const SourceCode&);
+extern "C" bool Bun__hasStandaloneModuleGraph();
+extern "C" bool Bun__validateRuntimeModuleInfo();
+
+// Cross-check every record against JSC's own analysis: always in debug, in
+// release under BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO=1.
+static bool shouldValidateModuleInfo()
+{
+#if BUN_DEBUG
+    return true;
+#else
+    static const bool validate = Bun__validateRuntimeModuleInfo();
+    return validate;
+#endif
+}
+
+// JSModuleLoader::makeModule downcasts what we return before its caller consults
+// the throw scope, so never hand back a null cell. rejectWithCaughtException
+// yields null under termination: return the still-pending promise then, with the
+// exception left on the scope.
+static EncodedJSValue rejectWithCaughtExceptionOrPending(VM& vm, ThrowScope& scope, JSPromise* promise)
+{
+    JSPromise* rejected = promise->rejectWithCaughtException(vm, scope);
+    return JSValue::encode(rejected ? rejected : promise);
+}
 
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader*, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue = nullptr);
 extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise)
@@ -215,34 +260,29 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     if (provider->m_moduleInfo == nullptr) {
         // A module of the executable's pre-resolved graph carries no module_info of its own: the graph is its record.
         JSModuleRecord* prelinked = Bun__createPrelinkedModuleRecordForPipeline(uncheckedDowncast<Zig::GlobalObject>(globalObject), moduleLoader, moduleKey, sourceCode);
-        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+        RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));
         if (prelinked) {
-            promise->resolve(globalObject, vm, prelinked);
+            promise->fulfill(vm, prelinked);
             RELEASE_AND_RETURN(scope, JSValue::encode(promise));
         }
-        // Neither: analyze the source text.
+        // Outside an executable, a record missing here was released too early.
+        ASSERT_WITH_MESSAGE(Bun__hasStandaloneModuleGraph(), "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().legacyCStringPointer());
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
+    // Not consumed here: the require(esm) sync replay and --isolate analyze the
+    // same source again before it evaluates. releaseModuleInfoAfterLink frees it.
     auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
-    // Under --isolate the same SourceProvider is reused across globals via the
-    // IsolatedModuleCache, so module_info must remain alive on the provider;
-    // ~SourceProvider frees it. Otherwise, free now.
-    if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(moduleInfo);
-        provider->m_moduleInfo = nullptr;
-    }
+    RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));
     if (moduleRecord == nullptr) {
         RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("parseFromSourceCode failed")))));
     }
 
-#if BUN_DEBUG
-    RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
-#else
-    promise->resolve(globalObject, vm, moduleRecord);
+    if (shouldValidateModuleInfo()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise, moduleRecord));
+    promise->fulfill(vm, moduleRecord);
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));
-#endif
 }
 static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const SourceCode& sourceCode, JSPromise* promise, JSModuleRecord* resultValue)
 {
@@ -257,12 +297,15 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
     std::unique_ptr<ModuleProgramNode> moduleProgramNode = parseRootNode<ModuleProgramNode>(
         vm, sourceCode, ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
         StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, SourceParseMode::ModuleAnalyzeMode, error);
-    if (error.isValid())
-        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(error.toErrorObject(globalObject, sourceCode))));
+    if (error.isValid()) {
+        auto* errorObject = error.toErrorObject(globalObject, sourceCode);
+        RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));
+        RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(errorObject)));
+    }
     ASSERT(moduleProgramNode);
 
     ModuleAnalyzer moduleAnalyzer(globalObject, moduleLoader, moduleKey, sourceCode, moduleProgramNode->features());
-    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
+    RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));
 
     auto result = moduleAnalyzer.analyze(*moduleProgramNode);
     if (!result) {
@@ -291,7 +334,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, JSModuleLoader
     }
 
     scope.release();
-    promise->resolve(globalObject, vm, resultValue == nullptr ? moduleRecord : resultValue);
+    promise->fulfill(vm, resultValue == nullptr ? moduleRecord : resultValue);
     return JSValue::encode(promise);
 }
 

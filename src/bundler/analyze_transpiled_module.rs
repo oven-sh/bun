@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_core;
 
@@ -128,6 +129,9 @@ pub struct ModuleInfoDeserialized {
     table: ModuleInfoStrings<'static>,
     pub flags: Flags,
 }
+
+/// Records alive right now, read by `bun:internal-for-testing`.
+pub static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
 /// Where a record's names come from: a self-contained record carries its own
 /// strings (`WTF::StringImpl` bodies the runtime atomizes) and the bytes they
@@ -282,19 +286,18 @@ impl ModuleInfoDeserialized {
     pub(crate) unsafe fn deinit(this: *mut ModuleInfoDeserialized) {
         // SAFETY: caller contract — see fn doc above.
         drop(unsafe { bun_core::heap::take(this) });
+        LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
     }
 
-    /// The self-contained form (a module's own string table followed by its
-    /// body, as the runtime transpiler cache stores it). The bytes are copied
-    /// once; the record views the copy.
-    pub(crate) fn create(source: &[u8]) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
-        let owned: Box<[u8]> = source.into();
+    /// Parse the self-contained form (string table, then body) in place.
+    pub fn create_owned(owned: Box<[u8]>) -> Result<Box<ModuleInfoDeserialized>, ModuleInfoError> {
         // SAFETY: `owned` is moved into the returned struct and never
         // reallocated, so views into its heap buffer stay valid for `self`'s
         // lifetime; the `'static` is an erased self-borrow, not exposed.
         let bytes: &'static [u8] = unsafe { &*core::ptr::from_ref::<[u8]>(&owned) };
         let table = ModuleInfoStringTable::parse(bytes)?;
         let (flags, body) = Body::parse(&bytes[table.byte_len..])?;
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Ok(Box::new(ModuleInfoDeserialized {
             body,
             table: ModuleInfoStrings::Owned {
@@ -305,10 +308,9 @@ impl ModuleInfoDeserialized {
         }))
     }
 
-    /// Wrapper around `create` for use when loading from a cache. Returns
-    /// `None` on corrupt/truncated data.
-    pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        Self::create(source).ok()
+    /// `create_owned` over a cache entry's `esm_record`; `None` when corrupt.
+    pub fn create_from_cached_record(record: Box<[u8]>) -> Option<Box<ModuleInfoDeserialized>> {
+        Self::create_owned(record).ok()
     }
 
     /// A body inside the executable whose ids index the slot table the
@@ -319,6 +321,7 @@ impl ModuleInfoDeserialized {
         body: &'static [u8],
     ) -> Option<Box<ModuleInfoDeserialized>> {
         let (flags, body) = Body::parse(body).ok()?;
+        LIVE_COUNT.fetch_add(1, Ordering::Relaxed);
         Some(Box::new(ModuleInfoDeserialized {
             body,
             table: ModuleInfoStrings::Shared(*table),
@@ -540,9 +543,10 @@ pub trait ModuleInfoExt {
 
 impl ModuleInfoExt for ModuleInfo {
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        let bytes = bun_js_printer::serialize_module_info(Some(&mut self))
+        let bytes = self
+            .take_serialized()
             .expect("finalize cannot fail after printing");
-        ModuleInfoDeserialized::create(&bytes).expect("just serialized")
+        ModuleInfoDeserialized::create_owned(bytes).expect("just serialized")
     }
 }
 

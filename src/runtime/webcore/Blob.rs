@@ -5642,23 +5642,32 @@ pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
     this.get_size_for_bindings()
 }
 
-/// Borrows the bytes of an in-memory Blob from `value`. Returns `false` for a file- or S3-backed
-/// Blob, which has to be read first.
+/// What [`Blob__sharedView`] found in a value.
+#[repr(u8)] // C++: `BlobBytes` (blob.h)
+pub(crate) enum BlobBytes {
+    /// The value holds no Blob.
+    NotABlob = 0,
+    InMemory = 1,
+    /// A file- or S3-backed Blob, which has to be read first.
+    NotInMemory = 2,
+}
+
+/// Borrows the bytes of the Blob that `value` holds: a Blob, or a `Bun.build()` output. Writes `ptr` and `len` only for [`BlobBytes::InMemory`].
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__sharedView(
     value: JSValue,
     ptr: &mut *const u8,
     len: &mut usize,
-) -> bool {
-    let Some(view) = value
-        .as_class_ref::<Blob>()
-        .and_then(BlobExt::in_memory_view)
-    else {
-        return false;
+) -> BlobBytes {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return BlobBytes::NotABlob;
+    };
+    let Some(view) = blob.in_memory_view() else {
+        return BlobBytes::NotInMemory;
     };
     *ptr = view.as_ptr();
     *len = view.len();
-    true
+    BlobBytes::InMemory
 }
 
 /// # Safety

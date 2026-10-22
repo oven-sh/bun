@@ -1937,6 +1937,21 @@ void test_v8_throw_error_empty_message(
   isolate->ThrowError(String::NewFromUtf8(isolate, "").ToLocalChecked());
 }
 
+// These return a Local, not a MaybeLocal, so an addon does not check them.
+void test_v8_new_values_with_pending_exception(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowError(String::NewFromUtf8(isolate, "pending").ToLocalChecked());
+
+  LOG_EXPR(Array::New(isolate, 3)->Length());
+  Local<Value> elements[] = {Number::New(isolate, 1), Number::New(isolate, 2)};
+  LOG_EXPR(Array::New(isolate, elements, 2)->Length());
+  Local<ArrayBuffer> buffer = ArrayBuffer::New(isolate, 16);
+  LOG_EXPR(Uint8Array::New(buffer, 0, 8)->IsUint8Array());
+  LOG_EXPR(Uint32Array::New(buffer, 0, 2)->IsObject());
+  LOG_EXPR(BigInt::New(isolate, 5)->IsBigInt());
+}
+
 void test_v8_aligned_pointer_in_internal_field(
     const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -2283,6 +2298,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_exception_empty_message);
   NODE_SET_METHOD(exports, "test_v8_throw_error_empty_message",
                   test_v8_throw_error_empty_message);
+  NODE_SET_METHOD(exports, "test_v8_new_values_with_pending_exception",
+                  test_v8_new_values_with_pending_exception);
   NODE_SET_METHOD(exports, "test_v8_aligned_pointer_in_internal_field",
                   test_v8_aligned_pointer_in_internal_field);
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler", test_v8_cpu_profiler);

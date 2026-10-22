@@ -628,6 +628,28 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
   });
 });
 
+it.each(["before the first read", "after a chunk"])(
+  "Readable.fromWeb: destroy() %s emits no 'error' if the source's cancel() rejects, as in Node",
+  async when => {
+    const web = new ReadableStream({
+      pull(c) {
+        c.enqueue(new Uint8Array(1));
+      },
+      cancel() {
+        return Promise.reject(new Error("cancel failed"));
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const events = [];
+    r.on("error", err => events.push(err.message));
+    const closed = new Promise(resolve => r.once("close", resolve));
+    if (when === "after a chunk") await new Promise(resolve => r.once("data", resolve));
+    r.destroy();
+    await closed;
+    expect({ events, errored: r.errored }).toEqual({ events: [], errored: null });
+  },
+);
+
 // A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
 // buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
 // emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so

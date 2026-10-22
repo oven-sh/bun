@@ -47,8 +47,6 @@ pub struct FileSink {
     pub(crate) pollable: Cell<bool>,
     pub(crate) nonblocking: Cell<bool>,
     pub(crate) force_sync: Cell<bool>,
-    #[cfg(unix)]
-    pub(crate) is_tty: Cell<bool>,
 
     pub(crate) is_socket: Cell<bool>,
     pub(crate) fd: Cell<Fd>,
@@ -743,14 +741,6 @@ impl FileSink {
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);
-        #[cfg(unix)]
-        if is_tty_out {
-            // TTY writes are synchronous, as in Node.
-            self.is_tty.set(true);
-            self.force_sync.set(true);
-            // SAFETY(JsCell): single-field write; does not call into JS.
-            self.writer.with_mut(|w| w.force_sync = true);
-        }
 
         let fd = match result {
             sys::Result::Err(err) => {
@@ -802,6 +792,10 @@ impl FileSink {
                     .with_mut(|w| w.update_ref(self.io_evtloop(), false));
                 #[cfg(unix)]
                 {
+                    // TTY writes are synchronous, as in Node.
+                    let force_sync = self.force_sync.get() || is_tty_out;
+                    self.writer.with_mut(|w| w.force_sync = force_sync);
+
                     if self.nonblocking.get() {
                         self.writer
                             .get()
@@ -816,7 +810,7 @@ impl FileSink {
                             .get_poll()
                             .unwrap()
                             .set_flag(bun_io::FilePollFlag::Socket);
-                    } else if self.is_tty.get() {
+                    } else if is_tty_out {
                         self.writer
                             .get()
                             .get_poll()
@@ -1623,8 +1617,6 @@ impl FileSink {
             pollable: Cell::new(false),
             nonblocking: Cell::new(false),
             force_sync: Cell::new(false),
-            #[cfg(unix)]
-            is_tty: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(fd),
             auto_flusher: JsCell::new(AutoFlusher::default()),
@@ -1792,7 +1784,8 @@ impl FileSink {
         let _guard = unsafe { RefPtr::init_ref(std::ptr::from_mut::<FileSink>(self)) };
 
         self.stream_bytes.set(Some(0));
-        let promise = bun_jsc::JSPromise::create(global_this).to_js();
+        let done_promise = bun_jsc::JSPromise::create(global_this);
+        let promise = done_promise.to_js();
         let controller =
             JSSink::create_controller(global_this, core::ptr::NonNull::from(&mut *self));
         self.pipe.set(streams::PipeCell::create(
@@ -1829,7 +1822,11 @@ impl FileSink {
             readable_stream::NativeWireResult::NotNative => {
                 let result = self
                     .assign_to_js_stream(stream, controller, global_this)
-                    .inspect_err(|_| self.stream_bytes.set(None))?;
+                    .inspect_err(|_| {
+                        self.stream_bytes.set(None);
+                        // The caller gets the throw, not the done-promise that a close(error) inside pull() rejected.
+                        done_promise.set_handled();
+                    })?;
                 // A pump that already failed reports through the done-promise.
                 if let Some(pump) = result.as_any_promise() {
                     if pump.status() == bun_jsc::js_promise::Status::Rejected {

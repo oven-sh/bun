@@ -3412,22 +3412,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.report_at_current_node(code, sink::Args::default()) {
             return;
         }
-        // A query that began under an instantiation had less depth left than the same query has
-        // from depth 0, where a finite type doesn't reach the limit. tsgo stores its result
-        // regardless, and which types that breaks depends on the order in which it checks files.
-        if let Some(from) = self.frames.iter().position(|frame| frame.entry_depth > 0) {
-            self.mark_tainted_from(from);
-            // That doesn't apply to an infinite type (`is_runaway`), that is, a type node that's in
-            // progress several times.
-            for i in from..self.stack.len() {
-                let q = self.stack[i];
-                if matches!(q, Query::TypeNode(..))
-                    && (self.stack[..i].contains(&q) || self.stack[i + 1..].contains(&q))
-                {
-                    self.frames[i].tainted = false;
-                }
-            }
-        }
+        true
     }
 
     /// Returns false if there's no node to report at. Nothing in progress is stored then.

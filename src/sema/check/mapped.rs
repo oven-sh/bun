@@ -900,6 +900,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         let apparent = self.reduced_apparent_type(obj);
+        let holder = self.apparent_type_or_type_variable(obj, apparent);
         if let TypeData::Union(keys) = self.data(index)
             && !self.is_boolean(index)
         {
@@ -907,7 +908,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut was_missing_prop = false;
             for &key in keys.iter() {
                 match self.property_type_for_index(
-                    apparent,
+                    (apparent, holder),
                     (key, index),
                     access_node,
                     access_flags,
@@ -932,7 +933,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_with_alias(&types, alias)
             });
         }
-        self.property_type_for_index(apparent, (index, index), access_node, access_flags)
+        self.property_type_for_index(
+            (apparent, holder),
+            (index, index),
+            access_node,
+            access_flags,
+        )
     }
 
     /// The start of `getIndexedAccessTypeOrUndefined`. If the reduced `obj` has only a string index
@@ -1089,11 +1095,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type. The index pair is
-    /// `indexType`, which isn't a union, and `fullIndexType`.
+    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type, and `holder` is what
+    /// `apparent_type_or_type_variable` returns for it. The index pair is `indexType`, which isn't a union, and
+    /// `fullIndexType`.
     fn property_type_for_index(
         &mut self,
-        object: TypeId,
+        (object, holder): (TypeId, TypeId),
         (index, full_index): (TypeId, TypeId),
         access_node: AccessNode,
         access_flags: AccessFlags,
@@ -1109,7 +1116,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let ty = self.contextual_property(object, name);
                 return Some(ty.unwrap_or(TypeId::ANY));
             }
-            if let Some((prop, mapper)) = self.get_property_of_type(object, name) {
+            if let Some((prop, mapper)) = self.get_property_of_type(holder, name) {
                 if !access_flags.contains(AccessFlags::WRITING) {
                     let prop_type = self.type_of_prop(prop, mapper);
                     return Some(match access_node {

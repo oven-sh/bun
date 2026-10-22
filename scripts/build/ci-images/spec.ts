@@ -156,13 +156,13 @@ export const pins = {
     },
   },
   buildkiteAgent: {
-    version: "3.114.0",
+    version: "4.7.0",
     // The release's buildkite-agent-<version>.SHA256SUMS.
     sha256: {
-      "linux-x64": "7f574fd8bcc3cd980f6d2d560e7481db4313e100ae587c2c32e4b5084369c4f4",
-      "linux-aarch64": "3eb580a2e39daed2c34b2d821b686131f2a6d8db2c4f255bbb1c2ed67bf6fcc0",
-      "windows-x64": "9a7880ce4ee0e1b6fd6e272bdf13f1b63b67f64a327c7d045be422890572dfb7",
-      "windows-aarch64": "2da2e9a7559b3a995964e721c94ceccc273e7972a5c042cb4a2ee08c079fab7a",
+      "linux-x64": "6a71ae796642ffa15063a1e571f160a758287cb8b028a7c00a599081eecdd2f5",
+      "linux-aarch64": "dfc9a41609cad90e4bf6a5acafcdf73e41790620128f562c88c06b532e9ce99f",
+      "windows-x64": "8fa3e012e646d7203574e34e23e56c1c7f0a36bed496aeab63d7e53d590ac87b",
+      "windows-aarch64": "92c5bdf99002d5f6636d9ad54af438694daafb33f4ed16d65a62449664a196cf",
     },
   },
   cmake: {

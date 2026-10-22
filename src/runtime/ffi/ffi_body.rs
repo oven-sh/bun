@@ -1483,20 +1483,25 @@ impl FFI {
             // can't see the bunfs virtual FS. The helper lives in
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
-            if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
+            match crate::jsc_hooks::resolve_embedded_file_to_buf(
                 name_slice.slice(),
                 ext,
                 &mut filepath_buf[..],
             ) {
-                // NUL-terminate in place so `DynLib::open`
-                // can pass the slice to libc without copying. `resolve_*_to_buf`
-                // is bounded by `Fs::FileSystem::tmpname` + a tmpdir join (both
-                // fit in `PATH_MAX`), so `filepath_buf[len]` is in bounds.
-                filepath_buf[len] = 0;
-                break 'brk &filepath_buf[0..len];
+                Ok(Some(len)) => {
+                    // NUL-terminate for `DynLib::open`; `write_absolute` left room.
+                    filepath_buf[len] = 0;
+                    break 'brk &filepath_buf[0..len];
+                }
+                Ok(None) => break 'brk name_slice.slice(),
+                Err(err) => {
+                    return Ok(crate::jsc_hooks::embedded_file_extract_error(
+                        global,
+                        name_slice.slice(),
+                        &err,
+                    ));
+                }
             }
-
-            break 'brk name_slice.slice();
         };
 
         if name.is_empty() {
@@ -2379,9 +2384,6 @@ static CREATE_COMPILER_RT_DIR_ONCE: Once = Once::new();
 
 impl CompilerRT {
     fn create_compiler_rt_dir() {
-        // `bun_resolver::fs::FileSystem` (the inline canonical surface) doesn't
-        // yet expose an inherent `tmpdir()`; reuse the crate-local
-        // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
         let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
             return;

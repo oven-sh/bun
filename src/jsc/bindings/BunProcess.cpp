@@ -368,7 +368,7 @@ JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObj
     return true;
 }
 
-extern "C" BunString Bun__resolveEmbeddedNodeFile(const BunString*);
+extern "C" BunString Bun__resolveEmbeddedNodeFile(JSC::JSGlobalObject*, const BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
 #endif
@@ -523,7 +523,8 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     [[maybe_unused]] bool fromEmbedded = false;
     if (filename.startsWith(StandaloneModuleGraph__base_path)) {
         BunString bunStr = Bun::toString(filename);
-        BunString resolved = Bun__resolveEmbeddedNodeFile(&bunStr);
+        BunString resolved = Bun__resolveEmbeddedNodeFile(globalObject, &bunStr);
+        RETURN_IF_EXCEPTION(scope, {});
         if (!resolved.isDead()) {
             filename = resolved.transferToWTFString();
             // The extracted file is content-hashed and shared across dlopens
@@ -531,8 +532,6 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
             fromEmbedded = true;
         }
     }
-
-    RETURN_IF_EXCEPTION(scope, {});
 
     // Handle known yet-to-be-working in Bun
     {

@@ -44,7 +44,6 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
-use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -4626,18 +4625,21 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
 ///
 /// The filename is a hash of the contents, so every `dlopen()` of the same
 /// embedded library — across calls, Worker VMs, and restarts — shares one
-/// file instead of leaking a copy per call (#29585). Returns `None` when the
-/// input is empty, absent from the graph, or a filesystem step fails.
+/// file instead of leaking a copy per call (#29585). `Ok(None)` when the
+/// input is not an embedded file. `Err` carries the absolute temp path.
 pub(crate) fn resolve_embedded_file_to_buf(
     input_path: &[u8],
     extname: &[u8],
     out_buf: &mut [u8],
-) -> Option<usize> {
+) -> bun_sys::Maybe<Option<usize>> {
     if input_path.is_empty() {
-        return None;
+        return Ok(None);
     }
 
-    let file = bun_standalone_graph::Graph::get_ref()?.find_ref(input_path)?;
+    let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|g| g.find_ref(input_path))
+    else {
+        return Ok(None);
+    };
     let file_contents: &[u8] = file.contents.as_bytes();
 
     // `.bun-{uid}-{wyhash(contents)}.{ext}`: the hash dedupes; the uid keeps
@@ -4645,7 +4647,7 @@ pub(crate) fn resolve_embedded_file_to_buf(
     let content_hash = bun_wyhash::hash(file_contents);
     let uid = extract_owner_uid();
     let mut canonical_name_buf = [0u8; 64];
-    let canonical_name = bun_core::fmt::buf_print_z(
+    let Ok(canonical_name) = bun_core::fmt::buf_print_z(
         &mut canonical_name_buf,
         format_args!(
             ".bun-{}-{:x}.{}",
@@ -4653,13 +4655,25 @@ pub(crate) fn resolve_embedded_file_to_buf(
             content_hash,
             bun_core::fmt::s(extname)
         ),
-    )
-    .ok()?;
+    ) else {
+        return Ok(None);
+    };
+
+    // `TMPDIR` can be relative (#45054).
+    let mut tmpdir_path_buf = bun_paths::path_buffer_pool::get();
+    let Some(tmpdir_path) = Fs::FileSystem::instance()
+        .abs_buf_checked(&[Fs::RealFS::tmpdir_path()], &mut tmpdir_path_buf[..])
+    else {
+        return Err(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(Fs::RealFS::tmpdir_path()),
+        );
+    };
 
     // Reuse the canonical file from a previous run if it is still ours with
     // the right size. `lstatat` so a planted symlink fails the ISREG check
     // instead of being followed.
-    let tmpdir = (*Fs::FileSystem::instance()).tmpdir().ok()?;
+    let tmpdir = bun_sys::Dir::open(tmpdir_path).map_err(|e| e.with_path(tmpdir_path))?;
     let tmpdir_fd: bun_sys::Fd = tmpdir.fd;
     if let Ok(st) = bun_sys::lstatat(tmpdir_fd, canonical_name) {
         let size_ok = st.st_size as usize == file_contents.len();
@@ -4668,29 +4682,31 @@ pub(crate) fn resolve_embedded_file_to_buf(
         #[cfg(windows)]
         let ours = true;
         if size_ok && ours {
-            return write_absolute(
-                out_buf,
-                Fs::RealFS::tmpdir_path(),
-                canonical_name.as_bytes(),
-            );
+            return write_absolute(out_buf, tmpdir_path, canonical_name.as_bytes()).map(Some);
         }
     }
 
     // Write to a unique scratch name, then atomically rename it into place.
     let mut scratch_buf = bun_paths::path_buffer_pool::get();
-    let scratch_name = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash).ok()?;
+    let Ok(scratch_name) = Fs::FileSystem::tmpname(extname, &mut scratch_buf[..], content_hash)
+    else {
+        return Ok(None);
+    };
+
+    // A failure below reports this path. Success overwrites it.
+    let scratch_len = write_absolute(out_buf, tmpdir_path, scratch_name.as_bytes())?;
 
     // 0600: the file persists, only the owning euid ever dlopens it, and the
     // embedded bytes may come from a binary that is not world-readable.
-    let mut tmpfile = bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600).ok()?;
+    let mut tmpfile = match bun_sys::Tmpfile::create_with_mode(tmpdir_fd, scratch_name, 0o600) {
+        Ok(f) => f,
+        Err(e) => return Err(e.with_path(&out_buf[..scratch_len])),
+    };
     let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
 
-    let write_ok = bun_sys::File::borrow(&tmpfile.fd)
-        .write_all(file_contents)
-        .is_ok();
-    if !write_ok {
+    if let Err(e) = bun_sys::File::borrow(&tmpfile.fd).write_all(file_contents) {
         let _ = bun_sys::unlinkat(tmpdir_fd, scratch_name);
-        return None;
+        return Err(e.with_path(&out_buf[..scratch_len]));
     }
 
     // On sticky `/tmp` the rename fails EACCES/EPERM when another user owns
@@ -4702,17 +4718,43 @@ pub(crate) fn resolve_embedded_file_to_buf(
     } else {
         scratch_name
     };
-    write_absolute(out_buf, Fs::RealFS::tmpdir_path(), final_name.as_bytes())
+    write_absolute(out_buf, tmpdir_path, final_name.as_bytes()).map(Some)
 }
 
-/// Writes `{tmpdir}/{name}` into `out_buf` and returns the length.
-fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usize> {
-    let result = bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+/// Writes `{tmpdir}/{name}` into `out_buf`, with room for a trailing NUL.
+fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> bun_sys::Maybe<usize> {
+    let capacity = out_buf.len();
+    match bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
         tmpdir,
         out_buf,
         &[name],
-    );
-    Some(result.len())
+    ) {
+        Some(path) if path.len() < capacity => Ok(path.len()),
+        _ => Err(
+            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                .with_path(tmpdir),
+        ),
+    }
+}
+
+/// `ERR_DLOPEN_FAILED` for an embedded library that could not be extracted.
+pub(crate) fn embedded_file_extract_error(
+    global: &JSGlobalObject,
+    input_path: &[u8],
+    err: &bun_sys::Error,
+) -> JSValue {
+    let mut sys_err: bun_jsc::SystemError = err.to_system_error().into();
+    let msg = {
+        let cause = sys_err.message.to_utf8();
+        format!(
+            "Failed to extract embedded library \"{}\": {}. Set BUN_TMPDIR to a writable directory.",
+            bun_core::fmt::s(input_path),
+            bun_core::fmt::s(&cause),
+        )
+    };
+    sys_err.code = bun_core::String::static_("ERR_DLOPEN_FAILED");
+    sys_err.message = bun_core::String::clone_utf8(msg.as_bytes());
+    sys_err.to_error_instance(global)
 }
 
 /// euid, not uid: `open(2)` sets the new file's owner to euid, so a
@@ -4728,9 +4770,13 @@ fn extract_owner_uid() -> u32 {
     bun_sys::windows::user_unique_id()
 }
 
-/// Support embedded .node files. `Dead` when `path` is not an embedded file.
+/// Support embedded .node files. `Dead` when `path` is not an embedded file,
+/// or after a throw when it could not be extracted.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -> bun_core::String {
+pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bun_core::String {
     bun_jsc::mark_binding();
     if VirtualMachine::get().standalone_module_graph.is_none() {
         return bun_core::String::DEAD;
@@ -4738,8 +4784,16 @@ pub(crate) extern "C" fn Bun__resolveEmbeddedNodeFile(path: &bun_core::String) -
     let input_path = path.to_utf8();
     let mut path_buf = bun_paths::path_buffer_pool::get();
     match resolve_embedded_file_to_buf(input_path.slice(), b"node", &mut path_buf[..]) {
-        Some(len) => bun_core::String::clone_utf8(&path_buf[..len]),
-        None => bun_core::String::DEAD,
+        Ok(Some(len)) => bun_core::String::clone_utf8(&path_buf[..len]),
+        Ok(None) => bun_core::String::DEAD,
+        Err(err) => {
+            let _ = global.throw_value(embedded_file_extract_error(
+                global,
+                input_path.slice(),
+                &err,
+            ));
+            bun_core::String::DEAD
+        }
     }
 }
 

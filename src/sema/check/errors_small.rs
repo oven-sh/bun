@@ -204,7 +204,10 @@ impl<'p> Checker<'p, '_> {
         } else if self.is_rechecking() {
             self.check_expression_ex(file, location, CheckMode::empty())
         } else {
-            let outside = (self.type_only_node.take(), self.check_in_flow_loop.take());
+            let outside = (self.type_only_node.take(), self.check_in_flow_loop);
+            if let Some(check) = &mut self.check_in_flow_loop {
+                check.is_second_visit = false;
+            }
             let ty = self.check_expression_again(file, location);
             (self.type_only_node, self.check_in_flow_loop) = outside;
             ty

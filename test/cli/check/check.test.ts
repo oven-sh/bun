@@ -10964,6 +10964,45 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("keeps what the first visit computed when the right operand of a logical operator is checked again", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare function pair<T>(first: T, second: T): T;
+declare function assertB(value: unknown): asserts value is "b";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+declare const more: boolean;
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  let z: Letter = list[0];
+  for (const item of list) {
+    for (; more; x = [y][0]) {
+      x = z;
+      y = (more || next[y] === y) && z !== z ? pair(z, x) : next[x];
+    }
+    assertB(y);
+    try {
+    } catch {
+      while (next[y] === z) {
+        y = ((z === "a" ?? next[y] === y) && x) || x;
+        y = id(y);
+      }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,20): error TS2367: This comparison appears to be unintentional because the types '"b"' and '"a"' have no overlap.
+        a.ts(21,15): error TS2869: Right operand of ?? is unreachable because the left operand is never nullish.
+        a.ts(21,28): error TS2367: This comparison appears to be unintentional because the types '"c"' and '"b"' have no overlap."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

@@ -761,9 +761,9 @@ struct HttpResponseData;
             return (((x)-~0ULL/255*(n))&~(x)&~0ULL/255*128);
         }
 
-        /* Nonzero if any byte of x is DEL (127) */
-        static inline uint64_t hasDelete(uint64_t x) {
-            return hasLess(x ^ (~0ULL/255*127), 1);
+        /* Nonzero if any byte of x is 0x7f or above. Adding 1 to a byte carries only out of 0xff, which x itself flags. */
+        static inline uint64_t hasDeleteOrAbove(uint64_t x) {
+            return ((x + ~0ULL/255) | x) & (~0ULL/255*128);
         }
 
         /* RFC 9110 5.6.2. Tokens */
@@ -900,10 +900,6 @@ struct HttpResponseData;
         /* Puts method as key, target as value and returns non-null (or nullptr on error). */
         template <bool IsNodeHttp>
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
-            /* req.url can be three times as long as the target, and has to fit a string. */
-            if (IsNodeHttp && (!maxHeaderSize || maxHeaderSize > INT32_MAX / 3)) {
-                maxHeaderSize = INT32_MAX / 3;
-            }
             /* Scan until single SP, assume next is / (origin request) */
             char *start = data;
             /* This catches the post padded CR and fails */
@@ -962,7 +958,7 @@ struct HttpResponseData;
                     }
                     if (hasLess(word, 33)) {
                         while (*(unsigned char *)data > 32) {
-                            if (IsNodeHttp && *(unsigned char *)data == 127) [[unlikely]] {
+                            if (IsNodeHttp && *(unsigned char *)data >= 0x7f) [[unlikely]] {
                                 return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
                             }
                             data++;
@@ -998,8 +994,8 @@ struct HttpResponseData;
                          * post-padding sentinel. Fall through to the version error. */
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
                     }
-                    /* llhttp rejects DEL in a request target, with or without insecureHTTPParser. */
-                    if (IsNodeHttp && hasDelete(word)) [[unlikely]] {
+                    /* llhttp accepts only 0x21 to 0x7e in a request target, with or without insecureHTTPParser. */
+                    if (IsNodeHttp && hasDeleteOrAbove(word)) [[unlikely]] {
                         return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_URL);
                     }
                 }
@@ -1047,7 +1043,7 @@ struct HttpResponseData;
             for (; true; p += 8) {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
-                if (hasLess(word, 32) || (IsNodeHttp && hasDelete(word))) {
+                if (hasLess(word, 32) || (IsNodeHttp && hasLess(word ^ (~0ULL/255*127), 1))) {
                     while (*(unsigned char *)p > 31 && !(IsNodeHttp && *(unsigned char *)p == 127)) p++;
                     return p;
                 }

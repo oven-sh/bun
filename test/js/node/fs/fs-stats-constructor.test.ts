@@ -215,6 +215,22 @@ describe("Stats date accessors define the property the way Object.defineProperty
     }
   });
 
+  test.each(kinds)("%s: a receiver in dictionary mode gets the property", (_, proto, ms) => {
+    const { get, set } = Object.getOwnPropertyDescriptor(proto, "mtime")!;
+    const dictionary = () => {
+      const receiver: Record<string, unknown> = { mtimeMs: ms };
+      for (let i = 0; i < 200; i++) receiver["k" + i] = i;
+      delete receiver.k0;
+      return receiver;
+    };
+    const read = dictionary();
+    expect(get!.call(read)).toEqual(new Date(5));
+    expect(Object.getOwnPropertyDescriptor(read, "mtime")).toEqual(dataProperty(new Date(5)));
+    const assigned = dictionary();
+    set!.call(assigned, 42);
+    expect(Object.getOwnPropertyDescriptor(assigned, "mtime")).toEqual(dataProperty(42));
+  });
+
   test("the prototype as the receiver keeps its accessor", () => {
     expect(Stats.prototype.mtime.getTime()).toBeNaN();
     expect(Object.getOwnPropertyDescriptor(Stats.prototype, "mtime")!.get).toBeFunction();

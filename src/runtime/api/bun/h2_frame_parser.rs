@@ -2479,22 +2479,35 @@ impl H2FrameParser {
         extra: JSValue,
         extra2: JSValue,
     ) {
+        self.dispatch_values(event, [value, extra, extra2]);
+    }
+
+    pub(crate) fn dispatch_with_3_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+        extra2: JSValue,
+        extra3: JSValue,
+    ) {
+        self.dispatch_values(event, [value, extra, extra2, extra3]);
+    }
+
+    fn dispatch_values<const N: usize>(&self, event: JSH2FrameParser::Gc, values: [JSValue; N]) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        extra2.ensure_still_alive();
+        let mut args = [ctx_value; 5];
+        args[1..=N].copy_from_slice(&values);
+        for value in values {
+            value.ensure_still_alive();
+        }
         let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra, extra2],
-        );
+        let handlers = self.handlers.get();
+        let _ = handlers.call_event_handler(event, this_value, ctx_value, &args[..=N]);
     }
 
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
@@ -3064,6 +3077,18 @@ impl H2FrameParser {
                 Self::close_socket_for_dead_transport::<false>(socket.get());
             }
             BunSocket::None => {}
+        }
+    }
+
+    /// The kernel rejected a send of the session's TLS socket. The TLS layer closes the socket
+    /// once it has read what the peer sent before.
+    fn transport_send_rejected(&self) -> bool {
+        match self.native_socket.get() {
+            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+                socket.get().socket.get().ssl_send_rejected()
+            }
+            // A plain socket is closed at once, which ends its streams before the error is reported.
+            _ => false,
         }
     }
 
@@ -3817,11 +3842,15 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
             return;
         };
         if lib_error_code != 0 {
-            self.dispatch_with_2_extra(
+            // The responses of a client that is gone are still queued. The server's handler ends
+            // their streams without the session's error, as the close that follows would.
+            let client_is_gone = self.is_server.get() && self.transport_send_rejected();
+            self.dispatch_with_3_extra(
                 JSH2FrameParser::Gc::onError,
                 JSValue::js_number(lib_error_code as f64),
                 JSValue::js_number(self.last_stream_id.get() as f64),
                 chunk,
+                JSValue::from(client_is_gone),
             );
         }
         self.dispatch_with_extra(

@@ -883,11 +883,15 @@ pub(crate) extern "C" fn Bun__streamIterEnabled() -> bool {
 /// True when `name` is a stream/iter specifier that must stay invisible
 /// because `--experimental-stream-iter` was not passed.
 fn stream_iter_alias_gated(name: &[u8]) -> bool {
-    (name == b"stream/iter"
+    is_stream_iter_alias(name) && !stream_iter_enabled()
+}
+
+/// A stream/iter specifier: a builtin only with `--experimental-stream-iter`.
+fn is_stream_iter_alias(name: &[u8]) -> bool {
+    name == b"stream/iter"
         || name == b"node:stream/iter"
         || name == b"zlib/iter"
-        || name == b"node:zlib/iter")
-        && !stream_iter_enabled()
+        || name == b"node:zlib/iter"
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
@@ -945,5 +949,21 @@ impl Alias {
             return lookup(&NODE_ALIAS_MAP, name);
         }
         None
+    }
+
+    /// Programs import `bun:fs` (#16883), so `bun:` + a bare Node builtin name means that builtin.
+    #[inline]
+    pub fn bun_prefixed_builtin(specifier: &[u8]) -> Option<&[u8]> {
+        Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
+    }
+
+    // Reads no flag or mode: the answer goes into cached output. A name behind a flag is not kept.
+    #[cold]
+    #[inline(never)]
+    fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {
+        (!name.starts_with(b"node:")
+            && !is_stream_iter_alias(name)
+            && lookup(&NODE_ALIAS_MAP, name).is_some())
+        .then_some(name)
     }
 }

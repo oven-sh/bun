@@ -168,6 +168,18 @@ test("mocking a builtin", async () => {
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
 });
 
+test("mocking a bun: module that is not a builtin", async () => {
+  mock.module("bun:not-a-builtin", () => {
+    return {
+      wow: () => 42,
+    };
+  });
+
+  // @ts-expect-error
+  expect((await import("bun:not-a-builtin")).wow()).toBe(42);
+  expect(require("bun:not-a-builtin").wow()).toBe(42);
+});
+
 test("a factory export getter that throws throws when the export is read, not from the import", async () => {
   mock.module("mock-module-getter-throws", () => ({
     get a() {

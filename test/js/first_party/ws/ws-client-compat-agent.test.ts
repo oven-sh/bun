@@ -154,7 +154,7 @@ const socksAgents: { shape: string; create(proxy: Proxy): http.Agent }[] = [
   },
 ];
 
-describe.each(implementations)("ws client connection options ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client connection options ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   /** A client with `watch()` attached. Disposing it calls terminate(). */
@@ -440,6 +440,34 @@ describe.each(implementations)("ws client connection options ($name)", ({ ws: im
     );
     expect(await store).toBe("the caller's");
   });
+
+  // The handshake runs from the event loop, whoever turns it. `Bun.build()` ticks the event loop until an async plugin
+  // `setup()` settles, here inside a store. With npm ws, node:tls runs the callback there.
+  test.skipIf(!builtin)(
+    "checkServerIdentity of a socket made outside every store doesn't run in the store of a caller that ticks the event loop",
+    async () => {
+      await using peer = await createPeer({ secure: true });
+      const storage = new AsyncLocalStorage<string>();
+      const { promise: checked, resolve } = Promise.withResolvers<void>();
+      let store: string | undefined;
+      using client = connect(peer.url, {
+        ca: certificate.cert,
+        checkServerIdentity: () => {
+          store = storage.getStore() ?? "no store";
+          resolve();
+        },
+      });
+      const build = storage.run("the waiter's", () =>
+        Bun.build({
+          entrypoints: ["/wait.js"],
+          files: { "/wait.js": "" },
+          plugins: [{ name: "wait", setup: () => checked }],
+        }),
+      );
+      expect(store).toBe("no store");
+      await build;
+    },
+  );
 
   test("a checkServerIdentity verdict that rejectUnauthorized: false dropped isn't reported later", async () => {
     await using peer = await createPeer({

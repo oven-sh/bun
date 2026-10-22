@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCanary, isDebug, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -528,6 +528,61 @@ describe("bun", () => {
       const out = (stdout + stderr).replaceAll("\r\n", "\n");
       for (const re of expected) expect(out).toMatch(re);
       expect(out).not.toContain("bun list ");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.concurrent("bun lint is a command in canary builds only", () => {
+    test("bun --help lists it there", async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "--help"], env: bunEnv, stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
+      expect(listed).toEqual(isCanary ? ["check", "lint", "fmt"] : ["check", "fmt"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("elsewhere bun lint looks for a script", async () => {
+      using dir = tempDir("bun-lint-canary-only", { "package.json": "{}", "a.js": "debugger;\n" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "a.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (isCanary) expect(stdout).toContain("no-debugger");
+      else expect({ stdout, stderr }).toEqual({ stdout: "", stderr: 'error: Script not found "lint"\n' });
+      expect(exitCode).toBe(1);
+    });
+
+    // test/cli/lint has more of these, but a release build skips it.
+    test.each([
+      ["a script in package.json", { "package.json": `{ "scripts": { "lint": "echo the script" } }` }, "the script"],
+      ["lint.ts", { "lint.ts": `console.log("the file");` }, "the file"],
+      ["lint/index.js", { "lint/index.js": `console.log("the index");` }, "the index"],
+      // On Windows, an install creates different files for it.
+      ...(isWindows
+        ? []
+        : [
+            [
+              "node_modules/.bin/lint",
+              { "node_modules/.bin/lint": `#!/bin/sh\necho the executable\n` },
+              "the executable",
+            ],
+          ]),
+    ] as [string, Record<string, string>, string][])("everywhere bun lint runs %s", async (_, files, printed) => {
+      using dir = tempDir("bun-lint-of-the-project", { "a.js": "debugger;\n", ...files });
+      if ("node_modules/.bin/lint" in files) fs.chmodSync(join(String(dir), "node_modules/.bin/lint"), 0o755);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe(printed);
       expect(exitCode).toBe(0);
     });
   });

@@ -1772,3 +1772,54 @@ describe.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)("writes that queue mo
     expect({ size: fs.statSync(file).size, seen }).toEqual({ size: total, seen: expected });
   }, 180_000);
 });
+
+// A sink on stdout writes synchronously, and it handed the whole chunk to one
+// write request. Windows takes no single pipe write of 2^32 - 1 bytes. The
+// writer is a child, which holds the 4 GiB. The bytes only pass through here.
+it.skipIf(!isWindows || totalmem() < 12 * 1024 ** 3)(
+  "a stdout sink on a pipe writes a chunk of 2^32 - 1 bytes whole",
+  async () => {
+    const size = 2 ** 32 - 1;
+    // [offset, value]: both ends, and both sides of the offsets where a write that went out in parts would resume.
+    const marks = [0, 0x7fff_f000 - 1, 0x7fff_f000, 2 ** 31 - 1, 2 ** 31, size - 2, size - 1].map((at, i) => [
+      at,
+      i + 1,
+    ]);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const payload = new Uint8Array(${size});
+        for (const [at, value] of JSON.parse(process.env.MARKS)) payload[at] = value;
+        const sink = Bun.stdout.writer();
+        sink.write(payload);
+        await sink.end();
+        `,
+      ],
+      env: { ...bunEnv, MARKS: JSON.stringify(marks) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const seen: (number | null)[] = marks.map(() => null);
+    let total = 0;
+    const counted = (async () => {
+      for await (const chunk of proc.stdout) {
+        for (let i = 0; i < marks.length; i++) {
+          const at = marks[i][0] - total;
+          if (at >= 0 && at < chunk.length) seen[i] = chunk[at];
+        }
+        total += chunk.length;
+      }
+    })();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, counted]);
+    expect({ total, seen, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      total: size,
+      seen: marks.map(([, value]) => value),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+  180_000,
+);

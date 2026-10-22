@@ -1089,6 +1089,20 @@ extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, us_socket_t* socket)
     }
 }
 
+// Parsing stops first: a TLS close waits for unsent ciphertext, and uWS answers a request that it reads meanwhile.
+extern "C" void Bun__NodeHTTP__refuseConnection(int ssl, us_socket_t* socket)
+{
+    if (us_socket_is_closed(socket)) {
+        return;
+    }
+    auto* serverSocket = ssl ? getNodeHTTPServerSocket<true>(socket) : getNodeHTTPServerSocket<false>(socket);
+    if (!serverSocket) {
+        return;
+    }
+    serverSocket->stopHTTPParsing();
+    serverSocket->close();
+}
+
 // Returns the JSNodeHTTPServerSocket already attached to this raw socket, or
 // creates (and attaches) one. Used for connections that have not produced a
 // parsed request yet: the 'clientError' path and the connection-accept path.

@@ -3297,15 +3297,18 @@ where
     /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
     /// `onConnection` callback so `node:http` can emit 'connection' before any
     /// request bytes arrive.
-    pub(crate) fn on_connection_callback(&self, socket: *mut c_void) -> JsResult<()> {
-        if self.js_value_for_dispatch().is_none() {
-            return Ok(());
-        }
-        let callback = self.on_connection;
+    pub(crate) fn on_connection_callback(this: *const Self, socket: *mut c_void) -> JsResult<()> {
+        let (callback, global) = {
+            // SAFETY: uWS runs the filter of a live server. Its listeners can free it, so this borrow ends before them.
+            let this = unsafe { &*this };
+            if this.js_value_for_dispatch().is_none() {
+                return Ok(());
+            }
+            (this.on_connection, this.global())
+        };
         if callback.is_empty() {
             return Ok(());
         }
-        let global = self.global();
         let node_socket = jsc::from_js_host_call(&global, || {
             Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
         })?;
@@ -3317,6 +3320,24 @@ where
             unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
+    }
+
+    /// Node.js exits at a listener's error that nothing handles, and Bun goes on to read the request: https://github.com/nodejs/node/blob/v26.3.0/src/node_errors.cc#L1369-L1375
+    #[inline(never)] // The filter thunk returns before this frame for 3 of its 4 calls per connection.
+    pub(crate) fn run_connection_listeners(this: *const Self, socket: *mut c_void) {
+        // SAFETY: uWS runs the filter of a live server. Its listeners can free it: `bun test` runs the next test from inside the report of their error.
+        let vm = unsafe { (*this).vm };
+        let unhandled_errors = vm.unhandled_error_counter;
+        crate::dispatch::fold(Self::on_connection_callback(this, socket));
+        if vm.unhandled_error_counter != unhandled_errors {
+            bun_core::hint::cold();
+            // `bun test` takes every error of its main VM, as a handler does.
+            let runner_took_it = vm.worker.is_none()
+                && jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed);
+            if !runner_took_it {
+                Bun__NodeHTTP__refuseConnection(c_int::from(SSL), socket);
+            }
+        }
     }
 
     // `js_gc_route_list_set` / `ptr_to_js` live on the unbounded
@@ -3466,9 +3487,10 @@ fn server_set_on_connection(
                         }
                         // SAFETY: user_data is the `*mut Self` registered below;
                         // socket is a live uWS socket for this server's group.
-                        // Shared — the callback re-enters JS.
-                        let this = unsafe { &*user_data.cast::<$T>() };
-                        crate::dispatch::fold(this.on_connection_callback(socket.cast::<c_void>()));
+                        <$T>::run_connection_listeners(
+                            user_data.cast::<$T>(),
+                            socket.cast::<c_void>(),
+                        );
                     }
                     if first {
                         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
@@ -3692,6 +3714,9 @@ unsafe extern "C" {
         socket: *mut c_void,
         global: &JSGlobalObject,
     ) -> JSValue;
+
+    // `socket` is the same live `uws::Socket*`: stops its HTTP parsing and closes it.
+    safe fn Bun__NodeHTTP__refuseConnection(ssl: c_int, socket: *mut c_void);
 
     // `&JSGlobalObject` / `&mut JSValue` discharge the deref'd-param
     // preconditions; `request_ptr`/`req` are opaque handles that C++ stores or

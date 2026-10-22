@@ -1297,7 +1297,7 @@ describe("Response", () => {
         const output = JSON.stringify(input);
         expect(await Response.json(input).text()).toBe(output);
       }
-      // JSON.stringify() returns undefined
+      // No argument gives an empty body. An explicit undefined throws.
       expect(await Response.json().text()).toBe("");
       // JSON.stringify("") returns '""'
       expect(await Response.json("").text()).toBe('""');
@@ -1348,8 +1348,8 @@ describe("Response", () => {
       expect(() => Response.json({ func: function () {} })).not.toThrow();
       expect(() => Response.json({ undef: undefined })).not.toThrow();
 
-      // BigInt should throw with Node.js compatible error message
-      expect(() => Response.json(123n)).toThrow("Do not know how to serialize a BigInt");
+      // A BigInt throws the error that JSON.stringify throws for it
+      expect(() => Response.json(123n)).toThrow("JSON.stringify cannot serialize BigInt.");
     });
   });
   describe("Response.redirect", () => {

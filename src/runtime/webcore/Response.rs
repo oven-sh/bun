@@ -871,35 +871,23 @@ impl Response {
         let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
-            // Validate top-level values that are not JSON serializable (Node.js compatibility)
-            if json_value.is_undefined()
-                || json_value.is_symbol()
-                || json_value.js_type() == bun_jsc::JSType::JSFunction
-            {
-                let err = global_this
-                    .create_type_error_instance(format_args!("Value is not JSON serializable"));
-                return Err(global_this.throw_value(err));
-            }
-
-            // BigInt has a different error message to match Node.js exactly
-            if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!(
-                    "Do not know how to serialize a BigInt"
-                ));
-                return Err(global_this.throw_value(err));
-            }
-
             // Use jsonStringifyFast which passes undefined for the space parameter,
             // triggering JSC's FastStringifier optimization. This is significantly faster
             // than jsonStringify which passes 0 for space and uses the slower Stringifier.
             let str = json_value.json_stringify_fast(global_this)?;
 
-            if !str.is_empty() {
-                debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
-                let value = &response.body.get().value;
-                value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
-                value.with_mut(|v| v.to_blob_if_possible());
+            // An empty string means `JSON.stringify` returned undefined.
+            // https://infra.spec.whatwg.org/#serialize-a-javascript-value-to-a-json-string
+            if str.is_empty() {
+                return Err(
+                    global_this.throw_type_error(format_args!("Value is not JSON serializable"))
+                );
             }
+
+            debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+            let value = &response.body.get().value;
+            value.set(BodyValue::WTFStringImpl(str.leak_wtf_impl()));
+            value.with_mut(|v| v.to_blob_if_possible());
         }
 
         if let Some(arg_init) = args.next_eat() {

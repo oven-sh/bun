@@ -1924,10 +1924,11 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
     /**
      * Create a new {@link Response} with a JSON body.
      *
-     * Syntactic sugar for:
+     * Similar to:
      * ```js
      * new Response(JSON.stringify(body), {headers: { "Content-Type": "application/json" }})
      * ```
+     * Unlike that expression, `Response.json(body)` throws when `JSON.stringify(body)` returns `undefined`.
      *
      * @example
      * ```ts
@@ -1940,6 +1941,8 @@ declare var Response: Bun.__internal.UseLibDomIfAvailable<
      *
      * @param body Value to serialize with `JSON.stringify`
      * @param init Options for the response
+     * @throws {TypeError} If `body` is passed and `JSON.stringify(body)` returns `undefined`, for example for
+     * `undefined`, a symbol, a function, or an object whose `toJSON` method returns `undefined`.
      * @link https://github.com/whatwg/fetch/issues/1389
      */
     json(body?: any, init?: ResponseInit | number): Response;

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { normalizeBunSnapshot } from "harness";
 
 test("zero args returns an otherwise empty 200 response", () => {
@@ -49,7 +49,7 @@ describe("2-arg form", () => {
 test("print size", () => {
   expect(normalizeBunSnapshot(Bun.inspect(new Response(Bun.file(import.meta.filename)))), import.meta.dir)
     .toMatchInlineSnapshot(`
-    "Response (8.0 KB) {
+    "Response (12.73 KB) {
       ok: true,
       url: "",
       status: 200,
@@ -137,6 +137,134 @@ test("Response.redirect rejects a non-absolute url that is not a valid header va
   // writing a latin-1-corrupted Location ("/â¬").
   expect(() => Response.redirect("/€")).toThrow(new TypeError("Header 'Location' has invalid value"));
   expect(() => Response.redirect("/搜索")).toThrow(new TypeError("Header 'Location' has invalid value"));
+});
+
+// https://infra.spec.whatwg.org/#serialize-a-javascript-value-to-a-json-string
+describe("Response.json", () => {
+  const notSerializable = expect.objectContaining({
+    name: "TypeError",
+    message: "Value is not JSON serializable",
+  });
+
+  describe("when JSON.stringify returns undefined", () => {
+    test.each<[string, () => unknown]>([
+      ["undefined", () => undefined],
+      ["a Symbol", () => Symbol("s")],
+      ["a function", () => function () {}],
+      ["toJSON returns undefined", () => ({ toJSON() {} })],
+      ["toJSON returns a function", () => ({ toJSON: () => function () {} })],
+      ["toJSON returns a Symbol", () => ({ toJSON: () => Symbol("s") })],
+      ["an inherited toJSON returns undefined", () => Object.create({ toJSON() {} })],
+      ["a String object whose toJSON returns undefined", () => Object.assign(new String("s"), { toJSON() {} })],
+      ["a callable Proxy", () => new Proxy(function () {}, {})],
+      ["a built-in constructor", () => Date],
+      ["Function.prototype", () => Function.prototype],
+    ])("throws TypeError: %s", (_, make) => {
+      const value = make();
+      expect(JSON.stringify(value)).toBeUndefined();
+      expect(() => Response.json(value)).toThrow(notSerializable);
+    });
+
+    test.each<[string, ResponseInit]>([
+      ["a status out of range", { status: 99 }],
+      ["a null body status", { status: 204 }],
+      ["an invalid header name", { headers: { "bad name": "x" } }],
+    ])("throws TypeError before it validates init: %s", (_, init) => {
+      expect(() => Response.json({ toJSON() {} }, init)).toThrow(notSerializable);
+    });
+
+    test("throws TypeError from a subclass and from a detached call", () => {
+      class Subclass extends Response {}
+      const { json } = Response;
+      expect(() => Subclass.json({ toJSON() {} })).toThrow(notSerializable);
+      expect(() => json({ toJSON() {} })).toThrow(notSerializable);
+    });
+
+    test("calls toJSON once", () => {
+      const toJSON = jest.fn();
+      expect(() => Response.json({ toJSON })).toThrow(notSerializable);
+      expect(toJSON).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test.each<[string, () => unknown]>([
+    ["a function", () => Object.assign(function () {}, { toJSON: () => ({ a: 1 }) })],
+    ["an arrow function", () => Object.assign(() => {}, { toJSON: () => ({ a: 1 }) })],
+    ["a bound function", () => Object.assign(function () {}.bind(null), { toJSON: () => ({ a: 1 }) })],
+    [
+      "a class",
+      () =>
+        class {
+          static toJSON() {
+            return { a: 1 };
+          }
+        },
+    ],
+  ])("serializes %s that has a toJSON method", async (_, make) => {
+    const response = Response.json(make());
+    expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: '{"a":1}' });
+  });
+
+  test("looks up toJSON on a function once", () => {
+    const get = jest.fn();
+    const fn = Object.defineProperty(function () {}, "toJSON", { get });
+    expect(() => Response.json(fn)).toThrow(notSerializable);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a BigInt", () => {
+    function withToJSON<T>(toJSON: (this: bigint) => unknown, run: () => T): T {
+      Object.defineProperty(BigInt.prototype, "toJSON", { configurable: true, value: toJSON });
+      try {
+        return run();
+      } finally {
+        Reflect.deleteProperty(BigInt.prototype, "toJSON");
+      }
+    }
+
+    test("is serialized by BigInt.prototype.toJSON", async () => {
+      const response = withToJSON(
+        function () {
+          return this.toString();
+        },
+        () => Response.json(123n),
+      );
+      expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: '"123"' });
+    });
+
+    test("throws TypeError when BigInt.prototype.toJSON returns undefined", () => {
+      expect(() =>
+        withToJSON(
+          () => undefined,
+          () => Response.json(123n),
+        ),
+      ).toThrow(notSerializable);
+    });
+
+    test("throws the JSON.stringify TypeError when it has no toJSON method", () => {
+      const cannotSerializeBigInt = expect.objectContaining({
+        name: "TypeError",
+        message: "JSON.stringify cannot serialize BigInt.",
+      });
+      expect(() => Response.json(123n)).toThrow(cannotSerializeBigInt);
+      expect(() => Response.json({ n: 123n })).toThrow(cannotSerializeBigInt);
+    });
+  });
+
+  test("rethrows what toJSON throws", () => {
+    const error = new RangeError("from toJSON");
+    let thrown: unknown;
+    try {
+      Response.json({
+        toJSON() {
+          throw error;
+        },
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBe(error);
+  });
 });
 
 test("new Response(123, { statusText: 123 }) does not throw", () => {

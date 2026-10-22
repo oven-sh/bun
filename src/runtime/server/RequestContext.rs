@@ -3886,9 +3886,7 @@ where
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
-            // A list the script never saw counts as no list.
-            needs_content_range =
-                needs_content_range && (sendfile.total > 0 || has_content_range || headers_.unseen);
+            needs_content_range = needs_content_range && (sendfile.total > 0 || has_content_range);
             if needs_content_range {
                 status = 206;
             }

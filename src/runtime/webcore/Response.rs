@@ -32,11 +32,8 @@ use bun_ptr::weak_ptr::WeakPtrData;
 /// Intentionally not `Clone`: the only "share" operation the surface
 /// exposes is `clone_this()`, which deep-copies a fresh `FetchHeaders` on the
 /// C++ side. Transferring ownership is by-move.
-pub(crate) struct HeadersRef {
-    ptr: NonNull<FetchHeaders>,
-    /// A body reader built the list, or it is a copy of such a list: the script neither gave it nor read it.
-    pub(crate) unseen: bool,
-}
+#[repr(transparent)]
+pub(crate) struct HeadersRef(NonNull<FetchHeaders>);
 
 impl HeadersRef {
     /// Adopt a freshly-created `FetchHeaders*` (refcount already 1).
@@ -46,12 +43,12 @@ impl HeadersRef {
     /// transfer ownership of one ref.
     #[inline]
     pub(crate) unsafe fn adopt(ptr: NonNull<FetchHeaders>) -> Self {
-        Self { ptr, unseen: false }
+        Self(ptr)
     }
 
     #[inline]
     pub(crate) fn as_ptr(&self) -> *mut FetchHeaders {
-        self.ptr.as_ptr()
+        self.0.as_ptr()
     }
 
     /// `FetchHeaders.createEmpty()` — fresh C++ allocation, refcount 1.
@@ -81,18 +78,10 @@ impl HeadersRef {
     /// `FetchHeaders.cloneThis(global)` — deep copy on the C++ side.
     #[inline]
     pub(crate) fn clone_this(&self, global: &JSGlobalObject) -> JsResult<Option<Self>> {
-        // C++ returns a +1 ref or null.
-        Ok(bun_opaque::opaque_deref_mut(self.ptr.as_ptr())
+        // SAFETY: C++ returns a +1 ref or null.
+        Ok(bun_opaque::opaque_deref_mut(self.0.as_ptr())
             .clone_this(global)?
-            .map(|ptr| Self {
-                ptr,
-                unseen: self.unseen,
-            }))
-    }
-
-    pub(crate) fn to_js(&mut self, global: &JSGlobalObject) -> JSValue {
-        self.unseen = false;
-        bun_opaque::opaque_deref_mut(self.ptr.as_ptr()).to_js(global)
+            .map(|p| unsafe { Self::adopt(p) }))
     }
 }
 
@@ -100,28 +89,28 @@ impl core::ops::Deref for HeadersRef {
     type Target = FetchHeaders;
     #[inline]
     fn deref(&self) -> &FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.ptr` is live
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
         // for the lifetime of `self` — safe `*const → &` via `opaque_deref`.
-        bun_opaque::opaque_deref(self.ptr.as_ptr())
+        bun_opaque::opaque_deref(self.0.as_ptr())
     }
 }
 
 impl core::ops::DerefMut for HeadersRef {
     #[inline]
     fn deref_mut(&mut self) -> &mut FetchHeaders {
-        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.ptr` is live
+        // `FetchHeaders` is an opaque ZST FFI handle (S008); `self.0` is live
         // for the lifetime of `self` — safe `*mut → &mut` via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(self.ptr.as_ptr())
+        bun_opaque::opaque_deref_mut(self.0.as_ptr())
     }
 }
 
 impl Drop for HeadersRef {
     #[inline]
     fn drop(&mut self) {
-        // `self.ptr` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
+        // `self.0` is live; releasing our +1 ref via WebCore__FetchHeaders__deref.
         // Explicit UFCS to avoid `core::ops::Deref::deref` resolution ambiguity.
         // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
-        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.ptr.as_ptr()));
+        FetchHeaders::deref(bun_opaque::opaque_deref_mut(self.0.as_ptr()));
     }
 }
 
@@ -307,13 +296,6 @@ impl BodyMixin for Response {
             core::ptr::NonNull::new(h.as_ptr())
                 .expect("HeadersRef wraps a non-null *mut FetchHeaders")
         })
-    }
-    #[inline]
-    fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        if self.init.get().headers.is_none() {
-            self.get_or_create_headers(global_object)?.unseen = true;
-        }
-        Ok(())
     }
     #[inline]
     fn get_form_data_encoding(
@@ -1163,8 +1145,12 @@ impl Response {
         // doing it on stack locals lets `?` trigger the scopeguard and
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
+            let content_type = blob.content_type_slice();
+            // A file leaves the list unbuilt: `new Response(Bun.file(path))` is the static file hot path, and `render_metadata` sends a slice as a 206 only without a list.
+            if init.headers.is_none() && !content_type.is_empty() && !blob.needs_to_read_file() {
+                init.headers = Some(HeadersRef::create_empty());
+            }
             if let Some(headers) = init.headers.as_deref_mut() {
-                let content_type = blob.content_type_slice();
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,

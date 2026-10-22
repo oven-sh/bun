@@ -1606,7 +1606,7 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Mixin trait with provided methods.
-/// Implementers supply `get_body_value`, `get_fetch_headers`, `build_fetch_headers`, `get_form_data_encoding`,
+/// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
 ///
 /// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
@@ -1624,8 +1624,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// (FFI signature is `*mut`). Returning `NonNull` instead of `&FetchHeaders`
     /// avoids deriving `&mut T` from `&T` at the call sites (UB).
     fn get_fetch_headers(&self) -> Option<NonNull<FetchHeaders>>;
-    /// Builds the header list if there is none yet.
-    fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()>;
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
@@ -1634,16 +1632,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     // [`BodyOwnerJs`] forwarders erase the per-class codegen module so the
     // bodies can live here once.
     // ────────────────────────────────────────────────────────────────────
-
-    /// The header list is built on first use and takes its `Content-Type` from the `Blob` body, so build it before that body goes.
-    fn keep_body_content_type(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        if let Value::Blob(blob) = self.get_body_value()
-            && !blob.content_type().is_empty()
-        {
-            self.build_fetch_headers(global_object)?;
-        }
-        Ok(())
-    }
 
     /// JS-side `js.gc.stream` cache is the
     /// source of truth; fall back to the native `Locked.readable` slot.
@@ -1751,7 +1739,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
@@ -1792,7 +1779,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_this)?;
         // The stream the getter makes is the reading script's.
         let context = global_this.bun_vm().context_of_caller_no_frame();
         let body = self.get_body_value();
@@ -1820,7 +1806,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_this)?;
         let cx = global_this.js_thread_of_caller(callframe);
         // Step 1: If this is unusable, throw a TypeError.
         self.throw_if_body_unusable(global_this)?;
@@ -1896,7 +1881,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
@@ -1947,7 +1931,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
         let value = self.get_body_value();
@@ -2004,7 +1987,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let context = global_object.bun_vm().context_of_caller(callframe);
         let value = self.get_body_value();
 
@@ -2056,7 +2038,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2156,7 +2137,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        self.keep_body_content_type(global_object)?;
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {

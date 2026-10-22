@@ -181,13 +181,6 @@ impl BodyMixin for Request {
         })
     }
     #[inline]
-    fn build_fetch_headers(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        if !self.has_fetch_headers() {
-            self.ensure_fetch_headers(global_object)?.unseen = true;
-        }
-        Ok(())
-    }
-    #[inline]
     fn get_form_data_encoding(
         &self,
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -1167,13 +1160,14 @@ impl Request {
                     }
 
                     if !fields.contains(Fields::Headers) {
-                        if response.get_init_headers().is_some() {
+                        if let Some(headers) = response.get_init_headers_mut() {
                             // The flag is set unconditionally once `getInitHeaders()` yielded a
                             // value, even if `cloneThis` returns null — so a later arg can't
                             // repopulate headers from a different source.
-                            match response.clone_init_headers(cx.global()) {
+                            match headers.clone_this(cx.global()) {
                                 Ok(h) => {
-                                    req.headers.set(h);
+                                    // SAFETY: clone_this returns a +1 ref FetchHeaders.
+                                    req.headers.set(h.map(|p| unsafe { HeadersRef::adopt(p) }));
                                     fields.insert(Fields::Headers);
                                 }
                                 Err(e) => bail!(Err(e)),
@@ -1406,6 +1400,15 @@ impl Request {
         // decrement it to be perfectly balanced.
 
         req.url.set(href);
+
+        // The same rule as in `Response::constructor`.
+        if let BodyValue::Blob(blob) = req.body_value()
+            && req.headers.get().is_none()
+            && !blob.content_type_slice().is_empty()
+            && !blob.needs_to_read_file()
+        {
+            req.headers.set(Some(HeadersRef::create_empty()));
+        }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
             if let BodyValue::Blob(blob) = req.body_value() {

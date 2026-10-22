@@ -133,6 +133,19 @@ pub use spans::{compute_ecma_line_starts, normalize_jsdoc_type_source_text};
 const RECENT_SIGS: usize = 256;
 const RECENT_TYPE_PARAMS: usize = 64;
 
+/// The state of the checker at a `before_check_in_flow_loop` call.
+#[derive(Copy, Clone)]
+pub(super) struct CheckInFlowLoop {
+    work: u64,
+    /// The height of `stack`.
+    height: usize,
+    /// The length of `reported`.
+    reported: usize,
+    interruptions: (u64, u64, u64),
+    /// `check_expression_in_flow_loop` has begun.
+    is_second_visit: bool,
+}
+
 /// A non-cacheable query result. It's valid while `frames[depth]` has the serial number `serial`.
 #[derive(Copy, Clone)]
 struct Provisional {
@@ -901,6 +914,8 @@ impl<'s> Program<'s> {
             is_type_checked: false,
             reported: Vec::new(),
             is_checking_in_flow_loop: false,
+            check_in_flow_loop: None,
+            checked_in_flow_loop: FxHashMap::default(),
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             reduced_unions: spare.reduced_unions,
@@ -1699,6 +1714,11 @@ pub struct Checker<'p, 's> {
     /// other than the task's. It then records nothing for the end of `checkSourceFile`, which is
     /// the file walk's job, and it checks the calls that it visits.
     is_checking_in_flow_loop: bool,
+    /// The innermost `before_check_in_flow_loop` whose `check_expression_in_flow_loop` hasn't returned.
+    check_in_flow_loop: Option<CheckInFlowLoop>,
+    /// The types and signatures that follow from a loop's incomplete type, each with the `work` of
+    /// the check that computed it. They're for the second visit of that check.
+    checked_in_flow_loop: FxHashMap<Query, (u64, u64)>,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,
@@ -3804,6 +3824,14 @@ impl<'p, 's> Checker<'p, 's> {
         // any other non-cacheable frame. It's also requested from places where the loop isn't visible, where a result
         // that follows from a loop isn't a hit. Every use would then recompute it, and nested uses cost uses ^ depth.
         let flow = frame.incomplete_flow && self.is_in_flow_loop();
+        // The result of a check that was cut short isn't remembered.
+        if flow
+            && matches!(q, Query::Expr(..) | Query::Call(..))
+            && let Some(check) = self.check_in_flow_loop
+            && check.interruptions == self.interruptions()
+        {
+            self.checked_in_flow_loop.insert(q, (raw, check.work));
+        }
         // tsgo recomputes it, and then finds the loop in `flowLoopCache`, whereas this computation
         // only saw the types collected so far.
         if flow && self.is_flow_loop_cached_since(frame.serial) {
@@ -3863,7 +3891,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Returns the result that `cache_provisionally` stored for `q`, if it's still valid.
     #[inline]
     fn provisional(&mut self, q: Query) -> Option<u64> {
-        if self.provisional.is_empty() {
+        if self.provisional.is_empty() && self.check_in_flow_loop.is_none() {
             return None;
         }
         cold_path();
@@ -3872,6 +3900,16 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline(never)]
     fn provisional_hit(&mut self, q: Query) -> Option<u64> {
+        // Not where `checkExpressionCached` has emptied `flowLoopStack`, as below.
+        if let Some(check) = self.check_in_flow_loop
+            && let Some(&(raw, computed_by)) = self.checked_in_flow_loop.get(&q)
+            && check.is_second_visit
+            && computed_by == check.work
+            && self.is_flow_loop_visible(check.height)
+        {
+            self.taint_from(check.height);
+            return Some(raw);
+        }
         if self.stack.is_empty() {
             // `clear` costs O(capacity).
             if self.provisional.capacity() > 1024 {

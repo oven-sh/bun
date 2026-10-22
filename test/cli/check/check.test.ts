@@ -10910,6 +10910,33 @@ export function f() {
       expect(exitCode).toBe(1);
     });
 
+    test("checks each part of an expression once per request while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => { kind: string };
+declare const list: number[];
+export function f(o: { kind: string }, maybe: { kind: string } | undefined) {
+  fail();
+  for (const item of list) {
+    while (maybe?.kind === "a") {}
+    for (; (c && c) || c; maybe = o) {
+      switch (true) {
+        case make().kind === "a":
+          break;
+      }
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(
+        `"a.ts(8,19): error TS2339: Property 'kind' does not exist on type 'never'."`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

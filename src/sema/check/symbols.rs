@@ -2781,10 +2781,21 @@ impl<'p, 's> Checker<'p, 's> {
         ty
     }
 
-    /// Call before `type_of_expr(e)`. Returns the argument for `check_expression_in_flow_loop`: the length of
-    /// `reported`, and `interruptions`.
-    pub(super) fn before_check_in_flow_loop(&self) -> (usize, (u64, u64, u64)) {
-        (self.reported.len(), self.interruptions())
+    /// Call before `type_of_expr(e)`. Returns the arguments for `check_expression_in_flow_loop`, which visits `e` a
+    /// second time. The two are one `checkExpression` call, so the second visit finds what the first has computed.
+    pub(super) fn before_check_in_flow_loop(&mut self) -> [Option<CheckInFlowLoop>; 2] {
+        let check = CheckInFlowLoop {
+            work: self.work,
+            height: self.stack.len(),
+            reported: self.reported.len(),
+            interruptions: self.interruptions(),
+            is_second_visit: false,
+        };
+        let check = (!self.flow_loops.is_empty()).then_some(check);
+        [
+            check,
+            std::mem::replace(&mut self.check_in_flow_loop, check),
+        ]
     }
 
     /// Call after `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is
@@ -2795,18 +2806,27 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         e: ExprId,
-        (reported, cuts): (usize, (u64, u64, u64)),
+        [check, outer_check]: [Option<CheckInFlowLoop>; 2],
     ) {
-        if !self.is_in_flow_loop() {
-            return;
+        if let Some(check) = check
+            && self.is_in_flow_loop()
+        {
+            self.check_in_flow_loop = Some(CheckInFlowLoop {
+                is_second_visit: true,
+                ..check
+            });
+            let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+            self.check_expression(file, e);
+            self.is_checking_in_flow_loop = outer;
+            // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
+            // which drop them, and the task that completes the check becomes the owner.
+            if check.interruptions == self.interruptions() {
+                self.log_reported_in_flow_loop(check.reported, file, e);
+            }
         }
-        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
-        self.check_expression(file, e);
-        self.is_checking_in_flow_loop = outer;
-        // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
-        // which drop them, and the task that completes the check becomes the owner.
-        if cuts == self.interruptions() {
-            self.log_reported_in_flow_loop(reported, file, e);
+        self.check_in_flow_loop = outer_check;
+        if outer_check.is_none() && !self.checked_in_flow_loop.is_empty() {
+            self.checked_in_flow_loop.clear();
         }
     }
 

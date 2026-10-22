@@ -204,9 +204,9 @@ impl<'p> Checker<'p, '_> {
         } else if self.is_rechecking() {
             self.check_expression_ex(file, location, CheckMode::empty())
         } else {
-            let outside = self.type_only_node.take();
+            let outside = (self.type_only_node.take(), self.check_in_flow_loop.take());
             let ty = self.check_expression_again(file, location);
-            self.type_only_node = outside;
+            (self.type_only_node, self.check_in_flow_loop) = outside;
             ty
         };
         let start = self.start_inside_parentheses(file, location);

@@ -388,6 +388,17 @@ pub struct ParseOptions<'a> {
     /// command.
     pub unknown_long_flags_are_errors: bool,
     pub ignored_long_flags: IgnoredLongFlags,
+    /// Rules of this parse for params of the table, each named by its long name without the dashes.
+    pub param_rules: &'static [(&'static [u8], ParamRule)],
+}
+
+/// How one command reads a param of a table that it shares with other commands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ParamRule {
+    /// The command does not have the param. Its flags are read like the flags of no param.
+    Absent,
+    /// The short flag takes no glued value: `-w client` and `-w=client` parse, `-wclient` fails.
+    SeparateValue,
 }
 
 /// Long flags, written without the dashes, that are skipped instead of failing the parse when
@@ -519,6 +530,7 @@ pub fn parse<Id: 'static>(
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
             ignored_long_flags: opt.ignored_long_flags,
+            param_rules: opt.param_rules,
         },
     )?;
     Ok(Args { clap })
@@ -542,6 +554,7 @@ pub fn parse_with_table<Id: 'static>(
             unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
             unknown_long_flags_are_errors: opt.unknown_long_flags_are_errors,
             ignored_long_flags: opt.ignored_long_flags,
+            param_rules: opt.param_rules,
         },
     )?;
     Ok(Args { clap })

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, isMacOS, isMusl, isWindows, MAX_PATH_BYTES, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -246,6 +246,71 @@ describe("bun", () => {
   describe.skipIf(isWindows)("completions", () => {
     const bunxName = isDebug ? "bunx-debug" : "bunx";
 
+    // Puts a private copy of the executable at `exe`, so that the first candidate location, the
+    // executable's own directory, is inside the temporary directory.
+    function bunxInstaller(dir: string, exe: string | Buffer = join(dir, "bin", "bun")) {
+      if (isMacOS) {
+        // Not a hardlink: macOS resolves a path through fcntl(F_GETPATH), which names a file with
+        // several links by whichever name was looked up last. Other tests run bunExe() all the time,
+        // so the realpath of a link to it sometimes is bunExe() itself. A clone is a file of its own
+        // and costs nothing on APFS.
+        fs.copyFileSync(bunExe(), exe, fs.constants.COPYFILE_FICLONE);
+      } else {
+        // A hardlink avoids copying the binary; fall back to a copy when the temporary directory is
+        // on another filesystem.
+        try {
+          fs.linkSync(fs.realpathSync(bunExe()), exe);
+        } catch {
+          fs.copyFileSync(bunExe(), exe);
+        }
+      }
+
+      return async function installBunx(env: Record<string, string | undefined>, cmd = [String(exe), "completions"]) {
+        await using proc = Bun.spawn({
+          cmd,
+          // No bunx on PATH, so the symlink gets installed. No SHELL, so the command stops right
+          // after that step instead of writing shell completions.
+          env: { ...bunEnv, PATH: join(dir, "empty-path"), SHELL: undefined, BUN_INSTALL: undefined, ...env },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain("Unknown or unsupported shell");
+        expect(exitCode).toBe(1);
+      };
+    }
+
+    // A JavaScript string cannot hold a lone 0xE9 byte. So a shell script, written as raw bytes,
+    // sets $HOME and runs `exe completions`.
+    function withRawHome(dir: string, home: Buffer, exe: string | Buffer) {
+      const script = join(dir, "raw-home.sh");
+      fs.writeFileSync(
+        script,
+        Buffer.concat([
+          Buffer.from("HOME='"),
+          home,
+          Buffer.from("'; export HOME; exec '"),
+          Buffer.from(exe),
+          Buffer.from("' completions\n"),
+        ]),
+      );
+      return ["/bin/sh", script];
+    }
+
+    // Makes a directory under `base` whose path is exactly `length` bytes long.
+    function nestedDir(base: string, length: number) {
+      let path = base;
+      while (Buffer.byteLength(path) < length) {
+        const room = length - Buffer.byteLength(path) - 1;
+        // 101 bytes of room take a name of 99, so that a separator and a name are left.
+        path += "/" + Buffer.alloc(room === 101 ? 99 : Math.min(100, room), "d").toString();
+      }
+      expect(Buffer.byteLength(path)).toBe(length);
+      fs.mkdirSync(path, { recursive: true });
+      return path;
+    }
+
     test("installs a bunx symlink to the executable, falling back through the install directories", async () => {
       using dir = tempDir("completions-bunx", {
         "bin": {},
@@ -255,32 +320,9 @@ describe("bun", () => {
         "home-bun": { ".bun": { bin: {} } },
         "home-local": { ".local": { bin: {} } },
       });
-      // Run a private copy of the executable so that the first candidate location, the executable's
-      // own directory, is inside the temporary directory. A hardlink avoids copying the binary; fall
-      // back to a copy when the temporary directory is on another filesystem.
-      const exe = join(String(dir), "bin", "bun");
-      try {
-        fs.linkSync(fs.realpathSync(bunExe()), exe);
-      } catch {
-        fs.copyFileSync(bunExe(), exe);
-      }
+      const installBunx = bunxInstaller(String(dir));
       // The link is created against the resolved executable path.
-      const exeRealpath = fs.realpathSync(exe);
-
-      async function installBunx(env: Record<string, string | undefined>) {
-        await using proc = Bun.spawn({
-          cmd: [exe, "completions"],
-          // No bunx on PATH, so the symlink gets installed. No SHELL, so the command stops right
-          // after that step instead of writing shell completions.
-          env: { ...bunEnv, PATH: join(String(dir), "empty-path"), SHELL: undefined, BUN_INSTALL: undefined, ...env },
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout).toBe("");
-        expect(stderr).toContain("Unknown or unsupported shell");
-        expect(exitCode).toBe(1);
-      }
+      const exeRealpath = fs.realpathSync(join(String(dir), "bin", "bun"));
 
       // 1. Next to the executable.
       await installBunx({ HOME: join(String(dir), "home-empty") });
@@ -298,6 +340,95 @@ describe("bun", () => {
       // 4. $HOME/.local/bin, once $HOME/.bun/bin does not exist.
       await installBunx({ HOME: join(String(dir), "home-local") });
       expect(fs.readlinkSync(join(String(dir), "home-local", ".local", "bin", bunxName))).toBe(exeRealpath);
+    });
+
+    test("skips a bunx symlink location that is too long for a path", async () => {
+      using dir = tempDir("completions-bunx-long", {
+        "bin": {},
+        "empty-path": {},
+        "home": { ".bun": { bin: {} } },
+      });
+      const installBunx = bunxInstaller(String(dir));
+      const exeRealpath = fs.realpathSync(join(String(dir), "bin", "bun"));
+      // The executable's own directory has a bunx already, so the search goes on to $BUN_INSTALL/bin.
+      fs.symlinkSync(exeRealpath, join(String(dir), "bin", bunxName));
+
+      await installBunx({
+        BUN_INSTALL: join(String(dir), Buffer.alloc(5000, "a").toString()),
+        HOME: join(String(dir), "home"),
+      });
+      expect(fs.readlinkSync(join(String(dir), "home", ".bun", "bin", bunxName))).toBe(exeRealpath);
+    });
+
+    // A path and its NUL fit in MAX_PATH_BYTES: 4095 bytes on Linux, 1023 on macOS.
+    test("installs the bunx symlink at the longest path, and skips a longer one", async () => {
+      using dir = tempDir("completions-bunx-limit", { "bin": {}, "empty-path": {} });
+      const installBunx = bunxInstaller(String(dir));
+      const exeRealpath = fs.realpathSync(join(String(dir), "bin", "bun"));
+      fs.symlinkSync(exeRealpath, join(String(dir), "bin", bunxName));
+      const link = `/.local/bin/${bunxName}`;
+
+      const fits = nestedDir(join(String(dir), "fits"), MAX_PATH_BYTES - 1 - link.length);
+      fs.mkdirSync(join(fits, ".local", "bin"), { recursive: true });
+      await installBunx({ HOME: fits });
+      expect(fs.readlinkSync(fits + link)).toBe(exeRealpath);
+
+      // One byte more.
+      const tooLong = nestedDir(join(String(dir), "too-long"), MAX_PATH_BYTES - link.length);
+      fs.mkdirSync(join(tooLong, ".local", "bin"), { recursive: true });
+      await installBunx({ HOME: tooLong });
+      expect(fs.readdirSync(join(tooLong, ".local", "bin"))).toEqual([]);
+    });
+
+    // This location needs no environment variable: the path is the executable's directory.
+    test.each([
+      ["is made when its path fits", 0],
+      ["is skipped when its path is one byte too long", 1],
+    ])("the bunx symlink beside the executable %s", async (_, extra) => {
+      using dir = tempDir("completions-bunx-exe-limit", { "empty-path": {}, "home": { ".local": { bin: {} } } });
+      const exeDir = nestedDir(join(String(dir), "x"), MAX_PATH_BYTES - 2 - bunxName.length + extra);
+      const installBunx = bunxInstaller(String(dir), join(exeDir, "bun"));
+      const exeRealpath = fs.realpathSync(join(exeDir, "bun"));
+      const home = join(String(dir), "home");
+
+      await installBunx({ HOME: home });
+      expect({
+        besideTheExecutable: fs.readdirSync(exeDir).sort(),
+        inHome: fs.readdirSync(join(home, ".local", "bin")),
+      }).toEqual(
+        extra
+          ? { besideTheExecutable: ["bun"], inHome: [bunxName] }
+          : { besideTheExecutable: ["bun", bunxName], inHome: [] },
+      );
+      const made = extra ? join(home, ".local", "bin", bunxName) : join(exeDir, bunxName);
+      expect(fs.readlinkSync(made)).toBe(exeRealpath);
+    });
+
+    // Linux accepts any bytes in a file name. macOS refuses a name that is not UTF-8.
+    test.skipIf(!isLinux)("installs the bunx symlink in directories whose names are not valid UTF-8", async () => {
+      using dir = tempDir("completions-bunx-raw", { "empty-path": {} });
+      const under = (base: Buffer, path: string) => Buffer.concat([base, Buffer.from(path)]);
+      const home = Buffer.concat([Buffer.from(join(String(dir), "jos")), Buffer.from([0xe9])]);
+      fs.mkdirSync(under(home, "/.bun/bin"), { recursive: true });
+      fs.mkdirSync(under(home, "/.local/bin"), { recursive: true });
+      const exe = under(home, "/.bun/bin/bun");
+      const installBunx = bunxInstaller(String(dir), exe);
+      const exeRealpath = fs.realpathSync(exe, "buffer");
+
+      // 1. Next to the executable, which is in $HOME/.bun/bin.
+      await installBunx({}, withRawHome(String(dir), home, exe));
+      expect(fs.readlinkSync(under(home, `/.bun/bin/${bunxName}`), "buffer")).toEqual(exeRealpath);
+
+      // 2. $HOME/.local/bin, now that $HOME/.bun/bin has one.
+      await installBunx({}, withRawHome(String(dir), home, exe));
+      expect(fs.readlinkSync(under(home, `/.local/bin/${bunxName}`), "buffer")).toEqual(exeRealpath);
+
+      // 3. A $HOME with 1400 such bytes. It fits in a path. With a 3-byte U+FFFD for each it does not.
+      let long = Buffer.from(String(dir));
+      for (let i = 0; i < 7; i++) long = Buffer.concat([long, Buffer.from("/"), Buffer.alloc(200, 0xe9)]);
+      fs.mkdirSync(under(long, "/.bun/bin"), { recursive: true });
+      await installBunx({}, withRawHome(String(dir), long, exe));
+      expect(fs.readlinkSync(under(long, `/.bun/bin/${bunxName}`), "buffer")).toEqual(exeRealpath);
     });
 
     test("reports that PowerShell completions do not exist when $SHELL is pwsh", async () => {
@@ -345,9 +476,13 @@ describe("bun", () => {
     });
 
     // IS_BUN_AUTO_UPDATE is what `bun upgrade` sets: the file is installed although stdout is a pipe.
-    async function installCompletions(args: string[], env: Record<string, string | undefined>) {
+    async function installCompletions(
+      args: string[],
+      env: Record<string, string | undefined>,
+      cmd = [bunExe(), "completions", ...args],
+    ) {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "completions", ...args],
+        cmd,
         env: {
           ...bunEnv,
           BUN_INSTALL: undefined,
@@ -387,6 +522,8 @@ describe("bun", () => {
     describe("zsh", () => {
       const zsh = (home: string) =>
         installCompletions([join(home, ".bun")], { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh" });
+      // What the command appends to a .zshrc when the completions file is at `path`.
+      const line = (path: string) => `\n# bun completions\n[ -s "${path}" ] && source "${path}"\n`;
 
       test.concurrent.each([
         '[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"',
@@ -412,6 +549,101 @@ describe("bun", () => {
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
         expect((await zsh(String(dir))).exitCode).toBe(0);
         expect(fs.readFileSync(join(String(dir), ".zshrc"), "utf8")).toBe(added);
+      });
+
+      test.concurrent.each([
+        ["is edited when its path fits", 0],
+        ["is skipped when its path is one byte too long, and $HOME/.zshrc is edited", 1],
+      ])("$ZDOTDIR/.zshrc %s", async (_, extra) => {
+        const zshrc = 'export PATH="/usr/local/bin:$PATH"\n';
+        using dir = tempDir("completions-zdotdir-limit", { ".bun/.keep": "", ".zshrc": zshrc });
+        const home = fs.realpathSync(String(dir));
+        const zdotdir = nestedDir(join(home, "z"), MAX_PATH_BYTES - 1 - "/.zshrc".length + extra);
+        if (!extra) fs.writeFileSync(join(zdotdir, ".zshrc"), zshrc);
+
+        const { exitCode } = await installCompletions([join(home, ".bun")], {
+          HOME: home,
+          ZDOTDIR: zdotdir,
+          SHELL: "/bin/zsh",
+        });
+        const edited = zshrc + line(join(home, ".bun", "_bun"));
+        expect(fs.readFileSync(join(home, ".zshrc"), "utf8")).toBe(extra ? edited : zshrc);
+        if (!extra) expect(fs.readFileSync(join(zdotdir, ".zshrc"), "utf8")).toBe(edited);
+        expect(exitCode).toBe(0);
+      });
+
+      // "/_bun" takes 5 of the bytes of a path. No shell can open a longer path, so that file gets
+      // no line.
+      test.concurrent.each([
+        [MAX_PATH_BYTES - 6, true],
+        [MAX_PATH_BYTES - 5, false],
+        [MAX_PATH_BYTES - 1, false],
+      ])("the file in a completions directory of %d bytes gets a line in .zshrc: %p", async (length, fits) => {
+        const zshrc = 'export PATH="/usr/local/bin:$PATH"\n';
+        using dir = tempDir("completions-zsh-deep", { ".zshrc": zshrc });
+        const home = fs.realpathSync(String(dir));
+        const deep = nestedDir(home, length);
+
+        const { stderr, exitCode } = await installCompletions([deep], { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh" });
+        expect(fs.readdirSync(deep)).toEqual(["_bun"]);
+        expect(fs.readFileSync(join(home, ".zshrc"), "utf8")).toBe(fits ? zshrc + line(`${deep}/_bun`) : zshrc);
+        expect(stderr).not.toContain("To enable completions");
+        expect(exitCode).toBe(0);
+      });
+
+      // The path of the file is what the hint shows, and what stops a second edit of a .zshrc that
+      // has the line without the "# bun completions" comment.
+      test.concurrent.each([
+        ["an argument", (comp: string) => ({ args: [comp], env: {} })],
+        ["an argument with a trailing slash", (comp: string) => ({ args: [`${comp}/`], env: {} })],
+        ["$BUN_INSTALL with a trailing slash", (comp: string) => ({ args: [], env: { BUN_INSTALL: `${comp}/` } })],
+      ])("finds the line of the hint again when the directory is %s", async (_, given) => {
+        using dir = tempDir("completions-zshrc-hint", { "comp": {} });
+        const home = fs.realpathSync(String(dir));
+        const { args, env } = given(join(home, "comp"));
+        const run = () => installCompletions(args, { HOME: home, ZDOTDIR: home, SHELL: "/bin/zsh", ...env });
+        const hint = `[ -s "${home}/comp/_bun" ] && source "${home}/comp/_bun"\n`;
+
+        expect((await run()).stderr).toContain(`To enable completions, add this to your .zshrc:\n      ${hint}`);
+
+        fs.writeFileSync(join(home, ".zshrc"), hint);
+        const { stderr, exitCode } = await run();
+        expect(stderr).not.toContain("To enable completions");
+        expect(fs.readFileSync(join(home, ".zshrc"), "utf8")).toBe(hint);
+        expect(exitCode).toBe(0);
+      });
+
+      // /dev/zero has no end. The read fills the buffer, so the end of the file is not known and
+      // there is no room for the line.
+      test.concurrent("tells the user what to add when the .zshrc does not end", async () => {
+        using dir = tempDir("completions-zshrc-endless", { ".bun/.keep": "" });
+        fs.symlinkSync("/dev/zero", join(String(dir), ".zshrc"));
+
+        const { stderr, exitCode } = await zsh(String(dir));
+        expect(stderr).toContain("To enable completions, add this to your .zshrc:");
+        expect(exitCode).toBe(0);
+      });
+
+      // A .zshrc of over 64 KB leaves the line only the room that is reserved for it. With a 3-byte
+      // U+FFFD for each byte that is not UTF-8, this path does not fit in that room.
+      test.concurrent.skipIf(!isLinux)("writes a path that is not valid UTF-8 to .zshrc as it is", async () => {
+        using dir = tempDir("completions-zshrc-raw", {});
+        const zshrc = Buffer.alloc(72 * 1024, "# filler\n");
+        const home = Buffer.concat([Buffer.from(join(fs.realpathSync(String(dir)), "zsh")), Buffer.alloc(200, 0xe9)]);
+        const dotZshrc = Buffer.concat([home, Buffer.from("/.zshrc")]);
+        fs.mkdirSync(Buffer.concat([home, Buffer.from("/.bun")]), { recursive: true });
+        fs.writeFileSync(dotZshrc, zshrc);
+
+        const { exitCode } = await installCompletions(
+          [],
+          { ZDOTDIR: undefined, SHELL: "/bin/zsh" },
+          withRawHome(String(dir), home, bunExe()),
+        );
+        const written = fs.readFileSync(dotZshrc);
+        // latin1 keeps every byte, and a failure prints a diff that a person can read.
+        expect(written.subarray(zshrc.length).toString("latin1")).toBe(line(`${home.toString("latin1")}/.bun/_bun`));
+        expect(written.subarray(0, zshrc.length).equals(zshrc)).toBe(true);
+        expect(exitCode).toBe(0);
       });
     });
   });

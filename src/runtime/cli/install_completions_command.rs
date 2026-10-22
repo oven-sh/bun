@@ -35,32 +35,24 @@ impl InstallCompletionsCommand {
             return Ok(());
         }
 
-        // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
         let mut link_buf = bun_paths::path_buffer_pool::get();
-        let link_path = buf_print_z(
-            &mut link_buf,
-            format_args!(
-                "{}/{}",
-                bstr::BStr::new(bun_core::dirname(exe).expect("exe has dirname")),
-                Self::BUNX_NAME
-            ),
-        );
-        if bun_sys::symlink(exe, link_path).is_ok() {
-            return Ok(());
-        }
-
         for (dir, bin_dir) in [
-            (env_var::BUN_INSTALL.get(), "bin"),
-            (env_var::HOME.get(), ".bun/bin"),
-            (env_var::HOME.get(), ".local/bin"),
+            // first try installing the symlink into the same directory as the bun executable
+            (bun_core::dirname(exe), b"/".as_slice()),
+            (env_var::BUN_INSTALL.get(), b"/bin/".as_slice()),
+            (env_var::HOME.get(), b"/.bun/bin/".as_slice()),
+            (env_var::HOME.get(), b"/.local/bin/".as_slice()),
         ] {
             let Some(dir) = dir else { continue };
-            let link_path = buf_print_z(
-                &mut link_buf,
-                format_args!("{}/{}/{}", bstr::BStr::new(dir), bin_dir, Self::BUNX_NAME),
-            );
-            if bun_sys::symlink(exe, link_path).is_ok() {
+            // Raw bytes: a formatted path has U+FFFD in place of each byte that is not UTF-8.
+            let Ok(link_path) = strings::concat_buf_t::<u8>(
+                &mut link_buf[..],
+                &[dir, bin_dir, Self::BUNX_NAME.as_bytes(), b"\0"],
+            ) else {
+                continue;
+            };
+            if bun_sys::symlink(exe, bun_core::ZStr::from_slice_with_nul(link_path)).is_ok() {
                 return Ok(());
             }
         }
@@ -456,12 +448,15 @@ impl InstallCompletionsCommand {
             let _ = bun_sys::close(output_dir);
 
             // Check if they need to load the zsh completions file into their .zshrc
-            if shell == Shell::Zsh {
-                let mut completions_path_buf = bun_paths::path_buffer_pool::get();
-                let completions_path: &[u8] = resolve_path::join_string_buf::<platform::Auto>(
-                    &mut completions_path_buf,
+            // No shell can open a path that does not fit, so such a path gets no line.
+            if shell == Shell::Zsh
+                && let mut completions_path_buf = bun_paths::path_buffer_pool::get()
+                && let Some(completions_path) = resolve_path::join_z_buf_checked::<platform::Auto>(
+                    &mut completions_path_buf[..],
                     &[completions_dir, filename],
-                );
+                )
+            {
+                let completions_path: &[u8] = completions_path.as_bytes();
                 let mut zshrc_filepath = bun_paths::path_buffer_pool::get();
                 let needs_to_tell_them_to_add_completions_file: bool = 'brk: {
                     let dot_zshrc: File = 'zshrc: {
@@ -472,12 +467,14 @@ impl InstallCompletionsCommand {
                             (env_var::HOME.get(), b"/.zshenv".as_slice()),
                         ] {
                             let Some(dir) = dir else { continue };
-                            let len = dir.len() + name.len();
-                            zshrc_filepath[..dir.len()].copy_from_slice(dir);
-                            zshrc_filepath[dir.len()..len].copy_from_slice(name);
-                            zshrc_filepath[len] = 0;
+                            let Ok(path) = strings::concat_buf_t::<u8>(
+                                &mut zshrc_filepath[..],
+                                &[dir, name, b"\0"],
+                            ) else {
+                                continue;
+                            };
                             if let Ok(f) = bun_sys::open_file_absolute_z(
-                                bun_core::ZStr::from_buf(&zshrc_filepath[..], len),
+                                bun_core::ZStr::from_slice_with_nul(path),
                                 bun_sys::OpenFlags::READ_WRITE,
                             ) {
                                 break 'zshrc f;
@@ -512,14 +509,19 @@ impl InstallCompletionsCommand {
                     // Okay, we need to add it
 
                     // We need to add it to the end of the file
-                    let remaining = &mut buf[read..];
-                    let extra = buf_print(
-                        remaining,
-                        format_args!(
-                            "\n# bun completions\n[ -s \"{0}\" ] && source \"{0}\"\n",
-                            bstr::BStr::new(completions_path)
-                        ),
-                    );
+                    // Without room for the line, the file is longer than fstat said.
+                    let Ok(extra) = strings::concat_buf_t::<u8>(
+                        &mut buf[read..],
+                        &[
+                            b"\n# bun completions\n[ -s \"",
+                            completions_path,
+                            b"\" ] && source \"",
+                            completions_path,
+                            b"\"\n",
+                        ],
+                    ) else {
+                        break 'brk true;
+                    };
 
                     if dot_zshrc
                         .pwrite_all(extra, i64::try_from(read).expect("int cast"))
@@ -551,6 +553,3 @@ impl InstallCompletionsCommand {
         }
     }
 }
-
-#[cfg(not(windows))]
-use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};

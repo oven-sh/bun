@@ -2728,6 +2728,19 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        if constexpr (checkPrototypes) {
+            bool membersEqual = NodeCollections { deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, {} }.setsEqual(set1, set2);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!membersEqual) {
+                return false;
+            }
+            if (sameStructureWithoutOwnProperties(c1, c2)) {
+                return true;
+            }
+            // node also compares own enumerable properties of Sets.
+            break;
+        }
+
         auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
         JSValue key1;
         while (iter1->next(globalObject, key1)) {
@@ -2756,10 +2769,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Sets.
-            break;
-        }
         return true;
     }
     case JSMapType: {
@@ -2773,6 +2782,19 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (leftSize != map2->size()) {
             return false;
+        }
+
+        if constexpr (checkPrototypes) {
+            bool entriesEqual = NodeCollections { deepEqualsMode<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>, globalObject, gcBuffer, stack, scope, {} }.mapsEqual(map1, map2);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!entriesEqual) {
+                return false;
+            }
+            if (sameStructureWithoutOwnProperties(c1, c2)) {
+                return true;
+            }
+            // node also compares own enumerable properties of Maps.
+            break;
         }
 
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
@@ -2810,10 +2832,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Maps.
-            break;
-        }
         return true;
     }
     case ArrayBufferType:
@@ -3930,6 +3948,12 @@ bool Bun__deepEqualsNodeStrict(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue
 bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
 {
     return deepEqualsWrapperImpl<true, false, true, true>(JSValue0, JSValue1, globalObject);
+}
+
+// node:assert deepEqual / notDeepEqual: node's loose mode (kLoose).
+bool Bun__deepEqualsNodeLoose(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject)
+{
+    return deepEqualsWrapperImpl<false, false, true, true>(JSValue0, JSValue1, globalObject);
 }
 
 #undef IMPL_DEEP_EQUALS_WRAPPER

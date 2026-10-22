@@ -8669,6 +8669,53 @@ export const u: [number] | [number, string] = [1, 2];
       expect(exitCode).toBe(1);
     });
 
+    test("checks the callee again after the quick type of a call, and after the test for a recursive call", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+declare const make: () => { kind: string };
+declare const id: <T>(value: T) => T;
+declare class Box { kind: string }
+export function statement() {
+  fail();
+  while (c || c) { make(); }
+}
+export function initializer() {
+  fail();
+  while (c || c) { const made = make(); }
+}
+export function generic() {
+  fail();
+  while (c || c) { const made = id(1); }
+}
+export function construct(box: typeof Box) {
+  fail();
+  while (c || c) { const made = new box(); }
+}
+export function returned() {
+  fail();
+  while (c || c) { if (c) return make(); }
+}
+export const inferredFirst = () => {
+  fail();
+  while (c || c) { if (c) return make(); }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,33): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(16,33): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures.
+        a.ts(20,37): error TS2351: This expression is not constructable.
+          Type 'never' has no construct signatures.
+        a.ts(28,34): error TS2349: This expression is not callable.
+          Type 'never' has no call signatures."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("narrows with an assertion method called on a mapped type or on a union that declares it once", async () => {
       using dir = project({
         "a.ts": `type Asserts = { isStr(v: unknown): asserts v is string };

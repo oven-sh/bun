@@ -2752,7 +2752,12 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(pushed_at) = loop_pushed_at {
                 self.taint_from(pushed_at);
             }
-            let quick = self.quick_type_of_expr(file, e);
+            // Nothing keeps the type of the callee. The check of the call checks it again.
+            let quick = if self.flow_type_cache_depth == usize::MAX {
+                self.outside_flow_loops(|c| c.quick_type_of_expr(file, e))
+            } else {
+                self.quick_type_of_expr(file, e)
+            };
             self.quick_initializers.pop();
             let _ = self.leave(Query::Expr(file, e));
             if let Some(quick) = quick {
@@ -4767,7 +4772,8 @@ impl<'p, 's> Checker<'p, 's> {
         if !matches!(hir[callee].kind, ExprKind::Ident(_)) || is_parenthesized(hir, callee) {
             return false;
         }
-        let ty = self.check_expression_cached_ex(file, callee, CheckMode::empty());
+        let ty = self
+            .outside_flow_loops(|c| c.check_expression_cached_ex(file, callee, CheckMode::empty()));
         self.is_type_of_function_symbol(ty, file, func)
             && (!matches!(hir[func].kind, FnKind::Expr | FnKind::Arrow) || {
                 let reference = self.reference_of(file, callee);

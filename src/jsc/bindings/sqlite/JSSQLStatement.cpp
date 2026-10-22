@@ -189,8 +189,8 @@ public:
     const WebCore::ScriptExecutionContextIdentifier graphContext;
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
     // Statements that no JSSQLStatement owns anymore but that aren't finalized yet. The GC moves a statement here when
-    // finalizing it would run JS (Bun::sqliteCommitsWhenFinalized). The next call on the connection finalizes it, or
-    // closeIfDrained() does if the connection is closed and its last statement is gone.
+    // finalizing it would call the update hook (Bun::sqliteCommitsWhenFinalized). The next call on the connection
+    // finalizes it, or closeIfDrained() does if the connection is closed and its last statement is gone.
     WTF::Vector<sqlite3_stmt*> orphans;
     // db.handle
     const uint64_t handleNumber;
@@ -201,8 +201,8 @@ public:
     // SQLite is calling script of the user from inside a statement of this connection. To reset or finalize that
     // statement now, or to close the connection, frees what SQLite returns to. So every call on the connection throws.
     bool inCallback = false;
-    // True if the connection has ever had an update hook or a user function.
-    bool hasCallbacks = false;
+    // True if the connection has ever had an update hook.
+    bool hasUpdateHook = false;
 
     sqlite3* handle() const { return closed ? nullptr : db; }
 
@@ -282,7 +282,9 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
             record->abandonStatements();
         else if (record->db) {
             Bun__sqliteCheckpointForTermination(record->db);
-            record->closeHandle();
+            // This finalizes the statements before it closes. sqlite3_close_v2() discards the entries that a full-text
+            // index hasn't written yet, so a write finalized after it would commit rows that are missing from the index.
+            record->close(true, false);
         }
     }
 }
@@ -587,11 +589,11 @@ public:
 
     ~JSSQLStatement();
 
-    void finalizeStatement()
+    void finalizeStatement(bool mayCallScript = true)
     {
         if (!stmt)
             return;
-        sqlite3_finalize(std::exchange(stmt, nullptr));
+        Bun::sqliteFinalize(std::exchange(stmt, nullptr), mayCallScript);
         if (version_db)
             version_db->closeIfDrained();
     }
@@ -1772,7 +1774,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDefineFunction, (JSC::JSGlobalObject * le
     }
 
     database->m_callbacks.set(vm, database, name, argumentCount, roots);
-    versionDB->hasCallbacks = true;
     return JSValue::encode(jsUndefined());
 }
 
@@ -1793,6 +1794,8 @@ static std::optional<unsigned> updateHookIndex(int operation)
 // What runs the statement (a JSSQLStatement, db.run()) keeps the cell alive.
 static void callUpdateHook(void* cell, int operation, const char* schema, const char* table, sqlite3_int64 rowid)
 {
+    if (Bun::sqliteScriptIsForbidden) [[unlikely]]
+        return;
     auto* database = static_cast<JSSQLDatabase*>(cell);
     auto index = updateHookIndex(operation);
     JSObject* hook = index ? database->m_updateHooks[*index].get() : nullptr;
@@ -1878,7 +1881,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSetUpdateHookFunction, (JSC::JSGlobalObje
     database->m_wrapper.setMayBeNull(vm, database, hasHook ? callFrame->argument(3).getObject() : nullptr);
     database->m_safeIntegers = callFrame->argument(4).isInt32() && (callFrame->argument(4).asInt32() & kSafeIntegersFlag);
     sqlite3_update_hook(db, hasHook ? callUpdateHook : nullptr, database);
-    database->record().hasCallbacks |= hasHook;
+    database->record().hasUpdateHook |= hasHook;
     return JSValue::encode(jsUndefined());
 }
 
@@ -2616,13 +2619,13 @@ JSSQLStatement::~JSSQLStatement()
 {
     if (this->version_db) {
         this->version_db->statements.remove(this);
-        if (this->version_db->hasCallbacks && Bun::sqliteCommitsWhenFinalized(stmt)) {
+        if (this->version_db->hasUpdateHook && Bun::sqliteCommitsWhenFinalized(stmt)) {
             this->version_db->orphans.append(stmt);
             this->version_db->closeIfDrained();
             return;
         }
     }
-    finalizeStatement();
+    finalizeStatement(false);
 }
 
 void JSSQLStatement::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -2684,7 +2687,7 @@ int VersionSqlite3::close(bool force, bool mayCallScript)
         statement->finalizedByClose = true;
     }
     while (!orphans.isEmpty())
-        Bun::sqliteFinalize(orphans.takeLast(), mayCallScript || !hasCallbacks);
+        Bun::sqliteFinalize(orphans.takeLast(), mayCallScript);
     closed = true;
     if (!force) {
         closeIfDrained();
@@ -2733,7 +2736,7 @@ void VersionSqlite3::closeIfDrained()
         if (statement->stmt)
             return;
     }
-    // The GC can call this, so don't run JS. No statement is left for the interrupt to disturb.
+    // The GC can call this, so don't run JS.
     while (!orphans.isEmpty())
         Bun::sqliteFinalize(orphans.takeLast(), false);
     closeHandle();

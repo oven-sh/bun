@@ -224,6 +224,8 @@ pub enum Error {
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
+    JsPrinter(#[from] bun_js_printer::Error),
+    #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
     #[error(transparent)]
     Transpiler(#[from] bun_transpiler::Error),
@@ -372,6 +374,7 @@ impl Error {
             Self::PackageManifest(e) => <&'static str>::from(e),
             Self::Dotenv(e) => e.name(),
             Self::Parsers(e) => e.name(),
+            Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::Transpiler(e) => e.name(),
             Self::Paths(e) => e.name(),

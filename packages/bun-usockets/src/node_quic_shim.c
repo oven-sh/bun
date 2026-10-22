@@ -318,10 +318,11 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         if (i >= len) break;
         i++;
         unsigned char flags = (i < len) ? (unsigned char) buf[i++] : 0;
-        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
+        if (name_len >= LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
             return -1;
-        lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
-                                   val_off, val_len);
+        /* lsxpack asserts that offsets fit lsxpack_strlen_t, so they count from this pair's start. */
+        lsxpack_header_set_offset2(&hdrs[count], buf + name_off, 0, name_len,
+                                   val_off - name_off, val_len);
         if (flags & 1) {
             hdrs[count].flags = LSXPACK_NEVER_INDEX;
             hdrs[count].indexed_type = 2;

@@ -858,13 +858,13 @@ describe("a bun.lock written by Bun 1.4", () => {
       return { lock, dir: await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock }) };
     };
 
-    test.concurrent.each(frozen)("bun %s prints the entry and the rule", async command => {
+    test.concurrent.each(frozen)("bun %s installs the entry", async command => {
       const { dir, lock } = await held();
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
-      expect(stderr).toBe(
-        `error: lockfile had changes, but lockfile is frozen\nnote: bun.lock has ${saved.held}, overrides in package.json wants 1.0.0\nnote: try re-running without --frozen-lockfile and commit the updated lockfile`,
-      );
-      expect(exitCode).toBe(1);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const name = saved.held.slice(0, saved.held.indexOf("@"));
+      expect(nodeModulesPackages(dir)).toContain(`node_modules/${name}/${saved.held}`);
       expect(await lockfile(dir)).toBe(lock);
     });
 

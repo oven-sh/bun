@@ -18687,5 +18687,15 @@
       "a.ts": "/// <reference lib=\"QA\" />\n/// <reference lib=\"Qİ\" />\n/// <reference lib=\"QꟐ\" />\n/// <reference lib=\"QᲉ\" />\n/// <reference lib=\"QꟋ\" />\n/// <reference lib=\"QꟌ\" />\n/// <reference lib=\"Q꟎\" />\n/// <reference lib=\"QꟜ\" />\n/// <reference lib=\"Q𐵐\" />\n/// <reference lib=\"Q𖺠\" />\nexport const uA7CC: Uppercase<\"Ꟍ\"> = 0;\nexport const lA7CC: Lowercase<\"Ꟍ\"> = 0;\nexport const uA7CD: Uppercase<\"ꟍ\"> = 0;\nexport const lA7CD: Lowercase<\"ꟍ\"> = 0;\nexport const u264: Uppercase<\"ɤ\"> = 0;\nexport const l264: Lowercase<\"ɤ\"> = 0;\nexport const u10D50: Uppercase<\"𐵐\"> = 0;\nexport const l10D50: Lowercase<\"𐵐\"> = 0;\nexport const u16EBB: Uppercase<\"𖺻\"> = 0;\nexport const l16EBB: Lowercase<\"𖺻\"> = 0;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
     }
+  },
+  "inferred-type-is-a-module-in-a-nested-node-modules": {
+    "files": {
+      "a.ts": "import { K, viaImportType, viaNamespace } from \"outer\";\nexport const a = viaImportType();\nexport const b = viaNamespace();\nexport const c = new K().m;\nexport class D { m(x: typeof import(\"outer/node_modules/inner\")) { return x; } }\n",
+      "node_modules/outer/package.json": "{ \"name\": \"outer\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/index.d.ts": "import * as inner from \"inner\";\nexport declare function viaImportType(): typeof import(\"inner\");\nexport declare function viaNamespace(): typeof inner;\nexport declare class K { m(x: import(\"inner\").Inner): typeof import(\"inner\"); }\n",
+      "node_modules/outer/node_modules/inner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
+    }
   }
 }

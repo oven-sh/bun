@@ -28,7 +28,8 @@ const options = {
   module: "esnext",
   moduleResolution: "bundler",
 };
-const tsconfig = (more: object = {}) => JSON.stringify({ compilerOptions: { ...options, ...more } });
+const tsconfig = (more: object = {}, others: object = {}) =>
+  JSON.stringify({ compilerOptions: { ...options, ...more }, ...others });
 
 /** What `bun check` prints for a project of `files`, by line, and its exit code. */
 async function check(files: Record<string, string>, args: string[] = []) {
@@ -50,6 +51,14 @@ async function check(files: Record<string, string>, args: string[] = []) {
   return { lines, exitCode };
 }
 
+// What a program with `lib: []` needs: `--explainFiles` then lists no file of the library, whose path is not that of `tsc`.
+const globals = ["Array<T>", "Boolean", "CallableFunction", "Function", "IArguments", "NewableFunction"]
+  .concat(["Number", "Object", "RegExp", "String"])
+  .map(it => `interface ${it} {}\n`)
+  .join("");
+const notUnderRootDir = (file: string) =>
+  `error TS6059: File '<dir>/${file}' is not under 'rootDir' '<dir>/src'. 'rootDir' is expected to contain all source files.`;
+
 // A debug build that was just linked is read from the disk by the first process, and starts twenty processes together
 // too slowly for the five seconds that a test has by default. So a hook with the limit of a process starts the first
 // one, and the tests start one at a time.
@@ -58,6 +67,43 @@ beforeAll(async () => {
 }, longLimit);
 
 describe("bun check", () => {
+  // `collectModuleReferences`: only a statement of the file itself, or of an ambient module in it, is one of its
+  // imports. Nothing resolves the name of an import that is the statement of an `if`, a label or a loop.
+  describe("an import that is not a statement of its file adds no file", () => {
+    test("no error from inside a file that only such an import names, and no 6059 for it", async () => {
+      const wrong = `export const x: string = 1;\n`;
+      expect(
+        await check({
+          "tsconfig.json": tsconfig(
+            { lib: [], rootDir: "./src" },
+            { files: ["globals.d.ts", "src/if.ts", "src/label.ts", "src/loop.ts", "src/top.ts"] },
+          ),
+          "globals.d.ts": globals,
+          "src/if.ts": `if (true) import "../other/in-if";\nexport {};\n`,
+          "src/label.ts": `label: import { x } from "../other/in-label";\nexport {};\n`,
+          "src/loop.ts": `while (false) export * from "../other/in-loop";\nexport {};\n`,
+          "src/top.ts": `if (true) import "../other/in-if";\nimport "../other/at-top";\nexport {};\n`,
+          "other/in-if.ts": wrong,
+          "other/in-label.ts": wrong,
+          "other/in-loop.ts": wrong,
+          "other/at-top.ts": wrong,
+        }),
+      ).toEqual({
+        lines: [
+          "other/at-top.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.",
+          "src/if.ts(1,11): error TS1232: An import declaration can only be used at the top level of a namespace or module.",
+          "src/label.ts(1,1): error TS1344: A label is not allowed here.",
+          "src/label.ts(1,8): error TS1232: An import declaration can only be used at the top level of a namespace or module.",
+          "src/loop.ts(1,15): error TS1233: An export declaration can only be used at the top level of a namespace or module.",
+          "src/loop.ts(1,29): error TS2307: Cannot find module '../other/in-loop' or its corresponding type declarations.",
+          "src/top.ts(1,11): error TS1232: An import declaration can only be used at the top level of a namespace or module.",
+          `src/top.ts(2,8): ${notUnderRootDir("other/at-top.ts")}`,
+        ],
+        exitCode: 1,
+      });
+    });
+  });
+
   // `getTypeReferenceType`: an alias that `resolveSymbol` does not follow, because it is also a value or has exports
   // beside it, takes no type arguments. For `export =`, TypeScript 6 follows the alias to the class, as TypeScript 7
   // does in a type reference (microsoft/typescript-go#4038): this is what the version that `bun check` follows prints.

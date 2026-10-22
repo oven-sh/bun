@@ -18820,5 +18820,64 @@
       "node_modules/pkg/b.d.ts": "export = Store;\nexport type BName = string;\ndeclare class Store<K> {\n    keys: K[];\n    constructor();\n}\n",
       "use.js": "/** @type {import(\"pkg\")} */\nlet store = /** @type {any} */ (null);\n/** @type {number} */\nconst n = store;\nmodule.exports = { n };\n"
     }
+  },
+  "import-as-the-statement-of-an-if-of-a-file-with-an-error": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\"}, \"files\": [\"globals.d.ts\", \"src/a.ts\"]}",
+      "src/a.ts": "if (true) import \"../other/x\";\nexport {};\n",
+      "other/x.ts": "export const x: string = 1;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "imports-as-the-statement-of-an-if-a-label-and-a-loop": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"explainFiles\": true, \"allowJs\": true, \"checkJs\": true}, \"files\": [\"globals.d.ts\", \"src/if.ts\", \"src/else.ts\", \"src/label.ts\", \"src/while.ts\", \"src/for.ts\", \"src/do.ts\", \"src/script.ts\", \"src/javascript.js\", \"src/top.ts\"]}",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n",
+      "src/if.ts": "if (true) import \"../other/in-if\";\nexport {};\n",
+      "src/else.ts": "if (true) {} else import { x } from \"../other/in-else\";\nexport {};\n",
+      "src/label.ts": "label: import \"../other/in-label\";\nexport {};\n",
+      "src/while.ts": "while (false) export * from \"../other/in-while\";\nexport {};\n",
+      "src/for.ts": "for (;;) export { x } from \"../other/in-for\";\nexport {};\n",
+      "src/do.ts": "do import type { x } from \"../other/in-do\"; while (false);\nexport {};\n",
+      "src/script.ts": "if (true) import \"../other/in-script\";\n",
+      "src/javascript.js": "if (true) import \"../other/in-javascript\";\nexport {};\n",
+      "src/top.ts": "if (true) import \"../other/in-if\";\nimport \"../other/at-top\";\nexport {};\n",
+      "other/in-if.ts": "export const x: string = 1;\n",
+      "other/in-else.ts": "export const x: string = 1;\n",
+      "other/in-label.ts": "export const x: string = 1;\n",
+      "other/in-while.ts": "export const x: string = 1;\n",
+      "other/in-for.ts": "export const x: string = 1;\n",
+      "other/in-do.ts": "export const x: string = 1;\n",
+      "other/in-script.ts": "export const x: string = 1;\n",
+      "other/in-javascript.ts": "export const x: string = 1;\n",
+      "other/at-top.ts": "export const x: string = 1;\n"
+    }
+  },
+  "import-as-the-statement-of-an-if-of-a-file-outside-rootdir": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\"}, \"files\": [\"globals.d.ts\", \"src/a.ts\"]}",
+      "src/a.ts": "if (true) import \"../other/x\";\nexport {};\n",
+      "other/x.ts": "export const x = 1;\n",
+      "other/y.ts": "export const y = 1;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "import-as-the-statement-of-an-if-of-an-unlisted-file": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"composite\": true}, \"files\": [\"globals.d.ts\", \"src/a.ts\"]}",
+      "src/a.ts": "if (true) import { x } from \"../other/x\";\nexport {};\n",
+      "other/x.ts": "export const x = 1;\n",
+      "other/y.ts": "export const y = 1;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
+  },
+  "import-as-the-statement-of-an-if-and-the-same-import-at-the-top-level": {
+    "files": {
+      "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"types\": [], \"lib\": [], \"skipLibCheck\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"rootDir\": \"./src\", \"explainFiles\": true}, \"files\": [\"globals.d.ts\", \"src/a.ts\"]}",
+      "src/a.ts": "if (true) import \"../other/x\";\nimport \"../other/x\";\nexport {};\n",
+      "other/x.ts": "export const x = 1;\n",
+      "other/y.ts": "export const y = 1;\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\n"
+    }
   }
 }

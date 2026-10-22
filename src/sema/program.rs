@@ -6485,6 +6485,10 @@ impl<'s> Files<'s> {
             // A module augmentation resolves the module the way the file itself would, regardless
             // of other uses of the specifier. It doesn't add the file to the program.
             let is_module_name = bound.ambient_modules.iter().any(|m| m.0 == spec);
+            // Not one of `file.Imports()`, and no augmentation: nothing resolves it.
+            if count == 0 && !is_module_name {
+                continue;
+            }
             if (count == 0 || is_module_name && hir.has_module_syntax)
                 && !modes[..count].iter().any(|known| known.0 == default_mode)
             {

@@ -6122,6 +6122,16 @@ impl VirtualMachine {
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
 
+        // Loaded macros are functions of the outgoing realm. The macro context
+        // remembers which ones are loaded, so the next file loads its own.
+        for callback in self.macros.values() {
+            callback.unprotect();
+        }
+        self.macros.clear_retaining_capacity();
+        if let Some(ctx) = self.transpiler.macro_context.take() {
+            ctx.deinit();
+        }
+
         let old_global = self.global;
         // `old_global` valid for VM lifetime (safe ZST-handle deref);
         // `console` is the live per-VM ConsoleObject.

@@ -2448,13 +2448,38 @@ impl Lockfile {
 
     /// Binds a dependency that `Package::parse` tagged as a workspace link to that workspace.
     /// Returns true if it was bound to another package before.
-    pub(crate) fn bind_workspace_link(&mut self, dep_id: DependencyID) -> bool {
-        let version = &self.buffers.dependencies[dep_id as usize].version;
+    pub(crate) fn bind_workspace_link(
+        &mut self,
+        dep_id: DependencyID,
+        link_workspace_packages: bool,
+    ) -> bool {
+        let dependency = &self.buffers.dependencies[dep_id as usize];
+        let version = &dependency.version;
         if version.tag != dependency::Tag::Workspace {
             return false;
         }
         let buf = self.buffers.string_bytes.as_slice();
         let path = version.workspace().slice(buf);
+        // The resolver asks for the version of an override, and that links this workspace or not.
+        if self.is_overridden_dependency(dep_id) {
+            let links = (crate::dedupe::effective_npm_range(self, dep_id, dependency)).is_some_and(
+                |asked| {
+                    let npm = asked.npm();
+                    linked_workspace_path(
+                        link_workspace_packages,
+                        &self.workspace_paths,
+                        &self.workspace_versions,
+                        Semver::string::Builder::string_hash(npm.name.slice(buf)),
+                        &npm.version,
+                        buf,
+                    )
+                    .is_some_and(|linked| linked.slice(buf) == path)
+                },
+            );
+            if !links {
+                return false;
+            }
+        }
         let Some(id) = (self.packages.items_resolution().iter()).position(|res| {
             res.tag == ResolutionTag::Workspace && res.workspace().slice(buf) == path
         }) else {

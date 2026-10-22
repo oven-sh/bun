@@ -729,7 +729,6 @@ fn is_like_new(task: &mut Task) -> bool {
         closed_a_cycle,
         order_dependent_variances,
         held_back,
-        assumed_at,
         view,
         was_discarded,
         is_trusted,
@@ -754,7 +753,6 @@ fn is_like_new(task: &mut Task) -> bool {
         && !*closed_a_cycle
         && order_dependent_variances.is_empty()
         && held_back.get() == 0
-        && assumed_at.get() == 0
         && view.is_none()
         && !was_discarded.get()
         && !*is_trusted
@@ -818,7 +816,6 @@ fn ended_task_is_like_new() {
         });
     });
     check(&|task| task.hold_back());
-    check(&|task| task.assumed_at.set(1));
     ends_like_new(&tables, &session, |task| {
         task.view = Some(commits.view(3));
     });
@@ -1135,37 +1132,6 @@ fn entry_is_written_immediately_unless_held_back_since_computation_began() {
     assert_eq!(tables.by_id.get(&other, &TypeId::ANY), None);
     assert_eq!(commit(&tables, &commits, &task, 1), 4);
     assert_eq!(tables.by_id.get(&other, &TypeId::ANY), Some(STRING));
-}
-
-#[test]
-#[cfg_attr(miri, ignore)]
-fn entry_that_depends_on_an_assumption_is_never_published() {
-    let session = Session::new();
-    let (tables, commits) = (Tables::new(&session), Commits::new_in(session.arena()));
-    let task = begin_writing_immediately(&session, &tables, &commits, 0);
-    let other = begin_writing_immediately(&session, &tables, &commits, 1);
-    let outer = from_now(&task);
-    task.note_assumption();
-    assert!(task.depends_on_an_assumption(outer));
-    assert!(task.depends_on_an_assumption(outer.held_back()));
-    assert!(!task.depends_on_an_assumption(from_now(&task)));
-    assert!(!task.depends_on_an_assumption(stored()));
-    tables.by_id.insert(&task, STRING, NUMBER, outer);
-    tables.by_id.rewrite(&task, NUMBER, STRING, outer);
-    (tables.by_key).insert(&task, (STRING, STRING), NUMBER, outer.held_back());
-    (tables.shapes).insert_ref(&task, STRING, Box::new([NUMBER]), outer);
-    assert_eq!(task.buffer().logged(), 0);
-    assert_eq!(commit(&tables, &commits, &task, 1), 0);
-    assert_eq!(tables.by_id.get(&other, &STRING), None);
-    assert_eq!(tables.by_id.get(&other, &NUMBER), None);
-    assert_eq!(tables.by_key.get(&other, &(STRING, STRING)), None);
-    assert_eq!(tables.shapes.handle(&other, &STRING), None);
-    assert_eq!(tables.by_id.get(&task, &STRING), Some(NUMBER));
-    assert_eq!(tables.by_id.get(&task, &NUMBER), Some(STRING));
-    assert_eq!(tables.by_key.get(&task, &(STRING, STRING)), Some(NUMBER));
-    // A computation that begins afterwards is published as usual.
-    (tables.by_id).insert(&task, TypeId::BOOLEAN, STRING, from_now(&task));
-    assert_eq!(tables.by_id.get(&other, &TypeId::BOOLEAN), Some(STRING));
 }
 
 #[test]

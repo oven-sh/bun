@@ -1177,9 +1177,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
         value: V,
         stored: Stored,
     ) -> V {
-        if key.local_number().is_none() && task.depends_on_an_assumption(stored) {
-            return self.insert_for_this_task(task, key, value);
-        }
         if key.local_number().is_none() && is_for_all_tasks(task, &value) {
             if task.may_write_immediately(self.own_slot(), stored) {
                 if MAY_STAY_IN_TASK && stays_in_task(task, &key) {
@@ -1204,10 +1201,6 @@ impl<I: Id + Follow, V: Packed<Cell = AtomicU32> + Follow, W: Location, A: Alloc
     pub fn rewrite(&self, task: &Task, key: I, value: V, stored: Stored) -> V {
         let Some(number) = key.local_number() else {
             let number = key.number();
-            if task.depends_on_an_assumption(stored) {
-                (task.buffer()).store_unlogged(self.own_slot(), number, value.pack());
-                return value;
-            }
             if is_for_all_tasks(task, &value) {
                 if task.may_write_immediately(self.own_slot(), stored)
                     && self.in_task(task, number) == 0
@@ -1460,7 +1453,7 @@ where
             Ok(shared_value) => return shared_value,
             Err(is_committed) => is_committed,
         };
-        let is_shared = is_committed && !key.is_local() && !task.depends_on_an_assumption(stored);
+        let is_shared = is_committed && !key.is_local();
         let own = task.buffer().typed_or_new(&self.slot);
         let new_index = own.len();
         let current = match replaces {

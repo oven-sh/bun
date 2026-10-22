@@ -1,0 +1,19 @@
+[package]
+name = "bun_lint_svelte"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_lint.workspace = true
+bun_lint_eslint.workspace = true
+bun_core.workspace = true
+bun_format.workspace = true
+bun_semver.workspace = true
+rustc-hash = "2"
+smallvec.workspace = true
+
+[lints]
+workspace = true

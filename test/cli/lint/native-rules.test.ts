@@ -67,6 +67,7 @@ const spellings: Record<string, string[]> = {
   jest: ["jest/"],
   vitest: ["vitest/"],
   prettier: ["prettier/"],
+  svelte: ["svelte/"],
   bun: ["bun/"],
   "bun:test": ["bun:test/"],
 };

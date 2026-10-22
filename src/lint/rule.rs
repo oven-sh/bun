@@ -88,9 +88,8 @@ enum UnderEslint {
     /// The rules here. There is no package that could.
     Here,
     /// The rules here, in place of those of the package of that name, which is loaded for the rules that do not exist
-    /// here. Without a name: whatever the plugin of the configuration says it is called. And the version of the package that
-    /// the rules here do the same as.
-    InPlaceOf(Option<&'static str>, &'static str),
+    /// here. And the version of the package that the rules here do the same as.
+    InPlaceOf(&'static str, &'static str),
     /// Like `InPlaceOf`, for a plugin that defines [languages](crate::languages) and rules for files in those
     /// languages. Only ESLint has languages, so the plugin doesn't exist with any other config, or without a config.
     Languages(&'static str, &'static str),
@@ -151,19 +150,19 @@ plugins! {
     /// `no-debugger`
     Eslint: ["", "eslint"], Always, Whole;
     /// `@typescript-eslint/no-explicit-any`
-    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf(Some("@typescript-eslint/eslint-plugin"), "8.71.1"), Whole;
+    TypeScript: ["@typescript-eslint", "typescript-eslint", "typescript"], InPlaceOf("@typescript-eslint/eslint-plugin", "8.71.1"), Whole;
     /// `react-hooks/rules-of-hooks`
-    ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react-hooks"), "7.1.1"), Part;
+    ReactHooks: ["react-hooks", "react_hooks"], InPlaceOf("eslint-plugin-react-hooks", "7.1.1"), Part;
     /// `import/no-cycle`
-    Import: ["import", "import-x"], InPlaceOf(Some("eslint-plugin-import"), "2.32.0"), Part;
+    Import: ["import", "import-x"], InPlaceOf("eslint-plugin-import", "2.32.0"), Part;
     /// `n/no-unsupported-features/es-syntax`
-    Node: ["n", "node"], InPlaceOf(Some("eslint-plugin-n"), "18.4.1"), Part;
+    Node: ["n", "node"], InPlaceOf("eslint-plugin-n", "18.4.1"), Part;
     /// `oxc/no-accumulating-spread`
     Oxc: ["oxc"], Here, Part;
     /// `unicorn/no-null`
     Unicorn: ["unicorn"], Package, Part;
     /// `react/jsx-key`
-    React: ["react", "react-hooks", "react_hooks"], InPlaceOf(Some("eslint-plugin-react"), "7.37.5"), Part;
+    React: ["react", "react-hooks", "react_hooks"], InPlaceOf("eslint-plugin-react", "7.37.5"), Part;
     /// `react-perf/jsx-no-new-object-as-prop`
     ReactPerf: ["react-perf", "react_perf"], Package, Part;
     /// `jsx-a11y/alt-text`
@@ -185,7 +184,7 @@ plugins! {
     /// `bun:test/no-focused-tests`
     BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
-    Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
+    Prettier: ["prettier"], InPlaceOf("eslint-plugin-prettier", "5.5.6"), Whole;
     /// `json/no-duplicate-keys`
     Json: ["json"], Languages("@eslint/json", "2.1.1"), Whole;
     /// `markdown/no-html`
@@ -252,6 +251,12 @@ impl Plugin {
             .map(Plugin::in_oxlint)
     }
 
+    /// Whether, under its usual name, the plugin is taken for the package whatever it says it is. Versions of typescript-eslint
+    /// before 6 say nothing, and a copy that a file of the project exports is common.
+    const fn is_any_under_usual_name(self) -> bool {
+        matches!(self, Plugin::TypeScript)
+    }
+
     /// Whether the rules here answer for the plugin that a configuration of ESLint has as `prefix`, in place of those
     /// of the package: it has the name that is usual for it, and it is that package. `package`: what the plugin says it
     /// is called, if it says so.
@@ -259,8 +264,8 @@ impl Plugin {
         Plugin::ALL.iter().any(|it| match it.names().under_eslint {
             UnderEslint::InPlaceOf(usual, _) => {
                 it.prefix().as_bytes() == prefix
-                    && (usual.zip(package))
-                        .is_none_or(|(usual, package)| usual.as_bytes() == package)
+                    && (it.is_any_under_usual_name()
+                        || package.is_none_or(|package| usual.as_bytes() == package))
             }
             // The prefix alone isn't enough: `json` is also the prefix that ESLint derives from eslint-plugin-json.
             UnderEslint::Languages(usual, _) => {
@@ -278,7 +283,7 @@ impl Plugin {
     /// The plugin whose rules answer in place of those of `package`, under any name.
     pub(crate) fn in_place_of_package(package: &[u8]) -> Option<Plugin> {
         let is_it = |it: &Plugin| match it.names().under_eslint {
-            UnderEslint::InPlaceOf(Some(usual), _) => usual.as_bytes() == package,
+            UnderEslint::InPlaceOf(usual, _) => usual.as_bytes() == package,
             _ => false,
         };
         Plugin::ALL.iter().copied().find(is_it)
@@ -297,8 +302,9 @@ impl Plugin {
     /// The package that the built-in rules replace, if they only replace that specific package.
     pub fn package(self) -> Option<&'static str> {
         match self.names().under_eslint {
-            UnderEslint::InPlaceOf(package, _) => package,
-            UnderEslint::Languages(package, _) => Some(package),
+            UnderEslint::InPlaceOf(package, _) | UnderEslint::Languages(package, _) => {
+                Some(package)
+            }
             UnderEslint::Always | UnderEslint::Here | UnderEslint::Package => None,
         }
     }

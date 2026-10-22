@@ -410,23 +410,37 @@ describe.concurrent("an eslint.config.js", () => {
       timeout,
     );
 
-    // A plugin that says nothing about itself is what the usual name says, wherever it comes from: a file of the project too.
-    test("a plugin without a name, from a file of the project, is built in under the usual name", async () => {
-      const { problems, exitCode } = await lint(
+    const messagesOf = (raw: string) =>
+      JSON.parse(raw).results.flatMap((it: { messages: { ruleId: string; message: string }[] }) =>
+        it.messages.map(message => [message.ruleId, message.message]),
+      );
+
+    // Under its usual name typescript-eslint is what the name says, whatever the plugin says about itself: versions before 6
+    // say nothing, and a copy from a file of the project is common. The other plugins have to be the package.
+    test("a plugin without a name, from a file of the project, is typescript-eslint under the usual name", async () => {
+      const { raw, exitCode } = await lint(
         {
-          "eslint.config.mjs": `import ts from "./ts.mjs";\nexport default [{ files: ["**/*.ts"], plugins: { "@typescript-eslint": ts }, rules: { "@typescript-eslint/no-explicit-any": "error" } }];`,
+          "eslint.config.mjs": `import ts from "./ts.mjs";\nimport n from "./n.mjs";\nexport default [{
+            files: ["**/*.ts"],
+            plugins: { "@typescript-eslint": ts, n },
+            rules: { "@typescript-eslint/no-explicit-any": "error", "n/no-process-exit": "error" },
+          }];`,
           "ts.mjs": `export default { rules: { "no-explicit-any": ${rule("TSAnyKeyword")} } };`,
+          "n.mjs": `export default { rules: { "no-process-exit": ${rule("TSAnyKeyword")} } };`,
           "a.ts": "export let a: any = 1;\n",
         },
         ["a.ts"],
       );
-      expect(problems).toEqual(["a.ts:1:15 @typescript-eslint/no-explicit-any"]);
+      expect(messagesOf(raw).sort()).toEqual([
+        ["@typescript-eslint/no-explicit-any", "Unexpected any. Specify a different type."],
+        ["n/no-process-exit", "from JavaScript"],
+      ]);
       expect(exitCode).toBe(1);
     });
 
     // ESLint allows one name for different plugins in objects for different files. It is then no alias for either.
     test("one name for two built-in packages, for different files, is neither", async () => {
-      const { problems, exitCode } = await lint(
+      const { problems, raw, exitCode } = await lint(
         {
           "eslint.config.mjs": `export default [
             { files: ["**/*.ts"], plugins: { x: ${ts} }, rules: { "x/no-explicit-any": "error" } },
@@ -438,6 +452,10 @@ describe.concurrent("an eslint.config.js", () => {
         ["a.ts", "b.js"],
       );
       expect(problems).toEqual(["a.ts:1:15 x/no-explicit-any", "b.js:1:1 x/no-process-exit"]);
+      expect(messagesOf(raw).sort()).toEqual([
+        ["x/no-explicit-any", "from JavaScript"],
+        ["x/no-process-exit", "from JavaScript"],
+      ]);
       expect(exitCode).toBe(1);
     });
   });

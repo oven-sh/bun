@@ -124,7 +124,7 @@ bun lint --plugin perfectionist --rule 'perfectionist/sort-imports: error'
 
 With an ESLint config, eight plugins run natively: `@typescript-eslint`, `react`, `react-hooks`, `import`, `n`, `prettier`, `json`, and `markdown`. Everything else runs from `node_modules`, including `unicorn`, `jsx-a11y`, `promise`, `jest`, and `vitest`. Bun's built-in versions of those follow oxlint, so Bun only uses them with `bunfig.toml` or an oxlint config.
 
-Bun knows the first six of these by their package, not by the name you register them under. `@antfu/eslint-config` registers `@typescript-eslint` as `ts` and `eslint-plugin-n` as `node`. Their rules run natively, and reports and `eslint-disable` comments use the names of your config: `ts/no-floating-promises`. Another package under a built-in plugin's name, such as `eslint-plugin-import-x` as `import`, runs from `node_modules`. A plugin that names no package (no `meta.name`, and not found in a module) is built in only under its usual name. `json` and `markdown` are built in only under those names.
+Bun knows the first six of these by their package, not by the name you register them under. `@antfu/eslint-config` registers `@typescript-eslint` as `ts` and `eslint-plugin-n` as `node`. Their rules run natively, and reports and `eslint-disable` comments use the names of your config: `ts/no-floating-promises`. Another package under a built-in plugin's name, such as `eslint-plugin-import-x` as `import`, runs from `node_modules`. A plugin that names no package (no `meta.name`, and not found in `node_modules`) is built in only under its usual name. `json` and `markdown` are built in only under those names.
 
 `bun lint --doctor` shows which of your rules run natively and which run in JavaScript.
 

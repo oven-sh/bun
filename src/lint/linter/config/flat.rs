@@ -119,19 +119,15 @@ fn answered_by(
     }
 }
 
-/// What a plugin is called: what it says, with its version; else the package in `node_modules` that it was exported from, if it
-/// was found in one. `name`, `located`: what `plugins` and `$jsPlugins` of the object have for it. eslint-plugin-import,
-/// eslint-plugin-react and eslint-plugin-import-lite, which `@antfu/eslint-config` has as `import`, all say nothing. A plugin
-/// from a file of the project says nothing either.
+/// What a plugin is called: what it says, with its version; else the package that it was exported from, if it was found in a
+/// module, with `/` between the parts. `name`, `located`: what `plugins` and `$jsPlugins` of the object have for it.
+/// eslint-plugin-import, eslint-plugin-react and eslint-plugin-import-lite, which `@antfu/eslint-config` has as `import`, all
+/// say nothing.
 fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<Cow<'j, [u8]>> {
     if let Some(name) = name.as_str() {
         return Some(Cow::Borrowed(name));
     }
-    let module = located?.get(b"module")?.as_str()?;
-    let package = package_of(module);
-    if package.len() == module.len() {
-        return None;
-    }
+    let package = package_of(located?.get(b"module")?.as_str()?);
     Some(match bun_core::strings::contains_char(package, b'\\') {
         true => Cow::Owned(bun_core::strings::replace_owned(package, b"\\", b"/")),
         false => Cow::Borrowed(package),
@@ -709,10 +705,14 @@ impl Reader<'_> {
             let can_be_loaded =
                 located.is_some() || self.js_locations.iter().any(|it| *it.0 == prefix[..]);
             let called = called(name, located);
-            let answered = answered_by(self.registry, prefix, called.as_deref(), can_be_loaded);
-            // Not under a name that another plugin has too: see `from_flat`.
-            let is_foreign = self.foreign_prefixes.iter().any(|it| **it == prefix[..]);
-            match answered != AnsweredBy::Package && !is_foreign {
+            let is_built_in =
+                match answered_by(self.registry, prefix, called.as_deref(), can_be_loaded) {
+                    AnsweredBy::Here => true,
+                    // Not under a name that another plugin has too: see `from_flat`.
+                    AnsweredBy::Alias(_) => self.aliases.iter().any(|it| *it.0 == prefix[..]),
+                    AnsweredBy::Package => false,
+                };
+            match is_built_in {
                 true => {
                     object.plugins.push(prefix[..].into());
                     if let Some(name) = name.as_str() {

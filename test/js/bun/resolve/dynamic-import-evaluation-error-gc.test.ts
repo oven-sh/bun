@@ -63,5 +63,4 @@ test("import() of a module whose evaluation throws survives a GC stack-trace fin
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ok", exitCode: 0 });
     void stderr;
   }
-}, // default 5s. // Two runs of a 300-iteration loop on a debug+ASAN build take well over the
-120_000);
+}, 120_000); // default 5s. // Two runs of a 300-iteration loop on a debug+ASAN build take well over the

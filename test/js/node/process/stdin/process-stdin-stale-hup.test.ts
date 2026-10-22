@@ -84,5 +84,4 @@ test("process.stdin drain loop does not wedge on a stale POLLHUP when a writer r
   expect(stderrBuf).toContain("data len=5");
   expect(stderrBuf).toContain("opened writer fd=");
   expect({ stdout: stdout.trim(), exited }).toEqual({ stdout: "OK", exited: 0 });
-}, // generous headroom, especially under ASAN where startup is much slower. // Debug-bun child startup + the 60s hang-detection race above need
-120_000);
+}, 120_000); // generous headroom, especially under ASAN where startup is much slower. // Debug-bun child startup + the 60s hang-detection race above need

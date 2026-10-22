@@ -2,18 +2,18 @@
 // CALLS+ literal NewRegExpLiteral
 // CALLS- literal ConstructInternalFunction
 // CALLS+ constants NewRegExpLiteral
-// CALLS+ fromSources operationAOTTypedNewRegExp
+// CALLS+ fromSources operationAOTNewRegExp
 // CALLS+ fromBoth ConstructInternalFunction2
 // CALLS+ vowels StringReplaceRegExpString
-// CALLS+ shout operationAOTTypedStringReplaceRegExp
-// CALLS+ swap operationAOTTypedStringReplaceString
-// CALLS+ words operationAOTTypedStringSplitRegExp
-// CALLS+ parts operationAOTTypedStringSplitString
+// CALLS+ shout operationAOTStringReplaceRegExp
+// CALLS+ swap operationAOTStringReplaceString
+// CALLS+ words operationAOTStringSplitRegExp
+// CALLS+ parts operationAOTStringSplitString
 // CALLS+ found (?<!Typed)StringMatchRegExp
-// CALLS+ where operationAOTTypedStringSearchRegExp
+// CALLS+ where operationAOTStringSearchRegExp
 // CALLS- isGlobal CallHostFunction
-// CALLS+ flagsOf operationAOTTypedRegExpFlags
-// CALLS+ sourceOf operationAOTTypedRegExpSource
+// CALLS+ flagsOf operationAOTRegExpFlags
+// CALLS+ sourceOf operationAOTRegExpSource
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

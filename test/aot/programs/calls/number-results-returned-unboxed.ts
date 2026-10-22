@@ -1,9 +1,9 @@
 // Functions that yield a number are held in places of two types: "yields a number" and "yields a number or nothing", and the program has more calls through the second. A call of what such a place holds takes the number as it is, without a box, from an entry that the function has for one kind of call. A function has that entry for the calls that take the number as the function itself yields it, however many calls of another kind there are.
-// IR- ^function \d+ "one" Plain flags 1088
-// IR- ^function \d+ "half" Plain flags 1088
-// IR- ^function \d+ "counts" Plain flags 1088
-// IR+ ^function \d+ "one" Arrow flags \d+ .* result number$
-// IR+ ^function \d+ "either" Arrow flags \d+ .* result undefined\|number$
+// IR- ^function f\d+ "one" \w+ role=SignatureEntrypoint
+// IR- ^function f\d+ "half" \w+ role=SignatureEntrypoint
+// IR- ^function f\d+ "counts" \w+ role=SignatureEntrypoint
+// IR+ ^function f\d+ "one" Arrow .* -> number( |$)
+// IR+ ^function f\d+ "either" Arrow .* -> undefined\|number( |$)
 const lines: string[] = [];
 let count = 0;
 const one = (): number => 1;

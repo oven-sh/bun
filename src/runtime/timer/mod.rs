@@ -209,12 +209,11 @@ macro_rules! impl_timer_object {
                 self.internals.finalize()
             }
 
-            #[::bun_jsc::host_fn(getter)]
             pub(crate) fn get_destroyed(
                 this: &Self,
                 _global: &::bun_jsc::JSGlobalObject,
-            ) -> ::bun_jsc::JsResult<::bun_jsc::JSValue> {
-                Ok(::bun_jsc::JSValue::from(this.internals.get_destroyed()))
+            ) -> bool {
+                this.internals.get_destroyed()
             }
 
             #[::bun_jsc::host_fn(method)]

@@ -1,8 +1,4 @@
 // Between the read of `body` and the construction stands code that the compiler cannot look through: a call of a function that is not inlined, an await, a yield.
-// IR= 0 withCall CallBuiltin NewResponseFromResponse
-// IR= 0 withAwait CallBuiltin NewResponseFromResponse
-// IR= 0 withYield CallBuiltin NewResponseFromResponse
-// IR= 1 withNothing CallBuiltin NewResponseFromResponse
 const log = [];
 function initFor(response, depth) {
   if (depth > 0) return initFor(response, depth - 1);

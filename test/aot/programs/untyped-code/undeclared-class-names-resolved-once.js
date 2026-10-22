@@ -9,7 +9,7 @@ function thenables(value, turns) { let n = 0; for (let i = 0; i < turns; i++) n 
 function marks(value, turns) { let seen; for (let i = 0; i < turns; i++) seen = value.$$mark; return seen; }
 function texts(value, turns) { let text = ""; for (let i = 0; i < turns; i++) text = value.toString(); return text; }
 function owns(value, turns) { let n = 0; for (let i = 0; i < turns; i++) n += value.hasOwnProperty("id") ? 1 : 0; return n; }
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 const receivers = [new Task(), new Job(), new Cron()];
 let most = 0;
 const results = [];

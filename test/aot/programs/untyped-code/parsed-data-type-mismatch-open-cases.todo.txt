@@ -1,1 +1,0 @@
-Plain Bun prints "a parameter of a common type: -1"; --aot prints "a parameter of a common type: THROWS expected string[], got string "one,two"".

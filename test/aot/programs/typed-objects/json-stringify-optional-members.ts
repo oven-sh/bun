@@ -1,3 +1,5 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 interface Item { id: number; title?: string; price?: number; hidden?: boolean }
 interface Choice { yes?: boolean; no?: boolean | null; name: string }
@@ -7,11 +9,11 @@ function hide(value: unknown): any {
 }
 
 function measure(label: string, run: () => string | undefined): void {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
-    const handedOver = aotOperationCount("operationAOTTypedJSONAppendValue");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const handedOver = aotOperationCount("operationAOTJSONAppendValue");
     let text: string | undefined = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + text + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTTypedJSONAppendValue") - handedOver) + " values handed to the runtime");
+    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - handedOver) + " values handed to the runtime");
 }
 
 function item(bits: number): Item {

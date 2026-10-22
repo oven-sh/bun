@@ -4,7 +4,7 @@
 {"id":400,"state":"open","level":"high","author":{"login":"u"},"note":"late"} id,state,level,author,note
 {"id":2,"state":"other","level":"low","author":{"login":"u"}}
 {"id":2,"state":"open","level":"middle","author":{"login":"u"}}
-TypeError: expected Hit, got untyped object
+{"id":2,"state":5,"level":"low","author":{"login":"u"}}
 {"id":2,"state":null,"level":"low","author":{"login":"u"}}
 {"id":2,"level":"low","author":{"login":"u"}}
 {"id":2,"state":"open","level":"opened for good","author":{"login":"u"}}

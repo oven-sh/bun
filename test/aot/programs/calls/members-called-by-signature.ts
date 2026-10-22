@@ -129,8 +129,8 @@ for (let round = 0; round < 3; round++) {
     say("a member behind a getter", callUnary(computed, 1, 2));
     for (const what of [undefined, null, 0, 1.5, "text", true, {}, [], Symbol.iterator, 10n, class { }, /x/] as any[]) {
         const broken = holder(round);
-        broken.unary = what;
-        broken.who = what;
+        (broken as any).unary = what;
+        (broken as any).who = what;
         const label = typeof what === "symbol" ? "symbol" : typeof what === "bigint" ? "bigint" : typeof what === "function" ? "class" : Array.isArray(what) ? "array" : what instanceof RegExp ? "regexp" : String(what);
         attempt("what is no function, " + label, () => callUnary(broken, 1, 2));
         attempt("what is no method, " + label, () => callWho(broken, 2));

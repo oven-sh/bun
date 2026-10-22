@@ -248,7 +248,7 @@ JSObject* JSDOMException::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSDOMException>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSDOMException::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSDOMException::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDOMExceptionDOMConstructor, DOMConstructorID::DOMException>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

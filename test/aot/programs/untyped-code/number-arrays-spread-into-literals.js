@@ -1,6 +1,6 @@
 // `[...numbers]` in code that says nothing of its arrays: the array that is spread holds numbers alone, the literal may come to hold anything. Every element arrives as the number it is, a hole arrives as undefined, and spreading such arrays over and over takes no work outside compiled code.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedLanguageOperation") : 0;
+const entered = () => counted ? counted("operationAOTAppendSpread") : 0;
 const lines = [];
 const show = list => list.length + ":" + list.map((x, i) => (i in list ? "" : "hole ") + (Object.is(x, -0) ? "-0" : typeof x === "string" ? JSON.stringify(x) : String(x))).join(",") + ":" + Object.keys(list).join("");
 const spreads = {

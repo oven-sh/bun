@@ -1128,7 +1128,7 @@ impl Expr {
 
     #[inline]
     pub fn has_value_for_this_in_call(&self) -> bool {
-        matches!(crate::audited::unmarked(*self).data, Data::EDot(_) | Data::EIndex(_))
+        matches!(self.data, Data::EDot(_) | Data::EIndex(_))
     }
 
     /// The given "expr" argument should be the operand of a "!" prefix operator

@@ -1,0 +1,5 @@
+# Each clause of a `switch` over a union of literals narrows the subject, and `default` gets the remaining members.
+switch-value.ts:3 type `v` = "a" | "b" | "c"
+switch-value.ts:5 type `v` = "a"
+switch-value.ts:8 type `v` = "b"
+switch-value.ts:11 type `v` = "c"

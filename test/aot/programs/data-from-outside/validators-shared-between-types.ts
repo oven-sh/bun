@@ -1,6 +1,8 @@
-// The validator and the parser of a type are emitted once per file, however many of the types given to JSON.parse<T>() mention it.
-// IR= 1 validate object = GetById v\d+ "street"
-// IR= 1 validate String ",\\x22zip\\x22:\\x22"
+// The parser of a type is emitted once per file, however many of the types given to JSON.parse<T>() mention it.
+// IR+ JSONStartsWith v\d+ text="\\x22street\\x22:"
+// IR- JSONStartsWith v\d+ text="\\x22street\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22street\\x22:"
+// IR+ JSONStartsWith v\d+ text="\\x22zip\\x22:"
+// IR- JSONStartsWith v\d+ text="\\x22zip\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22zip\\x22:"
 interface Address { street: string; zip: string }
 interface Named { name: string; nickname?: string }
 interface Person { who: Named; home: Address }

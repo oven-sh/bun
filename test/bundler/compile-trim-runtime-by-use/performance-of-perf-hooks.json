@@ -1,1 +1,1 @@
-{ "features": ["performance_timeline", "structured_clone"] }
+{ "features": ["PerformanceTimeline", "StructuredClone"] }

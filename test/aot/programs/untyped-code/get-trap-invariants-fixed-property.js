@@ -1,9 +1,9 @@
 // A `get` trap must answer with the value of a property of the target that is neither configurable nor writable, and with undefined for
-// an accessor that is not configurable and has no getter. Every kind of value, the same and another; and where the answer is the very
-// value that is stored, nothing more is looked at.
+// an accessor that is not configurable and has no getter. Every kind of value, the same and another. A trap that compiled code calls
+// directly has its answer validated on every read.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTGetByNameAndCache") > 0; }
-function allowed() { return count("read of a proxy:the target's Structure allows the answer") + count("read of a proxy:the target lacks the property"); }
+function counted() { return count("operationAOTGetByIdAndCache") > 0; }
+function validated() { return count("operationAOTValidateProxyGet"); }
 function read(o) { return o.wanted; }
 function show(value) { return typeof value === "symbol" ? String(value) : typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : typeof value === "string" ? JSON.stringify(value) : typeof value === "object" && value !== null ? "object" : typeof value === "function" ? "function" : String(value); }
 function attempt(label, target, answer) {
@@ -37,6 +37,6 @@ function named() {}
 Object.defineProperties(named, { wanted: { value: symbol }, other: { value: "id" } });
 var reference = new Proxy(named, { get(t, key) { return t[key]; } });
 read(reference);
-var before = allowed(), same = true;
+var before = validated(), same = true;
 for (var i = 0; i < 100; i++) same = read(reference) === symbol && same;
-console.log(same, !counted() || allowed() - before === 100);
+console.log(same, !counted() || validated() - before === 100);

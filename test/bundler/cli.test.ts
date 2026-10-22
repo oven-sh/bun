@@ -490,66 +490,6 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(out).toContain("app");
   });
 
-  test("rewriteRelativeImportExtensions: a relative import of a TypeScript file names the JavaScript file", async () => {
-    using dir = tempDir("no-bundle-outdir-rewrite", {
-      "tsconfig.base.json": JSON.stringify({ compilerOptions: { rewriteRelativeImportExtensions: true } }),
-      "tsconfig.json": JSON.stringify({ extends: "./tsconfig.base.json" }),
-      "src/main.ts": `import { a } from "./a.ts";
-import { view } from "../src/view.tsx";
-import { b } from "./b.mts";
-export * from "./c.cts";
-import types from "./types.d.ts";
-import pkg from "pkg/file.ts";
-import data from "./data.json";
-export const lazy = () => import("./a.ts");
-console.log(a, view, b, types, pkg, data);
-`,
-      "src/a.ts": `export const a = 1;\n`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "./src/main.ts", "./src/a.ts", "--outdir=dist"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-
-    const main = await Bun.file(path.join(String(dir), "dist", "main.js")).text();
-    expect([...main.matchAll(/(?:from |import\()("[^"]+")/g)].map(match => match[1])).toEqual([
-      '"./a.js"',
-      '"../src/view.js"',
-      '"./b.mjs"',
-      '"./c.cjs"',
-      '"./types.d.ts"',
-      '"pkg/file.ts"',
-      '"./data.json"',
-      '"./a.js"',
-    ]);
-  });
-
-  test("without rewriteRelativeImportExtensions an import is left as it is written", async () => {
-    using dir = tempDir("no-bundle-outdir-no-rewrite", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { allowImportingTsExtensions: true } }),
-      "src/main.ts": `import { a } from "./a.ts";\nconsole.log(a);\n`,
-    });
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "--no-bundle", "./src/main.ts", "--outdir=dist"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    expect(await Bun.file(path.join(String(dir), "dist", "main.js")).text()).toContain('from "./a.ts"');
-  });
-
   test("reports the size of the written file", async () => {
     using dir = tempDir("no-bundle-outdir-size", {
       "src/app.js": `console.log(1);\n`,

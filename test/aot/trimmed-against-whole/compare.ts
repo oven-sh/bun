@@ -1,6 +1,8 @@
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { constants, cpus, freemem, loadavg, totalmem, userInfo } from "node:os";
 import { dirname, join } from "node:path";
+import type { FeatureModel, FeatureName } from "../../../scripts/build/trim/features";
+import { readRemovedFeatures } from "./removed-features";
 
 export interface Program {
   corpus: string;
@@ -39,7 +41,7 @@ export interface Result {
   trimmed?: Ran;
   wholeBytes?: number;
   trimmedBytes?: number;
-  door?: number;
+  reportNumber?: number;
   features?: string[];
   repro?: string;
   text?: string;
@@ -52,7 +54,7 @@ export interface Settings {
   bun: string;
   scratch: string;
   kept: string;
-  doors: string;
+  model: FeatureModel;
   jobs: number;
   cores?: number[];
   highestLoad: number;
@@ -64,45 +66,17 @@ export interface Settings {
   env: Record<string, string | undefined>;
   buildFlags: string[];
   findsFeature: boolean;
-  wronglyLeftOut?: string[];
+  wronglyLeftOut?: FeatureName[];
 }
 
 const isWindows = process.platform === "win32";
 const outputLimit = 4 << 20;
-const kindsOfFacts = ["world", "global", "Bun", "process", "console", "module", "native", "loader", "property", "option", "environment", "autoload"];
 
-export function featuresLeftOut(facts: string[], doors: string): string[] {
-  const features: string[] = [];
-  const conditions: { feature: string; kind: string; name: string }[] = [];
-  for (const line of doors.split("\n")) {
-    const [word, feature, kind, ...name] = line.split(" ");
-    if (word === "feature") features.push(feature);
-    else if (word === "when") conditions.push({ feature, kind, name: name.join(" ") });
-  }
-  const stated = new Set(facts);
-  const holds = (kind: string, name: string) => !kindsOfFacts.includes(kind) || stated.has(`${kind} ${name}`) || stated.has(`${kind} *`);
-  const kept = new Set(
-    features.filter(feature => {
-      const own = conditions.filter(condition => condition.feature === feature);
-      return own.length === 0 || own.some(condition => condition.kind !== "feature" && holds(condition.kind, condition.name));
-    }),
-  );
-  for (let hasGrown = true; hasGrown; ) {
-    hasGrown = false;
-    for (const { feature, kind, name } of conditions) {
-      if (kind !== "feature" || kept.has(feature) || (features.includes(name) && !kept.has(name))) continue;
-      kept.add(feature);
-      hasGrown = true;
-    }
-  }
-  return features.filter(feature => !kept.has(feature));
-}
+const featureWithText = (text: string, model: FeatureModel): FeatureName | undefined => model.features.find(feature => feature.text === text)?.name;
 
-function featureDescribedAs(description: string, doors: string): string | undefined {
-  for (const line of doors.split("\n")) {
-    const [word, feature, ...words] = line.split(" ");
-    if (word === "feature" && words.join(" ") === description) return feature;
-  }
+function onlyFeatureOf(trimFeature: string, model: FeatureModel): FeatureName | undefined {
+  const features = model.trimFeatures.find(each => each.name === trimFeature)?.features ?? [];
+  return features.length === 1 ? features[0] : undefined;
 }
 
 const running = new Set<number>();
@@ -317,7 +291,13 @@ function firstDifference(whole: Ran, trimmed: Ran): string {
 
 const foundBefore: string[][] = [];
 
-const opensTheWorld = `if (globalThis.neverSetByAnyProgram) (0, eval)("0");\n`;
+const seesEveryApi = "the compiler can see every API this program uses";
+const callsEval = `if (globalThis.neverSetByAnyProgram) (0, eval)("0");\n`;
+
+function removedFeaturesOf(executable: string, model: FeatureModel): FeatureName[] | undefined {
+  const removed = readRemovedFeatures(executable);
+  return removed && model.features.filter(feature => removed.includes(feature.index) && feature.enteredFrom === "program").map(feature => feature.name);
+}
 
 class Bench {
   readonly executable: string;
@@ -338,7 +318,7 @@ class Bench {
       mkdirSync(dirname(join(this.sources, path)), { recursive: true });
       writeFileSync(join(this.sources, path), text);
     }
-    writeFileSync(join(folder, "opens-the-world.js"), opensTheWorld);
+    writeFileSync(join(folder, "calls-eval.js"), callsEval);
   }
 
   env(more: Record<string, string> = {}): Record<string, string | undefined> {
@@ -356,8 +336,6 @@ class Bench {
       TMPDIR: temporary,
       TEMP: temporary,
       TMP: temporary,
-      BUN_FEATURE_FLAG_TRIM_RUNTIME: undefined,
-      BUN_TRIM_RUNTIME_WITHOUT: undefined,
       ...more,
     };
   }
@@ -370,9 +348,9 @@ class Bench {
     if (this.program.workingDirectory) cpSync(this.program.workingDirectory, join(this.folder, "cwd"), { recursive: true });
   }
 
-  flags(how: "whole" | "trimmed" | "opened"): string[] {
-    const trims = how === "whole" ? [] : ["--compile-trim-runtime", "--aot-explain=runtime-use"];
-    const entries = how === "opened" ? [this.entry, join(this.folder, "opens-the-world.js")] : [this.entry];
+  flags(how: "whole" | "trimmed" | "blocked", without: readonly string[] = []): string[] {
+    const trims = how === "whole" ? [] : ["--trim", "--explain=trim", ...(without.length > 0 ? ["--trim-without=" + without.join(",")] : [])];
+    const entries = how === "blocked" ? [this.entry, join(this.folder, "calls-eval.js")] : [this.entry];
     return ["build", "--compile", "--aot", ...trims, ...this.settings.buildFlags, ...(this.program.flags ?? []), ...entries];
   }
 
@@ -386,11 +364,11 @@ class Bench {
     return performance.now() - started >= seconds * 1000 ? { ...ran, exitCode: null, signal: "SIGKILL" } : withSignalNamed(ran);
   }
 
-  async build(how: "whole" | "trimmed" | "opened", saveAs: string, without: string[] = []): Promise<Ran> {
+  async build(how: "whole" | "trimmed" | "blocked", saveAs: string, without: string[] = []): Promise<Ran> {
     this.freshFolders();
     rmSync(this.executable, { force: true });
-    const env = this.env(without.length > 0 ? { BUN_TRIM_RUNTIME_WITHOUT: without.join(",") } : {});
-    const command = [this.settings.bun, ...this.flags(how), "--outfile", this.executable];
+    const env = this.env();
+    const command = [this.settings.bun, ...this.flags(how, without), "--outfile", this.executable];
     const [cwd, seconds] = [join(this.folder, "build"), this.settings.buildSeconds];
     const built = await this.jailed(command, cwd, env, seconds);
     if (built.exitCode === 0) renameSync(this.executable, join(this.folder, saveAs));
@@ -409,7 +387,7 @@ class Bench {
   }
 
   async differsWithout(features: string[], whole: Ran): Promise<boolean> {
-    const built = await this.build("opened", "forced", features);
+    const built = await this.build("blocked", "forced", features);
     if (built.exitCode !== 0) return false;
     const ran = await this.run("forced");
     rmSync(join(this.folder, "forced"), { force: true });
@@ -471,19 +449,18 @@ export async function compare(program: Program, settings: Settings, folder: stri
 
     const differs = (why: string, rest: Partial<Result>): Result => {
       const entry = bench.keepSources();
-      const build = (how: "whole" | "trimmed") => [settings.bun, ...bench.flags(how).map(flag => (flag === bench.entry ? entry : flag)), "--outfile", how].map(quoted).join(" ");
+      const build = (how: "whole" | "trimmed") => [settings.bun, ...bench.flags(how, how === "trimmed" ? settings.wronglyLeftOut : []).map(flag => (flag === bench.entry ? entry : flag)), "--outfile", how].map(quoted).join(" ");
       const run = (how: string) => [`./${how}`, ...(program.args ?? [])].map(quoted).join(" ");
       const text = program.files?.()[program.entry];
       return result({ verdict: "differs", why, wholeBytes, whole: shortened(whole), text: text && text.length < 4000 ? text : undefined, repro: `${build("whole")} && ${build("trimmed")}; ${run("whole")}; ${run("trimmed")}`, ...rest });
     };
 
     const builtTrimmed = await bench.build("trimmed", "trimmed", settings.wronglyLeftOut);
-    const facts = [...builtTrimmed.stderr.matchAll(/^aot: runtime use: (.*)$/gm)].map(match => match[1]);
-    const world = facts[0] ?? "";
-    const listed = [...builtTrimmed.stderr.matchAll(/^aot: left out: (.*)$/gm)].map(match => match[1]);
-    const leftOut = listed.length > 0 ? listed.filter(feature => feature !== "tools" && feature !== "jit") : world === "closed" ? featuresLeftOut(facts, settings.doors) : [];
+    const world = /^aot: trim: (.*)$/m.exec(builtTrimmed.stderr)?.[1] ?? "";
     if (builtTrimmed.signal === "SIGKILL") return result({ verdict: "set aside", why: "the trimmed build does not end" });
-    if (builtTrimmed.exitCode !== 0) return differs("the trimmed build fails", { world, leftOut, trimmed: shortened(builtTrimmed) });
+    if (builtTrimmed.exitCode !== 0) return differs("the trimmed build fails", { world, leftOut: [], trimmed: shortened(builtTrimmed) });
+    const removed = removedFeaturesOf(join(folder, "trimmed"), settings.model);
+    const leftOut = removed ?? [];
     const trimmedBytes = statSync(join(folder, "trimmed")).size;
 
     const trimmed = await bench.run("trimmed");
@@ -494,17 +471,18 @@ export async function compare(program: Program, settings: Settings, folder: stri
     rmSync(join(folder, "whole"));
     if (isSame(whole, await bench.run("trimmed"))) return result({ verdict: "set aside", why: "trimmed differs only sometimes", detail: firstDifference(whole, trimmed), world });
 
-    const sentence = /built with --compile-trim-runtime, without (.*?)(?:, and something has just asked for it\..*?number: (\d+)|\n\s*code: "ERR_FEATURE_REMOVED")/s.exec(trimmed.stderr);
-    const named = sentence && featureDescribedAs(sentence[1], settings.doors);
-    const features = named ? [named] : settings.findsFeature ? await bench.smallestSetThatDiffers(leftOut, whole) : undefined;
+    const sentence = /--trim removed (.*?) from this executable, but the program needs it\.(?:[^\n]*?number: (\d+))?/s.exec(trimmed.stderr);
+    const thrown = /was removed by --trim because your code never uses it\. To keep it, add "([\w-]+)" to compile\.trim\.allow[^\n]*\n\s*code: "ERR_FEATURE_REMOVED"/.exec(trimmed.stderr);
+    const named = (sentence && featureWithText(sentence[1], settings.model)) ?? (thrown && onlyFeatureOf(thrown[1], settings.model));
+    const features = named ? [named] : settings.findsFeature && removed ? await bench.smallestSetThatDiffers(leftOut, whole) : undefined;
     return differs(firstDifference(whole, trimmed), {
       world,
       leftOut,
       trimmedBytes,
       trimmed: shortened(trimmed),
-      door: sentence?.[2] ? Number(sentence[2]) : undefined,
+      reportNumber: sentence?.[2] ? Number(sentence[2]) : undefined,
       features: features ?? undefined,
-      detail: named ? undefined : features === undefined ? "no feature found" : features.length === 0 ? "not by a feature: the closed world itself" : undefined,
+      detail: named ? undefined : features === undefined ? "no feature found" : features.length === 0 ? "not by a feature: it only differs where --trim is not blocked" : undefined,
     });
   } catch (error) {
     return result({ verdict: "set aside", why: "the runner failed", detail: cut(String(error), 300) });
@@ -517,10 +495,10 @@ export function described(result: Result): string {
   const lines = [`DIFFERS ${result.corpus} ${result.name}: ${result.why}`];
   const told = (ran: Ran | undefined) => (ran ? `exit ${ran.exitCode ?? ran.signal}, stdout ${ran.stdout.length}, stderr ${ran.stderr.length}: ${JSON.stringify(cut(ran.stderr.trim().split("\n")[0] ?? "", 240))}` : "");
   lines.push(`  whole    ${told(result.whole)}`, `  trimmed  ${told(result.trimmed)}`);
-  lines.push(`  world    ${result.world}`);
-  if (result.door !== undefined) lines.push(`  door     ${result.door}`);
+  lines.push(`  trim     ${result.world}`);
+  if (result.reportNumber !== undefined) lines.push(`  number   ${result.reportNumber}`);
   lines.push(`  feature  ${result.features?.join(" ") || result.detail || "?"}`);
-  lines.push(`  left out ${result.leftOut?.length ?? 0}: ${result.leftOut?.join(" ") ?? ""}`);
+  lines.push(`  removed  ${result.leftOut?.length ?? 0}: ${result.leftOut?.join(" ") ?? ""}`);
   lines.push(`  repro    ${result.repro}`);
   if (result.text) lines.push(result.text.replace(/^/gm, "  | "));
   return lines.join("\n");
@@ -607,7 +585,7 @@ export class Tally {
     if (result.verdict === "set aside") count(`set aside: ${result.why}`);
     if (result.verdict === "same") {
       count(`same: ${result.exitCode === 0 ? "exit 0" : "another exit"}`);
-      count(`same: ${result.world === "closed" ? "closed" : "open"}`);
+      count(`same: ${result.world === seesEveryApi ? "every API seen" : "blocked"}`);
     }
     if (result.verdict === "differs") count(`differs: ${result.features?.join("+") || result.detail || result.why}`);
   }

@@ -1,0 +1,149 @@
+strict: true
+Array.prototype.includes.call(t, 1) with a number -> "same same same / same same same", ran 0 times, now same same same
+Array.prototype.includes.call(t, 1) with methods -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Array.prototype.includes.call(t, 1) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.includes.call(t, 1) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.reverse.call(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Array.prototype.reverse.call(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.reverse.call(t) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.reverse.call(t) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.concat.call([], t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Array.prototype.concat.call([], t) with methods -> "same same same / same same same", ran 0 times, now same same same
+Array.prototype.concat.call([], t) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.concat.call([], t) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.at.call(t, 0) with a number -> "same same same / same same same", ran 0 times, now same same same
+Array.prototype.at.call(t, 0) with methods -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Array.prototype.at.call(t, 0) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Array.prototype.at.call(t, 0) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(t) with a proxy -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+new Uint8Array(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+new Uint8Array(2).fill(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).fill(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).fill(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).fill(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).set(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).set(t) with methods -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+new Uint8Array(2).set(t) with a proxy -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).set(t) with a proxy of a function -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).set([1], t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).set([1], t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).set([1], t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).set([1], t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2)[0] = t with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2)[0] = t with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2)[0] = t with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2)[0] = t with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2)[t] with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2)[t] with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2)[t] with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2)[t] with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+new Uint8Array(2).subarray(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).subarray(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).subarray(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).subarray(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).slice(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).slice(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).slice(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).slice(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).at(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).at(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).at(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).at(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).indexOf(0, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).indexOf(0, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).indexOf(0, t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).indexOf(0, t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).join(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).join(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).join(t) with a proxy -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Uint8Array(2).join(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+new Uint8Array(2).with(t, 0) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Uint8Array(2).with(t, 0) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Uint8Array(2).with(t, 0) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Uint8Array(2).with(t, 0) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Uint8Array.from(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Uint8Array.from(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Uint8Array.from(t) with a proxy -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Uint8Array.from(t) with a proxy of a function -> "same same same / changed changed changed", ran 2 times, now changed changed changed
+Uint8Array.of(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Uint8Array.of(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Uint8Array.of(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Uint8Array.of(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new Float64Array([t]) with a number -> "same same same / same same same", ran 0 times, now same same same
+new Float64Array([t]) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new Float64Array([t]) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new Float64Array([t]) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new ArrayBuffer(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new ArrayBuffer(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new ArrayBuffer(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new ArrayBuffer(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new ArrayBuffer(8).slice(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new ArrayBuffer(8).slice(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new ArrayBuffer(8).slice(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new ArrayBuffer(8).slice(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new DataView(new ArrayBuffer(8), t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8), t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new DataView(new ArrayBuffer(8), t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new DataView(new ArrayBuffer(8), t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).getInt8(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8)).getInt8(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).getInt8(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).getInt8(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).setInt8(0, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8)).setInt8(0, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).setInt8(0, t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).setInt8(0, t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+new DataView(new ArrayBuffer(8)).getInt16(0, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8)).getInt16(0, t) with methods -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8)).getInt16(0, t) with a proxy -> "same same same / same same same", ran 0 times, now same same same
+new DataView(new ArrayBuffer(8)).getInt16(0, t) with a proxy of a function -> "same same same / same same same", ran 0 times, now same same same
+Atomics.load(new Int32Array(2), t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Atomics.load(new Int32Array(2), t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Atomics.load(new Int32Array(2), t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Atomics.load(new Int32Array(2), t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Atomics.add(new Int32Array(2), 0, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Atomics.add(new Int32Array(2), 0, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Atomics.add(new Int32Array(2), 0, t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Atomics.add(new Int32Array(2), 0, t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Buffer.from(t) with a number -> threw TypeError, ran 0 times, now same same same
+Buffer.from(t) with methods -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Buffer.from(t) with a proxy -> threw TypeError, ran 7 times, now changed changed changed
+Buffer.from(t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(t) with methods -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(t) with a proxy -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2, t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(2, t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Buffer.alloc(2, t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Buffer.alloc(2, t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Buffer.alloc(2).fill(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(2).fill(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Buffer.alloc(2).fill(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Buffer.alloc(2).fill(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Buffer.alloc(2).readUInt8(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(2).readUInt8(t) with methods -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).readUInt8(t) with a proxy -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).readUInt8(t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).toString(t) with a number -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).toString(t) with methods -> threw TypeError, ran 1 times, now changed changed changed
+Buffer.alloc(2).toString(t) with a proxy -> threw TypeError, ran 3 times, now changed changed changed
+Buffer.alloc(2).toString(t) with a proxy of a function -> threw TypeError, ran 2 times, now changed changed changed
+Buffer.alloc(2).slice(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(2).slice(t) with methods -> "same same same / changed changed changed", ran 1 times, now changed changed changed
+Buffer.alloc(2).slice(t) with a proxy -> "same same same / changed changed changed", ran 4 times, now changed changed changed
+Buffer.alloc(2).slice(t) with a proxy of a function -> "same same same / changed changed changed", ran 3 times, now changed changed changed
+Buffer.alloc(2).write(t) with a number -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).write(t) with methods -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).write(t) with a proxy -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).write(t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).indexOf(t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.alloc(2).indexOf(t) with methods -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).indexOf(t) with a proxy -> threw TypeError, ran 0 times, now same same same
+Buffer.alloc(2).indexOf(t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same
+Buffer.concat([Buffer.alloc(1)], t) with a number -> "same same same / same same same", ran 0 times, now same same same
+Buffer.concat([Buffer.alloc(1)], t) with methods -> threw TypeError, ran 0 times, now same same same
+Buffer.concat([Buffer.alloc(1)], t) with a proxy -> threw TypeError, ran 0 times, now same same same
+Buffer.concat([Buffer.alloc(1)], t) with a proxy of a function -> threw TypeError, ran 0 times, now same same same

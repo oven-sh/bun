@@ -1,4 +1,4 @@
-// The other side of borrowed-prototype-unchanged.ts: a prototype of another object that does NOT satisfy the record type is refused.
+// The other side of borrowed-prototype-unchanged.ts: an object that is the prototype of another object and does NOT satisfy the record type enters it like any object. A member of the wrong kind throws where typed code reads it, and a missing member reads undefined.
 type Inner = { p: number; q?: string; deep: number[] };
 type Outer = { inner: Inner; n?: number };
 function own(): Outer { return { inner: { p: 7, deep: [1], q: "q" }, n: 2 }; }

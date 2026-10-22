@@ -1,15 +1,20 @@
-// Further places where an expression of type `any` reaches a declared primitive type: a wrong value throws there.
+// Further places where an expression of type `any` reaches a declared primitive type. A field initializer, a default and a `return` are tested there. An element that an array literal or `push` put in is tested where it is read. A tuple is an array whose contents are its element types together, so the string in the place of the number of `[number, string]` passes the read and is found where it enters a written type, as what `Map.get` returns is.
 /* expected
 field TypeError
 dynamic field TypeError
 default TypeError
 pattern default TypeError
 object pattern default TypeError
-array literal TypeError
-tuple made TypeError
+array literal made TypeError
+tuple made x
 push pushed TypeError
-map set set TypeError
+map set set x
+array literal, typed read made TypeError
+tuple, typed read made TypeError
+push, typed read pushed TypeError
+map set, typed read set TypeError
 async return called
+async return rejects TypeError
 */
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
@@ -31,4 +36,4 @@ attempt("array literal, typed read", () => { const list: number[] = [hide("x")];
 attempt("tuple, typed read", () => { const pair: [number, string] = [hide("x"), "s"]; return "made " + tried(() => { const n: number = pair[0]; return n }) })
 attempt("push, typed read", () => { const list: number[] = []; list.push(hide("x")); return "pushed " + tried(() => { const n: number = list[0]; return n }) })
 attempt("map set, typed read", () => { const m = new Map<string, number>(); m.set("k", hide("x")); return "set " + tried(() => { const n: number | undefined = m.get("k"); return n }) })
-attempt("async return", () => { async function f(): Promise<number> { return hide("x") } f(); return "called" })
+attempt("async return", () => { async function f(): Promise<number> { return hide("x") } f().catch(e => console.log("async return rejects", (e as Error).constructor.name)); return "called" })

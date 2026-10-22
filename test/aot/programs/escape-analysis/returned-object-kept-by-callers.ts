@@ -46,7 +46,7 @@ for (const f of table) { const [p, q] = f(9); t += p + q; }
 const x1 = onlyKept(1), x2 = onlyKept(2); keep(x1); keep(x2);
 for (let i = 0; i < 5; i++) { const [p, q] = sometimesShared(i); t += p + q; const [a, b] = escapes(i); t += a + b; }
 console.log(sometimesShared(50) === sometimesShared(60), seen.length, seen[0] === seen[0], escapes(1) === seen[seen.length - 1]);
-// Own elements are read whatever the prototype has. (The compiled program rejects the definition, because built-in prototypes are immutable; plain Bun accepts it. Neither is visible here.)
+// Own elements are read whatever the prototype has. (The compiled program rejects the definition, because `Array.prototype` takes no key that is an index; plain Bun accepts it. Neither is visible here.)
 try { Object.defineProperty(Array.prototype, "0", { get() { return "from the prototype"; }, configurable: true }); } catch {}
 { const [p, q] = pair(8); console.log(p, q); }
 try { delete (Array.prototype as any)[0]; } catch {}

@@ -1,4 +1,0 @@
-own property named like a method: TypeError
-still class 21 id
-the method bound to the object: no error
-bound class 21

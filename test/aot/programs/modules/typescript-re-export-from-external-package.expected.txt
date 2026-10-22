@@ -1,0 +1,6 @@
+TypeScript, a type: present = 1
+TypeScript, a name the package does not export: present = 1
+JavaScript, a name the package does not export: SyntaxError
+TypeScript, a name that is ambiguous: SyntaxError
+JavaScript, a name that is ambiguous: SyntaxError
+TypeScript, a name the package exports: present = 1

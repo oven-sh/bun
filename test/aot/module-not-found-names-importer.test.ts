@@ -3,9 +3,7 @@ import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-// "Cannot find module 'x'" names the file that asked for it, in the message or in its "Require stack:". Under `bun run --aot` a
-// `require("package")` that the bundler could not resolve was asked for on behalf of the entry point: the wrong file in the
-// message, and the wrong folder to start looking in.
+// "Cannot find module 'x'" names the file that asked for it, in the message or in its "Require stack:", and not the entry point.
 
 const report = `e => [e.name, e.code, e.message, e.requireStack && e.requireStack.join()].join(" | ")`;
 
@@ -56,27 +54,17 @@ test("bun run --aot names the same file as bun run", async () => {
   expect(aot.exitCode).toBe(0);
 });
 
-test("bun build --compile --aot names the executable, as bun build --compile does", async () => {
+test("bun build --compile --aot names the same file as bun run, by its path in the executable", async () => {
   using dir = tempDir("module-not-found", files);
-  const outputs: string[][] = [];
-  for (const flags of [[], ["--aot"]]) {
-    const built = await spawned([bunExe(), "build", "--compile", ...flags, "main.mjs", "--outfile", "program"], String(dir));
-    expect(built.exitCode).toBe(0);
-    const ran = await spawned([join(String(dir), "program")], String(dir));
-    expect(ran.exitCode).toBe(0);
-    outputs.push(ran.stdout.split("\n"));
-  }
-  // The bundle replaces a literal `require` that it could not resolve by code that throws a plain Error without a code.
-  const isComparable = (line: string) => !line.startsWith("require(literal");
-  expect(outputs[1].filter(isComparable)).toEqual(outputs[0].filter(isComparable));
-  const program = isWindows ? "B:\\~BUN\\root\\program" : "/$bunfs/root/program";
-  expect(outputs[1].filter(line => !isComparable(line))).toEqual([
-    `require(literal package): ResolveMessage | MODULE_NOT_FOUND | Cannot find module 'no-such-package' ~ Require stack: ~ - ${program} | ${program}`,
-    `require(literal file): ResolveMessage | MODULE_NOT_FOUND | Cannot find module './no-such-file.js' ~ Require stack: ~ - ${program} | ${program}`,
-  ]);
+  const plain = await spawned([bunExe(), "run", "main.mjs"], String(dir));
+  const built = await spawned([bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program"], String(dir));
+  expect(built.exitCode).toBe(0);
+  const ran = await spawned([join(String(dir), "program")], String(dir));
+  expect(ran.stdout).toBe(plain.stdout.replaceAll("<cwd>", isWindows ? "B:\\~BUN\\root" : "/$bunfs/root"));
+  expect(ran.exitCode).toBe(0);
 });
 
-test("bun run --aot looks for a package that appears later from the folder of the file that requires it", async () => {
+test("bun run --aot does not load a package that appears later, and names the file that requires it", async () => {
   using dir = tempDir("module-not-found", {
     ...files,
     "late.mjs": `import { mkdirSync, writeFileSync } from "node:fs";
@@ -86,9 +74,10 @@ writeFileSync("lib/deep/node_modules/only-nearby/index.js", "exports.where = 'be
 console.log(cjs.nearby());
 `,
   });
-  const plain = await spawned([bunExe(), "run", "late.mjs"], String(dir));
-  expect(plain.stdout).toBe("beside the file that requires it\n");
-  using again = tempDir("module-not-found", { ...files, "late.mjs": await Bun.file(join(String(dir), "late.mjs")).text() });
-  const aot = await spawned([bunExe(), "run", "--debug-aot", "late.mjs"], String(again));
-  expect(aot.stdout).toBe(plain.stdout);
+  // Code that was not there when the program was compiled is not part of it.
+  const aot = await spawned([bunExe(), "run", "--debug-aot", "late.mjs"], String(dir));
+  expect(aot.stdout).toContain("Cannot find module 'only-nearby' from ");
+  expect(aot.stdout).toContain(join("lib", "deep", "asks.cjs"));
+  expect(aot.exitCode).toBe(0);
+  expect((await spawned([bunExe(), "run", "late.mjs"], String(dir))).stdout).toBe("beside the file that requires it\n");
 });

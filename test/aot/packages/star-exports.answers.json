@@ -1,12 +1,9 @@
 {
   "export-star.collide_named.mjs": {
-    "errors": "error: <folder>/export-star.collide_named.mjs:2: --aot does not support an import of a name that the module does not export\n"
+    "errors": "error: TS100201: Ambiguous import \"both\" has multiple matching exports\n"
   },
   "export-star.from_two_cjs.names.mjs": {
     "output": "x [\"c1\",\"c2\",\"d1\"]\n"
   },
-  "export-star.from_two_cjs.namespace.mjs": {
-    "output": "x [\"c1,c2,d1\",\"undef\",\"undef\",\"c1\",\"c2\",\"d1\"]\n"
-  },
-  "export-star.from_two_cjs.require.cjs": "compiled"
+  "handed-on-under-side-effects-false.star.mjs": "compiled"
 }

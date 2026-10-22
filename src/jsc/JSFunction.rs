@@ -1,6 +1,6 @@
 use bun_core::String as BunString;
 
-use crate::{JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::{JSGlobalObject, JSHostFn, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::JSFunction`.
@@ -75,20 +75,6 @@ impl JSFunction {
             options.implementation_visibility,
             options.intrinsic,
             options.constructor,
-        )
-    }
-
-    /// Calls `implementation` as JavaScript would, for native code that has no call frame to hand
-    /// on. It finds `request` again with `callframe.argument(0).as_promise_ptr::<T>()`.
-    pub fn call_with_request<T>(
-        global: &JSGlobalObject,
-        implementation: JSHostFn,
-        request: &mut T,
-    ) -> JsResult<JSValue> {
-        Self::create(global, "", implementation, 1, Default::default()).call(
-            global,
-            JSValue::UNDEFINED,
-            &[JSValue::from_ptr_address(core::ptr::from_mut(request) as usize)],
         )
     }
 

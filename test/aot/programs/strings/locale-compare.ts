@@ -1,9 +1,9 @@
 // `a.localeCompare(b)` with one string argument, with locales or options, and with other kinds of arguments.
-// CALLS+ compared operationAOTTypedStringLocaleCompare
+// CALLS+ compared operationAOTStringLocaleCompare
 // CALLS- compared CallHostFunction
-// CALLS+ byLocale operationAOTTypedStringLocaleCompare
-// CALLS- comparedIn operationAOTTypedStringLocaleCompare
-// CALLS- comparedWithAnything operationAOTTypedStringLocaleCompare
+// CALLS+ byLocale operationAOTStringLocaleCompare
+// CALLS- comparedIn operationAOTStringLocaleCompare
+// CALLS- comparedWithAnything operationAOTStringLocaleCompare
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

@@ -146,7 +146,7 @@ JSObject* JSPerformanceObserverEntryList::prototype(VM& vm, JSDOMGlobalObject& g
     return getDOMPrototype<JSPerformanceObserverEntryList>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSPerformanceObserverEntryList::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSPerformanceObserverEntryList::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceObserverEntryListDOMConstructor, DOMConstructorID::PerformanceObserverEntryList>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

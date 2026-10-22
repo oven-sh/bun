@@ -1,5 +1,5 @@
 // Several first stores in a row to one typed record under another prototype: they are tested together, and each must still see a setter, a read-only property or a proxy of the chain, before and after the chain changes.
-// IR+ ^shape \d+ Record "Fields" .* other prototypes prototype set by typed code
+// IR+ ^layout L\d+ .*name="Fields" (?!.*impossibleMutations=\[[^\]]*ChangePrototype)(?!.*isStable=true)
 interface Fields { a: number; count?: any; ended?: any; size?: number; late?: any }
 const calls: string[] = []
 const plainChain: any = Object.create({ count: 0 })

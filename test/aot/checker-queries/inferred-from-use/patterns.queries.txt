@@ -1,0 +1,10 @@
+# A parameter that is an object pattern has the members that the pattern names, typed by the uses of the variables.
+patterns.js:3 parameter `{ a, b }` = { a?: number; b: { c?: number; }; }
+patterns.js:5 parameter `{ size = 1 }` = { size?: number; }
+patterns.js:7 parameter `{ a: { b } }` = { a: { b?: number; }; }
+patterns.js:9 parameter `{ a, ...rest }` = { a?: any; }
+patterns.js:13 parameter `[x, y]` = [any, any]
+patterns.js:13 binding `x` = number
+patterns.js:13 binding `y` = number
+patterns.js:15 parameter `o` = { a?: number; }
+patterns.js:17 parameter `{ a }` = { a?: number; }

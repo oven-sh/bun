@@ -1,5 +1,7 @@
 #include "root.h"
 #include "_NativeModule.h"
+#include "RemovableFeatures.h"
+#include "BunCompiledModules.h"
 #include "CodeGenerationFromStrings.h"
 
 #include "ExceptionOr.h"
@@ -74,8 +76,14 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
     (JSGlobalObject * globalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Inspector, functionStartRemoteDebugger);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (JSValue error = Bun::errorIfDebuggerIsRefused(globalObject, "startRemoteDebugger from bun:jsc"_s)) [[unlikely]] {
+        throwException(globalObject, scope, error);
+        return {};
+    }
 
     // The debugger evaluates what its client sends, whatever the engine's eval setting.
     THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(globalObject, scope, {});
@@ -617,6 +625,11 @@ JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
     (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = globalObject->vm();
+    if (JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "getProtectedObjects from bun:jsc"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        throwException(globalObject, scope, error);
+        return {};
+    }
     MarkedArgumentBuffer list;
     vm.heap.forEachProtectedCell(
         [&](JSCell* cell) { list.append(cell); });
@@ -833,6 +846,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
     (JSGlobalObject * lexicalGlobalObject,
         CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionSerialize);
     auto* globalObject = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -883,6 +897,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSerialize,
 }
 JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(StructuredClone, functionDeserialize);
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     JSValue value = callFrame->argument(0);

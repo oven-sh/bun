@@ -1,13 +1,13 @@
 // Each of these differs in one step from the functions that bind every name of another module to the exports: the module keeps its object, and a name is read by a property access. Nothing but names is read of them here, so that nothing else makes them keep it.
-// IR+ (GetById|CallMethod) v[0-9]+ "alpha"
-// IR+ (GetById|CallMethod) v[0-9]+ "beta"
-// IR+ (GetById|CallMethod) v[0-9]+ "gamma"
-// IR+ (GetById|CallMethod) v[0-9]+ "delta"
-// IR+ (GetById|CallMethod) v[0-9]+ "epsilon"
-// IR+ (GetById|CallMethod) v[0-9]+ "zeta"
-// IR+ (GetById|CallMethod) v[0-9]+ "eta"
-// IR+ (GetById|CallMethod) v[0-9]+ "theta"
-// IR+ (GetById|CallMethod) v[0-9]+ "iota"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="alpha"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="beta"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="gamma"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="delta"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="epsilon"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="zeta"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="eta"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="theta"
+// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="iota"
 const alphaModule = require("./files/default-too.js");
 console.log(typeof alphaModule.alpha === "function" ? alphaModule.alpha() : alphaModule.alpha, alphaModule.alphaValue);
 const betaModule = require("./files/what-is-there-is-overwritten.js");

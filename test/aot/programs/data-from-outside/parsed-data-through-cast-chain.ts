@@ -1,4 +1,4 @@
-// What is parsed is looked at as one type after another, and each cast carries it one step further: the search for what is given takes a turn for each.
+// What is parsed is looked at as one type after another through a chain of casts. Each cast lets the object pass as it is, so every view reads and stores the same object.
 interface Link0 { id: number; label: string; next?: Link0 }
 interface Link1 { id: number; label: string; next?: Link1; seen?: boolean }
 interface Link2 { id: number; label: string; next?: Link2; depth?: number }

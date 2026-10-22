@@ -1,0 +1,3 @@
+const result = Array("text", 1.5);
+console.log(Array.isArray(result), result.length, typeof result[0], result[0].length, result[0]);
+console.log(typeof result[1], result[1] + 1);

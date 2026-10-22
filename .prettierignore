@@ -45,3 +45,4 @@ src/js/internal/repl/acorn-walk.js
 
 # typed versions of npm packages: the packages' own code, pinned byte for byte
 packages/bun-sound
+test/aot/typed-packages/react-reconciler-host/typed-bundle

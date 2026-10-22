@@ -2,7 +2,7 @@
 import { js, pkg, ts, type Case } from "./run-packages";
 
 const differs =
-  "An object of a declared class or type keeps its fields as plain data properties of the declared types, and its class keeps its methods: a library that turns fields into accessors, replaces a method or stores a value of another type gets a TypeError.";
+  "A value of the wrong type in a location whose type the program wrote throws a TypeError: a method that reads a `number` field after a library stored a string in it, and a `number` parameter that generated code passes a string.";
 
 export const cases: Case[] = [
   {

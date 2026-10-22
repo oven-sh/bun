@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "built-ins-alone-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+const result = fs.writeFileSync(file, new Uint8Array([104, 105]));
+console.log(result === undefined);
+console.log(fs.readFileSync(file, "utf8"));
+fs.rmSync(folder, { recursive: true });

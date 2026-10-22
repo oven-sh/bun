@@ -25,34 +25,41 @@
 
 "use strict";
 
-const { URL, URLSearchParams, URLPattern } = globalThis;
+const { URL, URLSearchParams, URLPattern } = globalThis as typeof globalThis & { URLPattern: unknown };
 const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
-const pathToFileURL = require("internal/path_to_file_url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 
-interface Url {
-  protocol: string | null;
-  slashes: boolean | null;
-  auth: string | null;
-  host: string | null;
-  port: string | null;
-  hostname: string | null;
-  hash: string | null;
-  search: string | null;
-  query: string | Record<string, string | string[]> | null;
-  pathname: string | null;
-  path: string | null;
-  href: string | null;
-  parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): this;
-  format(): string;
-  resolve(relative: string | URL | Url): string;
-  resolveObject(relative: string | Url): Url;
-  parseHost(): void;
+declare global {
+  namespace $Node {
+    /** What `url.parse()` answers. */
+    interface Url extends UrlPrototype {
+      protocol: string | null;
+      slashes: boolean | null;
+      auth: string | null | undefined;
+      host: string | null | undefined;
+      port: string | null;
+      hostname: string | null | undefined;
+      hash: string | null;
+      search: string | null;
+      query: string | Record<string, string | string[]> | null;
+      pathname: string | null;
+      path: string | null;
+      href: string | null;
+    }
+
+    /** What `Url.prototype` itself holds: the methods, and no field of an instance. */
+    interface UrlPrototype {
+      parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean): this;
+      format(): string;
+      resolve(relative: string | Url): string;
+      resolveObject(relative: string | Url): Url;
+      parseHost(): void;
+    }
+  }
 }
 
-function Url() {
+function Url(this: $Node.Url) {
   this.protocol = null;
   this.slashes = null;
   this.auth = null;
@@ -66,7 +73,7 @@ function Url() {
   this.path = null;
   this.href = null;
 }
-Url.prototype = {} as Url;
+Url.prototype = {} as $Node.UrlPrototype;
 
 // Reference: RFC 3986, RFC 1808, RFC 2396
 
@@ -90,27 +97,21 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
   // Characters never allowed in a hostname (post-IDNA) / bracketed IPv6 hostname.
   forbiddenHostChars = /[\0\t\n\r #%/:<>?@[\\\]^|]/,
   forbiddenHostCharsIpv6 = /[\0\t\n\r #%/<>?@\\^|]/,
-  // user@server without a protocol
-  authWithoutProtocolPattern = /^\/\/[^@/]+@[^@/]+/,
-  // Any of `autoEscape`
-  autoEscapePattern = /['{}|\\^`<>" \r\n\t]/,
-  questionMarkOrHashPattern = /[?#]/g,
-  hashPattern = /#/g,
   hostnameMaxLen = 255,
   // protocols that can allow "unsafe" and "unwise" chars.
-  unsafeProtocol = {
+  unsafeProtocol: Record<string, true | null | undefined> = {
     __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that never have a hostname.
-  hostlessProtocol = {
+  hostlessProtocol: Record<string, true | null | undefined> = {
     __proto__: null,
     javascript: true,
     "javascript:": true,
   },
   // protocols that always contain a // bit.
-  slashedProtocol = {
+  slashedProtocol: Record<string, true | null | undefined> = {
     __proto__: null,
     http: true,
     https: true,
@@ -132,11 +133,7 @@ const { isInsideNodeModules } = require("internal/shared");
 
 let urlParseWarned = false;
 
-function urlParse(
-  url: string | URL | Url, // really has unknown type but intellisense is nice
-  parseQueryString?: boolean,
-  slashesDenoteHost?: boolean,
-) {
+function urlParse(url: string | $Node.Url, parseQueryString?: boolean, slashesDenoteHost?: boolean) {
   // Once-per-process and never from library code, matching node v26.3.0
   // lib/url.js urlParse. The latch stays unset on suppressed calls so a
   // later first-party caller still gets the warning, like node.
@@ -153,12 +150,17 @@ function urlParse(
 
   if ($isObject(url) && url instanceof Url) return url;
 
-  var u = new Url();
+  var u: $Node.Url = new Url();
   u.parse(url, parseQueryString, slashesDenoteHost);
   return u;
 }
 
-Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, slashesDenoteHost?: boolean) {
+Url.prototype.parse = function parse(
+  this: $Node.Url,
+  url: string,
+  parseQueryString?: boolean,
+  slashesDenoteHost?: boolean,
+) {
   validateString(url, "url");
 
   /*
@@ -173,10 +175,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   let rest = "";
   let lastPos = 0;
   for (let i = 0, inWs = false, split = false; i < url.length; ++i) {
-    const code = StringPrototypeCharCodeAt.$call(url, i);
-
-    // Nothing below looks at ] ^ _ ` a-z { | } ~ once the text has begun.
-    if (code > 92 && code < 128 && start !== -1 && !inWs) continue;
+    const code = url.$charCodeAt(i);
 
     // Find first and last non-whitespace characters for trimming
     const isWs = code < 33 || code === Char.NO_BREAK_SPACE || code === Char.ZERO_WIDTH_NOBREAK_SPACE;
@@ -259,10 +258,11 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     }
   }
 
-  var proto: any = protocolPattern.exec(rest);
+  var proto: RegExpExecArray | string | null = protocolPattern.exec(rest);
   if (proto) {
     proto = proto[0];
-    var lowerProto = proto.toLowerCase();
+    // Stays undefined without a protocol. No table below has the key "undefined".
+    var lowerProto: string = proto.toLowerCase();
     this.protocol = lowerProto;
     rest = rest.substring(proto.length);
   }
@@ -273,16 +273,16 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
    * resolution will treat //foo/bar as host=foo,path=bar because that's
    * how the browser resolves relative URLs.
    */
-  let slashes;
-  if (slashesDenoteHost || proto || rest.match(authWithoutProtocolPattern)) {
+  let slashes: boolean | undefined;
+  if (slashesDenoteHost || proto || rest.match(/^\/\/[^@/]+@[^@/]+/)) {
     slashes = rest.substring(0, 2) === "//";
-    if (slashes && !(proto && hostlessProtocol[lowerProto])) {
+    if (slashes && !(proto && hostlessProtocol[lowerProto!])) {
       rest = rest.substring(2);
       this.slashes = true;
     }
   }
 
-  if (!hostlessProtocol[lowerProto] && (slashes || (lowerProto && !slashedProtocol[lowerProto]))) {
+  if (!hostlessProtocol[lowerProto!] && (slashes || (lowerProto! && !slashedProtocol[lowerProto!]))) {
     /*
      * there's a hostname.
      * the first instance of /, ?, ;, or # ends the host.
@@ -301,10 +301,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     let atSign = -1;
     let nonHost = -1;
     for (let i = 0; i < rest.length; ++i) {
-      const code = StringPrototypeCharCodeAt.$call(rest, i);
-      // a-z 0-9 - .
-      if (code >= 97 ? code <= 122 : code >= 48 ? code <= 57 : code === 46 || code === 45) continue;
-      switch (code) {
+      switch (rest.$charCodeAt(i)) {
         case Char.TAB:
         case Char.LINE_FEED:
         case Char.CARRIAGE_RETURN:
@@ -415,7 +412,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
     var p = this.port ? ":" + this.port : "";
     var h = this.hostname || "";
     this.host = h + p;
-    this.href += this.host;
+    this.href! += this.host;
 
     /*
      * strip [ and ] from the hostname
@@ -433,7 +430,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
    * now rest is set to the post-host stuff.
    * chop off any delim chars.
    */
-  if (!unsafeProtocol[lowerProto] && autoEscapePattern.test(rest)) {
+  if (!unsafeProtocol[lowerProto!]) {
     /*
      * First, make 100% sure that any "autoEscape" chars get
      * escaped, even if encodeURIComponent doesn't think they
@@ -476,13 +473,13 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
   if (rest) {
     this.pathname = rest;
   }
-  if (slashedProtocol[lowerProto] && this.hostname && !this.pathname) {
+  if (slashedProtocol[lowerProto!] && this.hostname && !this.pathname) {
     this.pathname = "/";
   }
 
   // to support http.request
   const pathname = this.pathname;
-  let search;
+  let search: string | null | undefined;
   if (pathname || (search = this.search)) {
     this.path = (pathname || "") + ((search ?? this.search) || "");
   }
@@ -494,7 +491,7 @@ Url.prototype.parse = function parse(url: string, parseQueryString?: boolean, sl
 
 // Same as node's lib/url.js noEscapeAuth table (noEscape plus the colon).
 // prettier-ignore
-const noEscapeAuth = new Uint8Array([
+const noEscapeAuth = new Int8Array([
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x00 - 0x0F
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0x10 - 0x1F
   0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, // 0x20 - 0x2F
@@ -515,7 +512,7 @@ function getHexTable() {
 }
 
 // Port of node's internal/querystring encodeStr, used for auth encoding.
-function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
+function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
   const len = str.length;
   if (len === 0) return "";
 
@@ -524,7 +521,7 @@ function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
   let i = 0;
 
   outer: for (; i < len; i++) {
-    let c = StringPrototypeCharCodeAt.$call(str, i);
+    let c = str.$charCodeAt(i);
 
     // ASCII
     while (c < 0x80) {
@@ -536,7 +533,7 @@ function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
 
       if (++i === len) break outer;
 
-      c = StringPrototypeCharCodeAt.$call(str, i);
+      c = str.$charCodeAt(i);
     }
 
     if (lastPos < i) out += str.slice(lastPos, i);
@@ -557,7 +554,7 @@ function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
 
     if (i >= len) throw $ERR_INVALID_URI();
 
-    const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
+    const c2 = str.$charCodeAt(i) & 0x3ff;
 
     lastPos = i + 1;
     c = 0x10000 + (((c & 0x3ff) << 10) | c2);
@@ -574,15 +571,15 @@ function encodeStr(str: string, noEscapeTable: Uint8Array, hexTable: string[]) {
 
 function isIpv6Hostname(hostname: string) {
   return (
-    StringPrototypeCharCodeAt.$call(hostname, 0) === Char.LEFT_SQUARE_BRACKET &&
-    StringPrototypeCharCodeAt.$call(hostname, $toLength(hostname.length - 1)) === Char.RIGHT_SQUARE_BRACKET
+    hostname.$charCodeAt(0) === Char.LEFT_SQUARE_BRACKET &&
+    hostname.$charCodeAt($toLength(hostname.length - 1)) === Char.RIGHT_SQUARE_BRACKET
   );
 }
 
 let warnInvalidPort = true;
-function getHostname(self, rest, hostname: string, url) {
+function getHostname(self: $Node.Url, rest: string, hostname: string, url: string) {
   for (let i = 0; i < hostname.length; ++i) {
-    const code = StringPrototypeCharCodeAt.$call(hostname, i);
+    const code = hostname.$charCodeAt(i);
     const isValid =
       code !== Char.FORWARD_SLASH &&
       code !== Char.BACKWARD_SLASH &&
@@ -607,7 +604,7 @@ function getHostname(self, rest, hostname: string, url) {
 }
 
 // format a parsed object into a url string
-function urlFormat(urlObject: string | URL | Url, options?: object): string;
+function urlFormat(urlObject: string | URL | $Node.Url, options?: object): string;
 function urlFormat(urlObject: unknown, options?: unknown) {
   /*
    * ensure it's an object, and not a string url.
@@ -692,7 +689,7 @@ function formatWhatwgURL(url: URL, fragment: boolean, unicode: boolean, search: 
   return ret;
 }
 
-Url.prototype.format = function format() {
+Url.prototype.format = function format(this: $Node.Url) {
   var auth: string = this.auth || "";
   if (auth) {
     auth = encodeStr(auth, noEscapeAuth, getHexTable());
@@ -710,7 +707,7 @@ Url.prototype.format = function format() {
   }
 
   const thisHost = this.host;
-  let thisHostname;
+  let thisHostname: string | null | undefined;
   if (thisHost) {
     host = auth + thisHost;
   } else if ((thisHostname = this.hostname)) {
@@ -753,39 +750,37 @@ Url.prototype.format = function format() {
     search = "?" + search;
   }
 
-  pathname = pathname.replace(questionMarkOrHashPattern, encodeMatch);
-  search = search.replace(hashPattern, "%23");
+  pathname = pathname.replace(/[?#]/g, function (match) {
+    return encodeURIComponent(match);
+  });
+  search = search.replace(/#/g, "%23");
 
   return protocol + host + pathname + search + hash;
 };
 
-function encodeMatch(match) {
-  return encodeURIComponent(match);
-}
-
-function urlResolve(source: string | URL | Url, relative: string | URL | Url) {
+function urlResolve(source: string | $Node.Url, relative: string | $Node.Url) {
   return urlParse(source, false, true).resolve(relative);
 }
 
-Url.prototype.resolve = function resolve(relative: string | URL | Url) {
+Url.prototype.resolve = function resolve(this: $Node.Url, relative: string | $Node.Url) {
   return this.resolveObject(urlParse(relative, false, true)).format();
 };
 
-function urlResolveObject(source, relative) {
+function urlResolveObject(source: string | $Node.Url, relative: string | $Node.Url) {
   if (!source) {
     return relative;
   }
   return urlParse(source, false, true).resolveObject(relative);
 }
 
-Url.prototype.resolveObject = function resolveObject(relative) {
+Url.prototype.resolveObject = function resolveObject(this: $Node.Url, relative: string | $Node.Url) {
   if (typeof relative === "string") {
-    var rel: Url = new Url();
+    var rel: $Node.Url = new Url();
     rel.parse(relative, false, true);
     relative = rel;
   }
 
-  var result = new Url();
+  var result: $Node.Url = new Url();
   var tkeys = Object.keys(this);
   for (var tk = 0; tk < tkeys.length; tk++) {
     var tkey = tkeys[tk];
@@ -816,7 +811,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     }
 
     // urlParse appends trailing / to urls like http://www.example.com
-    if (slashedProtocol[result.protocol] && result.hostname && !result.pathname) {
+    if (slashedProtocol[result.protocol!] && result.hostname && !result.pathname) {
       result.pathname = "/";
       result.path = result.pathname;
     }
@@ -872,7 +867,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
     result.port = relative.port;
     // to support http.request
     const resultPathname = result.pathname;
-    let resultSearch;
+    let resultSearch: string | null | undefined;
     if (resultPathname || (resultSearch = result.search)) {
       result.path = (resultPathname || "") + ((resultSearch ?? result.search) || "");
     }
@@ -883,7 +878,8 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
   const isSourceAbs = result.pathname && result.pathname.charAt(0) === "/";
   const isRelAbs = relative.host || (relative.pathname && relative.pathname.charAt(0) === "/");
-  let mustEndAbs = isRelAbs || isSourceAbs || (result.host && relative.pathname);
+  let mustEndAbs: string | number | boolean | null | undefined =
+    isRelAbs || isSourceAbs || (result.host && relative.pathname);
   const removeAllDots = mustEndAbs;
   let srcPath = (result.pathname && result.pathname.split("/")) || [];
   const relPath = (relative.pathname && relative.pathname.split("/")) || [];
@@ -1079,7 +1075,7 @@ Url.prototype.resolveObject = function resolveObject(relative) {
 
   // to support request.http
   const resultPathname = result.pathname;
-  let resultSearch;
+  let resultSearch: string | null | undefined;
   if (resultPathname !== null || (resultSearch = result.search) !== null) {
     resultSearch ??= result.search;
     // prettier-ignore
@@ -1092,15 +1088,16 @@ Url.prototype.resolveObject = function resolveObject(relative) {
   return result;
 };
 
-Url.prototype.parseHost = function parseHost() {
+Url.prototype.parseHost = function parseHost(this: $Node.Url) {
   var host = this.host;
-  var port: RegExpExecArray | string | null = portPattern.exec(host);
+  // The pattern matches neither "null" nor "undefined".
+  var port: RegExpExecArray | string | null = portPattern.exec(host!);
   if (port) {
     port = port[0];
     if (port !== ":") {
       this.port = port.slice(1);
     }
-    host = host.slice(0, host.length - port.length);
+    host = host!.slice(0, host!.length - port.length);
   }
   if (host) this.hostname = host;
 };
@@ -1142,6 +1139,92 @@ const enum Char {
   SPACE = 32,                       // ' '
   NO_BREAK_SPACE = 160,             //
   ZERO_WIDTH_NOBREAK_SPACE = 65279, //
+}
+
+const isWindows = process.platform === "win32";
+
+// Mirrors the pre-encode table in node's src/node_url.cc EncodePathChars();
+// the URL parser then applies the WHATWG path percent-encode set to the rest.
+const encodePathCharsRe = /[\0\t\n\r "#%?[\\\]^|~]/g;
+const encodePathCharsMap = {
+  __proto__: null,
+  "\0": "%00",
+  "\t": "%09",
+  "\n": "%0A",
+  "\r": "%0D",
+  " ": "%20",
+  '"': "%22",
+  "#": "%23",
+  "%": "%25",
+  "?": "%3F",
+  "[": "%5B",
+  "\\": "%5C",
+  "]": "%5D",
+  "^": "%5E",
+  "|": "%7C",
+  "~": "%7E",
+};
+
+function encodeWindowsPathChar(ch: string) {
+  return ch === "\\" ? "/" : encodePathCharsMap[ch];
+}
+function encodePosixPathChar(ch: string) {
+  return encodePathCharsMap[ch];
+}
+
+// Equivalent of node's bindingUrl.pathToFileURL (src/node_url.cc).
+function createFileURL(filepath: string, windows: boolean, hostname?: string) {
+  let outURL: URL;
+  try {
+    outURL = new URL(
+      "file://" + filepath.replace(encodePathCharsRe, windows ? encodeWindowsPathChar : encodePosixPathChar),
+    );
+  } catch {
+    throw $ERR_INVALID_URL(filepath);
+  }
+  if (hostname !== undefined) {
+    // The WHATWG hostname setter is silent on failure; node throws when ada's
+    // set_hostname() fails. Probe with the parser, which does throw.
+    try {
+      new URL("file://" + hostname + "/");
+    } catch {
+      throw $ERR_INVALID_URL(filepath, hostname);
+    }
+    outURL.hostname = hostname;
+  }
+  return outURL;
+}
+
+function pathToFileURL(filepath: string, options?: { windows?: boolean } | null) {
+  validateString(filepath, "path");
+  const path = require("node:path");
+  const windows = options?.windows ?? isWindows;
+  const isUNC = windows && filepath.startsWith("\\\\");
+  let resolved = isUNC ? filepath : windows ? path.win32.resolve(filepath) : path.posix.resolve(filepath);
+  if (isUNC || (windows && resolved.startsWith("\\\\"))) {
+    // UNC path format: \\server\share\resource
+    // "\\?\UNC\" extended UNC path prefix is ignored.
+    const isExtendedUNC = resolved.startsWith("\\\\?\\UNC\\");
+    const prefixLength = isExtendedUNC ? 8 : 2;
+    const hostnameEndIndex = resolved.indexOf("\\", prefixLength);
+    if (hostnameEndIndex === -1) {
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Missing UNC resource path");
+    }
+    if (hostnameEndIndex === prefixLength) {
+      throw $ERR_INVALID_ARG_VALUE("path", resolved, "Empty UNC servername");
+    }
+    const hostname = resolved.slice(prefixLength, hostnameEndIndex);
+    return createFileURL(resolved.slice(hostnameEndIndex), true, hostname);
+  }
+  // path.resolve strips trailing slashes so we must add them back
+  const filePathLast = filepath.charCodeAt(filepath.length - 1);
+  if (
+    (filePathLast === Char.FORWARD_SLASH || (windows && filePathLast === Char.BACKWARD_SLASH)) &&
+    resolved[resolved.length - 1] !== path.sep
+  ) {
+    resolved += "/";
+  }
+  return createFileURL(resolved, windows);
 }
 
 // Ports of node's getPathFromURLWin32/getPathFromURLPosix
@@ -1223,7 +1306,7 @@ function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
 function percentDecodeIntoBuffer(pathname: string): Buffer {
   const input = Buffer.from(pathname, "utf8");
   const length = input.length;
-  const output = Buffer.allocUnsafe(length);
+  const output: Buffer = Buffer.allocUnsafe(length);
   let j = 0;
   for (let i = 0; i < length; ++i) {
     const byte = input[i];

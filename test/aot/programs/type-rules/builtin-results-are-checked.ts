@@ -39,14 +39,14 @@ function inATry(text: string): string {
     const value: string[] = JSON.parse(text);
     return "fine " + value.length;
   } catch (error) {
-    return "caught " + (error as Error).message;
+    return "caught " + (error as Error).name;
   }
 }
 function row(name: string, run: () => string): void {
   try {
     console.log(name, run());
   } catch (error) {
-    console.log(name, "threw", (error as Error).name + ": " + (error as Error).message);
+    console.log(name, "threw", (error as Error).name);
   }
 }
 const texts = ['"four"', "4", '["a","b"]', '{"length":2}', "null", "true"];

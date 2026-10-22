@@ -37,8 +37,7 @@ const self = thisIn(); self.double = 20;
 lines.push(self.n, self.double, Object.create(self).double);
 const kept = [];
 for (let i = 0; i < 300; i++) { context(state); many(i); apart(i); thisIn(); }
-const names = ["operationAOTTypedDefineGetterByKey", "operationAOTTypedDefineSetterByKey", "language-operation:DefineGetter", "language-operation:DefineSetter"];
-const asked = () => names.reduce((sum, name) => sum + count(name), 0);
+const asked = () => count("operationAOTDefineAccessor");
 const before = asked();
 let check = 0;
 for (let i = 0; i < 3000; i++) {

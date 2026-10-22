@@ -1,6 +1,6 @@
 // `(a + b) | 0` on `int32` values is a 32-bit addition: it wraps, as in plain Bun, and nothing is tested.
 // SIZE< step 120
-// IR- Cast v\d+ As integer
+// IR- : (i32|int\S*) = Claim v\d+(?!.* isProven)
 import type { int32 } from "bun";
 
 function step(a: int32, b: int32, c: int32): int32 {

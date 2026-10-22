@@ -1,7 +1,7 @@
 // Required fields that are stored right after an object's allocation can never be observed as missing; frozen objects, reflection and untyped callers see the same as in plain Bun.
 const show = (what: string, o: object) => console.log(what, JSON.stringify(Object.keys(o)), JSON.stringify(o))
 enum Flags { None = 0, One = 1, All = -1 }
-// Through the runtime, by a computed name: a typed read of a number that finds nothing throws, which is a different rule.
+// Through `any`, by a computed name: no written type is involved in the read.
 const read = (o: any, name: string) => o[name]
 const list = [1]
 
@@ -101,6 +101,6 @@ Object.defineProperty(Object.getPrototypeOf(half), "ma", { set(value: number) { 
 const later = new Half(list, 5); show("M half, a setter", later); console.log(kept, read(later, "ma"), Object.hasOwn(later, "ma"))
 
 // A callee that is not a constructor function of the type: it declares no `this`, so it does not receive the allocated object, whether
-// or not the compiler knows the callee. What it creates is not an `H`; the cast that calls it a constructor of `H` is a prediction, so nothing is thrown: as in plain Bun.
+// or not the compiler knows the callee. Any function fits a constructor type, and what it creates is no `H` but an object, which passes an object type, so nothing is thrown: as in plain Bun.
 const Other = function (this: any) { this.other = 1 } as unknown as new (o: number[], k: Flags, n: number) => H
 try { const o = new Other(list, Flags.One, 1); console.log("Other", JSON.stringify(o), read(o, "k")) } catch (e) { console.log("Other", (e as Error).constructor.name) }

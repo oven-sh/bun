@@ -1,9 +1,9 @@
 // `const r = new T(..); r.id = ..; r.sym = ..` where the constructor is only predicted.
-// IR= 2 make PutById v[0-9]+, v[0-9]+ "sym"
-// IR= 2 make PutById v[0-9]+, v[0-9]+ "extra"
-// IR= 2 makeCounted PutById v[0-9]+, v[0-9]+ "id"
-// IR= 2 makeCounted PutField
-// IR= 1 makeSeen PutById v[0-9]+, v[0-9]+ "id"
+// IR= 2 make PropSet v[0-9]+, v[0-9]+ name="sym"
+// IR= 2 make PropSet v[0-9]+, v[0-9]+ name="extra"
+// IR= 2 makeCounted PropSet v[0-9]+, v[0-9]+ name="id"
+// IR= 2 makeCounted PutEnvironmentField
+// IR= 1 makeSeen PropSet v[0-9]+, v[0-9]+ name="id"
 declare const console: any;
 interface Ty { flags: number; id: number; sym: string | undefined; extra: number }
 function Ty(this: Ty, flags: number) { this.flags = flags; }

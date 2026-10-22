@@ -1,15 +1,15 @@
 // A member keyed by a symbol that a module-level constant holds is a field of the layout: classes, subclasses, interfaces, type literals, optional and union types.
-// IR+ field "[^"]*:handle" number
-// IR= 0 bump (GetByVal|PutByVal)
-// IR= 1 bump : number = GetById .*:count"
-// IR= 1 bump PutById .*:count"
-// IR= 1 bump : number = GetById .*:handle"
-// IR= 0 readRequest GetByVal
-// IR= 1 readRequest : number = GetById .*:handle"
-// IR= 0 sum GetByVal
-// IR= 1 sum : number = GetById .*:same"
-// IR= 0 update (GetByVal|PutByVal)
-// IR= 0 describe GetByVal
+// IR+ ^layout L[0-9]+ .*\{name=UniqueSymbol "[^"]*handle" declared=number
+// IR= 0 bump (ElemGet|ElemSet)
+// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*count"
+// IR= 1 bump PropSet v[0-9]+, v[0-9]+ name=UniqueSymbol "[^"]*count"
+// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*handle"
+// IR= 0 readRequest ElemGet
+// IR= 1 readRequest : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*handle"
+// IR= 0 sum ElemGet
+// IR= 1 sum : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*same"
+// IR= 0 update (ElemGet|ElemSet)
+// IR= 0 describe ElemGet
 const kHandle = Symbol("handle");
 const kCount = Symbol("count");
 const kSame = Symbol("same");

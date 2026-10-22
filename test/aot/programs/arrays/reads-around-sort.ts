@@ -9,7 +9,7 @@ function literalOfIntegers(): number[] { return [3, 1, 2, 0]; }
 function literalOfTexts(): string[] { return ["c", "a", "b"]; }
 function shortened(list: number[]): string { let calls = 0; list.sort((x, y) => { if (++calls === 2) list.length = 1; return x - y; }); return list.join() + "|" + list.length; }
 function emptied(list: Row[]): string { let calls = 0; list.sort((x, y) => { if (++calls === 2) list.length = 0; return x.key - y.key; }); return list.map(r => r.name).join() + "|" + list.length; }
-function changedKind(list: number[]): string { let calls = 0; list.sort((x, y) => { if (++calls === 2) (list as unknown[]).push({}); return x - y; }); return list.length + "|" + typeof list[list.length - 1] + "|" + list.slice(0, 4).join(); }
+function changedKind(list: number[]): string { let calls = 0; list.sort((x, y) => { if (++calls === 2) (list as unknown[]).push({}); return x - y; }); return list.length + "|" + typeof (list as unknown[])[list.length - 1] + "|" + list.slice(0, 4).join(); }
 function madeSparse(list: number[]): string { let calls = 0; list.sort((x, y) => { if (++calls === 2) list[100000] = 1; return x - y; }); return list.length + "|" + list.slice(0, 5).join(); }
 function frozenMeanwhile(list: number[]): string { let calls = 0; try { list.sort((x, y) => { if (++calls === 2) Object.freeze(list); return x - y; }); } catch (e) { return (e as Error).constructor.name + "|" + list.join(); } return list.join(); }
 for (let turn = 0; turn < 3; turn++) {

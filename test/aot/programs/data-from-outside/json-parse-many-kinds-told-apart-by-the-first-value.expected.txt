@@ -1,4 +1,0 @@
-ten kinds, the first 200: 200 texts, 31 by expecting keys, told apart by more 1 times, set aside 0 times, 0 wrong
-ten kinds, the next 1,000: 1000 texts, 1000 by expecting keys, told apart by more 0 times, set aside 0 times, 0 wrong
-nine kinds and one whose keys are new every time: 1000 texts, 936 by expecting keys, told apart by more 0 times, set aside 1 times, 0 wrong
-the nine kinds alone: 900 texts, 900 by expecting keys, told apart by more 0 times, set aside 0 times, 0 wrong

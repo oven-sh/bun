@@ -52,7 +52,7 @@ for (const { kind, declaration, differs } of [
     test("plain Bun and bun run --aot list the two functions", async () => {
       using dir = tempDir("aot-class-reexported-as-a-type", files(declaration));
       expect(await run([bunExe(), "run", "main.ts"], String(dir))).toMatchObject({ stdout: "defineSocket,serve\n", exitCode: 0 });
-      expect(await run([bunExe(), "run", "--aot", "main.ts"], String(dir))).toMatchObject({ stdout: "defineSocket,serve\n", exitCode: 0 });
+      for (const flag of ["--aot", "--debug-aot"]) expect(await run([bunExe(), "run", flag, "main.ts"], String(dir))).toMatchObject({ stdout: "defineSocket,serve\n", exitCode: 0 });
     });
 
     test(

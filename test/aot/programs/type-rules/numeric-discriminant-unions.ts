@@ -12,16 +12,16 @@ function make(flags: Has): Flagged {
   return made
 }
 const all = make(Has.Label | Has.Count | Has.Child), none = make(Has.None)
-// An object created as a type in which the fields are optional is cast to a type in which a field is required. It does not have that type (not assignable), and that type lacks
-// fields it has, so it cannot be converted in place: the cast lets it through unchanged. The field is read where it is present, and is undefined where it is not. As in ECMAScript.
+// An object created as a type in which the fields are optional is cast to a type in which a field is required. Any object passes the cast.
+// The field is read where it is present, and is undefined where it is not. As in ECMAScript.
 try { console.log((all as WithLabel).label); console.log("cast to the interface the flags promise: no error") } catch (e) { console.log("cast to the interface the flags promise:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log((all as WithCount).count); console.log("to the second: no error") } catch (e) { console.log("to the second:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log((all as WithChild).child.flags); console.log("to the third: no error") } catch (e) { console.log("to the third:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log((none as WithLabel).label); console.log("where the field is absent: no error") } catch (e) { console.log("where the field is absent:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(JSON.stringify(all), JSON.stringify(none))
-// A numeric enum whose members are all int32 is an int32: flags combine, a larger number does not fit. ECMAScript: 4294975488.
+// A numeric enum is tested as `number`: flags combine, and a larger number or a fraction is stored as in plain Bun.
 all.flags = Has.Top | Has.Deep | 7
 console.log(all.flags)
 try { all.flags = all.flags * 4096; console.log("beyond 32 bits: no error") } catch (e) { console.log("beyond 32 bits:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { all.flags = all.flags / 4; console.log("a fraction: no error") } catch (e) { console.log("a fraction:", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { all.flags = all.flags / 8192; console.log("a fraction: no error") } catch (e) { console.log("a fraction:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(all.flags)

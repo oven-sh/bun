@@ -1,4 +1,4 @@
-// Objects from untyped code of which nothing can be made and that DO NOT satisfy the record type are refused where they meet it, as before: the required member is nowhere, or holds what is no object and does not fit.
+// Objects from untyped code that are no plain objects (a function, a Map, an array, an object with inherited members or accessors) and do not satisfy the record type enter a typed parameter: any object passes. A member that is missing reads undefined, as in plain Bun. A member of the wrong kind throws where typed code reads it.
 type Whole = { k: { id?: number }; n: number };
 function own(): Whole { return { k: { id: 7 }, n: 1 }; }
 function take(answer: Whole): unknown { return [answer.k.id, answer.n]; }

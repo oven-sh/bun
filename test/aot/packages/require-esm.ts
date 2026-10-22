@@ -2,7 +2,7 @@
 import { js, pkg, type Case } from "./run-packages";
 
 const differs =
-  "`require()` of a module with top-level await cannot work and is a build error. What `require()` returns for an ES module is its namespace object, which cannot be written to.";
+  "`require()` of a module with top-level await cannot work and throws a TypeError. What `require()` returns for an ES module is its namespace object, which cannot be written to.";
 
 export const cases: Case[] = [
   {

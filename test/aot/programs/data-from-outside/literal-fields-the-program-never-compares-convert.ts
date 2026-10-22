@@ -1,4 +1,4 @@
-// Plain objects become records with a field whose type is a union of string literals that the program never compares with anything. Such a field holds the string itself. A text outside the union, a number and a missing field are treated as before.
+// Objects built member by member in untyped code are read through a record type with a field whose type is a union of string literals that the program never compares with anything. A text passes however it was made, of the union or outside it: a literal type promises the kind, string. A number throws where typed code reads the field, and the object stays as it was.
 type State = "open" | "closed" | "";
 type Author = { login: string };
 type Hit = { id: number; state: State; author: Author; note?: "a" | "b" };

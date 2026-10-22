@@ -27,6 +27,11 @@ export type Mode = "full" | "codegen";
 export type WebKitMode = "prebuilt" | "local";
 /** The package manager for the package.json files the build installs. */
 export type PackageManager = "bun" | "npm";
+export type DebugInfo = "full" | "lines" | "none";
+
+export function defaultDebugInfo(cfg: Pick<Config, "debug" | "lto">): DebugInfo {
+  return cfg.debug || !cfg.lto ? "full" : "lines";
+}
 
 /**
  * Host platform — what's running the build. Distinguish from target
@@ -115,7 +120,21 @@ export interface Config {
 
   // ─── Features (all explicit booleans) ───
   lto: boolean;
-  islands: boolean;
+  /**
+   * The link goes through scripts/build/trim/link.ts, which lays the executable out by removable feature and writes the
+   * trim table into it. `bun build --compile --trim` needs that table in the bun it copies. Costs a second link.
+   */
+  trimmable: boolean;
+  /**
+   * Linux: a position-independent executable with full RELRO, eager binding and code in pages of its own. Defines
+   * BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
+   */
+  hardened: boolean;
+  /**
+   * Linux with glibc: the relative relocations of the executable are packed (DT_RELR). Smaller, and faster to load.
+   * Only glibc 2.36 and later load such a file, so it is for a build whose users are known.
+   */
+  relr: boolean;
   /** IR PGO: directory for .profraw output (instrumented build). Mutually exclusive with pgoUse. */
   pgoGenerate: string | undefined;
   /** IR PGO: .profdata file path (optimized build). Mutually exclusive with pgoGenerate. */
@@ -165,6 +184,16 @@ export interface Config {
    * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
    */
   timeTrace: boolean;
+  /**
+   * `codegen-units` of every crate, in place of the release profile's 1. A crate is then that many ThinLTO modules:
+   * rustc and the link work on them in parallel, and the link's cache keeps the ones an edit did not reach. For
+   * builds that are repeated all day. What ships keeps one module a crate. Undefined: what `Cargo.toml` says.
+   */
+  rustCodegenUnits: number | undefined;
+  rustIncremental: boolean;
+  rustLto: boolean;
+  debugInfo: DebugInfo;
+  linkerMap: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -297,12 +326,12 @@ export interface Config {
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
-  /** e.g. "13.0". Passed to deps as -DCMAKE_OSX_DEPLOYMENT_TARGET. */
+  /** e.g. "13.0". `-mmacosx-version-min`, for bun's sources and the deps' alike (flags.ts). */
   osxDeploymentTarget: string | undefined;
   /**
    * SDK path. Native darwin: from `xcrun --show-sdk-path`. Darwin
    * cross-compile from a non-darwin host: an extracted MacOSX*.sdk (see
-   * macos-sdk.ts). Passed to deps as -DCMAKE_OSX_SYSROOT / `-isysroot`.
+   * macos-sdk.ts). `-isysroot`, for bun's sources and the deps' alike.
    */
   osxSysroot: string | undefined;
 
@@ -350,7 +379,9 @@ export interface PartialConfig {
   buildType?: BuildType;
   mode?: Mode;
   lto?: boolean;
-  islands?: boolean;
+  trimmable?: boolean;
+  hardened?: boolean;
+  relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
   asan?: boolean;
@@ -369,6 +400,11 @@ export interface PartialConfig {
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
+  rustCodegenUnits?: number;
+  rustIncremental?: boolean;
+  rustLto?: boolean;
+  debugInfo?: DebugInfo;
+  linkerMap?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -533,6 +569,20 @@ export function detectHost(): Host {
  */
 export function detectLinuxAbi(): Abi {
   return existsSync("/etc/alpine-release") ? "musl" : "gnu";
+}
+
+export function glibcLoadsPackedRelocations(version: string): boolean {
+  const [major = 0, minor = 0] = version.split(".").map(Number);
+  return major > 2 || (major === 2 && minor >= 36);
+}
+
+function hostLoadsPackedRelocations(): boolean {
+  try {
+    const version = /^glibc (\d+\.\d+)/.exec(execSync("getconf GNU_LIBC_VERSION", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    return version !== null && glibcLoadsPackedRelocations(version[1]!);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -989,6 +1039,19 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     lto = false;
   }
 
+  const rustLto = partial.rustLto ?? true;
+  if (lto && !rustLto) {
+    throw new BuildError("rustLto cannot be off where lto is on", { hint: "Pass --lto=off too" });
+  }
+
+  const debugInfo = partial.debugInfo ?? defaultDebugInfo({ debug, lto });
+  if (debugInfo !== "full" && debugInfo !== "lines" && debugInfo !== "none") {
+    throw new BuildError(`Unknown debugInfo: ${debugInfo}`, { hint: "Use full, lines or none" });
+  }
+  if (windows && partial.debugInfo !== undefined) {
+    throw new BuildError("debugInfo cannot be chosen for a Windows target");
+  }
+
   // The link reads LLVM bitcode from both compilers with clang's LLVM (release crates are bitcode with or without `lto`),
   // and an LLVM cannot read a newer one's. A newer clang is refused too: rustc's linker-plugin-lto documentation
   // recommends the same LLVM in both, and no CI build mixes them. Without a rustc there is nothing to compare;
@@ -1053,6 +1116,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
+  assert(!partial.hardened || webkit === "local", "hardened=true requires webkit=local (a prebuilt WebKit is not compiled with the hardened flags)");
+  assert(
+    !partial.relr || (linux && abi === "gnu"),
+    "relr=true requires os=linux and abi=gnu (packed relative relocations are loaded by glibc 2.36 and later; nothing says that this target's C library can)",
+  );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
@@ -1278,7 +1346,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     x64,
     arm64,
     host,
-    canRunOnHost: os === host.os && arch === host.arch && (!linux || abi === (detectLinuxAbi() ?? abi)),
+    canRunOnHost:
+      os === host.os &&
+      arch === host.arch &&
+      (!linux || abi === (detectLinuxAbi() ?? abi)) &&
+      (!partial.relr || hostLoadsPackedRelocations()),
     exeSuffix,
     objSuffix,
     libPrefix,
@@ -1288,7 +1360,15 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     release,
     mode: "full",
     lto,
-    islands: (partial.islands ?? false) && (linux || darwinCross || (windows && host.os !== "windows")) && release && !asan,
+    trimmable:
+      (partial.trimmable ?? false) &&
+      release &&
+      !asan &&
+      !valgrind &&
+      linksWithLld({ darwin, crossTarget }) &&
+      host.os !== "windows",
+    hardened: (partial.hardened ?? false) && linux && abi !== "android",
+    relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
     asan,
@@ -1308,6 +1388,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
+    rustCodegenUnits: partial.rustCodegenUnits,
+    rustIncremental: partial.rustIncremental ?? false,
+    rustLto,
+    debugInfo,
+    linkerMap: partial.linkerMap ?? true,
     ci,
     buildkite,
     webkit,
@@ -1336,7 +1421,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
           ? `/usr/bin/${crossTarget}-strip`
           : (toolchain.llvmStrip ?? toolchain.strip)
-        : toolchain.strip),
+        : (partial.hardened ?? false) && linux && abi !== "android"
+          ? (toolchain.llvmStrip ?? toolchain.strip)
+          : toolchain.strip),
     nm: toolchain.nm,
     readobj: toolchain.readobj,
     objdump: toolchain.objdump,
@@ -1643,6 +1730,15 @@ export function bunExeName(cfg: Config): string {
 }
 
 /**
+ * An lld does the link: every one but a native macOS link, which goes through Apple's ld. That linker takes none of
+ * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so flags.ts states
+ * those only where this holds. Lives here (not flags.ts) because `trimmable` is resolved from it.
+ */
+export function linksWithLld(c: Pick<Config, "darwin" | "crossTarget">): boolean {
+  return !c.darwin || c.crossTarget !== undefined;
+}
+
+/**
  * Whether this config produces a stripped `bun` alongside `bun-profile`.
  *
  * Only plain release builds strip — not debug (you want symbols), not
@@ -1671,13 +1767,20 @@ export function formatConfig(cfg: Config, exe: string): string {
   ];
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
-  if (cfg.islands) features.push("islands");
+  if (cfg.trimmable) features.push("trimmable");
+  if (cfg.hardened) features.push("hardened");
+  if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
   if (cfg.asan) features.push("asan");
   if (cfg.assertions) features.push("assertions");
   if (cfg.logs) features.push("logs");
   if (cfg.baseline) features.push("baseline");
+  if (cfg.rustCodegenUnits !== undefined) features.push(`rust-codegen-units:${cfg.rustCodegenUnits}`);
+  if (cfg.rustIncremental) features.push("rust-incremental");
+  if (!cfg.rustLto) features.push("rust-lto:off");
+  if (cfg.debugInfo !== defaultDebugInfo(cfg)) features.push(`debug-info:${cfg.debugInfo}`);
+  if (!cfg.linkerMap) features.push("linker-map:off");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
   if (cfg.socketFaultInjection !== cfg.asan) {

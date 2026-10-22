@@ -1,6 +1,5 @@
-// The other side of a-record-given-a-prototype-by-typed-code.ts: where only untyped code sets the prototype of a record that may give up its layout, the type is not marked, and the one object gives up its layout.
-// IR- ^shape \d+ Record "Point" .* prototype set by typed code
-// IR- ^shape \d+ Record "Point" .* other prototypes
+// The other side of a-record-given-a-prototype-by-typed-code.ts: the prototype of a record is set where its type is not written, through an array of `any`. The one object gives up its layout, the others keep theirs.
+// IR+ ^layout L\d+ .*name="Point" .* representation=Typed
 // VALIDATED compiles
 interface Point { x: number; y: number }
 const make = (x: number, y: number): Point => ({ x, y })

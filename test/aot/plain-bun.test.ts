@@ -31,3 +31,11 @@ test.failing(
   },
   120_000,
 );
+
+// Function.prototype.apply is written with the engine's call of a list, which reads the list before it looks at the callee.
+// Once the bug is fixed this test fails: change `test.failing` to `test`.
+test.failing("Function.prototype.apply throws for a receiver that is no function before it reads the list", async () => {
+  const program = "calls/apply-tests-the-callee-before-the-list";
+  const correct = { stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"), exitCode: 0 };
+  expect(await plain(program)).toEqual(correct);
+});

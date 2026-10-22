@@ -2,7 +2,7 @@
 import { js, pkg, ts, ways, type Case } from "./run-packages";
 
 const differs =
-  "What cannot be resolved is a build error of the bundler, with or without --aot; `bun run` reports it when the line runs.";
+  "A require() or an import() of a path that the package does not export throws where it runs, as under `bun run`. What is thrown is an Error where `bun run` throws a ResolveMessage, and a file that is there but not exported is no part of the executable.";
 
 export const cases: Case[] = [
   {

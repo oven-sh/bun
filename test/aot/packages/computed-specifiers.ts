@@ -4,6 +4,7 @@ import { js, pkg, ts, type Case } from "./run-packages";
 export const cases: Case[] = [
   {
     name: "variable",
+    differs: "A name that is made at run time brings nothing into the executable: what no file of the program names is not there, and the load says so.",
     files: {
       ...pkg("dyn", {
         "index.js": `exports.load = (name) => require("./locale/" + name + ".js");

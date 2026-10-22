@@ -7,6 +7,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 mod bundler;
 mod defaults;
 mod framework;
+pub(crate) mod plugins;
 mod transpiler;
 
 pub(crate) use bundler::{BuildConfigSubset, SplitBundlerOptions};

@@ -16,7 +16,6 @@ import {
   __name,
   __using,
 } from "../../runtime.bun";
-import { __validate } from "../../js/internal/validation";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
 import { type SourceMapURL, derefMapping } from "#stack-trace";
@@ -29,7 +28,7 @@ export const serverManifest = {};
 /** Server */
 export const ssrManifest = {};
 /** Client */
-export let onServerSideReload: (() => Promise<void>) | null = null;
+export let onServerSideReload: ((update: { clientCodeChanged: boolean }) => Promise<void>) | null = null;
 const eventHandlers: Record<HMREvent | string, HotEventHandler[] | undefined> = {};
 let refreshRuntime: any;
 /** The expression `import(a,b)` is not supported in all browsers, most notably
@@ -917,7 +916,6 @@ registerSynthetic("bun:wrap", {
   __callDispose,
   __MEMO_CACHE_SENTINEL,
   __EARLY_RETURN_SENTINEL,
-  __validate,
 });
 
 if (side === "server") {
@@ -929,7 +927,15 @@ if (side === "server") {
 }
 
 if (side === "client") {
+  const { route } = config;
   registerSynthetic("bun:bake/client", {
     onServerSideReload: cb => (onServerSideReload = cb),
+    // For a router whose pages also run in the browser: the modules of the current route.
+    route: route
+      ? {
+          page: () => (route.page ? loadExports(route.page) : Promise.resolve(null)),
+          layouts: () => Promise.all(route.layouts.map(id => loadExports(id))),
+        }
+      : null,
   });
 }

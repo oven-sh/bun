@@ -128,9 +128,9 @@ attempt("undefined", () => setLength(undefined, 1));
     return scratch.length + names.length + halves.length + halves[0] - i;
   }
   for (let i = 0; i < 100; ++i) sum += round(i);
-  const before = count("operationAOTPutByNameAndCache");
+  const before = count("operationAOTPutByIdAndCache");
   for (let i = 0; i < 3000; ++i) sum += round(i);
-  const asked = count("operationAOTPutByNameAndCache") - before;
+  const asked = count("operationAOTPutByIdAndCache") - before;
   say("rounds", sum);
   say(asked <= 200 ? "the stores asked the run time at most 200 times" : "the stores asked the run time " + asked + " times");
 }

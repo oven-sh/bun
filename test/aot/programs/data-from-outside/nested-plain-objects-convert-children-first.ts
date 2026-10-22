@@ -1,4 +1,4 @@
-// Plain objects that hold plain objects, and arrays of plain objects, are converted to record types child by child, in place: each stays the same object, a cycle and a shared child come out right, and a parent that does not fit leaves its children as they were.
+// Plain objects that hold plain objects, and arrays of plain objects, are read through record types: each stays the same object, a cycle and a shared child come out right, a member of the wrong kind throws where typed code reads it, and untyped code may store anything into any of them afterwards.
 type Customer = { id: number; name: string };
 type Item = { sku: string; quantity: number };
 type Order = { customer: Customer; items: Item[]; coupon?: string };

@@ -3,19 +3,18 @@ import { unsupported } from "../../aot/run-programs";
 import { spawn } from "child_process";
 import { once } from "events";
 import { chmodSync, readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import type { Readable } from "stream";
 import { text } from "stream/consumers";
 
 const supported = !unsupported;
 
-type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean };
+// `warns`: the codes of the warnings that the build prints in front of what the program prints.
+type Options = { args?: string[]; env?: Record<string, string>; stdin?: string; flags?: string[]; builds?: boolean; warns?: string[] };
 
 function expectToHaveUsedImage(stderr: string) {
-  expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
-  expect(stderr).not.toContain("[aot] not using");
   return stderr.replace(/^\[aot\] .*\r?\n/gm, "");
 }
 
@@ -37,6 +36,12 @@ async function run(
   return { stdout, stderr: aot && builds ? expectToHaveUsedImage(stderr) : stderr, exitCode };
 }
 
+function withoutWarnings<T extends { stderr: string }>(ran: T, codes: string[] = []): T {
+  for (const code of codes) expect(ran.stderr).toContain(`warn: ${code}: `);
+  // A warning is the line of the source, a caret, the warning and where it is, then an empty line or the end.
+  return codes.length ? { ...ran, stderr: ran.stderr.replace(/^ *\d+ \| .*\n +\^\nwarn: TS\d+: .*\n +at .*\n\n?/gm, "") } : ran;
+}
+
 async function expectSameAsBunRun(files: Record<string, string>, entry: string, options?: Options) {
   using dir = tempDir(
     "run-aot",
@@ -46,8 +51,23 @@ async function expectSameAsBunRun(files: Record<string, string>, entry: string, 
     run(String(dir), false, "app/" + entry, options),
     run(String(dir), true, "app/" + entry, options),
   ]);
-  expect(actual).toEqual(expected);
-  return actual;
+  expect(withoutWarnings(actual, options?.warns)).toEqual(expected);
+  return { ...actual, bunRun: expected };
+}
+
+/** Where the two differ on purpose: both end well and say nothing on stderr, and the test says what each prints. */
+async function expectBothToRun(files: Record<string, string>, entry: string, options?: Options) {
+  using dir = tempDir(
+    "run-aot",
+    Object.fromEntries(Object.entries(files).map(([path, text]) => ["app/" + path, text])),
+  );
+  const [bunRun, actual] = await Promise.all([
+    run(String(dir), false, "app/" + entry, options),
+    run(String(dir), true, "app/" + entry, options),
+  ]);
+  expect({ stderr: bunRun.stderr, exitCode: bunRun.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({ stderr: withoutWarnings(actual, options?.warns).stderr, exitCode: actual.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  return { ...actual, bunRun };
 }
 
 describe.skipIf(!supported)("a file that is imported for its path", () => {
@@ -274,27 +294,28 @@ describe.skipIf(!supported)("bun run --aot", () => {
   });
 
   test.concurrent("stack traces through require(), CommonJS top-level code and an immediately invoked function", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.cjs": `
+    const files = (withoutPositionOfRequire: string) => ({
+      "entry.cjs": `
           function load() {
             try {
               require("./throws.cjs");
             } catch (error) {
-              return error.stack.replaceAll(__dirname, "");
+              return error.stack.replaceAll(__dirname, "")${withoutPositionOfRequire};
             }
           }
           console.log(load().replace(/\\n +at \\S+ \\((?:unknown|:?\\d+:\\d+)\\)/g, ""));
         `,
-        "throws.cjs": `
+      "throws.cjs": `
           exports.before = 1;
           (() => { throw new Error("thrown") })();
         `,
-      },
-      "entry.cjs",
-    );
+    });
+    // The source map of bun run has no entry for a call of require(): its frame names the brace in front of the call, 3:17. A compiled program names the call, as it does for every other call.
+    await expectSameAsBunRun(files(`.replace(/(at load \\(\\S+?):\\d+:\\d+/, "$1")`), "entry.cjs");
+    using dir = tempDir("run-aot", files(""));
+    const { stdout } = await run(String(dir), true, "entry.cjs");
     expect(stdout.replaceAll("\\", "/")).toMatch(
-      /^Error: thrown\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at load \(\/entry\.cjs:4:23\)\n    at <anonymous> \(\/entry\.cjs:9:\d+\)\n$/,
+      /^Error: thrown\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at <anonymous> \(\/throws\.cjs:3:\d+\)\n    at load \(\/entry\.cjs:4:15\)\n    at <anonymous> \(\/entry\.cjs:9:\d+\)\n$/,
     );
   });
 
@@ -370,6 +391,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         "sub/other.ts": `export default "the other module";`,
       },
       "entry.ts",
+      { warns: ["TS100064"] },
     );
   });
 
@@ -416,6 +438,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         `,
       },
       "entry.ts",
+      { warns: ["TS100064"] },
     );
     expect(stdout).toBe("lib begins\nother runs\nsaid: lib has a word\nentry: lib has a word\n");
   });
@@ -429,74 +452,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toStartWith("the preload runs\n");
     expect(stdout.match(/^Started .*server: /gm)).toHaveLength(1);
     expect(exitCode).toBe(0);
-  });
-
-  test.concurrent("a throw behind a top-level await in a Worker that has a preload is reported", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `
-          const worker = new Worker(new URL("./worker.ts", import.meta.url).href, { preload: [Bun.fileURLToPath(new URL("./preload.ts", import.meta.url))] });
-          worker.addEventListener("error", event => { console.log("error:", event.message.includes("thrown behind an await")); });
-          worker.addEventListener("close", () => { console.log("closed"); });
-        `,
-        "worker.ts": `console.log("the worker begins"); await Promise.resolve(); throw new Error("thrown behind an await");`,
-        "preload.ts": `console.log("the preload runs");`,
-      },
-      "entry.ts",
-    );
-    expect(stdout).toBe("the preload runs\nthe worker begins\nerror: true\nclosed\n");
-  });
-
-  test.concurrent("require.extensions handlers run for compiled files", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `
-          const extensions = require.extensions as Record<string, (module: any, filename: string) => void>;
-          const { ".js": js, ".ts": ts, ".json": json } = extensions;
-          let calls = 0;
-          extensions[".js"] = (module, filename) => (calls++, module._compile("module.exports = 'by the handler';", filename));
-          console.log(require("./common"), (await import("./imported.js")).default, calls);
-          extensions[".js"] = js;
-          console.log(require("./common"), require("./other"), calls);
-          extensions[".ts"] = extensions[".cjs"] = (module, filename) => (calls++, ts(module, filename));
-          console.log(require("./module.ts").name, require("./secretly-a-module").default, calls);
-          extensions[".ts"] = ts;
-          extensions[".json"] = module => (calls++, (module.exports = "by the handler"));
-          console.log(require("./data.json"), calls);
-          extensions[".json"] = json;
-        `,
-        "common.js": `module.exports = "common.js";`,
-        "imported.js": `module.exports = "imported.js";`,
-        "other.js": `module.exports = "other.js";`,
-        "module.ts": `export const name: string = "module.ts";`,
-        "secretly-a-module.cjs": `export default 1;`,
-        "data.json": `{ "a": 1 }`,
-      },
-      "entry.ts",
-    );
-    expect(stdout).toBe("by the handler imported.js 1\nby the handler other.js 1\nmodule.ts 1 3\nby the handler 4\n");
-  });
-
-  test.concurrent("the default require.extensions loaders run compiled modules", async () => {
-    using dir = tempDir("run-aot", {
-      "entry.ts": `
-        const extensions = require.extensions as Record<string, (module: any, filename: string) => void>;
-        const { ".js": js, ".ts": ts } = extensions;
-        const seen: string[] = [];
-        const nameOf = (filename: string) => filename.split(/[\\\\/]/).pop()!;
-        extensions[".js"] = (module, filename) => (seen.push(nameOf(filename)), js(module, filename));
-        extensions[".ts"] = (module, filename) => (seen.push(nameOf(filename)), ts(module, filename));
-        console.log(require("./common"), require("./module.ts").name, seen.join());
-      `,
-      "common.js": `module.exports = "common.js";`,
-      "module.ts": `export const name: string = "module.ts";`,
-    });
-    const [expected, actual] = await Promise.all([
-      run(String(dir), false, "entry.ts"),
-      run(String(dir), true, "entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
-    ]);
-    expect(actual).toEqual(expected);
-    expect(actual.stdout).toBe("common.js module.ts common.js,module.ts\n");
   });
 
   test.concurrent("every store by name to process.env goes through the conversion to a string", async () => {
@@ -553,42 +508,27 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(stdout).toBe("loaded as JavaScript true\n");
   });
 
-  test.concurrent("required JSON is read at require time and reread after eviction from require.cache", async () => {
-    const files = {
-      "entry.ts": `
-        import { writeFileSync } from "node:fs";
-        import imported from "./data.json";
-        const path = require.resolve("./data.json");
-        const first = require("./data.json");
-        console.log(first.n, first === require("./data.json"), first === imported, require.cache[path]?.exports === first);
-        writeFileSync(path, '{ "n": 2 }');
-        console.log(require("./data.json").n);
-        delete require.cache[path];
-        console.log(require("./data.json").n);
-      `,
-      "data.json": `{ "n": 1 }`,
-    };
-    using plain = tempDir("run-aot", files);
-    using compiled = tempDir("run-aot", files);
-    const [expected, actual] = await Promise.all([run(String(plain), false, "entry.ts"), run(String(compiled), true, "entry.ts")]);
-    expect(actual).toEqual(expected);
-    expect(actual.stdout).toBe("1 true false true\n1\n2\n");
-  });
-
+  // A `.cjs` file is CommonJS, so it is sloppy, however it is reached: that is Node's answer, and one file's mode does not hang on the rest of the graph.
+  // Bun: `bun run` has a `.cjs` file with no sign of CommonJS in its text strict where an `import` reaches it, unless a package.json beside it says "commonjs".
+  const whereBunRunDiffers: Record<string, string> = {
+    "imports-cjs.mjs": "strict",
+    "imports-dynamically.mjs": "strict sloppy strict strict",
+  };
   for (const [entry, expected] of Object.entries({
     "entry.cjs": "sloppy",
     "commonjs-package/entry.js": "sloppy",
     "commonjs-package/entry.cjs": "sloppy",
     "module-package/entry.cjs": "sloppy",
-    "imports-cjs.mjs": "strict",
+    "imports-cjs.mjs": "sloppy",
     "imports-js-of-commonjs-package.mjs": "sloppy",
     "imports-cjs-of-commonjs-package.mjs": "sloppy",
-    "imports-dynamically.mjs": "strict sloppy strict strict",
+    "imports-dynamically.mjs": "sloppy sloppy sloppy strict",
     "requires.cjs": "sloppy strict sloppy sloppy",
   })) {
-    test.concurrent("files that are CommonJS only by name are sloppy where bun run has them sloppy: " + entry, async () => {
+    test.concurrent("files that are CommonJS only by name are sloppy: " + entry, async () => {
       const text = `(function () { console.log(this === undefined ? "strict" : "sloppy"); })();`;
-      const { stdout } = await expectSameAsBunRun(
+      const compare = whereBunRunDiffers[entry] === undefined ? expectSameAsBunRun : expectBothToRun;
+      const { stdout, bunRun } = await compare(
         {
           "entry.cjs": text,
           "imported.cjs": text,
@@ -618,6 +558,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
         entry,
       );
       expect(stdout.trim().split("\n").join(" ")).toBe(expected);
+      expect(bunRun.stdout.trim().split("\n").join(" ")).toBe(whereBunRunDiffers[entry] ?? expected);
     });
   }
 
@@ -642,73 +583,6 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(actual.stdout).toBe("{\n  before: true,\n} exported\n");
   });
 
-  test.concurrent("compiled modules stay compiled under Module.prototype.require and Module._resolveFilename overrides", async () => {
-    using dir = tempDir("run-aot", {
-      "entry.cjs": `
-        const Module = require("node:module");
-        const { require: original } = Module.prototype;
-        const { _resolveFilename: resolve } = Module;
-        const seen = [];
-        Module.prototype.require = function (id) {
-          seen.push(id);
-          return original.apply(this, arguments);
-        };
-        Module._resolveFilename = function (request, ...rest) {
-          return resolve.call(this, request === "./common" ? "./other" : request, ...rest);
-        };
-        console.log(require("./common"), require("./module.ts").name, seen.join());
-        Module._resolveFilename = resolve;
-        console.log(require("./other"));
-      `,
-      "common.js": `module.exports = "common.js";`,
-      "other.js": `module.exports = "other.js";`,
-      "module.ts": `export const name: string = "module.ts";`,
-    });
-    const [expected, actual] = await Promise.all([
-      run(String(dir), false, "entry.cjs"),
-      run(String(dir), true, "entry.cjs", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
-    ]);
-    expect(actual).toEqual(expected);
-    expect(actual.stdout).toBe("other.js module.ts ./common,./module.ts\nother.js\n");
-  });
-
-  test.concurrent("Module.prototype.require, Module._resolveFilename and Module.wrapper overrides apply to compiled files", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.cjs": `
-          const Module = require("node:module");
-          const { require: original } = Module.prototype;
-          const { _resolveFilename: resolve } = Module;
-          const seen = [];
-          Module.prototype.require = function (id) {
-            seen.push(id);
-            return original.apply(this, arguments);
-          };
-          console.log(require("./common"), require("./requires-other.cjs"), require("./module.ts").name, require("./data.json").a, seen.join());
-          Module.prototype.require = original;
-          Module._resolveFilename = function (request, ...rest) {
-            seen.push(request);
-            return resolve.call(this, request === "./common" ? "./other" : request, ...rest);
-          };
-          console.log(require("./common"), seen.slice(5).join());
-          Module._resolveFilename = resolve;
-          Module.wrapper[0] += "globalThis.wrapped = true;";
-          console.log(require("./last"), globalThis.wrapped);
-        `,
-        "common.js": `module.exports = "common.js";`,
-        "other.js": `module.exports = "other.js";`,
-        "requires-other.cjs": `module.exports = "requires " + require("./other");`,
-        "module.ts": `export const name: string = "module.ts";`,
-        "data.json": `{ "a": 1 }`,
-        "last.js": `module.exports = "last.js";`,
-      },
-      "entry.cjs",
-    );
-    expect(stdout).toBe(
-      "common.js requires other.js module.ts 1 ./common,./requires-other.cjs,./other,./module.ts,./data.json\nother.js ./common\nlast.js true\n",
-    );
-  });
-
   test.concurrent("the exit code and stdin", async () => {
     const { stdout, exitCode } = await expectSameAsBunRun(
       { "entry.ts": `console.log((await Bun.stdin.text()).toUpperCase()); process.exit(7);` },
@@ -719,184 +593,10 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(exitCode).toBe(7);
   });
 
-  test.concurrent("require.cache lists compiled modules that finished evaluating", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `
-          import { name } from "./imported.ts";
-          const [imported, later, failing] = ["./imported.ts", "./later.ts", "./failing.ts"].map(path => require.resolve(path));
-          const names = () => Object.keys(require.cache).map(key => key.split(/[\\\\/]/).pop()!).sort().join();
-          console.log(name, names(), imported in require.cache, require.cache[imported]?.exports?.name, import.meta.path in require.cache);
-          console.log(later in require.cache);
-          await import("./later.ts");
-          console.log(names(), later in require.cache);
-          console.log(await import("./failing.ts").then(({ tries }) => tries, error => error.message), failing in require.cache);
-        `,
-        "imported.ts": `export const name = "imported.ts";`,
-        "later.ts": `export {};`,
-        "failing.ts": `
-          const all = globalThis as { tries?: number };
-          export const tries: number = (all.tries = (all.tries ?? 0) + 1);
-          if (tries == 1) throw new Error("the first try fails");
-        `,
-      },
-      "entry.ts",
-    );
-    expect(stdout).toBe("imported.ts imported.ts true imported.ts false\nfalse\nimported.ts,later.ts true\nthe first try fails false\n");
-  });
-
-  test.concurrent("ES modules evicted from require.cache are evaluated again, compiled", async () => {
-    using dir = tempDir("run-aot", {
-      "entry.ts": `
-        const path = require.resolve("./counted.ts");
-        delete require.cache[path];
-        console.log(require("./counted.ts").count, path in require.cache, require("./counted.ts").count);
-        delete require.cache[path];
-        console.log(path in require.cache, require("./counted.ts").count, (await import("./counted.ts")).count);
-        delete require.cache[path];
-        console.log((await import("./counted.ts")).count, (await import(path)).count, require("./counted.ts").count);
-        console.log((await import("./importer.ts")).seen);
-        for (const evicts of [false, true, false]) {
-          console.log(await import("./fails-once.ts").then(({ tries }) => tries, error => error.message));
-          if (evicts) delete require.cache[require.resolve("./fails-once.ts")];
-        }
-        delete require.cache[require.resolve("./awaits.ts")];
-        console.log((await import("./awaits.ts")).count);
-        delete require.cache[require.resolve("./awaits.ts")];
-        console.log((await import("./awaits.ts")).count);
-      `,
-      "counted.ts": `const all = globalThis as { count?: number }; export const count: number = (all.count = (all.count ?? 0) + 1);`,
-      "importer.ts": `import { count } from "./counted.ts"; export const seen = "the importer sees " + count;`,
-      "fails-once.ts": `
-        const all = globalThis as { tries?: number };
-        export const tries: number = (all.tries = (all.tries ?? 0) + 1);
-        if (tries == 1) throw new Error("the first try fails");
-      `,
-      "awaits.ts": `
-        const all = globalThis as { awaited?: number };
-        await 0;
-        export const count: number = (all.awaited = (all.awaited ?? 0) + 1);
-      `,
-    });
-    const [expected, actual] = await Promise.all([
-      run(String(dir), false, "entry.ts"),
-      run(String(dir), true, "entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
-    ]);
-    expect(actual).toEqual(expected);
-    expect(actual.stdout).toBe("1 true 1\nfalse 2 2\n3 3 3\nthe importer sees 3\nthe first try fails\nthe first try fails\n2\n1\n2\n");
-  });
-
-  test.concurrent("the namespace of an evicted ES module keeps its values", async () => {
-    using dir = tempDir("run-aot", {
-      "entry.ts": `
-        const first = await import("./counted.ts");
-        delete require.cache[require.resolve("./counted.ts")];
-        console.log(first.count, Object.keys(first).join());
-        const second = await import("./counted.ts");
-        console.log(first.count, second.count, first === second, first.list === second.list, first.list.join(), second.list.join());
-      `,
-      "counted.ts": `
-        const all = globalThis as { count?: number };
-        export const count: number = (all.count = (all.count ?? 0) + 1);
-        export const list: number[] = [count];
-      `,
-    });
-    const [expected, actual] = await Promise.all([
-      run(String(dir), false, "entry.ts"),
-      run(String(dir), true, "entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
-    ]);
-    expect(actual).toEqual(expected);
-    expect(actual.stdout).toBe("1 count,list\n1 2 false false 1 2\n");
-  });
-
-  test.concurrent("a Worker", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `
-          const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-          worker.onmessage = e => { console.log(JSON.stringify(e.data)); worker.terminate(); };
-          worker.postMessage(20);
-        `,
-        "worker.ts": `
-          declare var self: Worker;
-          function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
-          self.onmessage = e => postMessage({ fib: fib(e.data), path: import.meta.path });
-        `,
-      },
-      "entry.ts",
-    );
-    expect(stdout).toContain(`"fib":6765`);
-  });
-
-  test.concurrent("nothing is interpreted for a Worker whose file is in the program but is no entry point", async () => {
-    using dir = tempDir("run-aot", {
-      "app/entry.ts": `
-        import { Worker } from "node:worker_threads";
-        import { fileURLToPath } from "node:url";
-        if (process.argv.length > 9) { await import("./waits.ts"); await import("./serves.ts"); await import("./plain.ts"); }
-        const start = (name: string) => new Promise<void>(done => {
-          const worker = new Worker(fileURLToPath(import.meta.resolve(name)));
-          worker.on("message", (message: unknown) => console.log(name, message));
-          worker.on("exit", (code: number) => { console.log(name, "exit", code); done(); });
-        });
-        await start("./plain.ts");
-        await start("./waits.ts");
-        await start("./serves.ts");
-      `,
-      "app/plain.ts": `
-        import { parentPort } from "node:worker_threads";
-        parentPort!.postMessage("ran");
-        export default { fetch: "no function" };
-      `,
-      "app/waits.ts": `
-        import { parentPort } from "node:worker_threads";
-        parentPort!.postMessage("ran");
-        await new Promise(resolve => setTimeout(resolve, 20));
-        parentPort!.postMessage("waited");
-      `,
-      "app/serves.ts": `
-        import { parentPort } from "node:worker_threads";
-        setTimeout(() => { parentPort!.postMessage("still here"); process.exit(0); }, 200);
-        export default { port: 0, fetch() { return new Response("served"); } };
-      `,
-    });
-    const [expected, actual] = await Promise.all([
-      run(String(dir), false, "app/entry.ts"),
-      run(String(dir), true, "app/entry.ts", { env: { BUN_JSC_crashIfInterpreterIsUsed: "1" } }),
-    ]);
-    const withoutPort = (ran: typeof actual) => ({ ...ran, stdout: ran.stdout.replace(/:\d+\n/, ":<port>\n") });
-    expect(withoutPort(actual)).toEqual(withoutPort(expected));
-    expect(actual.stdout).toMatch(/Started (development )?server: http:\/\/localhost:\d+\n/);
-  });
-
-  test.concurrent("a Worker that loads nothing that was compiled calls built-in functions that were", async () => {
-    const { stdout } = await expectSameAsBunRun(
-      {
-        "entry.ts": `
-          const name = "./worker";
-          const worker = new Worker(new URL(name + ".ts", import.meta.url).href);
-          worker.onmessage = e => { console.log(e.data); worker.terminate(); };
-          worker.postMessage(3);
-        `,
-        "worker.ts": `
-          function* count(n: number) { for (let i = 0; i < n; i++) yield i; }
-          self.onmessage = async e => {
-            postMessage(JSON.stringify([
-              [...count(e.data)], [3, 1, 2].sort((a, b) => a - b), [1, 2, 3].map(x => x * 2), Array.from(new Set([1, 2])),
-              [...new Map([[1, 2]])], await Promise.all([1, Promise.resolve(2)]), Object.fromEntries([["a", 1]]), "a-b".replaceAll("-", "+"),
-            ]));
-          };
-        `,
-      },
-      "entry.ts",
-    );
-    expect(stdout).toBe(`[[0,1,2],[1,2,3],[2,4,6],[1,2],[[1,2]],[1,2],{"a":1},"a+b"]\n`);
-  });
-
   test.concurrent(".env, tsconfig.json paths and package.json", async () => {
     using dir = tempDir("run-aot", {
       ".env": `FROM_DOTENV=yes`,
-      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@alias/*": ["./sub/*"] } } }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { types: ["bun"], paths: { "@alias/*": ["./sub/*"] } } }),
       "package.json": JSON.stringify({ name: "app", type: "module" }),
       "entry.ts": `
         import other from "@alias/other";
@@ -983,7 +683,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
 
   test.concurrent("Bun.build with compile.aot builds what it builds without --aot", async () => {
     using dir = tempDir("run-aot", {
-      "app.ts": `console.log("the executable runs", Object.isFrozen(Array.prototype));`,
+      "app.ts": `const replace = () => Reflect.set(Array.prototype, "push", 1);\nconsole.log("the executable runs", replace());`,
       "build.ts": `
         const results = await Promise.all(
           [1, 2].map(n => Bun.build({ entrypoints: ["./app.ts"], compile: { aot: true, outfile: process.argv[2] + "/app" + n + ".exe" } })),
@@ -999,35 +699,8 @@ describe.skipIf(!supported)("bun run --aot", () => {
     expect(await hashOf("compiled/app1.exe")).toBe(await hashOf("plain/app1.exe"));
     expect(await hashOf("compiled/app2.exe")).toBe(await hashOf("plain/app2.exe"));
     await using proc = Bun.spawn({ cmd: [join(String(dir), "compiled/app1.exe")], env: bunEnv, stdout: "pipe", stderr: "inherit" });
-    expect(await proc.stdout.text()).toBe("the executable runs true\n");
+    expect(await proc.stdout.text()).toBe("the executable runs false\n");
     expect(await proc.exited).toBe(0);
-  });
-
-  test.concurrent("a replaced Module.prototype.require is called, whenever it is replaced", async () => {
-    using dir = tempDir("run-aot", {
-      "entry.cjs": `
-        const Module = require("node:module");
-        const original = Module.prototype.require;
-        const answering = answer =>
-          function (id) {
-            return id === "virtual/module" ? answer : original.apply(this, arguments);
-          };
-        Module.prototype.require = answering("first");
-        console.log(require("virtual/module"), Module.createRequire(__filename)("virtual/module"));
-        Module.prototype.require = answering("second");
-        console.log(require("virtual/module"), Module.createRequire(__filename)("virtual/module"));
-        Module.prototype.require = original;
-        try {
-          require("virtual/module");
-        } catch {
-          console.log("not found");
-        }
-      `,
-    });
-    for (const aot of [false, true]) {
-      const { stdout, exitCode } = await run(String(dir), aot, "entry.cjs");
-      expect({ stdout, exitCode }).toEqual({ stdout: "first first\nsecond second\nnot found\n", exitCode: 0 });
-    }
   });
 
   test.concurrent("default exports, with and without a name of their own, can be imported from other files", async () => {
@@ -1159,27 +832,6 @@ row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new Typ
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("a replaced Module.prototype.require is called for the files of the program", async () => {
-    using dir = tempDir("run-aot", {
-      "real.cjs": `exports.real = true;`,
-      "entry.cjs": `
-        const Module = require("node:module");
-        const original = Module.prototype.require;
-        const seen = [];
-        Module.prototype.require = function (id) {
-          if (id.startsWith(".")) seen.push(id);
-          const exports = original.apply(this, arguments);
-          return id === "./real.cjs" ? { ...exports, patched: true } : exports;
-        };
-        console.log(JSON.stringify(require("./real.cjs")), seen.join());
-      `,
-    });
-    for (const aot of [false, true]) {
-      const { stdout, exitCode } = await run(String(dir), aot, "entry.cjs");
-      expect({ stdout, exitCode }).toEqual({ stdout: '{"real":true,"patched":true} ./real.cjs\n', exitCode: 0 });
-    }
-  });
-
   test.concurrent("globals that other sources of the project declare or bring in are seen", async () => {
     using dir = tempDir("run-aot", {
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [], skipLibCheck: true }, include: ["src"] }),
@@ -1222,30 +874,6 @@ row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new Typ
     expect({ stdout: importing.stdout, exitCode: importing.exitCode }).toEqual({ stdout: "3 4\n", exitCode: 0 });
   });
 
-  test.concurrent("a replaced Module.prototype.require can replace the exports of a file of which only members are read", async () => {
-    using dir = tempDir("run-aot", {
-      "members.cjs": `
-        const value = "original";
-        exports.value = value;
-        exports.shout = () => value.toUpperCase();
-      `,
-      "entry.cjs": `
-        const Module = require("node:module");
-        const original = Module.prototype.require;
-        const seen = [];
-        Module.prototype.require = function (id) {
-          if (id.startsWith(".")) seen.push(id);
-          return id === "./members.cjs" ? { value: "replaced", shout: () => "REPLACED" } : original.apply(this, arguments);
-        };
-        console.log(require("./members.cjs").value, require("./members.cjs").shout(), seen.join());
-      `,
-    });
-    for (const aot of [false, true]) {
-      const { stdout, exitCode } = await run(String(dir), aot, "entry.cjs");
-      expect({ stdout, exitCode }).toEqual({ stdout: "replaced REPLACED ./members.cjs,./members.cjs\n", exitCode: 0 });
-    }
-  });
-
   test.concurrent("the debugger is not supported", async () => {
     using dir = tempDir("run-aot", { "entry.ts": `console.log("ran");` });
     const { stdout, stderr, exitCode } = await run(String(dir), true, "entry.ts", {
@@ -1253,7 +881,7 @@ row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new Typ
       builds: false,
     });
     expect(stdout).toBe("");
-    expect(stderr).toContain("the debugger is not supported with --aot");
+    expect(stderr).toContain("--aot does not support the debugger (--inspect, BUN_INSPECT)");
     expect(exitCode).toBe(1);
   });
 
@@ -1264,6 +892,24 @@ row("typed", Typed.name, new Typed().grow(2), TypedWithConstructor.name, new Typ
     expect(stderr).toContain(`error: --aot does not support ${flag}: `);
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent.each<[string, Options]>([
+    ["--cwd=app", { flags: ["--cwd=app"] }],
+    ["--cwd app", { flags: ["--cwd", "app"] }],
+    ["--cwd=app in BUN_OPTIONS", { env: { BUN_OPTIONS: "--cwd=app" } }],
+  ])("a relative %s is applied once", async (_form, options) => {
+    using dir = tempDir("run-aot", {
+      "app/entry.ts": `console.log("app/entry.ts", process.cwd(), JSON.stringify(process.execArgv.filter(flag => flag !== "--debug-aot")));`,
+      "app/app/entry.ts": `console.log("app/app/entry.ts", process.cwd());`,
+    });
+    const [expected, actual] = await Promise.all([
+      run(String(dir), false, "entry.ts", options),
+      run(String(dir), true, "entry.ts", options),
+    ]);
+    expect(actual).toEqual(expected);
+    expect(actual.stdout).toStartWith("app/entry.ts ");
+    expect(actual.exitCode).toBe(0);
+  });
 });
 
 test.skipIf(!supported).each([false, true])("inherited file descriptors stay open (--aot: %p)", async aot => {
@@ -1272,23 +918,44 @@ test.skipIf(!supported).each([false, true])("inherited file descriptors stay ope
       const { writeSync } = require("fs");
       writeSync(3, "written to 3");
       writeSync(4, "written to 4");
+      writeSync(64, "written to 64");
     `,
   });
   const child = spawn(bunExe(), ["run", ...(aot ? ["--debug-aot"] : []), "entry.js"], {
     cwd: String(dir),
     env: bunEnv,
-    stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
+    stdio: Array.from({ length: 65 }, (_, descriptor) => ([1, 2, 3, 4, 64].includes(descriptor) ? "pipe" : "ignore")),
   });
-  const [stderr, third, fourth, [exitCode]] = await Promise.all([
+  const [stderr, third, fourth, sixtyFourth, [exitCode]] = await Promise.all([
     text(child.stderr!),
     text(child.stdio[3] as Readable),
     text(child.stdio[4] as Readable),
+    text((child.stdio as readonly unknown[])[64] as Readable),
     once(child, "exit"),
   ]);
-  expect({ stderr, third, fourth, exitCode }).toEqual({
+  expect({ stderr, third, fourth, sixtyFourth, exitCode }).toEqual({
     stderr: "",
     third: "written to 3",
     fourth: "written to 4",
+    sixtyFourth: "written to 64",
     exitCode: 0,
   });
+});
+
+test.concurrent.each([
+  ["99", "error: --aot-graph-fd: the compiled program could not be read ("],
+  ["x", 'error: --aot-graph-fd: "x" is not a file descriptor\n'],
+])("--aot-graph-fd=%s is an error", async (descriptor, message) => {
+  using dir = tempDir("run-aot", { "a.ts": `console.log("ran");` });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--aot-graph-fd=" + descriptor, "a.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(message);
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(1);
 });

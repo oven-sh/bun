@@ -31,7 +31,7 @@ async function run(cmd: string[], cwd: string) {
 }
 
 using probe = tempDir("development-server-probe", { "hello.ts": "console.log(1);" });
-const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stderr: "pipe" });
+const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stderr: "pipe" });
 
 (probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)("the development server in a trimmed executable answers as in the whole one", () => {
   for (const [name, source] of Object.entries(programs)) {
@@ -41,7 +41,7 @@ const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-
         slot(async () => {
           using dir = tempDir("development-server", { "program.mjs": source, ...late });
           const answers: Record<string, unknown> = {};
-          for (const [kind, flags] of [["whole", []], ["trimmed", ["--compile-trim-runtime"]]] as const) {
+          for (const [kind, flags] of [["whole", []], ["trimmed", ["--trim"]]] as const) {
             const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", kind], String(dir));
             expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
             const ran = await run([join(String(dir), kind)], String(dir));

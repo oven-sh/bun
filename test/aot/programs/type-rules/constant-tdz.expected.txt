@@ -1,6 +1,0 @@
-constants: ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError
-caught: yesReferenceError
-in a function: ReferenceError set
-exact: ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError,ReferenceError
-after: 5,0.5,false,,null,undefined,number,7,6,2,a6b
-after: 5,5,5 0 70 true

@@ -3,6 +3,9 @@ import path from "node:path";
 
 export const firstBuiltinFunctionId = 0x10000;
 
+/** Keys as in `builtinFunctionIds`. */
+export const windowsOnlyBuiltinFunctions: ReadonlySet<string> = new Set(["ProcessObjectInternals.ts\twindowsEnv"]);
+
 /** By `<file>\t<function>`, as in `Fifo.ts\tcreateFIFO`. */
 export function builtinFunctionIds(directory: string): Map<string, number> {
   const ids = new Map<string, number>();

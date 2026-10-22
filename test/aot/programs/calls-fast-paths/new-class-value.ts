@@ -1,6 +1,6 @@
 // `new` on a class expression stored in a `const` needs no call into the runtime.
-// IR- = Construct v
-// IR+ NewObjectWithShape
+// IR- ^ .*= Construct v
+// IR+ : =?L[0-9]+ = (NewObject|CreateThis) 
 declare const console: any;
 const Links = class { a = 1; b = 2; sum() { return this.a + this.b; } };
 let s = 0;

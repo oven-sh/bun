@@ -1,9 +1,9 @@
-// A build-time constant decides a condition also where it comes through another module, a namespace import, an enum, or a function that returns it. Each call of `wrong` with a text is a type error, which stops the build unless the checker knows that the call never runs.
+// A build-time constant decides a condition also where it comes through another module, a namespace import, an enum, or a function that returns it. No call of `wrong` runs: each would leave a line in the log.
 import { Channel, HAS_FEATURE, IS_INTERNAL, LEVEL, Level, calls, countsCalls, decidesInSteps, dependsOnItsArgument, hasFeature, isInternal, reassign, reassigned } from "./flags"
 import * as flags from "./flags"
 import { INTERNAL_AGAIN, isInternalAgain } from "./again"
 const log: unknown[] = []
-function wrong(n: number): number {
+function wrong(n: string): string {
   log.push("this ran: " + n)
   return n
 }

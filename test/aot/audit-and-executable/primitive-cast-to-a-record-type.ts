@@ -1,5 +1,5 @@
 // `x as T`, where T is a record type and x is a string, a number or a boolean when the program runs.
-const say = (label: string, f: () => unknown): void => { let r: string; try { r = String(f()); } catch (e) { r = "throws " + (e as Error).name + ": " + (e as Error).message.split("\n")[0].replace(/ \(bun --aot[^)]*\)/, "").replace(/ \(declared at [^)]*\)/g, ""); } console.log(label + " ==> " + r); };
+const say = (label: string, f: () => unknown): void => { let r: string; try { r = String(f()); } catch (e) { r = "throws " + (e as Error).name + ": " + (e as Error).message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "").replace(/ \(declared at [^)]*\)/g, ""); } console.log(label + " ==> " + r); };
 const key = Symbol("matcher");
 interface Matcher { [key]: () => boolean; name: string }
 const isMatcher = (x: unknown): x is Matcher => { const pattern = x as Matcher; return pattern && !!pattern[key]; };

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Deep-equality matrix for node:assert and node:util.
 // Expectations come from the documented semantics of assert.deepStrictEqual/deepEqual,
 // cross-checked against Node.js. Cases Bun gets wrong today are marked `test.failing`.

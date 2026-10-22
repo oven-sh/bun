@@ -1,0 +1,378 @@
+use super::*;
+use crate::resolve::{get_root_length, path_is_relative};
+
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum RootFiles {
+    Listed,
+    Unlisted,
+    Skipped,
+}
+
+impl ConfigError {
+    pub(super) fn unreadable(code: u32, args: &[&[u8]]) -> ConfigError {
+        ConfigError {
+            is_unreadable: true,
+            ..ConfigError::new(code, args)
+        }
+    }
+}
+
+pub fn compile_build_overrides() -> Vec<(Vec<u8>, Json)> {
+    vec![
+        (b"noEmit".to_vec(), Json::Bool(true)),
+        (b"allowImportingTsExtensions".to_vec(), Json::Bool(true)),
+        (b"noCheck".to_vec(), Json::Bool(false)),
+        (b"traceResolution".to_vec(), Json::Bool(false)),
+    ]
+}
+
+// They say what tsc writes and where, and a build writes none of it. Left in, they are held against each other, against
+// `noEmit` and against the places of the files. `composite` and `declaration` stay: other projects ask for them.
+const OUTPUT_OPTIONS: [&[u8]; 20] = [
+    b"charset",
+    b"declarationDir",
+    b"declarationMap",
+    b"emitDeclarationOnly",
+    b"importHelpers",
+    b"importsNotUsedAsValues",
+    b"incremental",
+    b"inlineSourceMap",
+    b"inlineSources",
+    b"mapRoot",
+    b"noImplicitUseStrict",
+    b"out",
+    b"outDir",
+    b"outFile",
+    b"prepend",
+    b"preserveValueImports",
+    b"rootDir",
+    b"sourceMap",
+    b"sourceRoot",
+    b"tsBuildInfoFile",
+];
+
+// TypeScript 7 has removed them, and `bun run` never looked at them. They say what tsc writes, or how tsc finds a module,
+// which a build finds as `bun run` does. The two about default imports forbid an import that `bun run` performs, and the
+// checker reads neither: a namespace that is called, which only they allowed, is reported where it is called.
+fn is_removed_and_means_nothing(option: &(Vec<u8>, Json)) -> bool {
+    let is_one_of = |values: &[&[u8]]| {
+        let written = option.1.as_str();
+        written.is_some_and(|it| values.iter().any(|value| it.eq_ignore_ascii_case(value)))
+    };
+    match &option.0[..] {
+        b"downlevelIteration" => true,
+        b"alwaysStrict" | b"esModuleInterop" | b"allowSyntheticDefaultImports" => {
+            matches!(option.1, Json::Bool(false))
+        }
+        b"target" => is_one_of(&[b"es5"]),
+        b"module" => is_one_of(&[b"amd", b"umd", b"system"]),
+        b"moduleResolution" => is_one_of(&[b"node", b"node10", b"classic"]),
+        _ => false,
+    }
+}
+
+const UNKNOWN_OPTION_CODE: u32 = 5023;
+
+pub fn load_for_build(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+) -> Result<Project, Vec<ConfigError>> {
+    load(host, session, path, RootFiles::Listed)
+}
+
+/// `load_for_build` without reading a directory. A project that has references is loaded with its files, because
+/// `only_has_references` asks for them. No error says that there are no files.
+pub fn load_for_build_with_unlisted_files(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+) -> Result<Project, Vec<ConfigError>> {
+    let mut project = load(host, session, path, RootFiles::Unlisted)?;
+    if !project.references.is_empty() {
+        project.list_files(host);
+    }
+    Ok(project)
+}
+
+pub fn load_options_for_build(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+) -> Result<Project, Vec<ConfigError>> {
+    load(host, session, path, RootFiles::Skipped)
+}
+
+impl Project {
+    // A solution: it lists projects and has no file of its own, so its options are written for no file. Only a project that
+    // was loaded with its root files can say so.
+    pub fn only_has_references(&self) -> bool {
+        debug_assert!(self.unlisted_files.is_none() || self.references.is_empty());
+        self.files.is_empty() && !self.references.is_empty()
+    }
+
+    pub fn list_files(&mut self, host: &dyn Host) {
+        if let Some(unlisted) = self.unlisted_files.take() {
+            self.files = unlisted.list(host, &mut |_| {});
+            self.options.files.clone_from(&self.files);
+        }
+    }
+}
+
+// The projects that `project` references, directly or indirectly, each before its own references: the order in which the
+// language service looks for the project of an open file.
+fn load_referenced_projects(
+    host: &dyn Host,
+    project: &Project,
+    load: impl Fn(&[u8]) -> Option<Project>,
+) -> Vec<Project> {
+    let is_case_sensitive = host.is_case_sensitive();
+    let paths_of = |project: &Project| -> Vec<Vec<u8>> {
+        let references = project.references.iter().rev();
+        references.map(|it| resolve_config_file_name_of_project_reference(&it.path)).collect()
+    };
+    let mut seen = vec![project.config_path.clone()];
+    let mut pending = paths_of(project);
+    let mut projects = Vec::new();
+    while let Some(path) = pending.pop() {
+        if seen.iter().any(|it| is_same_path(it, &path, is_case_sensitive)) {
+            continue;
+        }
+        seen.push(path.clone());
+        if let Some(referenced) = load(&path) {
+            pending.extend(paths_of(&referenced));
+            projects.push(referenced);
+        }
+    }
+    projects
+}
+
+// Each with its root files.
+pub fn load_referenced_projects_for_build(host: &dyn Host, solution: &Project) -> Vec<Project> {
+    load_referenced_projects(host, solution, |path| load_for_build(host, &Session::new(), path).ok())
+}
+
+// The sources of a referenced project stand in for the declaration files that it would write, so nothing has to be built
+// first: for each that writes into a directory of its own, that directory and the directory of sources that it mirrors.
+fn find_outputs_of_referenced_projects(host: &dyn Host, project: &Project) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let referenced = load_referenced_projects(host, project, |path| {
+        let (session, mut errors) = (Session::new(), Vec::new());
+        let mut raw = parse_config(host, &session, path, &mut errors)?;
+        skip_root_files(&mut raw);
+        Some(project_from_raw(host, &session, path, dirname::<Posix>(path), raw, errors))
+    });
+    let outputs = referenced.iter().filter_map(|referenced| {
+        let options = &referenced.options;
+        let written = [&options.declaration_dir, &options.out_dir];
+        let output_directory = written.into_iter().find(|directory| !directory.is_empty())?;
+        let root_directory = match options.root_dir.is_empty() {
+            true => dirname::<Posix>(&referenced.config_path),
+            false => &options.root_dir[..],
+        };
+        Some((output_directory.clone(), root_directory.to_vec()))
+    });
+    outputs.collect()
+}
+
+fn skip_root_files(raw: &mut Raw) {
+    raw.files = List {
+        is_specified: true,
+        is_array: true,
+        items: None,
+        verbatim: None,
+    };
+    raw.include = List {
+        is_specified: true,
+        is_array: true,
+        items: Some(Vec::new()),
+        verbatim: None,
+    };
+}
+
+fn load(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+    root_files: RootFiles,
+) -> Result<Project, Vec<ConfigError>> {
+    let mut errors = Vec::new();
+    let raw = parse_config(host, session, path, &mut errors);
+    let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
+        return Err(errors);
+    };
+    let base = dirname::<Posix>(path);
+    merge_compiler_options(&mut raw.compiler, compile_build_overrides(), &[]);
+    exclude_output_directories(&mut raw, base);
+    raw.compiler.retain(|option| !OUTPUT_OPTIONS.contains(&&option.0[..]));
+    raw.compiler.retain(|option| !is_removed_and_means_nothing(option));
+    let names_output_option = |error: &ConfigError| {
+        error.args.first().is_some_and(|option| OUTPUT_OPTIONS.contains(&&option[..]))
+    };
+    errors.retain(|error| error.code != UNKNOWN_OPTION_CODE || !names_output_option(error));
+    let base_url = take_base_url(&mut raw.compiler, base);
+    let assigns_class_fields = raw.compiler.iter().any(|option| {
+        option.0 == b"useDefineForClassFields" && matches!(option.1, Json::Bool(false))
+    });
+    match root_files {
+        RootFiles::Listed => {}
+        RootFiles::Unlisted => raw.leaves_root_files_unlisted = true,
+        RootFiles::Skipped => skip_root_files(&mut raw),
+    }
+    let mut project = project_from_raw(host, session, path, base, raw, errors);
+    project.options.imports_need_no_extension = true;
+    // `bun run` leaves class fields where they are written unless the option is false, whatever the target.
+    project.options.use_define_for_class_fields = !assigns_class_fields;
+    project.options.emit_standard_class_fields = !assigns_class_fields;
+    project.options.referenced_outputs = find_outputs_of_referenced_projects(host, &project);
+    if let Some(base_url) = base_url {
+        project.options.paths_base_dir.clone_from(&base_url);
+        project.options.base_url = base_url;
+    }
+    Ok(project)
+}
+
+// Emitted files aren't read back in as input. `project_from_raw` no longer sees where they were written.
+fn exclude_output_directories(raw: &mut Raw, base: &[u8]) {
+    if raw.exclude.is_array {
+        return;
+    }
+    let directories: Vec<Json> = (raw.compiler.iter())
+        .filter(|option| option.0 == b"outDir" || option.0 == b"declarationDir")
+        .filter_map(|option| option.1.as_str())
+        .filter(|directory| !directory.is_empty())
+        .map(|directory| match substitute_if_template(directory, base) {
+            Some(substituted) => displayed_path(&substituted).into_owned(),
+            None => displayed_path(directory).into_owned(),
+        })
+        .map(Json::String)
+        .collect();
+    if !directories.is_empty() {
+        raw.exclude.items = Some(directories);
+    }
+}
+
+fn take_base_url(compiler: &mut Vec<(Vec<u8>, Json)>, base: &[u8]) -> Option<Vec<u8>> {
+    let index = compiler.iter().position(|option| option.0 == b"baseUrl")?;
+    let written = compiler.remove(index).1.into_string()?;
+    let base_url = substitute_if_template(&written, base).unwrap_or_else(|| join(base, &written));
+    let paths = compiler.iter_mut().find(|option| option.0 == b"paths");
+    let Some((_, Json::Object(patterns))) = paths else {
+        return Some(base_url);
+    };
+    for (_, substitutions) in patterns {
+        let Json::Array(substitutions) = substitutions else {
+            continue;
+        };
+        for substitution in substitutions {
+            if let Json::String(text) = substitution
+                && !path_is_relative(text)
+                && get_root_length(text) == 0
+                && !starts_with_config_dir_template(text)
+            {
+                *text = displayed_path(&join(&base_url, text)).into_owned();
+            }
+        }
+    }
+    Some(base_url)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::resolve::ModuleDetection;
+
+    fn text(value: &str) -> Json {
+        Json::String(value.into())
+    }
+
+    fn paths_option(substitutions: [&str; 4]) -> (Vec<u8>, Json) {
+        let substitutions = Json::Array(substitutions.map(text).into());
+        let patterns = vec![(b"@/*".to_vec(), substitutions)];
+        (b"paths".to_vec(), Json::Object(patterns))
+    }
+
+    #[test]
+    fn compile_build_overrides_take_precedence() {
+        let mut compiler = vec![
+            (b"noEmit".to_vec(), Json::Bool(false)),
+            (b"noCheck".to_vec(), Json::Bool(true)),
+            (b"traceResolution".to_vec(), Json::Bool(true)),
+        ];
+        merge_compiler_options(&mut compiler, compile_build_overrides(), &[]);
+        let options = Options::from_compiler_options(b"/project", &Json::Object(compiler));
+        assert!(options.no_emit);
+        assert!(!options.no_check);
+        assert!(options.allow_importing_ts_extensions);
+        assert!(!options.trace_resolution);
+        assert_eq!(options.module_detection, ModuleDetection::Auto);
+        assert!(options.problems.is_empty());
+    }
+
+    #[test]
+    fn base_url_is_removed_and_bare_substitutions_become_absolute() {
+        let strict = (b"strict".to_vec(), Json::Bool(true));
+        let mut compiler = vec![
+            (b"baseUrl".to_vec(), text("/project/base")),
+            strict.clone(),
+            paths_option(["src/*", "./lib/*", "../up/*", "/rooted/*"]),
+        ];
+        let base_url = take_base_url(&mut compiler, b"/project");
+        assert_eq!(base_url.as_deref(), Some(&b"/project/base"[..]));
+        let rewritten = paths_option(["/project/base/src/*", "./lib/*", "../up/*", "/rooted/*"]);
+        assert_eq!(compiler, [strict, rewritten]);
+    }
+
+    #[test]
+    fn relative_base_url_is_resolved_from_configuration_directory() {
+        let mut compiler = vec![(b"baseUrl".to_vec(), text("./src"))];
+        let base_url = take_base_url(&mut compiler, b"/project");
+        assert_eq!(base_url.as_deref(), Some(&b"/project/src"[..]));
+        assert!(compiler.is_empty());
+    }
+
+    #[test]
+    fn paths_without_base_url_are_unchanged() {
+        let written = paths_option(["src/*", "./lib/*", "../up/*", "/rooted/*"]);
+        let mut compiler = vec![written.clone()];
+        assert_eq!(take_base_url(&mut compiler, b"/project"), None);
+        assert_eq!(compiler, [written]);
+    }
+
+    #[test]
+    fn config_dir_template_is_not_joined_to_base_url() {
+        let mut compiler = vec![
+            (b"baseUrl".to_vec(), text("${configDir}/base")),
+            paths_option(["${configDir}/src/*", "src/*", "./lib/*", "/rooted/*"]),
+        ];
+        let base_url = take_base_url(&mut compiler, b"/project");
+        assert_eq!(base_url.as_deref(), Some(&b"/project/base"[..]));
+        let rewritten = paths_option([
+            "${configDir}/src/*",
+            "/project/base/src/*",
+            "./lib/*",
+            "/rooted/*",
+        ]);
+        assert_eq!(compiler, [rewritten]);
+    }
+
+    #[test]
+    fn rewritten_options_have_no_removed_option_error() {
+        let mut compiler = vec![
+            (b"baseUrl".to_vec(), text("/project")),
+            paths_option(["src/*", "./lib/*", "../up/*", "/rooted/*"]),
+        ];
+        let as_written = Json::Object(compiler.clone());
+        let errors = Options::from_compiler_options(b"/project", &as_written).errors;
+        assert_eq!(errors, [5090, 5102]);
+        take_base_url(&mut compiler, b"/project");
+        let rewritten = Json::Object(compiler);
+        let errors = Options::from_compiler_options(b"/project", &rewritten).errors;
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn unreadable_error_is_marked() {
+        assert!(ConfigError::unreadable(5083, &[b"/a/tsconfig.json"]).is_unreadable);
+        assert!(!ConfigError::new(5083, &[b"/a/tsconfig.json"]).is_unreadable);
+    }
+}

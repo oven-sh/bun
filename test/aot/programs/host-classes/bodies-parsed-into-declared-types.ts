@@ -1,4 +1,4 @@
-// Whatever type `await request.json()` goes to, and whatever the body holds, the answer is that of json().
+// Whatever object type `await request.json()` goes to, a body that holds an object, an array or null gives what json() gives, whatever its members are, and a body that is no JSON gives the error of json(). Only a body that starts with a byte order mark differs (rows 20 and 22): the compiled form reads the bytes, drops a UTF-8 mark and decodes after a UTF-16 mark, whatever held them. A body that holds a number or a string is no `Order`: the cast or the annotation throws a TypeError.
 interface Order {
   customer: { id: number; name: string };
   items: { sku: string; quantity: number }[];
@@ -8,6 +8,10 @@ interface Order {
 function describe(value: unknown): string {
   if (typeof value !== "object" || value === null) return typeof value + " " + String(value);
   return JSON.stringify(value) + " " + Reflect.ownKeys(value).map(String).join() + " " + (Object.getPrototypeOf(value) === (Array.isArray(value) ? Array.prototype : Object.prototype));
+}
+
+function failure(error: unknown): string {
+  return error instanceof TypeError ? "TypeError" : (error as Error).name + ": " + (error as Error).message;
 }
 
 async function ofRequest(request: Request): Promise<unknown> {
@@ -75,7 +79,7 @@ for (const [name, read] of readers) {
     try {
       console.log(name, at, describe(await read(bodies[at]!)));
     } catch (error) {
-      console.log(name, at, "threw", (error as Error).name + ":", (error as Error).message);
+      console.log(name, at, "threw", failure(error));
     }
   }
 }
@@ -103,7 +107,7 @@ for (const [name, value] of others) {
   try {
     console.log(name + ":", describe(await ofRequest(value as Request)));
   } catch (error) {
-    console.log(name + ": threw", (error as Error).name + ":", (error as Error).message);
+    console.log(name + ": threw", failure(error));
   }
 }
 
@@ -112,7 +116,7 @@ console.log(twice.bodyUsed, describe(await ofRequest(twice)), twice.bodyUsed);
 try {
   await ofRequest(twice);
 } catch (error) {
-  console.log("threw", (error as Error).name + ":", (error as Error).message);
+  console.log("threw", failure(error));
 }
 
 const order: string[] = [];

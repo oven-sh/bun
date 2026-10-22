@@ -340,11 +340,11 @@ function verifyElf(spec: VerifySpec): void {
   {
     const pat = globToRegExp(expect.forbiddenImports);
     const bad = imported.filter(s => pat.test(s));
-    report(
-      "imports",
-      `${imported.length} imported symbols`,
-      bad.map(s => `+ ${s} (forbidden import)`),
-    );
+    const missing = (expect.requiredImports ?? []).filter(s => !imported.includes(s));
+    report("imports", `${imported.length} imported symbols`, [
+      ...bad.map(s => `+ ${s} (forbidden import)`),
+      ...missing.map(s => `- ${s} (required import)`),
+    ]);
   }
 
   const sections = blocks(info, "Section");

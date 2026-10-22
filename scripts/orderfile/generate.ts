@@ -743,23 +743,38 @@ function codeRanges(fd: number, path: string): CodeRange[] {
  * link-time addresses. The starts are addresses in the profile, and a
  * breakpoint planted at one of them in any other build lands mid-instruction.
  * Stripping and `bun build --compile` both leave the code as it was.
+ * `bun build --compile --aot` leaves out what the program cannot reach: what
+ * stays keeps its address, in several ranges, with a few pages rewritten where
+ * something was cut out of them, and the compiled program is a range of its own
+ * behind the profile's.
  */
 export function sameCode(profile: string, exe: string): boolean {
   const [a, b] = [openSync(profile, "r"), openSync(exe, "r")];
   try {
     const [ours, theirs] = [codeRanges(a, profile), codeRanges(b, exe)];
-    if (ours.length !== theirs.length) return false;
-    for (const [i, range] of ours.entries()) {
-      const other = theirs[i]!;
-      if (range.address !== other.address || range.size !== other.size) return false;
+    const endOf = (range: CodeRange) => range.address + BigInt(range.size);
+    const page = 4096;
+    let [compared, rewritten] = [0, 0];
+    for (const other of theirs) {
+      const range = ours.find(range => range.address <= other.address && endOf(other) <= endOf(range));
+      if (!range) {
+        if (ours.some(range => other.address < endOf(range) && range.address < endOf(other))) return false;
+        continue;
+      }
+      const from = range.offset + Number(other.address - range.address);
       const step = 1 << 22;
-      for (let done = 0; done < range.size; done += step) {
-        const size = Math.min(step, range.size - done);
-        const bytes = readAt(a, range.offset + done, size);
-        if (bytes.length !== size || !bytes.equals(readAt(b, other.offset + done, size))) return false;
+      for (let done = 0; done < other.size; done += step) {
+        const size = Math.min(step, other.size - done);
+        const [expected, found] = [readAt(a, from + done, size), readAt(b, other.offset + done, size)];
+        if (expected.length !== size || found.length !== size) return false;
+        compared += Math.ceil(size / page);
+        if (expected.equals(found)) continue;
+        for (let at = 0; at < size; at += page) {
+          if (!expected.subarray(at, at + page).equals(found.subarray(at, at + page))) rewritten++;
+        }
       }
     }
-    return true;
+    return compared > 0 && rewritten * 100 <= compared;
   } finally {
     closeSync(a);
     closeSync(b);
@@ -1066,6 +1081,21 @@ export async function generateOrderFile(options: GenerateOptions): Promise<{ cou
     writeFileSync(
       join(fixtures, "hello.ts"),
       `const greet = (name: string): string => \`hi \${name}\`;\nconsole.log(greet("world"));\n`,
+    );
+    writeFileSync(
+      join(fixtures, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "esnext",
+          module: "preserve",
+          moduleResolution: "bundler",
+          typeRoots: [resolve(here, "..", "..", "packages")],
+          types: ["bun-types"],
+          allowJs: true,
+          strict: true,
+          noEmit: true,
+        },
+      }) + "\n",
     );
     writeFileSync(
       join(fixtures, "server.js"),

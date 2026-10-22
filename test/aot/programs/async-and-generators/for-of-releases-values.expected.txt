@@ -1,7 +1,0 @@
-a generator: collected, 1144
-an iterator that the program wrote: collected, 1144
-an iterator helper: collected, 1144
-an array pattern: collected, 1144
-a loop in a generator: collected, 1144
-a loop in a generator over an iterator that the program wrote: collected, 1144
-a value read after the await: kept, 1144

@@ -1,7 +1,7 @@
 // `for..in` over ordinary objects whose properties do not lie one behind the other from the first slot on: one was deleted, some are named by symbols, some are not enumerable, some are accessors. The keys, their order and the values read under them are those of plain Bun, also where the loop changes the object, and listing the keys of such a shape takes no work anew each time.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedForInKeys") + counted("operationAOTTypedHasEnumerableProperty") : 0;
+const entered = () => counted ? counted("operationAOTForInKeys") + counted("operationAOTHasEnumerableProperty") : 0;
 const mark = Symbol("mark");
 const words = ["alpha", "beta", "gamma", "delta"];
 function list(o: any): string { const seen: string[] = []; for (const k in o) seen.push(k + "=" + String(o[k])); return seen.join(); }

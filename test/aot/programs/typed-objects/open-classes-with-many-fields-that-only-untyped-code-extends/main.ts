@@ -7,7 +7,7 @@ const count = typeof aotOperationCount === "function" ? aotOperationCount : () =
 const collect = typeof gc === "function" ? gc : typeof Bun !== "undefined" ? () => Bun.gc(true) : () => {};
 
 function rounds(name: string, Heir: new (seed: number) => any, sumOf: (value: any) => number, mayAsk: number) {
-  const before = count("operationAOTTypedCreateThisAt");
+  const before = count("operationAOTCreateThis");
   const kept: any[] = [];
   let sum = 0;
   for (let i = 0; i < 3000; ++i) {
@@ -20,7 +20,7 @@ function rounds(name: string, Heir: new (seed: number) => any, sumOf: (value: an
       collect();
     }
   }
-  const asked = count("operationAOTTypedCreateThisAt") - before;
+  const asked = count("operationAOTCreateThis") - before;
   const last = kept[kept.length - 1];
   console.log(name, sum, Object.keys(last).length, Object.keys(last).slice(0, 3).join(), Object.keys(last).slice(-3).join());
   console.log(name, "each its own:", kept.map(made => made.f1 + ":" + made.f3 + ":" + made.o0 + ":" + made.own).join(" "));

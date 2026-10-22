@@ -3,7 +3,7 @@
 `bun build --compile --aot` gives `new Intl.DateTimeFormat("de", { month: "long" })`, `new Intl.NumberFormat(..)`,
 `date.toLocaleString("de", { .. })` and `number.toLocaleString(..)` with a constant locale and constant options a _format pattern_:
 read-only data in the executable from which our own code writes the text, without ICU
-(`Source/JavaScriptCore/aot/AOTFormatPatterns.h` and `AOTTypedBuiltinsIntlTemporal.cpp` in the WebKit fork).
+(`Source/JavaScriptCore/aot/runtime/AOTFormatPatterns.h` and `aot/builtins/AOTFormatPattern*.cpp` in the WebKit fork).
 
 The pattern's data (field order, literals, month names, separators, group sizes) is read from ICU: `udat_toPattern`,
 `udat_getSymbols`, `unum_getSymbol`, `unum_getAttribute`, the formatter's resolved options. A pattern letter or an option that the
@@ -31,7 +31,7 @@ rules of named time zones are read when the program runs.
   (`BUN_JSC_formatPatternsOfAnotherICUForTesting=1`), and with every plan refused (`=2`).
 - `../programs/calls-fast-paths/intl-constant-formatters*.ts` and `to-locale-string-with-constant-arguments.ts` hold the known traps
   and the ways a formatter can flow through a program.
-- With `BUN_JSC_validateAOTTypedFacts=1` any executable formats every text from a pattern with ICU as well and crashes on a
+- With `BUN_JSC_validateAOTRuntime=1` any executable formats every text from a pattern with ICU as well and crashes on a
   difference.
 
 ## When ICU changes

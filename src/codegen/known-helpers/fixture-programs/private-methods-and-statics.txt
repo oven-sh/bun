@@ -1,0 +1,72 @@
+Private methods, accessors, static fields and methods, and `#name in`: results, identity of methods, and every TypeError they can throw.
+//// main.js
+class Account {
+  #balance = 10;
+  static #opened = 0;
+  static #registry = [];
+  constructor() {
+    Account.#opened++;
+    Account.#register(this);
+  }
+  #fee() {
+    return 1;
+  }
+  get #net() {
+    return this.#balance - this.#fee();
+  }
+  set #net(value) {
+    this.#balance = value + this.#fee();
+  }
+  get #readOnly() {
+    return "read only";
+  }
+  static #register(account) {
+    Account.#registry.push(account);
+    return Account.#registry.length;
+  }
+  deposit(amount) {
+    this.#net = this.#net + amount;
+    return this.#balance;
+  }
+  sameMethod(other) {
+    return this.#fee === other.#fee;
+  }
+  overwriteMethod() {
+    this.#fee = function () {};
+  }
+  overwriteGetter() {
+    this.#readOnly = 1;
+  }
+  static opened() {
+    return Account.#opened + "/" + Account.#registry.length;
+  }
+  static openedOf(receiver) {
+    return receiver.#opened;
+  }
+  static is(value) {
+    return #balance in value;
+  }
+  static hasStatic(value) {
+    return #opened in value;
+  }
+}
+
+function attempt(label, action) {
+  try {
+    console.log(label, action());
+  } catch (error) {
+    console.log(label, error.constructor.name + ": " + error.message);
+  }
+}
+
+const one = new Account();
+const two = new Account();
+console.log(one.deposit(5), two.deposit(1), one.sameMethod(two), Account.opened());
+console.log(Account.is(one), Account.is({}), Account.is(Object.create(one)), Account.hasStatic(Account), Account.hasStatic(one));
+attempt("in a primitive", () => Account.is(1));
+attempt("in null", () => Account.is(null));
+attempt("write a method", () => one.overwriteMethod());
+attempt("write an accessor without a setter", () => one.overwriteGetter());
+attempt("a method on another receiver", () => one.sameMethod({}));
+attempt("a static field of a subclass", () => Account.openedOf(class extends Account {}));
+attempt("deposit on another receiver", () => Account.prototype.deposit.call({}, 1));

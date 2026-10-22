@@ -2236,13 +2236,19 @@ pub mod formatter {
                 T::RegExpObject => TagPayload::String,
                 T::Symbol => TagPayload::Symbol,
                 T::BooleanObject => TagPayload::Boolean,
-                T::JSFunction | T::SlimClosure | T::SlimClosureWithProperties => TagPayload::Function,
+                T::JSFunction
+                | T::CompiledClosure
+                | T::SlimClosure
+                | T::SlimClosureWithProperties => TagPayload::Function,
                 T::WeakMap | T::Map => TagPayload::Map,
                 T::MapIterator => TagPayload::MapIterator,
                 T::SetIterator => TagPayload::SetIterator,
                 T::WeakSet | T::Set => TagPayload::Set,
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
+
+                // The engine's generator objects have a cell type of their own, which falls to the last arm.
+                T::Object if value.is_compiled_generator() => TagPayload::JSON,
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
@@ -2251,6 +2257,7 @@ pub mod formatter {
                 | T::IteratorHelper
                 | T::Object
                 | T::FinalObject
+                | T::CompiledObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
                 T::ProxyObject => {

@@ -1,4 +1,4 @@
-// A plain object that is the prototype of another object cannot become a record where it is: the heir would lose what it inherits. Where it enters a typed place it stays as it is, and typed code, untyped code and the heir all see one object.
+// A plain object that is the prototype of another object enters a typed place. It stays as it is, and typed code, untyped code and the heir all see one object.
 interface Compile { outfile: string; target?: string }
 interface Build { entrypoints: string[]; compile: Compile }
 function describeBuild(build: Build): string { return build.entrypoints.join() + " " + build.compile.outfile + " " + build.compile.target }
@@ -6,7 +6,7 @@ function rename(build: Build, name: string): void { build.compile.outfile = name
 function retarget(build: Build, target: string): void { build.compile.target = target }
 function same(build: Build, other: unknown): boolean { return build.compile === other }
 function untypedOptions(): any { const options: any = {}; options.outfile = "out.js"; return options }
-function tell(name: string, f: () => unknown): void { let text: string; try { text = String(f()) } catch (e) { text = e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(e) } console.log(name + ": " + text) }
+function tell(name: string, f: () => unknown): void { let text: string; try { text = String(f()) } catch (e) { text = e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "") : String(e) } console.log(name + ": " + text) }
 function make(): { options: any; heir: any; build: any } { const options = untypedOptions(); const heir = Object.create(options); return { options, heir, build: { entrypoints: ["a.ts"], compile: options } } }
 tell("read", () => { const { heir, build } = make(); return describeBuild(build) + " | heir " + heir.outfile });
 tell("identity", () => { const { options, heir, build } = make(); describeBuild(build); return same(build, options) + " " + (build.compile === options) + " " + (Object.getPrototypeOf(heir) === options) + " " + (Object.getPrototypeOf(heir) === build.compile) });

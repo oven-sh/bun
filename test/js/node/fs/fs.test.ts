@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
@@ -3237,6 +3236,105 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   const linkPath = join(String(dir), "link");
   symlinkSync(import.meta.path, linkPath);
   expect(realpathSync(linkPath)).toBe(self);
+});
+
+it.if(isPosix)("realpath reads its path the way Node does", async () => {
+  using dir = tempDir("fs-realpath-path", {
+    "file": "",
+    "y": "",
+    "dir/y": "",
+    "dir/sub/x": "",
+    "a\\b": "",
+    "a/b": "",
+    "\\c": "",
+    "C:\\d": "",
+    "w\\d/z": "",
+    "e\\/z": "",
+    "e/z": "",
+  });
+  symlinkSync("dir/sub", join(String(dir), "link"));
+
+  // fs.realpath starts from path.resolve(path). fs.realpath.native and
+  // fs.promises.realpath leave the whole path to the system.
+  const cases: [path: string, resolved: string, native: string][] = [
+    ["a\\b", "/a\\b", "/a\\b"],
+    ["\\c", "/\\c", "/\\c"],
+    ["C:\\d", "/C:\\d", "/C:\\d"],
+    ["w\\d/z", "/w\\d/z", "/w\\d/z"],
+    ["w\\d/../file", "/file", "/file"],
+    ["a\\..\\file", "ENOENT lstat", "ENOENT realpath"],
+    ["file/", "/file", "ENOTDIR realpath"],
+    ["file/..", "", "ENOTDIR realpath"],
+    ["nope/../file", "/file", "ENOENT realpath"],
+    ["link/../y", "/y", "/dir/y"],
+  ];
+
+  const script = `
+    import fs from "node:fs";
+    import { promisify } from "node:util";
+    const cwd = process.cwd();
+    const impls = [
+      fs.realpathSync,
+      promisify(fs.realpath),
+      fs.realpathSync.native,
+      promisify(fs.realpath.native),
+      fs.promises.realpath,
+    ];
+    async function run(path) {
+      const results = [];
+      for (const impl of impls) {
+        try {
+          results.push((await impl(path)).slice(cwd.length));
+        } catch (err) {
+          results.push(err.code + " " + err.syscall);
+        }
+      }
+      return results;
+    }
+    const out = [];
+    for (const path of ${JSON.stringify(cases.map(([path]) => path))}) {
+      out.push(await run(path), await run(cwd + "/" + path), await run(Buffer.from(path)));
+    }
+    out.push(await run(""));
+    process.chdir("w\\\\d");
+    out.push(await run("."), await run("z"));
+    process.chdir("../e\\\\");
+    out.push(await run("."), await run("z"));
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const row = (resolved: string, native: string) => [resolved, resolved, native, native, native];
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    ...cases.flatMap(([, resolved, native]) => Array(3).fill(row(resolved, native))),
+    row("", "ENOENT realpath"),
+    row("/w\\d", "/w\\d"),
+    row("/w\\d/z", "/w\\d/z"),
+    row("/e\\", "/e\\"),
+    row("/e\\/z", "/e\\/z"),
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+it("promises.realpath is realpath.native", async () => {
+  const { root } = path.parse(process.cwd());
+  expect(await promises.realpath(root)).toBe(realpathSync.native(root));
+  expect(await promises.realpath(root)).toEndWith(path.sep);
+
+  using dir = tempDir("fs-promises-realpath", {});
+  await expect(promises.realpath(join(String(dir), "nope"))).rejects.toMatchObject({
+    code: "ENOENT",
+    syscall: "realpath",
+  });
 });
 
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
@@ -6897,13 +6995,12 @@ it("sync fs calls read a Buffer path captured at call time when an option getter
   expect(exitCode).toBe(0);
 });
 
-it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
+it.if(isPosix)("realpath reports ENAMETOOLONG when cwd plus the path exceeds the system path limit", async () => {
   using dir = tempDir("fs-realpath-too-long", {});
 
-  // The relative path argument is within the per-argument limit, but joining
-  // it onto the (non-root) cwd overflows the internal fixed-size path buffer.
-  // Both realpath variants must surface this as a clean ENAMETOOLONG error
-  // instead of aborting the process.
+  // Each relative path is within the per-argument limit and only its absolute
+  // form is too long. `longPath` does not exist. `deep` does, so the native
+  // variants open it and find out when they ask for the path of the descriptor.
   const script = `
     const fs = require("node:fs");
     const longPath = "a".repeat(4090);
@@ -6915,6 +7012,24 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
         console.log(err.code);
       }
     }
+
+    const levels = ${isLinux ? 12 : 3};
+    const nested = n => Array(n).fill(Buffer.alloc(200, "d").toString()).join("/");
+    const deep = nested(levels);
+    fs.mkdirSync(deep, { recursive: true });
+    process.chdir(deep);
+    fs.mkdirSync(deep, { recursive: true });
+    (async () => {
+      for (const impl of [fs.realpathSync, fs.realpathSync.native, fs.promises.realpath]) {
+        try {
+          await impl(deep);
+          console.log("resolved");
+        } catch (err) {
+          console.log(err.code, err.syscall);
+        }
+      }
+      for (let n = levels; n > 0; n--) fs.rmdirSync(nested(n));
+    })();
   `;
 
   await using proc = Bun.spawn({
@@ -6927,7 +7042,13 @@ it.if(isPosix)("realpathSync reports ENAMETOOLONG when cwd plus the path exceeds
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
-  expect(stdout.trim().split("\n")).toEqual(["ENAMETOOLONG", "ENAMETOOLONG"]);
+  expect(stdout.trim().split("\n")).toEqual([
+    "ENAMETOOLONG",
+    "ENAMETOOLONG",
+    "ENAMETOOLONG lstat",
+    "ENAMETOOLONG realpath",
+    "ENAMETOOLONG realpath",
+  ]);
   expect(exitCode).toBe(0);
 });
 

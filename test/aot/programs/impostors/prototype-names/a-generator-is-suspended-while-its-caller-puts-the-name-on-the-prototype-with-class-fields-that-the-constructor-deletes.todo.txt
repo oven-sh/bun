@@ -1,0 +1,1 @@
+Built with --aot-erase-types the executable crashes in `drain` (segmentation fault at address 0x5): where the generator is expanded into its caller, the slow arm of the read never writes the frame slot of `first`. The other two ways of running it agree.

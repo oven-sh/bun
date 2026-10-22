@@ -1,3 +1,4 @@
+use bun_jsc::proven_return::ProvenString;
 use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
@@ -1115,15 +1116,14 @@ impl ServerWebSocket {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_ready_state(&self, _global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ready_state(&self, _global_this: &JSGlobalObject) -> i32 {
         bun_output::scoped_log!(WebSocketServer, "getReadyState()");
 
         if self.is_closed() {
-            return JSValue::js_number(3.0);
+            return 3;
         }
 
-        JSValue::js_number(1.0)
+        1
     }
 
     // `passThis: true` — wrapper emitted by generated_classes.rs.
@@ -1210,11 +1210,10 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_binary_type(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_binary_type(&self, global_this: &JSGlobalObject) -> ProvenString {
         bun_output::scoped_log!(WebSocketServer, "getBinaryType()");
 
-        Ok(match self.flags.get().binary_type() {
+        ProvenString::expect(match self.flags.get().binary_type() {
             BinaryType::Uint8Array => global_this.common_strings().uint8array(),
             BinaryType::Buffer => global_this.common_strings().nodebuffer(),
             BinaryType::ArrayBuffer => global_this.common_strings().arraybuffer(),
@@ -1339,15 +1338,13 @@ impl ServerWebSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_is_paused(&self, _global_this: &JSGlobalObject) -> JSValue {
-        JSValue::from(!self.is_closed() && self.websocket().is_paused())
+    pub(crate) fn get_is_paused(&self, _global_this: &JSGlobalObject) -> bool {
+        !self.is_closed() && self.websocket().is_paused()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_remote_address(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_remote_address(&self, global_this: &JSGlobalObject) -> JsResult<Option<ProvenString>> {
         if self.is_closed() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         }
 
         let mut buf = [0u8; 64];
@@ -1371,10 +1368,10 @@ impl ServerWebSocket {
                 0,
             )
             .into(),
-            _ => return Ok(JSValue::UNDEFINED),
+            _ => return Ok(None),
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_string_jsc::create_utf8_for_js(global_this, text)
+        bun_string_jsc::create_utf8_for_js(global_this, text).map(|text| Some(ProvenString::expect(text)))
     }
 }
 

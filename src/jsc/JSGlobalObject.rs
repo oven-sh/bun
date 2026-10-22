@@ -876,10 +876,6 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__queueMicrotaskJob(self, function, first, second)
     }
 
-    pub fn ignores_host_function_exception(&self) -> bool {
-        JSGlobalObject__ignoresHostFunctionException(self)
-    }
-
     pub fn throw_value(&self, value: JSValue) -> JsError {
         // A termination exception (e.g. stack overflow) may already be
         // pending. Don't try to override it — that would hit
@@ -1249,7 +1245,7 @@ impl JSGlobalObject {
             return Err(self.throw_invalid_property_type_value(field_name, b"integer", value));
         }
         // @floatFromInt — i128→f64 (rounds beyond 2^53; bounds are already clamped to safe-integer range).
-        if f64_val < (min_t as f64) || f64_val > (max_t as f64) {
+        if f64_val < (min_t as i64 as f64) || f64_val > (max_t as i64 as f64) {
             return Err(self.throw_range_error(
                 f64_val,
                 bun_fmt::OutOfRangeOptions {
@@ -1512,7 +1508,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__clearExceptionExceptTermination(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__clearTerminationException(this: &JSGlobalObject);
     safe fn JSGlobalObject__hasException(this: &JSGlobalObject) -> bool;
-    safe fn JSGlobalObject__ignoresHostFunctionException(this: &JSGlobalObject) -> bool;
     safe fn JSGlobalObject__setTimeZone(this: &JSGlobalObject, time_zone: &EncodedSlice) -> bool;
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
 

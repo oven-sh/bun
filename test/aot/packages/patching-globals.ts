@@ -2,7 +2,7 @@
 import { inBothModes, type Case } from "./run-packages";
 
 const differs =
-  "Under --aot the built-in objects of the language cannot be changed: a store that would replace or add a method throws a TypeError, or is a build error where it is certain to run.";
+  "Under --aot the members that the built-in objects of the language have cannot be replaced, and nothing can be added to Function.prototype: the store throws a TypeError, in sloppy code too, or is a build error where it is certain to run.";
 
 export const cases: Case[] = [
   ...inBothModes("self-assign-static", "pf_self_assign_static", {
@@ -38,7 +38,7 @@ exports.ok = typeof Symbol.dispose;
     "index.js": `Object.defineProperty(Array.prototype, "includes", { value: Array.prototype.includes, writable: true, configurable: true, enumerable: false });
 exports.ok = [1].includes(1);
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
   ...inBothModes("global-self-assign", "pf_global_self_assign", {
     "index.js": `globalThis.fetch = globalThis.fetch || function () {};
 globalThis.Promise = globalThis.Promise || function () {};
@@ -69,12 +69,12 @@ exports.ok = r;
     "index.js": `let r; try { String.prototype.shout = function () { return this.toUpperCase() + "!"; }; r = "a".shout(); } catch (e) { r = e.name; }
 exports.ok = r;
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
   ...inBothModes("new-proto-define", "pf_new_proto_define", {
     "index.js": `let r; try { Object.defineProperty(Array.prototype, "last", { get() { return this[this.length - 1]; }, configurable: true }); r = [1, 2].last; } catch (e) { r = e.name; }
 exports.ok = r;
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
   ...inBothModes("error-settings", "pf_error_settings", {
     "index.js": `Error.stackTraceLimit = 50;
 const was = Error.stackTraceLimit;
@@ -132,7 +132,7 @@ try { const old = Math.random; Math.random = () => 0.5; r.push(Math.random()); M
 try { const old = JSON.parse; JSON.parse = () => "patched"; r.push(JSON.parse("1")); JSON.parse = old; } catch (e) { r.push(e.name); }
 exports.ok = r;
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
   ...inBothModes("timers-patch", "pf_timers_patch", {
     "index.js": `let r = []; try { const old = globalThis.setTimeout; globalThis.setTimeout = function fake() { return "fake"; }; r.push(setTimeout(() => {}, 0)); globalThis.setTimeout = old; r.push(typeof setTimeout); } catch (e) { r.push(e.name); }
 try { const old = globalThis.fetch; globalThis.fetch = async () => "mock"; r.push(typeof fetch); globalThis.fetch = old; } catch (e) { r.push(e.name); }
@@ -143,7 +143,7 @@ exports.ok = r;
     "index.js": `let r; try { const Old = globalThis.Promise; globalThis.Promise = class Mine extends Old {}; r = Promise.name; globalThis.Promise = Old; } catch (e) { r = e.name; }
 exports.ok = r;
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
   ...inBothModes("global-four-roads", "pf_global_four_roads", {
     "index.js": `const a = Function("return this")();
 const b = (0, eval)("this");
@@ -237,5 +237,5 @@ exports.ok = r;
     "index.js": `const d = (o, k) => { const x = Object.getOwnPropertyDescriptor(o, k); return x ? [x.writable, x.enumerable, x.configurable].join() : "none"; };
 exports.ok = [d(Array.prototype, "push"), d(Object, "assign"), d(globalThis, "Array"), d(globalThis, "undefined"), d(Math, "PI"), d(Math, "max"), d(JSON, "parse"), d(Promise.prototype, "then"), d(Function.prototype, "call"), d(Symbol, "iterator"), d(globalThis, "globalThis"), d(globalThis, "console"), d(globalThis, "process"), d(Error, "stackTraceLimit"), Object.isExtensible(Array.prototype), Object.isExtensible(Object), Object.isExtensible(globalThis), Object.isFrozen(Array.prototype), Object.isSealed(Math)];
 `,
-  }, { differs, required: true }),
+  }, { required: true }),
 ];

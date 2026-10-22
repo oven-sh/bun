@@ -79,7 +79,7 @@ console.log("kept across collections:", kept.every((o, i) => o.value === Math.fl
 const counted = ["a promise", "a resolved promise", "an heir of Promise", "a map", "an heir of Map", "a set", "a weak map", "a date", "a generator", "an async generator", "a buffer", "a number object"].map(label => kinds[label][0]);
 const round = n => { for (const make of counted) give(make(), n); };
 for (let i = 0; i < 200; i++) round(i);
-const before = count("operationAOTPutByNameAndCache");
+const before = count("operationAOTPutByIdAndCache");
 for (let i = 0; i < 500; i++) round(i);
-const visited = count("operationAOTPutByNameAndCache") - before;
+const visited = count("operationAOTPutByIdAndCache") - before;
 console.log("the run time is asked at most 300 times for 54000 names given to 6000 objects:", typeof aotOperationCount !== "function" || visited <= 300);

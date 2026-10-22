@@ -1,8 +1,8 @@
 // A member keyed by Symbol.dispose or Symbol.asyncDispose is a field of a record's layout: literals with a method or a function under that key, `using`, `await using`, classes and host objects where such a record is expected.
-// IR+ shape [0-9]+ Record "Span"
-// IR+ field "[^"]*w:dispose" undefined.null.function
-// IR= 0 open (PutByVal|DefineField)
-// IR= 0 closeByHand GetByVal
+// IR+ ^layout L[0-9]+ .*name="Span" .* representation=Typed
+// IR+ ^layout L[0-9]+ .*\{name=WellKnownSymbol "[^"]*dispose" declared=undefined.null.function
+// IR= 0 open (ElemSet|(Prop|Elem)Define)
+// IR= 0 closeByHand ElemGet
 const log: string[] = [];
 interface Span {
   name: string;

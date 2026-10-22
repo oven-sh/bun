@@ -1,6 +1,6 @@
 exports.run = function (made) {
   const said = [];
-  const tell = (name, f) => { try { said.push(name + ": " + f()); } catch (e) { said.push(name + ": " + e.name + ": " + e.message.replace(/ \(bun --aot.*$/s, "")); } };
+  const tell = (name, f) => { try { said.push(name + ": " + f()); } catch (e) { said.push(name + ": " + e.name + ": " + e.message.replace(/ \(bun compile.*$/s, "")); } };
   tell("delete `only` of the first", () => delete made.makeA().only);
   tell("delete `other` of the second", () => delete made.makeB().other);
   tell("delete `only` of the second, which has none", () => delete made.makeB().only);

@@ -1,9 +1,9 @@
 // A variable declared by `var`, or by `let` without a value, holds `undefined` until a store has run. Where every store in the program, those through setters among them, stores closures of one function, `undefined` or `null`, all that is open at a call is whether the variable holds nothing: the call asks that and is a direct call otherwise. A call that comes too early or too late throws as it always did.
-// IR+ ^variable \d+ "bySetter" .* only f\d+$
-// IR+ ^variable \d+ "bySetterAndCleared" .* only f\d+$
-// IR+ ^variable \d+ "bySetterAndClearedWithNull" .* only f\d+$
-// IR- ^variable \d+ "oneOfTwoBySetter" .* only f\d+
-// IR- ^variable \d+ "sometimesANumberBySetter" .* only f\d+
+// IR+ ^variable g\d+ name="bySetter" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+// IR+ ^variable g\d+ name="bySetterAndCleared" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+// IR+ ^variable g\d+ name="bySetterAndClearedWithNull" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+// IR- ^variable g\d+ name="oneOfTwoBySetter" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+// IR- ^variable g\d+ name="sometimesANumberBySetter" .*declared=(undefined\|)?(null\|)?f\d+( |$)
 var bySetter;
 var bySetterAndCleared;
 var bySetterAndClearedWithNull;

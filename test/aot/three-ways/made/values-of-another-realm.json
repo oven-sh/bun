@@ -1,16 +1,16 @@
 {
  "a-map-and-a-set-of-another-realm": "all agree",
- "a-map-and-a-set-whose-realm-has-patched-them": "alone: get=patched get has=patched has size=patched size set=false for of=z26 forEach= keys!TypeError spread=[[\"z\",26]] delete=patched delete instanceof=false new Map=",
- "a-shadow-realm": "alone: a wrong argument: THROWS TypeError: expected number, got string (bun --aot: https://bun.com/docs/bundler/e",
- "a-typed-object-as-the-global-of-a-context": "alone: count = \"wrong\"; typeof count: THROWS TypeError: Cannot assign to 'count' of G: expected number, got string \"wrong\" (bu\ntypeof globalThis.count: number\nseen here: 5|g||count,name,made",
+ "a-map-and-a-set-whose-realm-has-patched-them": "all agree",
+ "a-shadow-realm": "all agree",
+ "a-typed-object-as-the-global-of-a-context": "all agree",
  "an-array-of-another-realm": "all agree",
  "an-array-whose-realm-has-elements-on-the-prototype": "all agree",
- "an-array-whose-realm-has-patched-its-iterator": "alone: length=3 index=2 map=[2,3,4] filter=[2,3] forEach=6 for of!TypeError for=6 spread=[100,200] destructure!TypeError rest!TypeError join=1-2-3 includes=true indexO",
- "an-array-whose-realm-has-patched-its-methods": "alone: length=3 index=2 map=patched map filter=patched filter forEach=0 for of=6 for=6 spread=[1,2,3] destructure=[1,2] rest=[2,3] join=patched join includes=patched i",
+ "an-array-whose-realm-has-patched-its-iterator": "all agree",
+ "an-array-whose-realm-has-patched-its-methods": "all agree",
  "an-object-of-another-realm": "all agree",
  "an-object-whose-realm-has-patched-object-prototype": "all agree",
- "code-run-in-this-context": "alone: a patch of a built-in: THROWS TypeError: Cannot change 'last' of Array.prototype: built-ins are locked in a pro\nmath: THROWS TypeError: Cannot change 'random' of Math: built-ins are locked in a program comp",
+ "code-run-in-this-context": "alone: math: THROWS TypeError: Cannot assign to Math.random because built-in objects are read-only in",
  "other-things-of-another-realm": "all agree",
  "the-order-of-jobs-with-a-promise-of-another-realm": "all agree",
- "typed-things-handed-into-a-context": "alone: row.a = \"wrong\"; typeof row.a: THROWS TypeError: Cannot assign to 'a' of Row: expected number, got string \"wrong\" (bun \nadd(\"1\", 2): THROWS TypeError: expected number, got string \"1\" (bun --aot: https://bun.com/docs/bundl\nadd(): THROWS TypeError: expected number, got undefined (bun --aot: https://bun.com/docs/bundle\ntyped({ a: 1 }): THROWS TypeError: expected Row, got untyped object (bun --aot: https://bun.com/docs/bund\nand 2 lines more"
+ "typed-things-handed-into-a-context": "all agree"
 }

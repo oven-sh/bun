@@ -1,4 +1,4 @@
-// Typed objects reach untyped code indirectly (`arguments`, `apply`, `bind`, `catch`, JSON replacers ..): tampering with them there throws, and the objects stay as they were.
+// Typed objects reach untyped code indirectly (`arguments`, `apply`, `bind`, `catch`, JSON replacers ..): what that code does to them succeeds or fails as in plain Bun, and typed code sees the result. (The store of a text fails because `id` is an accessor without a setter by then.)
 interface Acct { id: number; owner: string; limit?: number; peer?: Acct }
 function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o, (k, v) => k === "peer" ? "peer" : v) }
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
@@ -76,7 +76,7 @@ const registry: object[] = []
 class Tracked { a: number; b = "b"; c?: number; constructor(n: number) { registry.push(this); this.a = n } sum() { return this.a + this.b + this.c } }
 const t1 = new Tracked(1), t2 = new Tracked(2)
 for (const r of registry) console.log("instance, getter:", refused(() => { Object.defineProperty(r, "a", { get() { return 7 }, configurable: true, enumerable: false }) }), "kind:", refused(() => { Object.assign(r, { c: "3" }) }))
-console.log(t1.sum(), t2.a, t2.c, Object.keys(t1).join(), JSON.stringify(t2))
+console.log(t1.sum(), t2.a, (t2 as any).c, Object.keys(t1).join(), JSON.stringify(t2))
 
 // 10. Objects that never leaked stay as they were made, at the same sites.
 check("untouched", acct(99))

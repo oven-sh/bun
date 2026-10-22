@@ -1,8 +1,0 @@
-setPrototypeOf on a record: 7 1 id,n
-__proto__ stored through any: 7 1
-setPrototypeOf(record, null): 1 true false
-setPrototypeOf on an instance: THROWS TypeError: Cannot set prototype of Dog: objects of a declared type keep their prototype (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-a method replaced on the prototype: replaced replaced
-a method added to the prototype: a runs
-a method shadowed on the instance: own
-the prototype of the class's prototype changed: other false

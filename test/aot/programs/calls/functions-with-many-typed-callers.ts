@@ -1,4 +1,4 @@
-// A function that ends in a call whose result must be checked, and that many typed callers call directly, has a copy for them that checks its own result. What the program does is the same as with few callers: who receives the result as a type gets a TypeError for a misfit, who takes any value gets the value, and calls in tail position hand their frame on.
+// A function that ends in a call whose result must be tested, and that many typed callers call directly. The program does the same as with few callers: a result of another kind than the written return type throws a TypeError (under an `as` an object passes), whoever receives it and whatever the receiver does with it, and a cycle of tail calls runs in constant stack space.
 function attempt(what: () => unknown): string { try { const got = what(); return typeof got + " " + String(got); } catch (e) { return (e as Error).constructor.name; } }
 const g: any = globalThis;
 function num(f: (x: number) => number, x: number): number { return f(x); }

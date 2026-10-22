@@ -20,7 +20,7 @@ const bump = c.bump, describe = c.describe, fastDescribe = fast.describe
 
 console.log(attempt(() => bump()), attempt(() => describe("x")), attempt(() => (0, c.bump)()), attempt(() => (c.bump)()), c.count)
 console.log(bump.call(other), bump.call(other), other.count, c.count, bump.call(fast), fast.count, meter.bump(), meter.count, describe.call(fast, "f"), fastDescribe.call(fast, "f"), fastDescribe.call(new FastCounter(), "n"))
-// FastCounter adds no member, so a Counter is assignable to it: it is a member of that type and enters as `this`.
+// `this` of a method is not tested: a Counter runs the method of FastCounter.
 console.log(fastDescribe.call(new Counter(), "c"))
 
 console.log(attempt(() => bump.call(Object.freeze(new Counter()))), attempt(() => bump.call(Object.seal(new Counter()))), attempt(() => bump.call(Object.preventExtensions(new Counter()))))

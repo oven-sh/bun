@@ -1,9 +1,9 @@
 // The namespace object of a module is kept in a module variable to which nothing else is stored, and all that is ever done with what the variable holds is to read members by constant names. An export that nobody calls, names or reads is not in the program.
-// IR+ ^variable \d+ "hookOfAConstant" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfSetLater" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfCopiedToAnother" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfImportedAndKept" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfReadInAnotherModule" .* only f\d+ proven$
+// IR+ ^variable g\d+ name="hookOfAConstant" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfSetLater" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfCopiedToAnother" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfImportedAndKept" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfReadInAnotherModule" .*declared=f\d+( |$)
 import { callHook as call0 } from "./aConstant.ts";
 import { callHook as call1 } from "./setLater.ts";
 import { callHook as call2 } from "./copiedToAnother.ts";

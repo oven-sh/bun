@@ -1,5 +1,5 @@
-// Inside `try` every operation that may throw ends its block, so `{ ...p }` and the cast behind it stand in two blocks. The copy was then made as a plain object and converted by the runtime at the cast. It is predicted to have the type it is cast to, so it is copied as a record.
-// IRT= 1 copy ~undefined\|null\|Point\.\d+ = CallBuiltin CloneObject#
+// `{ ...p }` inside `try`, returned as or stored into a written record type: the copy is made as a record of that type, and it has the keys, the order and the values that plain Bun gives it, also for a source with an extra property, a frozen source and a copy that a throw follows.
+// IRT= 1 copy  = CloneAs 
 interface Point { x: number; y: number; name: string; note?: string; late?: string }
 function make(i: number): Point { return i % 2 ? { x: i, y: i + 1, name: "p", note: "n" } : { x: i, y: i + 1, name: "q" }; }
 function copy(p: Point): Point { try { return { ...p }; } catch { return p; } }

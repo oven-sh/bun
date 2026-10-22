@@ -1,6 +1,6 @@
 // A function that only reads the object literal it is handed is inlined into a caller that suspends, so that the literal need not stay alive across the suspension. In a caller that never suspends the copy would only cost bytes: the call stays a call.
 // IR= 1 plain CallDirect
-// IR= 0 suspends NewObjectWithShape
+// IR= 0 suspends : =?L[0-9]+ = NewObject 
 interface Box {
   width: number;
   height: number;

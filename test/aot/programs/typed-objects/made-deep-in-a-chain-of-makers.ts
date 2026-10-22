@@ -1,7 +1,7 @@
 // An object made at the bottom of a chain of small makers, each of which casts what the one below returns; other code sees it before the casts.
-// IR= 1 reference : Reference\S* .*= NewObjectWithShape
+// IR= 1 reference : =?L[0-9]+ = NewObject 
 // IRT= 0 reference CallDirect
-// IR= 1 anonymous : Structured\S* .*= NewObjectWithShape
+// IR= 1 anonymous : =?L[0-9]+ = NewObject 
 interface Base { flags: number; id: number; owner?: string; symbol: string | undefined }
 interface Structured extends Base { objectFlags: number; members: Map<string, number> | undefined; properties: string[] | undefined }
 interface Reference extends Structured { target: Structured; typeArguments: readonly Base[] | undefined; literal?: Reference }

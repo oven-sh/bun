@@ -1,4 +1,4 @@
-// Objects that look like instances of a class but were not created by its constructor are rejected where the class type is declared.
+// Objects that were not created by the constructor of a class (an heir, a proxy, a literal under a cast) pass where the class type or its interface is declared, and methods that use no `#` name run on them.
 interface Owned { owner: string; level: number }
 class Vault implements Owned {
   #secret: number

@@ -1,12 +1,12 @@
 // A closure that another closure captures lies in the frame when the capturing closure does and only calls it.
-// IR= 2 bothInTheFrame NewClosure .* in the frame
-// IR= 3 threeDeep NewClosure .* in the frame
-// IR= 0 outerIsKept NewClosure .* in the frame
-// IR= 1 innerIsKeptByTheOuter NewClosure .* in the frame
-// IR= 1 innerIsReturnedByTheOuter NewClosure .* in the frame
-// IR= 1 innerIsComparedByTheOuter NewClosure .* in the frame
-// IR= 0 carriedAcrossIterations NewClosure .* in the frame
-// IR= 2 throwsThrough NewClosure .* in the frame
+// IR= 2 bothInTheFrame NewClosure .* storage=Frame
+// IR= 3 threeDeep NewClosure .* storage=Frame
+// IR= 0 outerIsKept NewClosure .* storage=Frame
+// IR= 1 innerIsKeptByTheOuter NewClosure .* storage=Frame
+// IR= 1 innerIsReturnedByTheOuter NewClosure .* storage=Frame
+// IR= 1 innerIsComparedByTheOuter NewClosure .* storage=Frame
+// IR= 0 carriedAcrossIterations NewClosure .* storage=Frame
+// IR= 2 throwsThrough NewClosure .* storage=Frame
 let noise = 0;
 function pad(k: number): void { for (let i = 0; i < 3; i++) noise = (noise * 31 + k + i) % 1000003; }
 type Test = (x: number) => boolean;

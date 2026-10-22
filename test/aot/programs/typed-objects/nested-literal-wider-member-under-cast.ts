@@ -1,6 +1,6 @@
 // A nested object literal has a member whose type is wider than the type the outer `as` cast gives it (`string | undefined` for `string`)
-// and lacks an optional member of that type, but the values it holds fit. Reading the nested object through the cast's type converts it
-// in place instead of throwing.
+// and lacks an optional member of that type, but the values it holds fit. Reading the nested object through the cast's type gives the
+// object as it is, and nothing throws.
 interface Compile { outfile: string; target?: string }
 interface Build { entrypoints: string[]; compile: Compile; fold?: boolean }
 interface Task { name: string; run: () => string; retries?: number }

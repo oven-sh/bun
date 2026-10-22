@@ -1,4 +1,4 @@
-// An object made with `Object.create` from an object of an interface type is held to that type: it finds every field on its prototype chain, so it satisfies the type. It stays the object it is and is read by name. An own property of another type that shadows a field is refused.
+// An object made with `Object.create` from an object of an interface type is held to that type: it finds every field on its prototype chain, so it satisfies the type. It stays the object it is and is read by name. An own property of another kind that shadows a field throws where typed code reads the field.
 interface Conf { host: string; port: number; secure?: boolean; nested: { depth: number } }
 function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
 function next(c: Conf): number { return c.port + 1 + c.nested.depth }

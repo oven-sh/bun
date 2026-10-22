@@ -1,0 +1,21 @@
+bytes of 1: plain 49 | same | refused | refused | refused
+bytes of a record: plain SyntaxError: JSON Parse error: Unable to parse JSON string | same | same | same | same
+bytes of [1]: plain SyntaxError: JSON Parse error: Unable to parse JSON string | same | same | same | same
+no bytes: plain SyntaxError: JSON Parse error: Unexpected EOF | same | same | same | same
+Uint8ClampedArray: plain 49 | same | refused | refused | refused
+Int8Array: plain 49 | same | refused | refused | refused
+ArrayBuffer: plain SyntaxError: JSON Parse error: Unexpected identifier "object" | same | same | same | same
+a number: plain 7 | same | refused | refused | refused
+null: plain null | refused | refused | refused | refused
+undefined: plain SyntaxError: JSON Parse error: Unexpected identifier "undefined" | same | same | same | same
+true: plain true | refused | refused | refused | refused
+an array: plain 1 | same | refused | refused | refused
+an array of two: plain SyntaxError: JSON Parse error: Unable to parse JSON string | same | same | same | same
+an object: plain SyntaxError: JSON Parse error: Unexpected identifier "object" | same | same | same | same
+an object with toString: plain {"x":1,"y":2} | refused | same | refused | refused
+an object with valueOf: plain 2 | same | refused | refused | refused
+a String object: plain {"x":1,"y":2} | refused | same | refused | refused
+a symbol: plain TypeError: Cannot convert a symbol to a string | same | same | same | same
+a bigint: plain 12 | same | refused | refused | refused
+a throwing toString: plain RangeError: mine | same | same | same | same
+toString was called 5 times

@@ -3,7 +3,7 @@
 // CALLS- slice1 CallHostFunction|CallValue
 // CALLS- substring2 CallHostFunction|CallValue
 // CALLS- substr2 CallHostFunction|CallValue
-// CALLS+ sliceOfAnything CallHostFunction|CallValue|Call2|operationAOTTypedCall
+// CALLS+ sliceOfAnything CallHostFunction|CallValue|Call2
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

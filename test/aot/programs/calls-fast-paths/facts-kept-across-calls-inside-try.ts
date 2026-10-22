@@ -1,8 +1,8 @@
 // Inside `try`, facts that the compiler has established are kept across calls that may throw.
-// IR= 0 create Coerce
-// IR= 0 create GetById v[0-9]+ "links"
-// IR= 1 twice GetById v[0-9]+ "x"
-// IR= 2 twiceAroundACall GetById v[0-9]+ "x"
+// IR= 0 create  = Claim v[0-9]+(?!.* isProven)
+// IR= 0 create PropGet v[0-9]+ name="links"(?!.* isFallback)
+// IR= 1 twice PropGet v[0-9]+ name="x"(?!.* isFallback)
+// IR= 2 twiceAroundACall PropGet v[0-9]+ name="x"(?!.* isFallback)
 declare const console: any;
 interface Links { _brand: any }
 interface TransientLinks extends Links { check: number; target: Sym | undefined }

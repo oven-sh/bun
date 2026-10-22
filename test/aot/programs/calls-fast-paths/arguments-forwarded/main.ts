@@ -1,7 +1,7 @@
 // Wrappers that pass their arguments on allocate no array.
 // IR= 0 viaSpread CreateRest
 // IR= 1 viaSpread CallForwardVarargs
-// IR= 1 viaApplyRest CallForwardVarargs .* 1$
+// IR= 1 viaApplyRest CallForwardVarargs .* firstArgument=1\b
 // IR= 1 viaApplyArguments CallForwardVarargs
 // @ts-ignore
 import untyped from "./untyped.js";

@@ -1,6 +1,6 @@
 // Objects made by Object.create(proto) stay as they are when they are cast to a record type. Once the runtime has looked at one such object, the
 // next ones of the same Structure are let through without a call into the runtime, whatever fitting values they hold.
-// Only the jsc shell with --useAOTOperationCounters=1 can count. Elsewhere the program checks the answers alone.
+// Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
 declare const aotOperationCount: undefined | ((name: string) => number)
 const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
 
@@ -50,10 +50,10 @@ function pass(): string {
   return utc + ' ' + length + ' ' + sum
 }
 console.log(pass())
-const before = count('operationAOTTypedCoerce')
+const before = count('operationAOTEnforceType')
 let last = ''
 for (let turn = 0; turn < 100; turn++) last = pass()
-const entered = count('operationAOTTypedCoerce') - before
+const entered = count('operationAOTEnforceType') - before
 console.log(last, entered < 1000 ? 'without the runtime' : 'entered the runtime ' + entered + ' times')
 
 StampProto.kind = 'zoned'

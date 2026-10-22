@@ -2,7 +2,7 @@
 declare const console: { log(...values: unknown[]): void };
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const asked = () => (counted ? counted("operationAOTTypedArrayPut") : 0);
+const asked = () => (counted ? counted("operationAOTArrayPut") : 0);
 const word = "w" + (counted ? "" : "");
 const thing = { a: 1 };
 function numbers(n: number): number[] { const a: number[] = []; for (let i = 0; i < n; i++) a[i] = i; return a; }

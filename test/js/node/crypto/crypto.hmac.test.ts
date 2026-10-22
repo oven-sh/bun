@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { Hmac, createHmac, createSecretKey } from "crypto";
 import { PassThrough } from "stream";

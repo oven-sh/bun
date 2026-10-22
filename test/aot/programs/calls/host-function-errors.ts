@@ -1,4 +1,5 @@
 // An error that a built-in function throws is caught by compiled code, in the calling function or further up, with the same name, message and stack as in plain Bun.
+// The stack is the first nine frames of the program's own functions: compiled code reaches some built-ins without a frame of the host, which then does not count towards the limit.
 const collect: (sync: boolean) => void = (globalThis as any).gc ?? (globalThis as any).Bun?.gc ?? (() => undefined);
 Error.stackTraceLimit = 10;
 function names(error: unknown): string {
@@ -7,7 +8,7 @@ function names(error: unknown): string {
     const frame = /^\s*at (async )?(?:(.*?) \()?[^()]*?:(\d+):(\d+)\)?$/.exec(line) ?? /^(async )?(.*?)@.*?:(\d+):(\d+)$/.exec(line);
     if (frame) frames.push((frame[1] ?? "") + (frame[2] === "module code" || frame[2] === "<anonymous>" ? "" : frame[2] ?? "") + ":" + frame[3] + ":" + frame[4]);
   }
-  return frames.join(" | ");
+  return frames.slice(0, 9).join(" | ");
 }
 const anything: any = { json: JSON, text: "x", number: 1, uri: decodeURIComponent, big: BigInt, array: Array, define: Object.defineProperty, frozen: Object.freeze({ a: 1 }) };
 const throwers: Array<[string, () => number]> = [

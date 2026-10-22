@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { parse, urlToHttpOptions } from "url";
 
 describe("Url.prototype.parse", () => {

@@ -1,9 +1,6 @@
 // What `default`, the names and the namespace of a CommonJS module are: with and without `__esModule`, for exports that are a function, a class, a primitive, a Proxy, and by the kind of file that imports it.
 import { js, pkg, type Case } from "./run-packages";
 
-const differs =
-  "A namespace made for a CommonJS module reads through to `module.exports`.";
-
 export const cases: Case[] = [
   {
     name: "flag-and-default",
@@ -83,7 +80,6 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "flag-plain-assign",
-    differs,
     files: {
       ...pkg("i_flag_plain_assign", {
         "index.js": `exports.__esModule = true;
@@ -604,6 +600,8 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "proto-members",
+    // A named import that the CommonJS module does not export is a SyntaxError under `bun run` too.
+    fails: true,
     files: {
       ...pkg("i_proto_members", {
         "index.js": `function Base() {}
@@ -716,7 +714,6 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "proxy",
-    differs,
     files: {
       ...pkg("i_proxy", {
         "index.js": `module.exports = new Proxy({ named: "named" }, { get(t, k) { return k in t ? t[k] : typeof k === "string" ? "made:" + k : undefined; } });
@@ -832,7 +829,6 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "thenable",
-    differs: "The bundler moves `exports.name = function () {}` to a variable `$name`, which names the function. Under --aot its name stays empty, as in `bun run`.",
     files: {
       ...pkg("i_thenable", {
         "index.js": `exports.then = function (resolve) { resolve("thenable resolved"); };
@@ -908,7 +904,8 @@ ${js}t("re-exported", () => [keys(again), again.named, again.default]);
   },
   {
     name: "keywords2",
-    differs,
+    // A named import that the CommonJS module does not export is a SyntaxError under `bun run` too.
+    fails: true,
     files: {
     },
     importers: {

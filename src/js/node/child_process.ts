@@ -11,7 +11,6 @@ const {
   validateOneOf,
 } = require("internal/validators");
 
-var NetModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
@@ -192,7 +191,7 @@ function spawn(file, args, options) {
     child.once("close", clear);
   }
 
-  const signal = options.signal;
+  const signal: AbortSignal | undefined = options.signal;
   if (signal) {
     if (signal.aborted) {
       process.nextTick(onAbortListener);
@@ -204,7 +203,7 @@ function spawn(file, args, options) {
     }
 
     function onAbortListener() {
-      abortChildProcess(child, killSignal, signal.reason);
+      abortChildProcess(child, killSignal, signal!.reason);
     }
   }
   return child;
@@ -235,7 +234,9 @@ function spawn(file, args, options) {
  *   ) => any} [callback]
  * @returns {ChildProcess}
  */
-function execFile(file, args, options?, callback?) {
+type ExecCallback = (error: ExecException | null, stdout: string | Buffer, stderr: string | Buffer) => unknown;
+
+function execFile(file, args, options?, callback?: ExecCallback) {
   ({ file, args, options, callback } = normalizeExecFileArgs(file, args, options, callback));
 
   options = {
@@ -275,8 +276,8 @@ function execFile(file, args, options?, callback?) {
   });
 
   let encoding;
-  const _stdout = [];
-  const _stderr = [];
+  const _stdout: (string | Buffer)[] = [];
+  const _stderr: (string | Buffer)[] = [];
   const optionsEncoding = options.encoding;
   if (optionsEncoding !== "buffer" && BufferIsEncoding(optionsEncoding)) {
     encoding = optionsEncoding;
@@ -308,13 +309,13 @@ function execFile(file, args, options?, callback?) {
     if (encoding || child.stdout?.readableEncoding) {
       stdout = ArrayPrototypeJoin.$call(_stdout, "");
     } else {
-      stdout = BufferConcat(_stdout);
+      stdout = BufferConcat(_stdout as Buffer[]);
     }
 
     if (encoding || child.stderr?.readableEncoding) {
       stderr = ArrayPrototypeJoin.$call(_stderr, "");
     } else {
-      stderr = BufferConcat(_stderr);
+      stderr = BufferConcat(_stderr as Buffer[]);
     }
 
     if (!ex && code === 0 && signal === null) {
@@ -372,17 +373,17 @@ function execFile(file, args, options?, callback?) {
     }, optionsTimeout).unref();
   }
 
-  function addOnDataListener(child_buffer, _buffer, kind) {
+  function addOnDataListener(child_buffer: $Node.Readable, _buffer: (string | Buffer)[], kind: string) {
     if (encoding) child_buffer.setEncoding(encoding);
 
     let totalLen = 0;
     if (maxBuffer === Infinity) {
-      child_buffer.on("data", function onDataNoMaxBuf(chunk) {
+      child_buffer.on("data", function onDataNoMaxBuf(chunk: string | Buffer) {
         $arrayPush(_buffer, chunk);
       });
       return;
     }
-    child_buffer.on("data", function onData(chunk) {
+    child_buffer.on("data", function onData(chunk: string | Buffer) {
       const encoding = child_buffer.readableEncoding;
       if (encoding) {
         const length = Buffer.byteLength(chunk, encoding);
@@ -456,8 +457,8 @@ function exec(command, options, callback) {
 
 const kCustomPromisifySymbol = Symbol.for("nodejs.util.promisify.custom");
 
-const customPromiseExecFunction = orig => {
-  return (...args) => {
+const customPromiseExecFunction = (orig: (...args: any[]) => ChildProcess) => {
+  return (...args: unknown[]) => {
     const { resolve, reject, promise }: ExecPromiseWithResolvers = Promise.withResolvers();
 
     promise.child = orig(...args, (err, stdout, stderr) => {
@@ -683,8 +684,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   return result;
 }
-const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const etimedoutErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
+const enobufsErrorCode: () => number = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1112,7 +1113,7 @@ function normalizeSpawnArguments(file, args, options?) {
   return options;
 }
 
-function checkExecSyncError(ret, args, cmd?) {
+function checkExecSyncError(ret: SpawnSyncResult, args: string[] | undefined, cmd?: string) {
   let err;
   const retError = ret.error;
   if (retError) {
@@ -1143,8 +1144,10 @@ function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> |
 //------------------------------------------------------------------------------
 // Section 3. ChildProcess class
 //------------------------------------------------------------------------------
+type StdioStream = $Node.Readable | $Node.Writable | $Node.Socket;
+
 class ChildProcess extends EventEmitter {
-  #handle;
+  #handle: $ZigGeneratedClasses.Subprocess | null | undefined;
   #closesNeeded = 1;
   #closesGot = 0;
 
@@ -1230,7 +1233,10 @@ class ChildProcess extends EventEmitter {
     this.#maybeClose();
   }
 
-  #getBunSpawnIo(i, autoResume = false) {
+  #getBunSpawnIo(i: 0, autoResume?: boolean): $Node.Writable | null | undefined;
+  #getBunSpawnIo(i: 1 | 2, autoResume?: boolean): $Node.Readable | null | undefined;
+  #getBunSpawnIo(i: number, autoResume?: boolean): StdioStream | null | undefined;
+  #getBunSpawnIo(i: number, autoResume = false) {
     if ($debug && !this.#handle) {
       if (this.#handle === null) {
         $debug("ChildProcess: getBunSpawnIo: this.#handle is null. This means the subprocess already exited");
@@ -1261,7 +1267,7 @@ class ChildProcess extends EventEmitter {
               stream.destroy();
               return stream;
             }
-            const result = require("internal/fs/streams").writableFromFileSink(stdin);
+            const result = require("internal/fs/streams").writableFromFileSink(stdin as $Node.FileSink);
             result.readable = false;
             return result;
           }
@@ -1300,7 +1306,10 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, {});
+            const pipe = require("internal/streams/native-readable").constructNativeReadable(
+              value as ReadableStream,
+              {},
+            );
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();
@@ -1323,22 +1332,21 @@ class ChildProcess extends EventEmitter {
         switch (io) {
           case "pipe":
           case "socket-fd":
-            if (!NetModule) NetModule = require("node:net");
             // #spawn mapped "pipe" at i>=3 to "socket-fd", so the parent-end
             // fd in handle.stdio[i] is UnownedFd: we own it and
             // net.connect({fd}) -> usockets will close it on socket close.
             const fd = handle && handle.stdio[i];
             if (fd == null) return null;
-            return NetModule.connect({ fd });
+            return require("node:net").connect({ fd });
         }
         return null;
     }
   }
 
-  #stdin;
-  #stdout;
-  #stderr;
-  #stdioObject;
+  #stdin: $Node.Writable | null | undefined;
+  #stdout: $Node.Readable | null | undefined;
+  #stderr: $Node.Readable | null | undefined;
+  #stdioObject: (StdioStream | null | undefined)[] | undefined;
   #stdioOptions;
 
   #createStdioObject() {
@@ -1389,10 +1397,10 @@ class ChildProcess extends EventEmitter {
     return (this.#stdioObject ??= this.#createStdioObject());
   }
 
-  get connected() {
+  get connected(): boolean {
     const handle = this.#handle;
     if (handle === null) return false;
-    return handle.connected ?? false;
+    return handle!.connected ?? false;
   }
 
   get [kHandle]() {
@@ -1478,7 +1486,7 @@ class ChildProcess extends EventEmitter {
         cgroup: options.cgroup,
         onExit: (handle, exitCode, signalCode, err) => {
           this.#handle = handle;
-          this.pid = this.#handle.pid;
+          this.pid = this.#handle!.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
           if (hasSocketsToEagerlyLoad) {
@@ -1503,7 +1511,7 @@ class ChildProcess extends EventEmitter {
         windowsHide: !!options.windowsHide,
         windowsVerbatimArguments: !!options.windowsVerbatimArguments,
       });
-      this.pid = this.#handle.pid;
+      this.pid = this.#handle!.pid;
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
@@ -1527,7 +1535,7 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
+        for (let item of this.stdio!) {
           item?.ref?.();
         }
       }
@@ -1570,7 +1578,7 @@ class ChildProcess extends EventEmitter {
     this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
   }
 
-  #send(message, handle, options, callback) {
+  #send(message: unknown, handle?, options?, callback?: (error: Error | null) => unknown) {
     if (typeof handle === "function") {
       callback = handle;
       handle = undefined;
@@ -1629,7 +1637,7 @@ class ChildProcess extends EventEmitter {
       this.emit("error", $ERR_IPC_DISCONNECTED());
       return;
     }
-    this.#handle.disconnect();
+    this.#handle!.disconnect();
     this.channel = null;
   }
 
@@ -1678,7 +1686,7 @@ class ChildProcess extends EventEmitter {
   static {
     Object.defineProperties(this.prototype, {
       stdin: {
-        get: function () {
+        get: function (this: ChildProcess) {
           const value = (this.#stdin ??= this.#getBunSpawnIo(0, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdin", {
@@ -1693,7 +1701,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdout: {
-        get: function () {
+        get: function (this: ChildProcess) {
           const value = (this.#stdout ??= this.#getBunSpawnIo(1, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdout", {
@@ -1708,7 +1716,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stderr: {
-        get: function () {
+        get: function (this: ChildProcess) {
           const value = (this.#stderr ??= this.#getBunSpawnIo(2, false));
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stderr", {
@@ -1723,7 +1731,7 @@ class ChildProcess extends EventEmitter {
         configurable: true,
       },
       stdio: {
-        get: function () {
+        get: function (this: ChildProcess) {
           const value = (this.#stdioObject ??= this.#createStdioObject());
           // Define as own enumerable property on first access
           Object.defineProperty(this, "stdio", {
@@ -1778,7 +1786,7 @@ function streamFdOf(item): number | undefined {
 
   if (item.destroyed) return undefined;
 
-  const sink = item[require("internal/fs/streams").kWriteStreamFastPath];
+  const sink: $Node.FileSink | true | undefined = item[require("internal/fs/streams").kWriteStreamFastPath];
   if (sink && sink !== true) {
     const fd = sink._getFd();
     if (typeof fd === "number" && fd >= 0) return fd;
@@ -1913,7 +1921,7 @@ function normalizeStdio(stdio): string[] {
   }
 }
 
-function abortChildProcess(child, killSignal, reason) {
+function abortChildProcess(child: ChildProcess, killSignal: string | number | undefined, reason: unknown) {
   if (!child) return;
   try {
     if (child.kill(killSignal)) {
@@ -2024,7 +2032,6 @@ function toPathIfFileURL(fileURLOrPath) {
 // Section 7. Node errors / error polyfills
 //------------------------------------------------------------------------------
 var Error = globalThis.Error;
-var TypeError = globalThis.TypeError;
 
 function genericNodeError(message, errorProperties) {
   // eslint-disable-next-line no-restricted-syntax

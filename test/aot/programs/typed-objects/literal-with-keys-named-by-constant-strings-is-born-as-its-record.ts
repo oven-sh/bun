@@ -1,9 +1,9 @@
 // What the compiler makes of a literal with computed keys. Named by constant strings, they are names: the literal is born as the record of its type. Named by anything else, the literal is built key by key.
-// IR= 1 born NewObjectWithShape
-// IR= 0 born DefineField
-// IR= 0 born Cast .* As$
-// IR= 0 byAVariable NewObjectWithShape
-// IR= 0 underProto NewObjectWithShape
+// IR= 1 born : =?L[0-9]+ = NewObject 
+// IR= 0 born (Prop|Elem)Define
+// IR= 0 born  = Claim 
+// IR= 0 byAVariable : =?L[0-9]+ = NewObject 
+// IR= 0 underProto : =?L[0-9]+ = NewObject 
 declare const console: { log(...values: unknown[]): void };
 const TypeId = "~scope/TypeId";
 const Kind = "kind" as const;

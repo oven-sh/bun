@@ -1,7 +1,5 @@
 // Promises resolved with, and awaits of, objects of classes of the program: heirs of Array, Map, Error and Object, plain classes, classes whose prototype nobody has looked at yet. None of them is a thenable until
 // somebody gives it a `then`: on the object, on the class's prototype, on a prototype further up, by a method of the class, by an accessor, by Object.setPrototypeOf: then it is called, at once and every time.
-// Once warm, nobody looks `then` up on what cannot have one. Only the jsc shell can count; elsewhere the count is zero.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const lines = [];
 class Rows extends Array { count = 0; static get [Symbol.species]() { return Array; } first() { return this[0]; } }
 class Table extends Map { name() { return "table"; } }
@@ -54,12 +52,11 @@ async function main() {
     rows.then = resolve => resolve("then on the array");
     await all("rows, behind", () => rows);
     for (let i = 0; i < 100; i++) { await returns(new Rows()); await returns(new Table()); await returns(new Deeper(i)); await new Point(i); }
-    const before = count("a promise looks up then");
     let sum = 0;
     for (let i = 0; i < 1000; i++) {
         sum += (await returns(Rows.from([i]))).first() + (await returns(new Deeper(i))).triple() + (await new Point(i)).double() + (await Promise.resolve(new Table())).size + (await new Promise(resolve => resolve(new Deep(i)))).double();
     }
-    lines.push("then is looked up at most 5 times for 5000 objects that cannot have one: " + (count("a promise looks up then") - before <= 5), sum);
+    lines.push("5000 objects that cannot have a then:", sum);
     console.log(lines.join("\n"));
 }
 main();

@@ -1,7 +1,0 @@
-caught thrown at load, time 1
-caught thrown at load, time 2
-got Symbol(own) stamped 3 readOwn
-symbols 3 false false 3
-keys on an object that outlives the evaluations 3 1,2,3
-the last is the one that is exported true 3
-kept undefined readKept true

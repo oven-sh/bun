@@ -1,7 +1,9 @@
 //! `--disallow-code-generation-from-strings`: whether script may be made from a
 //! string in this process. Set while the command line is parsed and never
 //! lowered afterwards, so every thread and every global object made later
-//! reads the same answer.
+//! reads the same answer. An executable from which `--trim` removed the
+//! interpreter is at `Strict` whatever its flags say, and so is one whose
+//! program `bun compile` found to evaluate no text.
 //!
 //! A build configured with `codeGenerationFromStrings` off
 //! (scripts/build/config.ts) has no level to set: it is the constant
@@ -31,31 +33,6 @@ impl CodeGenerationFromStrings {
             _ => None,
         }
     }
-
-    pub fn in_exec_argv(exec_argv: &[u8]) -> Self {
-        let mut arguments: Vec<Box<crate::ZStr>> = vec![crate::ZStr::boxed(b"")];
-        crate::append_options_env(exec_argv, &mut arguments);
-        let levels = arguments[1..].iter().map(|argument| argument.as_bytes()).filter_map(|argument| match argument.strip_suffix(b"\0").unwrap_or(argument).strip_prefix(b"--disallow-code-generation-from-strings")? {
-            b"" => Self::from_flag_value(b""),
-            [b'=', value @ ..] => Self::from_flag_value(value),
-            _ => None,
-        });
-        levels.max().unwrap_or(Self::Allowed)
-    }
-}
-
-static LEVEL_IN_BUILT_EXECUTABLE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
-
-pub fn set_code_generation_from_strings_in_built_executable(level: CodeGenerationFromStrings) {
-    LEVEL_IN_BUILT_EXECUTABLE.store(level as u8, core::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn code_generation_from_strings_in_built_executable() -> CodeGenerationFromStrings {
-    match LEVEL_IN_BUILT_EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed) {
-        0 => CodeGenerationFromStrings::Allowed,
-        1 => CodeGenerationFromStrings::DisallowedLikeNode,
-        _ => CodeGenerationFromStrings::Strict,
-    }
 }
 
 /// Whether this build is at [`CodeGenerationFromStrings::Strict`] with no flag given.
@@ -68,11 +45,11 @@ mod level {
     use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
     static LEVEL: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
-    static IS_INTERPRETER_REMOVED_BY_NAME: AtomicBool = AtomicBool::new(false);
-    static LEVEL_FROM_FLAGS: AtomicU8 = AtomicU8::new(CodeGenerationFromStrings::Allowed as u8);
+    static IS_DISALLOWED_BY_COMPILED_PROGRAM: AtomicBool = AtomicBool::new(false);
+    static IS_INTERPRETER_REMOVED: AtomicBool = AtomicBool::new(false);
 
-    fn level_of(level: &AtomicU8) -> CodeGenerationFromStrings {
-        match level.load(Ordering::Relaxed) {
+    pub fn code_generation_from_strings_by_flags() -> CodeGenerationFromStrings {
+        match LEVEL.load(Ordering::Relaxed) {
             0 => CodeGenerationFromStrings::Allowed,
             1 => CodeGenerationFromStrings::DisallowedLikeNode,
             _ => CodeGenerationFromStrings::Strict,
@@ -80,30 +57,37 @@ mod level {
     }
 
     pub fn code_generation_from_strings() -> CodeGenerationFromStrings {
-        level_of(&LEVEL)
+        if is_interpreter_removed() || is_code_generation_disallowed_by_compiled_program() {
+            return CodeGenerationFromStrings::Strict;
+        }
+        code_generation_from_strings_by_flags()
     }
 
-    pub fn code_generation_from_strings_by_flags() -> CodeGenerationFromStrings {
-        level_of(&LEVEL_FROM_FLAGS)
+    pub fn is_code_generation_disallowed_by_trimming() -> bool {
+        is_interpreter_removed()
+            && code_generation_from_strings_by_flags() != CodeGenerationFromStrings::Strict
+    }
+
+    fn is_interpreter_removed() -> bool {
+        IS_INTERPRETER_REMOVED.load(Ordering::Relaxed)
+    }
+
+    pub fn disallow_code_generation_for_removed_interpreter() {
+        IS_INTERPRETER_REMOVED.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_code_generation_disallowed_by_compiled_program() -> bool {
+        IS_DISALLOWED_BY_COMPILED_PROGRAM.load(Ordering::Relaxed)
+    }
+
+    /// The compiled code in this executable is only correct while no other script runs beside it.
+    pub fn disallow_code_generation_for_compiled_program() {
+        IS_DISALLOWED_BY_COMPILED_PROGRAM.store(true, Ordering::Relaxed);
     }
 
     /// Raises the level. There is no way to lower it.
     pub fn disallow_code_generation_from_strings(level: CodeGenerationFromStrings) {
-        LEVEL_FROM_FLAGS.fetch_max(level as u8, Ordering::Relaxed);
         LEVEL.fetch_max(level as u8, Ordering::Relaxed);
-    }
-
-    pub fn disallow_code_generation_in_trimmed_executable() {
-        LEVEL.fetch_max(CodeGenerationFromStrings::Strict as u8, Ordering::Relaxed);
-    }
-
-    pub fn disallow_code_generation_without_interpreter() {
-        IS_INTERPRETER_REMOVED_BY_NAME.store(true, Ordering::Relaxed);
-        disallow_code_generation_in_trimmed_executable();
-    }
-
-    pub fn is_interpreter_removed_by_name() -> bool {
-        IS_INTERPRETER_REMOVED_BY_NAME.load(Ordering::Relaxed)
     }
 }
 
@@ -126,23 +110,63 @@ mod level {
     pub fn disallow_code_generation_from_strings(_level: CodeGenerationFromStrings) {}
 
     #[inline(always)]
-    pub fn disallow_code_generation_in_trimmed_executable() {}
-
-    #[inline(always)]
-    pub fn disallow_code_generation_without_interpreter() {}
-
-    #[inline(always)]
-    pub const fn is_interpreter_removed_by_name() -> bool {
+    pub const fn is_code_generation_disallowed_by_trimming() -> bool {
         false
     }
+
+    #[inline(always)]
+    pub const fn is_code_generation_disallowed_by_compiled_program() -> bool {
+        false
+    }
+
+    #[inline(always)]
+    pub fn disallow_code_generation_for_compiled_program() {}
+
+    #[inline(always)]
+    pub fn disallow_code_generation_for_removed_interpreter() {}
 }
 
 pub use level::{
-    code_generation_from_strings, code_generation_from_strings_by_flags, disallow_code_generation_from_strings,
-    disallow_code_generation_in_trimmed_executable, disallow_code_generation_without_interpreter, is_interpreter_removed_by_name,
+    code_generation_from_strings, code_generation_from_strings_by_flags,
+    disallow_code_generation_for_compiled_program, disallow_code_generation_for_removed_interpreter,
+    disallow_code_generation_from_strings, is_code_generation_disallowed_by_compiled_program,
+    is_code_generation_disallowed_by_trimming,
 };
 
-pub fn is_code_generation_disallowed_by_trimming() -> bool {
-    code_generation_from_strings() == CodeGenerationFromStrings::Strict
-        && code_generation_from_strings_by_flags() != CodeGenerationFromStrings::Strict
+#[cfg(all(test, not(bun_disallow_code_generation_from_strings)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn level_only_rises_and_flags_are_not_trimming() {
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Allowed);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::Allowed);
+        assert!(!is_code_generation_disallowed_by_trimming());
+
+        disallow_code_generation_from_strings(CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert!(!is_code_generation_disallowed_by_trimming());
+
+        disallow_code_generation_from_strings(CodeGenerationFromStrings::Allowed);
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+
+        assert!(!is_code_generation_disallowed_by_compiled_program());
+        disallow_code_generation_for_compiled_program();
+        assert!(is_code_generation_disallowed_by_compiled_program());
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert!(!is_code_generation_disallowed_by_trimming());
+
+        disallow_code_generation_for_removed_interpreter();
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::DisallowedLikeNode);
+        assert!(is_code_generation_disallowed_by_trimming());
+
+        disallow_code_generation_from_strings(CodeGenerationFromStrings::Strict);
+        assert_eq!(code_generation_from_strings(), CodeGenerationFromStrings::Strict);
+        assert_eq!(code_generation_from_strings_by_flags(), CodeGenerationFromStrings::Strict);
+        assert!(!is_code_generation_disallowed_by_trimming());
+    }
 }

@@ -1,5 +1,5 @@
-//! Rules of plugins that many projects use with ESLint and oxlint. Each is a port of the rule of the same name, with the same
-//! options, the same messages, at the same places:
+//! Rules from plugins that many projects use with ESLint and oxlint. Each is a port of the rule with the same name, and
+//! has the same options, messages and report locations:
 //! - `react-hooks`: https://github.com/facebook/react/tree/main/packages/eslint-plugin-react-hooks (Copyright Meta Platforms,
 //!   Inc. and affiliates, MIT License)
 //! - `import`: https://github.com/import-js/eslint-plugin-import (Copyright Ben Mosher, MIT License)
@@ -8,13 +8,12 @@
 //! - `prettier`: https://github.com/prettier/eslint-plugin-prettier and
 //!   https://github.com/prettier/prettier-linter-helpers (Copyright Andres Suarez and Teddy Katz, MIT License)
 //!
-//! And the rules of `bun`, which are Bun's own.
+//! Also the `bun` plugin's rules, which are Bun's own.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]
 
 mod bun;
-mod bun_aot;
 mod import_export_map;
 mod import_export_record;
 mod import_minimatch;
@@ -28,11 +27,6 @@ mod oxlint;
 mod prettier;
 
 bun_lint::rules! {
-    bun_aot_cast_lacks_member::AotCastLacksMember,
-    bun_aot_locked_builtin_write::AotLockedBuiltinWrite,
-    bun_aot_no_any_to_typed::AotNoAnyToTyped,
-    bun_aot_outside_data::AotOutsideData,
-    bun_aot_spy_on_builtin::AotSpyOnBuiltin,
     bun_axios_no_unbounded_requests::AxiosNoUnboundedRequests,
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,
     bun_fast_check_no_unseeded_random::FastCheckNoUnseededRandom,

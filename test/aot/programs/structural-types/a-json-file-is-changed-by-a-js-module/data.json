@@ -1,0 +1,7 @@
+{
+  "count": 3,
+  "name": "data",
+  "origin": { "x": 1, "y": 2 },
+  "sizes": [1, 2, 3],
+  "on": true
+}

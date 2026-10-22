@@ -1,6 +1,6 @@
 // A store to a property that is the object's own accessor calls the setter. Once the run time has seen such a store for a kind of object it is not asked again, wherever the accessor lies: in the object, out of line, far out of line.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTPutByNameAndCache") + count("operationAOTGetByNameAndCache");
+const visits = () => count("operationAOTPutByIdAndCache") + count("operationAOTGetByIdAndCache");
 const makeSmall = seed => ({ kept: seed, get near() { return this.kept + 1; }, set near(v) { this.kept = v - 1; }, set only(v) { this.kept = v * 2; } });
 const makeWide = seed => {
   const o = { kept: seed };

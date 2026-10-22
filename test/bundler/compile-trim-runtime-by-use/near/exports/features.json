@@ -1,1 +1,1 @@
-{"features": ["napi", "ffi", "sqlite"], "keptToday": true}
+{"features": ["NativeAddons", "Ffi", "Sqlite"], "keptToday": true}

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
+import { canTrim, featureNamed, saysFeatureWasRemoved, withoutFeatures } from "./compile-trim-features";
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
   await using child = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -48,7 +49,7 @@ const files = {
     show("languages", () => ["ä".localeCompare("z", "de"), "ä".localeCompare("z", "sv"), "ch".localeCompare("d", "cs")]);
     show("sorted", () => ["z", "ä", "a", "Z", "10", "9"].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })));
     show("chinese", () => [["中", "文", "字"].sort((a, b) => a.localeCompare(b, "zh-u-co-pinyin")), ["中", "文", "字"].sort((a, b) => a.localeCompare(b, "zh-u-co-stroke"))]);
-    show("refused", () => "a".localeCompare("b", "not a locale"));
+    show("invalid", () => "a".localeCompare("b", "not a locale"));
   `,
   "names-toLocaleDateString.ts": `
     ${show}
@@ -115,37 +116,27 @@ const files = {
       show(locale, () => [at.toLocaleString(locale, { timeZone: "UTC", dateStyle: "full", timeStyle: "full" }), at.toLocaleString(locale, { timeZone: "Asia/Kolkata", timeZoneName: "longGeneric" })]);
     }
   `,
-  "uses-segmenter.ts": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length);`,
-  "uses-display_names.ts": `console.log(new Intl.DisplayNames("de", { type: "region" }).of("US"));`,
-  "uses-intl.ts": `console.log(new Intl.ListFormat("de").format(["a", "b"]));`,
-  "uses-collation.ts": `console.log("b".localeCompare("a"));`,
-  "uses-number_formatting.ts": `console.log((1234.5).toLocaleString(process.env.LOCALE ?? "de"));`,
-  "uses-date_formatting.ts": `console.log(new Date(0).toLocaleDateString(process.env.LOCALE ?? "de", { timeZone: "UTC" }));`,
-  "uses-units.ts": `
+  "uses-IntlSegmenter.ts": `console.log([...new Intl.Segmenter("en", { granularity: "word" }).segment("two words")].length);`,
+  "uses-IntlDisplayNames.ts": `console.log(new Intl.DisplayNames("de", { type: "region" }).of("US"));`,
+  "uses-IntlOther.ts": `console.log(new Intl.ListFormat("de").format(["a", "b"]));`,
+  "uses-IntlCollation.ts": `console.log("b".localeCompare("a"));`,
+  "uses-IntlNumberFormat.ts": `console.log((1234.5).toLocaleString(process.env.LOCALE ?? "de"));`,
+  "uses-IntlDateTimeFormat.ts": `console.log(new Date(0).toLocaleDateString(process.env.LOCALE ?? "de", { timeZone: "UTC" }));`,
+  "uses-IntlUnits.ts": `
     ${show}
     show("unit", () => (3.5).toLocaleString("en", { style: "unit", unit: "liter", unitDisplay: "long" }));
     show("plain", () => (3.5).toLocaleString("de"));
   `,
 };
 
-const features = ["segmenter", "display_names", "intl", "collation", "units", "date_formatting", "number_formatting"];
-const without = (...kept: string[]) => features.filter(feature => !kept.includes(feature)).join(",");
+const features = ["IntlSegmenter", "IntlDisplayNames", "IntlOther", "IntlCollation", "IntlUnits", "IntlDateTimeFormat", "IntlNumberFormat"];
+const without = (...kept: string[]) => features.filter(feature => !kept.includes(feature));
 
-using probe = tempDir("compile-trim-runtime-icu-data-probe", { "hello.ts": files["hello.ts"] });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stdout: "pipe",
-  stderr: "pipe",
-});
-const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
-
-describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-runtime and ICU's data", () => {
-  async function build(folder: string, entry: string, outfile: string, leftOut: string | undefined) {
-    const trim = leftOut === undefined ? [] : ["--compile-trim-runtime"];
-    const built = await run([bunExe(), "build", "--compile", "--aot", ...trim, entry, "--outfile", outfile], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: leftOut });
-    expect(built.stderr).not.toContain("error:");
+describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim and ICU's data", () => {
+  async function build(folder: string, entry: string, outfile: string, forcedOut: string[] | undefined) {
+    const trim = forcedOut === undefined ? [] : ["--trim", ...withoutFeatures(forcedOut)];
+    const built = await run([bunExe(), "build", "--compile", "--aot", ...trim, entry, "--outfile", outfile], folder);
+    expect(built.stderr).not.toMatch(/^error\b/m);
     expect(built.exitCode).toBe(0);
     return statSync(join(folder, outfile + (isWindows ? ".exe" : ""))).size;
   }
@@ -157,11 +148,11 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     { TZ: "Etc/GMT+5", LANG: "C" },
   ];
 
-  async function runsAsWhole(entry: string, leftOut: string) {
+  async function runsLikeUntrimmed(entry: string, forcedOut: string[]) {
     using dir = tempDir("compile-trim-runtime-icu-data", files);
     const folder = String(dir);
     await build(folder, entry, "whole", undefined);
-    await build(folder, entry, "trimmed", leftOut);
+    await build(folder, entry, "trimmed", forcedOut);
     for (const environment of environments) {
       const env = { ...bunEnv, LANG: undefined, LC_ALL: undefined, ...environment };
       const whole = await run([join(folder, "whole")], folder, env);
@@ -170,76 +161,68 @@ describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-ru
     }
   }
 
-  test.skipIf(!isLinux && !isWindows)("most of the data goes with the features that read it", async () => {
+  test.skipIf(!isLinux && !isWindows)("most of the data is removed with the features that read it", async () => {
     using dir = tempDir("compile-trim-runtime-icu-data", files);
     const folder = String(dir);
-    const kept = await build(folder, "names-Intl.ts", "kept", "");
-    const leftOut = await build(folder, "names-Intl.ts", "left-out", without());
-    expect(kept - leftOut).toBeGreaterThan(8_000_000);
+    const kept = await build(folder, "names-Intl.ts", "kept", []);
+    const forcedOut = await build(folder, "names-Intl.ts", "forced-out", without());
+    expect(kept - forcedOut).toBeGreaterThan(8_000_000);
   });
 
-  test.skipIf(!isLinux && !isWindows)("a program that does not name Intl has no rules and dictionaries for breaking text", async () => {
+  test.skipIf(!isLinux && !isWindows)("a program that doesn't use Intl has no rules and dictionaries for breaking text", async () => {
     using dir = tempDir("compile-trim-runtime-icu-data", files);
     const folder = String(dir);
-    const named = await build(folder, "names-Intl.ts", "named", "");
-    const notNamed = await build(folder, "hello.ts", "not-named", "");
+    const named = await build(folder, "names-Intl.ts", "named", []);
+    const notNamed = await build(folder, "hello.ts", "not-named", []);
     expect(named - notNamed).toBeGreaterThan(2_500_000);
     expect(await run([join(folder, "not-named")], folder)).toMatchObject({ stdout: "hello world\n", stderr: "", exitCode: 0 });
   });
 
   test("dates, URLs, normalization and case do not need it", async () => {
-    await runsAsWhole("names-none.ts", without());
+    await runsLikeUntrimmed("names-none.ts", without());
   });
 
   test("localeCompare needs only the data of collation", async () => {
-    await runsAsWhole("names-localeCompare.ts", without("collation"));
+    await runsLikeUntrimmed("names-localeCompare.ts", without("IntlCollation"));
   });
 
   test("toLocaleDateString and toLocaleTimeString need only the data of date formatting", async () => {
-    await runsAsWhole("names-toLocaleDateString.ts", without("date_formatting"));
+    await runsLikeUntrimmed("names-toLocaleDateString.ts", without("IntlDateTimeFormat"));
   });
 
   test("toLocaleString of a Date needs only the data of date formatting", async () => {
-    await runsAsWhole("names-date-toLocaleString.ts", without("date_formatting"));
+    await runsLikeUntrimmed("names-date-toLocaleString.ts", without("IntlDateTimeFormat"));
   });
 
   test("toLocaleString of a Number or a BigInt needs only the data of number formatting and of units", async () => {
-    await runsAsWhole("names-number-toLocaleString.ts", without("number_formatting", "units"));
+    await runsLikeUntrimmed("names-number-toLocaleString.ts", without("IntlNumberFormat", "IntlUnits"));
   });
 
   test("toLocaleString of anything needs the data of both and of units", async () => {
-    await runsAsWhole("names-toLocaleString.ts", without("date_formatting", "number_formatting", "units"));
+    await runsLikeUntrimmed("names-toLocaleString.ts", without("IntlDateTimeFormat", "IntlNumberFormat", "IntlUnits"));
   });
 
-  test("a program that names Intl keeps all of it", async () => {
-    await runsAsWhole("names-Intl.ts", "");
+  test("a program that uses every Intl service keeps all of it", async () => {
+    await runsLikeUntrimmed("names-Intl.ts", []);
   });
 
-  const leftOutSays = {
-    segmenter: "without Intl.Segmenter",
-    display_names: "without Intl.DisplayNames",
-    intl: "without Intl.ListFormat, Locale, PluralRules, RelativeTimeFormat, getCanonicalLocales and supportedValuesOf",
-    collation: "without Intl.Collator and localeCompare",
-    date_formatting: "without Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString of a Date or a Temporal object",
-    number_formatting: "without Intl.NumberFormat, Intl.DurationFormat and toLocaleString of a Number or a BigInt",
-  };
-  for (const [feature, says] of Object.entries(leftOutSays)) {
-    test(`${feature}: an executable without it says so`, async () => {
+  for (const feature of without("IntlUnits")) {
+    test(`${feature}: with it forced out, the executable says so`, async () => {
       using dir = tempDir("compile-trim-runtime-icu-data", files);
       const folder = String(dir);
-      await build(folder, `uses-${feature}.ts`, "left-out", feature);
-      const refused = await run([join(folder, "left-out")], folder);
-      expect(refused.stderr).toContain("this executable was built with --compile-trim-runtime, " + says);
-      expect(refused).toMatchObject({ stdout: "", signalCode: null });
-      expect([70, 1]).toContain(refused.exitCode);
+      await build(folder, `uses-${feature}.ts`, "forced-out", [feature]);
+      const failed = await run([join(folder, "forced-out")], folder);
+      expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureNamed(feature)) }).toEqual({ stderr: failed.stderr, saysSo: true });
+      expect(failed).toMatchObject({ stdout: "", signalCode: null });
+      expect([70, 1]).toContain(failed.exitCode);
     });
   }
 
-  test.skipIf(!isLinux && !isWindows)("units: an executable without them throws a TypeError where a unit is asked for", async () => {
+  test.skipIf(!isLinux && !isWindows)("units: with them forced out, formatting with a unit throws a TypeError", async () => {
     using dir = tempDir("compile-trim-runtime-icu-data", files);
     const folder = String(dir);
-    await build(folder, "uses-units.ts", "left-out", "units");
-    expect(await run([join(folder, "left-out")], folder)).toEqual({
+    await build(folder, "uses-IntlUnits.ts", "forced-out", ["IntlUnits"]);
+    expect(await run([join(folder, "forced-out")], folder)).toEqual({
       stdout: `unit TypeError: Failed to initialize NumberFormat\nplain "3,5"\n`,
       stderr: "",
       exitCode: 0,

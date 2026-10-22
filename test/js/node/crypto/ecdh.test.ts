@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { expect, test } from "bun:test";
 import { createECDH, ECDH, getCurves } from "node:crypto";
 import { createContext, runInContext } from "node:vm";

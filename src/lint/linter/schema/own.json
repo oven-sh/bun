@@ -1,9 +1,4 @@
 {
-  "bun/aot-cast-lacks-member": [],
-  "bun/aot-locked-builtin-write": [],
-  "bun/aot-no-any-to-typed": [],
-  "bun/aot-outside-data": [],
-  "bun/aot-spy-on-builtin": [],
   "bun/axios-no-unbounded-requests": [
     {
       "type": "object",

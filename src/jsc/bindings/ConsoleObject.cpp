@@ -6,7 +6,6 @@
 
 #include <JavaScriptCore/ConsoleClient.h>
 #include <JavaScriptCore/ConsoleMessage.h>
-#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ScriptArguments.h>
 #include <wtf/text/WTFString.h>
@@ -52,7 +51,7 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && !dynamicDowncast<JSC::JSArray>(args->argumentAt(1))) [[unlikely]] {
+    if (type == MessageType::Table && count >= 2 && !args->argumentAt(1).isUndefined() && (!args->argumentAt(1).isCell() || args->argumentAt(1).asCell()->type() != JSC::JSType::ArrayType)) [[unlikely]] {
         JSC::throwTypeError(globalObject, scope, "The \"properties\" argument must be an instance of Array."_s);
         return;
     }

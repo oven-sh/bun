@@ -1,4 +1,4 @@
-// A value that satisfies its type is never refused for how it is represented. An object with a prototype of its own (an heir made by Object.create, an instance of a class of untyped code) cannot be turned into an object of a declared type in place, and cannot be copied without losing what it is. Where something untyped can reach a declared type, such an object is let in as it is, and typed code reads it by name.
+// A value that satisfies its type is never rejected for how it is represented. An heir made by Object.create, an instance of a class of untyped code, plain data, a frozen heir and an object without a prototype pass as `this` and as a parameter, stay what they are, and typed code reads and stores through them as plain JavaScript does.
 interface Small { weight: number; run(this: Small, x: number): number }
 interface Large { weight: number; inner: { a: number }; list: number[]; run(this: Large, x: number): number; grow(this: Large): Large }
 function makeSmall(weight: number): Small { return { weight, run(x: number): number { return x + this.weight; } }; }

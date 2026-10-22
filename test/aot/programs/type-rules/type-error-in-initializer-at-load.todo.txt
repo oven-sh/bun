@@ -1,1 +1,0 @@
-Each of these constants is initialized at its first read, because the proof that allows it does not know which run-time type checks can fail: the TypeError is thrown when the constant is read.

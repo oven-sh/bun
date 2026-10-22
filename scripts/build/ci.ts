@@ -11,15 +11,14 @@ import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { gunzipSync, gzipSync } from "node:zlib";
 import { isBuildkite, markBuildkiteStepReported, reportAnnotationToBuildkite } from "../buildkite.ts";
 import { formatAnnotationToHtml, parseAnnotations } from "./annotations.ts";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
-import { webkitJSCPath, webkitTestFFIPath } from "./deps/webkit.ts";
+import { webkitAotFile, webkitJSCPath, webkitTestAotPath, webkitTestFFIPath } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
-import { freshIslandsPlanPath, islandsPlanPath, linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
+import { linkerMapOutputs, orderFilePath, usesOrderFile } from "./flags.ts";
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */
@@ -247,12 +246,15 @@ const TIMINGS_META_DATA = "timings:";
 //     └── ${bunTriplet}-profile/
 //           ├── bun-profile[.exe]
 //           ├── testFFI[.exe]            (WebKit FFI test binary, when shipped)
-//           ├── jsc                      (WebKit's shell, where `bun build --compile --aot` works)
+//           ├── jsc[.exe]                (WebKit's shell, when shipped)
+//           ├── testaot[.exe]            (the engine's AoT test program, when shipped)
+//           ├── aot-tests/               (its IR tests: WebKit's Source/JavaScriptCore/aot/tests)
 //           ├── features.json
 //           ├── bun-profile.linker-map   (linkerMapOutputs: release, non-asan)
 //           ├── bun-profile.map          (windows; with the above, what the
 //           │                             trace-order step resolves addresses with)
 //           ├── linker.order             (the order file this binary was linked with, if any)
+//           ├── bun-profile.trim/        (what the trimmable link found: entry points, requires, groups, retained-by)
 //           ├── bun-profile.pdb          (windows)
 //           └── bun-profile.dSYM         (mac)
 //
@@ -332,11 +334,19 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
     chmodSync(testFFI, 0o755);
     files.push(testFFI);
   }
-  const jsc = webkitJSCPath(cfg);
-  const compilesAheadOfTime = (cfg.darwin && cfg.arm64) || (cfg.linux && cfg.x64 && cfg.abi === "gnu");
-  if (compilesAheadOfTime && existsSync(jsc)) {
-    chmodSync(jsc, 0o755);
-    files.push(jsc);
+  for (const program of [webkitJSCPath(cfg), webkitTestAotPath(cfg)]) {
+    if (existsSync(program)) {
+      chmodSync(program, 0o755);
+      files.push(program);
+    }
+  }
+  const engineTests = webkitAotFile(cfg, "tests");
+  if (existsSync(engineTests)) {
+    // makeZip names an entry by its base name, and this folder's is `tests`.
+    const staged = resolve(buildDir, "aot-tests");
+    rmSync(staged, { recursive: true, force: true });
+    cpSync(engineTests, staged, { recursive: true });
+    files.push("aot-tests");
   }
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
@@ -354,12 +364,8 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   if (hasOrderFile) {
     files.push(basename(orderFilePath(cfg)));
   }
-  if (cfg.islands && isIslandsPlan(islandsPlanPath(cfg))) files.push(basename(islandsPlanPath(cfg)));
+  if (cfg.trimmable) files.push(`${basename(exe)}.trim`);
   zipPaths.push(makeZip(cfg, bunPath, files));
-  if (cfg.islands && isIslandsPlan(freshIslandsPlanPath(cfg))) {
-    writeFileSync(resolve(buildDir, islandsPlanArtifact(cfg)), gzipSync(readFileSync(freshIslandsPlanPath(cfg))));
-    zipPaths.push(islandsPlanArtifact(cfg));
-  }
 
   // ─── Stripped zip ───
   // Only for plain release (shouldStrip). Just the stripped `bun` binary.
@@ -380,9 +386,9 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
  *
  * Uses `cmake -E tar cfv x.zip --format=zip` — cmake's cross-platform
  * zip wrapper (wraps libarchive). GNU tar (Linux default) DOESN'T support
- * --format=zip; bsdtar does but isn't guaranteed on Linux. cmake is
- * already a required tool (we use it for nested dep builds), so this
- * adds no new dependency. Identical to cmake's own packaging approach
+ * --format=zip; bsdtar does but isn't guaranteed on Linux. cmake is on
+ * every CI image (`pins.cmake`, ci-images/spec.ts); this is the build's
+ * only use of it. Identical to cmake's own packaging approach
  * (BuildBun.cmake:1544).
  *
  * Files that don't exist are silently skipped (e.g., .pdb on a clean build).
@@ -478,7 +484,6 @@ export interface OrderFileContext {
   /** The branch whose builds publish order files: the pipeline's default branch. */
   mainBranch: string | undefined;
   buildNumber: number | undefined;
-  branch?: string | undefined;
 }
 
 /** Read the environment once, at the edge. */
@@ -488,7 +493,6 @@ export function orderFileContext(): OrderFileContext {
     buildUrl: process.env.BUILDKITE_BUILD_URL,
     mainBranch: process.env.BUILDKITE_PIPELINE_DEFAULT_BRANCH,
     buildNumber: Number(process.env.BUILDKITE_BUILD_NUMBER) || undefined,
-    branch: process.env.BUILDKITE_BRANCH,
   };
 }
 
@@ -586,7 +590,6 @@ const buildkiteLookups = (signal: AbortSignal): BuildLookups => ({
 export async function* candidateBuilds(
   ctx: OrderFileContext,
   lookups: BuildLookups,
-  alsoOfBranch?: string,
 ): AsyncGenerator<{ id: string; number: number | undefined }> {
   const { mainBranch: branch, buildUrl } = ctx;
   if (!branch || !buildUrl) return;
@@ -614,7 +617,7 @@ export async function* candidateBuilds(
     number -= count;
     for (const body of bodies) {
       if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
-      if (!body?.id || (body.branch_name !== branch && body.branch_name !== alsoOfBranch)) continue;
+      if (!body?.id || body.branch_name !== branch) continue;
       seen.add(body.id);
       yield { id: body.id, number: body.number };
     }
@@ -685,41 +688,5 @@ export async function inheritOrderFile(cfg: Config, ctx: OrderFileContext): Prom
       ? "found no earlier build to inherit from"
       : `none of the ${tried} builds tried published it`;
   console.log(`~ symbol order: ${what} (${since(start)})`);
-  return false;
-}
-
-export function islandsPlanEligible(cfg: Config, ctx: OrderFileContext): boolean {
-  return cfg.islands && ctx.buildkite && ctx.branch !== ctx.mainBranch;
-}
-
-function islandsPlanArtifact(cfg: Config): string {
-  return `${computeBunTriplet(cfg)}.islands-plan.gz`;
-}
-
-function isIslandsPlan(path: string): boolean {
-  return existsSync(path) && readFileSync(path, "latin1").startsWith("bun-islands-plan ");
-}
-
-export async function inheritIslandsPlan(cfg: Config, ctx: OrderFileContext): Promise<boolean> {
-  if (!islandsPlanEligible(cfg, ctx)) return false;
-  const start = Date.now();
-  const artifact = islandsPlanArtifact(cfg);
-  const downloaded = resolve(cfg.buildDir, artifact);
-  const outOfTime = AbortSignal.timeout(INHERIT_BUDGET_MS);
-  for await (const build of candidateBuilds(ctx, buildkiteLookups(outOfTime), ctx.branch)) {
-    if (outOfTime.aborted) break;
-    const result = spawnSync("buildkite-agent", ["artifact", "download", artifact, ".", "--build", build.id], {
-      cwd: cfg.buildDir,
-      stdio: "ignore",
-      timeout: ARTIFACT_DOWNLOAD_TIMEOUT_MS,
-    });
-    if (result.status !== 0 || !existsSync(downloaded)) continue;
-    writeFileSync(islandsPlanPath(cfg), gunzipSync(readFileSync(downloaded)));
-    rmSync(downloaded, { force: true });
-    if (!isIslandsPlan(islandsPlanPath(cfg))) continue;
-    console.log(`+ islands: inherited ${artifact} from #${build.number ?? "?"} in ${since(start)}: one link`);
-    return true;
-  }
-  console.log(`~ islands: no earlier build published ${artifact} (${since(start)}): this build links twice and publishes it`);
   return false;
 }

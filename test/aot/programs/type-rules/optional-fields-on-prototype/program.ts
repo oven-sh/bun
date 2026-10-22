@@ -12,14 +12,14 @@ console.log(peek(plain, "toString"), peek(plain, "constructor"), String(plain))
 
 interface Describable { label: string; describe?: () => string; size?: number; tag?: string }
 function inspect(d: Describable): string { return [d.label, d.describe?.(), d.size, d.tag].map(String).join("|") }
-// Throws: any change to the prototype object of a class.
+// The prototype object of a class of the program can change in every way.
 class WithValue { label = "v" }
 try { (WithValue.prototype as any).tag = "from prototype"; console.log("a property added by a store: no error") } catch (e) { console.log("a property added by a store:", e instanceof TypeError ? "TypeError" : "other " + e) }
 class Labelled { label: string; constructor(label: string) { this.label = label } }
 try { Object.defineProperty(Labelled.prototype, "tag", { value: "polluted", configurable: true, writable: true }); console.log("by defineProperty: no error") } catch (e) { console.log("by defineProperty:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { Object.defineProperty(Labelled.prototype, "tag", { get() { return "got" }, set(v: string) {}, configurable: true }); console.log("an accessor: no error") } catch (e) { console.log("an accessor:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(inspect(new WithValue()), inspect(new Labelled("l")), "tag" in Labelled.prototype)
-// Throws: a prototype given after creation, also to a literal that was just made.
+// A prototype given after creation, also to a literal that was just made.
 const late: Describable = { label: "late" }
 try { Object.setPrototypeOf(late, { size: 99, describe(this: Describable) { return "inherited by " + this.label }, get tag() { return "getter tag" } }); console.log("setPrototypeOf: no error") } catch (e) { console.log("setPrototypeOf:", e instanceof TypeError ? "TypeError" : "other " + e) }
 const given: object = {}

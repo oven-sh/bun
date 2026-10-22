@@ -16,13 +16,13 @@ async function takesNested(o: { name: string; at: Point }): Promise<number> { re
 async function takesLists(ls: number[][]): Promise<number> { return ls.length; }
 async function sinks(f: any, n: number): Promise<number> { return f(f, n + 1); }
 const table: any[] = [takesArray, takesPoint, takesPattern, takesPoints, takesNested, takesLists, sinks];
-// C++ throws inside a conversion, or user code that it calls does.
+// What is handed over throws when the body reads it: a getter, a trap of a proxy. What is no array is refused on entry where an array is declared, before its iterator is asked.
 row("a getter that throws on what is handed over", () => table[1]({ get x(): number { throw new RangeError("x"); }, y: 2 }));
 row("a proxy whose get trap throws", () => table[1](new Proxy({ x: 1, y: 2 }, { get(): never { throw new SyntaxError("get"); } })));
 row("a proxy that is revoked", () => { const r = Proxy.revocable({ x: 1, y: 2 }, {}); r.revoke(); return table[1](r.proxy); });
 row("an iterator that throws", () => table[2]({ [Symbol.iterator](): never { throw new EvalError("iterator"); } }));
 row("an iterator whose next throws", () => table[2]({ [Symbol.iterator]() { return { next(): never { throw new URIError("next"); } }; } }));
-// A conversion that has done part of its work when it fails: C++ iterates over its argument and throws from the middle of it.
+// Only the value itself is tested on entry: an array passes whatever its elements are, an object whatever its fields are. The bodies read none of the elements and fields that do not fit.
 row("a list of records, the second is a number", () => table[3]([{ x: 1, y: 2 }, 5]));
 row("a list of records, the last of 300 lacks a field", () => table[3](Array.from({ length: 300 }, (_, i) => i < 299 ? { x: i, y: i } : { x: i })));
 row("a list of records, right", () => table[3]([{ x: 1, y: 2 }, { x: 3, y: 4 }]));

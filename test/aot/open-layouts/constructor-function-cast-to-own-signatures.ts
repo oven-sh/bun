@@ -31,3 +31,9 @@ function createRequest(prefix: string): Request {
 const made = createRequest("r");
 console.log(made.status, made.state.prefix, made.state.next, made.tasks[0].name, made.tasks[0].request === made);
 console.log(Object.getPrototypeOf(made) === RequestInstance.prototype, Object.keys(made).join());
+
+interface Control {
+  control: number;
+}
+const control: Control = JSON.parse('{"control":1}');
+console.log(control.control);

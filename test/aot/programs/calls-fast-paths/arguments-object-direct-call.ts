@@ -1,7 +1,7 @@
 // A large function that uses `arguments` or a rest parameter and is only ever called by name (like TypeScript's `reduceLeft`).
 // IR= 0 run = Call v
 // IR= 0 run = CallMethod
-// IR+ CallDirect f[0-9]+ \(v[0-9]+\)
+// IR+ CallDirect \(v[0-9]+\) function=f[0-9]+
 declare const console: any;
 function pad(x: number): number { let s = 0; for (let i = 0; i < 2; i++) { s += x + i; s ^= i; s += x * 2; s -= i; s |= 0; s += 7; s ^= x; s += 11; s -= 3; s += x & 5; s ^= 9; s += 13; s -= x >> 1; s += 17; } return s; }
 function reduceLeft(array: number[], f: (memo: number, value: number, i: number) => number, initial?: number, start?: number, count?: number): number {

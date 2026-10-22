@@ -130,16 +130,16 @@ pub(super) fn ensure_route_is_bundled(
                                 // `vm()` is the centralized JSC_BORROW accessor (one
                                 // `unsafe` site for the field); the borrow is dropped
                                 // before the assignment so no overlap with `&mut dev`.
-                                let has_tailwind = if let Some(serve_plugins) =
-                                    &dev.vm().transpiler.options.serve_plugins
-                                {
-                                    serve_plugins
-                                        .iter()
-                                        .find(|p| strings::includes(p, b"tailwind"))
-                                        .map(|_| Default::default())
-                                } else {
-                                    None
-                                };
+                                let vm = dev.vm();
+                                let has_tailwind = vm
+                                    .transpiler
+                                    .options
+                                    .serve_plugins
+                                    .iter()
+                                    .flatten()
+                                    .chain(vm.bake_config_plugin_names.iter())
+                                    .find(|p| strings::includes(p, b"tailwind"))
+                                    .map(|_| Default::default());
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
                                 let load_result: crate::server::GetOrStartLoadResult = dev

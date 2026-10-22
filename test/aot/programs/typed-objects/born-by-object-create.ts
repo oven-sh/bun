@@ -492,7 +492,11 @@ function makeByTypedKey(key: "size", size: number): Marked {
   self[key] = size
   return self
 }
-show("a key that only its type names", describe(makeByTypedKey("size", 6)) + " " + describe(makeByTypedKey("other" as any, 7)))
+try {
+  show("a key that only its type names", describe(makeByTypedKey("size", 6)) + " " + describe(makeByTypedKey("other" as any, 7)))
+} catch (error) {
+  show("a key that only its type names", (error as Error).constructor.name)
+}
 function attemptStore(store: () => unknown): string {
   try {
     store()

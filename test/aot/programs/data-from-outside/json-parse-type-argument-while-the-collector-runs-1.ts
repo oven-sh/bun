@@ -1,4 +1,5 @@
 // Records of 1 declared field and as many undeclared keys, four deep, in arrays, tuples and dictionaries, are parsed by JSON.parse<T> while the collector runs as often as it can be made to.
+import { validate } from "bun:bundle";
 interface Level1 { f0: string }
 interface Level2 { kid: Level1 }
 interface Level3 { kid: Level2 }
@@ -163,8 +164,8 @@ function section(label: string, undeclared: number, shuffled: boolean, withSpace
   for (let round = 0; round < 2; round++) {
     const value = JSON.parse<Holder>(text);
     if (JSON.stringify(value) !== compact || probe(value) !== probed) different++;
-    if (round === 0 && JSON.stringify(Bun.validate<Holder>(value)) !== compact) different++;
-    if (round === 1 && JSON.stringify(Bun.validate<Holder>(plainParse(text))) !== compact) different++;
+    if (round === 0 && JSON.stringify(validate<Holder>(value)) !== compact) different++;
+    if (round === 1 && JSON.stringify(validate<Holder>(plainParse(text))) !== compact) different++;
     kept.push({ value, written: compact, probed });
   }
   console.log(label + ": " + different + " differ, " + keptStillStand());

@@ -1,4 +1,4 @@
-// An expression that is being tested (`typeof x`, `x === undefined`, `if (x)`) gets no runtime type check: the program is asking what the value is.
+// A typed read is tested wherever it stands: under `typeof`, against `undefined` or a literal, in a condition, as a binding, an argument or an operand. A field that holds another kind throws a TypeError; one that is undefined, null or missing passes and goes on as it is.
 interface Clock { origin: number; name: string; on: boolean; next: Clock; list: number[]; tick: () => number; big: bigint }
 declare function fromHost(which: number): Clock;
 const raws: any[] = [0, 1].map(() => JSON.parse('{"origin":1,"name":"n","on":true,"next":null,"list":[1],"tick":null,"big":null}'));
@@ -6,7 +6,7 @@ for (const raw of raws) { raw.next = raw; raw.tick = () => 7; raw.big = 5n; }
 (globalThis as any).fromHost = (which: number) => raws[which];
 const kept: Clock = fromHost(0), broken: Clock = fromHost(1);
 { const raw = raws[1]; raw.origin = undefined; raw.name = 5; raw.on = "yes"; raw.next = 0; delete raw.list; raw.tick = null; raw.big = ""; }
-// The object under test. It goes from one place of type `Clock` to another, which asks nothing of it.
+// The object under test. It goes from one place of type `Clock` to another, which asks only for an object.
 let c: Clock = kept;
 function attempt(label: string, f: () => unknown): void {
     const out: string[] = [];
@@ -56,13 +56,13 @@ attempt("t || falls through", () => c.origin || "none");
 attempt("t ??", () => [c.origin ?? "none", c.list ?? "none", c.tick ?? "none"].map(show).join());
 attempt("t ?.", () => [c.list?.length, c.tick?.(), c.list?.[0]].join());
 attempt("t ?. ??", () => c.list?.length ?? "none");
-// an expression that forwards its operand is in the same position as the whole
+// an expression that forwards its operand
 attempt("t ?: within typeof", () => typeof (c.on ? c.origin : c.name));
 attempt("t || within typeof", () => [typeof (c.name || c.origin), typeof (c.big && c.on), typeof (c.name ?? c.on)].join());
 attempt("t || within ===", () => (c.name || "x") === "n");
 attempt("t , within if", () => { let n = 0; if ((n++, c.list)) return "T" + n; return "F" + n; });
 
-// NOT test positions
+// bindings, arguments, operands, results, receivers
 attempt("h binding", () => { const t = c.origin; return typeof t === "number"; });
 attempt("h argument", () => show(c.name));
 attempt("h arithmetic", () => c.origin + 1);
@@ -73,7 +73,7 @@ attempt("h return", () => c.on);
 attempt("h receiver", () => c.list.length);
 attempt("h call", () => c.tick());
 attempt("h template", () => `${c.name}`);
-// used where the test lets it through: held there, and only there
+// the left side of &&, || and ?? for its value
 attempt("t && lets through", () => c.name && "x");
 attempt("h && kept", () => c.big && "x");
 attempt("h || kept", () => c.name || "none");

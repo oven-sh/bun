@@ -1,5 +1,5 @@
-// Under --aot path.posix answers as Node's lib/path.js does, which stands below, on strings of every kind.
-// Bun: plain Bun prints other answers here: its native node:path goes through UTF-8, so a lone surrogate comes back as U+FFFD and basename counts a suffix in bytes. Node's answer is the right one, and --aot gives it: see the .expected.txt.
+// path.posix against Node's lib/path.js, which stands below, on strings of every kind. A compiled program calls the same native node:path as plain Bun, so it prints what plain Bun prints,
+// also where that differs from Node: the native code goes through UTF-8, so a lone surrogate comes back as U+FFFD and basename counts a suffix in bytes.
 import { posix } from "node:path";
 
 function validateString(value: unknown, name: string): asserts value is string {

@@ -1,7 +1,7 @@
 // `list.push(f())`: push is read before f runs. Where list is then an array as the engine makes them, what is read is the engine's push, and the call appends, whatever f has done to the array in between.
 // CALLS+ pushes GetArrayPushByName
 // CALLS+ pushes ArrayPushReadAheadOrCallValue
-// CALLS- pushes GetByNameWithDirectColumn
+// CALLS- pushes GetByIdWithDirectColumn
 // CALLS+ pushesAtTheEnd ArrayPushReadAheadOrCallValue
 // CALLS- pushesTwo ArrayPushReadAhead
 // CALLS- keepsPush ArrayPushReadAhead

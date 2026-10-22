@@ -48,6 +48,16 @@ impl DevServer {
                         route.file_layout,
                     )?;
                 }
+                // A router whose pages also run in the browser: the same files, in the client graph.
+                for path in self.client_page_files(bundle.route_index).iter() {
+                    let stale = match self.client_graph.get_file_index(path) {
+                        Some(index) => self.client_graph.stale_files.is_set(index.get() as usize),
+                        None => true,
+                    };
+                    if stale {
+                        entry_points.append_js(path, bake::Graph::Client)?;
+                    }
+                }
             }
             route_bundle::Data::Html(html) => {
                 entry_points.append_html(&html.html_bundle.bundle.path)?;
@@ -299,16 +309,17 @@ impl TestingBatch {
 }
 
 impl DevServer {
+    #[inline(never)]
     pub(crate) fn start_async_bundle(
         &mut self,
         entry_points: EntryPointList,
         had_reload_event: bool,
         timer: Instant,
     ) -> crate::Result<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::start_async_bundle);
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
-        bun_ast::audited::forget_json_parse_schemas();
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {

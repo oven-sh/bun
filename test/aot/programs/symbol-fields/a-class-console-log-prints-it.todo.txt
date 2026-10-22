@@ -1,0 +1,2 @@
+console.log and Bun.inspect walk the property table of an ordinary object, which is in the order of the stores: a symbol that was stored first is printed first.
+Of an object with a layout they ask for the own keys, and those come with the names in front of the symbols.

@@ -1,9 +1,9 @@
-// `{ id, label: "x", [key]: id }` where a declared record type is expected was built as a plain object and converted by the runtime at every birth. It is born as the record; the property under the computed key is defined on it.
-// IRT= 1 withKey NewObjectWithShape
-// IRT= 0 withKey = NewObject$
-// IRT= 1 withTwoKeys NewObjectWithShape
-// IRT= 0 namedBehindKey NewObjectWithShape
-// IRT= 0 lacksMember NewObjectWithShape
+// `{ id, label: "x", [key]: id }` where a declared record type is expected is created with the record's layout; the property under the computed key is defined on it. Every line reads as in plain Bun.
+// IRT= 1 withKey : =?L[0-9]+ = NewObject 
+// IRT= 0 withKey = NewPlainObject
+// IRT= 1 withTwoKeys : =?L[0-9]+ = NewObject 
+// IRT= 0 namedBehindKey : =?L[0-9]+ = NewObject 
+// IRT= 0 lacksMember : =?L[0-9]+ = NewObject 
 interface Named { id: number; label: string; note?: string }
 function withKey(key: string, id: number): Named { return { id, label: "x", [key]: id }; }
 function withTwoKeys(first: string | symbol, second: string | number, id: number): Named { return { id, label: "y", note: "n", [first]: id, [second]: "s" }; }

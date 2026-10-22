@@ -1,7 +1,7 @@
 // `{ ...defaults, ...record }`, `Object.assign({}, defaults, record)` and `Object.assign(target, record)` where the record is an object of a written type and the code that copies knows nothing of it. The copy has what plain Bun gives it, in that order, whatever the record has been through; and copying records of one type onto targets of one shape takes a plan that is made once.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const byPlan = () => counted ? counted("operationAOTTypedLanguageOperation:copied-from-a-record") + counted("operationAOTTypedObjectAssignFrom:copied-from-a-record") : 0;
+const byPlan = () => counted ? counted("operationAOTCopyDataProperties") + counted("operationAOTNewObjectWithSpreads") + counted("operationAOTObjectAssignFrom") : 0;
 interface Inner { v: number }
 interface Row { count: number; ratio: number; ok: boolean; name: string; inner: Inner; any: unknown; maybe?: number; other?: string; nothing: number | undefined; none: Inner | null }
 const make = (i: number): Row => ({ count: i, ratio: i + 0.5, ok: i % 2 === 0, name: "n" + i, inner: { v: i }, any: i, nothing: undefined, none: null });

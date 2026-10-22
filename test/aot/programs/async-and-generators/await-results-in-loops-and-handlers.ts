@@ -13,7 +13,7 @@ async function table(id: number): Promise<Map<string, number>> { return new Map(
 async function adder(id: number): Promise<(n: number) => number> { await null; return n => n + id; }
 async function fails(id: number): Promise<User> { await null; throw new RangeError("no user " + id); }
 function already(id: number): Promise<string> { return Promise.resolve("already" + id); }
-function thenable(id: number): PromiseLike<string> { return { then(resolve) { resolve!("then" + id); return this as never; } }; }
+function thenable(id: number): PromiseLike<string> { return { then(resolve) { resolve!("then" + id); return this as any; } }; }
 
 class Store {
     private seen = 0;

@@ -1,4 +1,4 @@
-// A script that declares `let process` or `let setTimeout` at its top level shadows the global for the program's own code, not for Bun's built-in modules.
+// A script that declares `let process` or `let setTimeout` at its top level shadows the global for the program's own code, not for Bun's built-in modules. Where compiled code takes the global for a constant the declaration is refused (closed-world/script-declarations-over-constant-globals) and nobody sees a binding.
 const vm = require("node:vm");
 const print = console.log;
 const cancel = clearTimeout;
@@ -11,11 +11,24 @@ function tell(name, f) {
   }
 }
 
-for (const name of ["process", "Buffer", "setTimeout", "queueMicrotask", "URL", "TextDecoder", "AbortController", "performance", "setImmediate", "clearTimeout", "console"]) {
-  tell("let " + name, () => vm.runInThisContext("let " + name + "; typeof " + name));
+const typesTheProgramSees = {
+  process: () => typeof process, Buffer: () => typeof Buffer, setTimeout: () => typeof setTimeout, queueMicrotask: () => typeof queueMicrotask, URL: () => typeof URL, TextDecoder: () => typeof TextDecoder,
+  AbortController: () => typeof AbortController, performance: () => typeof performance, setImmediate: () => typeof setImmediate, clearTimeout: () => typeof clearTimeout, console: () => typeof console,
+};
+for (const name in typesTheProgramSees) {
+  tell("let " + name, () => {
+    let declared = "undefined";
+    try {
+      vm.runInThisContext("let " + name);
+    } catch (error) {
+      if (error.name !== "SyntaxError") throw error;
+      declared = typeof globalThis[name];
+    }
+    const seen = typesTheProgramSees[name]();
+    return seen === declared ? "the program sees what was declared" : "the program sees " + seen;
+  });
 }
 
-tell("the program sees the binding", () => [typeof process, typeof setTimeout, typeof URL].join());
 tell("globalThis is as it was", () => [typeof globalThis.process, typeof globalThis.setTimeout, typeof globalThis.URL].join());
 tell("fs", () => typeof require("node:fs").readFileSync(__filename, "utf8"));
 tell("stream", () => {

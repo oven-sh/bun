@@ -1,4 +1,4 @@
-// A function with parameters of type number that is called through a value: every number arrives as it is, whichever way it is kept, and anything else is turned away with a TypeError that names what was expected and what came.
+// A function with parameters of type number that is called through a value: every number arrives as it is, whichever way it is kept, undefined and null pass, and anything else is turned away with a TypeError that names what was expected and what came. The parameter of the arrow function that `makeAdder` returns has no annotation of its own, so it is not tested.
 function oneNumber(a: number): number {
   return a + 1;
 }

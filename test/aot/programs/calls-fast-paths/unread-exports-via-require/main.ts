@@ -1,10 +1,10 @@
 // An ES module is taken by require(), and all that is ever done with its namespace object is to read members by constant names, also behind `as typeof import(..)`. An export that nobody calls, names or reads is not in the program.
-// IR+ ^variable \d+ "hookOfAPatternAndAnAssertion" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfAMethodCall" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfKeptInAConstant" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfRequiredTwice" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfRequiredAndImported" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfByUntypedCode" .* only f\d+ proven$
+// IR+ ^variable g\d+ name="hookOfAPatternAndAnAssertion" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfAMethodCall" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfKeptInAConstant" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfRequiredTwice" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfRequiredAndImported" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfByUntypedCode" .*declared=f\d+( |$)
 import { callHook as call0 } from "./aPatternAndAnAssertion.ts";
 import { callHook as call1 } from "./aMethodCall.ts";
 import { callHook as call2 } from "./keptInAConstant.ts";

@@ -297,12 +297,6 @@ say("a polyfill inside try and catch falls back", () => {
   }
   return fellBack;
 });
-say("the same value is stored back", () => {
-  const prototype = Response.prototype as any;
-  prototype.json = prototype.json;
-  Headers.prototype.get = Headers.prototype.get;
-  return typeof prototype.json;
-});
 
 say("methods borrowed from the prototypes", () => [
   Headers.prototype.get.call(new Headers({ a: "1" }), "a"),

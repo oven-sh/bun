@@ -1,5 +1,4 @@
-// A compiled validator that refuses a value hands over where it failed, so what it has accepted is not walked again. The issues are the same as from a walk of the whole value.
-// IR+ ^function \d+ "recordFailure"
+// A value that a compiled validator refuses is walked by the routine that all types share. The issues are the same wherever in the value the validator stopped.
 import type { Schema } from "bun";
 interface Item { sku: string & Schema.MinLength<2>; quantity: number & Schema.Int & Schema.Min<1> & Schema.Max<9>; note?: string }
 interface Customer { id: number & Schema.Int; name: string; address: { street: string; zip: string & Schema.MinLength<5> } }

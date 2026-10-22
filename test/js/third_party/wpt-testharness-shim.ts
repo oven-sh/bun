@@ -359,7 +359,7 @@ class WPTTest {
     return this.step_func(() => assert_unreached(description));
   }
 
-  step_timeout(fn: (...a: any[]) => unknown, timeout?: number, ...args: any[]) {
+  step_timeout(fn: (...a: any[]) => unknown, timeout: number, ...args: any[]) {
     return setTimeout(
       this.step_func(() => fn(...args)),
       timeout,

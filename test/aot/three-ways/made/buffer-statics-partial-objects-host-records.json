@@ -1,5 +1,5 @@
 {
- "buffer-statics-replaced": "alone: replaced: 42 | bytes:60.113.62 | THROWS TypeError | bytes:99.97.116 | bytes:0.0 | 7 | false\nhot and replaced 42 THROWS TypeError\nthe global replaced: THROWS TypeError | 2\nthe module's: true | THROWS TypeError | 1",
+ "buffer-statics-replaced": "alone: replaced: THROWS TypeError | THROWS TypeError | THROWS TypeError | THROWS TypeError | THROWS TypeError | THROWS TypeError | THROWS TypeError\nhot and replaced 3 false\na getter: THROWS TypeError | 3\nthe module's: true | THROWS TypeError | 1",
  "constructors-observed-half-made": "all agree",
  "get-store-of-records": "all agree",
  "typed-constructors-observed-half-made": "all agree"

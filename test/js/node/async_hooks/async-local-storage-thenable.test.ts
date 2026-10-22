@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { AsyncLocalStorage } from "async_hooks";
 import { createTest } from "node-harness";
 const store = new AsyncLocalStorage();

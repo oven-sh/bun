@@ -28,3 +28,9 @@ console.log(Debug.twice(2), Debug.thrice(2), Debug.Inner.shout());
 silence("twice");
 Debug.level = 5;
 console.log(Debug.twice(2), Debug.thrice(2), Debug.Inner.shout(), typeof kept.twice, kept.twice?.(1));
+
+interface Control {
+  control: number;
+}
+const control: Control = JSON.parse('{"control":1}');
+console.log(control.control);

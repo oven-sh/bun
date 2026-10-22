@@ -1,0 +1,8 @@
+# A call of a function of the file that links the prototype objects of its parameters links those of the arguments.
+linked-by-a-function.js:6 constructor function parent `Linked` = linked-by-a-function.js:1
+linked-by-a-function.js:12 constructor function parent `Extended` = linked-by-a-function.js:1
+linked-by-a-function.js:18 constructor function parent `ThroughTwoFunctions` = linked-by-a-function.js:1
+linked-by-a-function.js:23 constructor function parent `FixedParent` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:29 constructor function parent `UnknownParent` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:31 constructor function parent `Spread` = linked-by-a-function.js:1
+absent: linked-by-a-function.js:33 constructor function parent `NeverCalled` = linked-by-a-function.js:1

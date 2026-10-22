@@ -1,0 +1,6 @@
+# A generic alias names itself with a `.d.ts` alias as the argument. The written type of that member is `unknown`, not the alias with the argument of the outer reference.
+recursive-generic-alias-with-inexact-argument.ts:4 written `Labeled<number>` = Labeled<number>
+recursive-generic-alias-with-inexact-argument.ts:4 shape `Labeled<number>` = Object
+recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = value Field number checked number
+recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = label Field unknown checked Labeled<string> | null
+absent: recursive-generic-alias-with-inexact-argument.ts:4 has `Labeled<number>` = label Field Labeled<number> | null checked Labeled<string> | null

@@ -49,11 +49,11 @@ for (const [name, make] of Object.entries(makers)) {
   let sum = 0;
   // What `split` and `Object.keys` yield shares its elements with other arrays until it is written to: that is left to the run time.
   const all = Object.entries(makers).filter(([name]) => !/split|keys/.test(name)).map(([, make]) => make);
-  const before = count("operationAOTPutByNameAndCache");
+  const before = count("operationAOTPutByIdAndCache");
   for (let i = 0; i < 300; ++i) {
     for (const make of all) sum += setLength(make(), 0).length + setLength(make(), 1).length;
   }
-  const asked = count("operationAOTPutByNameAndCache") - before;
+  const asked = count("operationAOTPutByIdAndCache") - before;
   say("rounds", sum);
   say(asked <= 200 ? "the stores asked the run time at most 200 times" : "the stores asked the run time " + asked + " times");
 }

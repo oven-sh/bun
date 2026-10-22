@@ -1,3 +1,4 @@
+// A part of parsed JSON is cast from its base type to one of two subtypes, read, stored to, and put into a literal and an array of the program. Any object passes a cast, a parameter and a field of an object type; a number throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
 interface Base { kind: number }
 interface Leaf extends Base { text: string; size: number }
 interface Pair extends Base { left: Base; right: Base }

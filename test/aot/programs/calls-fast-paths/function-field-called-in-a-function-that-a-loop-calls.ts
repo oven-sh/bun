@@ -1,8 +1,8 @@
-// A field of a class holds one arrow function and is called in a function that has no loop and is called in one. The test of the byte is no level of inlining, so the function is copied in; and its `this` is the receiver, so the field is not read and the closure, which is made lazily, is never made.
-// IR= 4 kernel IsClassObjectUnmodified
+// A field of a class holds one arrow function and is called in a function that has no loop and is called in one. The function is copied in; and its `this` is the receiver, so the field is not read and the closure, which is created lazily, is never created.
+// IR= 0 kernel IsClosureOf
 // IR= 0 kernel CallDirect
 // IR= 0 kernel GetCapture
-// IR= 4 kernel GetById v[0-9]+ "add"
+// IR= 0 kernel PropGet v[0-9]+ name="add"(?!.* isFallback)
 class Context {
   count = 0;
   add = (by: number): number => {
@@ -32,4 +32,6 @@ for (let round = 0; round < rounds; round++) {
   kernel();
   if (rounds < 0) kernel();
 }
+// Called once outside any loop too: top-level code that runs once takes nothing in, so the function keeps a body for the expectations to look at.
+kernel();
 console.log(total);

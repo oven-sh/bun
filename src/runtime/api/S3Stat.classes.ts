@@ -11,18 +11,25 @@ export default [
     proto: {
       size: {
         getter: "getSize",
+        type: "number",
         cache: true,
       },
       lastModified: {
         getter: "getLastModified",
+        type: "Date",
+        checkedAtRuntime: true,
         cache: true,
       },
       etag: {
         getter: "getEtag",
+        type: "string",
+        checkedAtRuntime: true,
         cache: true,
       },
       type: {
         getter: "getContentType",
+        type: "string",
+        checkedAtRuntime: true,
         cache: true,
       },
     },

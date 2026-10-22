@@ -23,7 +23,7 @@ attempt("an array under `members`", () => { const g: any = createGeneric([]); g.
 attempt("undefined under `count`", () => { const g: any = createGeneric([]); g.count = undefined; return Object.keys(g) })
 attempt("another name", () => { const g: any = createGeneric([]); g.extra = 5; return g })
 attempt("a stranger", () => { const s: Stranger = { id: 3, tags: [], far: [] }; (s as any).members = 5; return s })
-// The stores above are taken as plain Bun takes them. The value is tested where typed code relies on the type: at the cast to the subtype.
+// The stores above are taken as plain Bun takes them. Any object passes the cast to the subtype. The value is tested at the first typed read of the field.
 attempt("then: the number is read as string[] by typed code", () => { const g: any = createGeneric([]); g.members = 5; const r = resolve(g); return [typeof r.members, r.members.length, r.count] })
 attempt("then: joined", () => { const g: any = createGeneric([]); g.members = 5; const r = resolve(g); return r.members.join("+") })
 attempt("then: count is read as a number", () => { const g: any = createGeneric([]); g.members = ["m"]; g.count = "many"; const r = resolve(g); return [typeof r.count, r.count + 1] })

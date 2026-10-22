@@ -1,4 +1,4 @@
-// A value of type `any` is checked where it is stored into a typed variable: `var`, `let`, hoisted reads, captured and module-level variables.
+// `undefined` and `null` out of `any` pass into every variable of type number or boolean and stay what they are: `var`, `let`, hoisted reads, captured and module-level variables.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }

@@ -1,1 +1,0 @@
-Plain Bun prints "less than the type says | {}undefined1-"; --aot prints "less than the type says | THROWN expected string, got number 1".

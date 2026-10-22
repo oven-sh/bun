@@ -170,7 +170,6 @@ impl DefineExt for Define {
             dots_filter: Default::default(),
             drop_debugger,
             user_hash: None,
-            user_inputs: Vec::new(),
         });
         define.dots.reserve(124);
 

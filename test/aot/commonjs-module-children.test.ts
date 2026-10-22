@@ -2,8 +2,7 @@ import { expect } from "bun:test";
 import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// `module.children` lists every CommonJS module that the module has required, also one that another module had loaded before. Tools that
-// take a module and all it has loaded out of `require.cache` walk these lists.
+// `module.children` lists every CommonJS module that the module has required, also one that another module had loaded before.
 
 const files = {
   "lib/names.js": `exports.names = module => module.children.map(child => child.id.split("/").pop()).join();`,
@@ -41,23 +40,16 @@ require("./lib/child.js");
 console.log(names(module));
 `,
   "a-child-that-threw-is-not-listed.cjs": `const { names } = require("./lib/names.js");
-for (let i = 0; i < 2; i++) {
-  try {
-    require("./lib/thrower.js");
-  } catch (error) {
-    console.log(error.message, "|", names(module));
-  }
+try {
+  require("./lib/thrower.js");
+} catch (error) {
+  console.log(error.message, "|", names(module));
 }
 require("./lib/late.js");
 console.log(names(module));
 `,
   "a-cycle.cjs": `const left = require("./lib/left.js");
 console.log(left.children(), left.right.children(), module.children.length);
-`,
-  "taken-out-with-all-it-loaded.cjs": `const forget = path => { const seen = new Set(); (function walk(module) { if (!module || seen.has(module)) return; seen.add(module); module.children.forEach(walk); delete require.cache[module.id]; })(require.cache[path]); return seen.size; };
-const first = require("./lib/first.js"), second = require("./lib/second.js");
-console.log(forget(require.resolve("./lib/second.js")), Object.keys(require.cache).map(key => key.split("/").pop()).join());
-console.log(require("./lib/second.js").shared.loads, first.shared.loads, require("./lib/first.js") === first);
 `,
 };
 

@@ -22,7 +22,7 @@ const files = {
 test("a type library that `types` names and that is not installed is a warning: only a file that uses a name of it is refused", async () => {
   using dir = tempDir("type-library-not-installed", files);
   const { said, exitCode } = await run(String(dir), "test", "--aot");
-  expect(found(said, "warning")).toContain("TS2688");
+  expect(found(said, "warn")).toContain("TS2688");
   expect(found(said, "error")).toEqual(["TS2304"]);
   expect(passed(said)).toEqual(["needs nothing of it"]);
   expect(exitCode).toBe(1);

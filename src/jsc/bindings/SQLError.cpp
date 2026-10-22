@@ -30,7 +30,7 @@ static Structure* sqlErrorStructure(VM& vm, Zig::GlobalObject* realm, SQLErrorCl
         return structure;
 
     // The adapter that makes the error has loaded this module, so no JavaScript runs here.
-    JSValue classes = realm->internalModuleRegistry()->requireId(realm, vm, InternalModuleRegistry::Field::InternalSqlErrors);
+    JSValue classes = BUN_REQUIRE_INTERNAL_MODULE(realm, InternalSqlErrors, "bun:sql", "MySQLError"_s, "PostgresError"_s);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_ASSERT(classes.isObject());
     JSValue constructor = classes.getObject()->getDirect(vm, Identifier::fromString(vm, isMySQL ? "MySQLError"_s : "PostgresError"_s));

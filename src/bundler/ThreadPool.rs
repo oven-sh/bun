@@ -365,13 +365,6 @@ impl ThreadPool {
                 },
                 temporary_arena: None,
                 stmt_list: None,
-                scan_heap: None,
-                scan_ast_memory_store: None,
-                is_in_scan_arena: false,
-                release_scan_arena_task: ThreadPoolLib::Task {
-                    node: ThreadPoolLib::Node::default(),
-                    callback: Worker::release_scan_arena_callback,
-                },
             });
             (*worker).init(&*self.v2);
             TLS_WORKER.set((self.generation, worker));
@@ -436,11 +429,6 @@ pub struct Worker {
 
     pub(crate) temporary_arena: Option<bun_alloc::Arena>,
     pub(crate) stmt_list: Option<StmtList>,
-
-    pub(crate) scan_heap: Option<ThreadLocalArena>,
-    pub(crate) scan_ast_memory_store: Option<bun_ast::ASTMemoryAllocator>,
-    pub(crate) is_in_scan_arena: bool,
-    pub(crate) release_scan_arena_task: ThreadPoolLib::Task,
 }
 
 impl Worker {
@@ -569,8 +557,6 @@ impl Worker {
         // Ordered before `heap = None` in case `ASTMemoryAllocator::new`
         // ever threads `arena_ref` (= `&self.heap`) through.
         unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
-        worker.scan_ast_memory_store = None;
-        worker.scan_heap = None;
         if worker.has_created {
             worker.heap = None;
         }
@@ -600,50 +586,6 @@ impl Worker {
 
     pub(crate) fn unget(&mut self) {
         self.ast_memory_store.pop();
-    }
-
-    pub(crate) fn enter_scan_arena(&mut self) {
-        if self.scan_heap.is_none() {
-            // SAFETY: the `Worker` is heap-pinned, and `scan_ast_memory_store` is dropped ahead of `scan_heap` wherever either is.
-            let arena: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(self.scan_heap.insert(ThreadLocalArena::new())) };
-            self.scan_ast_memory_store = Some(bun_ast::ASTMemoryAllocator::borrowing(arena));
-        }
-        self.ast_memory_store.pop();
-        self.scan_ast_memory_store.as_mut().expect("set above").push();
-        self.is_in_scan_arena = true;
-    }
-
-    pub(crate) fn leave_scan_arena(&mut self) {
-        self.scan_ast_memory_store.as_mut().expect("set in enter_scan_arena()").pop();
-        self.ast_memory_store.push();
-        self.is_in_scan_arena = false;
-    }
-
-    pub(crate) fn parse_arena(&self) -> &ThreadLocalArena {
-        match &self.scan_heap {
-            Some(scan_heap) if self.is_in_scan_arena => scan_heap,
-            _ => self.arena.get(),
-        }
-    }
-
-    fn release_scan_arena_callback(task: *mut ThreadPoolLib::Task) {
-        // SAFETY: `task` is the `release_scan_arena_task` of a live boxed `Worker`: `release_scan_arena_soon` alone schedules it.
-        let this: *mut Worker = unsafe { bun_core::from_field_ptr!(Worker, release_scan_arena_task, task) };
-        // SAFETY: an idle task runs on the worker's own thread between two tasks, so nothing else borrows the `Worker`.
-        unsafe {
-            (*this).scan_ast_memory_store = None;
-            (*this).scan_heap = None;
-        }
-    }
-
-    /// # Safety
-    /// `this` is a live `Worker`, and nothing reads what is allocated in its `scan_heap` any more.
-    pub(crate) unsafe fn release_scan_arena_soon(this: *mut Worker) {
-        // SAFETY: `thread` is written once, before the `Worker` is published.
-        if let Some(thread) = unsafe { (*this).thread } {
-            // SAFETY: the field of a live `Worker`.
-            thread.push_idle_task(unsafe { &raw mut (*this).release_scan_arena_task });
-        }
     }
 
     pub(crate) fn init(&mut self, v2: &BundleV2<'_>) {

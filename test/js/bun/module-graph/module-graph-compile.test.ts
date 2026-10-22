@@ -165,7 +165,7 @@ const sources: Record<string, string> = {
       result = { out, hostView, log: log.filter(l => l.startsWith("external@") || l.startsWith("instance@")) };
     } else if (scenario === "process") {
       const g = new MG({ globals: { process: Object.create(process, { env: { value: { TAG: "own" }, enumerable: true } }) } });
-      result = await g.import(url).then((ns: any) => ns.envOfProcess(), (e: any) => errName(e) + ": " + String(e.message).split(" (bun --aot")[0]);
+      result = await g.import(url).then((ns: any) => ns.envOfProcess(), (e: any) => errName(e) + ": " + String(e.message).split(" (bun compile")[0]);
       g.dispose();
     } else {
       result = { error: "unknown scenario " + scenario };

@@ -214,7 +214,7 @@ JSObject* JSTransformStreamDefaultController::prototype(VM& vm, JSDOMGlobalObjec
     return getDOMPrototype<JSTransformStreamDefaultController>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSTransformStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSTransformStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSTransformStreamDefaultControllerConstructor, DOMConstructorID::TransformStreamDefaultController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

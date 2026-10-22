@@ -1,5 +1,5 @@
 // Methods of many lengths taken off their objects and called without `this`, with null, with a number, with another object: a TypeError or an answer, and no object is touched that was not `this`.
-// (10-16: where the code of such a method ended in the call that throws and fell into the function laid next, the throw was taken for the next function's: by the parity of a length.)
+// The code of such a method may end in the call that throws. Whatever its length, the throw belongs to that method and not to the function laid out after it.
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 const lines: string[] = [];
 class C0 { a = 1.5; b = 2.5; n = 0; s = "s"; on = false; run(): number { this.a += this.b; return this.a } }

@@ -3,13 +3,20 @@ import { test } from "./supported";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
+// The functions are laid out as the transpiler prints them: an executable answers with the text of the file, plain Bun with what it printed.
 const programs = {
-  "without a direct eval": `function f() { return 1; }
+  "without a direct eval": `function f() {
+  return 1;
+}
 console.log(String(f));
 console.log(f());
 `,
-  "with a direct eval": `function f() { return 1; }
-function g() { return eval("f()") + 1; }
+  "with a direct eval": `function f() {
+  return 1;
+}
+function g() {
+  return eval("f()") + 1;
+}
 console.log(String(f));
 console.log(String(g));
 console.log(g());

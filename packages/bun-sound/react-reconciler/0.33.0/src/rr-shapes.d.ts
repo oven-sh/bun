@@ -113,8 +113,7 @@ declare namespace RR {
     childLanes: Lanes;
     alternate: Fiber | null;
   }
-  /** function FiberNode(this: RR.Fiber, ..) and new (FiberNode as unknown as RR.FiberConstructor)(..) */
-  interface FiberConstructor { new (tag: WorkTag, pendingProps: any, key: string | null, mode: TypeOfMode): Fiber }
+  // function FiberNode(this: RR.Fiber, ..) and new FiberNode(..): in a compile build `new` of such a function has the type of its `this`. No cast: one through `unknown` loses the callee
 
   /** Fiber.memoizedState by tag: 0 11 14 15 and 5 (a form): Hook · 1: ClassState · 3: RootState · 13 31: SuspenseState · 19: SuspenseListRenderState · 22 23: OffscreenState · 24: CacheComponentState · 26: Resource */
   type MemoizedState = Hook | RootState | SuspenseState | SuspenseListRenderState | OffscreenState | CacheComponentState | ClassState | Resource | null;
@@ -159,20 +158,7 @@ declare namespace RR {
     formState: ReactFormState | null;
     incompleteTransitions: Map<Transition, unknown>;
   }
-  /** function FiberRootNode(this: RR.FiberRoot, ..) and new (FiberRootNode as unknown as RR.FiberRootConstructor)(..) */
-  interface FiberRootConstructor {
-    new (
-      containerInfo: Container,
-      tag: RootTag,
-      hydrate: boolean,
-      identifierPrefix: string,
-      onUncaughtError: OnUncaughtError,
-      onCaughtError: OnCaughtError,
-      onRecoverableError: OnRecoverableError,
-      onDefaultTransitionIndicator: OnDefaultTransitionIndicator,
-      formState: ReactFormState | null
-    ): FiberRoot;
-  }
+  // function FiberRootNode(this: RR.FiberRoot, ..) and new FiberRootNode(..), as for FiberNode
   type OnUncaughtError = (error: Thrown, errorInfo: ErrorInfo) => void;
   type OnCaughtError = (error: Thrown, errorInfo: CaughtErrorInfo) => void;
   type OnRecoverableError = (error: Thrown, errorInfo: ErrorInfo) => void;

@@ -1,1 +1,1 @@
-{"features": ["text", "jit"]}
+{"features": ["RuntimeTranspiler", "JIT"]}

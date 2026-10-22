@@ -111,8 +111,8 @@ async function main(): Promise<void> {
     }
     {
         const notStarted = ticks(3);
-        await attemptAsync("async: return of a promise before the start", () => notStarted.return(Promise.resolve("later") as unknown as string));
-        await attemptAsync("async: return of a rejected promise", () => notStarted.return(Promise.reject(new Error("refused")) as unknown as string));
+        await attemptAsync("async: return of a promise before the start", () => notStarted.return(Promise.resolve("later") as any));
+        await attemptAsync("async: return of a rejected promise", () => notStarted.return(Promise.reject(new Error("refused")) as any));
     }
     {
         const queued = ticks(2);

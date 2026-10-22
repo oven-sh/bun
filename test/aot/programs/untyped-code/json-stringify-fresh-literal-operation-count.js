@@ -1,8 +1,9 @@
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())[1]);
 function measure(label, run) {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
     let text = "";
     for (let i = 0; i < 100; i++) text = run(i);
-    console.log(label + ": " + text + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code");
+    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
 }
 const names = ["zero", "one", "two \"quoted\"", "three\n", "foür", "fïve 中"];
 const kept = [];

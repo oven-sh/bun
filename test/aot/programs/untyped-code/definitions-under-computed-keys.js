@@ -1,6 +1,6 @@
 // `{ [key]: value }`, class fields under computed keys and Object.fromEntries define an own property whatever the object inherits. A definition that is remembered for a shape and a key never answers for a store under that key, which asks the prototype chain, nor the other way round; and defining under the same few keys over and over takes no work anew.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedLanguageOperation") + counted("operationAOTTypedToKey") + counted("operationAOTTypedDefineByKey") : 0;
+const entered = () => counted ? counted("operationAOTToKey") + counted("operationAOTDefineField") : 0;
 const lines = [];
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? String(d.value) : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");
 const attempt = f => { try { return String(f()); } catch (e) { return e.constructor.name; } };

@@ -1,10 +1,9 @@
 // The issues of a failed validation are built by one routine that all types share, from a description of the type. No code is emitted per type for them.
-// IR= 0 validate String "invalid_type"
-// IR= 0 validate String "unrecognized_keys"
-// IR= 0 validate String "path"
-// IR= 0 report NewObjectWithShape
+// IR- ^function f\d+ - .*\{\n(?:[ ].*\n)*?[ ].* = String string="invalid_type"
+// IR- ^function f\d+ - .*\{\n(?:[ ].*\n)*?[ ].* = String string="unrecognized_keys"
+// IR- ^function f\d+ - .*\{\n(?:[ ].*\n)*?[ ].* = String string="path"
+// IR= 0 report : =?L[0-9]+ = NewObject 
 // SIZE< report 14000
-// IR- ^function \d+ "build"
 import type { Schema } from "bun";
 interface Address { street: string; zip: string & Schema.MaxLength<5> }
 interface Person {

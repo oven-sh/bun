@@ -8,5 +8,5 @@
  "eval-in-a-method": "all agree",
  "eval-in-a-nested-declaration": "all agree",
  "eval-in-a-required-file": "all agree",
- "eval-require": "as the bundle"
+ "eval-require": "as bun run"
 }

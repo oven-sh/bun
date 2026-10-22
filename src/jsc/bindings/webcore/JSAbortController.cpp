@@ -168,7 +168,7 @@ JSObject* JSAbortController::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSAbortController>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSAbortController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSAbortController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSAbortControllerDOMConstructor, DOMConstructorID::AbortController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

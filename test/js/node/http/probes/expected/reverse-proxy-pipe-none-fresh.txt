@@ -1,0 +1,94 @@
+GET text
+    upstream listener GET /text "1"
+    client response 200 ["date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 5\r\n\r\nhello"
+    again
+    again
+GET json
+    upstream listener GET /json "1"
+    client response 200 ["content-type","date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 7\r\n\r\n{\"a\":1}"
+    again
+    again
+GET cookies
+    upstream listener GET /cookies "1"
+    client response 200 ["set-cookie","vary","x-up","date","connection","keep-alive","transfer-encoding"]
+    response: "HTTP/1.1 200 OK\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nvary: Accept\r\nx-up: 1\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n7\r\ncookies\r\n0\r\n\r\n"
+    again
+    again
+GET large
+    upstream listener GET /large "1"
+    client response 200 ["date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 200000\r\n\r\n" + 200000 bytes, checksum 2068788677
+    again
+    again
+GET stream
+    upstream listener GET /stream "1"
+    client response 200 ["date","connection","keep-alive","transfer-encoding"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n4\r\none \r\n4\r\ntwo \r\n5\r\nthree\r\n0\r\n\r\n"
+    again
+    again
+GET no-content
+    upstream listener GET /no-content "1"
+    client response 204 ["date","connection","keep-alive"]
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\n\r\n"
+    again
+    again
+GET not-modified
+    upstream listener GET /not-modified "1"
+    client response 304 ["etag","date","connection","keep-alive"]
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\n\r\n"
+    again
+    again
+GET redirect
+    upstream listener GET /redirect "1"
+    client response 302 ["location","date","connection","keep-alive","transfer-encoding"]
+    response: "HTTP/1.1 302 Found\r\nlocation: /text\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n0\r\n\r\n"
+    again
+    again
+GET server-error
+    upstream listener GET /server-error "1"
+    client response 500 ["date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 500 Internal Server Error\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 6\r\n\r\nbroken"
+    again
+    again
+GET delayed
+    upstream listener GET /delayed "1"
+    client response 200 ["date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 7\r\n\r\ndelayed"
+    again
+    again
+GET destroyed-midway
+    upstream listener GET /destroyed-midway "1"
+    client response 200 ["date","connection","keep-alive","transfer-encoding"]
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n4\r\npart\r\n"
+GET reset
+    upstream listener GET /reset "1"
+    response: "HTTP/1.1 502 Bad Gateway\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n16\r\nbad gateway ECONNRESET\r\n0\r\n\r\n"
+    again
+    again
+POST echo
+    upstream listener POST /echo "1"
+    client response 200 ["content-type","date","connection","keep-alive","transfer-encoding"]
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+    again
+    again
+POST count
+POST count, chunked
+    upstream listener POST /count "1"
+    client response 200 ["date","connection","keep-alive","content-length"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ncontent-length: 1\r\n\r\n5"
+    again
+    again
+POST echo, chunked
+    upstream listener POST /echo "1"
+    client response 200 ["content-type","date","connection","keep-alive","transfer-encoding"]
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\ntransfer-encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n"
+    again
+    again
+HEAD text
+    upstream listener HEAD /text "1"
+    client response 200 ["date","connection","keep-alive"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nconnection: keep-alive\r\nkeep-alive: timeout=5\r\n\r\n"
+    again
+    again

@@ -1,6 +1,6 @@
 // A function whose parameter is a pattern is too large to be inlined. Where it is called with an object literal, the literal is never made: the values go to the function as they are.
-// IR= 0 caller NewObjectWithShape
-// IR= 0 inLoop NewObjectWithShape
+// IR= 0 caller : =?L[0-9]+ = NewObject 
+// IR= 0 inLoop : =?L[0-9]+ = NewObject 
 interface Options {
   count: number;
   word: string;

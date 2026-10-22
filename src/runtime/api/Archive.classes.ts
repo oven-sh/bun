@@ -10,24 +10,34 @@ export default [
     klass: {
       write: {
         fn: "write",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 2,
       },
     },
     proto: {
       extract: {
         fn: "extract",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 2,
       },
       blob: {
         fn: "blob",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 0,
       },
       bytes: {
         fn: "bytes",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 0,
       },
       files: {
         fn: "files",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 0,
       },
     },

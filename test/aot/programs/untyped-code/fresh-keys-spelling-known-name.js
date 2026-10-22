@@ -1,6 +1,5 @@
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const answers = ["own", "own-and-cached", "cannot-say", "inherited-or-absent", "inherited-or-absent-and-cached", "no-such-name", "no-such-name-and-cached", "along-the-chain-of-a-dictionary", "a-field", "beyond-the-layout", "of-an-object-that-is-not-final", "of-an-object-that-is-not-final-and-offered-to-the-table"];
-const visits = () => answers.reduce((sum, answer) => sum + count("operationAOTGetByKeyGeneric:" + answer), count("operationAOTGetByVal"));
+const visits = () => count("operationAOTGetByValGeneric") + count("operationAOTGetByVal");
 
 const anew = names => names.map(name => name.length < 2 ? name : name.slice(0, 1) + name.slice(1));
 const keysAnew = () => anew(["alpha", "beta", "gamma", "missing", "inherited", "computed"]);

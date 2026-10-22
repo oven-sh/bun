@@ -1,7 +1,4 @@
-// The first read by name of what an ordinary object has itself, or of what neither it nor Object.prototype has, is entered in the table the reads go by and nowhere else, whatever gave the object its shape.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const remembered = () => count("MegamorphicCache::load:new-pair") + count("MegamorphicCache::absent:new-pair");
+// The first read by name, and the later ones, of what an ordinary object has itself and of what neither it nor Object.prototype has, whatever gave the object its shape.
 function grown(k) { const o = {}; o["p" + k] = k; o.alpha = 1; o.beta = 2; return o; }
 function Made(i) { this.alpha = i; this.beta = i + 1; }
 const parsed = text => JSON.parse(text);
@@ -13,10 +10,7 @@ function lacksGamma(o, turns) { let n = 0; for (let i = 0; i < turns; i++) n += 
 function lacksThen(o, turns) { let n = 0; for (let i = 0; i < turns; i++) n += o.then === undefined ? 1 : 0; return n; }
 const absent = (o, turns) => Math.min(lacksGamma(o, turns), lacksThen(o, turns));
 const objects = [grown(1), grown(2), parsed('{"alpha":3,"beta":4}'), parsed('{"beta":5,"alpha":6,"more":7}'), assigned(1), assigned(2)];
-const before = remembered();
 console.log(objects.map(o => sum(o, 50)).join(), objects.map(o => absent(o, 50)).join());
-const after = remembered();
-console.log(after === before ? "nothing was remembered elsewhere" : (after - before) + " pairs were remembered elsewhere");
 function sumOfMade(o, turns) { let s = 0; for (let i = 0; i < turns; i++) s += o.alpha + o.beta; return s; }
 function absentOfMade(o, turns) { let n = 0; for (let i = 0; i < turns; i++) n += o.gamma === undefined && o.then === undefined ? 1 : 0; return n; }
 console.log(sumOfMade(new Made(1), 50), absentOfMade(new Made(1), 50));

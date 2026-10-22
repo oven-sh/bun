@@ -1,0 +1,1 @@
+{ "env": { "NAMES": "node:path,node:module,node:dgram,node:no-such-module" }, "skipInShell": "it asks for modules of Bun" }

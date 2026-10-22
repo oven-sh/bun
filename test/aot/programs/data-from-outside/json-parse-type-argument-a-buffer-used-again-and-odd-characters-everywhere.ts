@@ -40,11 +40,17 @@ try {
   console.log("Object.keys cannot be replaced: " + error.name);
 }
 console.log(say(() => JSON.parse<{ a: number; lists: Lists; z: number }>('{"o":1,"a":1,"lists":{"k":["s"],"m":[]},"p":2,"z":3}')), entered > 0 ? "entered" : "not entered");
+function addToObjectPrototype(): void {
+  (Object.prototype as any).y = 5;
+}
+function removeFromObjectPrototype(): void {
+  delete (Object.prototype as any).y;
+}
 try {
   (Object as any).keys = keys;
-  (Object.prototype as any).y = 5;
+  addToObjectPrototype();
   console.log(say(() => JSON.parse<Point>('{"x":1}')), say(() => JSON.parse<Point>('{"\\u0078":1}')), say(() => JSON.parse<Point>('{"x":1,"o":2}')));
-  delete (Object.prototype as any).y;
+  removeFromObjectPrototype();
 } catch (error: any) {
   console.log("Object.prototype cannot be changed: " + error.name);
 }

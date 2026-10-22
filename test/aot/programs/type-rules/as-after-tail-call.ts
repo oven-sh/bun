@@ -1,4 +1,4 @@
-// `as` around a tail call still converts the result for direct typed callers, exactly as it does when the call is not a tail call.
+// `as` around a tail call tests the result exactly as it does when the call is not a tail call, at every depth of the recursion: a primitive of another kind throws a TypeError, an object, `null` and `undefined` pass, and nothing is converted.
 const untyped: any = {};
 let bottom: any = 0;
 function toNumber(n: number): number {

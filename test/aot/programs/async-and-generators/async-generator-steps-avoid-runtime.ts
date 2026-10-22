@@ -2,7 +2,7 @@
 // parameters, how many variables it has, how many other generator functions stand beside it. The program counts the entries of the operation that the stub leaves for.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-function entered(): number { return counted ? counted("operationAOTTypedAsyncIteratorNext") : 0; }
+function entered(): number { return counted ? counted("operationAOTAsyncIteratorStep") : 0; }
 const lines: string[] = [];
 type Stream = AsyncGenerator<unknown, void, unknown>;
 interface Chunk { n: number; text: string; }

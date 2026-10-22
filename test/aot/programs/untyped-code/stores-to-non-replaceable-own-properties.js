@@ -1,6 +1,6 @@
 // An own property that lies in the object is read by its place. Where a plain store may not simply replace it (it is not enumerable, or its object is a prototype), the store has a cache beside the place: both are kept as the table by name grows and its rows move.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTPutByNameAndCache") + count("operationAOTGetByNameAndCache");
+const visits = () => count("operationAOTPutByIdAndCache") + count("operationAOTGetByIdAndCache");
 const makers = [];
 for (let kind = 0; kind < 24; kind++) {
   makers.push(seed => {

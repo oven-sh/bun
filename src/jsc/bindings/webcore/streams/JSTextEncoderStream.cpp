@@ -207,7 +207,7 @@ JSObject* JSTextEncoderStream::prototype(VM& vm, JSDOMGlobalObject& globalObject
     return getDOMPrototype<JSTextEncoderStream>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSTextEncoderStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSTextEncoderStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSTextEncoderStreamConstructor, DOMConstructorID::TextEncoderStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

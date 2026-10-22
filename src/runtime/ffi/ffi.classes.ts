@@ -10,6 +10,8 @@ export default [
     proto: {
       close: {
         fn: "close",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
 

@@ -1,6 +1,6 @@
 // A constructor whose initial stores cannot throw is inlined inside `try` blocks too.
-// IR= 0 inTry CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)$
-// IR= 0 inAsync CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)$
+// IR= 0 inTry CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+// IR= 0 inAsync CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
 declare const console: any;
 interface Pt { x: number; y: number }
 function Pt(this: Pt, x: number, y: number) { this.x = x; this.y = y; }

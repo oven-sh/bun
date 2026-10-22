@@ -4,7 +4,6 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "headers-handwritten.h"
-#include "wtf/HashSet.h"
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
 
@@ -30,6 +29,7 @@ static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRequireTestModule);
 
 void populateESMExports(
     JSC::JSGlobalObject* globalObject,
@@ -62,10 +62,6 @@ public:
     mutable JSC::WriteBarrier<Unknown> m_childrenValue;
     // This must be WriteBarrier<Unknown> to compile; always JSCommonJSModule
     WTF::Vector<WriteBarrier<Unknown>> m_children;
-    WTF::HashSet<JSCell*> m_childrenSet;
-    JSCommonJSModule* m_lastRequiredChild { nullptr };
-    void addChild(JSC::VM&, JSCommonJSModule*);
-    void clearChildren();
 
     // Visited by the GC. When the module is assigned a non-JSCommonJSModule
     // parent, it is assigned to this field.
@@ -86,6 +82,9 @@ public:
     JSC::WriteBarrier<JSModuleGraph> m_moduleGraph;
 
     bool ignoreESModuleAnnotation { false };
+    // Of the module object of a file of an ahead-of-time executable: the number of the file in the executable. Its `exports`, `parent` and `children` are the engine's to answer.
+    static constexpr uint32_t noCompiledModule = UINT32_MAX;
+    uint32_t compiledModule { noCompiledModule };
     JSC::SourceCode sourceCode = JSC::SourceCode();
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
@@ -137,7 +136,6 @@ public:
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
-    bool evaluateCompiledWrapper(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSValue wrapper);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -170,10 +168,12 @@ JSC::Structure* createCommonJSModuleStructure(
 // together with one of the graph's modules (whose loader's ES modules it also lists).
 JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireMap, JSCommonJSModule* owner = nullptr);
 
+// The global `require.cache`. Null with an exception where the function that makes it throws:
+// an ahead-of-time executable has that function only if the program uses the cache.
+JSC::JSObject* globalRequireCacheObject(Zig::GlobalObject*);
+
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
-JSC::JSSourceCode* loadedCommonJSModuleSource(Zig::GlobalObject*, const WTF::String& key, bool ignoreESModuleAnnotation);
-
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,

@@ -2,7 +2,7 @@
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
-const attempt = f => { try { return f(); } catch (error) { return error.constructor.name + ": " + error.message.replace(/ \(evaluating .*$/, ""); } };
+const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
 const thrownBy = f => { try { f(); return "nothing"; } catch (error) { return error.constructor.name; } };
 
 class Context {
@@ -37,11 +37,11 @@ const describe = c => Object.keys(c).join() + " | " + JSON.stringify(c) + " | " 
 const env = { name: "env" };
 const make = i => new Context("raw" + (i & 1), i & 2 ? { env, path: "/p" } : undefined);
 const seen = new Set();
-const asksBefore = count("operationAOTTypedTryPutProperties");
+const asksBefore = count("operationAOTTryPutProperties");
 for (let i = 0; i < 60; i++) seen.add(describe(make(i)));
-const asks = count("operationAOTTypedTryPutProperties") - asksBefore;
+const asks = count("operationAOTTryPutProperties") - asksBefore;
 for (let i = 0; i < 340; i++) seen.add(describe(make(i)));
-const names = ["operationAOTTypedLanguageOperation", "operationAOTTypedPrivateMethodsAdd", "operationAOTTypedPrivateFieldAdd", "operationAOTTypedTryPutProperties"];
+const names = ["operationAOTPrivateMethodsAdd", "operationAOTPrivateFieldAdd", "operationAOTTryPutProperties"];
 const before = names.map(name => count(name));
 for (let i = 0; i < 1000; i++) seen.add(describe(make(i)));
 const calls = names.map((name, i) => count(name) - before[i]).reduce((a, b) => a + b);

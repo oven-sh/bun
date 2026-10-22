@@ -73,12 +73,8 @@ describe("a typed handler that generated code calls with part of its context (th
     240_000,
   );
 
-  for (const { entry, differs } of [
-    { entry: "with-typed-module.ts", differs: false },
-    { entry: "with-unchecked-module.ts", differs: true },
-    { entry: "with-javascript-module.ts", differs: true },
-  ])
-    (differs ? test.failing : test)(`the executable of ${entry} does what the executable of alone.ts does`, () => {
-      expect(executables.get(entry)).toEqual(executables.get("alone.ts")!);
+  for (const entry of entries)
+    test(`the executable of ${entry} prints the path`, () => {
+      expect(executables.get(entry)).toEqual({ stdout: "/\n", exitCode: 0 });
     });
 });

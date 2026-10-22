@@ -1,5 +1,5 @@
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
-const entries = () => count("operationAOTTypedStringReplaceRegExpString");
+const entries = () => count("operationAOTStringReplaceRegExpString");
 
 const separators = /\u2028|\u2029/g;
 const first = /(\d+)\u5186/;

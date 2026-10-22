@@ -1,7 +1,7 @@
 // IRT= 0 count : number = (Add|Sub|ToNumeric)
 // IRT= 0 copy : number = (Add|Sub|ToNumeric)
 // IRT= 0 skip : number = (Add|Sub|ToNumeric)
-// IR- Cast v\d+ As integer
+// IR- : (i32|int\S*) = Claim v\d+(?!.* isProven)
 import type { int32 } from "bun";
 
 class Cursor {

@@ -1,4 +1,4 @@
-// A literal that spreads a typed record and defines more properties, one of them read through another property, in a callback whose result has no declared type, is born a plain object with room for the spread properties only: the others lie out of line. It is then copied into its record type. Whatever kinds those properties have the copy holds what the literal held, and a value that does not fit goes the way it went.
+// A literal that spreads a typed record and defines more properties, one of them read through another property, in a callback whose result has no declared type, enters its record type as it is: whatever kinds those properties have, the object holds what the literal held. `as` converts nothing: a primitive of the wrong kind throws there, and undefined and null stay what they are.
 type State = "open" | "closed";
 interface Author { login: string }
 interface Row { id: number; title: string; state: State; login: string }

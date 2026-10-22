@@ -20,14 +20,6 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
-#[derive(Clone, Copy)]
-pub struct JsxPragmas {
-    pub factory: StoreStr,
-    pub fragment: StoreStr,
-    pub runtime: StoreStr,
-    pub import_source: StoreStr,
-}
-
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
@@ -109,8 +101,6 @@ pub struct Ast<'a> {
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
-    pub has_esm_syntax: bool,
-    pub jsx_pragmas: Option<bun_alloc::AstBox<JsxPragmas>>,
     pub import_meta_ref: Ref,
 }
 
@@ -156,8 +146,6 @@ impl<'a> Ast<'a> {
             ts_enums: Default::default(),
             has_commonjs_export_names: false,
             has_import_meta: false,
-            has_esm_syntax: false,
-            jsx_pragmas: None,
             import_meta_ref: Ref::NONE,
         }
     }

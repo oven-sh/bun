@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import { once } from "node:events";

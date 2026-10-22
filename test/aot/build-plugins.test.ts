@@ -12,7 +12,9 @@ for (const log of result.logs) console.log(String(log));
 process.exit(result.success ? 0 : 1);
 `;
 
-const cases: Record<string, { files: Record<string, string>; prints: string; refusedWithAot?: string }> = {
+const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", types: [] }, include: ["*.ts"], exclude: ["build.ts", "plugin.ts"] });
+
+const cases: Record<string, { files: Record<string, string>; prints: string }> = {
   "onLoad changes the text of a file": {
     files: {
       "main.ts": `import { answer } from "./lib"; console.log(answer);`,
@@ -70,27 +72,22 @@ const cases: Record<string, { files: Record<string, string>; prints: string; ref
       "plugin.ts": `export default { name: "p", setup(b: any) { b.onLoad({ filter: /lib\\.ts$/ }, () => ({ contents: 'export const value: any = "a string";', loader: "ts" })); } };`,
     },
     prints: "string a string\n",
-    refusedWithAot: "TS100013",
   },
 };
 
 describe.concurrent("compile/aot/plugins of Bun.build", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [name, { files, prints, refusedWithAot }] of Object.entries(cases)) {
+  for (const [name, { files, prints }] of Object.entries(cases)) {
     test(
       name,
       () =>
         slot(async () => {
-          using dir = tempDir("aot-build-plugins", { ...files, "build.ts": build });
+          using dir = tempDir("aot-build-plugins", { "tsconfig.json": tsconfig, ...files, "build.ts": build });
           const folder = String(dir);
           const main = Object.keys(files).find(file => file.startsWith("main."))!;
           for (const how of ["bundle", "aot"]) {
             const executable = join(folder, how + (isWindows ? ".exe" : ""));
             const built = await spawned([bunExe(), "build.ts", "./" + main, executable, how], folder, bunEnv);
-            if (how === "aot" && refusedWithAot) {
-              expect({ how, stdout: built.stdout, exitCode: built.exitCode }).toEqual({ how, stdout: expect.stringContaining(refusedWithAot), exitCode: 1 });
-              continue;
-            }
             expect({ how, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ how, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
             const ran = await spawned([executable], folder, how === "aot" ? { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" } : bunEnv);
             expect({ how, stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ how, stdout: prints, exitCode: 0, signal: null });

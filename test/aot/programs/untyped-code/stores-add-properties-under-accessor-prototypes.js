@@ -40,9 +40,9 @@ function both(what) {
 const said = new Set();
 const kept = [new Message(0), new Reply(0)];
 for (let round = 0; round < 200; round++) said.add(make(Message, round & 1)).add(make(Reply, round & 1));
-const before = count("operationAOTPutByNameAndCache");
+const before = count("operationAOTPutByIdAndCache");
 for (let round = 0; round < 2000; round++) said.add(make(Message, round & 1)).add(make(Reply, round & 1));
-const entries = count("operationAOTPutByNameAndCache") - before;
+const entries = count("operationAOTPutByIdAndCache") - before;
 console.log([...said].join("\n"));
 console.log(entries <= 200 ? "the run time was asked at most 200 times" : "the run time was asked " + entries + " times", kept.length);
 collect();

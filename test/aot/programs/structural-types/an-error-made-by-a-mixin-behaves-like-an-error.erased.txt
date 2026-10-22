@@ -1,0 +1,6 @@
+message [went wrong] cause [the cause] code 7 text [RangeError: went wrong]
+own names: cause code message originalColumn originalLine stack keys: code
+instance: true true true false
+stack is a string: true tag [object Error]
+caught: thrown 7
+json {"code":7} isError true

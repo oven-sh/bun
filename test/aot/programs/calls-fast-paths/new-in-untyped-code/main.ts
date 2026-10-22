@@ -1,16 +1,16 @@
 // `new` on a known function or class in untyped code is an allocation and a direct call, which can be inlined.
-// IR= 0 makesPoints Construct
+// IR= 0 makesPoints = Construct
 // IR= 1 makesPoints CreateThis
 // IR= 1 makesPoints CallDirect
-// IR= 0 makesBases Construct
+// IR= 0 makesBases = Construct
 // IR= 1 makesBases CreateThis
-// IR= 0 makesFields Construct
+// IR= 0 makesFields = Construct
 // IR= 1 makesFields CreateThis
-// IR= 0 makesLarge Construct
+// IR= 0 makesLarge = Construct
 // IR= 2 makesLarge CallDirect
-// IR= 0 makesEither Construct
-// IR= 1 makesEither IsObject
-// IR= 1 makesGiven Construct
+// IR= 0 makesEither = Construct
+// IR= 1 makesEither TypeTest v[0-9]+ testedType=object
+// IR= 1 makesGiven = Construct
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;

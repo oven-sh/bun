@@ -33,7 +33,7 @@ for (const [kind, make] of makers)
     for (const [use, run] of uses)
         attempt(kind + " | " + use, () => run(make()));
 attempt("the pairs are new each time", () => { const m = new Map([[1, 2]]); const a = Array.from(m), b = Array.from(m); return [a[0] === b[0], a[0]]; });
-attempt("the pairs may be written", () => { const m = new Map([[1, 2]]); const a = Array.from(m); a[0][1] = 9; a[0].push(3 as never); return [a, m]; });
+attempt("the pairs may be written", () => { const m = new Map([[1, 2]]); const a = Array.from(m); a[0][1] = 9; a[0].push(3 as any); return [a, m]; });
 attempt("the iterator is used up", () => { const it = new Map(pairs).entries(); const a = Array.from(it); return [a.length, it.next(), Array.from(it)]; });
 attempt("a map that was gone through meanwhile", () => { const m = new Map(pairs); const out: unknown[] = []; for (const [k] of m) out.push(k, Array.from(m).length); return out; });
 console.log(lines.join("\n"));

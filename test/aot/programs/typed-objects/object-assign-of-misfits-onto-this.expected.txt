@@ -1,8 +1,0 @@
-a number for a Tree: ["TypeError",{"depth":2},"n","held,name"]
-a number for a string: ["TypeError",{"depth":2},"n","held,name"]
-an object whose depth is a string: ["TypeError",{"depth":2},"n","held,name"]
-an object that has what a Tree has: [{"depth":3},"n","held,name"]
-a Map: ["TypeError",{"depth":2},"n","held,name"]
-an array: ["TypeError",{"depth":2},"n","held,name"]
-a function: ["TypeError",{"depth":2},"n","held,name"]
-a fit before a misfit: ["TypeError",{"depth":2},"stored","held,name"]

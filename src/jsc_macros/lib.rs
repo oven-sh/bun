@@ -20,13 +20,15 @@ use syn::{
 
 // ──────────────────────────────────────────────────────────────────────────
 // #[bun_jsc::host_fn] / #[bun_jsc::host_fn(method|getter|setter)] /
-// #[bun_jsc::host_fn(export = "Name")]
+// #[bun_jsc::host_fn(export = "Name")] / #[bun_jsc::host_fn(feature = Name)]
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default)]
 struct HostFnArgs {
     kind: HostFnKind,
     export: Option<LitStr>,
+    /// The `bun_removable_features::Feature` that `bun build --compile --trim` removes this function with.
+    feature: Option<Ident>,
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +56,10 @@ impl Parse for HostFnArgs {
                 "export" => {
                     input.parse::<Token![=]>()?;
                     out.export = Some(input.parse()?);
+                }
+                "feature" => {
+                    input.parse::<Token![=]>()?;
+                    out.feature = Some(input.parse()?);
                 }
                 other => {
                     return Err(syn::Error::new(
@@ -242,6 +248,19 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
         ),
     };
 
+    let body = match &args.feature {
+        Some(feature) if args.kind == HostFnKind::Free && !has_receiver => quote! {
+            ::bun_removable_features::removable_host_function_definition!(#feature, #shim_ident);
+            #body
+        },
+        Some(feature) => {
+            return Err(syn::Error::new(
+                feature.span(),
+                "#[host_fn(feature = ..)] is for free functions: the class generator says which feature a method belongs to",
+            ));
+        }
+        None => body,
+    };
     let shim = jsc_extern_fn(export.as_deref(), &sig_args, &ret, &body);
 
     Ok(quote! {
@@ -259,6 +278,10 @@ fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> syn::Result<TokenStream2>
 //   `${TypeName}Prototype__${prop}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
 // shims that `src/codegen/generate-classes.ts` produces for every
 // `cache: true` property. The getter maps `.zero` → `None`.
+// A typed slot (the property declares `type`) is not reachable through this
+// macro: its setter is exported as `SetProvenCachedValue`, which only
+// `generated_classes.rs` binds, behind a `Proven<K>` parameter. Listing such a
+// property here fails to link.
 // Both extern blocks are duplicated under the
 // JSC calling-convention `#[cfg]` split (see `jsc_extern_fn` above).
 // ──────────────────────────────────────────────────────────────────────────
@@ -478,7 +501,8 @@ pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
 //   classSymbolName(T, "construct") → `${T}Class__construct`
 //   classSymbolName(T, "finalize")  → `${T}Class__finalize`
 //   symbolName(T, "estimatedSize")  → `${T}__estimatedSize`
-//   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__create` (C++-side, imported)
+//   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__isInstance` / `${T}__create`
+//   (C++-side, imported)
 //
 // This is the *minimal* surface: getter/setter/method shims per
 // `#[js(getter)]` etc. are emitted by `#[host_fn(..)]` on the impl methods;
@@ -604,6 +628,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     // Rust→C++ hooks (we import these; bodies live in generated C++).
     let from_js_sym = format!("{ty_name}__fromJS");
     let from_js_direct_sym = format!("{ty_name}__fromJSDirect");
+    let is_instance_sym = format!("{ty_name}__isInstance");
     let create_sym = format!("{ty_name}__create");
     let get_ctor_sym = format!("{ty_name}__getConstructor");
 
@@ -611,6 +636,7 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
     // `callconv(jsc.conv)` on the import side: two cfg-gated `extern` blocks.
     let from_js_lit = LitStr::new(&from_js_sym, Span::call_site());
     let from_js_direct_lit = LitStr::new(&from_js_direct_sym, Span::call_site());
+    let is_instance_lit = LitStr::new(&is_instance_sym, Span::call_site());
     let create_lit = LitStr::new(&create_sym, Span::call_site());
     let get_ctor_lit = LitStr::new(&get_ctor_sym, Span::call_site());
 
@@ -654,6 +680,8 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 safe fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #from_js_direct_lit]
                 safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                #[link_name = #is_instance_lit]
+                safe fn __is_instance(value: ::bun_jsc::JSValue) -> bool;
                 #[link_name = #create_lit]
                 safe fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
@@ -667,6 +695,8 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                 safe fn __from_js(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
                 #[link_name = #from_js_direct_lit]
                 safe fn __from_js_direct(value: ::bun_jsc::JSValue) -> *mut #rust_ty;
+                #[link_name = #is_instance_lit]
+                safe fn __is_instance(value: ::bun_jsc::JSValue) -> bool;
                 #[link_name = #create_lit]
                 safe fn __create(
                     global: *mut ::bun_jsc::JSGlobalObject,
@@ -742,6 +772,12 @@ fn js_class_hooks(args: &JsClassArgs, rust_ty: &Ident) -> TokenStream2 {
                     // Pure FFI downcast; returns null on type mismatch.
                     let p = __from_js_direct(value);
                     if p.is_null() { None } else { Some(p) }
+                }
+                fn is_wrapper(value: ::bun_jsc::JSValue) -> bool {
+                    // True also while the wrapper holds no native pointer and
+                    // `from_js` is `None`: detached, or inside a
+                    // `constructNeedsThis` constructor.
+                    __is_instance(value)
                 }
                 #get_ctor_impl
             }

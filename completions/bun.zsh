@@ -789,29 +789,27 @@ _bun_compile_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '*: :_files' \
-        '--library[Build a package to publish instead of an executable\: JavaScript, .d.ts files and a package.json]' \
         '--outfile[Write the executable to this path]:outfile:_files' \
-        '--outdir[With --library\: the folder to write the package to (default\: dist)]:outdir:_files -/' \
-        '--format[With --library\: esm, or cjs for sources that are CommonJS]:format:(esm cjs)' \
         '--target[The platform to build for, such as bun-linux-x64]:target' \
         '--define[Substitute K\:V while parsing]:define' \
         '--env[Inline environment variables\: inline, disable or a prefix*]:env' \
         '--asset[Embed a file or directory into the executable]:asset:_files' \
-        '--external[Leave a module out of the executable]:external' \
+        '--external[Exclude a module from the executable]:external' \
         '--minify[Enable all minification flags]' \
         '--sourcemap[Build with sourcemaps]:sourcemap' \
         '--tsconfig-override[Use this tsconfig.json]:tsconfig-override:_files' \
         '--compile-exec-argv[Prepend arguments to the executable'"'"'s execArgv]:compile-exec-argv' \
         '--disallow-code-generation-from-strings[In the executable, eval() and new Function() throw]' \
-        '--aot-explain[List the places where the compiler cannot use your types]' \
-        '--aot-type-errors[What the executable does when a value does not match its type\: throw or log]:aot-type-errors' \
-        '--aot-deny[Fail where a rule finds something]:aot-deny' \
-        '--aot-warn[The same, as warnings]:aot-warn' \
-        '--aot-allow[Turn a rule off]:aot-allow' \
-        '--aot-huge-heap[Let each thread have more than 32 GB of objects]' \
-        '--no-aot[Keep the JavaScript in the executable instead of compiling it ahead of time]' \
-        '--trim[Leave the parts of Bun that the program cannot reach out of the executable]' \
-        '--no-trim[Keep all of Bun in the executable]' \
+        '--explain[List the code that compiled to a slow path]' \
+        '--aot-log-type-mismatches[Log every value that does not match its declared type]' \
+        '--aot-huge-heap[Remove the 32 GB heap limit per thread]' \
+        '--obfuscate[Strip function names and source locations from the executable and write them to a source map]' \
+        '--compile-inspector[Let a debugger attach to the executable]' \
+        '--compile-in-place[Keep modules at their paths on disk. The executable only runs on the machine that built it]' \
+        '--no-compile-function-source[Don'"'"'t embed function source code. fn.toString() returns \[native code\]]' \
+        '--no-aot[Bundle the JavaScript into the executable instead of compiling it to machine code]' \
+        '--trim[Remove the Bun and Node.js APIs your code never calls from the executable]' \
+        '--trim-locales[With --trim\: keep only these locales, such as en,de-AT]:trim-locales' \
         '--no-script[Run this command even if the project has a compile script]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--help[Print this help menu]' \
@@ -834,14 +832,9 @@ _bun_check_completion() {
         '--timing[Print load and check times]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
-        '--aot[Also report what bun build --compile --aot would reject in these entry points]' \
-        '--aot-explain[With --aot\: print a report. throws lists every type check that can fail when the program runs]:report' \
-        '--aot-deny[With --aot\: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all]:rule' \
-        '--aot-warn[With --aot\: the same, as warnings]:rule' \
-        '--aot-allow[With --aot\: turn a rule off. Of two flags that name the same rule and file, the later one counts]:rule' \
-        '--aot-baseline[With --aot\: a file with the number of findings per rule and file that are accepted]:file:_files' \
-        '--aot-update-baseline[With --aot-baseline\: write the file anew from this build]' \
-        '--disallow-code-generation-from-strings[With --aot\: as for an executable built with that flag]::level:(strict)' \
+        '--aot[Also report the errors bun compile would report for these entry points]' \
+        '--explain[With --aot\: print a report. guards lists every type guard that can fail at run time]:report' \
+        '--define[With --aot\: substitute k with v while parsing, like bun compile --define]:define' \
         '--help[Print this help menu]' \
         '-h[Print this help menu]' &&
         ret=0
@@ -864,7 +857,6 @@ _bun_lint_completion() {
         '--print-config[Print the config for a file and exit]:print-config:_files' \
         '--doctor[Show which rules run natively and which packages you can remove]' \
         '--allow-unsupported[Warn instead of failing when the config has a rule or file that is not supported]' \
-        '--aot[Also report what behaves differently when compiled with bun build --aot]' \
         '--staged[Only lint files that are staged in git]' \
         '--changed[Only lint files that differ from a branch or commit (default\: the default branch)]' \
         '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \

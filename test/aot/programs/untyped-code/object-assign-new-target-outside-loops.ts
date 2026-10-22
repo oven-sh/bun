@@ -38,6 +38,6 @@ const fresh = run("given", 1);
 fresh.x = 2; fresh.added = true;
 console.log(JSON.stringify(given), JSON.stringify(run("given", 1)), Object.getPrototypeOf(fresh) === Object.prototype, fresh.y === given.y);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const before = counted("operationAOTTypedObjectAssignFrom");
+const before = counted("operationAOTObjectAssignFrom");
 for (const row of ["literal", "literalAgain", "given", "givenAgain"]) run(row, 500);
-console.log(counted("operationAOTTypedObjectAssignFrom") - before);
+console.log(counted("operationAOTObjectAssignFrom") - before);

@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSPerformanceObserver.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -157,6 +158,7 @@ static const HashTableValue JSPerformanceObserverConstructorTableValues[] = {
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, JSPerformanceObserverDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSPerformanceObserverDOMConstructor>(callFrame->jsCallee());
@@ -239,7 +241,7 @@ JSObject* JSPerformanceObserver::prototype(VM& vm, JSDOMGlobalObject& globalObje
     return getDOMPrototype<JSPerformanceObserver>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSPerformanceObserver::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSPerformanceObserver::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceObserverDOMConstructor, DOMConstructorID::PerformanceObserver>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

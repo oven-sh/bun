@@ -1,0 +1,17 @@
+let calls = 0;
+const subject = new EventTarget();
+const probe = {
+  valueOf() {
+    calls++;
+    console.log("probe valueOf", this === probe);
+    return "an";
+  },
+  toString() {
+    calls++;
+    console.log("probe toString", this === probe);
+    return "an";
+  },
+};
+const result = subject.addEventListener(probe, null, 3.5);
+console.log(typeof result, result === undefined);
+console.log(calls);

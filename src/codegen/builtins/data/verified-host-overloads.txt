@@ -1,0 +1,2 @@
+# Hashes of the hand-written host overloads that test/aot/builtins/differential.test.ts has checked.
+# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts

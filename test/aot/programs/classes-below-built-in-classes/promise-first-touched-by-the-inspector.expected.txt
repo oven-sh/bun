@@ -1,0 +1,2 @@
+shown [class Late extends Promise]
+an instance function true true method of Late true true

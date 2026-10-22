@@ -1,7 +1,7 @@
 // A multi-result function whose callers read different results is cloned once per set of results read, when the clones together are no larger than the original: each caller then only pays for what it reads.
 // IR= 2 make Results
 // IR= 4 make LoopHint
-// IR- ResultAt v\d+ [123]$
+// IR- ResultAt v\d+ index=[123]\b
 type Pair = { x: number; y: number; z: number; label: string };
 function make(i: number, n: number): Pair {
   let a = 0;

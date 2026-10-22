@@ -1,6 +1,6 @@
 // `Object.assign({}, source)`: where the source is an ordinary object with nothing special about it, the new object is made in one piece with the shape of the source: no property is gone through, from the first copy of every shape on. A second source goes by a plan made once.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const oneByOne = () => counted ? counted("operationAOTTypedObjectAssignFrom:copied") : 0;
+const oneByOne = () => counted ? counted("operationAOTObjectAssignFrom") : 0;
 const lines = [];
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? JSON.stringify(d.value) ?? "undefined" : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");
 const forms = { toNew(a) { return Object.assign({}, a); }, two(a, b) { return Object.assign({}, a, b); } };

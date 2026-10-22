@@ -1,8 +1,8 @@
 {
  "at-the-stacks-end-a-class": "as bun run",
  "at-the-stacks-end-a-function-too": "as bun run",
- "at-the-stacks-end-a-side-effect": "as bun run",
- "at-the-stacks-end-exports-dot": "as bun run",
+ "at-the-stacks-end-a-side-effect": "alone: string string threw RangeError true\ntrue string",
+ "at-the-stacks-end-exports-dot": "all agree",
  "at-the-stacks-end-it-requires-another": "as bun run",
  "at-the-stacks-end-only-values": "as bun run",
  "it-throws-after-exports-dot": "as bun run",

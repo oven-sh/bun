@@ -17,7 +17,7 @@ for (const form in forms) {
 }
 try { console.log(String(Symbol("s")), `${Symbol("t")}`); } catch (error) { console.log(error.constructor.name); }
 try { console.log(~Symbol("u")); } catch (error) { console.log(error.constructor.name); }
-for (const [form, name] of [["String(x)", "operationAOTTypedToString"], ["template", "operationAOTTypedToString"], ["~x", "operationAOTTypedBitNot"]]) {
+for (const [form, name] of [["String(x)", "operationAOTToString"], ["template", "operationAOTToString"], ["~x", "operationAOTValueBitNot"]]) {
   for (const value of [7, 13, 200, 1234]) {
     forms[form](value);
     const before = entered(name);

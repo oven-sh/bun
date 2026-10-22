@@ -1,5 +1,5 @@
 // A closure that calls itself, handed to a function that calls it: its body is taken in once; the call of itself in that copy stays a call.
-// IR= 1 total GetById v\d+ "value"
+// IR= 1 total PropGet v\d+ name="value"(?!.* isFallback)
 // IR= 1 total CallDirect
 declare const console: any;
 type Link = { value: number; next: Link | null };

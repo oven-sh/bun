@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """own-property-queries-by-name.py <seed>: what is asked about own properties is remembered by shape and name in tables of a fixed size.
 THE ATTACK: FAR MORE PAIRS OF SHAPE AND NAME THAN THE TABLES HOLD, SHAPES AND NAMES THAT DIE AND COME BACK AT THE SAME ADDRESSES, AND OBJECTS WHOSE ANSWER CHANGES: properties added, deleted, hidden, made accessors; elements; dictionaries; frozen; prototypes that get and lose names; names that nothing has and that something then gets; keys written out, keys from a pool, keys made at run time, keys like indices, symbols.
-A model of plain arrays of names beside every object. Prints WRONG lines (at most eight), then sums. Untyped JavaScript: all of it is compiled under --aot. BUN_JSC_validateAOTTypedFacts=1 makes the engine hold its tables against the Structures at every ask."""
+A model of plain arrays of names beside every object. Prints WRONG lines (at most eight), then sums. Untyped JavaScript: all of it is compiled under --aot. BUN_JSC_validateAOTRuntime=1 makes the engine hold its tables against the Structures at every ask."""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 steps = R.choice([20000, 40000, 80000]); live = R.choice([24, 60, 150, 400]); pool = R.choice([6, 14, 30]); made = R.choice([8, 40, 200])

@@ -1,4 +1,4 @@
-// A `const` initialized with a constant primitive expression is a compile-time constant: a read in its temporal dead zone returns the value, where plain JavaScript throws a ReferenceError.
+// A read of a `const` in its temporal dead zone throws a ReferenceError, also where the initializer is a constant primitive expression that the compiler folds.
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 enum Color { Red = 1, Green = 2 }
 function readNumber(): number { return earlyNumber }
@@ -25,14 +25,15 @@ function inner(): string {
   return first + " " + attempt(read)
 }
 console.log("in a function:", inner())
-// Not constants: these are exact.
+// Initializers that are no constant primitive expressions.
 function readLet(): number { return earlyLet }
 function readObject(): { v: number } { return earlyObject }
 function readCall(): number { return earlyCall }
 function readLong(): string { return earlyLong }
 function readOfLet(): number { return earlyOfLet }
 function readClass(): unknown { return EarlyClass }
-console.log("exact:", [readLet, readObject, readCall, readLong, readOfLet, readClass].map(attempt).join())
+function readKindOfClass(): string { return typeof EarlyClass }
+console.log("exact:", [readLet, readObject, readCall, readLong, readOfLet, readKindOfClass].map(attempt).join())
 const earlyNumber: number = 5, earlyDouble: number = 0.5, earlyBoolean: boolean = false, earlyText: string = "", earlyNull = null, earlyUndefined = undefined
 const earlyComputed = 2 * 3 + 1, earlyOther = earlyComputed - 1, earlyMember = Color.Green, earlyTemplate = `a${earlyOther}b`
 let earlyLet = 5

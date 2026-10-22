@@ -11,9 +11,9 @@ function Reader(owner) {
 }
 Reader.prototype.show = function () { return [this[kState], this[kBuffer].length, this[kEnded], this[kOwner], Reflect.ownKeys(this).map(String).join()].join(" "); };
 const said = new Set();
-const before = count("operationAOTTypedTryPutProperties");
+const before = count("operationAOTTryPutProperties");
 for (let i = 0; i < 2000; i++) said.add(new Reader(i & 1).show());
-const calls = count("operationAOTTypedTryPutProperties") - before;
+const calls = count("operationAOTTryPutProperties") - before;
 console.log([...said].join(" | "), calls <= 4 ? "and the run time was asked at most 4 times" : "and the run time was asked " + calls + " times");
 collect();
 console.log(new Reader(2).show());

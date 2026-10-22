@@ -1,0 +1,3 @@
+# An importing file gets the same members as the file that declares the class.
+imported-class.ts:3 declares `C` = x Field Member 3 number checked number
+same: imported-class.ts:3 declares `C` <=> imported-class-declaration.ts:2 class member `C`

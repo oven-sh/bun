@@ -2,7 +2,6 @@ import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-const listed = `.map(key => key.split("/").pop()).filter(name => /^(db|other|only-|index)/.test(name)).sort().join()`;
 const files = {
   "db.json": `{ "a": 1 }`,
   "other.js": `module.exports = { a: 1 };`,
@@ -17,15 +16,12 @@ const files = {
     const json = require("./only-json.js"), script = require("./only-script.js");
     console.log(JSON.stringify(json), json === require("./db.json"), JSON.stringify(script), script === require("./other.js"));
     console.log(require("fake-types").extension("text/plain"), require("fake-db") === require("fake-db/db.json"));
-    console.log(Object.keys(require.cache)${listed});
   `,
   "imported.mjs": `
     import json from "./only-json.js";
     import script from "./only-script.js";
     import types from "fake-types";
-    import { createRequire } from "node:module";
     console.log(JSON.stringify(json), JSON.stringify(script), types.extension("text/plain"));
-    console.log(Object.keys(createRequire(import.meta.url).cache)${listed});
   `,
   "only.test.js": `
     const { test } = require("node:test"), assert = require("node:assert");
@@ -42,7 +38,7 @@ async function run(cwd: string, args: string[], env: Record<string, string | und
 const compiledOnly = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
 test.concurrent.each(["required.cjs", "imported.mjs"])(
-  "bun run --aot %s: a module that only re-exports another is compiled and is in require.cache",
+  "bun run --aot %s: a module that only re-exports another is compiled",
   async entry => {
     using dir = tempDir("aot-reexport-only", files);
     const plain = await run(String(dir), ["run", entry], bunEnv);

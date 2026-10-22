@@ -1,0 +1,2 @@
+# A written `int32` result keeps its refinement.
+int32-result.ts:4 call result `f()` = int32 checked int32

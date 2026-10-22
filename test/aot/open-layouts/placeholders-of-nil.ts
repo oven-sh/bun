@@ -21,3 +21,6 @@ holders.push(cleared, clearedAsAny);
 for (const holder of holders) console.log(holder.name, sum(holder), holder.state);
 holders.forEach((holder, index) => { holder.state = makeBig(index); });
 for (const holder of holders) console.log(holder.name, sum(holder), Object.keys(holder.state).join());
+interface Control { control: number; }
+const control: Control = JSON.parse('{"control":1}');
+console.log(control.control);

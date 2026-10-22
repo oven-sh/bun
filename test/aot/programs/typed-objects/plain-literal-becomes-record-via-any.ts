@@ -1,4 +1,4 @@
-// A plain object literal that something else also holds is handed, as `any`, to a place of a record type with optional fields that the literal does not give. It satisfies the type, so it becomes the record where it lies: both holders go on seeing one object.
+// A plain object literal that something else also holds is handed, as `any`, to a place of a record type with optional fields that the literal does not give. It satisfies the type and stays the object it is: both holders go on seeing one object.
 interface Host { a: number[]; b: string; o1?: number; o2?: number; o3?: number; o4?: number }
 interface Pair { list: string[]; x?: number; y?: number; z?: number }
 function show(h: Host): string { return h.a.length + h.b + (h.o4 ?? "-"); }

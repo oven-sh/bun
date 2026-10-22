@@ -1,0 +1,1152 @@
+bytesWritten replaced on the socket, GET, end(body)
+bytesWritten replaced on the socket, POST with the body read
+bytesWritten replaced on the socket, POST with the body ignored
+destroyNow replaced on the socket, GET, end(body)
+destroyNow replaced on the socket, POST with the body read
+destroyNow replaced on the socket, POST with the body ignored
+_onTimeout replaced on the socket, GET, end(body)
+_onTimeout replaced on the socket, POST with the body read
+_onTimeout replaced on the socket, POST with the body ignored
+_unrefTimer replaced on the socket, GET, end(body)
+address replaced on the socket, GET, end(body)
+address replaced on the socket, POST with the body read
+address replaced on the socket, POST with the body ignored
+bufferSize replaced on the socket, GET, end(body)
+bufferSize replaced on the socket, POST with the body read
+bufferSize replaced on the socket, POST with the body ignored
+connect replaced on the socket, GET, end(body)
+connect replaced on the socket, POST with the body read
+connect replaced on the socket, POST with the body ignored
+_final replaced on the socket, GET, end(body)
+_final replaced on the socket, POST with the body read
+_final replaced on the socket, POST with the body ignored
+destroySoon replaced on the socket, GET, end(body)
+destroySoon replaced on the socket, POST with the body read
+destroySoon replaced on the socket, POST with the body ignored
+localAddress replaced on the socket, GET, end(body)
+localAddress replaced on the socket, POST with the body read
+localAddress replaced on the socket, POST with the body ignored
+localFamily replaced on the socket, GET, end(body)
+localFamily replaced on the socket, POST with the body read
+localFamily replaced on the socket, POST with the body ignored
+localPort replaced on the socket, GET, end(body)
+localPort replaced on the socket, POST with the body read
+localPort replaced on the socket, POST with the body ignored
+pending replaced on the socket, GET, end(body)
+pending replaced on the socket, POST with the body read
+pending replaced on the socket, POST with the body ignored
+readyState replaced on the socket, GET, end(body)
+readyState replaced on the socket, POST with the body read
+readyState replaced on the socket, POST with the body ignored
+servername replaced on the socket, GET, end(body)
+servername replaced on the socket, POST with the body read
+servername replaced on the socket, POST with the body ignored
+authorized replaced on the socket, GET, end(body)
+authorized replaced on the socket, POST with the body read
+authorized replaced on the socket, POST with the body ignored
+authorizationError replaced on the socket, GET, end(body)
+authorizationError replaced on the socket, POST with the body read
+authorizationError replaced on the socket, POST with the body ignored
+ref replaced on the socket, GET, end(body)
+ref replaced on the socket, POST with the body read
+ref replaced on the socket, POST with the body ignored
+remoteAddress replaced on the socket, GET, end(body)
+remoteAddress replaced on the socket, POST with the body read
+remoteAddress replaced on the socket, POST with the body ignored
+remotePort replaced on the socket, GET, end(body)
+remotePort replaced on the socket, POST with the body read
+remotePort replaced on the socket, POST with the body ignored
+remoteFamily replaced on the socket, GET, end(body)
+remoteFamily replaced on the socket, POST with the body read
+remoteFamily replaced on the socket, POST with the body ignored
+resetAndDestroy replaced on the socket, GET, end(body)
+resetAndDestroy replaced on the socket, POST with the body read
+resetAndDestroy replaced on the socket, POST with the body ignored
+setKeepAlive replaced on the socket, GET, end(body)
+setKeepAlive replaced on the socket, POST with the body read
+setKeepAlive replaced on the socket, POST with the body ignored
+setNoDelay replaced on the socket, GET, end(body)
+setNoDelay replaced on the socket, POST with the body read
+setNoDelay replaced on the socket, POST with the body ignored
+setEncoding replaced on the socket, GET, end(body)
+setEncoding replaced on the socket, POST with the body read
+setEncoding replaced on the socket, POST with the body ignored
+unref replaced on the socket, GET, end(body)
+unref replaced on the socket, POST with the body read
+unref replaced on the socket, POST with the body ignored
+_write replaced on the socket, GET, end(body)
+_write replaced on the socket, POST with the body read
+_write replaced on the socket, POST with the body ignored
+pause replaced on the socket, GET, end(body)
+pause replaced on the socket, POST with the body read
+pause replaced on the socket, POST with the body ignored
+_bytesDispatched replaced on the socket, GET, end(body)
+_bytesDispatched replaced on the socket, POST with the body read
+_bytesDispatched replaced on the socket, POST with the body ignored
+end replaced on the socket, GET, end(body)
+end replaced on the socket, POST with the body read
+end replaced on the socket, POST with the body ignored
+_connecting replaced on the socket, GET, end(body)
+_connecting replaced on the socket, POST with the body read
+_connecting replaced on the socket, POST with the body ignored
+_reset replaced on the socket, GET, end(body)
+_reset replaced on the socket, POST with the body read
+_reset replaced on the socket, POST with the body ignored
+_getpeername replaced on the socket, GET, end(body)
+_getpeername replaced on the socket, POST with the body read
+_getpeername replaced on the socket, POST with the body ignored
+_getsockname replaced on the socket, GET, end(body)
+_getsockname replaced on the socket, POST with the body read
+_getsockname replaced on the socket, POST with the body ignored
+setTypeOfService replaced on the socket, GET, end(body)
+setTypeOfService replaced on the socket, POST with the body read
+setTypeOfService replaced on the socket, POST with the body ignored
+getTypeOfService replaced on the socket, GET, end(body)
+getTypeOfService replaced on the socket, POST with the body read
+getTypeOfService replaced on the socket, POST with the body ignored
+_writev replaced on the socket, GET, end(body)
+_writev replaced on the socket, POST with the body read
+_writev replaced on the socket, POST with the body ignored
+write replaced on the socket, GET, end(body)
+write replaced on the socket, POST with the body read
+write replaced on the socket, POST with the body ignored
+cork replaced on the socket, GET, end(body)
+cork replaced on the socket, POST with the body read
+cork replaced on the socket, POST with the body ignored
+uncork replaced on the socket, GET, end(body)
+uncork replaced on the socket, POST with the body read
+uncork replaced on the socket, POST with the body ignored
+setDefaultEncoding replaced on the socket, GET, end(body)
+setDefaultEncoding replaced on the socket, POST with the body read
+setDefaultEncoding replaced on the socket, POST with the body ignored
+writableHighWaterMark replaced on the socket, GET, end(body)
+writableHighWaterMark replaced on the socket, POST with the body read
+writableHighWaterMark replaced on the socket, POST with the body ignored
+writableObjectMode replaced on the socket, GET, end(body)
+writableObjectMode replaced on the socket, POST with the body read
+writableObjectMode replaced on the socket, POST with the body ignored
+writableBuffer replaced on the socket, GET, end(body)
+writableBuffer replaced on the socket, POST with the body read
+writableBuffer replaced on the socket, POST with the body ignored
+writableLength replaced on the socket, GET, end(body)
+writableLength replaced on the socket, POST with the body read
+writableLength replaced on the socket, POST with the body ignored
+writableFinished replaced on the socket, GET, end(body)
+writableFinished replaced on the socket, POST with the body read
+writableFinished replaced on the socket, POST with the body ignored
+writableCorked replaced on the socket, GET, end(body)
+writableCorked replaced on the socket, POST with the body read
+writableCorked replaced on the socket, POST with the body ignored
+writableEnded replaced on the socket, GET, end(body)
+writableEnded replaced on the socket, POST with the body read
+writableEnded replaced on the socket, POST with the body ignored
+writableNeedDrain replaced on the socket, GET, end(body)
+writableNeedDrain replaced on the socket, POST with the body read
+writableNeedDrain replaced on the socket, POST with the body ignored
+_undestroy replaced on the socket, GET, end(body)
+_undestroy replaced on the socket, POST with the body read
+_undestroy replaced on the socket, POST with the body ignored
+unshift replaced on the socket, GET, end(body)
+unshift replaced on the socket, POST with the body read
+unshift replaced on the socket, POST with the body ignored
+isPaused replaced on the socket, GET, end(body)
+isPaused replaced on the socket, POST with the body read
+isPaused replaced on the socket, POST with the body ignored
+pipe replaced on the socket, GET, end(body)
+pipe replaced on the socket, POST with the body read
+pipe replaced on the socket, POST with the body ignored
+unpipe replaced on the socket, GET, end(body)
+unpipe replaced on the socket, POST with the body read
+unpipe replaced on the socket, POST with the body ignored
+on replaced on the socket, GET, end(body)
+on replaced on the socket, POST with the body read
+on replaced on the socket, POST with the body ignored
+addListener replaced on the socket, GET, end(body)
+addListener replaced on the socket, POST with the body read
+addListener replaced on the socket, POST with the body ignored
+removeListener replaced on the socket, GET, end(body)
+removeListener replaced on the socket, POST with the body read
+removeListener replaced on the socket, POST with the body ignored
+off replaced on the socket, GET, end(body)
+off replaced on the socket, POST with the body read
+off replaced on the socket, POST with the body ignored
+removeAllListeners replaced on the socket, GET, end(body)
+removeAllListeners replaced on the socket, POST with the body read
+removeAllListeners replaced on the socket, POST with the body ignored
+wrap replaced on the socket, GET, end(body)
+wrap replaced on the socket, POST with the body read
+wrap replaced on the socket, POST with the body ignored
+iterator replaced on the socket, GET, end(body)
+iterator replaced on the socket, POST with the body read
+iterator replaced on the socket, POST with the body ignored
+compose replaced on the socket, GET, end(body)
+compose replaced on the socket, POST with the body read
+compose replaced on the socket, POST with the body ignored
+readableDidRead replaced on the socket, GET, end(body)
+readableDidRead replaced on the socket, POST with the body read
+readableDidRead replaced on the socket, POST with the body ignored
+readableAborted replaced on the socket, GET, end(body)
+readableAborted replaced on the socket, POST with the body read
+readableAborted replaced on the socket, POST with the body ignored
+readableHighWaterMark replaced on the socket, GET, end(body)
+readableHighWaterMark replaced on the socket, POST with the body read
+readableHighWaterMark replaced on the socket, POST with the body ignored
+readableBuffer replaced on the socket, GET, end(body)
+readableBuffer replaced on the socket, POST with the body read
+readableBuffer replaced on the socket, POST with the body ignored
+readableFlowing replaced on the socket, GET, end(body)
+readableFlowing replaced on the socket, POST with the body read
+readableFlowing replaced on the socket, POST with the body ignored
+readableLength replaced on the socket, GET, end(body)
+readableLength replaced on the socket, POST with the body read
+readableLength replaced on the socket, POST with the body ignored
+readableObjectMode replaced on the socket, GET, end(body)
+readableObjectMode replaced on the socket, POST with the body read
+readableObjectMode replaced on the socket, POST with the body ignored
+readableEncoding replaced on the socket, GET, end(body)
+readableEncoding replaced on the socket, POST with the body read
+readableEncoding replaced on the socket, POST with the body ignored
+closed replaced on the socket, GET, end(body)
+closed replaced on the socket, POST with the body read
+closed replaced on the socket, POST with the body ignored
+drop replaced on the socket, GET, end(body)
+drop replaced on the socket, POST with the body read
+drop replaced on the socket, POST with the body ignored
+filter replaced on the socket, GET, end(body)
+filter replaced on the socket, POST with the body read
+filter replaced on the socket, POST with the body ignored
+flatMap replaced on the socket, GET, end(body)
+flatMap replaced on the socket, POST with the body read
+flatMap replaced on the socket, POST with the body ignored
+map replaced on the socket, GET, end(body)
+map replaced on the socket, POST with the body read
+map replaced on the socket, POST with the body ignored
+take replaced on the socket, GET, end(body)
+take replaced on the socket, POST with the body read
+take replaced on the socket, POST with the body ignored
+every replaced on the socket, GET, end(body)
+every replaced on the socket, POST with the body read
+every replaced on the socket, POST with the body ignored
+forEach replaced on the socket, GET, end(body)
+forEach replaced on the socket, POST with the body read
+forEach replaced on the socket, POST with the body ignored
+reduce replaced on the socket, GET, end(body)
+reduce replaced on the socket, POST with the body read
+reduce replaced on the socket, POST with the body ignored
+toArray replaced on the socket, GET, end(body)
+toArray replaced on the socket, POST with the body read
+toArray replaced on the socket, POST with the body ignored
+some replaced on the socket, GET, end(body)
+some replaced on the socket, POST with the body read
+some replaced on the socket, POST with the body ignored
+find replaced on the socket, GET, end(body)
+find replaced on the socket, POST with the body read
+find replaced on the socket, POST with the body ignored
+eventNames replaced on the socket, GET, end(body)
+eventNames replaced on the socket, POST with the body read
+eventNames replaced on the socket, POST with the body ignored
+setMaxListeners replaced on the socket, GET, end(body)
+setMaxListeners replaced on the socket, POST with the body read
+setMaxListeners replaced on the socket, POST with the body ignored
+getMaxListeners replaced on the socket, GET, end(body)
+getMaxListeners replaced on the socket, POST with the body read
+getMaxListeners replaced on the socket, POST with the body ignored
+prependListener replaced on the socket, GET, end(body)
+prependListener replaced on the socket, POST with the body read
+prependListener replaced on the socket, POST with the body ignored
+once replaced on the socket, GET, end(body)
+once replaced on the socket, POST with the body read
+once replaced on the socket, POST with the body ignored
+prependOnceListener replaced on the socket, GET, end(body)
+prependOnceListener replaced on the socket, POST with the body read
+prependOnceListener replaced on the socket, POST with the body ignored
+listeners replaced on the socket, GET, end(body)
+listeners replaced on the socket, POST with the body read
+listeners replaced on the socket, POST with the body ignored
+rawListeners replaced on the socket, GET, end(body)
+rawListeners replaced on the socket, POST with the body read
+rawListeners replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+bytesWritten replaced on the socket, GET, write(), end(body)
+destroyNow replaced on the socket, GET, write(), end(body)
+_onTimeout replaced on the socket, GET, write(), end(body)
+_unrefTimer replaced on the socket, GET, write(), end(body)
+address replaced on the socket, GET, write(), end(body)
+bufferSize replaced on the socket, GET, write(), end(body)
+connect replaced on the socket, GET, write(), end(body)
+_final replaced on the socket, GET, write(), end(body)
+destroySoon replaced on the socket, GET, write(), end(body)
+localAddress replaced on the socket, GET, write(), end(body)
+localFamily replaced on the socket, GET, write(), end(body)
+localPort replaced on the socket, GET, write(), end(body)
+pending replaced on the socket, GET, write(), end(body)
+readyState replaced on the socket, GET, write(), end(body)
+servername replaced on the socket, GET, write(), end(body)
+authorized replaced on the socket, GET, write(), end(body)
+authorizationError replaced on the socket, GET, write(), end(body)
+ref replaced on the socket, GET, write(), end(body)
+remoteAddress replaced on the socket, GET, write(), end(body)
+remotePort replaced on the socket, GET, write(), end(body)
+remoteFamily replaced on the socket, GET, write(), end(body)
+resetAndDestroy replaced on the socket, GET, write(), end(body)
+setKeepAlive replaced on the socket, GET, write(), end(body)
+setNoDelay replaced on the socket, GET, write(), end(body)
+setEncoding replaced on the socket, GET, write(), end(body)
+unref replaced on the socket, GET, write(), end(body)
+_write replaced on the socket, GET, write(), end(body)
+pause replaced on the socket, GET, write(), end(body)
+_bytesDispatched replaced on the socket, GET, write(), end(body)
+end replaced on the socket, GET, write(), end(body)
+_connecting replaced on the socket, GET, write(), end(body)
+_reset replaced on the socket, GET, write(), end(body)
+_getpeername replaced on the socket, GET, write(), end(body)
+_getsockname replaced on the socket, GET, write(), end(body)
+setTypeOfService replaced on the socket, GET, write(), end(body)
+getTypeOfService replaced on the socket, GET, write(), end(body)
+_writev replaced on the socket, GET, write(), end(body)
+write replaced on the socket, GET, write(), end(body)
+cork replaced on the socket, GET, write(), end(body)
+uncork replaced on the socket, GET, write(), end(body)
+setDefaultEncoding replaced on the socket, GET, write(), end(body)
+writableHighWaterMark replaced on the socket, GET, write(), end(body)
+writableObjectMode replaced on the socket, GET, write(), end(body)
+writableBuffer replaced on the socket, GET, write(), end(body)
+writableLength replaced on the socket, GET, write(), end(body)
+writableFinished replaced on the socket, GET, write(), end(body)
+writableCorked replaced on the socket, GET, write(), end(body)
+writableEnded replaced on the socket, GET, write(), end(body)
+writableNeedDrain replaced on the socket, GET, write(), end(body)
+_undestroy replaced on the socket, GET, write(), end(body)
+unshift replaced on the socket, GET, write(), end(body)
+isPaused replaced on the socket, GET, write(), end(body)
+pipe replaced on the socket, GET, write(), end(body)
+unpipe replaced on the socket, GET, write(), end(body)
+on replaced on the socket, GET, write(), end(body)
+addListener replaced on the socket, GET, write(), end(body)
+removeListener replaced on the socket, GET, write(), end(body)
+off replaced on the socket, GET, write(), end(body)
+removeAllListeners replaced on the socket, GET, write(), end(body)
+wrap replaced on the socket, GET, write(), end(body)
+iterator replaced on the socket, GET, write(), end(body)
+compose replaced on the socket, GET, write(), end(body)
+readableDidRead replaced on the socket, GET, write(), end(body)
+readableAborted replaced on the socket, GET, write(), end(body)
+readableHighWaterMark replaced on the socket, GET, write(), end(body)
+readableBuffer replaced on the socket, GET, write(), end(body)
+readableFlowing replaced on the socket, GET, write(), end(body)
+readableLength replaced on the socket, GET, write(), end(body)
+readableObjectMode replaced on the socket, GET, write(), end(body)
+readableEncoding replaced on the socket, GET, write(), end(body)
+closed replaced on the socket, GET, write(), end(body)
+drop replaced on the socket, GET, write(), end(body)
+filter replaced on the socket, GET, write(), end(body)
+flatMap replaced on the socket, GET, write(), end(body)
+map replaced on the socket, GET, write(), end(body)
+take replaced on the socket, GET, write(), end(body)
+every replaced on the socket, GET, write(), end(body)
+forEach replaced on the socket, GET, write(), end(body)
+reduce replaced on the socket, GET, write(), end(body)
+toArray replaced on the socket, GET, write(), end(body)
+some replaced on the socket, GET, write(), end(body)
+find replaced on the socket, GET, write(), end(body)
+eventNames replaced on the socket, GET, write(), end(body)
+setMaxListeners replaced on the socket, GET, write(), end(body)
+getMaxListeners replaced on the socket, GET, write(), end(body)
+prependListener replaced on the socket, GET, write(), end(body)
+once replaced on the socket, GET, write(), end(body)
+prependOnceListener replaced on the socket, GET, write(), end(body)
+listeners replaced on the socket, GET, write(), end(body)
+rawListeners replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+_unrefTimer replaced on the socket, POST with the body read
+_unrefTimer replaced on the socket, POST with the body ignored
+    socket._unrefTimer()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+_destroy replaced on the socket, GET, end(body)
+_destroy replaced on the socket, POST with the body read
+_destroy replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket._destroy(object)
+_destroy replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket._destroy(object)
+_read replaced on the socket, GET, end(body)
+_read replaced on the socket, POST with the body read
+_read replaced on the socket, POST with the body ignored
+    socket._read(65536)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+_read replaced on the socket, GET, write(), end(body)
+    socket._read(65536)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+setTimeout replaced on the socket, GET, end(body)
+setTimeout replaced on the socket, POST with the body read
+setTimeout replaced on the socket, POST with the body ignored
+    socket.setTimeout(6000)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+setTimeout replaced on the socket, GET, write(), end(body)
+    socket.setTimeout(6000)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+resume replaced on the socket, GET, end(body)
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+resume replaced on the socket, GET, write(), end(body)
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+resume replaced on the socket, POST with the body read
+    socket.resume()
+    socket.resume()
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+resume replaced on the socket, POST with the body ignored
+    socket.resume()
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+read replaced on the socket, GET, end(body)
+read replaced on the socket, POST with the body read
+read replaced on the socket, POST with the body ignored
+    socket.read(0)
+    socket.read()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.read()
+    socket.read(0)
+read replaced on the socket, GET, write(), end(body)
+    socket.read(0)
+    socket.read()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.read()
+    socket.read(0)
+destroy replaced on the socket, GET, end(body)
+destroy replaced on the socket, POST with the body read
+destroy replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.destroy(undefined)
+destroy replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.destroy(undefined)
+writable replaced on the socket, GET, end(body)
+writable replaced on the socket, POST with the body read
+writable replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.get writable()
+writable replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.get writable()
+destroyed replaced on the socket, GET, end(body)
+destroyed replaced on the socket, POST with the body read
+destroyed replaced on the socket, POST with the body ignored
+    socket.get destroyed()
+    socket.get destroyed()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.get destroyed()
+    socket.get destroyed()
+    socket.get destroyed()
+    socket.get destroyed()
+destroyed replaced on the socket, GET, write(), end(body)
+    socket.get destroyed()
+    socket.get destroyed()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.get destroyed()
+    socket.get destroyed()
+    socket.get destroyed()
+    socket.get destroyed()
+push replaced on the socket, GET, end(body)
+push replaced on the socket, POST with the body read
+push replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.push(object)
+push replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.push(object)
+readable replaced on the socket, GET, end(body)
+    socket.get readable()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+readable replaced on the socket, GET, write(), end(body)
+    socket.get readable()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+readable replaced on the socket, POST with the body read
+    socket.get readable()
+    socket.get readable()
+    socket.get readable()
+    socket.get readable()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+readable replaced on the socket, POST with the body ignored
+    socket.get readable()
+    socket.get readable()
+    socket.get readable()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+errored replaced on the socket, GET, end(body)
+errored replaced on the socket, POST with the body read
+errored replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.get errored()
+errored replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.get errored()
+readableEnded replaced on the socket, GET, end(body)
+readableEnded replaced on the socket, POST with the body read
+readableEnded replaced on the socket, POST with the body ignored
+    socket.get readableEnded()
+    socket.get readableEnded()
+    socket.get readableEnded()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.get readableEnded()
+    socket.get readableEnded()
+readableEnded replaced on the socket, GET, write(), end(body)
+    socket.get readableEnded()
+    socket.get readableEnded()
+    socket.get readableEnded()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.get readableEnded()
+    socket.get readableEnded()
+emit replaced on the socket, GET, end(body)
+emit replaced on the socket, POST with the body read
+emit replaced on the socket, POST with the body ignored
+    socket.emit("resume")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.emit("readable")
+    socket.emit("end")
+    socket.emit("close")
+emit replaced on the socket, GET, write(), end(body)
+    socket.emit("resume")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.emit("readable")
+    socket.emit("end")
+    socket.emit("close")
+listenerCount replaced on the socket, GET, end(body)
+listenerCount replaced on the socket, POST with the body read
+listenerCount replaced on the socket, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    socket.listenerCount("error")
+listenerCount replaced on the socket, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    socket.listenerCount("error")
+bytesWritten replaced on Socket.prototype, GET, end(body)
+bytesWritten replaced on Socket.prototype, POST with the body read
+bytesWritten replaced on Socket.prototype, POST with the body ignored
+destroyNow replaced on Socket.prototype, GET, end(body)
+destroyNow replaced on Socket.prototype, POST with the body read
+destroyNow replaced on Socket.prototype, POST with the body ignored
+_onTimeout replaced on Socket.prototype, GET, end(body)
+_onTimeout replaced on Socket.prototype, POST with the body read
+_onTimeout replaced on Socket.prototype, POST with the body ignored
+_unrefTimer replaced on Socket.prototype, GET, end(body)
+_unrefTimer replaced on Socket.prototype, POST with the body read
+_unrefTimer replaced on Socket.prototype, POST with the body ignored
+address replaced on Socket.prototype, GET, end(body)
+address replaced on Socket.prototype, POST with the body read
+address replaced on Socket.prototype, POST with the body ignored
+bufferSize replaced on Socket.prototype, GET, end(body)
+bufferSize replaced on Socket.prototype, POST with the body read
+bufferSize replaced on Socket.prototype, POST with the body ignored
+connect replaced on Socket.prototype, GET, end(body)
+connect replaced on Socket.prototype, POST with the body read
+connect replaced on Socket.prototype, POST with the body ignored
+_destroy replaced on Socket.prototype, GET, end(body)
+_destroy replaced on Socket.prototype, POST with the body read
+_destroy replaced on Socket.prototype, POST with the body ignored
+_final replaced on Socket.prototype, GET, end(body)
+_final replaced on Socket.prototype, POST with the body read
+_final replaced on Socket.prototype, POST with the body ignored
+destroySoon replaced on Socket.prototype, GET, end(body)
+destroySoon replaced on Socket.prototype, POST with the body read
+destroySoon replaced on Socket.prototype, POST with the body ignored
+localAddress replaced on Socket.prototype, GET, end(body)
+localAddress replaced on Socket.prototype, POST with the body read
+localAddress replaced on Socket.prototype, POST with the body ignored
+localFamily replaced on Socket.prototype, GET, end(body)
+localFamily replaced on Socket.prototype, POST with the body read
+localFamily replaced on Socket.prototype, POST with the body ignored
+localPort replaced on Socket.prototype, GET, end(body)
+localPort replaced on Socket.prototype, POST with the body read
+localPort replaced on Socket.prototype, POST with the body ignored
+pending replaced on Socket.prototype, GET, end(body)
+pending replaced on Socket.prototype, POST with the body read
+pending replaced on Socket.prototype, POST with the body ignored
+_read replaced on Socket.prototype, GET, end(body)
+_read replaced on Socket.prototype, POST with the body read
+_read replaced on Socket.prototype, POST with the body ignored
+readyState replaced on Socket.prototype, GET, end(body)
+readyState replaced on Socket.prototype, POST with the body read
+readyState replaced on Socket.prototype, POST with the body ignored
+servername replaced on Socket.prototype, GET, end(body)
+servername replaced on Socket.prototype, POST with the body read
+servername replaced on Socket.prototype, POST with the body ignored
+authorized replaced on Socket.prototype, GET, end(body)
+authorized replaced on Socket.prototype, POST with the body read
+authorized replaced on Socket.prototype, POST with the body ignored
+authorizationError replaced on Socket.prototype, GET, end(body)
+authorizationError replaced on Socket.prototype, POST with the body read
+authorizationError replaced on Socket.prototype, POST with the body ignored
+ref replaced on Socket.prototype, GET, end(body)
+ref replaced on Socket.prototype, POST with the body read
+ref replaced on Socket.prototype, POST with the body ignored
+remoteAddress replaced on Socket.prototype, GET, end(body)
+remoteAddress replaced on Socket.prototype, POST with the body read
+remoteAddress replaced on Socket.prototype, POST with the body ignored
+remotePort replaced on Socket.prototype, GET, end(body)
+remotePort replaced on Socket.prototype, POST with the body read
+remotePort replaced on Socket.prototype, POST with the body ignored
+remoteFamily replaced on Socket.prototype, GET, end(body)
+remoteFamily replaced on Socket.prototype, POST with the body read
+remoteFamily replaced on Socket.prototype, POST with the body ignored
+resetAndDestroy replaced on Socket.prototype, GET, end(body)
+resetAndDestroy replaced on Socket.prototype, POST with the body read
+resetAndDestroy replaced on Socket.prototype, POST with the body ignored
+setKeepAlive replaced on Socket.prototype, GET, end(body)
+setKeepAlive replaced on Socket.prototype, POST with the body read
+setKeepAlive replaced on Socket.prototype, POST with the body ignored
+setNoDelay replaced on Socket.prototype, GET, end(body)
+setNoDelay replaced on Socket.prototype, POST with the body read
+setNoDelay replaced on Socket.prototype, POST with the body ignored
+setTimeout replaced on Socket.prototype, GET, end(body)
+setTimeout replaced on Socket.prototype, POST with the body read
+setTimeout replaced on Socket.prototype, POST with the body ignored
+setEncoding replaced on Socket.prototype, GET, end(body)
+setEncoding replaced on Socket.prototype, POST with the body read
+setEncoding replaced on Socket.prototype, POST with the body ignored
+unref replaced on Socket.prototype, GET, end(body)
+unref replaced on Socket.prototype, POST with the body read
+unref replaced on Socket.prototype, POST with the body ignored
+_write replaced on Socket.prototype, GET, end(body)
+_write replaced on Socket.prototype, POST with the body read
+_write replaced on Socket.prototype, POST with the body ignored
+pause replaced on Socket.prototype, GET, end(body)
+pause replaced on Socket.prototype, POST with the body read
+pause replaced on Socket.prototype, POST with the body ignored
+end replaced on Socket.prototype, GET, end(body)
+end replaced on Socket.prototype, POST with the body read
+end replaced on Socket.prototype, POST with the body ignored
+read replaced on Socket.prototype, GET, end(body)
+read replaced on Socket.prototype, POST with the body read
+read replaced on Socket.prototype, POST with the body ignored
+_reset replaced on Socket.prototype, GET, end(body)
+_reset replaced on Socket.prototype, POST with the body read
+_reset replaced on Socket.prototype, POST with the body ignored
+_getpeername replaced on Socket.prototype, GET, end(body)
+_getpeername replaced on Socket.prototype, POST with the body read
+_getpeername replaced on Socket.prototype, POST with the body ignored
+_getsockname replaced on Socket.prototype, GET, end(body)
+_getsockname replaced on Socket.prototype, POST with the body read
+_getsockname replaced on Socket.prototype, POST with the body ignored
+setTypeOfService replaced on Socket.prototype, GET, end(body)
+setTypeOfService replaced on Socket.prototype, POST with the body read
+setTypeOfService replaced on Socket.prototype, POST with the body ignored
+getTypeOfService replaced on Socket.prototype, GET, end(body)
+getTypeOfService replaced on Socket.prototype, POST with the body read
+getTypeOfService replaced on Socket.prototype, POST with the body ignored
+_writev replaced on Socket.prototype, GET, end(body)
+_writev replaced on Socket.prototype, POST with the body read
+_writev replaced on Socket.prototype, POST with the body ignored
+destroy replaced on Duplex.prototype, GET, end(body)
+destroy replaced on Duplex.prototype, POST with the body read
+destroy replaced on Duplex.prototype, POST with the body ignored
+write replaced on Duplex.prototype, GET, end(body)
+write replaced on Duplex.prototype, POST with the body read
+write replaced on Duplex.prototype, POST with the body ignored
+cork replaced on Duplex.prototype, GET, end(body)
+cork replaced on Duplex.prototype, POST with the body read
+cork replaced on Duplex.prototype, POST with the body ignored
+uncork replaced on Duplex.prototype, GET, end(body)
+uncork replaced on Duplex.prototype, POST with the body read
+uncork replaced on Duplex.prototype, POST with the body ignored
+setDefaultEncoding replaced on Duplex.prototype, GET, end(body)
+setDefaultEncoding replaced on Duplex.prototype, POST with the body read
+setDefaultEncoding replaced on Duplex.prototype, POST with the body ignored
+_write replaced on Duplex.prototype, GET, end(body)
+_write replaced on Duplex.prototype, POST with the body read
+_write replaced on Duplex.prototype, POST with the body ignored
+end replaced on Duplex.prototype, GET, end(body)
+end replaced on Duplex.prototype, POST with the body read
+end replaced on Duplex.prototype, POST with the body ignored
+_undestroy replaced on Readable.prototype, GET, end(body)
+_undestroy replaced on Readable.prototype, POST with the body read
+_undestroy replaced on Readable.prototype, POST with the body ignored
+_destroy replaced on Readable.prototype, GET, end(body)
+_destroy replaced on Readable.prototype, POST with the body read
+_destroy replaced on Readable.prototype, POST with the body ignored
+unshift replaced on Readable.prototype, GET, end(body)
+unshift replaced on Readable.prototype, POST with the body read
+unshift replaced on Readable.prototype, POST with the body ignored
+isPaused replaced on Readable.prototype, GET, end(body)
+isPaused replaced on Readable.prototype, POST with the body read
+isPaused replaced on Readable.prototype, POST with the body ignored
+setEncoding replaced on Readable.prototype, GET, end(body)
+setEncoding replaced on Readable.prototype, POST with the body read
+setEncoding replaced on Readable.prototype, POST with the body ignored
+_read replaced on Readable.prototype, GET, end(body)
+_read replaced on Readable.prototype, POST with the body read
+_read replaced on Readable.prototype, POST with the body ignored
+pipe replaced on Readable.prototype, GET, end(body)
+pipe replaced on Readable.prototype, POST with the body read
+pipe replaced on Readable.prototype, POST with the body ignored
+unpipe replaced on Readable.prototype, GET, end(body)
+unpipe replaced on Readable.prototype, POST with the body read
+unpipe replaced on Readable.prototype, POST with the body ignored
+on replaced on Readable.prototype, GET, end(body)
+on replaced on Readable.prototype, POST with the body ignored
+addListener replaced on Readable.prototype, GET, end(body)
+addListener replaced on Readable.prototype, POST with the body read
+addListener replaced on Readable.prototype, POST with the body ignored
+removeListener replaced on Readable.prototype, GET, end(body)
+removeListener replaced on Readable.prototype, POST with the body read
+removeListener replaced on Readable.prototype, POST with the body ignored
+off replaced on Readable.prototype, GET, end(body)
+off replaced on Readable.prototype, POST with the body read
+off replaced on Readable.prototype, POST with the body ignored
+removeAllListeners replaced on Readable.prototype, POST with the body read
+pause replaced on Readable.prototype, GET, end(body)
+pause replaced on Readable.prototype, POST with the body read
+pause replaced on Readable.prototype, POST with the body ignored
+wrap replaced on Readable.prototype, GET, end(body)
+wrap replaced on Readable.prototype, POST with the body read
+wrap replaced on Readable.prototype, POST with the body ignored
+iterator replaced on Readable.prototype, GET, end(body)
+iterator replaced on Readable.prototype, POST with the body read
+iterator replaced on Readable.prototype, POST with the body ignored
+compose replaced on Readable.prototype, GET, end(body)
+compose replaced on Readable.prototype, POST with the body read
+compose replaced on Readable.prototype, POST with the body ignored
+drop replaced on Readable.prototype, GET, end(body)
+drop replaced on Readable.prototype, POST with the body read
+drop replaced on Readable.prototype, POST with the body ignored
+filter replaced on Readable.prototype, GET, end(body)
+filter replaced on Readable.prototype, POST with the body read
+filter replaced on Readable.prototype, POST with the body ignored
+flatMap replaced on Readable.prototype, GET, end(body)
+flatMap replaced on Readable.prototype, POST with the body read
+flatMap replaced on Readable.prototype, POST with the body ignored
+map replaced on Readable.prototype, GET, end(body)
+map replaced on Readable.prototype, POST with the body read
+map replaced on Readable.prototype, POST with the body ignored
+take replaced on Readable.prototype, GET, end(body)
+take replaced on Readable.prototype, POST with the body read
+take replaced on Readable.prototype, POST with the body ignored
+every replaced on Readable.prototype, GET, end(body)
+every replaced on Readable.prototype, POST with the body read
+every replaced on Readable.prototype, POST with the body ignored
+forEach replaced on Readable.prototype, GET, end(body)
+forEach replaced on Readable.prototype, POST with the body read
+forEach replaced on Readable.prototype, POST with the body ignored
+reduce replaced on Readable.prototype, GET, end(body)
+reduce replaced on Readable.prototype, POST with the body read
+reduce replaced on Readable.prototype, POST with the body ignored
+toArray replaced on Readable.prototype, GET, end(body)
+toArray replaced on Readable.prototype, POST with the body read
+toArray replaced on Readable.prototype, POST with the body ignored
+some replaced on Readable.prototype, GET, end(body)
+some replaced on Readable.prototype, POST with the body read
+some replaced on Readable.prototype, POST with the body ignored
+find replaced on Readable.prototype, GET, end(body)
+find replaced on Readable.prototype, POST with the body read
+find replaced on Readable.prototype, POST with the body ignored
+pipe replaced on Stream.prototype, GET, end(body)
+pipe replaced on Stream.prototype, POST with the body read
+pipe replaced on Stream.prototype, POST with the body ignored
+eventNames replaced on Stream.prototype, GET, end(body)
+eventNames replaced on Stream.prototype, POST with the body read
+eventNames replaced on Stream.prototype, POST with the body ignored
+setMaxListeners replaced on EventEmitter.prototype, GET, end(body)
+setMaxListeners replaced on EventEmitter.prototype, POST with the body read
+setMaxListeners replaced on EventEmitter.prototype, POST with the body ignored
+getMaxListeners replaced on EventEmitter.prototype, GET, end(body)
+getMaxListeners replaced on EventEmitter.prototype, POST with the body read
+getMaxListeners replaced on EventEmitter.prototype, POST with the body ignored
+addListener replaced on EventEmitter.prototype, GET, end(body)
+addListener replaced on EventEmitter.prototype, POST with the body read
+addListener replaced on EventEmitter.prototype, POST with the body ignored
+on replaced on EventEmitter.prototype, GET, end(body)
+on replaced on EventEmitter.prototype, POST with the body ignored
+prependListener replaced on EventEmitter.prototype, GET, end(body)
+prependListener replaced on EventEmitter.prototype, POST with the body read
+prependListener replaced on EventEmitter.prototype, POST with the body ignored
+once replaced on EventEmitter.prototype, GET, end(body)
+once replaced on EventEmitter.prototype, POST with the body read
+once replaced on EventEmitter.prototype, POST with the body ignored
+prependOnceListener replaced on EventEmitter.prototype, GET, end(body)
+prependOnceListener replaced on EventEmitter.prototype, POST with the body read
+prependOnceListener replaced on EventEmitter.prototype, POST with the body ignored
+removeListener replaced on EventEmitter.prototype, GET, end(body)
+removeListener replaced on EventEmitter.prototype, POST with the body read
+removeListener replaced on EventEmitter.prototype, POST with the body ignored
+off replaced on EventEmitter.prototype, GET, end(body)
+off replaced on EventEmitter.prototype, POST with the body read
+off replaced on EventEmitter.prototype, POST with the body ignored
+removeAllListeners replaced on EventEmitter.prototype, POST with the body read
+listeners replaced on EventEmitter.prototype, GET, end(body)
+listeners replaced on EventEmitter.prototype, POST with the body read
+listeners replaced on EventEmitter.prototype, POST with the body ignored
+rawListeners replaced on EventEmitter.prototype, GET, end(body)
+rawListeners replaced on EventEmitter.prototype, POST with the body read
+rawListeners replaced on EventEmitter.prototype, POST with the body ignored
+eventNames replaced on EventEmitter.prototype, GET, end(body)
+eventNames replaced on EventEmitter.prototype, POST with the body read
+eventNames replaced on EventEmitter.prototype, POST with the body ignored
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+bytesWritten replaced on Socket.prototype, GET, write(), end(body)
+destroyNow replaced on Socket.prototype, GET, write(), end(body)
+_onTimeout replaced on Socket.prototype, GET, write(), end(body)
+_unrefTimer replaced on Socket.prototype, GET, write(), end(body)
+address replaced on Socket.prototype, GET, write(), end(body)
+bufferSize replaced on Socket.prototype, GET, write(), end(body)
+connect replaced on Socket.prototype, GET, write(), end(body)
+_destroy replaced on Socket.prototype, GET, write(), end(body)
+_final replaced on Socket.prototype, GET, write(), end(body)
+destroySoon replaced on Socket.prototype, GET, write(), end(body)
+localAddress replaced on Socket.prototype, GET, write(), end(body)
+localFamily replaced on Socket.prototype, GET, write(), end(body)
+localPort replaced on Socket.prototype, GET, write(), end(body)
+pending replaced on Socket.prototype, GET, write(), end(body)
+_read replaced on Socket.prototype, GET, write(), end(body)
+readyState replaced on Socket.prototype, GET, write(), end(body)
+servername replaced on Socket.prototype, GET, write(), end(body)
+authorized replaced on Socket.prototype, GET, write(), end(body)
+authorizationError replaced on Socket.prototype, GET, write(), end(body)
+ref replaced on Socket.prototype, GET, write(), end(body)
+remoteAddress replaced on Socket.prototype, GET, write(), end(body)
+remotePort replaced on Socket.prototype, GET, write(), end(body)
+remoteFamily replaced on Socket.prototype, GET, write(), end(body)
+resetAndDestroy replaced on Socket.prototype, GET, write(), end(body)
+setKeepAlive replaced on Socket.prototype, GET, write(), end(body)
+setNoDelay replaced on Socket.prototype, GET, write(), end(body)
+setTimeout replaced on Socket.prototype, GET, write(), end(body)
+setEncoding replaced on Socket.prototype, GET, write(), end(body)
+unref replaced on Socket.prototype, GET, write(), end(body)
+_write replaced on Socket.prototype, GET, write(), end(body)
+pause replaced on Socket.prototype, GET, write(), end(body)
+end replaced on Socket.prototype, GET, write(), end(body)
+read replaced on Socket.prototype, GET, write(), end(body)
+_reset replaced on Socket.prototype, GET, write(), end(body)
+_getpeername replaced on Socket.prototype, GET, write(), end(body)
+_getsockname replaced on Socket.prototype, GET, write(), end(body)
+setTypeOfService replaced on Socket.prototype, GET, write(), end(body)
+getTypeOfService replaced on Socket.prototype, GET, write(), end(body)
+_writev replaced on Socket.prototype, GET, write(), end(body)
+destroy replaced on Duplex.prototype, GET, write(), end(body)
+write replaced on Duplex.prototype, GET, write(), end(body)
+cork replaced on Duplex.prototype, GET, write(), end(body)
+uncork replaced on Duplex.prototype, GET, write(), end(body)
+setDefaultEncoding replaced on Duplex.prototype, GET, write(), end(body)
+_write replaced on Duplex.prototype, GET, write(), end(body)
+end replaced on Duplex.prototype, GET, write(), end(body)
+_undestroy replaced on Readable.prototype, GET, write(), end(body)
+_destroy replaced on Readable.prototype, GET, write(), end(body)
+unshift replaced on Readable.prototype, GET, write(), end(body)
+isPaused replaced on Readable.prototype, GET, write(), end(body)
+setEncoding replaced on Readable.prototype, GET, write(), end(body)
+_read replaced on Readable.prototype, GET, write(), end(body)
+pipe replaced on Readable.prototype, GET, write(), end(body)
+unpipe replaced on Readable.prototype, GET, write(), end(body)
+on replaced on Readable.prototype, GET, write(), end(body)
+addListener replaced on Readable.prototype, GET, write(), end(body)
+removeListener replaced on Readable.prototype, GET, write(), end(body)
+off replaced on Readable.prototype, GET, write(), end(body)
+pause replaced on Readable.prototype, GET, write(), end(body)
+wrap replaced on Readable.prototype, GET, write(), end(body)
+iterator replaced on Readable.prototype, GET, write(), end(body)
+compose replaced on Readable.prototype, GET, write(), end(body)
+drop replaced on Readable.prototype, GET, write(), end(body)
+filter replaced on Readable.prototype, GET, write(), end(body)
+flatMap replaced on Readable.prototype, GET, write(), end(body)
+map replaced on Readable.prototype, GET, write(), end(body)
+take replaced on Readable.prototype, GET, write(), end(body)
+every replaced on Readable.prototype, GET, write(), end(body)
+forEach replaced on Readable.prototype, GET, write(), end(body)
+reduce replaced on Readable.prototype, GET, write(), end(body)
+toArray replaced on Readable.prototype, GET, write(), end(body)
+some replaced on Readable.prototype, GET, write(), end(body)
+find replaced on Readable.prototype, GET, write(), end(body)
+pipe replaced on Stream.prototype, GET, write(), end(body)
+eventNames replaced on Stream.prototype, GET, write(), end(body)
+setMaxListeners replaced on EventEmitter.prototype, GET, write(), end(body)
+getMaxListeners replaced on EventEmitter.prototype, GET, write(), end(body)
+addListener replaced on EventEmitter.prototype, GET, write(), end(body)
+on replaced on EventEmitter.prototype, GET, write(), end(body)
+prependListener replaced on EventEmitter.prototype, GET, write(), end(body)
+once replaced on EventEmitter.prototype, GET, write(), end(body)
+prependOnceListener replaced on EventEmitter.prototype, GET, write(), end(body)
+removeListener replaced on EventEmitter.prototype, GET, write(), end(body)
+off replaced on EventEmitter.prototype, GET, write(), end(body)
+listeners replaced on EventEmitter.prototype, GET, write(), end(body)
+rawListeners replaced on EventEmitter.prototype, GET, write(), end(body)
+eventNames replaced on EventEmitter.prototype, GET, write(), end(body)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Socket.prototype, GET, end(body)
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Socket.prototype, GET, write(), end(body)
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Socket.prototype, POST with the body read
+    socket.resume()
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Socket.prototype, POST with the body ignored
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+destroy replaced on Readable.prototype, GET, end(body)
+destroy replaced on Readable.prototype, POST with the body read
+destroy replaced on Readable.prototype, POST with the body ignored
+    req.destroy()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+destroy replaced on Readable.prototype, GET, write(), end(body)
+    req.destroy()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+push replaced on Readable.prototype, GET, end(body)
+push replaced on Readable.prototype, POST with the body ignored
+    req.push(object)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+push replaced on Readable.prototype, GET, write(), end(body)
+    req.push(object)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+push replaced on Readable.prototype, POST with the body read
+    req.push(object)
+    req.push(object)
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+read replaced on Readable.prototype, GET, end(body)
+read replaced on Readable.prototype, POST with the body ignored
+    req.read(0)
+    req.read()
+    req.read()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+read replaced on Readable.prototype, GET, write(), end(body)
+    req.read(0)
+    req.read()
+    req.read()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+read replaced on Readable.prototype, POST with the body read
+    req.read(0)
+    req.read()
+    req.read(0)
+    req.read()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+on replaced on Readable.prototype, POST with the body read
+on replaced on EventEmitter.prototype, POST with the body read
+    req.on("data")
+    req.on("end")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+removeAllListeners replaced on Readable.prototype, GET, end(body)
+removeAllListeners replaced on Readable.prototype, POST with the body ignored
+removeAllListeners replaced on EventEmitter.prototype, GET, end(body)
+removeAllListeners replaced on EventEmitter.prototype, POST with the body ignored
+    req.removeAllListeners("data")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+removeAllListeners replaced on Readable.prototype, GET, write(), end(body)
+removeAllListeners replaced on EventEmitter.prototype, GET, write(), end(body)
+    req.removeAllListeners("data")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Readable.prototype, GET, end(body)
+    req.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Readable.prototype, GET, write(), end(body)
+    req.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Readable.prototype, POST with the body read
+    req.resume()
+    socket.resume()
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+resume replaced on Readable.prototype, POST with the body ignored
+    req.resume()
+    socket.resume()
+    socket.resume()
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+emit replaced on EventEmitter.prototype, GET, end(body)
+emit replaced on EventEmitter.prototype, POST with the body ignored
+    res.emit("prefinish")
+    res.emit("finish")
+    res.emit("close")
+    req.emit("resume")
+    req.emit("readable")
+    req.emit("end")
+    req.emit("close")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+emit replaced on EventEmitter.prototype, GET, write(), end(body)
+    res.emit("prefinish")
+    res.emit("finish")
+    res.emit("close")
+    req.emit("resume")
+    req.emit("readable")
+    req.emit("end")
+    req.emit("close")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+emit replaced on EventEmitter.prototype, POST with the body read
+    req.emit("resume")
+    req.emit("data")
+    req.emit("readable")
+    req.emit("end")
+    res.emit("prefinish")
+    res.emit("finish")
+    res.emit("close")
+    req.emit("close")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+listenerCount replaced on EventEmitter.prototype, GET, end(body)
+listenerCount replaced on EventEmitter.prototype, POST with the body ignored
+    req.listenerCount("error")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+listenerCount replaced on EventEmitter.prototype, GET, write(), end(body)
+    req.listenerCount("error")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+listenerCount replaced on EventEmitter.prototype, POST with the body read
+    req.listenerCount("readable")
+    req.listenerCount("error")
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true

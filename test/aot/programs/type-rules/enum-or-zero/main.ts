@@ -1,4 +1,4 @@
-// A variable of type `Flags | 0`, like one of a numeric enum type, holds 32-bit integers only: -0, fractions and larger numbers throw a TypeError.
+// A numeric enum type, and `Flags | 0`, is checked as `number`: -0, fractions and larger numbers are stored and read as in plain Bun.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }

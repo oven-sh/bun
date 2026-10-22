@@ -1,0 +1,351 @@
+{
+ "useReducer/reducer": [
+  "FZ.UpdateQueue",
+  "any",
+  "FZ.Dispatch"
+ ],
+ "renderSuspenseListRows/resumeSlots": [
+  "FZ.ResumeSlots",
+  "number"
+ ],
+ "createRenderState/bootstrapScriptContent": [
+  "any"
+ ],
+ "createRenderState/idPrefix": [
+  "any"
+ ],
+ "createRenderState/inlineStyleWithNonce": [
+  "string"
+ ],
+ "writeBootstrap/i": [
+  "number"
+ ],
+ "None#4/precedence": [
+  "any"
+ ],
+ "prefetchDNS/resumableState": [
+  "any"
+ ],
+ "preconnect/resumableState": [
+  "any"
+ ],
+ "preload/imageSrcSet": [
+  "any"
+ ],
+ "preload/resumableState": [
+  "any"
+ ],
+ "preinitStyle/renderState": [
+  "FZ.RenderState"
+ ],
+ "createRecoverableError/initializedReason": [
+  "any"
+ ],
+ "useReducer/queue": [
+  "FZ.UpdateQueue"
+ ],
+ "useActionState/request": [
+  "FZ.Request | null"
+ ],
+ "useRef/initialValue": [
+  "any"
+ ],
+ "DetermineComponentFrameRoot/Fake": [
+  "() => never"
+ ],
+ "describeNativeComponentFrame/namePropDescriptor": [
+  "PropertyDescriptor | undefined"
+ ],
+ "renderSuspenseListRows/i": [
+  "any",
+  "number"
+ ],
+ "renderSuspenseListRows/node": [
+  "any"
+ ],
+ "finishFunctionComponent/segment": [
+  "FZ.Segment | null"
+ ],
+ "retryNode/childIndex": [
+  "any",
+  "FZ.int32"
+ ],
+ "retryNode/node": [
+  "any"
+ ],
+ "renderChildrenArray/boundary": [
+  "FZ.SuspenseBoundary | null"
+ ],
+ "renderChildrenArray/thrownInfo": [
+  "FZ.ThrownInfo"
+ ],
+ "trackPostponedBoundary/tracked": [
+  "FZ.TrackedBoundary | null"
+ ],
+ "trackPostpone/boundary": [
+  "FZ.SuspenseBoundary | null"
+ ],
+ "renderNode/segment": [
+  "FZ.Segment | null"
+ ],
+ "finishAbortedTask/boundary": [
+  "FZ.SuspenseBoundary | null"
+ ],
+ "finishAbortedTask/errorInfo": [
+  "FZ.ThrownInfo"
+ ],
+ "performWork/request$jscomp$0": [
+  "FZ.Request"
+ ],
+ "flushCompletedBoundary/completedSegments": [
+  "FZ.Segment[]"
+ ],
+ "flushCompletedQueues/boundary": [
+  "FZ.SuspenseBoundary"
+ ],
+ "flushCompletedQueues/clientRenderedBoundaries": [
+  "FZ.SuspenseBoundary[]"
+ ],
+ "flushCompletedQueues/renderState$jscomp$1": [
+  "FZ.RenderState"
+ ],
+ "getPostponedState/trackedPostpones": [
+  "FZ.PostponedHoles | null"
+ ],
+ "None#25/stream": [
+  "any"
+ ],
+ "None#27/readable": [
+  "any"
+ ],
+ "None#39/stream": [
+  "any"
+ ],
+ "None#41/readable": [
+  "any"
+ ],
+ "createRenderState/nonce": [
+  "any"
+ ],
+ "createRenderState/importMap": [
+  "any"
+ ],
+ "makeId/resumableState": [
+  "any"
+ ],
+ "pushViewTransitionAttributes/formatContext": [
+  "FZ.ViewTransitionContext | null",
+  "FZ.ViewTransitionContext"
+ ],
+ "getCustomFormFields/resumableState": [
+  "any"
+ ],
+ "pushStartSingletonElement/tag": [
+  "any"
+ ],
+ "pushStartGenericElement/tag": [
+  "any"
+ ],
+ "hoistPreambleState/renderState": [
+  "FZ.PreambleState"
+ ],
+ "writeBootstrap/renderState": [
+  "string[]"
+ ],
+ "flushStylesInPreamble/styleQueue": [
+  "number"
+ ],
+ "preloadLateStyle/stylesheet": [
+  "number"
+ ],
+ "preload/href": [
+  "any"
+ ],
+ "preinitStyle/precedence": [
+  "any"
+ ],
+ "preinitScript/src": [
+  "any"
+ ],
+ "preinitScript/options": [
+  "any"
+ ],
+ "preinitModuleScript/src": [
+  "any"
+ ],
+ "preinitModuleScript/options": [
+  "any"
+ ],
+ "getPreloadAsHeader/href": [
+  "any"
+ ],
+ "getPreloadAsHeader/as": [
+  "any"
+ ],
+ "popToNearestCommonAncestor/prev": [
+  "FZ.ContextNode | null"
+ ],
+ "popAllPrevious/prev": [
+  "FZ.ContextNode | null"
+ ],
+ "popPreviousToCommonLevel/prev": [
+  "FZ.ContextNode | null"
+ ],
+ "getTreeId/context": [
+  "FZ.int32"
+ ],
+ "pushTreeContext/baseContext": [
+  "string"
+ ],
+ "trackUsedThenable/index": [
+  "any"
+ ],
+ "trackUsedThenable/thenableState": [
+  "any"
+ ],
+ "useReducer/initialArg": [
+  "any"
+ ],
+ "useReducer/init": [
+  "((initialArg: any) => any) | undefined"
+ ],
+ "useMemo/nextCreate": [
+  "any"
+ ],
+ "dispatchAction/action": [
+  "any"
+ ],
+ "createRequest/resumableState": [
+  "any"
+ ],
+ "createRequest/renderState": [
+  "FZ.Segment"
+ ],
+ "createRequest/children": [
+  "any"
+ ],
+ "createPrerenderRequest/children": [
+  "any"
+ ],
+ "resumeRequest/renderState": [
+  "FZ.Request"
+ ],
+ "resumeRequest/onError": [
+  "FZ.Segment"
+ ],
+ "resumeRequest/children": [
+  "any"
+ ],
+ "resumeAndPrerenderRequest/children": [
+  "any"
+ ],
+ "createSuspenseBoundary/preamble": [
+  "FZ.SuspenseBoundary[] | null",
+  "FZ.SuspenseBoundary[]"
+ ],
+ "createSuspenseBoundary/fallbackAbortableTasks": [
+  "FZ.SuspenseBoundary"
+ ],
+ "createSuspenseBoundary/request": [
+  "FZ.HoistableState | null",
+  "FZ.HoistableState"
+ ],
+ "logRecoverableError/request": [
+  "FZ.BailoutHandler",
+  "FZ.ErrorHandler"
+ ],
+ "renderSuspenseListRows/keyPath": [
+  "any"
+ ],
+ "renderSuspenseListRows/revealOrder": [
+  "any"
+ ],
+ "renderWithHooks/request": [
+  "any"
+ ],
+ "finishFunctionComponent/keyPath": [
+  "FZ.TreeContext"
+ ],
+ "finishFunctionComponent/actionStateCount": [
+  "FZ.KeyNode | null"
+ ],
+ "renderNodeDestructive/node": [
+  "any"
+ ],
+ "renderChildrenArray/childIndex": [
+  "FZ.ReplayNode[]",
+  "any"
+ ],
+ "trackPostponedBoundary/request": [
+  "FZ.KeyNode | null",
+  "FZ.KeyNode"
+ ],
+ "trackPostponedBoundary/boundary": [
+  "FZ.ReplayNode"
+ ],
+ "trackPostpone/request": [
+  "FZ.Request",
+  "FZ.ResumeSlots",
+  "FZ.SlotMap | FZ.int32",
+  "FZ.SlotMap"
+ ],
+ "trackPostpone/task": [
+  "FZ.ReplayNode | undefined",
+  "FZ.ReplayNode"
+ ],
+ "untrackBoundary/request": [
+  "FZ.PostponedHoles | null",
+  "FZ.PostponedHoles",
+  "FZ.ReplayNode | undefined",
+  "FZ.ReplayNode"
+ ],
+ "untrackBoundary/boundary": [
+  "FZ.TrackedBoundary | null",
+  "FZ.TrackedBoundary",
+  "FZ.KeyNode | null",
+  "FZ.KeyNode"
+ ],
+ "renderNode/node": [
+  "any"
+ ],
+ "renderNode/childIndex": [
+  "FZ.ThenableState | null"
+ ],
+ "renderNode/request": [
+  "FZ.Ping"
+ ],
+ "abortTask/task": [
+  "FZ.Segment | null",
+  "FZ.Segment"
+ ],
+ "finishAbortedTask/task": [
+  "Error",
+  "FZ.SuspenseListRow | null",
+  "FZ.SuspenseListRow"
+ ],
+ "completeShell/request": [
+  "() => void"
+ ],
+ "completeAll/request": [
+  "FZ.Request",
+  "() => void"
+ ],
+ "finishedSegment/segment": [
+  "string[]"
+ ],
+ "flushPartiallyCompletedSegment/destination": [
+  "any"
+ ],
+ "flushPartiallyCompletedSegment/request": [
+  "FZ.RenderState"
+ ],
+ "flushPartiallyCompletedSegment/boundary": [
+  "any"
+ ],
+ "startFlowing/request": [
+  "any"
+ ],
+ "endRenderLifetime/request": [
+  "any"
+ ]
+}

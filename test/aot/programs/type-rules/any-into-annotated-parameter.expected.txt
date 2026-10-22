@@ -1,4 +1,0 @@
-old method 1 then replaced 1
-inheritor of a compiled object as a Speaker: no error
-another prototype: TypeError
-orig01 1

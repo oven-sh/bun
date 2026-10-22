@@ -631,7 +631,7 @@ JSObject* JSReadableStreamDefaultReader::prototype(VM& vm, JSDOMGlobalObject& gl
     return getDOMPrototype<JSReadableStreamDefaultReader>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSReadableStreamDefaultReader::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSReadableStreamDefaultReader::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSReadableStreamDefaultReaderConstructor, DOMConstructorID::ReadableStreamDefaultReader>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

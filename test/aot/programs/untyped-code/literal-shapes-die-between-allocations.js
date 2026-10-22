@@ -1,4 +1,4 @@
-// An object literal is allocated by a stub that remembers the literal's shape weakly. Here no object of any shape is alive when the next one is made, every collection is a full one and collections never stop, so the shapes are forgotten and made again all the time. The checks of validateAOTTypedFacts run at the head of the operation that the stub calls when it cannot allocate: they must not let the collector run there, between the stub's look at what it remembers and the operation's.
+// An object literal is allocated by a stub that remembers the literal's shape weakly. Here no object of any shape is alive when the next one is made, every collection is a full one and collections never stop, so the shapes are forgotten and made again all the time. The checks of validateAOTRuntime run at the head of the operation that the stub calls when it cannot allocate: they must not let the collector run there, between the stub's look at what it remembers and the operation's.
 const held = [null];
 function keep(o) { held[0] = o; const n = held[0].n; held[0] = null; return n; }
 const makers = [

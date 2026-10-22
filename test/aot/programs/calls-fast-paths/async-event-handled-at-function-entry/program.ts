@@ -1,4 +1,4 @@
-// ENV JSC_useAOTOperationCounters=1 JSC_watchdog=250
+// ENV JSC_aotCountsPath=/dev/null JSC_watchdog=250
 declare const console: any;
 declare const aotOperationCount: (name: string) => number;
 declare const sleepSeconds: (seconds: number) => void;
@@ -21,4 +21,4 @@ for (let round = 0; round < 120; round++) {
 }
 console.log("the result:", first);
 console.log("rounds whose result differs:", differing);
-console.log("the poll at an entry was entered:", aotOperationCount("operationAOTTypedPollAtPrologue") > 0);
+console.log("the poll at an entry was entered:", aotOperationCount("operationAOTPollAtPrologue") > 0);

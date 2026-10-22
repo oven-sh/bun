@@ -1,4 +1,4 @@
-// A store that does not fit the declared type of a field, by every road, a hundred thousand times each, the answers counted: whichever tier of the engine runs the store, and whoever is inlined into whom.
+// Every kind of store of a value of another kind than the field holds runs 100,000 times and the results are counted. Each store from JavaScript, through `any` or by reflection succeeds; only an argument for a parameter with a written type throws. The result is the same whichever function the store is inlined into.
 import { rows, setByKey, setSize } from "./sloppy.cjs";
 class Box { #own = 0; label = "b"; size = 1; }
 function count(f: (i: number) => unknown): string { const seen: Record<string, number> = {}; for (let i = 0; i < 100000; i++) { let said: string; try { said = String(f(i)); } catch (e) { said = (e as Error).name; } seen[said] = (seen[said] || 0) + 1; } return JSON.stringify(seen); }

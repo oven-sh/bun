@@ -1,8 +1,0 @@
-[7,1]
-a function without the member: TypeError
-a Map without the member: TypeError
-an array whose member is a string: TypeError
-an inherited member that is a string: TypeError
-an accessor beside a member that is a string: TypeError
-an accessor that yields a string, where it is read: TypeError
-a function that has both: [2,3]

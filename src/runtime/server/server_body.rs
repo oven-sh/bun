@@ -1,3 +1,4 @@
+use bun_jsc::proven_return::ProvenString;
 use core::ffi::{c_int, c_void};
 use core::mem;
 use core::ptr::NonNull;
@@ -24,6 +25,7 @@ use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::uuid::UUID;
+use bun_removable_features::{Feature, is_removed};
 use bun_jsc::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
     JsResult, Node, StringJsc as _, VirtualMachine, host_fn,
@@ -696,7 +698,7 @@ impl AnyRoute {
         path: &mut Node::PathOrFileDescriptor<'static>,
     ) -> JsResult<AnyRoute> {
         // The file/static route doesn't ref it.
-        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global);
+        let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
 
         if blob.needs_to_read_file() {
             // Throw a more helpful error upfront if the file does not exist.
@@ -825,9 +827,9 @@ impl AnyRoute {
                     return Ok(Some(AnyRoute::Directory(route)));
                 }
 
-                if init_ctx.may_start_development_server && !server_config::has_bundler() {
+                if init_ctx.may_start_development_server && is_removed(Feature::Bundler) {
                     return Err(global.throw_invalid_arguments(format_args!(
-                        "style: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                        "style: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
                     )));
                 }
                 let style: FrameworkRouter::Style =
@@ -859,6 +861,7 @@ impl AnyRoute {
                             Utf8Bytes::Borrowed(b".jsx".as_slice()),
                         ],
                         allow_layouts: true,
+                        client_pages: false,
                     });
 
                 // `@typeInfo(FrameworkRouter.Type.Index).@"enum".tag_type` → the index newtype's backing-int MAX.
@@ -995,9 +998,12 @@ impl ServePlugins {
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
-        let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
-            bun_paths::resolve_path::platform::Auto,
-        >(bunfig_path);
+        // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
+        let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
+            FileSystem::instance().top_level_dir
+        } else {
+            bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
+        };
 
         // NOTE: the keep-alive ref/deref pair
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
@@ -1013,6 +1019,13 @@ impl ServePlugins {
             bunstring_array.push(BunString::from_bytes(raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
+        // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+            let mut iter = config_plugins.array_iterator(global)?;
+            while let Some(config_plugin) = iter.next()? {
+                plugin_js_array.push(global, config_plugin)?;
+            }
+        }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
         self.state = ServePluginsState::Pending {
@@ -1083,7 +1096,9 @@ impl ServePlugins {
         Ok(())
     }
 
+    #[inline(never)]
     pub(crate) fn handle_on_resolve(&mut self) {
+        bun_removable_features::removable_definition!(Bundler, Self::handle_on_resolve);
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -1118,7 +1133,9 @@ impl ServePlugins {
         }
     }
 
+    #[inline(never)]
     pub(crate) fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
+        bun_removable_features::removable_definition!(Bundler, Self::handle_on_reject);
         debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
         let ServePluginsState::Pending {
             plugin,
@@ -2269,43 +2286,39 @@ where
         JSValue::UNDEFINED
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_port(&self, _: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_port(&self, _: &JSGlobalObject) -> Option<f64> {
         let config_port = match &self.config.address {
-            server_config::Address::Unix(_) => return JSValue::UNDEFINED,
+            server_config::Address::Unix(_) => return None,
             server_config::Address::Tcp { port, .. } => *port,
         };
 
         if let Some(listener) = self.listener {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
-                return JSValue::js_number(p as f64);
+                return Some(p as f64);
             }
         }
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener {
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 if let Some(p) = bun_opaque::opaque_deref_mut(h3l).get_local_port() {
-                    return JSValue::js_number(p as f64);
+                    return Some(p as f64);
                 }
             }
         }
-        JSValue::js_number(config_port as f64)
+        Some(config_port as f64)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global, &self.config.id)
+    pub(crate) fn get_id(&self, global: &JSGlobalObject) -> JsResult<ProvenString> {
+        bun_string_jsc::create_utf8_for_js(global, &self.config.id).map(ProvenString::expect)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_requests(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    pub(crate) fn get_pending_requests(&self, _: &JSGlobalObject) -> i32 {
+        (self.pending_requests.get() as u32 & 0x7FFF_FFFF) as i32
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pending_web_sockets(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number((self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32 as f64)
+    pub(crate) fn get_pending_web_sockets(&self, _: &JSGlobalObject) -> i32 {
+        (self.active_sockets_count() as u32 & 0x7FFF_FFFF) as i32
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2365,10 +2378,9 @@ where
         bun_string_jsc::to_jsdomurl(&url, global)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_hostname(&self, global: &JSGlobalObject) -> JsResult<Option<ProvenString>> {
         let hostname = match &self.config.address {
-            server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
+            server_config::Address::Unix(_) => return Ok(None),
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
         if let Some(listener) = self.listener {
@@ -2379,30 +2391,28 @@ where
                 .remote_address(&mut buf[..1024])
             {
                 if !addr.is_empty() {
-                    return bun_string_jsc::create_utf8_for_js(global, addr);
+                    return bun_string_jsc::create_utf8_for_js(global, addr).map(|text| Some(ProvenString::expect(text)));
                 }
             }
         }
         if let Some(hostname) = hostname {
-            bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes())
+            bun_string_jsc::create_utf8_for_js(global, hostname.as_bytes()).map(|text| Some(ProvenString::expect(text)))
         } else {
-            BunString::static_("localhost").to_js(global)
+            BunString::static_("localhost").to_js(global).map(|text| Some(ProvenString::expect(text)))
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_protocol(&self, global: &JSGlobalObject) -> ProvenString {
         let _ = self;
-        if SSL {
+        ProvenString::expect(if SSL {
             global.common_strings().https()
         } else {
             global.common_strings().http()
-        }
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_development(_this: &Self, _: &JSGlobalObject) -> JSValue {
-        JSValue::from(DEBUG)
+    pub(crate) fn get_development(_this: &Self, _: &JSGlobalObject) -> bool {
+        DEBUG
     }
 
     pub(crate) fn finalize(self: Box<Self>) {
@@ -3202,7 +3212,8 @@ where
         // So we first use a hash of the main field:
         let first_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let main = self.vm_ref().main();
+            // No entry module (`bun bake`): the hash of the project root below tells servers apart.
+            let main = self.vm_ref().main().unwrap_or_default();
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
                 .to_ne_bytes();

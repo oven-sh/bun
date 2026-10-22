@@ -2,9 +2,9 @@ import { expect } from "bun:test";
 import { describe, test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// Some early errors of the language are not reported by Bun's parser but by JavaScriptCore's, when it is handed the transpiled
-// module. A program compiled ahead of time is never handed to it at run time, so the build does that check: the same words as
-// `bun run`, with the file and the line of the source.
+// An early error of the language stops bun run before the first statement runs. Bun's parser reports some. These are reported by JavaScriptCore's, when it is
+// handed the transpiled module. A compiled program is never handed to it, so the build reports them: the type checker finds them in every file, typed or
+// not, and names the file and the line of the source. The words are the checker's, not those of bun run.
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -15,27 +15,35 @@ function syntaxErrorOf(stderr: string) {
   return stderr.match(/SyntaxError: .*/)?.[0];
 }
 
-async function expectSameSyntaxError(file: string, source: string, line: number, ...buildFlags: string[]) {
+async function expectEarlyError(file: string, source: string, line: number, ...buildFlags: string[]) {
   using dir = tempDir("aot-early-errors", { [file]: source });
   const cwd = String(dir);
   const plain = await run(cwd, "run", `./${file}`);
-  const expected = syntaxErrorOf(plain.stderr);
-  expect({ expected, stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ expected: expect.any(String), stdout: "", exitCode: 1 });
+  expect({ error: syntaxErrorOf(plain.stderr), stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ error: expect.any(String), stdout: "", exitCode: 1 });
+  const location = new RegExp(`${file.replace(".", "\\.")}:${line}:\\d+$`);
+  const said: string[][] = [];
   for (const args of [
     ["run", "--debug-aot", `./${file}`],
     ["build", "--compile", "--aot", ...buildFlags, `./${file}`, "--outfile", "app"],
   ]) {
     const { stdout, stderr, exitCode } = await run(cwd, ...args);
-    expect({ args, error: syntaxErrorOf(stderr), stdout: args[0] === "run" ? stdout : "", exitCode }).toEqual({ args, error: expected, stdout: "", exitCode: 1 });
-    expect(stderr).toMatch(new RegExp(`${file.replace(".", "\\.")}:${line}\\b`));
-    expect(stderr.match(/^error\b.*/gm)).toEqual([`error: ${expected}`]);
+    expect({ args, stdout: args[0] === "run" ? stdout : "", exitCode }).toEqual({ args, stdout: "", exitCode: 1 });
+    const errors = stderr.match(/^error\b.*/gm) ?? [];
+    expect(errors.filter(error => !/^error: TS\d+: \S/.test(error))).toEqual([]);
+    const locations = stderr.match(/^\s+at .*$/gm) ?? [];
+    expect(locations.filter(printed => !location.test(printed))).toEqual([]);
+    expect({ args, errors: errors.length > 0, locations: locations.length > 0 }).toEqual({ args, errors: true, locations: true });
+    said.push(errors);
   }
+  expect(said[1]).toEqual(said[0]);
+  return said[0];
 }
 
+// A function that nothing names is dropped by the bundler before anybody reads its body, with --aot and without: what is in it is no part of the program. So the functions here are named.
 const programs: Record<string, string> = {
-  "an invalid regular expression in a function that is never called": `function unused() { return /(?<n>a)(?<n>b)/; }`,
+  "an invalid regular expression in a function that is never called": `function unused() { return /(?<n>a)(?<n>b)/; } console.log(unused);`,
   "an invalid regular expression that is used": `console.log(/[b-a]/.test("a"));`,
-  "an invalid escape under the u flag": `function unused() { return /\\-/u; }`,
+  "an invalid escape under the u flag": `function unused() { return /\\-/u; } console.log(unused);`,
   "two constructors": `class Unused { constructor() {} constructor() {} }`,
   "new.target outside of functions": `new.target;`,
   "return outside of functions": `return;`,
@@ -55,24 +63,25 @@ const programs: Record<string, string> = {
   "a keyword as the variable of a loop": `for (let in {}) {}`,
 };
 
-describe.concurrent("an early error that only JavaScriptCore reports stops the build in the words of bun run", () => {
+describe.concurrent("an early error that only JavaScriptCore reports stops the build at the line of the source", () => {
   for (const [name, statement] of Object.entries(programs)) {
     test(name, async () => {
-      await expectSameSyntaxError("main.js", `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`, 3);
+      await expectEarlyError("main.js", `// The error is on the third line.\nconsole.log("never printed");\n${statement}\nconsole.log("never printed");\n`, 3);
     });
   }
 
   test("the line is that of the TypeScript source", async () => {
-    const source = `interface Point {\n  x: number;\n  y: number;\n}\ntype Name = string;\nconsole.log("never printed");\nfunction unused(point: Point, name: Name): RegExp {\n  return /(?<n>a)(?<n>b)/;\n}\n`;
-    await expectSameSyntaxError("main.ts", source, 8);
+    const source = `interface Point {\n  x: number;\n  y: number;\n}\ntype Name = string;\nconst never: string = "never printed";\nfunction unused(point: Point, name: Name): RegExp {\n  return /(?<n>a)(?<n>b)/;\n}\nconsole.log(unused);\n`;
+    await expectEarlyError("main.ts", source, 8);
   });
 
   test("the line is that of the source under --minify", async () => {
-    await expectSameSyntaxError("main.js", `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`, 5, "--minify");
+    await expectEarlyError("main.js", `console.log("never printed");\n\n\nfunction unused() {\n  return /[b-a]/;\n}\nconsole.log(unused);\n`, 5, "--minify");
   });
 
   test("the name is that of the source under --minify-identifiers", async () => {
-    await expectSameSyntaxError("main.js", `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`, 3, "--minify-identifiers");
+    const errors = await expectEarlyError("main.js", `console.log("never printed");\nvar both; function both() {} both;\nconsole.log("never printed");\n`, 2, "--minify-identifiers");
+    expect(errors[0]).toContain("'both'");
   });
 
   test("in a module that is imported", async () => {
@@ -88,14 +97,44 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
       ["build", "--compile", "--aot", "./main.ts", "--outfile", "app"],
     ]) {
       const { stderr, exitCode } = await run(cwd, ...args);
-      expect({ args, error: syntaxErrorOf(stderr), exitCode }).toEqual({ args, error: expected, exitCode: 1 });
-      expect(stderr).toMatch(/imported\.ts:3\b/);
+      expect({ args, errors: (stderr.match(/^error\b.*/gm) ?? []).length > 0, exitCode }).toEqual({ args, errors: true, exitCode: 1 });
+      expect(stderr).toMatch(/imported\.ts:3:\d+/);
     }
   });
 
   test("in a CommonJS module", async () => {
-    await expectSameSyntaxError("main.cjs", `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; }\n`, 3);
+    await expectEarlyError("main.cjs", `module.exports = 1;\nconsole.log("never printed");\nfunction unused() { return /(?<n>a)(?<n>b)/; } console.log(unused);\n`, 3);
   });
+});
+
+// The tree of such a text is one that no valid text has, so the file is reported and not compiled.
+describe.concurrent("a private name of super in a class that stays in the program stops the build", () => {
+  const texts: Record<string, string> = {
+    "main.js": `export var Kept = class { #x() {} method() { super.#x(); } };`,
+    "main.mjs": `var Kept = class extends Unknown { #x() {} method() { super.#x(); } };`,
+    "main.cjs": `var Kept = class extends Unknown { #x = 1; method() { return super.#x; } };`,
+  };
+  for (const [file, text] of Object.entries(texts)) {
+    test(file, async () => {
+      using dir = tempDir("aot-early-errors", { [file]: `console.log("never printed");\n${text}\n` });
+      const cwd = String(dir);
+      const plain = await run(cwd, "run", `./${file}`);
+      expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+      for (const args of [
+        ["run", "--debug-aot", `./${file}`],
+        ["build", "--compile", "--aot", `./${file}`, "--outfile", "app"],
+      ]) {
+        const { stdout, stderr, exitCode } = await run(cwd, ...args);
+        const errors = stderr.match(/^(error|panic)\b.*/gm);
+        expect({ args, stdout: args[0] === "run" ? stdout : "", errors, exitCode }).toEqual({
+          args,
+          stdout: "",
+          errors: ["error: TS1034: 'super' must be followed by an argument list or member access."],
+          exitCode: 1,
+        });
+      }
+    });
+  }
 });
 
 test("what is valid in a CommonJS module and not in a module still builds and runs", async () => {

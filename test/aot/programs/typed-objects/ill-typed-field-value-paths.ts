@@ -1,5 +1,5 @@
 // Every known way by which a field or an element comes to hold a value that its type does not allow: whether the store succeeds, and what later reads see.
-// Cases 8 and 9 redefine such objects by a computed key, so in this program objects of that structure have no layout: the rule for a laid-out record is tested in record-via-index-signature.ts.
+// A store that enters no written type succeeds. The next read through a written type throws, whatever is done with the value. A read through an unannotated variable (5) or through a type that allows the value (17) does not throw, and neither does a missing field (6, 10, 11, 12) or undefined (13).
 function attempt(label: string, f: () => unknown): void { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
 function plusOne(n: number): number { return n + 1 }
 function hide<T>(value: unknown): T { return value as T }
@@ -147,7 +147,7 @@ attempt("18 held", () => plusOne(n18[2]!))
 attempt("18 past the end", () => n18[9])
 attempt("18 past the end, held", () => plusOne(n18[9]!))
 
-// 19. A literal type, an enum: the field says which numbers.
+// 19. A literal type, an enum: the field promises the kind, so another number is taken.
 interface Kind19 { kind: 1 | 2 }
 const n19: Kind19 = { kind: 1 }
 attempt("19 store", () => { n19.kind = 3 as 1; return "taken" })

@@ -1,6 +1,6 @@
 // Prototypes with hundreds of properties: methods that are called, values that are read. What is inherited has its place in the table by name however far out of line it lies in its holder: every answer is that of the language, also after the holder has changed.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTGetByNameAndCache") + count("operationAOTPutByNameAndCache");
+const visits = () => count("operationAOTGetByIdAndCache") + count("operationAOTPutByIdAndCache");
 function Wide(base) { this.base = base; }
 Wide.prototype.m0 = function (x) { return this.base + x + 0; }; Wide.prototype.m1 = function (x) { return this.base + x + 1; }; Wide.prototype.m2 = function (x) { return this.base + x + 2; }; Wide.prototype.m3 = function (x) { return this.base + x + 3; }; Wide.prototype.m4 = function (x) { return this.base + x + 4; };
 Wide.prototype.m5 = function (x) { return this.base + x + 5; }; Wide.prototype.m6 = function (x) { return this.base + x + 6; }; Wide.prototype.m7 = function (x) { return this.base + x + 7; }; Wide.prototype.m8 = function (x) { return this.base + x + 8; }; Wide.prototype.m9 = function (x) { return this.base + x + 9; };

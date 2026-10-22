@@ -10,10 +10,10 @@ for (const path of ["C:\\a\\b", "C:\\a\\b\\", "C:/mixed\\slashes/", "\\\\server\
     console.log(JSON.stringify(path), (error as any).code, (error as Error).message);
   }
 }
-console.log(pathToFileURL("/posix\\kept", { windows: false }).href, pathToFileURL("/x", null as never).href, pathToFileURL("/x") instanceof URL);
+console.log(pathToFileURL("/posix\\kept", { windows: false }).href, pathToFileURL("/x", null as any).href, pathToFileURL("/x") instanceof URL);
 for (const value of [undefined, null, 1, {}, new URL("file:///x")]) {
   try {
-    pathToFileURL(value as string);
+    pathToFileURL(value as any);
   } catch (error) {
     console.log((error as any).code, (error as Error).message);
   }

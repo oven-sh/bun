@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";

@@ -1,9 +1,0 @@
-2,2,1
-count,rules,make {"count":1,"rules":{"depth":3}} 3
-function undefined true true false
-5 7,5,1
-undefined 7 9,7,2
-count
-rules
-make
-true true 8

@@ -1,3 +1,4 @@
+// Plain objects with a field written as a union of string literals are built and read in one function. Any string is taken and read back, a constant or not, of the union or outside it: a literal type promises the kind. A number in that field throws a TypeError at the typed read.
 type Author = { login: string };
 type Hit = { id: number; state: "open" | "closed"; author: Author };
 const makeAuthor = (login: string): Author => ({ login });

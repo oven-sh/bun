@@ -37,19 +37,16 @@ impl ResourceUsage {
         Ok(cpu)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_max_rss(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.maxrss())
+    pub(crate) fn get_max_rss(this: &Self, _global: &JSGlobalObject) -> f64 {
+        this.rusage.maxrss()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_shared_memory_size(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.ixrss())
+    pub(crate) fn get_shared_memory_size(this: &Self, _global: &JSGlobalObject) -> f64 {
+        this.rusage.ixrss()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_swap_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nswap())
+    pub(crate) fn get_swap_count(this: &Self, _global: &JSGlobalObject) -> f64 {
+        this.rusage.nswap()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -72,9 +69,8 @@ impl ResourceUsage {
         msgs
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_signal_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.rusage.nsignals())
+    pub(crate) fn get_signal_count(this: &Self, _global: &JSGlobalObject) -> f64 {
+        this.rusage.nsignals()
     }
 
     #[bun_jsc::host_fn(getter)]

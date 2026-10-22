@@ -1,12 +1,11 @@
-// `{ ...r, key: value }` where the type of r has a layout and also accepts untyped objects, because a type with the same members holds parsed data.
+// `{ ...r, key: value }` where r has a written record type, which any object may be.
 // A record of the layout is copied inline. Anything else (null, a record with an undeclared property, a plain object) takes one call, as in untyped code.
 // CALLS+ withId CopyTypedObject
 // CALLS+ withId CloneObjectAndExtendWithNumber
-// CALLS- withId CastInRegister|PutById|CloneObjectWithSubtypeCheck
 // CALLS+ withName CloneObjectAndExtend
-// CALLS- withName CastInRegister|PutBy|CloneObjectWithSubtypeCheck
+// CALLS- withName CastInRegister|CloneObjectWithSubtypeCheck
 // CALLS+ withBoth CloneObjectAndExtend
-// CALLS- withBoth CastInRegister|PutBy|CloneObjectWithSubtypeCheck
+// CALLS- withBoth CastInRegister|CloneObjectWithSubtypeCheck
 // SIZE< withId 100
 // SIZE< withName 112
 // SIZE< withBoth 150

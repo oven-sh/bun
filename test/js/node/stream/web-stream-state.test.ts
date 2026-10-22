@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";

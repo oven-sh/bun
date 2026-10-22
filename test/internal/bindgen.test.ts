@@ -1,5 +1,6 @@
 import { bindgen as bindings } from "bun:internal-for-testing";
 import { describe as describeAlways, expect, it as itAlways } from "bun:test";
+import { BlockList, SocketAddress } from "node:net";
 import { rustIdent } from "../../src/codegen/bindgen-lib-internal.ts";
 import * as b from "../../src/codegen/bindgen-lib.ts";
 
@@ -90,6 +91,12 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.i32.loose.allowBigInt.validateInteger()).toThrow(".validateInteger() refuses a BigInt");
   expect(b.u16.allowBigInt.loose.idlType).toBe(b.u16.loose.allowBigInt.idlType);
   expect(() => b.string.utf8.owned.default("x")).toThrow("cannot have a default");
+  const instance = b.classRef("SocketAddress");
+  for (const type of [instance, instance.nullable, b.union({ instance, ignored: b.any })]) {
+    expect(() => b.dictionary({ type })).toThrow("b.classRef is only for an argument");
+    expect(() => b.array(type)).toThrow("b.classRef is only for an argument");
+  }
+  expect(() => b.union({ instance, again: b.classRef("SocketAddress") })).toThrow("again is never chosen");
   expect(() => b.namespace({})).toThrow("a namespace with no functions");
   expect(() => b.namespace({ f: b.fn({ args: { x: b.i32 } }) as any })).toThrow(
     "f: write what b.fn takes, without b.fn",
@@ -106,8 +113,10 @@ itAlways("mistakes in a schema are errors when it loads", () => {
     expect(() => b.dictionary({ bytes })).toThrow("bytes: b.bytes is only for an argument");
     expect(() => b.union({ bytes })).toThrow("bytes: b.bytes is only for an argument");
   }
-  for (const absent of ["optional", "nullable", "falsyAsNull"] as const) {
-    expect(() => stringOrBuffer[absent]).toThrow("b.bytes is for an argument that is always there");
+  for (const held of ["handle", "copied", "pinned"] as const) {
+    expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
+      'only b.bytes that is held: "borrowed" can be absent',
+    );
   }
   expect(() => stringOrBuffer.default("")).toThrow("cannot have a default");
   expect(() => b.fn({ args: { data: stringOrBuffer }, capability: "js" })).toThrow(
@@ -116,7 +125,13 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.bytes({ from: [] })).toThrow("from: it takes nothing");
   expect(() => b.bytes({ from: ["string", "string"] })).toThrow("two kinds are both string");
   expect(() => b.bytes({ from: ["string"], refuse: ["null"] })).toThrow(
-    'refuse: without otherwise: "toString" they throw already',
+    'refuse: without otherwise: "toString" undefined and null throw already',
+  );
+  expect(() => b.bytes({ from: ["buffer"], refuse: ["stringObject"] })).toThrow(
+    'refuse: without from: "string" a String object throws already',
+  );
+  expect(() => b.bytes({ from: ["string"], otherwise: "toString", refuse: ["stringObject"] })).toThrow(
+    'refuse: "stringObject" is only with otherwise: "throw"',
   );
   expect(() => b.bytes({ from: ["buffer"], string: "asIs", held: "handle" })).toThrow("string: it takes no string");
   expect(() => b.bytes({ from: ["string"], shared: "copied" })).toThrow("shared: it takes no buffer");
@@ -173,6 +188,8 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   );
   expect(() => b.fn({ args: { fooBar: b.bool, foo_bar: b.bool } })).toThrow("two arguments are both foo_bar");
   expect(() => b.fn({ length: 1.5 })).toThrow("1.5 is not a count");
+  expect(() => b.fn({ args: { a: b.bool }, expected: { b: ["boolean"] } })).toThrow("expected: b is not an argument");
+  expect(() => b.fn({ args: { a: b.bool }, expected: { a: [] } })).toThrow("expected: a expects nothing");
   expect(() => b.overloads({ args: { a: b.bool }, length: 1 }, { args: { a: b.f64 }, length: 2 })).toThrow(
     "length is given once",
   );
@@ -181,6 +198,37 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   b.class({ rustPath: "T", proto: { label: { getter: b.string }, setLabel: {}, getLabel: {} } });
   expect(() => b.class({ rustPath: "T", proto: { value: { getter: b.any } } })).toThrow('takes capability: "heap"');
   expect(() => b.class({ rustPath: "T", internalFields: ["a", "a"] })).toThrow("two internal fields are both a");
+  const constructible = { rustPath: "T", construct: {} };
+  for (const extra of [{ cache: true }, { setter: true }]) {
+    // @ts-expect-error
+    expect(() => b.class({ ...constructible, static: { x: { getter: b.u32, ...extra } } })).toThrow(
+      "x: a static getter has no cache and no setter",
+    );
+  }
+  // @ts-expect-error
+  expect(() => b.class({ ...constructible, static: { x: { builtin: true, length: 0 } } })).toThrow(
+    "x: a builtin is a property of the prototype",
+  );
+  expect(() =>
+    b.class({
+      rustPath: "T",
+      proto: {
+        x: [
+          { rustName: "x_bool", args: { value: b.bool } },
+          { rustName: "x_number", args: { value: b.f64 }, privateSymbol: "x" },
+        ],
+      },
+    }),
+  ).toThrow("x: its overloads have one privateSymbol");
+  expect(() => b.class({ rustPath: "T", proto: { x: { rustName: "camelCase" } } })).toThrow(
+    "camelCase: rustName is written in snake_case",
+  );
+  expect(() => b.string.allowStringObject.loose).toThrow(".loose already takes a String object");
+  expect(() => b.string.loose.allowStringObject).toThrow(".loose already takes a String object");
+  // No overload can have the argument left out, so `undefined` goes to the one that reports its own error.
+  const textOrBytes = b.overloads({ args: { text: b.string } }, { args: { bytes: stringOrBuffer } });
+  const { dispatch } = textOrBytes;
+  expect("byKind" in dispatch && dispatch.byKind.get("undefined")).toBe(textOrBytes.signatures[1]);
   // What takes undefined can come before what does not.
   b.fn({ args: { encoding: b.string.nullable, callback: b.any, length: b.f64 } });
 });
@@ -340,7 +388,29 @@ describe("strings", () => {
     "nul \0 inside",
   ];
 
+  it("expected: a value of the wrong type throws Node's ERR_INVALID_ARG_TYPE", () => {
+    const f = bindgen.expectedByNode;
+    expect(f("abc", "de", true)).toBe(6);
+    expect(f("abc", new Uint8Array(2))).toBe(5);
+    const thrownBy = (...args: unknown[]) => {
+      try {
+        f(...args);
+      } catch (error: any) {
+        return `${error.name} ${error.code}: ${error.message}`;
+      }
+    };
+    const invalid = "TypeError ERR_INVALID_ARG_TYPE: ";
+    expect(thrownBy()).toBe(`${invalid}The "text" argument must be of type string. Received undefined`);
+    expect(thrownBy(1)).toBe(`${invalid}The "text" argument must be of type string. Received type number (1)`);
+    expect(thrownBy({})).toBe(`${invalid}The "text" argument must be of type string. Received an instance of Object`);
+    expect(thrownBy("abc", null)).toBe(
+      `${invalid}The "data" argument must be of type string or an instance of Buffer, TypedArray, or DataView. Received null`,
+    );
+    expect(thrownBy("abc", "de", 1)).toBe(`${invalid}flag must be a boolean`);
+  });
+
   it.each(texts)("round trips %j", text => {
+    expect(bindgen.stringLength(text)).toBe(text.length);
     expect(bindgen.utf8Echo(text)).toBe(text);
     expect(bindgen.utf8EchoLoose(text)).toBe(text);
     expect(bindgen.utf8Optional(text)).toBe(text);
@@ -351,6 +421,15 @@ describe("strings", () => {
   it("replaces an unpaired surrogate", () => {
     expect(bindgen.utf8Echo("a\ud800b")).toBe("a�b");
     expect(bindgen.utf8Echo("\udc00")).toBe("�");
+  });
+
+  it("b.string takes a String object when allowed to", () => {
+    expect(bindgen.stringOrObjectEcho("你好")).toBe("你好");
+    expect(bindgen.stringOrObjectEcho(new String("你好"))).toBe("你好");
+    expect(bindgen.stringOrObjectEcho(Object.assign(new String("ab"), { toString: () => "abc" }))).toBe("abc");
+    for (const value of [undefined, null, 1, {}, ["a"]]) {
+      expect(() => bindgen.stringOrObjectEcho(value as any)).toThrow("text must be a string");
+    }
   });
 
   it("strict takes strings and String objects only", () => {
@@ -396,6 +475,48 @@ describe("strings", () => {
       );
       expect(bindgen.utf8EchoLoose(...args)).toBe("undefined");
     }
+  });
+});
+
+describe("instances of a class of a .classes.ts file", () => {
+  const address = new SocketAddress({ port: 8080 });
+  const notInstances = [undefined, null, 1, "a", {}, SocketAddress.prototype, Object.create(address), new BlockList()];
+
+  it("alone", () => {
+    expect(bindgen.portOf(address)).toBe(8080);
+    for (const value of notInstances) {
+      expect(() => bindgen.portOf(value as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_ARG_TYPE",
+          message: "address must be an instance of SocketAddress",
+        }),
+      );
+    }
+  });
+
+  it("nullable", () => {
+    expect(bindgen.portOfOrNull(address)).toBe(8080);
+    expect(bindgen.portOfOrNull(null)).toBeNull();
+    expect(bindgen.portOfOrNull(undefined)).toBeNull();
+    expect(() => bindgen.portOfOrNull({} as any)).toThrow("address must be an instance of SocketAddress");
+  });
+
+  it("is held by the argument while JavaScript runs", () => {
+    expect(bindgen.portAfterCallback(new SocketAddress({ port: 81 }), () => Bun.gc(true))).toBe(81);
+  });
+
+  it("in a union", () => {
+    expect(bindgen.describeAddressOrList(address)).toBe("address");
+    expect(bindgen.describeAddressOrList(new BlockList())).toBe("list");
+    expect(() => bindgen.describeAddressOrList({} as any)).toThrow("value must be of type SocketAddress or BlockList");
+    expect(bindgen.isAddress(address)).toBe(true);
+    for (const value of notInstances) expect(bindgen.isAddress(value)).toBe(false);
+  });
+
+  it("is one kind of value however many times the schema names the class", () => {
+    expect(bindgen.portPlus(address, 2)).toBe(8082);
+    expect(bindgen.portPlus(address, "abc")).toBe(8083);
   });
 });
 
@@ -937,6 +1058,30 @@ describe("buffers", () => {
     expect(bindgen.sumBytes(new ArrayBuffer(0))).toBe(0);
   });
 
+  it("writes every kind of buffer, shared or not", () => {
+    const bytes = new Uint8Array(8);
+    expect(bindgen.fillBuffer(bytes.subarray(1, 3), 1)).toBe(2);
+    expect(bindgen.fillBuffer(new DataView(bytes.buffer, 6), 2)).toBe(2);
+    expect(bindgen.fillBuffer(new Uint16Array(bytes.buffer, 4, 1), 3)).toBe(2);
+    expect([...bytes]).toEqual([0, 1, 1, 0, 3, 3, 2, 2]);
+    expect(bindgen.fillBuffer(bytes.buffer, 4)).toBe(8);
+    expect([...bytes]).toEqual([4, 4, 4, 4, 4, 4, 4, 4]);
+
+    const shared = new Uint8Array(new SharedArrayBuffer(4));
+    expect(bindgen.fillBuffer(shared.subarray(2), 5)).toBe(2);
+    expect([...shared]).toEqual([0, 0, 5, 5]);
+    expect(bindgen.fillBuffer(shared.buffer, 6)).toBe(4);
+    expect([...shared]).toEqual([6, 6, 6, 6]);
+
+    const detached = new Uint8Array(4);
+    detached.buffer.transfer();
+    expect(bindgen.fillBuffer(detached, 7)).toBe(0);
+    expect(bindgen.fillBuffer(new Uint8Array(0), 7)).toBe(0);
+    for (const value of [undefined, null, "a", [], {}, new Blob(["a"])]) {
+      expect(() => bindgen.fillBuffer(value as any, 0)).toThrow("buffer must be an ArrayBuffer or ArrayBufferView");
+    }
+  });
+
   it("a detached or shrunk view is empty", () => {
     const detached = new Uint8Array([1, 2, 3]);
     detached.buffer.transfer();
@@ -1002,6 +1147,21 @@ describe("buffers", () => {
 });
 
 describe("a string or a buffer, as bytes", () => {
+  it("can be absent", () => {
+    expect(bindgen.sumBytesIfAny()).toBe(-1);
+    expect(bindgen.sumBytesIfAny(undefined)).toBe(-1);
+    expect(bindgen.sumBytesIfAny(null)).toBe(-1);
+    expect(bindgen.sumBytesIfAny("")).toBe(0);
+    expect(bindgen.sumBytesIfAny(new Uint8Array(0))).toBe(0);
+    expect(bindgen.sumBytesIfAny("\x01\x02")).toBe(3);
+    expect(bindgen.sumBytesIfAny(new Uint8Array([1, 2, 3]))).toBe(6);
+    expect(() => bindgen.sumBytesIfAny(1 as any)).toThrow("bytes must be a string, ArrayBuffer or ArrayBufferView");
+    // Read once `text` is converted.
+    const bytes = new Uint8Array([1, 2, 3]);
+    const detach = { toString: () => (bytes.buffer.transfer(), "") };
+    expect(bindgen.sumBytesIfAny(bytes, detach as any)).toBe(0);
+  });
+
   const utf8 = (text: string) => [...new TextEncoder().encode(text)];
   const buffers = (bytes: number[], ArrayBufferClass: typeof ArrayBuffer | typeof SharedArrayBuffer = ArrayBuffer) => {
     const padded = new Uint8Array(new ArrayBufferClass(bytes.length + 16));
@@ -1138,6 +1298,15 @@ describe("a string or a buffer, as bytes", () => {
     expect(() => f()).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
     expect(f(null)).toEqual(utf8("null"));
     expect(f(5)).toEqual(utf8("5"));
+  });
+
+  it('refuse: "stringObject" leaves only a string', () => {
+    const f = bindgen.bytesOfRefusingStringObject;
+    expect(f("abc")).toEqual(utf8("abc"));
+    expect(f(new Uint8Array(eight))).toEqual(eight);
+    for (const value of [...notBytes, new String("abc"), new Blob(["abc"])]) {
+      expect(() => f(value)).toThrow(refusal("a string, ArrayBuffer or ArrayBufferView"));
+    }
   });
 
   it('otherwise: "toString" is ToString of anything else', () => {
@@ -1391,9 +1560,27 @@ describe("classes", () => {
     expect(TestCounter.length).toBe(0);
     expect(TestCounter.prototype.constructor).toBe(TestCounter);
     expect(Object.prototype.toString.call(new TestCounter())).toBe("[object TestCounter]");
-    expect(Object.getOwnPropertyNames(TestCounter.prototype).sort()).toEqual(
-      ["constructor", "count", "increment", "label", "listen", "notify", "plus", "tag"].sort(),
-    );
+    // In the order of the schema.
+    expect(Object.getOwnPropertyNames(TestCounter.prototype)).toEqual([
+      "count",
+      "label",
+      "tag",
+      "increment",
+      "add",
+      "listen",
+      "notify",
+      "plus",
+      "constructor",
+    ]);
+    expect(Object.getOwnPropertyNames(TestCounter)).toEqual([
+      "length",
+      "name",
+      "starting",
+      "alive",
+      "count",
+      "limit",
+      "prototype",
+    ]);
     expect(Object.getOwnPropertyNames(new TestCounter())).toEqual([]);
     expect(TestCounter.prototype.increment.length).toBe(0);
     expect(TestCounter.prototype.plus.length).toBe(1);
@@ -1499,6 +1686,40 @@ describe("classes", () => {
     const other = Reflect.construct(TestCounter, [2], Other);
     expect(Object.getPrototypeOf(other)).toBe(Other.prototype);
     expect(TestCounter.prototype.increment.call(other)).toBe(3);
+  });
+
+  it("a static getter does not look at its receiver", () => {
+    const { get, set, enumerable } = Object.getOwnPropertyDescriptor(TestCounter, "count")!;
+    expect(set).toBeUndefined();
+    expect(enumerable).toBe(true);
+    const counter = new TestCounter(7);
+    expect(counter.count).toBe(7);
+    expect(TestCounter.count).toBe(TestCounter.alive());
+    class Sub extends TestCounter {}
+    expect(Sub.count).toBe(TestCounter.alive());
+    for (const receiver of [undefined, null, 1, {}, counter]) expect(get!.call(receiver)).toBe(TestCounter.alive());
+    expect(() => {
+      "use strict";
+      TestCounter.count = 1;
+    }).toThrow(TypeError);
+    expect(() => TestCounter.limit).toThrow(new RangeError("there is no limit"));
+  });
+
+  it("a method has overloads", () => {
+    const counter = new TestCounter(1);
+    expect(TestCounter.prototype.add.length).toBe(1);
+    expect(counter.add(2)).toBe(3);
+    expect(counter.add("four")).toBe(7);
+    expect(counter.add("four", 2)).toBe(15);
+    expect(counter.add(new String("x"))).toBe(16);
+    expect(() => counter.add("four", "2")).toThrow("times must be a number");
+    expect(() => counter.add({})).toThrow("text must be a string");
+    expect(counter.count).toBe(16);
+    for (const argument of [1, "a", {}]) {
+      expect(() => TestCounter.prototype.add.call({}, argument)).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_THIS" }),
+      );
+    }
   });
 
   it("takes and returns instances", () => {

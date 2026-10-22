@@ -1,0 +1,37 @@
+a name nobody has declared yet: undefined
+vm.runInThisContext, let Math: SyntaxError: Cannot declare 'Math': compiled code treats the global 'Math' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.runInThisContext, const JSON: SyntaxError: Cannot declare 'JSON': compiled code treats the global 'JSON' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.runInThisContext, class Map: SyntaxError: Cannot declare 'Map': compiled code treats the global 'Map' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.runInThisContext, let Array in strict code: SyntaxError: Cannot declare 'Array': compiled code treats the global 'Array' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.runInThisContext, let globalThis: SyntaxError: Cannot declare 'globalThis': compiled code treats the global 'globalThis' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.runInThisContext, let undefined: SyntaxError: Can't create duplicate variable that shadows a global property: 'undefined'
+vm.runInThisContext, a second declaration and a statement beside it: SyntaxError: Cannot declare 'Object': compiled code treats the global 'Object' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, let Math: SyntaxError: Cannot declare 'Math': compiled code treats the global 'Math' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, const JSON: SyntaxError: Cannot declare 'JSON': compiled code treats the global 'JSON' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, class Map: SyntaxError: Cannot declare 'Map': compiled code treats the global 'Map' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, let Array in strict code: SyntaxError: Cannot declare 'Array': compiled code treats the global 'Array' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, let globalThis: SyntaxError: Cannot declare 'globalThis': compiled code treats the global 'globalThis' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+vm.Script, let undefined: SyntaxError: Can't create duplicate variable that shadows a global property: 'undefined'
+vm.Script, a second declaration and a statement beside it: SyntaxError: Cannot declare 'Object': compiled code treats the global 'Object' as a constant, so a script can't shadow it with a top-level let, const or class (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+nothing of a refused script was declared or run: undefined 
+compiled code sees the globals: 2 [1] 0 true true function
+so does a later script: 2 [1] 0 true true function
+var Math in sloppy code: TypeError: Cannot assign to Math because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+var Math in strict code: TypeError: Cannot assign to Math because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+function Math: TypeError: Can't declare global function 'Math': property must be either configurable or both writable and enumerable
+a store to globalThis.globalThis: TypeError: Cannot assign to globalThis because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+compiled code still sees the globals: 2 true
+a block of a script: of the script
+a function of a script: of the script
+vm.compileFunction: of the function
+indirect eval: of the text
+Function: of the function
+vm.runInNewContext: of the context
+vm.runInContext: of the context
+vm.Script in a new context: function
+names that shadow nothing: string
+a later script sees them: of the script 1 function
+compiled code sees them: of the script 1 function
+compiled code stores to them: of the program
+they are no properties of the global object: false
+a second declaration of one of them: SyntaxError: Can't create duplicate variable: 'ofTheScript'

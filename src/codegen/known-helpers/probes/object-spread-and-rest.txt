@@ -1,0 +1,10 @@
+export function probeMerge(probeLeft, probeRight) {
+  return { ...probeLeft, probeOwn: 1, ...probeRight };
+}
+export function probeOmit(probeValue) {
+  const { probeFirst, ["probeSecond"]: probeSecond, ...probeOthers } = probeValue;
+  return [probeFirst, probeSecond, probeOthers];
+}
+export function probeParameter({ probeFirst, ...probeOthers }) {
+  return [probeFirst, probeOthers];
+}

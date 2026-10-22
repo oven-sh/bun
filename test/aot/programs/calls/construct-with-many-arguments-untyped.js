@@ -37,16 +37,16 @@ for (const name of Object.keys(all))
 const contexts = [{ Request: context.Request }, { Request: context.OtherRequest }];
 
 const seen = new Set();
-let before = count("operationAOTTypedConstruct");
+let before = count("operationAOTConstruct");
 for (let i = 0; i < 2000; i++) {
   const request = new contexts[i & 1].Request(i & 1, "p", "r", "q", "l", "c");
   seen.add(request.describe() + " " + (request instanceof Request) + " " + Object.keys(request).join());
 }
-let calls = count("operationAOTTypedConstruct") - before;
+let calls = count("operationAOTConstruct") - before;
 console.log([...seen].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
 
 const others = new Set();
-before = count("operationAOTTypedConstruct");
+before = count("operationAOTConstruct");
 for (let i = 0; i < 1000; i++) {
   others.add([
     new context.TakesTwo(1, 2, 3, 4, 5, 6).sum,
@@ -60,7 +60,7 @@ for (let i = 0; i < 1000; i++) {
     new context.TakesSeven(1, 2, 3, 4, 5, 6, 7, 8).text,
   ].join());
 }
-calls = count("operationAOTTypedConstruct") - before;
+calls = count("operationAOTConstruct") - before;
 console.log([...others].join(" | "), calls <= 8 ? "and the run time was asked at most 8 times" : "and the run time was asked " + calls + " times");
 
 for (let i = 0; i < 3; i++) {

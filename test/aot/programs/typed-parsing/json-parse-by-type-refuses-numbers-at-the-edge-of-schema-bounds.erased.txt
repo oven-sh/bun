@@ -1,0 +1,93 @@
+a whole number given 0: documented value, got value 0
+a whole number given -0: documented value, got value -0
+a whole number given 1: documented value, got value 1
+a whole number given -1: documented value, got value -1
+a whole number given 1.0: documented value, got value 1
+a whole number given 1e3: documented value, got value 1000
+a whole number given 1e21: documented value, got value 1e+21
+a whole number given 9007199254740993: documented value, got value 9007199254740992
+a whole number given 2147483648: documented value, got value 2147483648
+a whole number given 100e-2: documented value, got value 1
+a whole number given 0.5: documented TypeError, got TypeError
+a whole number given -0.5: documented TypeError, got TypeError
+a whole number given 1e-7: documented TypeError, got TypeError
+a whole number given 5e-324: documented TypeError, got TypeError
+a whole number given 1.0000000001: documented TypeError, got TypeError
+a whole number given 1e400: documented TypeError, got TypeError
+a whole number given "1": documented TypeError, got TypeError
+a whole number given null: documented TypeError, got TypeError
+at least 1 given 1: documented value, got value 1
+at least 1 given 1.0: documented value, got value 1
+at least 1 given 1.0000000000000002: documented value, got value 1.0000000000000002
+at least 1 given 2: documented value, got value 2
+at least 1 given 1e308: documented value, got value 1e+308
+at least 1 given 0.9999999999999999: documented TypeError, got TypeError
+at least 1 given 0: documented TypeError, got TypeError
+at least 1 given -1: documented TypeError, got TypeError
+at least 1 given -0: documented TypeError, got TypeError
+at least 1 given 1e400: documented TypeError, got TypeError
+at least 1 given -1e400: documented TypeError, got TypeError
+at most 10 given 10: documented value, got value 10
+at most 10 given 10.0: documented value, got value 10
+at most 10 given 9.999999999999998: documented value, got value 9.999999999999998
+at most 10 given -1e308: documented value, got value -1e+308
+at most 10 given 0: documented value, got value 0
+at most 10 given 10.000000000000002: documented TypeError, got TypeError
+at most 10 given 11: documented TypeError, got TypeError
+at most 10 given 1e400: documented TypeError, got TypeError
+at most 10 given -1e400: documented TypeError, got TypeError
+above 0 given 5e-324: documented value, got value 5e-324
+above 0 given 1: documented value, got value 1
+above 0 given 0.1: documented value, got value 0.1
+above 0 given 0: documented TypeError, got TypeError
+above 0 given -0: documented TypeError, got TypeError
+above 0 given 0.0: documented TypeError, got TypeError
+above 0 given 1e-400: documented TypeError, got TypeError
+above 0 given -5e-324: documented TypeError, got TypeError
+above 0 given -1: documented TypeError, got TypeError
+below 1 given 0.9999999999999999: documented value, got value 0.9999999999999999
+below 1 given 0: documented value, got value 0
+below 1 given -5: documented value, got value -5
+below 1 given 1: documented TypeError, got TypeError
+below 1 given 1.0: documented TypeError, got TypeError
+below 1 given 1.0000000000000002: documented TypeError, got TypeError
+below 1 given 2: documented TypeError, got TypeError
+at least 0 given 0: documented value, got value 0
+at least 0 given -0: documented value, got value -0
+at least 0 given -1e-400: documented value, got value -0
+at least 0 given 5e-324: documented value, got value 5e-324
+at least 0 given -5e-324: documented TypeError, got TypeError
+at least 0 given -1: documented TypeError, got TypeError
+a multiple of 5 given 0: documented value, got value 0
+a multiple of 5 given -0: documented value, got value -0
+a multiple of 5 given 5: documented value, got value 5
+a multiple of 5 given -5: documented value, got value -5
+a multiple of 5 given 10: documented value, got value 10
+a multiple of 5 given 1e21: documented value, got value 1e+21
+a multiple of 5 given 5.0: documented value, got value 5
+a multiple of 5 given 1: documented TypeError, got TypeError
+a multiple of 5 given 4.999999999999999: documented TypeError, got TypeError
+a multiple of 5 given 5.000000000000001: documented TypeError, got TypeError
+a multiple of 5 given 2.5: documented TypeError, got TypeError
+a multiple of 5 given -3: documented TypeError, got TypeError
+a quantity given 1: documented value, got value 1
+a quantity given 1000: documented value, got value 1000
+a quantity given 1e3: documented value, got value 1000
+a quantity given 999: documented value, got value 999
+a quantity given 0: documented TypeError, got TypeError
+a quantity given 1001: documented TypeError, got TypeError
+a quantity given 1.5: documented TypeError, got TypeError
+a quantity given 999.5: documented TypeError, got TypeError
+a quantity given -1: documented TypeError, got TypeError
+a quantity given 1e400: documented TypeError, got TypeError
+a quantity in a member given 1: documented value, got value {"q": 1}
+a quantity in a member given 1000: documented value, got value {"q": 1000}
+a quantity in a member given 0: documented TypeError, got TypeError
+a quantity in a member given 1001: documented TypeError, got TypeError
+a quantity in a member given 1.5: documented TypeError, got TypeError
+a quantity in a member given null: documented TypeError, got TypeError
+a quantity in a member given "1": documented TypeError, got TypeError
+quantities in a list given 2: documented value, got value [1, 2, 1000]
+quantities in a list given 0: documented TypeError, got TypeError
+quantities in a list given 1001: documented TypeError, got TypeError
+quantities in a list given 2.5: documented TypeError, got TypeError

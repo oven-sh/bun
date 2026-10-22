@@ -71,18 +71,18 @@ report("wide characters and escapes");
 const parse = JSON.parse;
 const otherWays: (() => unknown)[] = [
   () => JSON.parse('{"a":1,"b":2}', undefined),
-  () => JSON.parse('{"a":1,"b":2}', null as never),
-  () => JSON.parse('{"a":1,"b":2}', 5 as never),
+  () => JSON.parse('{"a":1,"b":2}', null as any),
+  () => JSON.parse('{"a":1,"b":2}', 5 as any),
   () => JSON.parse('{"a":1,"b":2}', (key, value) => (key === "a" ? undefined : value)),
   () => parse('{"a":1,"b":2}'),
   () => parse.call(null, '{"a":1,"b":2}'),
   () => Reflect.apply(parse, undefined, ['{"a":1,"b":2}']),
   () => ['{"a":1,"b":2}', "[1]"].map(text => JSON.parse(text)),
-  () => JSON.parse({ toString: () => '{"a":1,"b":2}' } as never),
-  () => JSON.parse(["[1", "2]"] as never),
-  () => JSON.parse(12 as never),
-  () => JSON.parse(null as never),
-  () => JSON.parse(undefined as never),
+  () => JSON.parse({ toString: () => '{"a":1,"b":2}' } as any),
+  () => JSON.parse(["[1", "2]"] as any),
+  () => JSON.parse(12 as any),
+  () => JSON.parse(null as any),
+  () => JSON.parse(undefined as any),
   () => (JSON.parse as () => unknown)(),
 ];
 for (const way of otherWays) {

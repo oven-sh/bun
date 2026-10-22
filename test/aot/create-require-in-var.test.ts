@@ -47,12 +47,6 @@ console.log(peer, __require("./lib/local.cjs").name);
 
 // What is no constant stays an ordinary variable: the answers are plain Bun's, by whatever runs them.
 const ordinary: Record<string, string> = {
-  "stored-to-again.mjs": `import { createRequire } from "node:module";
-var made = createRequire(import.meta.url);
-console.log(made("./lib/local.cjs").name);
-made = name => "another function got " + name;
-console.log(made("./lib/local.cjs"));
-`,
   "called-before-it-is-made.mjs": `import { createRequire } from "node:module";
 try { console.log(load()); } catch (error) { console.log(error.name); }
 var made = createRequire(import.meta.url);
@@ -65,6 +59,25 @@ var made = name => "the second declaration got " + name;
 console.log(made("./lib/local.cjs"));
 `,
 };
+
+// A variable that is stored to again names no files of the program: what it loads is not compiled, and code that is not compiled is not loaded.
+const refused: Record<string, string> = {
+  "stored-to-again.mjs": `import { createRequire } from "node:module";
+var made = createRequire(import.meta.url);
+try { made("./lib/local.cjs"); } catch (error) { console.log(error.code, error.message.includes("it isn't in this executable")); }
+made = name => "another function got " + name;
+console.log(made("./lib/local.cjs"));
+`,
+};
+
+describe.concurrent.each(Object.keys(refused))("%s", entry => {
+  test("bun run --aot does not load the file", async () => {
+    using dir = tempDir("create-require-in-a-var", { ...files, [entry]: refused[entry] });
+    await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", entry], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "MODULE_NOT_FOUND true\nanother function got ./lib/local.cjs\n", exitCode: 0 });
+  });
+});
 
 describe.concurrent.each(Object.keys({ ...compiled, ...ordinary }))("%s", entry => {
   test("bun run --aot prints what bun run prints", async () => {

@@ -4,6 +4,8 @@
 
 #include "ErrorCode.h"
 
+#include "BunCompiledModules.h"
+#include "JavaScriptCore/AOTRemovableFeature.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
@@ -16,7 +18,6 @@
 #include "../vm/NodeVMRunTermination.h"
 
 #include <bit>
-#include "JavaScriptCore/CompilerHooks.h"
 
 namespace Bun {
 using namespace NodeVM;
@@ -196,9 +197,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 codeBlock = JSC::ProgramCodeBlock::create(vm, executable, unlinkedBlock, jsScope);
                 RETURN_IF_EXCEPTION(scope, {});
             }
-            if (!JSC::g_compilerHooks.compileBaselineNow || !JSC::Options::useJIT()) {
+            if (!JSC::Options::useJIT()) {
                 script->cachedDataRejected(TriState::False);
-            } else if (JSC::g_compilerHooks.compileBaselineNow(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail) != JSC::CompilationResult::CompilationFailed) {
+            } else if (JSC::callRemovable<JSC::RemovableFeature::JIT, JSC::RemovedFeatureStub::Abort, &JSC::JIT::compileSync>(vm, codeBlock, JITCompilationEffort::JITCompilationCanFail) != JSC::CompilationResult::CompilationFailed) {
                 executable->installCode(codeBlock);
                 script->cachedDataRejected(TriState::False);
             } else {
@@ -302,7 +303,7 @@ NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
 {
 }
 
-NEVER_INLINE NodeVMScriptConstructor* NodeVMScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
+NodeVMScriptConstructor* NodeVMScriptConstructor::create(VM& vm, JSGlobalObject* globalObject, Structure* structure, JSObject* prototype)
 {
     NodeVMScriptConstructor* ptr = new (NotNull, allocateCell<NodeVMScriptConstructor>(vm)) NodeVMScriptConstructor(vm, structure);
     ptr->finishCreation(vm, prototype);

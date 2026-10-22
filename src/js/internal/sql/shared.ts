@@ -1,11 +1,10 @@
-// @ts-check
 import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = Array;
 const {
   Query,
   SQLQueryFlags,
-  stateOf,
+  symbols: { _strings, _values, _flags },
 } = require("internal/sql/query");
 
 type ArrayType =
@@ -394,12 +393,12 @@ class QueryBuilder {
   }
 
   undefinedValue(): unknown {
-    return this.adapter.connectionInfo.transform?.undefined;
+    return $getByIdDirect(this.adapter.connectionInfo, "transform")?.undefined;
   }
 
   identifier(name: string | number): string {
     const { quote, connectionInfo } = this.adapter;
-    const to = connectionInfo.transform?.column.to;
+    const to = $getByIdDirect(connectionInfo, "transform")?.column.to;
     name = String(to === undefined ? name : to(String(name)));
     if (name.includes("\0")) {
       throw $ERR_INVALID_ARG_VALUE("name", name, "must not contain null bytes");
@@ -408,15 +407,15 @@ class QueryBuilder {
   }
 
   fragment(query: QueryType<any, any>) {
-    const strings = stateOf(query).strings;
-    const values = stateOf(query).values;
+    const strings = query[_strings];
+    const values = query[_values];
     if (typeof strings !== "string") {
       if (!$isArray(strings)) {
         throw new SyntaxError("Invalid query: SQL Fragment cannot be executed or was misused");
       }
       return this.template(strings, values);
     }
-    const flags = stateOf(query).flags;
+    const flags = query[_flags];
     if (flags & SQLQueryFlags.notTagged) {
       this.text += this.identifier(strings);
       return;
@@ -608,6 +607,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> exte
 
   isConnected(): boolean;
   get closed(): boolean;
+  /** close({ timeout: 0 }) was called: the caller gave up on what is queued. */
+  readonly closedAtOnce?: boolean;
 
   readonly supportsReservedConnections: boolean;
   /** `true`: `onConnected` was still queued and will never run. */

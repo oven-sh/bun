@@ -1,5 +1,5 @@
 // An object literal with a spread is cast with `as`. A property written after the spread holds another object literal in one arm of a
-// conditional. The inner literal is created once and is not copied when the outer literal is converted: a reference to it that was kept
+// conditional. The inner literal is created once, and the cast copies nothing: a reference to it that was kept
 // while it was created is the same object as the one the outer literal holds.
 interface Jsx { runtime?: "automatic" | "classic"; factory?: string; fragment?: string }
 interface Config { entrypoints: string[]; target?: string; jsx?: Jsx }

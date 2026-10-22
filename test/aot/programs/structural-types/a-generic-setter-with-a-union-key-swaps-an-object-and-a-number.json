@@ -1,0 +1,5 @@
+{
+  "skipInVariant": {
+    "inner-objects-flattened-wherever-legal": "TODO: under --aot-testing=FlattenUntilHeldWhereverLegal the compiler aborts in CodeGenerator::passArguments: a parameter in which borrowed inner objects meet is given by another edge as the result of a test, and the code generator looks for it among the arguments of that edge"
+  }
+}

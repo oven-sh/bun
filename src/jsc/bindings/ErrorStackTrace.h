@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <JavaScriptCore/AOTFunctionDescription.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
@@ -190,6 +192,20 @@ private:
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 
+// The position of a compiled frame was recorded at build time in the original source: no source map applies to it.
+inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position && position->source;
+    }
+#else
+    UNUSED_PARAM(frame);
+#endif
+    return false;
+}
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);
@@ -210,7 +226,6 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
-String functionName(JSC::VM& vm, JSC::CodeType, JSC::ScriptExecutable*);
 String functionName(JSC::VM& vm, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 

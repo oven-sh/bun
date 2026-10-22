@@ -1,0 +1,8 @@
+# A modifier error is an EarlyError where JavaScript rejects the text too, and TypeScriptGrammar where the modifier or the rule is TypeScript's own.
+modifier-sites.ts:2 diagnostic TS1030 = EarlyError StopsBuild
+modifier-sites.ts:3 diagnostic TS1029 = EarlyError StopsBuild
+modifier-sites.ts:4 diagnostic TS1491 = EarlyError StopsBuild
+
+modifier-sites.ts:5 diagnostic TS1029 = TypeScriptGrammar StopsBuild
+modifier-sites.ts:6 diagnostic TS1089 = TypeScriptGrammar StopsBuild
+modifier-sites.ts:7 diagnostic TS18010 = TypeScriptGrammar StopsBuild

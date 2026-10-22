@@ -1,4 +1,4 @@
-// A double cast (`x as unknown as T`, `<T><any>x`) never throws, while a single `as` is still checked where the value reaches a typed variable or field.
+// A double cast (`x as unknown as T`, `<T><any>x`) of an object to an object type passes: any object fits, it stays the same object, and a member it does not have reads undefined.
 interface Tool { name: string; run(): string; level: number }
 interface Part { level: number; o: number[] }
 const part: Part = { level: 3, o: [1] }

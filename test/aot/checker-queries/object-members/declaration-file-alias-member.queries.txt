@@ -1,0 +1,8 @@
+# A member that the program annotates with a type alias of a `.d.ts` is written as `unknown`: nothing is tested where it is stored or read. A member of a mapped type whose template names such an alias is unwritten.
+declaration-file-alias-member.ts:6 has `Settings` = port Field unknown checked number
+declaration-file-alias-member.ts:6 has `Settings` = mode Field unknown checked Mode | null
+declaration-file-alias-member.ts:6 has `Settings` = retries Field number checked number
+declaration-file-alias-member.ts:7 index `Ports` = String unknown checked number
+declaration-file-alias-member.ts:8 has `Server` = port Field unknown checked number
+declaration-file-alias-member.ts:9 has `{ [K in "first" | "second"]: Port }` = first Field unwritten checked number
+declaration-file-alias-member.ts:9 has `{ [K in "first" | "second"]: Port }` = second Field unwritten checked number

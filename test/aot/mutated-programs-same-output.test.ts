@@ -112,7 +112,7 @@ async function compare(folder: string, source: string): Promise<string> {
   if (compiled.timedOut || interpreted.timedOut) return "skipped";
   if (compiled.stdout === interpreted.stdout && (compiled.exitCode === 0) === (interpreted.exitCode === 0)) return "same";
   const said = compiled.stdout + compiled.stderr;
-  if (said.includes("(bun --aot")) return "skipped";
+  if (said.includes("(bun compile")) return "skipped";
   // Plain Bun does not enforce the temporal dead zone of top-level classes, and the two run out of stack at different depths.
   if (said.includes("before initialization") || said.includes("ReferenceError") || (said + interpreted.stdout + interpreted.stderr).includes("Maximum call stack")) return "skipped";
   const [ours, theirs] = [compiled.stdout.split("\n"), interpreted.stdout.split("\n")];

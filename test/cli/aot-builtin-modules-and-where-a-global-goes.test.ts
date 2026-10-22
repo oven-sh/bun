@@ -4,6 +4,7 @@ import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { importingByName } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
 
@@ -82,7 +83,7 @@ console.log(Array.isArray(global[queue]) && globalThis[Symbol.for("a-small-progr
 
 const name = `const name = ["node:zlib"][0];\n`;
 const loaded = (how: string) => `console.log(typeof ${how}.gzipSync === "function" ? "run" : "");`;
-const withADoor: Record<string, string> = {
+const withADoor = importingByName("node:zlib", {
   "the-parameter-is-returned.mjs": `const check = it => it && it.Math === Math && it;
 const root = check(typeof globalThis == "object" && globalThis);
 console.log(typeof root.process.getBuiltinModule(["node:zlib"][0]).gzipSync === "function" ? "run" : "");`,
@@ -95,11 +96,11 @@ console.log(typeof first(globalThis).process.getBuiltinModule(["node:zlib"][0]).
   "the-loader-read-off-process-through-the-global-object.mjs": `${name}const root = globalThis;\n${loaded('root.process["getBuiltinModule"](name)')}`,
   "process-kept-and-handed-on.mjs": `${name}const own = process;\nconst use = kept => kept.getBuiltinModule(name);\n${loaded("use(own)")}`,
   "process-required-and-handed-on.cjs": `${name}const use = kept => kept.getBuiltinModule(name);\n${loaded('use(require("node:process"))')}`,
-};
+});
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
-test("a global that goes nowhere but into reads by written names does not bring every built-in module into the executable", async () => {
+test("a global that goes nowhere but into reads by written names brings no built-in module into the executable", async () => {
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("where-a-global-goes", programs);
   const sizes: Record<string, number> = {};

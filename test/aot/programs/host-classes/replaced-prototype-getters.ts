@@ -1,4 +1,4 @@
-// A getter of a host class that may be redefined is read many times, then replaced on its prototype, deleted, inherited from an object put behind, and put back: each read answers as plain Bun does.
+// A getter of a host class that may be redefined is read many times, then replaced on its prototype, deleted, inherited from an object put behind, and put back: each read answers as plain Bun does. A locked prototype leaves the attributes of its members as they are and is not extensible: that tells URL.prototype and URLSearchParams.prototype apart, whose getters are only read.
 import { SocketAddress } from "node:net";
 
 const lines: string[] = [];
@@ -37,14 +37,15 @@ function all<T extends object>(label: string, name: "pathname" | "size" | "abort
   const prototype = Object.getPrototypeOf(holder) as object;
   const original = Object.getOwnPropertyDescriptor(prototype, name);
   const both = (on: T = holder) => [read(on), untyped(on, name)];
-  say(label + " has a descriptor that may be redefined", () => [original?.configurable, typeof original?.get]);
+  const mayBeRedefined = !!original?.configurable && Object.isExtensible(prototype);
+  say(label + " has a descriptor that may be redefined", () => [mayBeRedefined, typeof original?.get]);
   say(label + " read many times", () => {
     let same = 0;
     const first = JSON.stringify(both());
     for (let turn = 0; turn < 200; turn++) if (JSON.stringify(both()) === first) same++;
     return [first, same];
   });
-  if (!original?.configurable) return;
+  if (!mayBeRedefined) return;
   say(label + " replaced by a getter", () => (Object.defineProperty(prototype, name, { get: () => "replaced", configurable: true }), [both(), both(make())]));
   say(label + " replaced by another getter", () => (Object.defineProperty(prototype, name, { get: () => "replaced again", configurable: true }), [both(), both(make())]));
   say(label + " replaced by a value", () => (Object.defineProperty(prototype, name, { value: 7, writable: true, configurable: true }), [both(), both(make())]));

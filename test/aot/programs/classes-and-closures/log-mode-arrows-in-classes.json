@@ -1,4 +1,4 @@
 {
-  "build": ["--aot-type-errors=log"],
-  "env": { "BUN_AOT_TYPE_ERROR_LOG": "/dev/null" }
+  "build": ["--aot-log-type-mismatches"],
+  "env": { "BUN_AOT_TYPE_MISMATCH_LOG": "/dev/null" }
 }

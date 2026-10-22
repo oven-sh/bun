@@ -1,3 +1,4 @@
+// `x!` tests nothing: arithmetic on the undefined or null behind it gives what JavaScript gives.
 function say(label: string, make: () => unknown): void {
   try { console.log(label, String(make())); } catch (error) { console.log(label, "THROWS", (error as Error).constructor.name); }
 }

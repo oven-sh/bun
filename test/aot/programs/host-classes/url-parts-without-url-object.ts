@@ -76,17 +76,17 @@ for (const text of texts) {
 
 const plain = "http://example.com/a/b?a=1&b=2";
 const order: string[] = [];
-say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as unknown as string).pathname);
-say("a name that is not a string", () => new URL(plain).searchParams.get({ toString: () => (order.push("name"), "b") } as unknown as string));
-say("a name that is a number, null, undefined", () => [5, null, undefined].map(name => new URL("http://a/?5=five&null=none&undefined=nothing").searchParams.get(name as unknown as string)));
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any).pathname);
+say("a name that is not a string", () => new URL(plain).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
+say("a name that is a number, null, undefined", () => [5, null, undefined].map(name => new URL("http://a/?5=five&null=none&undefined=nothing").searchParams.get(name as any)));
 say("a name that throws", () =>
   new URL(plain).searchParams.get({
     toString() {
       throw new RangeError("no name");
     },
-  } as unknown as string),
+  } as any),
 );
-say("a symbol for a name", () => new URL(plain).searchParams.get(Symbol.iterator as unknown as string));
+say("a symbol for a name", () => new URL(plain).searchParams.get(Symbol.iterator as any));
 say("the order of conversions", () => order);
 say("the input is evaluated before the name", () => {
   const seen: string[] = [];

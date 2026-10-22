@@ -1,34 +1,34 @@
 #!/usr/bin/env python3
-"""Runs the programs in ../programs with quick.py twice: as they are, and with the garbage collector at work all the time.
+"""Runs the programs in ../programs with quick.py twice: normally, and under collector stress.
 
-The second time the `jsc` shell collects at every n-th allocation that leaves the fast path, and overwrites every cell it frees, but
-only where the compiled program runs, not where it is compiled. A value that compiled code still uses and the collector cannot
-find is then gone at once, every time, instead of once in a million runs. Run it on Linux x64 too: with fewer registers, fewer stale
-copies of a pointer lie about that would keep such a value alive by accident.
+In the second run the `jsc` shell collects at every n-th slow-path allocation and scribbles over every cell it frees. Only the run of the
+image is stressed, not the compile. A value that compiled code still uses and the collector cannot find is then destroyed at once, every
+time, instead of once in a million runs. Run it on Linux x64 too: with fewer registers, fewer stale copies of a pointer are left to keep
+such a value alive by accident.
 
-    JSC=<jsc> SEMA=<bun-sema> PLAIN=<any bun> python3 test/aot/shell/collector-stress.py [-j <jobs>] [--every <n>] [--young] [--part <i>/<n>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/collector-stress.py [-j <jobs>] [--every <n>] [--young] [--part <i>/<n>] <program>... | all
 
-    --every <n>     collect at every n-th such allocation (default: 3). 1 and 2 find other things and take longer
-    --young         the collections are young ones. A full collection finds everything from the roots; a young one relies on the
-                    write barriers, so only this finds a store of a new cell into an old one that compiled code makes without one
-    --part <i>/<n>  of `all`: every n-th program, from the i-th on. ../collector-stress/*.test.ts deal the programs out so
-    the rest        as for quick.py, whose top says how to build the tools
+    --every <n>     collect at every n-th slow-path allocation (default: 3). 1 and 2 find other bugs and take longer
+    --young         run Eden collections. A full collection finds everything from the roots. An Eden collection relies on the write
+                    barriers, so only this finds a store of a new cell into an old one that compiled code does without a barrier
+    --part <i>/<n>  with `all`: every n-th program, starting at the i-th. ../collector-stress/*.test.ts split the programs this way
+    the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
-Prints one line per program that is `same` as it is and not the same under stress, and exits with 1 if there is any. Not counted:
-    a program that runs out of time under stress; their number is printed
-    the programs in collector-stress-known.txt: they count calls into the runtime or cells of the heap, and a collection empties
-    the caches that keep those numbers low
-Not run as part of `all`: the programs in collector-stress-slow.txt, which always run out of time
+Prints one line per program that is `same` normally and not under stress, and exits with 1 if there is one. Not counted:
+    a program that times out under stress; their number is printed
+    the programs in collector-stress-known.txt: they count runtime calls or heap cells, and a collection empties the caches that
+    keep those numbers low
+Not run as part of `all`: the programs in collector-stress-slow.txt, which always time out
 """
-import os, stat, subprocess, sys, tempfile
+import os, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import quick
+import quick, toolchain
 
 
-def verdicts(arguments, jsc, work, options):
-    env = {**os.environ, "JSC": jsc, "WORK": work, "COLLECTOR_STRESS_OPTIONS": options}
+def verdicts(arguments, work, options):
+    env = {**os.environ, "WORK": work, "RUN_OPTIONS": options}
     output = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode(errors="replace")
     return dict(line.split(": ", 1) for line in output.split("\n") if ": " in line)
 
@@ -51,19 +51,18 @@ if __name__ == "__main__":
     if "all" in arguments:
         slow = {line.split()[0] for line in open(HERE + "/collector-stress-slow.txt") if not line.startswith("#") and ("young" if young else "full") in line.split(None, 1)[1]}
         arguments[arguments.index("all"):] = [name for name in quick.all_programs() if name not in slow][part - 1::parts]
-    if not arguments or "JSC" not in os.environ:
+    if not arguments:
         sys.exit(__doc__)
+    for name in ("JSC", "TESTAOT", "FRONT_END", "PLAIN"):
+        toolchain.tool(name)
     known = {line.split()[0] for line in open(HERE + "/collector-stress-known.txt") if line.strip() and not line.startswith("#")}
     with tempfile.TemporaryDirectory(prefix="aot-collector-stress") as folder:
-        wrapper = folder + "/jsc"
-        open(wrapper, "w").write('#!/bin/sh\ncase " $* " in\n*" --aotImagePath="*) exec "%s" $COLLECTOR_STRESS_OPTIONS "$@";;\n*) exec "%s" "$@";;\nesac\n' % (os.environ["JSC"], os.environ["JSC"]))
-        os.chmod(wrapper, os.stat(wrapper).st_mode | stat.S_IXUSR)
-        plainly = verdicts(arguments, wrapper, folder + "/plainly", "")
-        stressed = verdicts(arguments, wrapper, folder + "/stressed", f"--slowPathAllocsBetweenGCs={every} --useZombieMode=1 --scribbleFreeCells=1" + (" --useEdenCollectionsAtSlowPathAllocs=1" if young else ""))
-    judged = [name for name, verdict in plainly.items() if verdict.startswith("same") and name not in known]
-    slow = [name for name in judged if stressed.get(name, "").startswith("DIFFERS: timed out")]
-    failures = [name for name in judged if name not in slow and not stressed.get(name, "").startswith("same")]
+        baseline = verdicts(arguments, folder + "/baseline", "")
+        stressed = verdicts(arguments, folder + "/stressed", f"--slowPathAllocsBetweenGCs={every} --useZombieMode=1 --scribbleFreeCells=1" + (" --useEdenCollectionsAtSlowPathAllocs=1" if young else ""))
+    judged = [name for name, verdict in baseline.items() if verdict.startswith("same") and name not in known]
+    timed_out = [name for name in judged if stressed.get(name, "").startswith("DIFFERS: timed out")]
+    failures = [name for name in judged if name not in timed_out and not stressed.get(name, "").startswith("same")]
     for name in failures:
         print(f"{name}: {stressed.get(name, 'no verdict')}")
-    print(f"{len(judged)} programs, {len(failures)} fail under stress alone, {len(slow)} run out of time")
+    print(f"{len(judged)} programs, {len(failures)} fail under stress alone, {len(timed_out)} run out of time")
     sys.exit(1 if failures else 0)

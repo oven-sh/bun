@@ -8,14 +8,16 @@ use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    JsResult,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
 use bun_http_types::Method::Method;
 
-use super::body::{Body, BodyMixin, SharedBody, Value as BodyValue, ValueError as BodyValueError};
+use super::body::{Body, BodyMixin, ProvenBody, Value as BodyValue, ValueError as BodyValueError};
 use super::{FetchHeaders, ReadableStream, Request};
+use crate::generated_classes::js_Response as js_typed;
+use bun_jsc::proven_return::{Proven, return_kind::{self, Instance}};
 
 // Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the `.classes.ts` source path is
@@ -210,7 +212,6 @@ pub(crate) struct Response {
     init: JsCell<Init>,
     url: JsCell<BunString>,
     redirected: Cell<bool>,
-    body_was_read: Cell<bool>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
     ref_count: Cell<u32>,
@@ -226,8 +227,6 @@ pub(crate) struct Response {
 
     /// Fetch's `AbortSignal` listener; survives `FetchTasklet` teardown so a fully-buffered body is still errored.
     abort_listener: JsCell<Option<Box<BodyAbortListener>>>,
-
-    shared_body: JsCell<Option<std::rc::Rc<SharedBody>>>,
 }
 
 impl Default for Response {
@@ -237,13 +236,11 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
-            body_was_read: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
             abort_listener: JsCell::new(None),
-            shared_body: JsCell::new(None),
         }
     }
 }
@@ -265,11 +262,15 @@ impl crate::webcore::body::BodyOwnerJs for Response {
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
-        js::body_get_cached(this)
+        js_typed::body_get_cached(this)
     }
     #[inline]
-    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js::body_set_cached(this, global, value)
+    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: ProvenBody) {
+        js_typed::body_set_cached(this, global, value)
+    }
+    #[inline]
+    fn body_clear_cached(this: JSValue, global: &JSGlobalObject) {
+        js_typed::body_clear_cached(this, global)
     }
     #[inline]
     fn stream_get_cached(this: JSValue) -> Option<JSValue> {
@@ -426,57 +427,7 @@ impl Response {
     pub(crate) fn get_body_value(&self) -> &mut BodyValue {
         // R-2: both `Response.body` and `Body.value` are `JsCell` —
         // single-JS-thread interior-mutability boundary. See `Body::value_mut`.
-        if self.shared_body.get().is_some() {
-            self.settle_shared_body();
-        }
         self.body.get().value_mut()
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn settle_shared_body(&self) {
-        let Some(shared) = self.shared_body.take() else {
-            return;
-        };
-        *self.body.get().value_mut() = shared.stream_body();
-        self.check_body_stream_ref(shared.global());
-        if self.body_was_read.get()
-            && let Some(this_value) = self.js_ref.get().try_get()
-            && let Some(stream) = self.get_body_readable_stream()
-        {
-            js::body_set_cached(this_value, shared.global(), stream.value);
-        }
-    }
-
-    pub(crate) fn get_body_value_as_blob_if_possible(&self) -> &mut BodyValue {
-        if !self.body_was_read.get()
-            && let Some(shared) = self.shared_body.get()
-            && let Some(value) = shared.take_unread()
-        {
-            *self.body.get().value_mut() = value;
-            self.shared_body.set(None);
-        }
-        let value = self.get_body_value();
-        value.to_blob_if_possible();
-        value
-    }
-
-    fn share_body(&self, global_this: &JSGlobalObject, this_value: JSValue) -> Option<std::rc::Rc<SharedBody>> {
-        if let Some(shared) = self.shared_body.get() {
-            if !shared.is_unread() {
-                return None;
-            }
-            self.body_was_read.set(true);
-            return Some(std::rc::Rc::clone(shared));
-        }
-        let value = self.body.get().value_mut();
-        if !SharedBody::can_hold(value) || js::body_get_cached(this_value).is_some() {
-            return None;
-        }
-        let shared = SharedBody::new(mem::replace(value, BodyValue::Used), global_this);
-        self.shared_body.set(Some(std::rc::Rc::clone(&shared)));
-        self.body_was_read.set(true);
-        Some(shared)
     }
 }
 
@@ -510,13 +461,6 @@ impl Response {
     }
 
     pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        let js_value = self.create_wrapper(global_object);
-        self.check_body_stream_ref(global_object);
-        js_value
-    }
-
-    #[inline(always)]
-    fn create_wrapper(&self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
         // `bun_jsc::generated::JSResponse::to_js` ⇒ `Response__create` (C++
         // shim). Payload type is erased (`*mut ()`) at the bun_jsc tier.
@@ -528,6 +472,8 @@ impl Response {
             global_object,
         );
         self.js_ref.set(JsRef::init_weak(js_value));
+
+        self.check_body_stream_ref(global_object);
         js_value
     }
 
@@ -600,40 +546,40 @@ impl Response {
     }
 
     // JS getter; codegen calls this exact name.
-    pub(crate) fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<Proven<return_kind::String>> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        this.url.get().to_js(global_this)
+        Proven::from_string(this.url.get(), global_this)
     }
 
     pub(crate) fn get_response_type(
         this: &Self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
+    ) -> Proven<return_kind::String> {
         if this.init.get().status_code < 200 {
-            return Ok(global_this.common_strings().error());
+            return Proven::from_common_string(bun_jsc::CommonString::FetchError, global_this);
         }
 
-        Ok(global_this.common_strings().default())
+        Proven::from_common_string(bun_jsc::CommonString::FetchDefault, global_this)
     }
 
-    pub(crate) fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<Proven<return_kind::String>> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
-        this.init.get().status_text.to_js(global_this)
+        Proven::from_string(&this.init.get().status_text, global_this)
     }
 
-    pub(crate) fn get_redirected(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_redirected(this: &Self, _global: &JSGlobalObject) -> bool {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
-        JSValue::from(this.redirected.get())
+        this.redirected.get()
     }
 
-    pub(crate) fn get_ok(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_ok(this: &Self, _global: &JSGlobalObject) -> bool {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
-        JSValue::from(this.is_ok())
+        this.is_ok()
     }
 
-    pub(crate) fn get_status(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_status(this: &Self, _global: &JSGlobalObject) -> u16 {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
-        JSValue::js_number(this.init.get().status_code as f64)
+        this.init.get().status_code
     }
 
     pub(crate) fn get_or_create_headers(
@@ -662,8 +608,8 @@ impl Response {
         Ok(init.headers.as_mut().unwrap())
     }
 
-    pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
+    pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<Proven<Instance<FetchHeaders>>> {
+        Ok(Proven::from_headers(this.get_or_create_headers(global_this)?, global_this))
     }
 
     pub(crate) fn get_content_type(&self) -> JsResult<Option<Utf8Bytes<'_>>> {
@@ -702,7 +648,6 @@ impl Response {
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
-        let _ = self.get_body_value();
         match self.body.get().known_len() {
             Some(len) => writeln!(
                 writer,
@@ -781,7 +726,7 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ")
             )?;
-            let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
+            let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?.value();
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatAs::Private,
@@ -886,7 +831,6 @@ impl Response {
             (*this).url.set(BunString::EMPTY);
             (*this).js_ref.set(JsRef::empty());
             (*this).abort_listener.set(None);
-            (*this).shared_body.set(None);
 
             // Contents are gone; the allocation itself stays until any outstanding
             // WeakRef derefs (RequestContext.response_weakref). WeakRef.get() returns
@@ -910,36 +854,19 @@ impl Response {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        Self::construct_json_response(global_this, callframe, JsonArgument::Value)
+    }
+
+    fn construct_json_response(
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+        argument: JsonArgument,
+    ) -> JsResult<JSValue> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
         let mut args = bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
-        let json_value = args.next_eat().unwrap_or_default();
-        Self::json_with_init(global_this, json_value, |response| {
-            if let Some(arg_init) = args.next_eat() {
-                if arg_init.is_undefined_or_null() {
-                    // no-op
-                } else if arg_init.is_number() {
-                    response.init.with_mut(|i| {
-                        i.status_code =
-                            u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
-                    });
-                } else {
-                    if let Some(init) = Init::init(global_this, arg_init)? {
-                        response.init.set(init);
-                    }
-                }
-            }
-            Ok(())
-        })
-    }
 
-    #[inline(always)]
-    fn json_with_init(
-        global_this: &JSGlobalObject,
-        json_value: JSValue,
-        set_init: impl FnOnce(&Response) -> JsResult<()>,
-    ) -> JsResult<JSValue> {
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
         // stack value in a scopeguard that calls `body.reset()`
@@ -955,32 +882,10 @@ impl Response {
             },
             |r| r.body.get().reset(),
         );
+        let json_value = args.next_eat().unwrap_or_default();
 
         if !json_value.is_empty() {
-            // Validate top-level values that are not JSON serializable (Node.js compatibility)
-            if json_value.is_undefined()
-                || json_value.is_symbol()
-                || json_value.js_type() == bun_jsc::JSType::JSFunction
-                || json_value.js_type() == bun_jsc::JSType::SlimClosure
-                || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
-            {
-                let err = global_this
-                    .create_type_error_instance(format_args!("Value is not JSON serializable"));
-                return Err(global_this.throw_value(err));
-            }
-
-            // BigInt has a different error message to match Node.js exactly
-            if json_value.is_big_int() {
-                let err = global_this.create_type_error_instance(format_args!(
-                    "Do not know how to serialize a BigInt"
-                ));
-                return Err(global_this.throw_value(err));
-            }
-
-            // Use jsonStringifyFast which passes undefined for the space parameter,
-            // triggering JSC's FastStringifier optimization. This is significantly faster
-            // than jsonStringify which passes 0 for space and uses the slower Stringifier.
-            let str = json_value.json_stringify_fast(global_this)?;
+            let str = Self::json_text_of(global_this, json_value, argument)?;
 
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
@@ -990,7 +895,20 @@ impl Response {
             }
         }
 
-        set_init(&response)?;
+        if let Some(arg_init) = args.next_eat() {
+            if arg_init.is_undefined_or_null() {
+                // no-op
+            } else if arg_init.is_number() {
+                response.init.with_mut(|i| {
+                    i.status_code =
+                        u16::try_from(0.max(arg_init.to_int32()).min(i32::from(u16::MAX))).unwrap();
+                });
+            } else {
+                if let Some(init) = Init::init(global_this, arg_init)? {
+                    response.init.set(init);
+                }
+            }
+        }
 
         let headers_ref = response.get_or_create_headers(global_this)?;
         let json_mime = bun_http_types::MimeType::JSON;
@@ -1005,6 +923,42 @@ impl Response {
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed and uniquely owned here.
         Ok(unsafe { (*ptr).to_js(global_this) })
+    }
+
+    fn json_text_of(
+        global_this: &JSGlobalObject,
+        json_value: JSValue,
+        argument: JsonArgument,
+    ) -> JsResult<BunString> {
+        if argument == JsonArgument::Text && json_value.is_string_literal() {
+            return json_value.to_bun_string(global_this);
+        }
+
+        // Validate top-level values that are not JSON serializable (Node.js compatibility)
+        if json_value.is_undefined()
+            || json_value.is_symbol()
+            || json_value.js_type() == bun_jsc::JSType::JSFunction
+            || json_value.js_type() == bun_jsc::JSType::CompiledClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
+        {
+            let err = global_this
+                .create_type_error_instance(format_args!("Value is not JSON serializable"));
+            return Err(global_this.throw_value(err));
+        }
+
+        // BigInt has a different error message to match Node.js exactly
+        if json_value.is_big_int() {
+            let err = global_this.create_type_error_instance(format_args!(
+                "Do not know how to serialize a BigInt"
+            ));
+            return Err(global_this.throw_value(err));
+        }
+
+        // Use jsonStringifyFast which passes undefined for the space parameter,
+        // triggering JSC's FastStringifier optimization. This is significantly faster
+        // than jsonStringify which passes 0 for space and uses the slower Stringifier.
+        json_value.json_stringify_fast(global_this)
     }
 
     fn validate_redirect_status_code(
@@ -1251,6 +1205,9 @@ impl Response {
 
         // Disarm: all fallible ops have succeeded.
         let body = scopeguard::ScopeGuard::into_inner(body);
+        // Ownership transfers to the JSC wrapper (freed via `finalize`): the
+        // codegen constructor thunk binds this `*mut Response` to `js_this`,
+        // and a caller without one makes the wrapper with `to_js`.
         Ok(bun_core::heap::into_raw(Box::new(Response {
             body: JsCell::new(body),
             init: JsCell::new(init),
@@ -1259,37 +1216,16 @@ impl Response {
         })))
     }
 
-    fn from_response(global_this: &JSGlobalObject, other_value: JSValue) -> JsResult<JSValue> {
-        let other = other_value.as_direct::<Response>().expect("the caller has compared the structure");
-        // SAFETY: `as_direct` returned the live `*mut Response` of the wrapper, which `other_value` roots for this call.
-        let other = unsafe { &*other };
-        if let Some(shared) = other.share_body(global_this, other_value) {
-            let init = other.init.get().clone(global_this)?;
-            let response = bun_core::heap::into_raw(Box::new(Response {
-                body: JsCell::new(Body::new(BodyValue::Used)),
-                init: JsCell::new(init),
-                shared_body: JsCell::new(Some(shared)),
-                ..Default::default()
-            }));
-            // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
-            return Ok(unsafe { (*response).create_wrapper(global_this) });
-        }
-        let body = match js::body_get_cached(other_value) {
-            Some(body) => body,
-            None => {
-                let body = <Self as BodyMixin>::get_body(other, global_this)?;
-                js::body_set_cached(other_value, global_this, body);
-                body
-            }
-        };
-        let init = other.init.get().clone(global_this)?;
-        let response = Self::from_body_and_init(global_this, body, init, None)?;
-        // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
-        Ok(unsafe { (*response).to_js(global_this) })
-    }
-
-    fn from_parts(global_this: &JSGlobalObject, body_value: JSValue, parts: &InitParts) -> JsResult<JSValue> {
-        if body_value.is_object() && body_value.as_class_ref::<Blob>().is_some_and(|blob| blob.is_s3()) {
+    fn from_parts(
+        global_this: &JSGlobalObject,
+        body_value: JSValue,
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        if body_value.is_object()
+            && body_value
+                .as_class_ref::<Blob>()
+                .is_some_and(|blob| blob.is_s3())
+        {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "new Response(s3File) do not support ResponseInit options",
             )));
@@ -1299,91 +1235,50 @@ impl Response {
         // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
         Ok(unsafe { (*response).to_js(global_this) })
     }
-
-    fn from_utf8_and_parts(global_this: &JSGlobalObject, bytes: Vec<u8>, parts: &InitParts) -> JsResult<JSValue> {
-        let init = Init::from_parts(global_this, parts)?;
-        let response = bun_core::heap::into_raw(Box::new(Response {
-            body: JsCell::new(Body::new(BodyValue::InternalBlob(super::InternalBlob { bytes, was_string: true }))),
-            init: JsCell::new(init),
-            ..Default::default()
-        }));
-        // SAFETY: `response` is freshly boxed; ownership transfers to the JSC wrapper.
-        Ok(unsafe { (*response).to_js(global_this) })
-    }
 }
 
+/// The members of a `ResponseInit` literal that compiled code has taken apart. Undefined stands for a member that the literal lacks.
 pub(crate) struct InitParts {
     status: JSValue,
     status_text: JSValue,
     headers: JSValue,
-    header_count: u32,
-    header_names_and_values: *const JSValue,
 }
 
+/// `new Response(body, { status, statusText, headers })` (`literalPartsForm` of the table of built-ins).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Response__ensureFetchHeaders(response: &Response, global_this: &JSGlobalObject) -> *mut FetchHeaders {
-    response.get_or_create_headers(global_this).map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Response__createFromResponse(global_this: &JSGlobalObject, other: JSValue) -> JSValue {
-    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_response(global_this, other))
-}
-
-/// # Safety
-/// `header_names_and_values` must point to `2 * header_count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Response__createFromParts(
-    global_this: &JSGlobalObject,
+#[bun_jsc::host_call]
+fn Response__createFromParts(
+    global_this: *mut JSGlobalObject,
     body: JSValue,
     status: JSValue,
     status_text: JSValue,
     headers: JSValue,
-    header_count: u32,
-    header_names_and_values: *const JSValue,
 ) -> JSValue {
-    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
-    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_parts(global_this, body, &parts))
-}
-
-/// # Safety
-/// `bytes` must point to `size` bytes of valid UTF-8, which are copied. `header_names_and_values` as for `Response__createFromParts`.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Response__createFromUTF8AndParts(
-    global_this: &JSGlobalObject,
-    bytes: *const u8,
-    size: usize,
-    status: JSValue,
-    status_text: JSValue,
-    headers: JSValue,
-    header_count: u32,
-    header_names_and_values: *const JSValue,
-) -> JSValue {
-    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
-    // SAFETY: the caller upholds the contract above.
-    let bytes = unsafe { core::slice::from_raw_parts(bytes, size) }.to_vec();
-    bun_jsc::host_fn::to_js_host_call(global_this, || Response::from_utf8_and_parts(global_this, bytes, &parts))
-}
-
-/// # Safety
-/// `header_names_and_values` must point to `2 * header_count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Response__createJSONFromParts(
-    global_this: &JSGlobalObject,
-    value: JSValue,
-    status: JSValue,
-    status_text: JSValue,
-    headers: JSValue,
-    header_count: u32,
-    header_names_and_values: *const JSValue,
-) -> JSValue {
-    let parts = InitParts { status, status_text, headers, header_count, header_names_and_values };
-    bun_jsc::host_fn::to_js_host_call(global_this, || {
-        Response::json_with_init(global_this, value, |response| {
-            response.init.set(Init::from_parts(global_this, &parts)?);
-            Ok(())
-        })
+    // SAFETY: compiled code passes its live realm.
+    let global_this = unsafe { &*global_this };
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+    };
+    bun_jsc::to_js_host_call(global_this, || {
+        Response::from_parts(global_this, body, &parts)
     })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsonArgument {
+    Value,
+    Text,
+}
+
+/// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
+#[bun_jsc::host_fn(export = "Response__constructJSONFromText")]
+fn construct_json_from_text(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    Response::construct_json_response(global_this, callframe, JsonArgument::Text)
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
@@ -1425,15 +1320,12 @@ impl Init {
         })
     }
 
+    /// The members are taken in the order in which `init` reads them.
     fn from_parts(global_this: &JSGlobalObject, parts: &InitParts) -> JsResult<Init> {
         let mut init = Init {
             status_code: 200,
             ..Default::default()
         };
-        // SAFETY: `InitParts` is only made by the two exported functions, whose callers uphold the contract.
-        let filled = unsafe { FetchHeaders::create_from_names_and_values(global_this, parts.header_count, parts.header_names_and_values) }?;
-        // SAFETY: C++ returns a +1 ref or null.
-        init.headers = filled.map(|headers| unsafe { HeadersRef::adopt(headers) });
         if !parts.headers.is_undefined() {
             init.set_headers(global_this, parts.headers)?;
         }
@@ -1441,7 +1333,9 @@ impl Init {
             init.set_status(global_this, parts.status)?;
         }
         let status_text = parts.status_text;
-        if !status_text.is_empty_or_undefined_or_null() && !(status_text.is_string() && !status_text.to_boolean()) {
+        if !status_text.is_empty_or_undefined_or_null()
+            && !(status_text.is_string() && !status_text.to_boolean())
+        {
             init.status_text = status_text.to_bun_string(global_this)?;
         }
         Ok(init)

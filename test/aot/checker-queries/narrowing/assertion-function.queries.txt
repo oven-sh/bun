@@ -1,0 +1,32 @@
+# A call to an assertion function narrows its argument in the statements after the call. The argument can be a property, a nested property, a property of `this` or an element at a constant key. An `asserts this is T` method narrows its receiver, and `asserts condition` narrows like an `if`. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+assertion-function.ts:4 type `x` = string | number
+assertion-function.ts:5 type `x` = string | number
+assertion-function.ts:6 type `x` = string
+assertion-function.ts:17 type `entry.inner.token` = Token
+assertion-function.ts:18 type `entry.inner.token` = Word
+assertion-function.ts:19 type `entry.token` = Token
+assertion-function.ts:20 type `entry.token` = Token
+assertion-function.ts:21 type `entry.token` = Word
+
+assertion-function.ts:30 type `this.token` = Token
+assertion-function.ts:31 type `this.token` = Word
+
+assertion-function.ts:36 type `pair[0]` = Token
+assertion-function.ts:37 type `pair[0]` = Word
+assertion-function.ts:38 type `pair[1]` = Token
+assertion-function.ts:39 type `entry["token"]` = Token
+assertion-function.ts:40 type `entry.token` = Word
+
+assertion-function.ts:50 type `shape` = Shape
+assertion-function.ts:51 type `shape` = Round
+assertion-function.ts:52 type `holder.shape` = Shape
+assertion-function.ts:53 type `holder.shape` = Round
+
+assertion-function.ts:57 type `entry.token` = Token
+assertion-function.ts:58 type `entry.token` = Word
+assertion-function.ts:60 type `other.token` = Word
+assertion-function.ts:61 type `other.inner.token` = Digits
+
+assertion-function.ts:67 type `entry.token` = Word
+assertion-function.ts:69 type `entry.token` = Word
+assertion-function.ts:71 type `entry.token` = Token

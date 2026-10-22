@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isLinux, isWindows, nodeExe, tempDir, tls as tlsCert } from "harness";
 import http from "http";

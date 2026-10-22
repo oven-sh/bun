@@ -1,1 +1,0 @@
-It throws a TypeError. The object has every member of the type, so it should be admitted as it is and the row should print what Bun prints. Until 2026-10-16 it was copied without a word, and the row printed false and the old number.

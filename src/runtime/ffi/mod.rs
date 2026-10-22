@@ -17,7 +17,7 @@ mod ffi_body;
 /// the codegen-expected path so the dispatch table links without forcing the
 /// generator to special-case `ffi/ffi.rs`.
 pub(crate) mod ffi {
-    pub(crate) use super::ffi_body::bun__ffi__cc;
+    pub(crate) use super::ffi_body::{bun__ffi__cc, close_callback};
 }
 
 #[path = "FFIObject.rs"]

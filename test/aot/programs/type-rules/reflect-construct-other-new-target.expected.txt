@@ -1,1 +1,0 @@
-Reflect.construct with another new.target: THROWS TypeError: Cannot construct 'F' with a new.target whose 'prototype' is not that of a function in TypeScript code of the program (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)

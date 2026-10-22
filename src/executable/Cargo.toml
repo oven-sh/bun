@@ -1,0 +1,16 @@
+[package]
+name = "bun_executable"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+test = false
+doctest = false
+
+[dependencies]
+bun_aot = { workspace = true, features = ["linked_names"] }
+bun_runtime = { path = "../runtime" }
+
+[lints]
+workspace = true

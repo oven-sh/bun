@@ -1,10 +1,11 @@
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
-const answersOfRead = ["own", "own-and-cached", "cannot-say", "inherited-or-absent", "inherited-or-absent-and-cached", "no-such-name", "no-such-name-and-cached", "along-the-chain-of-a-dictionary"];
-const answersOfHas = ["cannot-say", "no-such-name", "along-the-chain", "by-the-structure", "by-the-structure-and-cached"];
-const answersOfStore = ["left-to-the-operation", "added", "added-and-offered-to-the-table", "added-by-the-only-transition", "added-by-the-only-transition-and-offered-to-the-table", "replaced", "replaced-and-cached"];
-const visits = () => answersOfRead.reduce((sum, answer) => sum + count("operationAOTGetByKeyGeneric:" + answer), 0) + answersOfHas.reduce((sum, answer) => sum + count("operationAOTHasByKeyGeneric:" + answer), 0)
-    + answersOfStore.reduce((sum, answer) => sum + count("operationAOTPutByKeyGeneric:" + answer), 0) + count("operationAOTInByValAndCache") + count("operationAOTGetByValAndCache") + count("operationAOTPutByValAndCache") + count("operationAOTDeleteByValAndCache");
+const operations = [
+    "operationAOTGetByValGeneric", "operationAOTInByValGeneric", "operationAOTPutByValGeneric",
+    "operationAOTGetByValAndCache", "operationAOTInByValAndCache", "operationAOTPutByValAndCache", "operationAOTPutByValAndCacheSloppy",
+    "operationAOTDeleteByVal", "operationAOTDeleteByValSloppy",
+];
+const visits = () => operations.reduce((sum, operation) => sum + count(operation), 0);
 
 const log = [];
 const handler = {

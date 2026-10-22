@@ -1,11 +1,11 @@
 // The result of Object.getOwnPropertyDescriptor is only read by name or tested for being there, so no object is made for it; where it goes anywhere else it is an object as ever.
-// CALLS- valueOf operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS- partsOf operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS- isAccessor operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS- valueIfThere operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS+ handedOn operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS+ written operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS+ joined operationAOTTypedGetOwnPropertyDescriptor\b
+// CALLS- valueOf operationAOTGetOwnPropertyDescriptor\b
+// CALLS- partsOf operationAOTGetOwnPropertyDescriptor\b
+// CALLS- isAccessor operationAOTGetOwnPropertyDescriptor\b
+// CALLS- valueIfThere operationAOTGetOwnPropertyDescriptor\b
+// CALLS+ handedOn operationAOTGetOwnPropertyDescriptor\b
+// CALLS+ written operationAOTGetOwnPropertyDescriptor\b
+// CALLS+ joined operationAOTGetOwnPropertyDescriptor\b
 function show(value) {
   if (typeof value === "function") return "function " + value.name;
   if (typeof value === "symbol") return value.toString();

@@ -1,5 +1,0 @@
-error: TS100014: This always fails under --aot: `Reflect.set(Math, ..)` returns false where plain JavaScript returns true: built-ins cannot be replaced.
-error: TS100014: This always fails under --aot: `Reflect.defineProperty(Math, ..)` returns false where plain JavaScript returns true: built-ins cannot be replaced.
-error: TS100014: This always fails under --aot: `Reflect.deleteProperty(Math, ..)` returns false where plain JavaScript returns true: built-ins cannot be replaced.
-error: TS100014: This always fails under --aot: `Reflect.setPrototypeOf(Math, ..)` returns false where plain JavaScript returns true: built-in objects keep their prototype.
-error: TS100014: This always fails under --aot: `Reflect.set(Math, ..)` returns false where plain JavaScript returns true: it would hide `Object.prototype.toString`, and built-ins cannot be replaced.

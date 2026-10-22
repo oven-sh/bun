@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { unsupported } from "../aot/run-programs";
+import { canTrim } from "./compile-trim-features";
 
 const keyWidth = 8;
 const base = 16777619;
@@ -76,7 +78,7 @@ function whatIsCompressedIn(bytes: Buffer): Uint8Array[] {
 const heldByWhatStays = ["exhaustive-deps", "rules-of-hooks", "use-memo", "Substitutions for pattern "];
 const stillLeftOnLinux = ["error-message", "no-console", "no-deprecated", "no-export", "no-proto", "plicit-function-", "prop-types"];
 const stillLeftOnMacOS = `
-  activedescendant alt-text aot-outside-data arrow-body-style bad-min-max-func block-scoped-var catch-error-name error-boundaries error-message
+  activedescendant alt-text arrow-body-style bad-min-max-func block-scoped-var catch-error-name error-boundaries error-message
   fenced-code-meta forbid-dom-props id-match iframe-has-title inline-script-id jsx-indent jsx-indent-props max-dependencies max-nested-calls
   new-for-builtins no-absolute-path no-alert no-alias-methods no-array-reverse no-await-in-loop no-cast-to-brand no-children-prop no-clone-element
   no-console no-control-regex no-cycle no-deprecated no-done-callback no-empty no-empty-pattern no-export no-extend-native no-find-dom-node
@@ -94,18 +96,50 @@ function notAccountedFor(found: string[]) {
 
 const piecesOf = (name: string, width: number) => (name.length < width ? [name] : Array.from({ length: name.length - width + 1 }, (_, at) => name.slice(at, at + width)));
 
+const builtinModulesMagic = "BUNBLTNS";
+const builtinModulesHeaderSize = 48;
+const builtinModuleRecordSize = 24;
+
+function readBuiltinSourceTexts(executable: Buffer): { name: string; text: string }[] {
+  for (let start = executable.indexOf(builtinModulesMagic); start !== -1; start = executable.indexOf(builtinModulesMagic, start + 1)) {
+    if (start + builtinModulesHeaderSize > executable.length) break;
+    const field = (index: number) => executable.readUInt32LE(start + builtinModulesMagic.length + index * 4);
+    const header = { version: field(0), moduleCount: field(2), modulesOffset: field(3), dataOffset: field(6), dataLength: field(7) };
+    if (header.version !== 1 || header.modulesOffset !== builtinModulesHeaderSize) continue;
+    if (header.modulesOffset + header.moduleCount * builtinModuleRecordSize > header.dataOffset) continue;
+    if (start + header.dataOffset + header.dataLength > executable.length) continue;
+    const data = executable.subarray(start + header.dataOffset, start + header.dataOffset + header.dataLength);
+    const textAt = (offset: number, length: number) => data.toString("latin1", offset, offset + length);
+    const modules = Array.from({ length: header.moduleCount }, (_, index) => {
+      const word = (position: number) => executable.readUInt32LE(start + header.modulesOffset + index * builtinModuleRecordSize + position * 4);
+      return { name: textAt(word(0), word(1)), codeOffset: word(4), codeLength: word(5) };
+    });
+    const functionsLength = Math.min(...modules.map(module => module.codeOffset)) - 1;
+    return [{ name: "built-in functions", text: textAt(0, functionsLength) }, ...modules.map(module => ({ name: module.name, text: textAt(module.codeOffset, module.codeLength) }))];
+  }
+  return [];
+}
+
+function samplePieces(text: string) {
+  const width = 64;
+  const stride = 512;
+  const pieces = [text.slice(0, width)];
+  for (let at = stride; at + width <= text.length; at += stride) pieces.push(text.slice(at, at + width));
+  return pieces;
+}
+
 function said(cmd: string[], cwd: string) {
   const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
 }
 
-using dir = tempDir("compile-trim-runtime-texts", { "hello.ts": `console.log("hello world");` });
-const built = said([bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], String(dir));
-const hasIslands = !built.stderr.includes("nothing can be left out of this Bun");
-const file = hasIslands ? readFileSync(join(String(dir), "hello" + (isWindows ? ".exe" : ""))) : Buffer.alloc(0);
+const programs = { "hello.ts": `console.log("hello world");` };
+using dir = tempDir("compile-trim-runtime-texts", programs);
+said([bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"], String(dir));
+const file = canTrim ? readFileSync(join(String(dir), "hello" + (isWindows ? ".exe" : ""))) : Buffer.alloc(0);
 const listed = said([bunExe(), "lint", "--rules", "--format", "json"], String(dir)).stdout;
 
-describe.skipIf(!hasIslands)("an executable without the Bun command line holds none of its texts", () => {
+describe.skipIf(!canTrim)("an executable without the Bun command line holds none of its texts", () => {
   const whole = readFileSync(bunExe());
   const everythingIn = (bytes: Buffer) => [bytes, ...whatIsCompressedIn(bytes)];
   const trimmed = everythingIn(file);
@@ -159,5 +193,21 @@ describe.skipIf(!hasIslands)("an executable without the Bun command line holds n
       .filter(piece => piece.length >= 24);
     expect(messages.length).toBeGreaterThan(500);
     expect(notAccountedFor(textsFoundIn(trimmed, messages))).toEqual([]);
+  });
+
+  (unsupported ? test.skip : test.todoIf(isWindows))("no source text of the built-in modules in a compiled program that cannot run a string as code", () => {
+    const sources = readBuiltinSourceTexts(whole);
+    expect(sources.length).toBeGreaterThan(100);
+    const mostlyIn = (haystacks: Uint8Array[]) => {
+      const found = new Set(textsFoundIn(haystacks, sources.flatMap(source => samplePieces(source.text))));
+      return sources.filter(source => samplePieces(source.text).filter(piece => found.has(piece)).length * 2 >= samplePieces(source.text).length).map(source => source.name);
+    };
+    expect(mostlyIn(trimmed)).toEqual(sources.map(source => source.name));
+    using dir = tempDir("compile-trim-runtime-texts-compiled", programs);
+    const folder = String(dir);
+    const compiled = said([bunExe(), "build", "--compile", "--aot", "--trim", "--disallow-code-generation-from-strings", "hello.ts", "--outfile", "compiled"], folder);
+    expect(compiled.exitCode).toBe(0);
+    expect(mostlyIn(everythingIn(readFileSync(join(folder, "compiled" + (isWindows ? ".exe" : "")))))).toEqual([]);
+    expect(said([join(folder, "compiled")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
   });
 });

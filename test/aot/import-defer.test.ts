@@ -127,6 +127,12 @@ import { other, handedOn } from "./helper.mjs";
 console.log("main begins", other === a, handedOn === a);
 console.log(handedOn.value);
 `,
+  "reexport-read-through-namespace.mjs": `import defer * as a from "./a.mjs";
+import * as helper from "./helper.mjs";
+const name = ["handed", "On"].join("");
+console.log("main begins", helper.handedOn === a, helper[name] === a, Object.prototype.toString.call(helper[name]));
+console.log(helper[name].value);
+`,
   "another-object-than-the-eager-one.mjs": `import defer * as deferred from "./a.mjs";
 import * as eager from "./a.mjs";
 console.log("main begins", deferred === eager, Object.prototype.toString.call(deferred), Object.prototype.toString.call(eager), deferred.value === eager.value);

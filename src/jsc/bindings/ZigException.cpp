@@ -84,8 +84,9 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
 
     auto sourceURL = Zig::sourceURL(vm, stackFrame);
     frame.source_url = Bun::toStringRef(sourceURL);
-    if (stackFrame.hasLineAndColumnInfo()) {
-        switch (stackFrame.codeType()) {
+    auto m_codeBlock = stackFrame.codeBlock();
+    if (m_codeBlock) {
+        switch (m_codeBlock->codeType()) {
         case JSC::EvalCode: {
             frame.code_type = ZigStackFrameCodeEval;
             return;
@@ -99,11 +100,26 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
             return;
         }
         case JSC::FunctionCode: {
-            frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            frame.code_type = !m_codeBlock->isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
             break;
         }
         default:
             ASSERT_NOT_REACHED();
+        }
+    } else if (stackFrame.isCompiledFrame() && stackFrame.hasLineAndColumnInfo()) [[unlikely]] {
+        switch (stackFrame.codeType()) {
+        case JSC::EvalCode:
+            frame.code_type = ZigStackFrameCodeEval;
+            return;
+        case JSC::ModuleCode:
+            frame.code_type = ZigStackFrameCodeModule;
+            return;
+        case JSC::GlobalCode:
+            frame.code_type = ZigStackFrameCodeGlobal;
+            return;
+        case JSC::FunctionCode:
+            frame.code_type = !stackFrame.isConstructor() ? ZigStackFrameCodeFunction : ZigStackFrameCodeConstructor;
+            break;
         }
     }
 
@@ -119,10 +135,12 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     ZigStackFramePosition& position, JSC::SourceProvider** referenced_source_provider, PopulateStackTraceFlags flags)
 {
 #if ENABLE(AOT)
-    if (auto reported = stackFrame.reportedPosition(JSC::AOT::FunctionRef::ConstructPosition::AtStart); reported && stackFrame.hasLineAndColumnInfo()) {
-        position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
-        position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
-        position.byte_position = -1;
+    if (stackFrame.isCompiledFrame()) [[unlikely]] {
+        if (auto reported = stackFrame.compiledPosition(); reported && stackFrame.hasLineAndColumnInfo()) {
+            position.line_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.line).zeroBasedInt();
+            position.column_zero_based = OrdinalNumber::fromOneBasedInt(reported->lineColumn.column).zeroBasedInt();
+            position.byte_position = -1;
+        }
         return;
     }
 #endif
@@ -153,8 +171,6 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame.bytecodeIndex());
     memcpy(&position, &location, sizeof(ZigStackFramePosition));
     if (flags == PopulateStackTraceFlags::OnlyPosition)
-        return;
-    if (provider->hasNoSourceText())
         return;
     if (location.byte_position < 0 || static_cast<unsigned>(location.byte_position) >= sourceString.length())
         return;
@@ -231,7 +247,7 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
         populateStackFramePosition(stackFrame, nullptr,
             nullptr,
             0, frame.position, referenced_source_provider, flags);
-        if (auto position = stackFrame.reportedPosition(); position && position->source)
+        if (Zig::hasOriginalSourcePosition(stackFrame))
             frame.remapped = true;
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
         populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,

@@ -21,7 +21,7 @@ const values: [string, () => any][] = [
   ["a Map", () => new Map()], ["a Set", () => new Set()], ["a Date", () => new Date(0)], ["bytes", () => new Uint8Array(2)], ["a proxy of an array", () => new Proxy([], {})], ["a proxy of a function", () => new Proxy(() => 1, {})],
   ["a number", () => 5], ["a string", () => "text"], ["null", () => null], ["undefined", () => undefined],
 ];
-async function tell(name: string, f: () => unknown): Promise<void> { let said: string; try { await f(); said = "taken"; } catch (e) { said = (e as Error).name + (name.startsWith("listOr") ? "" : ": " + (e as Error).message.split(" (bun --aot")[0]); } console.log(name + ": " + said); }
+async function tell(name: string, f: () => unknown): Promise<void> { let said: string; try { await f(); said = "taken"; } catch (e) { said = (e as Error).name; } console.log(name + ": " + said); }
 for (const name of ["list", "pair", "optionalList", "callback", "anyFunction", "map", "listOrSet", "listOrFunction", "arrow", "later", "second", "used"]) for (const [what, make] of values) await tell(name + " | " + what, () => untyped[name](make()));
 for (const name of ["list", "callback", "map"]) for (const [what, make] of values) await tell("through a record of functions | " + name + " | " + what, () => byName[name]!(make()));
 const own: string[] = ["a"];

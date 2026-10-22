@@ -1,4 +1,4 @@
-// Untyped code stores a value of the wrong kind into a typed field, in five ways: each throws a TypeError, and the object stays as it was.
+// Untyped code stores a value of the wrong kind into a typed field, in five ways: each store succeeds. The typed read that follows throws a TypeError for another kind; null, undefined and, for an object type, any object pass.
 interface Gauge { n: number; s: string; b: boolean; o: { v: number }; f: () => string; opt?: number; list: number[] }
 function make(): Gauge { return { n: 1, s: "s", b: true, o: { v: 1 }, f: () => "f", list: [1] } }
 function all(g: Gauge): string { return [g.n + 1, g.s + "!", !g.b, g.o.v, g.f(), String(g.opt), g.list.length, Object.keys(g).join("")].join("") }

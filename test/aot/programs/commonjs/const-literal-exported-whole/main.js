@@ -1,5 +1,5 @@
 // `const keys = { .. }; module.exports = keys`: what the module exports is the literal, whoever asks and however, and symbols made there are keys like any other.
-// IR+ ^variable \d+ "onlyReadThroughTheObject" module
+// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
 "use strict";
 const lines = [];
 function show(what, value) { lines.push(what + ": " + String(value)); }

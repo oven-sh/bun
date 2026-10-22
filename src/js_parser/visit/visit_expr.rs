@@ -1709,10 +1709,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 has_spread = true;
             }
 
-            if in_.assign_target != js_ast::AssignTarget::None && property.flags.contains(Flags::Property::WasShorthand) {
-                property.value = property.value.map(bun_ast::audited::unmarked);
-            }
-
             // Extract the initializer for expressions like "({ a: b = c } = d)"
             if in_.assign_target != js_ast::AssignTarget::None
                 && property.initializer.is_none()
@@ -1867,82 +1863,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.should_fold_typescript_constant_expressions =
                 prev_should_fold_typescript_constant_expressions;
-            let specifier = p.with_dirname_folded(e_.expr);
-            *e = p.maybe_transpose_if_import(specifier, &state);
+            *e = p.maybe_transpose_if_import(e_.expr, &state);
             return;
         }
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    fn is_validating_callee(p: &mut Self, callee: Expr) -> bool {
-        let (written, method) = match callee.data {
-            Data::EDot(dot) => (dot.target, Some(dot.name.slice())),
-            _ => (callee, None),
-        };
-        let Data::EIdentifier(identifier) = written.data else { return false };
-        let name = p.load_name_from_ref(identifier.ref_);
-        let Ok(found) = p.find_symbol_with_record_usage::<false>(written.loc, name) else { return false };
-        let kind = if found.r#ref.is_empty() { js_ast::symbol::Kind::Unbound } else { p.symbols[found.r#ref.inner_index() as usize].kind };
-        match (kind, method) {
-            (js_ast::symbol::Kind::Unbound, Some(b"parse")) => name == b"JSON",
-            (js_ast::symbol::Kind::Unbound, Some(b"validate")) => name == b"Bun",
-            (js_ast::symbol::Kind::Import, Some(b"validate")) => p.bun_module_names.contains(&name),
-            (js_ast::symbol::Kind::Import, None) => p.bun_validate_names.contains(&name),
-            _ => false,
-        }
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn validated_call(p: &mut Self, e: &mut Expr, in_: ExprIn) -> bool {
-        let Data::ECall(call) = e.data else { return false };
-        let Some(at) = p.validated_calls.iter().position(|it| it.0 == call.close_paren_loc.start) else { return false };
-        let (_, which, schema) = p.validated_calls.swap_remove(at);
-        let loc = e.loc;
-        if which == bun_ast::audited::REFUSED {
-            if Self::is_validating_callee(p, call.target) {
-                p.log().add_error(
-                    Some(p.source),
-                    loc,
-                    b"this executable was built with --compile-trim-runtime, without the type checker, so code loaded at run time cannot validate by type",
-                );
-            }
-            return false;
-        }
-        let has_one_argument = call.args.len() == 1 && !matches!(call.args[0].data, Data::ESpread(..));
-        let is_json_parse = which == bun_ast::audited::JSON_PARSE;
-        let value = if is_json_parse || !has_one_argument {
-            Self::e_call(p, e, in_);
-            *e
-        } else {
-            let mut value = call.args[0];
-            p.visit_expr(&mut value);
-            value
-        };
-        if !is_json_parse && !has_one_argument {
-            return true;
-        }
-        let schema = p.new_expr(E::String::init(schema), loc);
-        let is_shared = p.new_expr(E::Boolean { value: true }, loc);
-        let arguments = [value, schema, is_shared];
-        let arguments = if is_json_parse && has_one_argument { &arguments[..2] } else { &arguments[..] };
-        *e = p.call_runtime(loc, b"__validate", ExprNodeList::from_arena_slice(arguments));
-        true
-    }
-
     fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
-        if !p.validated_calls.is_empty() && Self::validated_call(p, e, in_) {
-            return;
-        }
-        if p.options.bun_builtin_syntax && p.expand_builtin_call(e) {
-            return p.visit_expr_in_out(e, in_);
-        }
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
-        if matches!(e_.target.data, Data::EMissing(..)) {
-            p.visit_expr_in_out(&mut e_.args[0], in_);
-            return;
-        }
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {
@@ -1968,12 +1897,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
         match e_.target.data {
             Data::EIdentifier(ident) => {
-                if p.imports_create_require()
-                    && !p.is_unreachable()
-                    && let [argument] = e_.args.slice()
-                {
-                    p.single_argument_identifier_calls.push((ident.ref_, *argument));
-                }
                 if ident.call_can_be_unwrapped_if_unused()
                     && e_.can_be_unwrapped_if_unused == E::CallUnwrap::Never
                 {
@@ -2147,41 +2070,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        if p.options.inline_import_meta_paths && e_.args.len_u32() == 1 {
-            if let Data::EDot(dot) = e_.target.data {
-                let first = e_.args.slice()[0];
-                if matches!(dot.target.data, Data::EImportMeta(..))
-                    && !matches!(first.data, Data::ESpread(..))
-                {
-                    let parent: Option<&[u8]> = match dot.name.slice() {
-                        b"resolveSync" => Some(p.source.path.text),
-                        b"resolve" => {
-                            let path = bun_core::String::from_bytes(p.source.path.text);
-                            Some(p.arena.alloc_slice_copy(
-                                format!("{}", bun_url::file_url_from_string(&path)).as_bytes(),
-                            ))
-                        }
-                        _ => None,
-                    };
-                    if let Some(parent) = parent {
-                        let mut args = ExprNodeList::init_capacity(2);
-                        VecExt::append(&mut args, first);
-                        VecExt::append(
-                            &mut args,
-                            p.new_expr(
-                                E::EString {
-                                    data: parent.into(),
-                                    ..Default::default()
-                                },
-                                first.loc,
-                            ),
-                        );
-                        e_.args = args;
-                    }
-                }
-            }
-        }
-
         let is_macro_ref: bool = if Self::ALLOW_MACROS {
             let possible_macro_ref = match &e_.target.data {
                 Data::EImportIdentifier(ident) => Some(ident.ref_),
@@ -2279,7 +2167,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // the try/catch statement is there to handle the potential run-time
             // error from the unbundled require() call failing.
             if e_.args.len_u32() == 1 {
-                let first = p.with_dirname_folded(e_.args.slice()[0]);
+                let first = e_.args.slice()[0];
                 let state = TransposeState {
                     is_require_immediately_assigned_to_decl: in_.is_immediately_assigned_to_decl
                         && matches!(first.data, Data::EString(..)),
@@ -2304,7 +2192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Ignore calls to require() if the control flow is provably
             // dead here. We don't want to spend time scanning the required files
             // if they will never be used.
-            if p.is_unreachable() {
+            if p.is_control_flow_dead {
                 *e = p.new_expr(E::Null {}, expr.loc);
                 return;
             }
@@ -2333,13 +2221,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Ignore calls to require.resolve() if the control flow is provably
             // dead here. We don't want to spend time scanning the required files
             // if they will never be used.
-            if p.is_unreachable() {
+            if p.is_control_flow_dead {
                 *e = p.new_expr(E::Null {}, expr.loc);
                 return;
             }
 
             if e_.args.len_u32() == 1 {
-                let first = p.with_dirname_folded(e_.args.slice()[0]);
+                let first = e_.args.slice()[0];
                 match &first.data {
                     Data::EString(..) => {
                         // require.resolve(FOO) => require.resolve(FOO)
@@ -2574,9 +2462,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
     fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
-        if p.options.bun_builtin_syntax && p.expand_builtin_new(e) {
-            return p.visit_expr(e);
-        }
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
@@ -2597,142 +2482,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
-    }
-
-    fn path_after_dirname(&self, e: &Expr) -> Option<Vec<u8>> {
-        let text_of = |string: &E::String| {
-            if !string.is_utf8() {
-                return None;
-            }
-            let mut text = string.slice8().to_vec();
-            let mut rest = string.next;
-            while let Some(part) = rest {
-                if !part.get().is_utf8() {
-                    return None;
-                }
-                text.extend_from_slice(part.get().slice8());
-                rest = part.get().next;
-            }
-            Some(text)
-        };
-        match e.data {
-            Data::EIdentifier(identifier) => identifier.ref_.eql(self.dirname_ref).then(Vec::new),
-            Data::EBinary(sum) if sum.op == Op::BinAdd => {
-                let mut text = self.path_after_dirname(&sum.left)?;
-                let Data::EString(more) = sum.right.data else { return None };
-                text.extend(text_of(&more)?);
-                Some(text)
-            }
-            Data::ETemplate(template) if template.tag.is_none() => {
-                let E::TemplateContents::Cooked(head) = &template.head else { return None };
-                let (first, rest) = template.parts().split_first()?;
-                if head.len() != 0 || !rest.is_empty() {
-                    return None;
-                }
-                let mut text = self.path_after_dirname(&first.value)?;
-                let E::TemplateContents::Cooked(tail) = &first.tail else { return None };
-                text.extend(text_of(tail)?);
-                Some(text)
-            }
-            _ => None,
-        }
-    }
-
-    pub(crate) fn with_dirname_folded(&mut self, specifier: Expr) -> Expr {
-        if !self.options.bundle || matches!(specifier.data, Data::EString(..) | Data::EIdentifier(..)) {
-            return specifier;
-        }
-        let Some(text) = self.path_after_dirname(&specifier).filter(|text| text.first() == Some(&b'/')) else {
-            return specifier;
-        };
-        self.ignore_usage(self.dirname_ref);
-        let folded: &'a [u8] = self.arena.alloc_slice_copy(&[b".".as_slice(), &text].concat());
-        self.new_expr(E::String { data: folded.into(), ..Default::default() }, specifier.loc)
-    }
-
-    pub(crate) fn add_referenced_files_in(&mut self, specifier: &Expr) {
-        match specifier.data {
-            Data::EString(string) => {
-                if let Ok(text) = string.string(self.arena) {
-                    let index = self.add_import_record(bun_ast::ImportKind::Require, specifier.loc, text);
-                    self.import_records.items_mut()[index as usize]
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS);
-                }
-            }
-            Data::EIf(choice) => {
-                self.add_referenced_files_in(&choice.yes);
-                self.add_referenced_files_in(&choice.no);
-            }
-            _ => {}
-        }
-    }
-
-    pub(crate) fn imports_create_require(&self) -> bool {
-        !self.create_require_refs.is_empty() || !self.node_module_refs.is_empty()
-    }
-
-    pub(crate) fn is_call_with_import_meta_path(value: &Expr) -> bool {
-        let Data::ECall(call) = value.data else {
-            return false;
-        };
-        let [argument] = call.args.slice() else {
-            return false;
-        };
-        let is_import_meta = |e: &Expr, names: &[&[u8]]| match e.data {
-            Data::EDot(dot) => matches!(dot.target.data, Data::EImportMeta(..)) && names.contains(&dot.name.slice()),
-            _ => false,
-        };
-        match argument.data {
-            Data::EBinary(sum) => {
-                sum.op == Op::BinAdd
-                    && is_import_meta(&sum.left, &[b"dirname", b"dir"])
-                    && matches!(sum.right.data, Data::EString(slash) if slash.eql_comptime(b"/"))
-            }
-            _ => is_import_meta(argument, &[b"url", b"filename", b"path"]),
-        }
-    }
-
-    pub(crate) fn is_own_create_require(&self, visited: &Expr, receives_own_file_path: bool) -> bool {
-        let Data::ECall(call) = visited.data else {
-            return false;
-        };
-        let is_among = |wanted: Ref, known: &[Ref]| known.iter().any(|it| it.eql(wanted));
-        let makes_requires = match call.target.data {
-            Data::EImportIdentifier(callee) => {
-                is_among(callee.ref_, &self.create_require_refs)
-                    || self.node_module_refs.iter().any(|namespace| {
-                        let items = self.import_items_for_namespace.get(namespace);
-                        items.and_then(|items| items.get(b"createRequire".as_slice())).is_some_and(|item| item.ref_.eql(callee.ref_))
-                    })
-            }
-            Data::EIdentifier(callee) => is_among(callee.ref_, &self.create_require_refs),
-            Data::EDot(callee) => {
-                callee.name.slice() == b"createRequire"
-                    && match callee.target.data {
-                        Data::EImportIdentifier(module) => is_among(module.ref_, &self.node_module_refs),
-                        Data::EIdentifier(module) => is_among(module.ref_, &self.node_module_refs),
-                        _ => false,
-                    }
-            }
-            _ => false,
-        };
-        if !makes_requires {
-            return false;
-        }
-        let is_bound_to = |e: &Expr, wanted: Ref| matches!(e.data, Data::EIdentifier(identifier) if identifier.ref_.eql(wanted));
-        receives_own_file_path
-            || match call.args.slice() {
-                [argument] => match argument.data {
-                    Data::EBinary(sum) => {
-                        sum.op == Op::BinAdd
-                            && is_bound_to(&sum.left, self.dirname_ref)
-                            && matches!(sum.right.data, Data::EString(slash) if slash.eql_comptime(b"/"))
-                    }
-                    _ => is_bound_to(argument, self.filename_ref),
-                },
-                _ => false,
-            }
     }
 
     /// Note: Caller must check `p.bundler_feature_flag_ref.is_valid()` before calling.

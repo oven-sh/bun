@@ -19,6 +19,7 @@
 */
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JavaScriptCore/ExceptionScope.h"
 
 #include "JSTextEncoder.h"
@@ -109,6 +110,7 @@ using JSTextEncoderDOMConstructor = JSDOMConstructor<JSTextEncoder>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSTextEncoderDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(TextEncoder, JSTextEncoderDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSTextEncoderDOMConstructor>(callFrame->jsCallee());
@@ -184,7 +186,7 @@ JSObject* JSTextEncoder::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSTextEncoder>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSTextEncoder::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSTextEncoder::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSTextEncoderDOMConstructor, DOMConstructorID::TextEncoder>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

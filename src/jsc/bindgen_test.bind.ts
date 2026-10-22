@@ -28,6 +28,12 @@ export const utf8EchoLoose = b.fn({ args: { text: b.string.loose.utf8 }, returns
 export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, returns: b.string.utf8.nullable });
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
+export const stringLength = b.fn({ args: { text: b.string.default("absent") }, returns: b.usize });
+export const expectedByNode = b.fn({
+  args: { text: b.string, data: b.bytes({ from: ["string", "buffer"] }).optional, flag: b.bool.default(false) },
+  expected: { text: ["string"], data: ["Buffer", "TypedArray", "DataView", "string"] },
+  returns: b.usize,
+});
 
 export const TestColor = b.enumeration(["red", ["green", "lime"], "blue"]);
 export const nextColor = b.fn({ args: { color: TestColor }, returns: TestColor });
@@ -85,11 +91,24 @@ export const sumBeforeAndAfterCallback = b.fn({
   throws: true,
 });
 
+export const fillBuffer = b.fn({
+  args: { buffer: b.bufferSource.allowShared, value: b.u8 },
+  returns: b.usize,
+  capability: "heap",
+});
+/** -1 without any. */
+export const sumBytesIfAny = b.fn({
+  args: { bytes: b.bytes({ from: ["string", "buffer"] }).nullable, text: b.string.loose.utf8.default("") },
+  returns: b.i32,
+});
+export const stringOrObjectEcho = b.fn({ args: { text: b.string.allowStringObject }, returns: b.string });
+
 type BytesOptions = Parameters<typeof b.bytes>[0];
 const bytesOfWith = (options: BytesOptions) =>
   b.fn({ args: { data: b.bytes(options) }, returns: b.array(b.u8), rustPath: "crate::bindgen_test::bytes_of" });
 export const bytesOf = bytesOfWith({ from: ["string", "buffer"] });
 export const bytesOfString = bytesOfWith({ from: ["string"] });
+export const bytesOfRefusingStringObject = bytesOfWith({ from: ["string", "buffer"], refuse: ["stringObject"] });
 export const bytesOfBufferOrBlob = bytesOfWith({ from: ["buffer", "blob"] });
 export const bytesOfOrToString = bytesOfWith({ from: ["string", "buffer", "blob"], otherwise: "toString" });
 export const bytesOfRefusingUndefined = bytesOfWith({
@@ -154,6 +173,7 @@ export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability:
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
+  runsUnseenCode: false,
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
   internalFields: ["listener"],
   proto: {
@@ -161,6 +181,11 @@ export const TestCounter = b.class({
     label: { getter: b.string.utf8, setter: true },
     tag: { getter: b.any, capability: "heap", cache: true, throws: true },
     increment: { args: { by: b.i32.default(1) }, returns: b.i32, mutates: true },
+    /** By a number, or by the length of a string, as many times. */
+    add: [
+      { rustName: "add_length", args: { text: b.string.utf8, times: b.i32.default(1) }, returns: b.i32, mutates: true },
+      { rustName: "add_number", args: { by: b.i32 }, returns: b.i32, mutates: true },
+    ],
     listen: { args: { listener: b.any }, capability: "heap", passThis: true },
     /** Calls the listener, which may call back into this object, then returns the count. */
     notify: { returns: b.i32, capability: "js", throws: true },
@@ -170,12 +195,16 @@ export const TestCounter = b.class({
   static: {
     starting: { args: { at: b.i32 }, returns: b.self, capability: "heap" },
     alive: { returns: b.usize },
+    /** How many are alive. The prototype has a `count` too. */
+    count: { getter: b.usize, rustName: "static_count" },
+    limit: { getter: b.any, capability: "heap", throws: true },
   },
 });
 
 /** Keeps a `TestCounter` alive from Rust. */
 export const TestHolder = b.class({
   rustPath: "crate::bindgen_test::TestHolder",
+  runsUnseenCode: false,
   construct: { args: { counter: TestCounter }, capability: "heap" },
   proto: {
     counter: { getter: TestCounter, capability: "heap" },

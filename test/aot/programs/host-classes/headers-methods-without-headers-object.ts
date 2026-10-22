@@ -1,9 +1,4 @@
 // The same in typed code, in the shape a framework's context has: the Headers come from the Response at hand or from a field, and three methods are called on what was joined.
-// IR+ CallBuiltin CallHeadersMethod
-// IRT= 3 header CallBuiltin CallHeadersMethod
-// IRT= 1 vary CallBuiltin CallHeadersMethod
-// IRT= 1 vary = Integer 854$
-// IRT= 2 cached CallBuiltin CallHeadersMethod
 type Options = { append?: boolean };
 
 class Context {

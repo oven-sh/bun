@@ -45,7 +45,8 @@ const ascii = fresh("<div class=\"a\">hello</div>")
 const latin1 = fresh("na\xefve caf\xe9 \xff\x80\x7f")
 const wide = fresh("│ wide é")
 const texts = [fresh(""), ascii, latin1, wide, ascii + latin1, (ascii + latin1).slice(3, 30), ascii.slice(1), latin1 + wide, fresh("\x80"), fresh("\x7f")]
-for (const f of g.kept.slice(0, 4) as ((s: string) => number)[]) console.log(texts.map(t => f(t)).join(" "))
+for (const f of g.kept.slice(0, 3) as ((s: string) => number)[]) console.log(texts.map(t => f(t)).join(" "))
+console.log(texts.map(t => ofTextsWithHyphen([...t])).join(" "))
 console.log((["utf8", "utf-8", "latin1", "hex", "ucs2"] as BufferEncoding[]).map(e => texts.map(t => ofEncoding(t, e)).join(" ")).join(" | "))
 console.log(texts.map(t => ofUnknown(t)).join(" "), ofUnknown(new Uint8Array(7)), ofUnknown(new ArrayBuffer(9)))
 for (const bad of [1, null, undefined, true, {}, []]) {
@@ -54,10 +55,6 @@ for (const bad of [1, null, undefined, true, {}, []]) {
 let sum = 0
 for (let i = 0; i < 1000; i++) sum += ofText(texts[i % texts.length]) + ofUnknown(texts[(i + 3) % texts.length])
 console.log(sum)
-const original = g.Buffer.byteLength
-g.Buffer.byteLength = (s: string) => -s.length
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts))
-g.Buffer.byteLength = original
 console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts))
 const { byteLength } = Buffer
 console.log(byteLength(latin1, "utf8"), byteLength.call(undefined, wide))

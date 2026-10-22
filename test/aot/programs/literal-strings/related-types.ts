@@ -1,4 +1,4 @@
-// Types around unions of string literals: what is widened, what is a key, what is generic.
+// Types around unions of string literals: what is widened, what is a key, what is generic. A string that is no member of the union passes a cast to it. Handed on to a parameter that is written `never`, it throws a TypeError there.
 type Size = "s" | "m" | "l";
 type Loose = Size | (string & {});
 type Prefixed = `size-${Size}`;
@@ -54,6 +54,9 @@ function narrow(value: Size | number | undefined): string {
 function assertNever(value: never): never {
     throw new Error("unexpected " + value);
 }
+function attempt(run: () => unknown): unknown {
+    try { return run(); } catch (error) { return (error as Error).constructor.name; }
+}
 function exhaustive(size: Size): number {
     switch (size) {
         case "s": return 1;
@@ -73,9 +76,9 @@ console.log(exhaustive("s") + exhaustive("m") + exhaustive("l"));
 try {
     exhaustive("xl" as Size);
 } catch (error) {
-    console.log((error as Error).message);
+    console.log((error as Error).constructor.name);
 }
 for (const key in sizes) console.log(key, sizes[key as Keys]);
 const order: Size[] = ["m", "l", "s"];
 order.sort((a, b) => exhaustive(a) - exhaustive(b));
-console.log(order.join(""), order.map(identity).join(""), order.filter(s => s !== "m").length, order.find(s => s === "l"), order.some(s => s === ("x" as Size)));
+console.log(order.join(""), order.map(identity).join(""), order.filter(s => s !== "m").length, order.find(s => s === "l"), attempt(() => order.some(s => s === ("x" as Size))));

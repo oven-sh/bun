@@ -91,6 +91,7 @@ export interface BinaryExpectations {
   minOSVersion?: string;
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
   forbiddenImports: string[];
+  requiredImports?: string[];
   /**
    * The exact set of imported symbols, for a program small enough that every import is a decision (the Windows
    * `.bin/` shim). Undefined = only `forbiddenImports` is checked.
@@ -276,6 +277,11 @@ function runtimeInitializers(cfg: Config): string[] {
  * import guard/pure-virtual/typeid helpers from it, so only the throw path is
  * banned there. Emulated TLS and libatomic calls are banned everywhere.
  */
+function requiredImports(cfg: Config): string[] {
+  if (!cfg.hardened) return [];
+  return ["__stack_chk_fail", ...(cfg.abi === "gnu" && cfg.release && !cfg.asan ? ["__memcpy_chk", "__snprintf_chk"] : [])];
+}
+
 function forbiddenImports(cfg: Config): string[] {
   // Emulated TLS and libatomic calls: nowhere.
   const forbidden = ["__emutls_*", "__atomic_*"];
@@ -414,6 +420,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         // glibc 2.17 = RHEL 7 / Amazon Linux 2, the oldest distro generation
         // bun runs on.
         maxSymbolVersions = { GLIBC: "2.17" };
+        if (cfg.relr) versionNames = ["GLIBC_ABI_DT_RELR"];
       } else if (musl) {
         // libstdc++/libgcc stay dynamic on musl on purpose: an N-API addon
         // built on Alpine links libstdc++.so.6, and it and bun must share one
@@ -440,20 +447,21 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
+        requiredImports: requiredImports(cfg),
         ...(staticInitializers && { staticInitializers }),
         elf: {
           // Android requires PIE; everywhere else bun is a fixed-address
           // executable (-fno-pic, see flags.ts). No RELRO / BIND_NOW anywhere:
           // flags.ts links `-z norelro -z lazy` (a startup-time choice from
           // the CMake era, kept as is); recorded so a change is deliberate.
-          type: android ? "DYN" : "EXEC",
+          type: android || cfg.hardened ? "DYN" : "EXEC",
           execStack: false,
           rwxLoad: false,
-          relro: false,
-          bindNow: false,
+          relro: cfg.hardened,
+          bindNow: cfg.hardened,
           tlsSegment: !android,
         },
-        debugInfo: { symtab: true, debugSections: true, compressed: true },
+        debugInfo: { symtab: true, debugSections: cfg.debugInfo !== "none", compressed: true },
       };
     }
 

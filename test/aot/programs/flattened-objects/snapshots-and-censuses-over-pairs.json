@@ -1,0 +1,5 @@
+{
+  "build": [
+    "--aot-testing=FlattenUntilHeldWhereverLegal"
+  ]
+}

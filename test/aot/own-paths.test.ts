@@ -18,8 +18,6 @@ const files = {
     console.log("main stack", here());
     console.log("esm", whereEsm());
     console.log("cjs", cjs.where());
-    const name: string = ["./sub", "late.cjs"].join("/");
-    console.log("late", require(name).where());
   `,
   "sub/esm.ts": `
     export function where(): string { return [import.meta.path, import.meta.dir, import.meta.file, import.meta.url].join(" | "); }
@@ -46,16 +44,12 @@ test("a program compiled in place sees the paths that bun run shows it", async (
   expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
 
-test("__filename and __dirname of an executable are the ones the bundle has", async () => {
+test("__filename and __dirname of an executable lie under the root that its files have, and do not tell where it was built", async () => {
   using dir = tempDir("aot-own-paths-executable", files);
-  const printed: string[] = [];
-  for (const flags of [[], ["--aot"]]) {
-    const executable = join(String(dir), (flags.length ? "compiled" : "bundled") + (isWindows ? ".exe" : ""));
-    const build = await spawned([bunExe(), "build", "--compile", ...flags, "own.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect(build.exitCode).toBe(0);
-    const run = await spawned([executable], String(dir), bunEnv);
-    expect(run.exitCode).toBe(0);
-    printed.push(run.stdout);
-  }
-  expect(printed[1]).toBe(printed[0]);
+  const executable = join(String(dir), "compiled" + (isWindows ? ".exe" : ""));
+  const build = await spawned([bunExe(), "build", "--compile", "--aot", "own.cjs", "--outfile", executable], String(dir), bunEnv);
+  expect(build.exitCode).toBe(0);
+  const run = await spawned([executable], String(dir), bunEnv);
+  const root = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+  expect({ stdout: run.stdout, exitCode: run.exitCode }).toEqual({ stdout: [join(root, "own.cjs"), root, join(root, "data.json")].join(" | ") + "\n", exitCode: 0 });
 });

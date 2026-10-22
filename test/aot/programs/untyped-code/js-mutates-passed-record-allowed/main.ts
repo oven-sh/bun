@@ -1,6 +1,6 @@
 // JavaScript of the program may do to an object that typed code has handed it whatever the language allows: store a value of another kind into a field, make the field an accessor, turn one member of a union into another. Nothing of that is refused: that one object is an ordinary object from then on, and typed code reads it as it reads any object from outside.
 // The objects reach the JavaScript in two ways: it imports the functions that make them, or typed code hands them to it in a call. What the JavaScript leaves behind fits the type again.
-// IR+ NewObjectWithShape
+// IR+ : =?L[0-9]+ = NewObject 
 import { alter, deeds, run } from "./view.js";
 import { makeCounter, makeHolder, makeState, showCounter, showHolder, showState } from "./state.ts";
 

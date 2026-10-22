@@ -11,6 +11,9 @@
 //             A plain.json that is there already is not made again
 //   filters   as for the runner: parts of paths under test/
 //
+// whole-suite.unchecked.txt beside this script names test files that TypeScript rejects. With --aot a type error ends a file before it runs, so
+// for the run with the flag each of them gets `// @ts-nocheck` as its first line, and its own text back when the run has ended.
+//
 // It prints how many of the files that pass as they are also pass with the flag, by folder, and every file that does not with the
 // end of what it printed. The exit code is 1 if there is such a file that whole-suite.known.txt beside this script does not name.
 import { spawnSync } from "bun";
@@ -54,7 +57,18 @@ case "\${1:-}" in run|test) command=$1; shift; exec "${bun}" "$command" ${insert
 }
 
 const plain = run("plain", "");
-const flagged = run("flag", flag);
+const unchecked = readFileSync(join(import.meta.dir, "whole-suite.unchecked.txt"), "utf8")
+  .split("\n")
+  .filter(Boolean)
+  .map(path => join(repository, path));
+const texts = unchecked.map(path => readFileSync(path, "utf8"));
+let flagged: Map<string, Result>;
+try {
+  unchecked.forEach((path, index) => writeFileSync(path, "// @ts-nocheck\n" + texts[index]));
+  flagged = run("flag", flag);
+} finally {
+  unchecked.forEach((path, index) => writeFileSync(path, texts[index]));
+}
 
 const knownFile = join(import.meta.dir, "whole-suite.known.txt");
 const known = new Set(

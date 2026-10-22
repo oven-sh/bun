@@ -1,3 +1,4 @@
+// A required field of a typed object is made not enumerable through an untyped function. The definition succeeds, and keys, loops, JSON, spreads and copies leave the field out as in plain Bun.
 class Point {
   x = 1;
   y = 2;

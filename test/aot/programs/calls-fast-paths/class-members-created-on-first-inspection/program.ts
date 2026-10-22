@@ -14,13 +14,15 @@ class A { constructor(public v: number) {} m1(): number { return this.v; } m2():
 class B extends A { n1(): number { return 1; } n2(): number { return 2; } n3(): number { return 3; } n4(): number { return 4; } }
 class C { constructor(public v: number) {} m1(): number { return this.v; } m2(): number { return 2; } m3(): number { return 3; } m4(): number { return 4; } }
 console.log("heap cells of four kinds, more than at the line before"); census(""); census(""); census(""); census("nothing happened");
-const c = new C(3); let s = c.m1() + c.m2() + c.m3() + c.m4();
+// The objects stay reachable. A dead one is seen or not as a word left in a frame will have it, and what the snapshot sees it looks at.
+const kept: object[] = [];
+const c = new C(3); kept.push(c); let s = c.m1() + c.m2() + c.m3() + c.m4();
 census("new C and four typed calls");
 census("the snapshot has looked at C");
-const b = new B(2); s += b.n1() + b.m1() + b.g1;
+const b = new B(2); kept.push(b); s += b.n1() + b.m1() + b.g1;
 census("new B extends A and three typed calls");
 census("the snapshot has looked at B and A");
-const a = new A(1); s += a.m1() + A.s1();
+const a = new A(1); kept.push(a); s += a.m1() + A.s1();
 census("new A");
-console.log(s);
+console.log(s, kept.length);
 export {};

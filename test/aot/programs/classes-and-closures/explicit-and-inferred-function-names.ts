@@ -40,6 +40,15 @@ assigned = () => null;
 const { byDefault = () => null } = {} as { byDefault?: () => null };
 const bound = Arrow.bind(null);
 const boundDeclared = Declared.bind(null);
+const total = Object.getOwnPropertyDescriptor(
+  {
+    get total() {
+      return 1;
+    },
+    set total(value: number) {},
+  },
+  "total",
+)!;
 
 const all: [string, Function][] = [
   ["an arrow", Arrow],
@@ -60,5 +69,7 @@ const all: [string, Function][] = [
   ["a method named by a symbol", held[Symbol.iterator]],
   ["a bound arrow", bound],
   ["a bound declaration", boundDeclared],
+  ["a getter", total.get!],
+  ["a setter", total.set!],
 ];
 for (const [what, f] of all) console.log(what + ":", JSON.stringify(f.name), Bun.inspect(element(f)), Bun.inspect(f));

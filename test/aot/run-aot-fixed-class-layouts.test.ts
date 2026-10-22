@@ -29,13 +29,16 @@ test.concurrent.each([
   "typed-objects/two-classes-same-name",
 ])("%s", async name => {
   const file = existsSync(join(programs, name + ".ts")) ? join(programs, name + ".ts") : join(programs, name, "main.ts");
-  await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--aot", file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   let expected: string;
   if (existsSync(join(programs, name + ".expected.txt"))) expected = readFileSync(join(programs, name + ".expected.txt"), "utf8");
   else {
     await using plain = Bun.spawn({ cmd: [bunExe(), "run", file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
     [expected] = await Promise.all([plain.stdout.text(), plain.exited]);
   }
-  expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 0 });
-});
+  // From the sources, and as compiled code.
+  for (const flag of ["--aot", "--debug-aot"]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "run", flag, file], cwd: dirname(file), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ flag, stdout, exitCode }).toEqual({ flag, stdout: expected, exitCode: 0 });
+  }
+}, 120_000);

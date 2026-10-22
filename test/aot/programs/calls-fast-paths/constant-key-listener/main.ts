@@ -1,6 +1,5 @@
 // An event listener stored under a constant key is predicted and inlined into the loop that calls it.
-// IR+ by key "_events" "tick" f
-// IR+ ~\["_events"\]
+// IR= 1 run IsClosureOf v[0-9]+ function=f[0-9]+
 // IR= 1 run CallDirect
 // @ts-ignore
 import untyped from "./untyped.js";

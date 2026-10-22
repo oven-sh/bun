@@ -1,5 +1,5 @@
 // `i++` and `i--` on an `int32` are proven where a test on the way limits `i`. type-rules/int32-unproven-stores has the loops that are not.
-// IR- Cast v\d+ As integer
+// IR- : (i32|int\S*) = Claim v\d+(?!.* isProven)
 import type { int32 } from "bun";
 
 const MAX: int32 = 2147483647;

@@ -1,49 +1,31 @@
 {
-  "exports.closed0.cjs": "compiled",
-  "exports.closed0.mjs": "compiled",
+  "exports.closed0.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed0.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
   "exports.closed5.cjs": "compiled",
   "exports.closed5.mjs": "compiled",
-  "exports.closed6.cjs": "compiled",
-  "exports.closed6.mjs": "compiled",
+  "exports.closed6.cjs": {
+    "output": "require THROWS Error MODULE_NOT_FOUND\nresolve \"string\"\n"
+  },
+  "exports.closed6.mjs": {
+    "output": "import THROWS Error ERR_MODULE_NOT_FOUND\n"
+  },
   "exports.closed_literal0.cjs": {
-    "errors": "error: Could not resolve: \"sub/lib/a.js\". Maybe you need to \"bun install\"?\n"
+    "output": "require THROWS Error\n"
   },
   "exports.closed_literal0.mjs": {
-    "errors": "error: Could not resolve: \"sub/lib/a.js\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal1.cjs": {
-    "errors": "error: Could not resolve: \"sub/feat/secret\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal1.mjs": {
-    "errors": "error: Could not resolve: \"sub/feat/secret\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal2.cjs": {
-    "errors": "error: Could not resolve: \"sub/private/p\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal2.mjs": {
-    "errors": "error: Could not resolve: \"sub/private/p\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal3.cjs": {
-    "errors": "error: Could not resolve: \"sub/nothing\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal3.mjs": {
-    "errors": "error: Could not resolve: \"sub/nothing\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal4.cjs": {
-    "errors": "error: Could not resolve: \"sub/feat/none\". Maybe you need to \"bun install\"?\n"
-  },
-  "exports.closed_literal4.mjs": {
-    "errors": "error: Could not resolve: \"sub/feat/none\". Maybe you need to \"bun install\"?\n"
+    "output": "import THROWS Error\n"
   },
   "exports.closed_literal6.cjs": {
-    "errors": "error: Could not resolve: \"sub/\". Maybe you need to \"bun install\"?\n"
+    "output": "require THROWS Error\n"
   },
   "exports.closed_literal6.mjs": {
-    "errors": "error: Could not resolve: \"sub/\". Maybe you need to \"bun install\"?\n"
+    "output": "import THROWS Error\n"
   },
-  "exports.sub_feat_one.namespace.mjs": "compiled",
-  "exports.sub_feat_one.namespace.ts": "compiled",
   "imports.app_dyn.mjs": {
-    "errors": "error: Could not resolve: \"#none\". Maybe you need to \"bun install\"?\n"
+    "output": "two \"app:two\"\nvariable THROWS ResolveMessage ERR_MODULE_NOT_FOUND\nnone THROWS ResolveMessage ERR_MODULE_NOT_FOUND\n"
   }
 }

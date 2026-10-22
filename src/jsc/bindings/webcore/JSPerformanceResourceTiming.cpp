@@ -179,7 +179,7 @@ JSObject* JSPerformanceResourceTiming::prototype(VM& vm, JSDOMGlobalObject& glob
     return getDOMPrototype<JSPerformanceResourceTiming>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSPerformanceResourceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSPerformanceResourceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceResourceTimingDOMConstructor, DOMConstructorID::PerformanceResourceTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

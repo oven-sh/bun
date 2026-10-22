@@ -234,46 +234,46 @@ var unitlessNumbers = new Set(
     ["xHeight", "x-height"]
   ]),
   matchHtmlRegExp = /["'&<>]/;
-function escapeTextForBrowser(text: FZ.PropValue): string { var text$asString: string, match$asEscape: string;
+function escapeTextForBrowser(text: FZ.PropValue | string): string {
   if (
     "boolean" === typeof text ||
     "number" === typeof text ||
     "bigint" === typeof text
   )
     return "" + text;
-  text$asString = "" + text;
-  var match: RegExpExecArray | null = matchHtmlRegExp.exec(text$asString);
+  text = "" + text;
+  var match: RegExpExecArray | string | null = matchHtmlRegExp.exec((text as string));
   if (match) {
     var html = "",
-      index: FZ.int32,
-      lastIndex: FZ.int32 = 0;
-    for (index = match.index as FZ.int32; index < text$asString.length; index++) {
-      switch (text$asString.charCodeAt(index)) {
+      index: number,
+      lastIndex: number = 0;
+    for (index = match.index as number; index < (text as string).length; index++) {
+      switch ((text as string).charCodeAt(index)) {
         case 34:
-          match$asEscape = "&quot;";
+          match = "&quot;";
           break;
         case 38:
-          match$asEscape = "&amp;";
+          match = "&amp;";
           break;
         case 39:
-          match$asEscape = "&#x27;";
+          match = "&#x27;";
           break;
         case 60:
-          match$asEscape = "&lt;";
+          match = "&lt;";
           break;
         case 62:
-          match$asEscape = "&gt;";
+          match = "&gt;";
           break;
         default:
           continue;
       }
-      lastIndex !== index && (html += text$asString.slice(lastIndex, index));
+      lastIndex !== index && (html += (text as string).slice(lastIndex, index));
       lastIndex = index + 1;
-      html += match$asEscape;
+      html += match;
     }
-    text$asString = lastIndex !== index ? html + text$asString.slice(lastIndex, index) : html;
+    text = lastIndex !== index ? html + (text as string).slice(lastIndex, index) : html;
   }
-  return text$asString;
+  return (text as string);
 }
 var uppercasePattern = /([A-Z])/g,
   msPattern = /^ms-/,
@@ -426,7 +426,7 @@ function getSuspenseFallbackFormatContext(resumableState: FZ.ResumableState, par
     getSuspenseViewTransition(parentContext.viewTransition)
   );
 }
-function getSuspenseContentFormatContext(resumableState$given: FZ.ResumableState, parentContext: FZ.FormatContext): FZ.FormatContext { var resumableState; resumableState = resumableState$given;
+function getSuspenseContentFormatContext(resumableState: FZ.ResumableState | FZ.ViewTransitionContext | null, parentContext: FZ.FormatContext): FZ.FormatContext {
   resumableState = getSuspenseViewTransition(parentContext.viewTransition);
   var subtreeScope: FZ.TagScope = parentContext.tagScope | 16;
   null !== resumableState &&
@@ -439,39 +439,39 @@ function getSuspenseContentFormatContext(resumableState$given: FZ.ResumableState
     resumableState
   );
 }
-function makeId(resumableState$given: FZ.ResumableState, treeId: string, localId: FZ.int32): string { var resumableState; resumableState = resumableState$given;
-  resumableState = "_" + resumableState.idPrefix + "R_" + treeId;
+function makeId(resumableState: FZ.ResumableState | string, treeId: string, localId: number): string {
+  resumableState = "_" + (resumableState as FZ.ResumableState).idPrefix + "R_" + treeId;
   0 < localId && (resumableState += "H" + localId.toString(32));
   return resumableState + "_";
 }
-function pushViewTransitionAttributes(target: FZ.Chunk[], formatContext$given: FZ.FormatContext): void { var formatContext; formatContext = formatContext$given;
-  formatContext = formatContext.viewTransition;
+function pushViewTransitionAttributes(target: FZ.Chunk[], formatContext: FZ.FormatContext | FZ.ViewTransitionContext | null): void {
+  formatContext = (formatContext as FZ.FormatContext).viewTransition;
   null !== formatContext &&
-    ("auto" !== formatContext.name &&
+    ("auto" !== (formatContext as FZ.ViewTransitionContext).name &&
       (pushStringAttribute(
         target,
         "vt-name",
-        0 === formatContext.nameIdx
-          ? formatContext.name
-          : formatContext.name + "_" + formatContext.nameIdx
+        0 === (formatContext as FZ.ViewTransitionContext).nameIdx
+          ? (formatContext as FZ.ViewTransitionContext).name
+          : (formatContext as FZ.ViewTransitionContext).name + "_" + (formatContext as FZ.ViewTransitionContext).nameIdx
       ),
-      formatContext.nameIdx++),
-    pushStringAttribute(target, "vt-update", formatContext.update),
-    "none" !== formatContext.enter &&
-      pushStringAttribute(target, "vt-enter", formatContext.enter),
-    "none" !== formatContext.exit &&
-      pushStringAttribute(target, "vt-exit", formatContext.exit),
-    "none" !== formatContext.share &&
-      pushStringAttribute(target, "vt-share", formatContext.share));
+      (formatContext as FZ.ViewTransitionContext).nameIdx++),
+    pushStringAttribute(target, "vt-update", (formatContext as FZ.ViewTransitionContext).update),
+    "none" !== (formatContext as FZ.ViewTransitionContext).enter &&
+      pushStringAttribute(target, "vt-enter", (formatContext as FZ.ViewTransitionContext).enter),
+    "none" !== (formatContext as FZ.ViewTransitionContext).exit &&
+      pushStringAttribute(target, "vt-exit", (formatContext as FZ.ViewTransitionContext).exit),
+    "none" !== (formatContext as FZ.ViewTransitionContext).share &&
+      pushStringAttribute(target, "vt-share", (formatContext as FZ.ViewTransitionContext).share));
 }
 var styleNameCache: Map<string, FZ.Chunk> = new Map();
-function pushStyleAttribute(target: FZ.Chunk[], style: FZ.PropValue): void { var styleValue$asChunk: FZ.Chunk;
+function pushStyleAttribute(target: FZ.Chunk[], style: FZ.PropValue): void {
   if ("object" !== typeof style) throw Error(formatProdErrorMessage(62));
   var isFirst = !0,
     styleName: string;
   for (styleName in style)
     if (hasOwnProperty.call(style, styleName)) {
-      var styleValue: FZ.PropValue = style[styleName];
+      var styleValue: FZ.PropValue | FZ.Chunk = style[styleName];
       if (
         null != styleValue &&
         "boolean" !== typeof styleValue &&
@@ -479,7 +479,7 @@ function pushStyleAttribute(target: FZ.Chunk[], style: FZ.PropValue): void { var
       ) {
         if (0 === styleName.indexOf("--")) {
           var nameChunk: FZ.Chunk | undefined = escapeTextForBrowser(styleName);
-          styleValue$asChunk = escapeTextForBrowser(("" + styleValue).trim());
+          styleValue = escapeTextForBrowser(("" + styleValue).trim());
         } else
           (nameChunk = styleNameCache.get(styleName)),
             void 0 === nameChunk &&
@@ -490,7 +490,7 @@ function pushStyleAttribute(target: FZ.Chunk[], style: FZ.PropValue): void { var
                   .replace(msPattern, "-ms-")
               )),
               styleNameCache.set(styleName, nameChunk)),
-            (styleValue$asChunk =
+            (styleValue =
               "number" === typeof styleValue
                 ? 0 === styleValue || unitlessNumbers.has(styleName)
                   ? "" + styleValue
@@ -498,8 +498,8 @@ function pushStyleAttribute(target: FZ.Chunk[], style: FZ.PropValue): void { var
                 : escapeTextForBrowser(("" + styleValue).trim()));
         isFirst
           ? ((isFirst = !1),
-            target.push(' style="', nameChunk, ":", styleValue$asChunk))
-          : target.push(";", nameChunk, ":", styleValue$asChunk);
+            target.push(' style="', nameChunk, ":", (styleValue as FZ.Chunk)))
+          : target.push(";", nameChunk, ":", (styleValue as FZ.Chunk));
       }
     }
   isFirst || target.push('"');
@@ -529,10 +529,10 @@ function pushAdditionalFormField(this: FZ.Chunk[], value: FZ.PropValue, key: FZ.
 function validateAdditionalFormField(value: FZ.PropValue): void {
   if ("string" !== typeof value) throw Error(formatProdErrorMessage(480));
 }
-function getCustomFormFields(resumableState$given: FZ.ResumableState, formAction: FZ.FormAction): FZ.CustomFormFields { var resumableState; resumableState = resumableState$given;
+function getCustomFormFields(resumableState: FZ.ResumableState | string, formAction: FZ.FormAction): FZ.CustomFormFields {
   if ("function" === typeof formAction.$$FORM_ACTION) {
-    var id: number = resumableState.nextFormID++;
-    resumableState = resumableState.idPrefix + id;
+    var id: number = (resumableState as FZ.ResumableState).nextFormID++;
+    resumableState = (resumableState as FZ.ResumableState).idPrefix + id;
     try {
       var customFields: FZ.CustomFormFields = formAction.$$FORM_ACTION(resumableState);
       if (customFields) {
@@ -884,8 +884,8 @@ function pushScriptImpl(target: FZ.Chunk[], props: FZ.Props): null {
   target.push(endChunkForTag("script"));
   return null;
 }
-function pushStartSingletonElement(target: FZ.Chunk[], props: FZ.Props, tag$given: string, formatContext: FZ.FormatContext): FZ.ReactNode { var tag; tag = tag$given;
-  target.push(startChunkForTag(tag));
+function pushStartSingletonElement(target: FZ.Chunk[], props: FZ.Props, tag: string | any, formatContext: FZ.FormatContext): FZ.ReactNode {
+  target.push(startChunkForTag((tag as string)));
   var innerHTML: FZ.PropValue = (tag = null),
     propKey: string;
   for (propKey in props)
@@ -908,8 +908,8 @@ function pushStartSingletonElement(target: FZ.Chunk[], props: FZ.Props, tag$give
   pushInnerHTML(target, innerHTML, tag);
   return tag;
 }
-function pushStartGenericElement(target: FZ.Chunk[], props: FZ.Props, tag$given: string, formatContext: FZ.FormatContext): FZ.ReactNode { var tag; tag = tag$given;
-  target.push(startChunkForTag(tag));
+function pushStartGenericElement(target: FZ.Chunk[], props: FZ.Props, tag: string | any, formatContext: FZ.FormatContext): FZ.ReactNode {
+  target.push(startChunkForTag((tag as string)));
   var innerHTML: FZ.PropValue = (tag = null),
     propKey: string;
   for (propKey in props)
@@ -931,7 +931,7 @@ function pushStartGenericElement(target: FZ.Chunk[], props: FZ.Props, tag$given:
   target.push(">");
   pushInnerHTML(target, innerHTML, tag);
   return "string" === typeof tag
-    ? (target.push(escapeTextForBrowser(tag)), null)
+    ? (target.push(escapeTextForBrowser((tag as string))), null)
     : tag;
 }
 var VALID_TAG_REGEX = /^[a-zA-Z][a-zA-Z:_\.\-\d]*$/,
@@ -2003,35 +2003,35 @@ function endChunkForTag(tag: string): FZ.Chunk {
   void 0 === chunk && ((chunk = "</" + tag + ">"), endTagCache.set(tag, chunk));
   return chunk;
 }
-function hoistPreambleState(renderState$given: FZ.RenderState, preambleState: FZ.PreambleState): void { var renderState; renderState = renderState$given;
-  renderState = renderState.preamble;
-  null === renderState.htmlChunks &&
+function hoistPreambleState(renderState: FZ.RenderState | FZ.PreambleState, preambleState: FZ.PreambleState): void {
+  renderState = (renderState as FZ.RenderState).preamble;
+  null === (renderState as FZ.PreambleState).htmlChunks &&
     preambleState.htmlChunks &&
-    (renderState.htmlChunks = preambleState.htmlChunks);
-  null === renderState.headChunks &&
+    ((renderState as FZ.PreambleState).htmlChunks = preambleState.htmlChunks);
+  null === (renderState as FZ.PreambleState).headChunks &&
     preambleState.headChunks &&
-    (renderState.headChunks = preambleState.headChunks);
-  null === renderState.bodyChunks &&
+    ((renderState as FZ.PreambleState).headChunks = preambleState.headChunks);
+  null === (renderState as FZ.PreambleState).bodyChunks &&
     preambleState.bodyChunks &&
-    (renderState.bodyChunks = preambleState.bodyChunks);
+    ((renderState as FZ.PreambleState).bodyChunks = preambleState.bodyChunks);
 }
-function writeBootstrap(destination: FZ.Destination, renderState$given: FZ.RenderState): boolean { var renderState, i$asChunk: FZ.Chunk; renderState = renderState$given;
-  renderState = renderState.bootstrapChunks;
-  for (var i = 0; i < renderState.length - 1; i++)
-    destination.push(renderState[i]);
-  return i < renderState.length
-    ? ((i$asChunk = renderState[i]), (renderState.length = 0), destination.push(i$asChunk))
+function writeBootstrap(destination: FZ.Destination, renderState: FZ.RenderState | string[]): boolean {
+  renderState = (renderState as FZ.RenderState).bootstrapChunks;
+  for (var i: number | FZ.Chunk = 0; i < (renderState as string[]).length - 1; i++)
+    destination.push((renderState as string[])[i]);
+  return i < (renderState as string[]).length
+    ? ((i = (renderState as string[])[i]!), ((renderState as string[]).length = 0), destination.push(i))
     : !0;
 }
-function writeStartPendingSuspenseBoundary(destination: FZ.Destination, renderState$given: FZ.RenderState, id: FZ.SegmentId): boolean { var renderState; renderState = renderState$given;
+function writeStartPendingSuspenseBoundary(destination: FZ.Destination, renderState: FZ.RenderState | string, id: FZ.SegmentId): boolean {
   destination.push('\x3c!--$?--\x3e<template id="');
   if (null === id) throw Error(formatProdErrorMessage(395));
-  destination.push(renderState.boundaryPrefix);
+  destination.push((renderState as FZ.RenderState).boundaryPrefix);
   renderState = id.toString(16);
   destination.push(renderState);
   return destination.push('"></template>');
 }
-function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.RenderState, formatContext: FZ.FormatContext, id: FZ.SegmentId): boolean { var renderState; renderState = renderState$given;
+function writeStartSegment(destination: FZ.Destination, renderState: FZ.RenderState | string, formatContext: FZ.FormatContext, id: FZ.SegmentId): boolean {
   switch (formatContext.insertionMode) {
     case 0:
     case 1:
@@ -2039,7 +2039,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 2:
       return (
         destination.push('<div hidden id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2047,7 +2047,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 4:
       return (
         destination.push('<svg aria-hidden="true" style="display:none" id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2055,7 +2055,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 5:
       return (
         destination.push('<math aria-hidden="true" style="display:none" id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2063,7 +2063,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 6:
       return (
         destination.push('<table hidden id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2071,7 +2071,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 7:
       return (
         destination.push('<table hidden><tbody id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2079,7 +2079,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 8:
       return (
         destination.push('<table hidden><tr id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2087,7 +2087,7 @@ function writeStartSegment(destination: FZ.Destination, renderState$given: FZ.Re
     case 9:
       return (
         destination.push('<table hidden><colgroup id="'),
-        destination.push(renderState.segmentPrefix),
+        destination.push((renderState as FZ.RenderState).segmentPrefix),
         (renderState = id.toString(16)),
         destination.push(renderState),
         destination.push('">')
@@ -2212,16 +2212,16 @@ function flushStyleInPreamble(this: FZ.Destination, stylesheet: FZ.StylesheetRes
   stylesheetFlushingQueue.length = 0;
   stylesheet.state = 2;
 }
-function flushStylesInPreamble(this: FZ.Destination, styleQueue$given: FZ.StyleQueue): void { var styleQueue; styleQueue = styleQueue$given;
-  var hasStylesheets = 0 < styleQueue.sheets.size;
-  styleQueue.sheets.forEach(flushStyleInPreamble, this);
-  styleQueue.sheets.clear();
-  var rules = styleQueue.rules,
-    hrefs = styleQueue.hrefs;
+function flushStylesInPreamble(this: FZ.Destination, styleQueue: FZ.StyleQueue | number): void {
+  var hasStylesheets = 0 < (styleQueue as FZ.StyleQueue).sheets.size;
+  (styleQueue as FZ.StyleQueue).sheets.forEach(flushStyleInPreamble, this);
+  (styleQueue as FZ.StyleQueue).sheets.clear();
+  var rules = (styleQueue as FZ.StyleQueue).rules,
+    hrefs = (styleQueue as FZ.StyleQueue).hrefs;
   if (!hasStylesheets || hrefs.length) {
     this.push(currentlyFlushingRenderState!.startInlineStyle);
     this.push(' data-precedence="');
-    this.push(styleQueue.precedence);
+    this.push((styleQueue as FZ.StyleQueue).precedence);
     styleQueue = 0;
     if (hrefs.length) {
       for (
@@ -2240,14 +2240,14 @@ function flushStylesInPreamble(this: FZ.Destination, styleQueue$given: FZ.StyleQ
     hrefs.length = 0;
   }
 }
-function preloadLateStyle(this: FZ.Destination, stylesheet$given: FZ.StylesheetResource): void { var stylesheet; stylesheet = stylesheet$given;
-  if (0 === stylesheet.state) {
-    stylesheet.state = 1;
-    var props = stylesheet.props;
+function preloadLateStyle(this: FZ.Destination, stylesheet: FZ.StylesheetResource | number): void {
+  if (0 === (stylesheet as FZ.StylesheetResource).state) {
+    (stylesheet as FZ.StylesheetResource).state = 1;
+    var props = (stylesheet as FZ.StylesheetResource).props;
     pushLinkImpl(stylesheetFlushingQueue, {
       rel: "preload",
       as: "style",
-      href: stylesheet.props.href,
+      href: (stylesheet as FZ.StylesheetResource).props.href,
       crossOrigin: props.crossOrigin,
       fetchPriority: props.fetchPriority,
       integrity: props.integrity,
@@ -2280,27 +2280,27 @@ function pushCompletedShellIdAttribute(target: FZ.Chunk[], resumableState: FZ.Re
 function writeStyleResourceDependenciesInJS(destination: FZ.Destination, hoistableState: FZ.HoistableState): void {
   destination.push("[");
   var nextArrayOpenBrackChunk = "[";
-  hoistableState.stylesheets.forEach(function (resource) { var precedence$asString: string, resource$asHref: string;
-    if (2 !== resource.state)
-      if (3 === resource.state)
+  hoistableState.stylesheets.forEach(function (resource: FZ.StylesheetResource | string) {
+    if (2 !== (resource as FZ.StylesheetResource).state)
+      if (3 === (resource as FZ.StylesheetResource).state)
         destination.push(nextArrayOpenBrackChunk),
-          (resource$asHref = escapeJSObjectForInstructionScripts(
-            "" + resource.props.href
+          (resource = escapeJSObjectForInstructionScripts(
+            "" + (resource as FZ.StylesheetResource).props.href
           )),
-          destination.push(resource$asHref),
+          destination.push(resource),
           destination.push("]"),
           (nextArrayOpenBrackChunk = ",[");
       else {
         destination.push(nextArrayOpenBrackChunk);
-        var precedence = resource.props["data-precedence"],
-          props = resource.props,
-          coercedHref = sanitizeURL("" + resource.props.href);
+        var precedence: any | string = (resource as FZ.StylesheetResource).props["data-precedence"],
+          props = (resource as FZ.StylesheetResource).props,
+          coercedHref = sanitizeURL("" + (resource as FZ.StylesheetResource).props.href);
         coercedHref = escapeJSObjectForInstructionScripts(coercedHref);
         destination.push(coercedHref);
-        precedence$asString = "" + precedence;
+        precedence = "" + precedence;
         destination.push(",");
-        precedence$asString = escapeJSObjectForInstructionScripts(precedence$asString);
-        destination.push(precedence$asString);
+        precedence = escapeJSObjectForInstructionScripts((precedence as string));
+        destination.push((precedence as string));
         for (var propKey in props)
           if (
             hasOwnProperty.call(props, propKey) &&
@@ -2324,7 +2324,7 @@ function writeStyleResourceDependenciesInJS(destination: FZ.Destination, hoistab
             }
         destination.push("]");
         nextArrayOpenBrackChunk = ",[";
-        resource.state = 3;
+        (resource as FZ.StylesheetResource).state = 3;
       }
   });
   destination.push("]");
@@ -2377,19 +2377,19 @@ function writeStyleResourceAttributeInJS(destination: FZ.Destination, name: stri
 function createHoistableState(): FZ.HoistableState {
   return { styles: new Set(), stylesheets: new Set(), suspenseyImages: !1 };
 }
-function prefetchDNS(href: FZ.PropValue): void { var resumableState$asHeaders: FZ.PreloadHeaders | null, header$asResource: FZ.Resource;
+function prefetchDNS(href: FZ.PropValue): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
-    var resumableState = request.resumableState,
+    var resumableState: FZ.ResumableState | FZ.PreloadHeaders | null = request.resumableState,
       renderState = request.renderState;
     if ("string" === typeof href && href) {
       if (!resumableState.dnsResources.hasOwnProperty(href)) {
         resumableState.dnsResources[href] = null;
-        resumableState$asHeaders = renderState.headers;
-        var header: string | undefined, JSCompiler_temp: boolean | null;
+        resumableState = renderState.headers;
+        var header: string | FZ.Resource | undefined, JSCompiler_temp: boolean | null;
         if (
           (JSCompiler_temp =
-            resumableState$asHeaders && 0 < resumableState$asHeaders.remainingCapacity)
+            resumableState && 0 < resumableState.remainingCapacity)
         )
           JSCompiler_temp =
             ((header =
@@ -2399,40 +2399,40 @@ function prefetchDNS(href: FZ.PropValue): void { var resumableState$asHeaders: F
                 escapeHrefForLinkHeaderURLContextReplacer
               ) +
               ">; rel=dns-prefetch"),
-            0 <= (resumableState$asHeaders.remainingCapacity -= header.length + 2));
+            0 <= (resumableState.remainingCapacity -= header.length + 2));
         JSCompiler_temp
           ? ((renderState.resets.dns[href] = null),
-            resumableState$asHeaders!.preconnects && (resumableState$asHeaders!.preconnects += ", "),
-            (resumableState$asHeaders!.preconnects += header!))
-          : ((header$asResource = []),
-            pushLinkImpl(header$asResource, { href: href, rel: "dns-prefetch" }),
-            renderState.preconnects.add(header$asResource));
+            resumableState!.preconnects && (resumableState!.preconnects += ", "),
+            (resumableState!.preconnects += (header as string | undefined)!))
+          : ((header = []),
+            pushLinkImpl(header, { href: href, rel: "dns-prefetch" }),
+            renderState.preconnects.add(header));
       }
       enqueueFlush(request);
     }
   } else previousDispatcher.D(href);
 }
-function preconnect(href: FZ.PropValue, crossOrigin: FZ.PropValue): void { var resumableState$asHeaders: FZ.PreloadHeaders | null, bucket$asResource: FZ.Resource, JSCompiler_temp$asHeader: string;
+function preconnect(href: FZ.PropValue, crossOrigin: FZ.PropValue): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
-    var resumableState = request.resumableState,
+    var resumableState: FZ.ResumableState | FZ.PreloadHeaders | null = request.resumableState,
       renderState = request.renderState;
     if ("string" === typeof href && href) {
-      var bucket: FZ.ConnectBucket =
+      var bucket: FZ.ConnectBucket | FZ.Resource =
         "use-credentials" === crossOrigin
           ? "credentials"
           : "string" === typeof crossOrigin
             ? "anonymous"
             : "default";
-      if (!resumableState.connectResources[bucket].hasOwnProperty(href)) {
-        resumableState.connectResources[bucket][href] = null;
-        resumableState$asHeaders = renderState.headers;
-        var header: string | undefined, JSCompiler_temp: boolean | null;
+      if (!resumableState.connectResources[bucket]!.hasOwnProperty(href)) {
+        resumableState.connectResources[bucket]![href] = null;
+        resumableState = renderState.headers;
+        var header: string | undefined, JSCompiler_temp: boolean | string | null;
         if (
           (JSCompiler_temp =
-            resumableState$asHeaders && 0 < resumableState$asHeaders.remainingCapacity)
+            resumableState && 0 < resumableState.remainingCapacity)
         ) {
-          JSCompiler_temp$asHeader =
+          JSCompiler_temp =
             "<" +
             ("" + href).replace(
               regexForHrefInLinkHeaderURLContext,
@@ -2444,76 +2444,76 @@ function preconnect(href: FZ.PropValue, crossOrigin: FZ.PropValue): void { var r
               regexForLinkHeaderQuotedParamValueContext,
               escapeStringForLinkHeaderQuotedParamValueContextReplacer
             );
-            JSCompiler_temp$asHeader += '; crossorigin="' + escapedCrossOrigin + '"';
+            JSCompiler_temp += '; crossorigin="' + escapedCrossOrigin + '"';
           }
           JSCompiler_temp =
-            ((header = JSCompiler_temp$asHeader),
-            0 <= (resumableState$asHeaders.remainingCapacity -= header.length + 2));
+            ((header = JSCompiler_temp),
+            0 <= (resumableState.remainingCapacity -= header.length + 2));
         }
         JSCompiler_temp
-          ? ((renderState.resets.connect[bucket][href] = null),
-            resumableState$asHeaders!.preconnects && (resumableState$asHeaders!.preconnects += ", "),
-            (resumableState$asHeaders!.preconnects += header!))
-          : ((bucket$asResource = []),
-            pushLinkImpl(bucket$asResource, {
+          ? ((renderState.resets.connect[bucket]![href] = null),
+            resumableState!.preconnects && (resumableState!.preconnects += ", "),
+            (resumableState!.preconnects += header!))
+          : ((bucket = []),
+            pushLinkImpl(bucket, {
               rel: "preconnect",
               href: href,
               crossOrigin: crossOrigin
             }),
-            renderState.preconnects.add(bucket$asResource));
+            renderState.preconnects.add(bucket));
       }
       enqueueFlush(request);
     }
   } else previousDispatcher.C(href, crossOrigin);
 }
-function preload(href$given: FZ.PropValue, as: FZ.PropValue, options: FZ.Options): void { var href, resumableState$asHeaders: FZ.PreloadHeaders | null, resumableState$asResource: FZ.Resource, imageSrcSet$asResource: FZ.Resource, imageSrcSet$asDict: FZ.ResourceDict, key$asHeader: string; href = href$given;
+function preload(href: FZ.PropValue | any, as: FZ.PropValue, options: FZ.Options): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
-    var resumableState = request.resumableState,
+    var resumableState: FZ.ResumableState | FZ.PreloadHeaders | FZ.Resource | null = request.resumableState,
       renderState = request.renderState;
     if (as && href) {
       switch (as) {
         case "image":
           if (options) {
-            var imageSrcSet = options.imageSrcSet;
+            var imageSrcSet: any | FZ.Resource | FZ.ResourceDict = options.imageSrcSet;
             var imageSizes = options.imageSizes;
             var fetchPriority = options.fetchPriority;
           }
-          var key: FZ.PropValue = imageSrcSet
+          var key: FZ.PropValue | string = imageSrcSet
             ? imageSrcSet + "\n" + (imageSizes || "")
             : href;
           if (resumableState.imageResources.hasOwnProperty(key)) return;
           resumableState.imageResources[key] = PRELOAD_NO_CREDS;
-          resumableState$asHeaders = renderState.headers;
+          resumableState = renderState.headers;
           var header: string;
-          resumableState$asHeaders &&
-          0 < resumableState$asHeaders.remainingCapacity &&
+          resumableState &&
+          0 < resumableState.remainingCapacity &&
           "string" !== typeof imageSrcSet &&
           "high" === fetchPriority &&
           ((header = getPreloadAsHeader(href, as, options)),
-          0 <= (resumableState$asHeaders.remainingCapacity -= header.length + 2))
+          0 <= (resumableState.remainingCapacity -= header.length + 2))
             ? ((renderState.resets.image[key] = PRELOAD_NO_CREDS),
-              resumableState$asHeaders.highImagePreloads &&
-                (resumableState$asHeaders.highImagePreloads += ", "),
-              (resumableState$asHeaders.highImagePreloads += header))
-            : ((resumableState$asResource = []),
+              resumableState.highImagePreloads &&
+                (resumableState.highImagePreloads += ", "),
+              (resumableState.highImagePreloads += header))
+            : ((resumableState = []),
               pushLinkImpl(
-                resumableState$asResource,
+                resumableState,
                 assign(
                   { rel: "preload", href: imageSrcSet ? void 0 : href, as: as },
                   options
                 )
               ),
               "high" === fetchPriority
-                ? renderState.highImagePreloads.add(resumableState$asResource)
-                : (renderState.bulkPreloads.add(resumableState$asResource),
-                  renderState.preloads.images.set(key, resumableState$asResource)));
+                ? renderState.highImagePreloads.add(resumableState)
+                : (renderState.bulkPreloads.add(resumableState),
+                  renderState.preloads.images.set(key, resumableState)));
           break;
         case "style":
           if (resumableState.styleResources.hasOwnProperty(href)) return;
-          imageSrcSet$asResource = [];
+          imageSrcSet = [];
           pushLinkImpl(
-            imageSrcSet$asResource,
+            (imageSrcSet as FZ.Resource),
             assign({ rel: "preload", href: href, as: as }, options)
           );
           resumableState.styleResources[href] =
@@ -2522,16 +2522,16 @@ function preload(href$given: FZ.PropValue, as: FZ.PropValue, options: FZ.Options
               "string" !== typeof options.integrity)
               ? PRELOAD_NO_CREDS
               : [options.crossOrigin, options.integrity];
-          renderState.preloads.stylesheets.set(href, imageSrcSet$asResource);
-          renderState.bulkPreloads.add(imageSrcSet$asResource);
+          renderState.preloads.stylesheets.set(href, (imageSrcSet as FZ.Resource));
+          renderState.bulkPreloads.add((imageSrcSet as FZ.Resource));
           break;
         case "script":
           if (resumableState.scriptResources.hasOwnProperty(href)) return;
-          imageSrcSet$asResource = [];
-          renderState.preloads.scripts.set(href, imageSrcSet$asResource);
-          renderState.bulkPreloads.add(imageSrcSet$asResource);
+          imageSrcSet = [];
+          renderState.preloads.scripts.set(href, (imageSrcSet as FZ.Resource));
+          renderState.bulkPreloads.add((imageSrcSet as FZ.Resource));
           pushLinkImpl(
-            imageSrcSet$asResource,
+            (imageSrcSet as FZ.Resource),
             assign({ rel: "preload", href: href, as: as }, options)
           );
           resumableState.scriptResources[href] =
@@ -2544,84 +2544,84 @@ function preload(href$given: FZ.PropValue, as: FZ.PropValue, options: FZ.Options
         default:
           if (resumableState.unknownResources.hasOwnProperty(as)) {
             if (
-              ((imageSrcSet$asDict = resumableState.unknownResources[as]),
-              imageSrcSet$asDict.hasOwnProperty(href))
+              ((imageSrcSet = resumableState.unknownResources[as]),
+              (imageSrcSet as FZ.ResourceDict).hasOwnProperty(href))
             )
               return;
           } else
-            (imageSrcSet$asDict = {}),
-              (resumableState.unknownResources[as] = imageSrcSet$asDict);
-          imageSrcSet$asDict[href] = PRELOAD_NO_CREDS;
+            (imageSrcSet = {}),
+              (resumableState.unknownResources[as] = (imageSrcSet as FZ.ResourceDict));
+          (imageSrcSet as FZ.ResourceDict)[href] = PRELOAD_NO_CREDS;
           if (
-            (resumableState$asHeaders = renderState.headers) &&
-            0 < resumableState$asHeaders.remainingCapacity &&
+            (resumableState = renderState.headers) &&
+            0 < resumableState.remainingCapacity &&
             "font" === as &&
-            ((key$asHeader = getPreloadAsHeader(href, as, options)),
-            0 <= (resumableState$asHeaders.remainingCapacity -= key$asHeader.length + 2))
+            ((key = getPreloadAsHeader(href, as, options)),
+            0 <= (resumableState.remainingCapacity -= (key as string).length + 2))
           )
             (renderState.resets.font[href] = PRELOAD_NO_CREDS),
-              resumableState$asHeaders.fontPreloads &&
-                (resumableState$asHeaders.fontPreloads += ", "),
-              (resumableState$asHeaders.fontPreloads += key$asHeader);
+              resumableState.fontPreloads &&
+                (resumableState.fontPreloads += ", "),
+              (resumableState.fontPreloads += (key as string));
           else
             switch (
-              ((resumableState$asResource = []),
+              ((resumableState = []),
               (href = assign({ rel: "preload", href: href, as: as }, options)),
-              pushLinkImpl(resumableState$asResource, href),
+              pushLinkImpl(resumableState, href),
               as)
             ) {
               case "font":
-                renderState.fontPreloads.add(resumableState$asResource);
+                renderState.fontPreloads.add(resumableState);
                 break;
               default:
-                renderState.bulkPreloads.add(resumableState$asResource);
+                renderState.bulkPreloads.add(resumableState);
             }
       }
       enqueueFlush(request);
     }
   } else previousDispatcher.L(href, as, options);
 }
-function preloadModule(href: FZ.PropValue, options: FZ.Options): void { var as$asResource: FZ.Resource;
+function preloadModule(href: FZ.PropValue, options: FZ.Options): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
     var resumableState = request.resumableState,
       renderState = request.renderState;
     if (href) {
-      var as: string =
+      var as: string | FZ.Resource =
         options && "string" === typeof options.as ? options.as : "script";
-      switch (as) {
+      switch ((as as string)) {
         case "script":
           if (resumableState.moduleScriptResources.hasOwnProperty(href)) return;
-          as$asResource = [];
+          as = [];
           resumableState.moduleScriptResources[href] =
             !options ||
             ("string" !== typeof options.crossOrigin &&
               "string" !== typeof options.integrity)
               ? PRELOAD_NO_CREDS
               : [options.crossOrigin, options.integrity];
-          renderState.preloads.moduleScripts.set(href, as$asResource);
+          renderState.preloads.moduleScripts.set(href, as);
           break;
         default:
-          if (resumableState.moduleUnknownResources.hasOwnProperty(as)) {
-            var resources = resumableState.moduleUnknownResources[as];
+          if (resumableState.moduleUnknownResources.hasOwnProperty((as as string))) {
+            var resources = resumableState.moduleUnknownResources[(as as string)]!;
             if (resources.hasOwnProperty(href)) return;
           } else
             (resources = {}),
-              (resumableState.moduleUnknownResources[as] = resources);
-          as$asResource = [];
+              (resumableState.moduleUnknownResources[(as as string)] = resources);
+          as = [];
           resources[href] = PRELOAD_NO_CREDS;
       }
-      pushLinkImpl(as$asResource, assign({ rel: "modulepreload", href: href }, options));
-      renderState.bulkPreloads.add(as$asResource);
+      pushLinkImpl(as, assign({ rel: "modulepreload", href: href }, options));
+      renderState.bulkPreloads.add(as);
       enqueueFlush(request);
     }
   } else previousDispatcher.m(href, options);
 }
-function preinitStyle(href: FZ.PropValue, precedence$given: FZ.PropValue, options: FZ.Options): void { var precedence; precedence = precedence$given; var renderState$asResource: FZ.Resource | undefined;
+function preinitStyle(href: FZ.PropValue, precedence: FZ.PropValue | any, options: FZ.Options): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
     var resumableState = request.resumableState,
-      renderState = request.renderState;
+      renderState: FZ.RenderState | FZ.Resource | undefined = request.renderState;
     if (href) {
       precedence = precedence || "default";
       var styleQueue: FZ.StyleQueue | undefined = renderState.styles.get(precedence),
@@ -2648,16 +2648,16 @@ function preinitStyle(href: FZ.PropValue, precedence$given: FZ.PropValue, option
         resourceState &&
           (2 === resourceState.length &&
             adoptPreloadCredentials(precedence.props, resourceState),
-          (renderState$asResource = renderState.preloads.stylesheets.get(href)) &&
-          0 < renderState$asResource.length
-            ? (renderState$asResource.length = 0)
+          (renderState = renderState.preloads.stylesheets.get(href)) &&
+          0 < renderState.length
+            ? (renderState.length = 0)
             : (precedence.state = 1)),
         styleQueue.sheets.set(href, precedence),
         enqueueFlush(request));
     }
   } else previousDispatcher.S(href, precedence, options);
 }
-function preinitScript(src$given: FZ.PropValue, options$given: FZ.Options): void { var src, options; src = src$given; options = options$given;
+function preinitScript(src: FZ.PropValue | any, options: FZ.Options | any): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
     var resumableState = request.resumableState,
@@ -2681,7 +2681,7 @@ function preinitScript(src$given: FZ.PropValue, options$given: FZ.Options): void
     }
   } else previousDispatcher.X(src, options);
 }
-function preinitModuleScript(src$given: FZ.PropValue, options$given: FZ.Options): void { var src, options; src = src$given; options = options$given;
+function preinitModuleScript(src: FZ.PropValue | any, options: FZ.Options | any): void {
   var request: FZ.Request | null = currentRequest ? currentRequest : null;
   if (request) {
     var resumableState = request.resumableState,
@@ -2711,7 +2711,7 @@ function adoptPreloadCredentials(target: FZ.PropsBag, preloadState: FZ.PreloadSt
   null == target.crossOrigin && (target.crossOrigin = preloadState[0]);
   null == target.integrity && (target.integrity = preloadState[1]);
 }
-function getPreloadAsHeader(href$given: FZ.PropValue, as$given: FZ.PropValue, params: FZ.Options): string { var href, as; href = href$given; as = as$given;
+function getPreloadAsHeader(href: FZ.PropValue | any, as: FZ.PropValue | any, params: FZ.Options): string {
   href = ("" + href).replace(
     regexForHrefInLinkHeaderURLContext,
     escapeHrefForLinkHeaderURLContextReplacer
@@ -2948,13 +2948,13 @@ function createRenderState(resumableState: FZ.ResumableState, generateStaticMark
     generateStaticMarkup: generateStaticMarkup
   };
 }
-function pushTextInstance(target$given: FZ.Chunk[], text: string, renderState: FZ.RenderState, textEmbedded: boolean): boolean { var target; target = target$given;
+function pushTextInstance(target: FZ.Chunk[] | boolean, text: string, renderState: FZ.RenderState, textEmbedded: boolean): boolean {
   if (renderState.generateStaticMarkup)
-    return target.push(escapeTextForBrowser(text)), !1;
+    return (target as FZ.Chunk[]).push(escapeTextForBrowser(text)), !1;
   "" === text
     ? (target = textEmbedded)
-    : (textEmbedded && target.push("\x3c!-- --\x3e"),
-      target.push(escapeTextForBrowser(text)),
+    : (textEmbedded && (target as FZ.Chunk[]).push("\x3c!-- --\x3e"),
+      (target as FZ.Chunk[]).push(escapeTextForBrowser(text)),
       (target = !0));
   return target;
 }
@@ -3020,10 +3020,10 @@ function getComponentNameFromType(type: FZ.ElementType): FZ.ComponentName {
 }
 var emptyContextObject: FZ.EmptyContext = {},
   currentActiveSnapshot: FZ.ContextNode | null = null;
-function popToNearestCommonAncestor(prev$given: FZ.ContextNode, next: FZ.ContextNode): void { var prev; prev = prev$given;
-  if (prev !== next) {
-    prev.context._currentValue2 = prev.parentValue;
-    prev = prev.parent;
+function popToNearestCommonAncestor(prev: FZ.ContextNode | null, next: FZ.ContextNode): void {
+  if (prev! !== next) {
+    prev!.context._currentValue2 = prev!.parentValue;
+    prev = prev!.parent;
     var parentNext = next.parent;
     if (null === prev) {
       if (null !== parentNext) throw Error(formatProdErrorMessage(401));
@@ -3034,9 +3034,9 @@ function popToNearestCommonAncestor(prev$given: FZ.ContextNode, next: FZ.Context
     next.context._currentValue2 = next.value;
   }
 }
-function popAllPrevious(prev$given: FZ.ContextNode): void { var prev; prev = prev$given;
-  prev.context._currentValue2 = prev.parentValue;
-  prev = prev.parent;
+function popAllPrevious(prev: FZ.ContextNode | null): void {
+  prev!.context._currentValue2 = prev!.parentValue;
+  prev = prev!.parent;
   null !== prev && popAllPrevious(prev);
 }
 function pushAllNext(next: FZ.ContextNode): void {
@@ -3044,9 +3044,9 @@ function pushAllNext(next: FZ.ContextNode): void {
   null !== parentNext && pushAllNext(parentNext);
   next.context._currentValue2 = next.value;
 }
-function popPreviousToCommonLevel(prev$given: FZ.ContextNode, next: FZ.ContextNode): void { var prev; prev = prev$given;
-  prev.context._currentValue2 = prev.parentValue;
-  prev = prev.parent;
+function popPreviousToCommonLevel(prev: FZ.ContextNode | null, next: FZ.ContextNode): void {
+  prev!.context._currentValue2 = prev!.parentValue;
+  prev = prev!.parent;
   if (null === prev) throw Error(formatProdErrorMessage(402));
   prev.depth === next.depth
     ? popToNearestCommonAncestor(prev, next)
@@ -3087,21 +3087,21 @@ var classComponentUpdater: FZ.ClassComponentUpdater = {
     enqueueForceUpdate: function () {}
   },
   emptyTreeContext: FZ.TreeContext = { id: 1, overflow: "" };
-function getTreeId(context$given: FZ.TreeContext): string { var context; context = context$given;
-  var overflow = context.overflow;
-  context = context.id;
-  return (context & ~(1 << (32 - clz32(context) - 1))).toString(32) + overflow;
+function getTreeId(context: FZ.TreeContext | number): string {
+  var overflow = (context as FZ.TreeContext).overflow;
+  context = (context as FZ.TreeContext).id;
+  return ((context as number) & ~(1 << (32 - clz32((context as number)) - 1))).toString(32) + overflow;
 }
-function pushTreeContext(baseContext$given: FZ.TreeContext, totalChildren: FZ.int32, index: number): FZ.TreeContext { var baseContext; baseContext = baseContext$given; var length$asOverflow: string;
-  var baseIdWithLeadingBit: FZ.TreeId = baseContext.id as FZ.TreeId;
-  baseContext = baseContext.overflow;
-  var baseLength: number = (32 - clz32(baseIdWithLeadingBit) - 1) as FZ.int32;
+function pushTreeContext(baseContext: FZ.TreeContext | string, totalChildren: number, index: number): FZ.TreeContext {
+  var baseIdWithLeadingBit: FZ.TreeId = (baseContext as FZ.TreeContext).id as FZ.TreeId;
+  baseContext = (baseContext as FZ.TreeContext).overflow;
+  var baseLength: number = (32 - clz32(baseIdWithLeadingBit) - 1) as number;
   baseIdWithLeadingBit &= ~(1 << baseLength);
   index += 1;
-  var length: FZ.int32 = (32 - clz32(totalChildren) + baseLength) as FZ.int32;
+  var length: number | string = (32 - clz32(totalChildren) + baseLength) as number;
   if (30 < length) {
-    var numberOfOverflowBits: FZ.int32 = (baseLength - (baseLength % 5)) as FZ.int32;
-    length$asOverflow = (
+    var numberOfOverflowBits: number = (baseLength - (baseLength % 5)) as number;
+    length = (
       baseIdWithLeadingBit &
       ((1 << numberOfOverflowBits) - 1)
     ).toString(32);
@@ -3112,12 +3112,12 @@ function pushTreeContext(baseContext$given: FZ.TreeContext, totalChildren: FZ.in
         (1 << (32 - clz32(totalChildren) + baseLength)) |
         (index << baseLength) |
         baseIdWithLeadingBit,
-      overflow: length$asOverflow + baseContext
+      overflow: length + baseContext
     };
   }
   return {
     id: (1 << length) | (index << baseLength) | baseIdWithLeadingBit,
-    overflow: baseContext
+    overflow: (baseContext as string)
   };
 }
 var clz32: (x: number) => number = Math.clz32 ? Math.clz32 : clz32Fallback,
@@ -3129,10 +3129,10 @@ function clz32Fallback(x: number): number {
 }
 function noop(): void {}
 var SuspenseException = Error(formatProdErrorMessage(460));
-function trackUsedThenable(thenableState$given: FZ.ThenableState, thenable: FZ.Thenable, index$given: FZ.int32): FZ.FulfilledValue { var thenableState, index; thenableState = thenableState$given; index = index$given;
-  index = thenableState[index];
+function trackUsedThenable(thenableState: FZ.ThenableState | any, thenable: FZ.Thenable, index: number | any): FZ.FulfilledValue {
+  index = (thenableState as FZ.ThenableState)[(index as number)];
   void 0 === index
-    ? thenableState.push(thenable)
+    ? (thenableState as FZ.ThenableState).push(thenable)
     : index !== thenable && (thenable.then(noop, noop), (thenable = index));
   switch (thenable.status) {
     case "fulfilled":
@@ -3197,24 +3197,24 @@ var objectIs: (x: FZ.ComparedValue, y: FZ.ComparedValue) => boolean = "function"
   actionStateMatchingIndex: FZ.HookCounter = -1,
   thenableIndexCounter: number = 0,
   thenableState: FZ.ThenableState | null = null;
-function createRecoverableError(recoverable: FZ.Recoverable): Error { var initializedReason$asError: Error;
+function createRecoverableError(recoverable: FZ.Recoverable): Error {
   recoverable = recoverable._reason;
   if ("function" === typeof recoverable)
     try {
-      var initializedReason = recoverable();
+      var initializedReason: any | Error = recoverable();
     } catch ($jscomp$unused$catch) {
       initializedReason =
         "The reason for browser-only rendering could not be determined because its initializer threw.";
     }
   else initializedReason = recoverable;
-  initializedReason$asError = Error(
+  initializedReason = Error(
     formatProdErrorMessage(603),
     void 0 === recoverable ? void 0 : { cause: initializedReason }
   );
-  Object.defineProperty(initializedReason$asError, REACT_RECOVERABLE_TYPE, {
+  Object.defineProperty((initializedReason as Error), REACT_RECOVERABLE_TYPE, {
     value: !0
   });
-  return initializedReason$asError;
+  return (initializedReason as Error);
 }
 function isRecoverableError(error: FZ.Thrown): boolean {
   return "object" !== typeof error || null === error
@@ -3281,43 +3281,43 @@ function resetHooksState(): void {
 function basicStateReducer(state: FZ.HookState, action: FZ.HookState): FZ.HookState {
   return "function" === typeof action ? action(state) : action;
 }
-function useReducer(reducer$given: FZ.Reducer, initialArg$given: FZ.HookState, init$given?: (initialArg: FZ.HookState) => FZ.HookState): FZ.DispatchTuple { var reducer, initialArg, init; reducer = reducer$given; initialArg = initialArg$given; init = init$given; var init$asUpdate: FZ.Update | null | undefined;
+function useReducer(reducer: FZ.Reducer | FZ.UpdateQueue | any | FZ.Dispatch, initialArg: FZ.HookState | any, init?: ((initialArg: FZ.HookState) => FZ.HookState) | FZ.Update | ((initialArg: any) => any) | null | undefined): FZ.DispatchTuple {
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
   if (isReRender) {
-    var queue = workInProgressHook.queue!;var queue$asState: FZ.HookState;
-    initialArg = queue.dispatch;
+    var queue: FZ.UpdateQueue | FZ.HookState = workInProgressHook.queue!;
+    initialArg = (queue as FZ.UpdateQueue).dispatch;
     if (
       null !== renderPhaseUpdates &&
-      ((init$asUpdate = renderPhaseUpdates.get(queue)), void 0 !== init$asUpdate)
+      ((init = renderPhaseUpdates.get((queue as FZ.UpdateQueue))), void 0 !== init)
     ) {
-      renderPhaseUpdates.delete(queue);
-      queue$asState = workInProgressHook.memoizedState;
-      do (queue$asState = reducer(queue$asState, init$asUpdate.action)), (init$asUpdate = init$asUpdate.next);
-      while (null !== init$asUpdate);
-      workInProgressHook.memoizedState = queue$asState;
-      return [queue$asState, initialArg];
+      renderPhaseUpdates.delete((queue as FZ.UpdateQueue));
+      queue = workInProgressHook.memoizedState;
+      do (queue = (reducer as FZ.Reducer)(queue, init.action)), (init = init.next);
+      while (null !== init);
+      workInProgressHook.memoizedState = queue;
+      return [queue, initialArg];
     }
     return [workInProgressHook.memoizedState, initialArg];
   }
   reducer =
-    reducer === basicStateReducer
+    (reducer as FZ.Reducer) === basicStateReducer
       ? "function" === typeof initialArg
         ? initialArg()
         : initialArg
-      : void 0 !== init
-        ? init(initialArg)
+      : void 0 !== (init as ((initialArg: any) => any) | undefined)
+        ? (init as ((initialArg: FZ.HookState) => FZ.HookState))(initialArg)
         : initialArg;
   workInProgressHook.memoizedState = reducer;
   reducer = workInProgressHook.queue = { last: null, dispatch: null } as FZ.UpdateQueue;
-  reducer = reducer.dispatch = dispatchAction.bind(
+  reducer = (reducer as FZ.UpdateQueue).dispatch = dispatchAction.bind(
     null,
     currentlyRenderingComponent,
-    reducer
+    (reducer as FZ.UpdateQueue)
   );
-  return [workInProgressHook.memoizedState, reducer];
+  return [workInProgressHook.memoizedState, (reducer as FZ.Dispatch)];
 }
-function useMemo(nextCreate$given: () => FZ.MemoValue, deps: FZ.HookDeps): FZ.MemoValue { var nextCreate; nextCreate = nextCreate$given;
+function useMemo(nextCreate: (() => FZ.MemoValue) | any, deps: FZ.HookDeps): FZ.MemoValue {
   currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
   workInProgressHook = createWorkInProgressHook();
   deps = void 0 === deps ? null : deps;
@@ -3337,24 +3337,24 @@ function useMemo(nextCreate$given: () => FZ.MemoValue, deps: FZ.HookDeps): FZ.Me
       if (prevDeps) return prevState[0];
     }
   }
-  nextCreate = nextCreate();
+  nextCreate = (nextCreate as (() => FZ.MemoValue))();
   workInProgressHook.memoizedState = [nextCreate, deps];
   return nextCreate;
 }
-function dispatchAction(componentIdentity$given: FZ.ComponentIdentity, queue$given: FZ.UpdateQueue, action$given: FZ.HookState): void { var componentIdentity: FZ.ComponentIdentity, queue: FZ.UpdateQueue, action: FZ.HookState; componentIdentity = componentIdentity$given; queue = queue$given; action = action$given; var componentIdentity$asUpdate: FZ.Update; var action$asFirst: FZ.Update | undefined; var queue$asLast: FZ.Update;
+function dispatchAction(componentIdentity: FZ.ComponentIdentity | FZ.Update, queue: FZ.UpdateQueue | FZ.Update, action: FZ.HookState | FZ.Update | any | undefined): void {
   if (25 <= numberOfReRenders) throw Error(formatProdErrorMessage(301));
-  if (componentIdentity === currentlyRenderingComponent)
+  if ((componentIdentity as FZ.ComponentIdentity) === currentlyRenderingComponent)
     if (
       ((didScheduleRenderPhaseUpdate = !0),
-      (componentIdentity$asUpdate = { action: action, next: null } as FZ.Update),
+      (componentIdentity = { action: action, next: null } as FZ.Update),
       null === renderPhaseUpdates && (renderPhaseUpdates = new Map()),
-      (action$asFirst = renderPhaseUpdates.get(queue)),
-      void 0 === action$asFirst)
+      (action = renderPhaseUpdates.get((queue as FZ.UpdateQueue))),
+      void 0 === (action as FZ.Update | undefined))
     )
-      renderPhaseUpdates.set(queue, componentIdentity$asUpdate);
+      renderPhaseUpdates.set((queue as FZ.UpdateQueue), componentIdentity);
     else {
-      for (queue$asLast = action$asFirst; null !== queue$asLast.next; ) queue$asLast = queue$asLast.next;
-      queue$asLast.next = componentIdentity$asUpdate;
+      for (queue = (action as FZ.Update | undefined)!; null !== (queue as FZ.Update).next; ) queue = (queue as FZ.Update).next!;
+      (queue as FZ.Update).next = componentIdentity;
     }
 }
 function throwOnUseEffectEventCall() {
@@ -3366,18 +3366,18 @@ function unsupportedStartTransition() {
 function unsupportedSetOptimisticState() {
   throw Error(formatProdErrorMessage(479));
 }
-function useActionState(action: FZ.FormAction, initialState: FZ.HookState, permalink?: FZ.PropValue): FZ.ActionStateTuple { var action$asDispatch: FZ.ActionDispatch, request$asFormState: FZ.ReactFormState;
+function useActionState(action: FZ.FormAction | FZ.ActionDispatch, initialState: FZ.HookState, permalink?: FZ.PropValue): FZ.ActionStateTuple {
   resolveCurrentlyRenderingComponent();
   var actionStateHookIndex: number = actionStateCounter++,
-    request = currentlyRenderingRequest;
+    request: FZ.Request | FZ.ReactFormState | null = currentlyRenderingRequest;
   if ("function" === typeof action.$$FORM_ACTION) {
     var nextPostbackStateKey: string | null = null,
       componentKeyPath = currentlyRenderingKeyPath;
-    request$asFormState = request!.formState;
+    request = (request as FZ.Request | null)!.formState;
     var isSignatureEqual = action.$$IS_SIGNATURE_EQUAL;
-    if (null !== request$asFormState && "function" === typeof isSignatureEqual) {
-      var postbackKey = request$asFormState[1];
-      isSignatureEqual.call(action, request$asFormState[2], request$asFormState[3]) &&
+    if (null !== request && "function" === typeof isSignatureEqual) {
+      var postbackKey = request[1];
+      isSignatureEqual.call(action, request[2], request[3]) &&
         ((nextPostbackStateKey =
           void 0 !== permalink
             ? "p" + permalink
@@ -3388,14 +3388,14 @@ function useActionState(action: FZ.FormAction, initialState: FZ.HookState, perma
               )),
         postbackKey === nextPostbackStateKey &&
           ((actionStateMatchingIndex = actionStateHookIndex as FZ.HookCounter),
-          (initialState = request$asFormState[0])));
+          (initialState = request[0])));
     }
     var boundAction = action.bind(null, initialState);
-    action$asDispatch = function (payload) {
+    action = function (payload: any) {
       boundAction(payload);
     };
     "function" === typeof boundAction.$$FORM_ACTION &&
-      (action$asDispatch.$$FORM_ACTION = function (prefix) {
+      ((action as FZ.ActionDispatch).$$FORM_ACTION = function (prefix) {
         prefix = boundAction.$$FORM_ACTION(prefix);
         void 0 !== permalink &&
           ((permalink += ""), (prefix.action = permalink));
@@ -3417,7 +3417,7 @@ function useActionState(action: FZ.FormAction, initialState: FZ.HookState, perma
           formData.append("$ACTION_KEY", nextPostbackStateKey));
         return prefix;
       });
-    return [initialState, action$asDispatch, !1];
+    return [initialState, (action as FZ.ActionDispatch), !1];
   }
   var boundAction$22 = action.bind(null, initialState);
   return [
@@ -3457,13 +3457,13 @@ var HooksDispatcher: FZ.Dispatcher = {
     },
     useMemo: useMemo,
     useReducer: useReducer,
-    useRef: function (initialValue) { var initialValue$asRef: FZ.RefObject;
+    useRef: function (initialValue: any | FZ.RefObject) {
       currentlyRenderingComponent = resolveCurrentlyRenderingComponent();
       workInProgressHook = createWorkInProgressHook();
       var previousRef = workInProgressHook.memoizedState;
       return null === previousRef
-        ? ((initialValue$asRef = { current: initialValue }),
-          (workInProgressHook.memoizedState = initialValue$asRef))
+        ? ((initialValue = { current: initialValue }),
+          (workInProgressHook.memoizedState = (initialValue as FZ.RefObject)))
         : previousRef;
     },
     useState: function (initialState) {
@@ -3492,7 +3492,7 @@ var HooksDispatcher: FZ.Dispatcher = {
         resumableState = currentResumableState;
       if (null === resumableState) throw Error(formatProdErrorMessage(404));
       var localId: number = localIdCounter++;
-      return makeId(resumableState, treeId, localId as FZ.int32);
+      return makeId(resumableState, treeId, localId as number);
     },
     useSyncExternalStore: function (subscribe, getSnapshot, getServerSnapshot) {
       if (void 0 === getServerSnapshot)
@@ -3549,38 +3549,38 @@ function describeBuiltInComponentFrame(name: FZ.PropValue): string {
   return "\n" + prefix + name + suffix;
 }
 var reentry = !1;
-function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): string { var RunInRootFrame$asIndex: number, namePropDescriptor$asIndex: number;
+function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): string {
   if (!fn || reentry) return "";
   reentry = !0;
   var previousPrepareStackTrace = (Error as any).prepareStackTrace;
   (Error as any).prepareStackTrace = void 0;
   try {
-    var RunInRootFrame: FZ.RunInRootFrame = {
-      DetermineComponentFrameRoot: function () { var Fake$asDidSet: boolean, Fake$asResult: FZ.ReactNode;
+    var RunInRootFrame: FZ.RunInRootFrame | number = {
+      DetermineComponentFrameRoot: function () {
         try {
           if (construct) {
-            var Fake = function () {
+            var Fake: (() => never) | boolean | FZ.ReactNode = function () {
               throw Error();
             };
-            Object.defineProperty(Fake.prototype, "props", {
+            Object.defineProperty((Fake as (() => never)).prototype, "props", {
               set: function () {
                 throw Error();
               }
             });
             if ("object" === typeof Reflect && Reflect.construct) {
               try {
-                Reflect.construct(Fake, []);
+                Reflect.construct((Fake as (() => never)), []);
               } catch (x: FZ.Thrown) {
                 var control = x;
               }
-              Reflect.construct(fn, [], Fake);
+              Reflect.construct(fn, [], (Fake as (() => never)));
             } else {
               try {
-                (Fake as any).call();
+                ((Fake as (() => never)) as any).call();
               } catch (x$24: FZ.Thrown) {
                 control = x$24;
               }
-              Fake$asDidSet = !1;
+              Fake = !1;
               try {
                 var prevProps = Object.getOwnPropertyDescriptor(
                   fn.prototype,
@@ -3592,10 +3592,10 @@ function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): s
                     throw Error();
                   }
                 });
-                Fake$asDidSet = !0;
+                Fake = !0;
                 new fn();
               } finally {
-                Fake$asDidSet &&
+                (Fake as boolean) &&
                   (void 0 !== prevProps
                     ? Object.defineProperty(fn.prototype, "props", prevProps)
                     : delete fn.prototype.props);
@@ -3607,9 +3607,9 @@ function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): s
             } catch (x$25: FZ.Thrown) {
               control = x$25;
             }
-            (Fake$asResult = fn()) &&
-              "function" === typeof Fake$asResult.catch &&
-              Fake$asResult.catch(function () {});
+            (Fake = fn()) &&
+              "function" === typeof Fake.catch &&
+              Fake.catch(function () {});
           }
         } catch (sample: FZ.Thrown) {
           if (sample && control && "string" === typeof sample.stack)
@@ -3620,7 +3620,7 @@ function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): s
     };
     RunInRootFrame.DetermineComponentFrameRoot.displayName =
       "DetermineComponentFrameRoot";
-    var namePropDescriptor = Object.getOwnPropertyDescriptor(
+    var namePropDescriptor: PropertyDescriptor | number | undefined = Object.getOwnPropertyDescriptor(
       RunInRootFrame.DetermineComponentFrameRoot,
       "name"
     );
@@ -3638,58 +3638,58 @@ function describeNativeComponentFrame(fn: FZ.ElementType, construct: boolean): s
       var sampleLines = sampleStack.split("\n"),
         controlLines = controlStack.split("\n");
       for (
-        namePropDescriptor$asIndex = RunInRootFrame$asIndex = 0;
-        RunInRootFrame$asIndex < sampleLines.length &&
-        !sampleLines[RunInRootFrame$asIndex].includes("DetermineComponentFrameRoot");
+        namePropDescriptor = RunInRootFrame = 0;
+        RunInRootFrame < sampleLines.length &&
+        !sampleLines[RunInRootFrame]!.includes("DetermineComponentFrameRoot");
 
       )
-        RunInRootFrame$asIndex++;
+        RunInRootFrame++;
       for (
         ;
-        namePropDescriptor$asIndex < controlLines.length &&
-        !controlLines[namePropDescriptor$asIndex].includes(
+        namePropDescriptor < controlLines.length &&
+        !controlLines[namePropDescriptor]!.includes(
           "DetermineComponentFrameRoot"
         );
 
       )
-        namePropDescriptor$asIndex++;
+        namePropDescriptor++;
       if (
-        RunInRootFrame$asIndex === sampleLines.length ||
-        namePropDescriptor$asIndex === controlLines.length
+        RunInRootFrame === sampleLines.length ||
+        namePropDescriptor === controlLines.length
       )
         for (
-          RunInRootFrame$asIndex = sampleLines.length - 1,
-            namePropDescriptor$asIndex = controlLines.length - 1;
-          1 <= RunInRootFrame$asIndex &&
-          0 <= namePropDescriptor$asIndex &&
-          sampleLines[RunInRootFrame$asIndex] !== controlLines[namePropDescriptor$asIndex];
+          RunInRootFrame = sampleLines.length - 1,
+            namePropDescriptor = controlLines.length - 1;
+          1 <= RunInRootFrame &&
+          0 <= namePropDescriptor &&
+          sampleLines[RunInRootFrame] !== controlLines[namePropDescriptor];
 
         )
-          namePropDescriptor$asIndex--;
+          namePropDescriptor--;
       for (
         ;
-        1 <= RunInRootFrame$asIndex && 0 <= namePropDescriptor$asIndex;
-        RunInRootFrame$asIndex--, namePropDescriptor$asIndex--
+        1 <= RunInRootFrame && 0 <= namePropDescriptor;
+        RunInRootFrame--, namePropDescriptor--
       )
-        if (sampleLines[RunInRootFrame$asIndex] !== controlLines[namePropDescriptor$asIndex]) {
-          if (1 !== RunInRootFrame$asIndex || 1 !== namePropDescriptor$asIndex) {
+        if (sampleLines[RunInRootFrame] !== controlLines[namePropDescriptor]) {
+          if (1 !== RunInRootFrame || 1 !== namePropDescriptor) {
             do
               if (
-                (RunInRootFrame$asIndex--,
-                namePropDescriptor$asIndex--,
-                0 > namePropDescriptor$asIndex ||
-                  sampleLines[RunInRootFrame$asIndex] !==
-                    controlLines[namePropDescriptor$asIndex])
+                (RunInRootFrame--,
+                namePropDescriptor--,
+                0 > namePropDescriptor ||
+                  sampleLines[RunInRootFrame] !==
+                    controlLines[namePropDescriptor])
               ) {
                 var frame =
                   "\n" +
-                  sampleLines[RunInRootFrame$asIndex].replace(" at new ", " at ");
+                  sampleLines[RunInRootFrame]!.replace(" at new ", " at ");
                 fn.displayName &&
                   frame.includes("<anonymous>") &&
                   (frame = frame.replace("<anonymous>", fn.displayName));
                 return frame;
               }
-            while (1 <= RunInRootFrame$asIndex && 0 <= namePropDescriptor$asIndex);
+            while (1 <= RunInRootFrame && 0 <= namePropDescriptor);
           }
           break;
         }
@@ -3837,9 +3837,9 @@ function RequestInstance(this: FZ.Request,
   this.formState = void 0 === formState ? null : formState;
 }
 function createRequest(
-  children$given: FZ.ReactNode,
-  resumableState$given: FZ.ResumableState,
-  renderState$given: FZ.RenderState,
+  children: FZ.ReactNode | FZ.Task | any,
+  resumableState: FZ.ResumableState | FZ.Request,
+  renderState: FZ.RenderState | FZ.Segment,
   rootFormatContext: FZ.FormatContext,
   progressiveChunkSize: number | undefined,
   onError: FZ.ErrorHandler | undefined,
@@ -3849,10 +3849,10 @@ function createRequest(
   onShellError: ((error: FZ.Thrown) => void) | undefined,
   onFatalError: ((error: FZ.Thrown) => void) | undefined,
   formState: FZ.ReactFormState
-): FZ.Request { var children, resumableState, renderState; children = children$given; resumableState = resumableState$given; renderState = renderState$given; var children$asTask: FZ.Task;
+): FZ.Request {
   resumableState = new (RequestInstance as FZ.RequestConstructor)(
-    resumableState,
-    renderState,
+    (resumableState as FZ.ResumableState),
+    (renderState as FZ.RenderState),
     rootFormatContext,
     progressiveChunkSize,
     onError,
@@ -3872,7 +3872,7 @@ function createRequest(
     !1
   );
   renderState.parentFlushed = !0;
-  children$asTask = createRenderTask(
+  children = createRenderTask(
     resumableState,
     null,
     children,
@@ -3889,8 +3889,8 @@ function createRequest(
     null,
     null
   );
-  pushComponentStack(children$asTask);
-  resumableState.pingedTasks.push(children$asTask);
+  pushComponentStack((children as FZ.Task));
+  resumableState.pingedTasks.push((children as FZ.Task));
   return resumableState;
 }
 var currentRequest: FZ.Request | null = null;
@@ -3901,12 +3901,12 @@ function pingTask(request: FZ.Request, task: FZ.Task): void {
     performWork(request));
 }
 function createSuspenseBoundary(
-  request$given: FZ.Request,
+  request: FZ.Request | FZ.HoistableState | null,
   row: FZ.SuspenseListRow | null,
-  fallbackAbortableTasks$given: Set<FZ.Task>,
-  preamble$given: FZ.BoundaryPreamble | null,
+  fallbackAbortableTasks: Set<FZ.Task> | FZ.SuspenseBoundary,
+  preamble: FZ.BoundaryPreamble | FZ.SuspenseBoundary[] | null,
   defer: boolean
-): FZ.SuspenseBoundary { var request, fallbackAbortableTasks, preamble; request = request$given; fallbackAbortableTasks = fallbackAbortableTasks$given; preamble = preamble$given;
+): FZ.SuspenseBoundary {
   fallbackAbortableTasks = {
     status: 0,
     rootSegmentID: -1,
@@ -3916,18 +3916,18 @@ function createSuspenseBoundary(
     completedSegments: [],
     byteSize: 0,
     defer: defer,
-    fallbackAbortableTasks: fallbackAbortableTasks,
+    fallbackAbortableTasks: (fallbackAbortableTasks as Set<FZ.Task>),
     errorDigest: null,
     contentState: createHoistableState(),
     fallbackState: createHoistableState(),
-    preamble: preamble,
+    preamble: (preamble as FZ.BoundaryPreamble | null),
     tracked: null
   } as FZ.SuspenseBoundary;
   null !== row &&
     (row.pendingTasks++,
     (preamble = row.boundaries),
     null !== preamble &&
-      (request.allPendingTasks++,
+      ((request as FZ.Request).allPendingTasks++,
       fallbackAbortableTasks.pendingTasks++,
       preamble.push(fallbackAbortableTasks)),
     (request = row.inheritedHoistables),
@@ -4105,11 +4105,11 @@ function getThrownInfo(node$jscomp$0: FZ.ComponentStackNode | null): FZ.ThrownIn
     });
   return errorInfo;
 }
-function logRecoverableError(request$given: FZ.Request, error: FZ.Thrown, errorInfo: FZ.ThrownInfo): FZ.ErrorDigest { var request; request = request$given;
+function logRecoverableError(request: FZ.Request | FZ.BailoutHandler | FZ.ErrorHandler, error: FZ.Thrown, errorInfo: FZ.ThrownInfo): FZ.ErrorDigest {
   if (isRecoverableError(error))
-    return (request = request.onBrowserBailout), request(error, errorInfo), "";
-  request = request.onError;
-  error = request(error, errorInfo);
+    return (request = (request as FZ.Request).onBrowserBailout), (request as FZ.BailoutHandler)(error, errorInfo), "";
+  request = (request as FZ.Request).onError;
+  error = (request as FZ.ErrorHandler)(error, errorInfo);
   if (null == error || "string" === typeof error)
     return "" === error ? void 0 : error;
 }
@@ -4135,7 +4135,7 @@ function unblockSuspenseListRow(request: FZ.Request, unblockedRow: FZ.SuspenseLi
     if (null !== unblockedBoundaries) {
       unblockedRow.boundaries = null;
       for (var i = 0; i < unblockedBoundaries.length; i++) {
-        var unblockedBoundary = unblockedBoundaries[i];
+        var unblockedBoundary = unblockedBoundaries[i]!;
         null !== inheritedHoistables &&
           hoistHoistables(unblockedBoundary.contentState, inheritedHoistables);
         finishedTask(request, unblockedBoundary, null, null);
@@ -4151,7 +4151,7 @@ function tryToResolveTogetherRow(request: FZ.Request, togetherRow: FZ.SuspenseLi
   var boundaries = togetherRow.boundaries;
   if (null !== boundaries && togetherRow.pendingTasks === boundaries.length) {
     for (var allCompleteAndInlinable = !0, i = 0; i < boundaries.length; i++) {
-      var rowBoundary = boundaries[i];
+      var rowBoundary = boundaries[i]!;
       if (
         1 !== rowBoundary.pendingTasks ||
         rowBoundary.parentFlushed ||
@@ -4181,47 +4181,47 @@ function createSuspenseListRow(previousRow: FZ.SuspenseListRow | null): FZ.Suspe
     (previousRow.next = newRow));
   return newRow;
 }
-function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath$given: FZ.KeyNode, rows: FZ.ReactNode, revealOrder$given: FZ.PropValue): void { var keyPath, revealOrder; keyPath = keyPath$given; revealOrder = revealOrder$given; var resumeSlots$asNode: FZ.ReactNode; var resumeSlots$asSegment: FZ.Segment; var i$asNode: FZ.ReactNode; var node$asIndex: number;
+function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath: FZ.KeyNode | any, rows: FZ.ReactNode, revealOrder: FZ.PropValue | any): void {
   var prevKeyPath = task.keyPath,
     prevTreeContext = task.treeContext,
     prevRow = task.row;
-  task.keyPath = keyPath;
+  task.keyPath = (keyPath as FZ.KeyNode);
   keyPath = rows.length;
   var previousSuspenseListRow: FZ.SuspenseListRow | null = null;
   if (null !== task.replay) {
-    var resumeSlots = task.replay.slots;
-    if (null !== resumeSlots && "object" === typeof resumeSlots)
+    var resumeSlots: FZ.ResumeSlots | FZ.ReactNode | FZ.Segment | number = task.replay.slots;
+    if (null !== (resumeSlots as FZ.ResumeSlots) && "object" === typeof (resumeSlots as FZ.ResumeSlots))
       for (var n = 0; n < keyPath; n++) {
-        var i =
+        var i: any | FZ.ReactNode | number =
             "backwards" !== revealOrder &&
             "unstable_legacy-backwards" !== revealOrder
               ? n
               : keyPath - 1 - n,
-          node = rows[i];
+          node: any | number = rows[i];
         task.row = previousSuspenseListRow = createSuspenseListRow(
           previousSuspenseListRow
         );
-        task.treeContext = pushTreeContext(prevTreeContext, keyPath as FZ.int32, i);
-        var resumeSegmentID: FZ.SegmentId | undefined = resumeSlots[i];
+        task.treeContext = pushTreeContext(prevTreeContext, keyPath as number, i);
+        var resumeSegmentID: FZ.SegmentId | undefined = (resumeSlots as FZ.SlotMap)[i];
         "number" === typeof resumeSegmentID
           ? (resumeNode(request, task, resumeSegmentID as FZ.SegmentId, node, i as FZ.ChildIndex),
-            delete resumeSlots[i])
+            delete (resumeSlots as FZ.SlotMap)[i])
           : renderNode(request, task, node, i as FZ.ChildIndex);
         0 === --previousSuspenseListRow.pendingTasks &&
           finishSuspenseListRow(request, previousSuspenseListRow);
       }
     else
-      for (resumeSlots = 0; resumeSlots < keyPath; resumeSlots++)
+      for (resumeSlots = 0; (resumeSlots as number) < keyPath; resumeSlots++)
         (n =
           "backwards" !== revealOrder &&
           "unstable_legacy-backwards" !== revealOrder
-            ? resumeSlots
-            : keyPath - 1 - resumeSlots),
-          (i$asNode = rows[n]),
+            ? (resumeSlots as number)
+            : keyPath - 1 - (resumeSlots as number)),
+          (i = rows[n]),
           (task.row = previousSuspenseListRow =
             createSuspenseListRow(previousSuspenseListRow)),
-          (task.treeContext = pushTreeContext(prevTreeContext, keyPath as FZ.int32, n)),
-          renderNode(request, task, i$asNode, n as FZ.ChildIndex),
+          (task.treeContext = pushTreeContext(prevTreeContext, keyPath as number, n)),
+          renderNode(request, task, (i as FZ.ReactNode), n as FZ.ChildIndex),
           0 === --previousSuspenseListRow.pendingTasks &&
             finishSuspenseListRow(request, previousSuspenseListRow);
   } else if (
@@ -4229,31 +4229,31 @@ function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath$give
     "unstable_legacy-backwards" !== revealOrder
   )
     for (revealOrder = 0; revealOrder < keyPath; revealOrder++)
-      (resumeSlots$asNode = rows[revealOrder]),
+      (resumeSlots = rows[revealOrder]),
         (task.row = previousSuspenseListRow =
           createSuspenseListRow(previousSuspenseListRow)),
         (task.treeContext = pushTreeContext(
           prevTreeContext,
-          keyPath as FZ.int32,
+          keyPath as number,
           revealOrder
         )),
-        renderNode(request, task, resumeSlots$asNode, revealOrder as FZ.ChildIndex),
+        renderNode(request, task, resumeSlots, revealOrder as FZ.ChildIndex),
         0 === --previousSuspenseListRow.pendingTasks &&
           finishSuspenseListRow(request, previousSuspenseListRow);
   else {
-    resumeSlots$asSegment = task.blockedSegment!;
-    n = resumeSlots$asSegment.children.length;
-    i = resumeSlots$asSegment.chunks.length;
-    for (node$asIndex = 0; node$asIndex < keyPath; node$asIndex++) {
+    resumeSlots = task.blockedSegment!;
+    n = (resumeSlots as FZ.Segment).children.length;
+    i = (resumeSlots as FZ.Segment).chunks.length;
+    for (node = 0; (node as number) < keyPath; node++) {
       resumeSegmentID =
-        "unstable_legacy-backwards" === revealOrder ? keyPath - 1 - node$asIndex : node$asIndex;
+        "unstable_legacy-backwards" === revealOrder ? keyPath - 1 - (node as number) : (node as number);
       var node$39 = rows[resumeSegmentID];
       task.row = previousSuspenseListRow = createSuspenseListRow(
         previousSuspenseListRow
       );
       task.treeContext = pushTreeContext(
         prevTreeContext,
-        keyPath as FZ.int32,
+        keyPath as number,
         resumeSegmentID
       );
       var newSegment = createPendingSegment(
@@ -4261,10 +4261,10 @@ function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath$give
         i as FZ.ChunkIndex,
         null,
         task.formatContext,
-        0 === resumeSegmentID ? resumeSlots$asSegment.lastPushedText : !0,
+        0 === resumeSegmentID ? (resumeSlots as FZ.Segment).lastPushedText : !0,
         !0
       );
-      resumeSlots$asSegment.children.splice(n, 0, newSegment);
+      (resumeSlots as FZ.Segment).children.splice(n, 0, newSegment);
       task.blockedSegment = newSegment;
       try {
         renderNode(request, task, node$39, resumeSegmentID as FZ.ChildIndex),
@@ -4281,8 +4281,8 @@ function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath$give
         throw ((newSegment.status = request.aborted ? 3 : 4), thrownValue);
       }
     }
-    task.blockedSegment = resumeSlots$asSegment;
-    resumeSlots$asSegment.lastPushedText = !1;
+    task.blockedSegment = (resumeSlots as FZ.Segment);
+    (resumeSlots as FZ.Segment).lastPushedText = !1;
   }
   null !== prevRow &&
     null !== previousSuspenseListRow &&
@@ -4292,12 +4292,12 @@ function renderSuspenseListRows(request: FZ.Request, task: FZ.Task, keyPath$give
   task.row = prevRow;
   task.keyPath = prevKeyPath;
 }
-function renderWithHooks(request$given: FZ.Request, task: FZ.Task, keyPath: FZ.KeyNode, Component: FZ.FunctionComponent, props: FZ.Props, secondArg: FZ.Ref): FZ.ReactNode { var request; request = request$given;
+function renderWithHooks(request: FZ.Request | any, task: FZ.Task, keyPath: FZ.KeyNode, Component: FZ.FunctionComponent, props: FZ.Props, secondArg: FZ.Ref): FZ.ReactNode {
   var prevThenableState = task.thenableState;
   task.thenableState = null;
   currentlyRenderingComponent = {};
   currentlyRenderingTask = task;
-  currentlyRenderingRequest = request;
+  currentlyRenderingRequest = (request as FZ.Request);
   currentlyRenderingKeyPath = keyPath;
   actionStateCounter = localIdCounter = 0;
   actionStateMatchingIndex = -1;
@@ -4317,26 +4317,26 @@ function renderWithHooks(request$given: FZ.Request, task: FZ.Task, keyPath: FZ.K
 function finishFunctionComponent(
   request: FZ.Request,
   task: FZ.Task,
-  keyPath$given: FZ.KeyNode,
+  keyPath: FZ.KeyNode | FZ.TreeContext,
   children: FZ.ReactNode,
   hasId: boolean,
-  actionStateCount$given: FZ.HookCounter,
+  actionStateCount: FZ.HookCounter | FZ.KeyNode | null,
   actionStateMatchingIndex: FZ.HookCounter
-): void { var keyPath, actionStateCount; keyPath = keyPath$given; actionStateCount = actionStateCount$given; var segment$asChunks: FZ.Chunk[];
+): void {
   var didEmitActionStateMarkers = !1;
-  if (0 !== actionStateCount && null !== request.formState) {
-    var segment = task.blockedSegment;
+  if (0 !== (actionStateCount as FZ.HookCounter) && null !== request.formState) {
+    var segment: FZ.Segment | FZ.Chunk[] | null = task.blockedSegment;
     if (null !== segment) {
       didEmitActionStateMarkers = !0;
-      segment$asChunks = segment.chunks;
-      for (var i = 0; i < actionStateCount; i++)
+      segment = segment.chunks;
+      for (var i = 0; i < (actionStateCount as FZ.HookCounter); i++)
         i === actionStateMatchingIndex
-          ? segment$asChunks.push("\x3c!--F!--\x3e")
-          : segment$asChunks.push("\x3c!--F--\x3e");
+          ? segment.push("\x3c!--F!--\x3e")
+          : segment.push("\x3c!--F--\x3e");
     }
   }
   actionStateCount = task.keyPath;
-  task.keyPath = keyPath;
+  task.keyPath = (keyPath as FZ.KeyNode);
   hasId
     ? ((keyPath = task.treeContext),
       (task.treeContext = pushTreeContext(keyPath, 1, 0)),
@@ -5026,7 +5026,7 @@ function resumeNode(request: FZ.Request, task: FZ.Task, segmentId: FZ.SegmentId,
     (task.replay = prevReplay), (task.blockedSegment = null);
   }
 }
-function renderNodeDestructive(request: FZ.Request, task: FZ.Task, node$given: FZ.ReactNode, childIndex: FZ.ChildIndex): void { var node; node = node$given;
+function renderNodeDestructive(request: FZ.Request, task: FZ.Task, node: FZ.ReactNode | any, childIndex: FZ.ChildIndex): void {
   null !== task.replay && "number" === typeof task.replay.slots
     ? resumeNode(request, task, task.replay.slots as FZ.SegmentId, node, childIndex)
     : ((task.node = node),
@@ -5036,48 +5036,48 @@ function renderNodeDestructive(request: FZ.Request, task: FZ.Task, node$given: F
       retryNode(request, task),
       (task.componentStack = node));
 }
-function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request: FZ.Request; request = request$given; var request$asError: FZ.Thrown; var node$asIndex: number; var childIndex$asNodes: FZ.ReplayNode[]; var childIndex$asString: string; var childIndex$asSegment: FZ.Segment | null; var key$asKeyPath: FZ.KeyNode; var key$asInfo: FZ.ThrownInfo; var key$asDigest: FZ.ErrorDigest; var type$asNodes: FZ.ReplayNode[]; var props$asBoundary: FZ.SuspenseBoundary | null; var ref$asSlots: FZ.ResumeSlots; var name$asNodes: FZ.ReplayNode[]; var keyOrIndex$asKeyPath: FZ.KeyNode | null; var replay$asId: FZ.SegmentId; var node$jscomp$0$asSlots: FZ.ResumeSlots; var childNodes$asThrown: FZ.Thrown; var childNodes$asTask: FZ.Task; var childNodes$asInit: FZ.GivenFunction; var childNodes$asIterator: FZ.IteratorFn; var childSlots$asInfo: FZ.ThrownInfo; var childSlots$asChildren: FZ.ReactNode[]; var currentNode$asRequest: FZ.Request; var currentNode$asDigest: FZ.ErrorDigest;
-  var node = task.node,
-    childIndex = task.childIndex;
+function retryNode(request: FZ.Request | FZ.Thrown, task: FZ.Task): void {
+  var node: any | number = task.node,
+    childIndex: any | FZ.ReplayNode[] | string | FZ.Segment | number | null = task.childIndex;
   if (null !== node) {
     if ("object" === typeof node) {
       switch (node.$$typeof) {
         case REACT_ELEMENT_TYPE:
-          var type: FZ.ElementType = node.type,
-            key: FZ.KeyOrIndex = node.key,
-            props: FZ.Props = node.props;
+          var type: FZ.ElementType | FZ.ReplayNode[] = node.type,
+            key: FZ.KeyOrIndex | FZ.KeyNode | FZ.ThrownInfo | FZ.ErrorDigest = node.key,
+            props: FZ.Props | FZ.SuspenseBoundary | null = node.props;
           node = props.ref;
-          var ref: FZ.Ref = void 0 !== node ? node : null,
-            name: FZ.ComponentName = getComponentNameFromType(type),
-            keyOrIndex: FZ.KeyOrIndex =
+          var ref: FZ.Ref | FZ.ResumeSlots = void 0 !== node ? node : null,
+            name: FZ.ComponentName | FZ.ReplayNode[] = getComponentNameFromType(type),
+            keyOrIndex: FZ.KeyOrIndex | FZ.KeyNode | null =
               null == key || key === REACT_OPTIMISTIC_KEY
                 ? -1 === childIndex
                   ? 0
                   : childIndex
                 : key;
-          key$asKeyPath = [task.keyPath, name, keyOrIndex];
+          key = [task.keyPath, name, keyOrIndex];
           if (null !== task.replay)
             a: {
-              var replay: FZ.ReplaySet = task.replay;
-              childIndex$asNodes = replay.nodes;
-              for (node$asIndex = 0; node$asIndex < childIndex$asNodes.length; node$asIndex++) {
-                var node$jscomp$0: FZ.ReplayNode = childIndex$asNodes[node$asIndex];
-                if (keyOrIndex === node$jscomp$0[1]) {
+              var replay: FZ.ReplaySet | FZ.SegmentId = task.replay;
+              childIndex = replay.nodes;
+              for (node = 0; (node as number) < (childIndex as FZ.ReplayNode[]).length; node++) {
+                var node$jscomp$0: FZ.ReplayNode | FZ.ResumeSlots = (childIndex as FZ.ReplayNode[])[(node as number)]!;
+                if (keyOrIndex === node$jscomp$0[1]!) {
                   if (4 === node$jscomp$0.length) {
-                    if (null !== name && name !== node$jscomp$0[0])
+                    if (null !== name && name !== node$jscomp$0[0]!)
                       throw Error(
-                        formatProdErrorMessage(490, node$jscomp$0[0], name)
+                        formatProdErrorMessage(490, node$jscomp$0[0]!, name)
                       );
-                    var childNodes: FZ.ReplayNode[] = node$jscomp$0[2],
-                      childSlots: FZ.ResumeSlots = node$jscomp$0[3],
-                      currentNode: FZ.ReactNode = task.node;
+                    var childNodes: FZ.ReplayNode[] | FZ.Thrown | FZ.Task | FZ.GivenFunction | FZ.IteratorFn = node$jscomp$0[2]!,
+                      childSlots: FZ.ResumeSlots | FZ.ThrownInfo | FZ.ReactNode[] = node$jscomp$0[3]!,
+                      currentNode: FZ.ReactNode | FZ.Request | FZ.ErrorDigest = task.node;
                     task.replay = {
-                      nodes: childNodes,
-                      slots: childSlots,
+                      nodes: (childNodes as FZ.ReplayNode[]),
+                      slots: (childSlots as FZ.ResumeSlots),
                       pendingTasks: 1
                     };
                     try {
-                      renderElement(request, task, key$asKeyPath, type, props, ref);
+                      renderElement((request as FZ.Request), task, (key as FZ.KeyNode), type, props, ref);
                       if (
                         1 === task.replay.pendingTasks &&
                         0 < task.replay.nodes.length
@@ -5095,22 +5095,22 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                         throw (
                           (task.node === currentNode
                             ? (task.replay = replay)
-                            : childIndex$asNodes.splice(node$asIndex, 1),
+                            : (childIndex as FZ.ReplayNode[]).splice((node as number), 1),
                           x)
                         );
                       task.replay.pendingTasks--;
-                      key$asInfo = getThrownInfo(task.componentStack);
-                      currentNode$asRequest = request;
-                      props$asBoundary = task.blockedBoundary;
-                      request$asError = request.aborted ? request.fatalError : x;
-                      key$asDigest = logRecoverableError(currentNode$asRequest, request$asError, key$asInfo);
+                      key = getThrownInfo(task.componentStack);
+                      currentNode = (request as FZ.Request);
+                      props = task.blockedBoundary;
+                      request = (request as FZ.Request).aborted ? (request as FZ.Request).fatalError : x;
+                      key = logRecoverableError((currentNode as FZ.Request), request, (key as FZ.ThrownInfo));
                       abortRemainingReplayNodes(
-                        currentNode$asRequest,
-                        props$asBoundary,
-                        childNodes,
-                        childSlots,
-                        request$asError,
-                        key$asDigest
+                        (currentNode as FZ.Request),
+                        (props as FZ.SuspenseBoundary | null),
+                        (childNodes as FZ.ReplayNode[]),
+                        (childSlots as FZ.ResumeSlots),
+                        request,
+                        (key as FZ.ErrorDigest)
                       );
                     }
                     task.replay = replay;
@@ -5124,14 +5124,14 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                         )
                       );
                     b: {
-                      replay$asId = (node$jscomp$0[5]!) as FZ.SegmentId;
-                      type$asNodes = node$jscomp$0[2];
-                      ref$asSlots = node$jscomp$0[3];
-                      name$asNodes =
-                        null === node$jscomp$0[4] ? [] : node$jscomp$0[4]![2];
-                      node$jscomp$0$asSlots =
-                        null === node$jscomp$0[4] ? null : node$jscomp$0[4]![3];
-                      keyOrIndex$asKeyPath = task.keyPath;
+                      replay = (node$jscomp$0[5]!) as FZ.SegmentId;
+                      type = node$jscomp$0[2]!;
+                      ref = node$jscomp$0[3]!;
+                      name =
+                        null === node$jscomp$0[4]! ? [] : node$jscomp$0[4]![2]!;
+                      node$jscomp$0 =
+                        null === node$jscomp$0[4]! ? null : node$jscomp$0[4]![3]!;
+                      keyOrIndex = task.keyPath;
                       var prevContext = task.formatContext,
                         prevRow = task.row,
                         previousReplaySet = task.replay,
@@ -5141,29 +5141,29 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                       props = props.fallback;
                       var fallbackAbortSet = new Set<FZ.Task>(),
                         resumedBoundary = createSuspenseBoundary(
-                          request,
+                          (request as FZ.Request),
                           task.row,
                           fallbackAbortSet,
                           null,
                           !1
                         );
                       resumedBoundary.parentFlushed = !0;
-                      resumedBoundary.rootSegmentID = replay$asId;
+                      resumedBoundary.rootSegmentID = replay;
                       task.blockedBoundary = resumedBoundary;
                       task.hoistableState = resumedBoundary.contentState;
-                      task.keyPath = key$asKeyPath;
+                      task.keyPath = (key as FZ.KeyNode);
                       task.formatContext = getSuspenseContentFormatContext(
-                        request.resumableState,
+                        (request as FZ.Request).resumableState,
                         prevContext
                       );
                       task.row = null;
                       task.replay = {
-                        nodes: type$asNodes,
-                        slots: ref$asSlots,
+                        nodes: (type as FZ.ReplayNode[]),
+                        slots: (ref as FZ.ResumeSlots),
                         pendingTasks: 1
                       };
                       try {
-                        renderNode(request, task, content, -1);
+                        renderNode((request as FZ.Request), task, content, -1);
                         if (
                           1 === task.replay.pendingTasks &&
                           0 < task.replay.nodes.length
@@ -5175,45 +5175,45 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                           0 === resumedBoundary.status
                         ) {
                           resumedBoundary.status = 1;
-                          request.completedBoundaries.push(resumedBoundary);
+                          (request as FZ.Request).completedBoundaries.push(resumedBoundary);
                           break b;
                         }
                       } catch (thrownValue: FZ.Thrown) {
                         (resumedBoundary.status = 4),
-                          (childNodes$asThrown = request.aborted
-                            ? request.fatalError
+                          (childNodes = (request as FZ.Request).aborted
+                            ? (request as FZ.Request).fatalError
                             : thrownValue),
-                          (childSlots$asInfo = getThrownInfo(task.componentStack)),
-                          (currentNode$asDigest = logRecoverableError(
-                            request,
-                            childNodes$asThrown,
-                            childSlots$asInfo
+                          (childSlots = getThrownInfo(task.componentStack)),
+                          (currentNode = logRecoverableError(
+                            (request as FZ.Request),
+                            childNodes,
+                            childSlots
                           )),
-                          (resumedBoundary.errorDigest = currentNode$asDigest),
+                          (resumedBoundary.errorDigest = (currentNode as FZ.ErrorDigest)),
                           task.replay.pendingTasks--,
-                          request.clientRenderedBoundaries.push(
+                          (request as FZ.Request).clientRenderedBoundaries.push(
                             resumedBoundary
                           );
                       } finally {
                         (task.blockedBoundary = parentBoundary),
                           (task.hoistableState = parentHoistableState),
                           (task.replay = previousReplaySet),
-                          (task.keyPath = keyOrIndex$asKeyPath),
+                          (task.keyPath = (keyOrIndex as FZ.KeyNode | null)),
                           (task.formatContext = prevContext),
                           (task.row = prevRow);
                       }
-                      childNodes$asTask = createReplayTask(
-                        request,
+                      childNodes = createReplayTask(
+                        (request as FZ.Request),
                         null,
-                        { nodes: name$asNodes, slots: node$jscomp$0$asSlots, pendingTasks: 0 } as FZ.ReplaySet,
+                        { nodes: (name as FZ.ReplayNode[]), slots: node$jscomp$0, pendingTasks: 0 } as FZ.ReplaySet,
                         props,
                         -1,
                         parentBoundary,
                         resumedBoundary.fallbackState,
                         fallbackAbortSet,
-                        [key$asKeyPath[0], "Suspense Fallback", key$asKeyPath[2]],
+                        [(key as FZ.KeyNode)[0], "Suspense Fallback", (key as FZ.KeyNode)[2]],
                         getSuspenseFallbackFormatContext(
-                          request.resumableState,
+                          (request as FZ.Request).resumableState,
                           task.formatContext
                         ),
                         task.context,
@@ -5223,102 +5223,102 @@ function retryNode(request$given: FZ.Request, task: FZ.Task): void { var request
                           task.componentStack
                         )
                       );
-                      pushComponentStack(childNodes$asTask);
-                      request.pingedTasks.push(childNodes$asTask);
+                      pushComponentStack((childNodes as FZ.Task));
+                      (request as FZ.Request).pingedTasks.push((childNodes as FZ.Task));
                     }
                   }
-                  childIndex$asNodes.splice(node$asIndex, 1);
+                  (childIndex as FZ.ReplayNode[]).splice((node as number), 1);
                   break a;
                 }
               }
             }
-          else renderElement(request, task, key$asKeyPath, type, props, ref);
+          else renderElement((request as FZ.Request), task, (key as FZ.KeyNode), type, props, ref);
           return;
         case REACT_PORTAL_TYPE:
           throw Error(formatProdErrorMessage(257));
         case REACT_LAZY_TYPE:
-          childNodes$asInit = node._init;
-          node = childNodes$asInit(node._payload);
-          if (request.aborted) throw null;
-          renderNodeDestructive(request, task, node, childIndex);
+          childNodes = node._init;
+          node = childNodes(node._payload);
+          if ((request as FZ.Request).aborted) throw null;
+          renderNodeDestructive((request as FZ.Request), task, node, childIndex);
           return;
       }
       if (isArrayImpl(node)) {
-        renderChildrenArray(request, task, node, childIndex);
+        renderChildrenArray((request as FZ.Request), task, node, childIndex);
         return;
       }
-      if ((childNodes$asIterator = getIteratorFn(node)))
-        if ((childNodes$asIterator = childNodes$asIterator.call(node))) {
-          node = childNodes$asIterator.next();
+      if ((childNodes = getIteratorFn(node)))
+        if ((childNodes = childNodes.call(node))) {
+          node = childNodes.next();
           if (!node.done) {
-            childSlots$asChildren = [];
-            do childSlots$asChildren.push(node.value), (node = childNodes$asIterator.next());
+            childSlots = [];
+            do childSlots.push(node.value), (node = childNodes.next());
             while (!node.done);
-            renderChildrenArray(request, task, childSlots$asChildren, childIndex);
+            renderChildrenArray((request as FZ.Request), task, childSlots, childIndex);
           }
           return;
         }
       if ("function" === typeof node.then)
         return (
           (task.thenableState = null),
-          renderNodeDestructive(request, task, unwrapThenable(node), childIndex)
+          renderNodeDestructive((request as FZ.Request), task, unwrapThenable(node), childIndex)
         );
       if (node.$$typeof === REACT_CONTEXT_TYPE)
         return renderNodeDestructive(
-          request,
+          (request as FZ.Request),
           task,
           node._currentValue2,
           childIndex
         );
-      childIndex$asString = Object.prototype.toString.call(node);
+      childIndex = Object.prototype.toString.call(node);
       throw Error(
         formatProdErrorMessage(
           31,
-          "[object Object]" === childIndex$asString
+          "[object Object]" === (childIndex as string)
             ? "object with keys {" + Object.keys(node).join(", ") + "}"
-            : childIndex$asString
+            : (childIndex as string)
         )
       );
     }
     if ("string" === typeof node)
-      (childIndex$asSegment = task.blockedSegment),
-        null !== childIndex$asSegment &&
-          (childIndex$asSegment.lastPushedText = pushTextInstance(
-            childIndex$asSegment.chunks,
+      (childIndex = task.blockedSegment),
+        null !== (childIndex as FZ.Segment | null) &&
+          ((childIndex as FZ.Segment | null)!.lastPushedText = pushTextInstance(
+            (childIndex as FZ.Segment | null)!.chunks,
             node,
-            request.renderState,
-            childIndex$asSegment.lastPushedText
+            (request as FZ.Request).renderState,
+            (childIndex as FZ.Segment | null)!.lastPushedText
           ));
     else if ("number" === typeof node || "bigint" === typeof node)
-      (childIndex$asSegment = task.blockedSegment),
-        null !== childIndex$asSegment &&
-          (childIndex$asSegment.lastPushedText = pushTextInstance(
-            childIndex$asSegment.chunks,
+      (childIndex = task.blockedSegment),
+        null !== (childIndex as FZ.Segment | null) &&
+          ((childIndex as FZ.Segment | null)!.lastPushedText = pushTextInstance(
+            (childIndex as FZ.Segment | null)!.chunks,
             "" + node,
-            request.renderState,
-            childIndex$asSegment.lastPushedText
+            (request as FZ.Request).renderState,
+            (childIndex as FZ.Segment | null)!.lastPushedText
           ));
   }
 }
-function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$given: FZ.ReactNode[], childIndex$given: FZ.ChildIndex): void { var request: FZ.Request, children: FZ.ReactNode[], childIndex; request = request$given; var request$asError: FZ.Thrown; var children$asRequest: FZ.Request; children = children$given; childIndex = childIndex$given; var replay$asTreeContext: FZ.TreeContext; var replayNodes$asLength: FZ.int32; var j$asSlots: FZ.ResumeSlots; var node$asSlots: FZ.ResumeSlots; var node$asChild: FZ.ReactNode; var thrownInfo$asDigest: FZ.ErrorDigest; var boundary$asId: FZ.SegmentId | undefined;
+function renderChildrenArray(request: FZ.Request | FZ.Thrown, task: FZ.Task, children: FZ.ReactNode[] | FZ.Request, childIndex: FZ.ChildIndex | FZ.ReplayNode[] | any): void {
   var prevKeyPath = task.keyPath;
   if (
-    -1 !== childIndex &&
-    ((task.keyPath = [task.keyPath, "Fragment", childIndex]),
+    -1 !== (childIndex as FZ.ChildIndex) &&
+    ((task.keyPath = [task.keyPath, "Fragment", (childIndex as FZ.ChildIndex)]),
     null !== task.replay)
   ) {
     for (
-      var replay: FZ.ReplaySet = task.replay, replayNodes: FZ.ReplayNode[] = replay.nodes, j: number = 0;
+      var replay: FZ.ReplaySet | FZ.TreeContext = task.replay, replayNodes: FZ.ReplayNode[] | number = replay.nodes, j: number | FZ.ResumeSlots = 0;
       j < replayNodes.length;
       j++
     ) {
-      var node: FZ.ReplayNode = replayNodes[j];
-      if (node[1] === childIndex) {
-        childIndex = node[2];
-        node$asSlots = node[3];
-        task.replay = { nodes: childIndex, slots: node$asSlots, pendingTasks: 1 };
+      var node: FZ.ReplayNode | FZ.ResumeSlots | FZ.ReactNode = replayNodes[j];
+      if ((node as FZ.ReplayNode)[1] === (childIndex as FZ.ChildIndex)) {
+        childIndex = (node as FZ.ReplayNode)[2];
+        node = (node as FZ.ReplayNode)[3];
+        task.replay = { nodes: (childIndex as FZ.ReplayNode[]), slots: (node as FZ.ResumeSlots), pendingTasks: 1 };
         try {
-          renderChildrenArray(request, task, children, -1);
+          renderChildrenArray((request as FZ.Request), task, (children as FZ.ReactNode[]), -1);
           if (1 === task.replay.pendingTasks && 0 < task.replay.nodes.length)
             throw Error(formatProdErrorMessage(488));
           task.replay.pendingTasks--;
@@ -5330,18 +5330,18 @@ function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$
           )
             throw x;
           task.replay.pendingTasks--;
-          var thrownInfo = getThrownInfo(task.componentStack);
-          children$asRequest = request;
-          var boundary = task.blockedBoundary;
-          request$asError = request.aborted ? request.fatalError : x;
-          thrownInfo$asDigest = logRecoverableError(children$asRequest, request$asError, thrownInfo);
+          var thrownInfo: FZ.ThrownInfo | FZ.ErrorDigest = getThrownInfo(task.componentStack);
+          children = (request as FZ.Request);
+          var boundary: FZ.SuspenseBoundary | FZ.SegmentId | null | undefined = task.blockedBoundary;
+          request = (request as FZ.Request).aborted ? (request as FZ.Request).fatalError : x;
+          thrownInfo = logRecoverableError(children, request, thrownInfo);
           abortRemainingReplayNodes(
-            children$asRequest,
+            children,
             boundary,
-            childIndex,
-            node$asSlots,
-            request$asError,
-            thrownInfo$asDigest
+            (childIndex as FZ.ReplayNode[]),
+            (node as FZ.ResumeSlots),
+            request,
+            thrownInfo
           );
         }
         task.replay = replay;
@@ -5352,84 +5352,84 @@ function renderChildrenArray(request$given: FZ.Request, task: FZ.Task, children$
     task.keyPath = prevKeyPath;
     return;
   }
-  replay$asTreeContext = task.treeContext;
-  replayNodes$asLength = children.length as FZ.int32;
+  replay = task.treeContext;
+  replayNodes = (children as FZ.ReactNode[]).length as number;
   if (
     null !== task.replay &&
-    ((j$asSlots = task.replay.slots), null !== j$asSlots && "object" === typeof j$asSlots)
+    ((j = task.replay.slots), null !== j && "object" === typeof j)
   ) {
-    for (childIndex = 0; childIndex < replayNodes$asLength; childIndex++)
-      (node$asChild = children[childIndex]),
-        (task.treeContext = pushTreeContext(replay$asTreeContext, replayNodes$asLength, childIndex)),
-        (boundary$asId = (j$asSlots as FZ.SlotMap)[childIndex]),
-        "number" === typeof boundary$asId
-          ? (resumeNode(request, task, boundary$asId as FZ.SegmentId, node$asChild, childIndex as FZ.ChildIndex),
-            delete (j$asSlots as FZ.SlotMap)[childIndex])
-          : renderNode(request, task, node$asChild, childIndex as FZ.ChildIndex);
-    task.treeContext = replay$asTreeContext;
+    for (childIndex = 0; (childIndex as FZ.ChildIndex) < replayNodes; childIndex++)
+      (node = (children as FZ.ReactNode[])[(childIndex as FZ.ChildIndex)]),
+        (task.treeContext = pushTreeContext(replay, replayNodes, (childIndex as FZ.ChildIndex))),
+        (boundary = (j as FZ.SlotMap)[childIndex]),
+        "number" === typeof boundary
+          ? (resumeNode((request as FZ.Request), task, boundary as FZ.SegmentId, node, (childIndex as FZ.ChildIndex) as FZ.ChildIndex),
+            delete (j as FZ.SlotMap)[childIndex])
+          : renderNode((request as FZ.Request), task, node, (childIndex as FZ.ChildIndex) as FZ.ChildIndex);
+    task.treeContext = replay;
     task.keyPath = prevKeyPath;
     return;
   }
-  for (j = 0; j < replayNodes$asLength; j++)
-    (childIndex = children[j]),
-      (task.treeContext = pushTreeContext(replay$asTreeContext, replayNodes$asLength, j)),
-      renderNode(request, task, childIndex, j as FZ.ChildIndex);
-  task.treeContext = replay$asTreeContext;
+  for (j = 0; j < replayNodes; j++)
+    (childIndex = (children as FZ.ReactNode[])[j]),
+      (task.treeContext = pushTreeContext(replay, replayNodes, j)),
+      renderNode((request as FZ.Request), task, childIndex, j as FZ.ChildIndex);
+  task.treeContext = replay;
   task.keyPath = prevKeyPath;
 }
-function trackPostponedBoundary(request$given: FZ.Request, trackedPostpones: FZ.PostponedHoles, boundary$given: FZ.SuspenseBoundary): FZ.ReplayNode { var request, boundary; request = request$given; boundary = boundary$given; var tracked$asNode: FZ.ReplayNode | null;
-  boundary.status = 5;
-  boundary.rootSegmentID = request.nextSegmentId++;
-  var tracked = boundary.tracked;
+function trackPostponedBoundary(request: FZ.Request | FZ.KeyNode | null, trackedPostpones: FZ.PostponedHoles, boundary: FZ.SuspenseBoundary | FZ.ReplayNode): FZ.ReplayNode {
+  (boundary as FZ.SuspenseBoundary).status = 5;
+  (boundary as FZ.SuspenseBoundary).rootSegmentID = (request as FZ.Request).nextSegmentId++;
+  var tracked: FZ.TrackedBoundary | FZ.ReplayNode | null = (boundary as FZ.SuspenseBoundary).tracked;
   if (null === tracked) throw Error(formatProdErrorMessage(486));
-  request = tracked.contentKeyPath;
+  request = (tracked as FZ.TrackedBoundary | null)!.contentKeyPath;
   if (null === request) throw Error(formatProdErrorMessage(486));
-  tracked$asNode = tracked.fallbackNode;
+  tracked = (tracked as FZ.TrackedBoundary | null)!.fallbackNode;
   var children: FZ.ReplayNode[] = [],
-    boundaryNode = trackedPostpones.workingMap.get(request);
+    boundaryNode = trackedPostpones.workingMap.get((request as FZ.KeyNode));
   if (void 0 === boundaryNode)
     return (
       (boundary = [
-        request[1],
-        request[2],
+        (request as FZ.KeyNode)[1],
+        (request as FZ.KeyNode)[2],
         children,
         null,
-        tracked$asNode,
-        boundary.rootSegmentID
+        tracked,
+        (boundary as FZ.SuspenseBoundary).rootSegmentID
       ] as FZ.ReplayNode),
-      trackedPostpones.workingMap.set(request, boundary),
-      addToReplayParent(boundary, request[0], trackedPostpones),
+      trackedPostpones.workingMap.set((request as FZ.KeyNode), boundary),
+      addToReplayParent(boundary, (request as FZ.KeyNode)[0], trackedPostpones),
       boundary
     );
-  boundaryNode[4] = tracked$asNode;
-  boundaryNode[5] = boundary.rootSegmentID;
+  boundaryNode[4] = (tracked as FZ.ReplayNode | null);
+  boundaryNode[5] = (boundary as FZ.SuspenseBoundary).rootSegmentID;
   return boundaryNode;
 }
-function trackPostpone(request$given: FZ.Request, trackedPostpones: FZ.PostponedHoles, task$given: FZ.Task, segment: FZ.Segment): void { var request, task; request = request$given; task = task$given; var boundary$asMap: Map<FZ.KeyNode, FZ.ReplayNode>;
+function trackPostpone(request: FZ.Request | FZ.ResumeSlots | FZ.SlotMap | number, trackedPostpones: FZ.PostponedHoles, task: FZ.Task | FZ.ReplayNode | undefined, segment: FZ.Segment): void {
   segment.status = 5;
-  var keyPath = task.keyPath,
-    boundary = task.blockedBoundary;
+  var keyPath = (task as FZ.Task).keyPath,
+    boundary: FZ.SuspenseBoundary | Map<FZ.KeyNode, FZ.ReplayNode> | null = (task as FZ.Task).blockedBoundary;
   if (null === boundary)
-    (segment.id = request.nextSegmentId++),
+    (segment.id = (request as FZ.Request).nextSegmentId++),
       (trackedPostpones.rootSlots = segment.id),
-      null !== request.completedRootSegment &&
-        (request.completedRootSegment.status = 5);
+      null !== (request as FZ.Request).completedRootSegment &&
+        ((request as FZ.Request).completedRootSegment!.status = 5);
   else {
-    if (null !== boundary && 0 === boundary.status) {
+    if (null !== boundary && 0 === (boundary as FZ.SuspenseBoundary | null)!.status) {
       var boundaryNode: FZ.ReplayNode | undefined = trackPostponedBoundary(
-        request,
+        (request as FZ.Request),
         trackedPostpones,
         boundary
       );
       if (
-        null !== boundary.tracked &&
-        boundary.tracked.contentKeyPath === keyPath &&
-        -1 === task.childIndex
+        null !== (boundary as FZ.SuspenseBoundary | null)!.tracked &&
+        (boundary as FZ.SuspenseBoundary | null)!.tracked!.contentKeyPath === keyPath &&
+        -1 === (task as FZ.Task).childIndex
       ) {
         -1 === segment.id &&
           (segment.id = segment.parentFlushed
-            ? boundary.rootSegmentID
-            : request.nextSegmentId++);
+            ? (boundary as FZ.SuspenseBoundary | null)!.rootSegmentID
+            : (request as FZ.Request).nextSegmentId++);
         boundaryNode[3] = segment.id;
         return;
       }
@@ -5437,9 +5437,9 @@ function trackPostpone(request$given: FZ.Request, trackedPostpones: FZ.Postponed
     -1 === segment.id &&
       (segment.id =
         segment.parentFlushed && null !== boundary
-          ? boundary.rootSegmentID
-          : request.nextSegmentId++);
-    if (-1 === task.childIndex)
+          ? (boundary as FZ.SuspenseBoundary | null)!.rootSegmentID
+          : (request as FZ.Request).nextSegmentId++);
+    if (-1 === (task as FZ.Task).childIndex)
       null === keyPath
         ? (trackedPostpones.rootSlots = segment.id)
         : ((task = trackedPostpones.workingMap.get(keyPath)),
@@ -5456,32 +5456,32 @@ function trackPostpone(request$given: FZ.Request, trackedPostpones: FZ.Postponed
             throw Error(formatProdErrorMessage(491));
         }
       else if (
-        ((boundary$asMap = trackedPostpones.workingMap),
-        (boundaryNode = boundary$asMap.get(keyPath)),
+        ((boundary = trackedPostpones.workingMap),
+        (boundaryNode = boundary.get(keyPath)),
         void 0 === boundaryNode)
       )
         (request = {} as FZ.SlotMap),
           (boundaryNode = [keyPath[1], keyPath[2], [], request]),
-          boundary$asMap.set(keyPath, boundaryNode),
+          boundary.set(keyPath, boundaryNode),
           addToReplayParent(boundaryNode, keyPath[0], trackedPostpones);
       else if (((request = boundaryNode[3]), null === request))
         request = boundaryNode[3] = {} as FZ.SlotMap;
       else if ("number" === typeof request)
         throw Error(formatProdErrorMessage(491));
-      request[task.childIndex] = segment.id;
+      request[(task as FZ.Task).childIndex] = segment.id;
     }
   }
 }
-function untrackBoundary(request$given: FZ.Request, boundary$given: FZ.SuspenseBoundary): void { var request, boundary; request = request$given; boundary = boundary$given;
-  request = request.trackedPostpones;
+function untrackBoundary(request: FZ.Request | FZ.PostponedHoles | FZ.ReplayNode | null | undefined, boundary: FZ.SuspenseBoundary | FZ.TrackedBoundary | FZ.KeyNode | null): void {
+  request = (request as FZ.Request).trackedPostpones;
   null !== request &&
-    ((boundary = boundary.tracked),
+    ((boundary = (boundary as FZ.SuspenseBoundary).tracked),
     null !== boundary &&
-      ((boundary = boundary.contentKeyPath),
+      ((boundary = (boundary as FZ.TrackedBoundary).contentKeyPath),
       null !== boundary &&
-        ((request = request.workingMap.get(boundary)),
+        ((request = (request as FZ.PostponedHoles).workingMap.get(boundary)),
         void 0 !== request &&
-          ((request.length = 4), (request[2] = []), (request[3] = null)))));
+          (((request as FZ.ReplayNode).length = 4), ((request as FZ.ReplayNode)[2] = []), ((request as FZ.ReplayNode)[3] = null)))));
 }
 function spawnNewSuspendedReplayTask(request: FZ.Request, task: FZ.Task, thenableState: FZ.ThenableState | null): FZ.Task {
   return createReplayTask(
@@ -5531,17 +5531,17 @@ function spawnNewSuspendedRenderTask(request: FZ.Request, task: FZ.Task, thenabl
     task.componentStack
   );
 }
-function renderNode(request$given: FZ.Request, task: FZ.Task, node$given: FZ.ReactNode, childIndex$given: FZ.ChildIndex): void { var request, node, childIndex; request = request$given; node = node$given; childIndex = childIndex$given; var segment$asReplay: FZ.ReplaySet | null, segment$asThenable: FZ.Thenable, segment$asThenableState: FZ.ThenableState | null, segment$asTask: FZ.Task;
+function renderNode(request: FZ.Request | FZ.Ping, task: FZ.Task, node: FZ.ReactNode | any, childIndex: FZ.ChildIndex | FZ.ThenableState | null): void {
   var previousFormatContext = task.formatContext,
     previousContext = task.context,
     previousKeyPath = task.keyPath,
     previousTreeContext = task.treeContext,
     previousComponentStack = task.componentStack,
-    segment = task.blockedSegment;
-  if (null === segment) {
-    segment$asReplay = task.replay;
+    segment: FZ.Segment | FZ.ReplaySet | FZ.Thenable | FZ.ThenableState | FZ.Task | null = task.blockedSegment;
+  if (null === (segment as FZ.Segment | null)) {
+    segment = task.replay;
     try {
-      return renderNodeDestructive(request, task, node, childIndex as FZ.ChildIndex);
+      return renderNodeDestructive((request as FZ.Request), task, node, (childIndex as FZ.ChildIndex) as FZ.ChildIndex);
     } catch (thrownValue: FZ.Thrown) {
       if (
         (resetHooksState(),
@@ -5549,21 +5549,21 @@ function renderNode(request$given: FZ.Request, task: FZ.Task, node$given: FZ.Rea
           thrownValue === SuspenseException
             ? getSuspendedThenable()
             : thrownValue),
-        !request.aborted && "object" === typeof node && null !== node)
+        !(request as FZ.Request).aborted && "object" === typeof node && null !== node)
       ) {
         if ("function" === typeof node.then) {
           childIndex =
             thrownValue === SuspenseException
               ? getThenableStateAfterSuspending()
               : null;
-          request = spawnNewSuspendedReplayTask(request, task, childIndex).ping;
+          request = spawnNewSuspendedReplayTask((request as FZ.Request), task, childIndex).ping;
           node.then(request.resolve, request.reject);
           task.formatContext = previousFormatContext;
           task.context = previousContext;
           task.keyPath = previousKeyPath;
           task.treeContext = previousTreeContext;
           task.componentStack = previousComponentStack;
-          task.replay = segment$asReplay;
+          task.replay = (segment as FZ.ReplaySet | null);
           switchContext(previousContext);
           return;
         }
@@ -5572,43 +5572,43 @@ function renderNode(request$given: FZ.Request, task: FZ.Task, node$given: FZ.Rea
             thrownValue === SuspenseException
               ? getThenableStateAfterSuspending()
               : null;
-          node = spawnNewSuspendedReplayTask(request, task, node);
-          request.pingedTasks.push(node);
+          node = spawnNewSuspendedReplayTask((request as FZ.Request), task, node);
+          (request as FZ.Request).pingedTasks.push(node);
           task.formatContext = previousFormatContext;
           task.context = previousContext;
           task.keyPath = previousKeyPath;
           task.treeContext = previousTreeContext;
           task.componentStack = previousComponentStack;
-          task.replay = segment$asReplay;
+          task.replay = (segment as FZ.ReplaySet | null);
           switchContext(previousContext);
           return;
         }
       }
     }
   } else {
-    var childrenLength = segment.children.length,
-      chunkLength = segment.chunks.length;
+    var childrenLength = (segment as FZ.Segment | null)!.children.length,
+      chunkLength = (segment as FZ.Segment | null)!.chunks.length;
     try {
-      return renderNodeDestructive(request, task, node, childIndex as FZ.ChildIndex);
+      return renderNodeDestructive((request as FZ.Request), task, node, (childIndex as FZ.ChildIndex) as FZ.ChildIndex);
     } catch (thrownValue$63) {
       if (
         (resetHooksState(),
-        (segment.children.length = childrenLength),
-        (segment.chunks.length = chunkLength),
+        ((segment as FZ.Segment | null)!.children.length = childrenLength),
+        ((segment as FZ.Segment | null)!.chunks.length = chunkLength),
         (node =
           thrownValue$63 === SuspenseException
             ? getSuspendedThenable()
             : thrownValue$63),
-        !request.aborted && "object" === typeof node && null !== node)
+        !(request as FZ.Request).aborted && "object" === typeof node && null !== node)
       ) {
         if ("function" === typeof node.then) {
-          segment$asThenable = node;
+          segment = node;
           node =
             thrownValue$63 === SuspenseException
               ? getThenableStateAfterSuspending()
               : null;
-          request = spawnNewSuspendedRenderTask(request, task, node).ping;
-          segment$asThenable.then(request.resolve, request.reject);
+          request = spawnNewSuspendedRenderTask((request as FZ.Request), task, node).ping;
+          segment.then(request.resolve, request.reject);
           task.formatContext = previousFormatContext;
           task.context = previousContext;
           task.keyPath = previousKeyPath;
@@ -5618,12 +5618,12 @@ function renderNode(request$given: FZ.Request, task: FZ.Task, node$given: FZ.Rea
           return;
         }
         if ("Maximum call stack size exceeded" === node.message) {
-          segment$asThenableState =
+          segment =
             thrownValue$63 === SuspenseException
               ? getThenableStateAfterSuspending()
               : null;
-          segment$asTask = spawnNewSuspendedRenderTask(request, task, segment$asThenableState);
-          request.pingedTasks.push(segment$asTask);
+          segment = spawnNewSuspendedRenderTask((request as FZ.Request), task, (segment as FZ.ThenableState | null));
+          (request as FZ.Request).pingedTasks.push((segment as FZ.Task));
           task.formatContext = previousFormatContext;
           task.context = previousContext;
           task.keyPath = previousKeyPath;
@@ -5657,13 +5657,13 @@ function abortRemainingReplayNodes(
   errorDigest$jscomp$0: FZ.ErrorDigest
 ): void {
   for (var i = 0; i < nodes.length; i++) {
-    var node: FZ.ReplayNode | FZ.SegmentId = nodes[i];
+    var node: FZ.ReplayNode | FZ.SegmentId = nodes[i]!;
     if (4 === node.length)
       abortRemainingReplayNodes(
         request$jscomp$0,
         boundary,
-        node[2],
-        node[3],
+        node[2]!,
+        node[3]!,
         error,
         errorDigest$jscomp$0
       );
@@ -5697,27 +5697,27 @@ function abortRemainingReplayNodes(
     if ("object" === typeof slots) for (var index in slots) delete slots[index];
   }
 }
-function abortTask(task$given: FZ.Task, request: FZ.Request): void { var task; task = task$given;
-  if (task !== request.currentTask) {
-    var boundary = task.blockedBoundary;
-    task = task.blockedSegment;
-    null !== task && (task.status = 3);
+function abortTask(task: FZ.Task | FZ.Segment | null, request: FZ.Request): void {
+  if ((task as FZ.Task) !== request.currentTask) {
+    var boundary = (task as FZ.Task).blockedBoundary;
+    task = (task as FZ.Task).blockedSegment;
+    null !== task && ((task as FZ.Segment).status = 3);
     null !== boundary &&
       boundary.fallbackAbortableTasks.forEach(function (fallbackTask) {
         return abortTask(fallbackTask, request);
       });
   }
 }
-function finishAbortedTask(task$given: FZ.Task, request: FZ.Request, error: FZ.Thrown): void { var task; task = task$given; var boundary$asReplay: FZ.ReplaySet | null, boundary$asPostpones: FZ.PostponedHoles, errorInfo$asDigest: FZ.ErrorDigest, errorInfo$asRow: FZ.SuspenseListRow | null;
-  if (task !== request.currentTask) {
-    var boundary = task.blockedBoundary,
-      segment = task.blockedSegment;
+function finishAbortedTask(task: FZ.Task | Error | FZ.SuspenseListRow | null, request: FZ.Request, error: FZ.Thrown): void {
+  if ((task as FZ.Task) !== request.currentTask) {
+    var boundary: FZ.SuspenseBoundary | FZ.ReplaySet | FZ.PostponedHoles | null = (task as FZ.Task).blockedBoundary,
+      segment = (task as FZ.Task).blockedSegment;
     if (null === segment || 3 === segment.status) {
-      var errorInfo = getThrownInfo(task.componentStack),
+      var errorInfo: FZ.ThrownInfo | FZ.ErrorDigest | FZ.SuspenseListRow | null = getThrownInfo((task as FZ.Task).componentStack),
         isRecoverableReason = isRecoverableError(error);
       if (null === boundary) {
-        boundary$asReplay = task.replay;
-        if (null === boundary$asReplay) {
+        boundary = (task as FZ.Task).replay;
+        if (null === boundary) {
           isRecoverableReason ||
           null === request.trackedPostpones ||
           null === segment
@@ -5731,31 +5731,31 @@ function finishAbortedTask(task$given: FZ.Task, request: FZ.Request, error: FZ.T
                 12 !== request.status &&
                   13 !== request.status &&
                   fatalError(request, error))
-            : ((boundary$asPostpones = request.trackedPostpones),
+            : ((boundary = request.trackedPostpones),
               logRecoverableError(request, error, errorInfo),
-              trackPostpone(request, boundary$asPostpones, task, segment),
-              finishedTask(request, null, task.row, segment));
+              trackPostpone(request, boundary, (task as FZ.Task), segment),
+              finishedTask(request, null, (task as FZ.Task).row, segment));
           return;
         }
         12 !== request.status &&
           13 !== request.status &&
-          (boundary$asReplay.pendingTasks--,
-          0 === boundary$asReplay.pendingTasks &&
-            0 < boundary$asReplay.nodes.length &&
-            ((errorInfo$asDigest = logRecoverableError(request, error, errorInfo)),
+          ((boundary as FZ.ReplaySet | null)!.pendingTasks--,
+          0 === (boundary as FZ.ReplaySet | null)!.pendingTasks &&
+            0 < (boundary as FZ.ReplaySet | null)!.nodes.length &&
+            ((errorInfo = logRecoverableError(request, error, errorInfo)),
             abortRemainingReplayNodes(
               request,
               null,
-              boundary$asReplay.nodes,
-              boundary$asReplay.slots,
+              (boundary as FZ.ReplaySet | null)!.nodes,
+              (boundary as FZ.ReplaySet | null)!.slots,
               error,
-              errorInfo$asDigest
+              errorInfo
             )),
           request.pendingRootTasks--,
           0 === request.pendingRootTasks && completeShell(request));
       } else {
         var trackedPostpones$64 = request.trackedPostpones;
-        if (4 !== boundary.status) {
+        if (4 !== (boundary as FZ.SuspenseBoundary | null)!.status) {
           if (
             !isRecoverableReason &&
             null !== trackedPostpones$64 &&
@@ -5763,34 +5763,34 @@ function finishAbortedTask(task$given: FZ.Task, request: FZ.Request, error: FZ.T
           )
             return (
               logRecoverableError(request, error, errorInfo),
-              trackPostpone(request, trackedPostpones$64, task, segment),
-              boundary.fallbackAbortableTasks.forEach(function (fallbackTask) {
+              trackPostpone(request, trackedPostpones$64, (task as FZ.Task), segment),
+              (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.forEach(function (fallbackTask) {
                 return finishAbortedTask(fallbackTask, request, error);
               }),
-              boundary.fallbackAbortableTasks.clear(),
-              finishedTask(request, boundary, task.row, segment)
+              (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.clear(),
+              finishedTask(request, (boundary as FZ.SuspenseBoundary | null), (task as FZ.Task).row, segment)
             );
-          boundary.status = 4;
-          errorInfo$asDigest = logRecoverableError(request, error, errorInfo);
-          boundary.errorDigest = errorInfo$asDigest;
-          untrackBoundary(request, boundary);
-          boundary.parentFlushed &&
-            request.clientRenderedBoundaries.push(boundary);
+          (boundary as FZ.SuspenseBoundary | null)!.status = 4;
+          errorInfo = logRecoverableError(request, error, errorInfo);
+          (boundary as FZ.SuspenseBoundary | null)!.errorDigest = errorInfo;
+          untrackBoundary(request, (boundary as FZ.SuspenseBoundary | null));
+          (boundary as FZ.SuspenseBoundary | null)!.parentFlushed &&
+            request.clientRenderedBoundaries.push((boundary as FZ.SuspenseBoundary | null)!);
         }
-        boundary.pendingTasks--;
-        errorInfo$asRow = boundary.row;
-        null !== errorInfo$asRow &&
-          0 === --errorInfo$asRow.pendingTasks &&
-          finishSuspenseListRow(request, errorInfo$asRow);
-        boundary.fallbackAbortableTasks.forEach(function (fallbackTask) {
+        (boundary as FZ.SuspenseBoundary | null)!.pendingTasks--;
+        errorInfo = (boundary as FZ.SuspenseBoundary | null)!.row;
+        null !== errorInfo &&
+          0 === --errorInfo.pendingTasks &&
+          finishSuspenseListRow(request, (errorInfo as FZ.SuspenseListRow | null)!);
+        (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.forEach(function (fallbackTask) {
           return finishAbortedTask(fallbackTask, request, error);
         });
-        boundary.fallbackAbortableTasks.clear();
+        (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.clear();
       }
-      task = task.row;
+      task = (task as FZ.Task).row;
       null !== task &&
         0 === --task.pendingTasks &&
-        finishSuspenseListRow(request, task);
+        finishSuspenseListRow(request, (task as FZ.SuspenseListRow));
       request.allPendingTasks--;
       0 === request.allPendingTasks && completeAll(request);
     }
@@ -5857,32 +5857,32 @@ function safelyEmitEarlyPreloads(request: FZ.Request, shellComplete: boolean): v
     logRecoverableError(request, error, {});
   }
 }
-function completeShell(request$given: FZ.Request): void { var request; request = request$given;
-  null === request.trackedPostpones && safelyEmitEarlyPreloads(request, !0);
-  null === request.trackedPostpones && preparePreamble(request);
-  request = request.onShellReady;
-  request();
+function completeShell(request: FZ.Request | (() => void)): void {
+  null === (request as FZ.Request).trackedPostpones && safelyEmitEarlyPreloads((request as FZ.Request), !0);
+  null === (request as FZ.Request).trackedPostpones && preparePreamble((request as FZ.Request));
+  request = (request as FZ.Request).onShellReady;
+  (request as () => void)();
 }
-function completeAll(request$given: FZ.Request): void { var request; request = request$given;
+function completeAll(request: FZ.Request | (() => void)): void {
   safelyEmitEarlyPreloads(
-    request,
-    null === request.trackedPostpones
+    (request as FZ.Request),
+    null === (request as FZ.Request).trackedPostpones
       ? !0
-      : null === request.completedRootSegment ||
-          5 !== request.completedRootSegment.status
+      : null === (request as FZ.Request).completedRootSegment ||
+          5 !== (request as FZ.Request).completedRootSegment!.status
   );
-  preparePreamble(request);
-  request = request.onAllReady;
-  request();
+  preparePreamble((request as FZ.Request));
+  request = (request as FZ.Request).onAllReady;
+  (request as () => void)();
 }
 function queueCompletedSegment(boundary: FZ.SuspenseBoundary, segment: FZ.Segment): void {
   if (
     0 === segment.chunks.length &&
     1 === segment.children.length &&
-    null === segment.children[0].boundary &&
-    -1 === segment.children[0].id
+    null === segment.children[0]!.boundary &&
+    -1 === segment.children[0]!.id
   ) {
-    var childSegment = segment.children[0];
+    var childSegment = segment.children[0]!;
     childSegment.id = segment.id;
     childSegment.parentFlushed = !0;
     (1 !== childSegment.status &&
@@ -5891,89 +5891,89 @@ function queueCompletedSegment(boundary: FZ.SuspenseBoundary, segment: FZ.Segmen
       queueCompletedSegment(boundary, childSegment);
   } else boundary.completedSegments.push(segment);
 }
-function finishedTask(request: FZ.Request, boundary: FZ.SuspenseBoundary | null, row: FZ.SuspenseListRow | null, segment: FZ.Segment | null): void { var boundary$asRow: FZ.SuspenseListRow | null, row$asPostpones: FZ.PostponedHoles, segment$asBoundaries: FZ.SuspenseBoundary[] | null, postponedRow$asIndex: number;
-  null !== row &&
-    (0 === --row.pendingTasks
-      ? finishSuspenseListRow(request, row)
-      : row.together && tryToResolveTogetherRow(request, row));
+function finishedTask(request: FZ.Request, boundary: FZ.SuspenseBoundary | FZ.SuspenseListRow | null, row: FZ.SuspenseListRow | FZ.PostponedHoles | null, segment: FZ.Segment | FZ.SuspenseBoundary[] | null): void {
+  null !== (row as FZ.SuspenseListRow | null) &&
+    (0 === --(row as FZ.SuspenseListRow).pendingTasks
+      ? finishSuspenseListRow(request, (row as FZ.SuspenseListRow | null)!)
+      : (row as FZ.SuspenseListRow | null)!.together && tryToResolveTogetherRow(request, (row as FZ.SuspenseListRow | null)!));
   request.allPendingTasks--;
-  if (null === boundary) {
-    if (null !== segment && segment.parentFlushed) {
+  if (null === (boundary as FZ.SuspenseBoundary | null)) {
+    if (null !== (segment as FZ.Segment | null) && (segment as FZ.Segment | null)!.parentFlushed) {
       if (null !== request.completedRootSegment)
         throw Error(formatProdErrorMessage(389));
-      request.completedRootSegment = segment;
+      request.completedRootSegment = (segment as FZ.Segment | null);
     }
     request.pendingRootTasks--;
     0 === request.pendingRootTasks && completeShell(request);
-  } else if ((boundary.pendingTasks--, 4 !== boundary.status))
-    if (0 === boundary.pendingTasks)
+  } else if (((boundary as FZ.SuspenseBoundary | null)!.pendingTasks--, 4 !== (boundary as FZ.SuspenseBoundary | null)!.status))
+    if (0 === (boundary as FZ.SuspenseBoundary | null)!.pendingTasks)
       if (
-        (0 === boundary.status && (boundary.status = 1),
-        null !== segment &&
-          segment.parentFlushed &&
-          (1 === segment.status || 3 === segment.status) &&
-          queueCompletedSegment(boundary, segment),
-        boundary.parentFlushed && request.completedBoundaries.push(boundary),
-        1 === boundary.status)
+        (0 === (boundary as FZ.SuspenseBoundary | null)!.status && ((boundary as FZ.SuspenseBoundary | null)!.status = 1),
+        null !== (segment as FZ.Segment | null) &&
+          (segment as FZ.Segment | null)!.parentFlushed &&
+          (1 === (segment as FZ.Segment | null)!.status || 3 === (segment as FZ.Segment | null)!.status) &&
+          queueCompletedSegment((boundary as FZ.SuspenseBoundary | null)!, (segment as FZ.Segment | null)!),
+        (boundary as FZ.SuspenseBoundary | null)!.parentFlushed && request.completedBoundaries.push((boundary as FZ.SuspenseBoundary | null)!),
+        1 === (boundary as FZ.SuspenseBoundary | null)!.status)
       )
-        (row = boundary.row),
+        (row = (boundary as FZ.SuspenseBoundary | null)!.row),
           null !== row &&
-            hoistHoistables(row.hoistables, boundary.contentState),
-          isEligibleForOutlining(request, boundary) ||
+            hoistHoistables((row as FZ.SuspenseListRow | null)!.hoistables, (boundary as FZ.SuspenseBoundary | null)!.contentState),
+          isEligibleForOutlining(request, (boundary as FZ.SuspenseBoundary | null)!) ||
             (request.allPendingTasks++,
-            boundary.fallbackAbortableTasks.forEach(abortTaskSoft, request),
-            boundary.fallbackAbortableTasks.clear(),
+            (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.forEach(abortTaskSoft, request),
+            (boundary as FZ.SuspenseBoundary | null)!.fallbackAbortableTasks.clear(),
             null !== row &&
               0 === --row.pendingTasks &&
-              finishSuspenseListRow(request, row),
+              finishSuspenseListRow(request, (row as FZ.SuspenseListRow | null)!),
             request.allPendingTasks--),
           0 === request.pendingRootTasks &&
             null === request.trackedPostpones &&
-            null !== boundary.preamble &&
+            null !== (boundary as FZ.SuspenseBoundary | null)!.preamble &&
             preparePreamble(request);
       else {
         if (
-          5 === boundary.status &&
-          ((boundary$asRow = boundary.row), null !== boundary$asRow)
+          5 === (boundary as FZ.SuspenseBoundary | null)!.status &&
+          ((boundary = (boundary as FZ.SuspenseBoundary | null)!.row), null !== boundary)
         ) {
           if (null !== request.trackedPostpones) {
-            row$asPostpones = request.trackedPostpones;
-            var postponedRow: FZ.SuspenseListRow | null = boundary$asRow.next;
+            row = request.trackedPostpones;
+            var postponedRow: FZ.SuspenseListRow | number | null = (boundary as FZ.SuspenseListRow | null)!.next;
             if (
               null !== postponedRow &&
-              ((segment$asBoundaries = postponedRow.boundaries), null !== segment$asBoundaries)
+              ((segment = (postponedRow as FZ.SuspenseListRow | null)!.boundaries), null !== segment)
             )
               for (
-                postponedRow.boundaries = null, postponedRow$asIndex = 0;
-                postponedRow$asIndex < segment$asBoundaries.length;
-                postponedRow$asIndex++
+                (postponedRow as FZ.SuspenseListRow | null)!.boundaries = null, postponedRow = 0;
+                postponedRow < (segment as FZ.SuspenseBoundary[] | null)!.length;
+                postponedRow++
               ) {
-                var postponedBoundary = segment$asBoundaries[postponedRow$asIndex];
-                trackPostponedBoundary(request, row$asPostpones, postponedBoundary);
+                var postponedBoundary = (segment as FZ.SuspenseBoundary[] | null)![postponedRow]!;
+                trackPostponedBoundary(request, row, postponedBoundary);
                 finishedTask(request, postponedBoundary, null, null);
               }
           }
           request.allPendingTasks++;
-          0 === --boundary$asRow.pendingTasks &&
-            finishSuspenseListRow(request, boundary$asRow);
+          0 === --boundary.pendingTasks &&
+            finishSuspenseListRow(request, (boundary as FZ.SuspenseListRow | null)!);
           request.allPendingTasks--;
         }
       }
     else
-      null === segment ||
-        !segment.parentFlushed ||
-        (1 !== segment.status && 3 !== segment.status) ||
-        (queueCompletedSegment(boundary, segment),
-        1 === boundary.completedSegments.length &&
-          boundary.parentFlushed &&
-          request.partialBoundaries.push(boundary)),
-        (boundary$asRow = boundary.row),
-        null !== boundary$asRow &&
-          boundary$asRow.together &&
-          tryToResolveTogetherRow(request, boundary$asRow);
+      null === (segment as FZ.Segment | null) ||
+        !(segment as FZ.Segment | null)!.parentFlushed ||
+        (1 !== (segment as FZ.Segment | null)!.status && 3 !== (segment as FZ.Segment | null)!.status) ||
+        (queueCompletedSegment((boundary as FZ.SuspenseBoundary | null)!, (segment as FZ.Segment | null)!),
+        1 === (boundary as FZ.SuspenseBoundary | null)!.completedSegments.length &&
+          (boundary as FZ.SuspenseBoundary | null)!.parentFlushed &&
+          request.partialBoundaries.push((boundary as FZ.SuspenseBoundary | null)!)),
+        (boundary = (boundary as FZ.SuspenseBoundary | null)!.row),
+        null !== boundary &&
+          (boundary as FZ.SuspenseListRow | null)!.together &&
+          tryToResolveTogetherRow(request, (boundary as FZ.SuspenseListRow | null)!);
   0 === request.allPendingTasks && completeAll(request);
 }
-function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$asSegment: FZ.Segment;
+function performWork(request$jscomp$1: FZ.Request): void {
   if (!(request$jscomp$1.aborted || 11 < request$jscomp$1.status)) {
     var prevContext = currentActiveSnapshot,
       prevDispatcher = ReactSharedInternals.H;
@@ -5988,7 +5988,7 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
       var pingedTasks = request$jscomp$1.pingedTasks,
         i: number;
       for (i = 0; i < pingedTasks.length; i++) {
-        var task = pingedTasks[i],
+        var task = pingedTasks[i]!,
           request = request$jscomp$1,
           segment = task.blockedSegment;
         if (null === segment)
@@ -6026,7 +6026,7 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
                   thrownValue === SuspenseException &&
                     (task.thenableState = getThenableStateAfterSuspending());
                   request.currentTask = prevTask;
-                  var request$jscomp$0 = request;
+                  var request$jscomp$0: FZ.Request | FZ.Segment = request;
                   abortTask(task, request$jscomp$0);
                   task.abortSet.delete(task);
                   finishAbortedTask(
@@ -6087,34 +6087,34 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
           }
         else
           a: if (
-            ((request$jscomp$0$asSegment = segment), 0 === request$jscomp$0$asSegment.status)
+            ((request$jscomp$0 = segment), 0 === request$jscomp$0.status)
           ) {
             var prevTask$jscomp$0 = request.currentTask;
             request.currentTask = task;
             switchContext(task.context);
-            var childrenLength: FZ.ChunkIndex = request$jscomp$0$asSegment.children.length as FZ.ChunkIndex,
-              chunkLength: FZ.ChunkIndex = request$jscomp$0$asSegment.chunks.length as FZ.ChunkIndex,
+            var childrenLength: FZ.ChunkIndex = request$jscomp$0.children.length as FZ.ChunkIndex,
+              chunkLength: FZ.ChunkIndex = request$jscomp$0.chunks.length as FZ.ChunkIndex,
               startNode$jscomp$0 = task.node;
             try {
               retryNode(request, task),
                 pushSegmentFinale(
-                  request$jscomp$0$asSegment.chunks,
+                  request$jscomp$0.chunks,
                   request.renderState,
-                  request$jscomp$0$asSegment.lastPushedText,
-                  request$jscomp$0$asSegment.textEmbedded
+                  request$jscomp$0.lastPushedText,
+                  request$jscomp$0.textEmbedded
                 ),
                 task.abortSet.delete(task),
-                (request$jscomp$0$asSegment.status = 1),
+                (request$jscomp$0.status = 1),
                 finishedTask(
                   request,
                   task.blockedBoundary,
                   task.row,
-                  request$jscomp$0$asSegment
+                  request$jscomp$0
                 );
             } catch (thrownValue: FZ.Thrown) {
               resetHooksState();
-              request$jscomp$0$asSegment.children.length = childrenLength;
-              request$jscomp$0$asSegment.chunks.length = chunkLength;
+              request$jscomp$0.children.length = childrenLength;
+              request$jscomp$0.chunks.length = chunkLength;
               var x$jscomp$0 =
                 thrownValue === SuspenseException
                   ? getSuspendedThenable()
@@ -6134,7 +6134,7 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
               else {
                 if ("object" === typeof x$jscomp$0 && null !== x$jscomp$0) {
                   if ("function" === typeof x$jscomp$0.then) {
-                    request$jscomp$0$asSegment.status = 0;
+                    request$jscomp$0.status = 0;
                     task.thenableState =
                       thrownValue === SuspenseException
                         ? getThenableStateAfterSuspending()
@@ -6150,7 +6150,7 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
                     "Maximum call stack size exceeded" === x$jscomp$0.message &&
                     task.node !== startNode$jscomp$0
                   ) {
-                    request$jscomp$0$asSegment.status = 0;
+                    request$jscomp$0.status = 0;
                     task.thenableState = null;
                     request.pingedTasks.push(task);
                     break a;
@@ -6158,7 +6158,7 @@ function performWork(request$jscomp$1: FZ.Request): void { var request$jscomp$0$
                 }
                 var errorInfo$jscomp$0 = getThrownInfo(task.componentStack);
                 task.abortSet.delete(task);
-                request$jscomp$0$asSegment.status = 4;
+                request$jscomp$0.status = 4;
                 var boundary$jscomp$0 = task.blockedBoundary,
                   row = task.row;
                 null !== row &&
@@ -6240,7 +6240,7 @@ function preparePreambleFromSubtree(
     pendingPreambles =
       preparePreambleFromSegment(
         request,
-        segment.children[i],
+        segment.children[i]!,
         collectedPreambleSegments
       ) || pendingPreambles;
   return pendingPreambles;
@@ -6263,7 +6263,7 @@ function preparePreambleFromSegment(
     case 1:
       hoistPreambleState(request.renderState, preamble.content);
       request.byteSize += boundary.byteSize;
-      segment = boundary.completedSegments[0];
+      segment = boundary.completedSegments[0]!;
       if (!segment) throw Error(formatProdErrorMessage(391));
       return preparePreambleFromSubtree(
         request,
@@ -6304,38 +6304,38 @@ function preparePreamble(request: FZ.Request): void {
       : (request.byteSize = originalRequestByteSize);
   }
 }
-function flushSubtree(request$given: FZ.Request, destination: FZ.Destination, segment$given: FZ.Segment, hoistableState$given: FZ.HoistableState | null): boolean { var request, segment, hoistableState; request = request$given; segment = segment$given; hoistableState = hoistableState$given;
-  segment.parentFlushed = !0;
-  switch (segment.status) {
+function flushSubtree(request: FZ.Request | FZ.RenderState | string, destination: FZ.Destination, segment: FZ.Segment | FZ.Segment[], hoistableState: FZ.HoistableState | number | null): boolean {
+  (segment as FZ.Segment).parentFlushed = !0;
+  switch ((segment as FZ.Segment).status) {
     case 0:
-      segment.id = request.nextSegmentId++;
+      (segment as FZ.Segment).id = (request as FZ.Request).nextSegmentId++;
     case 5:
       return (
-        (hoistableState = segment.id),
-        (segment.lastPushedText = !1),
-        (segment.textEmbedded = !1),
-        (request = request.renderState),
+        (hoistableState = (segment as FZ.Segment).id),
+        ((segment as FZ.Segment).lastPushedText = !1),
+        ((segment as FZ.Segment).textEmbedded = !1),
+        (request = (request as FZ.Request).renderState),
         destination.push('<template id="'),
-        destination.push(request.placeholderPrefix),
-        (request = hoistableState.toString(16)),
+        destination.push((request as FZ.RenderState).placeholderPrefix),
+        (request = hoistableState!.toString(16)),
         destination.push(request),
         destination.push('"></template>')
       );
     case 1:
-      segment.status = 2;
-      var r$asSegment: FZ.Segment; var r: boolean = !0,
-        chunks = segment.chunks,
+      (segment as FZ.Segment).status = 2;
+ var r: boolean | FZ.Segment = !0,
+        chunks = (segment as FZ.Segment).chunks,
         chunkIdx: number = 0;
-      segment = segment.children;
-      for (var childIdx: number = 0; childIdx < segment.length; childIdx++) {
-        for (r$asSegment = segment[childIdx]; chunkIdx < r$asSegment.index; chunkIdx++)
+      segment = (segment as FZ.Segment).children;
+      for (var childIdx: number = 0; childIdx < (segment as FZ.Segment[]).length; childIdx++) {
+        for (r = (segment as FZ.Segment[])[childIdx]!; chunkIdx < (r as FZ.Segment).index; chunkIdx++)
           destination.push(chunks[chunkIdx]);
-        r = flushSegment(request, destination, r$asSegment, hoistableState);
+        r = flushSegment((request as FZ.Request), destination, r, (hoistableState as FZ.HoistableState | null));
       }
       for (; chunkIdx < chunks.length - 1; chunkIdx++)
         destination.push(chunks[chunkIdx]);
       chunkIdx < chunks.length && (r = destination.push(chunks[chunkIdx]));
-      return r;
+      return (r as boolean);
     case 3:
       return !0;
     default:
@@ -6343,81 +6343,81 @@ function flushSubtree(request$given: FZ.Request, destination: FZ.Destination, se
   }
 }
 var flushedByteSize: FZ.ByteSize = 0;
-function flushSegment(request: FZ.Request, destination: FZ.Destination, segment: FZ.Segment, hoistableState: FZ.HoistableState | null): boolean { var request$asResult: boolean, boundary$asDigest: FZ.ErrorDigest, segment$asRow: FZ.SuspenseListRow | null, segment$asSegments: FZ.Segment[];
-  var boundary: FZ.SuspenseBoundary | null = segment.boundary;
+function flushSegment(request: FZ.Request | boolean, destination: FZ.Destination, segment: FZ.Segment | FZ.SuspenseListRow | FZ.Segment[] | null, hoistableState: FZ.HoistableState | null): boolean {
+  var boundary: FZ.SuspenseBoundary | FZ.ErrorDigest | null = (segment as FZ.Segment).boundary;
   if (null === boundary)
-    return flushSubtree(request, destination, segment, hoistableState);
-  segment.boundary = null;
-  boundary.parentFlushed = !0;
-  if (4 === boundary.status) {
-    var row = boundary.row;
+    return flushSubtree((request as FZ.Request), destination, (segment as FZ.Segment), hoistableState);
+  (segment as FZ.Segment).boundary = null;
+  (boundary as FZ.SuspenseBoundary | null)!.parentFlushed = !0;
+  if (4 === (boundary as FZ.SuspenseBoundary | null)!.status) {
+    var row = (boundary as FZ.SuspenseBoundary | null)!.row;
     null !== row &&
       0 === --row.pendingTasks &&
-      finishSuspenseListRow(request, row);
-    request.renderState.generateStaticMarkup ||
-      ((boundary$asDigest = boundary.errorDigest),
+      finishSuspenseListRow((request as FZ.Request), row);
+    (request as FZ.Request).renderState.generateStaticMarkup ||
+      ((boundary = (boundary as FZ.SuspenseBoundary | null)!.errorDigest),
       destination.push("\x3c!--$!--\x3e"),
       destination.push("<template"),
-      null != boundary$asDigest &&
+      null != boundary &&
         (destination.push(' data-dgst="'),
-        (boundary$asDigest = escapeTextForBrowser(boundary$asDigest)),
-        destination.push(boundary$asDigest),
+        (boundary = escapeTextForBrowser(boundary)),
+        destination.push(boundary),
         destination.push('"')),
       destination.push("></template>"));
-    flushSubtree(request, destination, segment, hoistableState);
-    request$asResult = request.renderState.generateStaticMarkup
+    flushSubtree((request as FZ.Request), destination, (segment as FZ.Segment), hoistableState);
+    request = (request as FZ.Request).renderState.generateStaticMarkup
       ? !0
       : destination.push("\x3c!--/$--\x3e");
-    return request$asResult;
+    return (request as boolean);
   }
-  if (1 !== boundary.status)
+  if (1 !== (boundary as FZ.SuspenseBoundary | null)!.status)
     return (
-      0 === boundary.status &&
-        (boundary.rootSegmentID = request.nextSegmentId++),
-      0 < boundary.completedSegments.length &&
-        request.partialBoundaries.push(boundary),
+      0 === (boundary as FZ.SuspenseBoundary | null)!.status &&
+        ((boundary as FZ.SuspenseBoundary | null)!.rootSegmentID = (request as FZ.Request).nextSegmentId++),
+      0 < (boundary as FZ.SuspenseBoundary | null)!.completedSegments.length &&
+        (request as FZ.Request).partialBoundaries.push(boundary),
       writeStartPendingSuspenseBoundary(
         destination,
-        request.renderState,
-        boundary.rootSegmentID as FZ.SegmentId
+        (request as FZ.Request).renderState,
+        (boundary as FZ.SuspenseBoundary | null)!.rootSegmentID as FZ.SegmentId
       ),
-      hoistableState && hoistHoistables(hoistableState, boundary.fallbackState),
-      flushSubtree(request, destination, segment, hoistableState),
+      hoistableState && hoistHoistables(hoistableState, (boundary as FZ.SuspenseBoundary | null)!.fallbackState),
+      flushSubtree((request as FZ.Request), destination, (segment as FZ.Segment), hoistableState),
       destination.push("\x3c!--/$--\x3e")
     );
   if (
     !flushingPartialBoundaries &&
-    isEligibleForOutlining(request, boundary) &&
-    (flushedByteSize + boundary.byteSize > request.progressiveChunkSize ||
-      boundary.defer)
+    isEligibleForOutlining((request as FZ.Request), boundary) &&
+    (flushedByteSize + (boundary as FZ.SuspenseBoundary | null)!.byteSize > (request as FZ.Request).progressiveChunkSize ||
+      (boundary as FZ.SuspenseBoundary | null)!.defer)
   )
     return (
-      (boundary.rootSegmentID = request.nextSegmentId++),
-      request.completedBoundaries.push(boundary),
+      ((boundary as FZ.SuspenseBoundary | null)!.rootSegmentID = (request as FZ.Request).nextSegmentId++),
+      (request as FZ.Request).completedBoundaries.push(boundary),
       writeStartPendingSuspenseBoundary(
         destination,
-        request.renderState,
-        boundary.rootSegmentID as FZ.SegmentId
+        (request as FZ.Request).renderState,
+        (boundary as FZ.SuspenseBoundary | null)!.rootSegmentID as FZ.SegmentId
       ),
-      flushSubtree(request, destination, segment, hoistableState),
+      flushSubtree((request as FZ.Request), destination, (segment as FZ.Segment), hoistableState),
       destination.push("\x3c!--/$--\x3e")
     );
-  flushedByteSize += boundary.byteSize;
-  hoistableState && hoistHoistables(hoistableState, boundary.contentState);
-  segment$asRow = boundary.row;
-  null !== segment$asRow &&
-    isEligibleForOutlining(request, boundary) &&
-    0 === --segment$asRow.pendingTasks &&
-    finishSuspenseListRow(request, segment$asRow);
-  request.renderState.generateStaticMarkup ||
+  flushedByteSize += (boundary as FZ.SuspenseBoundary | null)!.byteSize;
+  hoistableState && hoistHoistables(hoistableState, (boundary as FZ.SuspenseBoundary | null)!.contentState);
+  segment = (boundary as FZ.SuspenseBoundary | null)!.row;
+  null !== segment &&
+    isEligibleForOutlining((request as FZ.Request), boundary) &&
+    0 === --segment.pendingTasks &&
+    finishSuspenseListRow((request as FZ.Request), segment);
+  (request as FZ.Request).renderState.generateStaticMarkup ||
     destination.push("\x3c!--$--\x3e");
-  segment$asSegments = boundary.completedSegments;
-  if (1 !== segment$asSegments.length) throw Error(formatProdErrorMessage(391));
-  flushSegment(request, destination, segment$asSegments[0], hoistableState);
-  request$asResult = request.renderState.generateStaticMarkup
+  segment = (boundary as FZ.SuspenseBoundary | null)!.completedSegments;
+  if (1 !== (segment as FZ.Segment[]).length) throw Error(formatProdErrorMessage(391));
+  flushSegment((request as FZ.Request), destination, (segment as FZ.Segment[])[0]!, hoistableState);
+  request = (request as FZ.Request).renderState.generateStaticMarkup
     ? !0
     : destination.push("\x3c!--/$--\x3e");
-  return request$asResult;
+  return (request as boolean);
 }
 function flushSegmentContainer(request: FZ.Request, destination: FZ.Destination, segment: FZ.Segment, hoistableState: FZ.HoistableState): boolean {
   writeStartSegment(
@@ -6429,136 +6429,136 @@ function flushSegmentContainer(request: FZ.Request, destination: FZ.Destination,
   flushSegment(request, destination, segment, hoistableState);
   return writeEndSegment(destination, segment.parentFormatContext);
 }
-function flushCompletedBoundary(request$given: FZ.Request, destination: FZ.Destination, boundary$given: FZ.SuspenseBoundary): boolean { var request: FZ.Request, boundary: FZ.SuspenseBoundary; request = request$given; boundary = boundary$given; var request$asRenderState: FZ.RenderState; var boundary$asHoistables: FZ.HoistableState; var boundary$asWritten: boolean; var completedSegments$asRow: FZ.SuspenseListRow | null, completedSegments$asResumableState: FZ.ResumableState, completedSegments$asId: string;
-  flushedByteSize = boundary.byteSize;
+function flushCompletedBoundary(request: FZ.Request | FZ.RenderState, destination: FZ.Destination, boundary: FZ.SuspenseBoundary | FZ.HoistableState | boolean): boolean {
+  flushedByteSize = (boundary as FZ.SuspenseBoundary).byteSize;
   for (
-    var completedSegments = boundary.completedSegments, i: number = 0;
-    i < completedSegments.length;
+    var completedSegments: FZ.Segment[] | FZ.SuspenseListRow | FZ.ResumableState | string | null = (boundary as FZ.SuspenseBoundary).completedSegments, i: number = 0;
+    i < (completedSegments as FZ.Segment[]).length;
     i++
   )
     flushPartiallyCompletedSegment(
-      request,
+      (request as FZ.Request),
       destination,
-      boundary,
-      completedSegments[i]
+      (boundary as FZ.SuspenseBoundary),
+      (completedSegments as FZ.Segment[])[i]!
     );
-  completedSegments.length = 0;
-  completedSegments$asRow = boundary.row;
-  null !== completedSegments$asRow &&
-    isEligibleForOutlining(request, boundary) &&
-    0 === --completedSegments$asRow.pendingTasks &&
-    finishSuspenseListRow(request, completedSegments$asRow);
+  (completedSegments as FZ.Segment[]).length = 0;
+  completedSegments = (boundary as FZ.SuspenseBoundary).row;
+  null !== completedSegments &&
+    isEligibleForOutlining((request as FZ.Request), (boundary as FZ.SuspenseBoundary)) &&
+    0 === --completedSegments.pendingTasks &&
+    finishSuspenseListRow((request as FZ.Request), completedSegments);
   writeHoistablesForBoundary(
     destination,
-    boundary.contentState,
-    request.renderState
+    (boundary as FZ.SuspenseBoundary).contentState,
+    (request as FZ.Request).renderState
   );
-  completedSegments$asResumableState = request.resumableState;
-  request$asRenderState = request.renderState;
-  i = boundary.rootSegmentID;
-  boundary$asHoistables = boundary.contentState;
-  var requiresStyleInsertion = request$asRenderState.stylesToHoist,
-    requiresViewTransitions = 0 !== (completedSegments$asResumableState.instructions & 128);
-  request$asRenderState.stylesToHoist = !1;
-  destination.push(request$asRenderState.startInlineScript);
+  completedSegments = (request as FZ.Request).resumableState;
+  request = (request as FZ.Request).renderState;
+  i = (boundary as FZ.SuspenseBoundary).rootSegmentID;
+  boundary = (boundary as FZ.SuspenseBoundary).contentState;
+  var requiresStyleInsertion = (request as FZ.RenderState).stylesToHoist,
+    requiresViewTransitions = 0 !== ((completedSegments as FZ.ResumableState).instructions & 128);
+  (request as FZ.RenderState).stylesToHoist = !1;
+  destination.push((request as FZ.RenderState).startInlineScript);
   destination.push(">");
   requiresStyleInsertion
-    ? (0 === (completedSegments$asResumableState.instructions & 4) &&
-        ((completedSegments$asResumableState.instructions |= 4),
+    ? (0 === ((completedSegments as FZ.ResumableState).instructions & 4) &&
+        (((completedSegments as FZ.ResumableState).instructions |= 4),
         destination.push(
           '$RX=function(b,c,d,e,f){var a=document.getElementById(b);a&&(b=a.previousSibling,b.data="$!",a=a.dataset,null!=c&&(a.dgst=c),d&&(a.msg=d),e&&(a.stck=e),f&&(a.cstck=f),b._reactRetry&&b._reactRetry())};'
         )),
-      0 === (completedSegments$asResumableState.instructions & 2) &&
-        ((completedSegments$asResumableState.instructions |= 2),
+      0 === ((completedSegments as FZ.ResumableState).instructions & 2) &&
+        (((completedSegments as FZ.ResumableState).instructions |= 2),
         destination.push(
           '$RB=[];$RV=function(a){$RT=performance.now();for(var b=0;b<a.length;b+=2){var c=a[b],e=a[b+1];null!==e.parentNode&&e.parentNode.removeChild(e);var f=c.parentNode;if(f){var g=c.previousSibling,h=0;do{if(c&&8===c.nodeType){var d=c.data;if("/$"===d||"/&"===d)if(0===h)break;else h--;else"$"!==d&&"$?"!==d&&"$~"!==d&&"$!"!==d&&"&"!==d||h++}d=c.nextSibling;f.removeChild(c);c=d}while(c);for(;e.firstChild;)f.insertBefore(e.firstChild,c);g.data="$";g._reactRetry&&requestAnimationFrame(g._reactRetry)}}a.length=0};\n$RC=function(a,b){if(b=document.getElementById(b))(a=document.getElementById(a))?(a.previousSibling.data="$~",$RB.push(a,b),2===$RB.length&&("number"!==typeof $RT?requestAnimationFrame($RV.bind(null,$RB)):(a=performance.now(),setTimeout($RV.bind(null,$RB),2300>a&&2E3<a?2300-a:$RT+300-a)))):b.parentNode.removeChild(b)};'
         )),
       requiresViewTransitions &&
-        0 === (completedSegments$asResumableState.instructions & 256) &&
-        ((completedSegments$asResumableState.instructions |= 256),
+        0 === ((completedSegments as FZ.ResumableState).instructions & 256) &&
+        (((completedSegments as FZ.ResumableState).instructions |= 256),
         destination.push(
           '$RV=function(B,g){function h(a,c){var e=a.getAttribute(c);e&&(c=a.style,l.push(a,c.viewTransitionName,c.viewTransitionClass),"auto"!==e&&(c.viewTransitionClass=e),(a=a.getAttribute("vt-name"))||(a="_T_"+N++ +"_"),a=CSS.escape(a)!==a?"r-"+btoa(a).replace(/=/g,""):a,c.viewTransitionName=a,C=!0)}var C=!1,N=0,l=[];try{var f=document.__reactViewTransition;if(f){f.finished.finally($RV.bind(null,g));return}var m=new Map;for(f=1;f<g.length;f+=2)for(var k=g[f].querySelectorAll("[vt-share]"),d=0;d<k.length;d++){var b=k[d];m.set(b.getAttribute("vt-name"),b)}var u=[];for(k=0;k<g.length;k+=2){var D=g[k],x=D.parentNode;if(x){var v=x.getBoundingClientRect();if(v.left||v.top||v.width||v.height){b=D;for(f=0;b;){if(8===b.nodeType){var t=b.data;if("/$"===t)if(0===f)break;else f--;else"$"!==t&&"$?"!==t&&"$~"!==t&&"$!"!==t||f++}else if(1===b.nodeType){d=b;var E=d.getAttribute("vt-name"),y=m.get(E);h(d,y?"vt-share":"vt-exit");y&&(h(y,"vt-share"),m.set(E,null));for(var F=d.querySelectorAll("[vt-share]"),\nz=0;z<F.length;z++){var G=F[z],H=G.getAttribute("vt-name"),I=m.get(H);I&&(h(G,"vt-share"),h(I,"vt-share"),m.set(H,null))}var J=d.querySelectorAll("[vt-parent-exit]");for(d=0;d<J.length;d++)h(J[d],"vt-parent-exit")}b=b.nextSibling}for(var K=g[k+1],n=K.firstElementChild;n;){null!==m.get(n.getAttribute("vt-name"))&&h(n,"vt-enter");var L=n.querySelectorAll("[vt-parent-enter]");for(b=0;b<L.length;b++)h(L[b],"vt-parent-enter");n=n.nextElementSibling}b=x;do for(var p=b.firstElementChild;p;){var M=p.getAttribute("vt-update");\nM&&"none"!==M&&!l.includes(p)&&h(p,"vt-update");p=p.nextElementSibling}while((b=b.parentNode)&&1===b.nodeType&&"none"!==b.getAttribute("vt-update"));u.push.apply(u,K.querySelectorAll(\'img[src]:not([loading="lazy"])\'))}}}if(C){var A=document.__reactViewTransition=document.startViewTransition({update:function(){B(g);for(var a=[document.documentElement.clientHeight,document.fonts.ready],c={},e=0;e<u.length;c={g:c.g},e++)if(c.g=u[e],!c.g.complete){var q=c.g.getBoundingClientRect();0<q.bottom&&0<q.right&&\nq.top<window.innerHeight&&q.left<window.innerWidth&&(q=new Promise(function(w){return function(r){w.g.addEventListener("load",r);w.g.addEventListener("error",r)}}(c)),a.push(q))}return Promise.race([Promise.all(a),new Promise(function(w){var r=performance.now();setTimeout(w,2300>r&&2E3<r?2300-r:500)})])},types:[]});A.ready.finally(function(){for(var a=l.length-3;0<=a;a-=3){var c=l[a],e=c.style;e.viewTransitionName=l[a+1];e.viewTransitionClass=l[a+1];""===c.getAttribute("style")&&c.removeAttribute("style")}});\nA.finished.finally(function(){document.__reactViewTransition===A&&(document.__reactViewTransition=null)});$RB=[];return}}catch(a){}B(g)}.bind(null,$RV);'
         )),
-      0 === (completedSegments$asResumableState.instructions & 8)
-        ? ((completedSegments$asResumableState.instructions |= 8),
+      0 === ((completedSegments as FZ.ResumableState).instructions & 8)
+        ? (((completedSegments as FZ.ResumableState).instructions |= 8),
           destination.push(
             '$RM=new Map;$RR=function(n,w,p){function u(q){this._p=null;q()}for(var r=new Map,t=document,h,b,e=t.querySelectorAll("link[data-precedence],style[data-precedence]"),v=[],k=0;b=e[k++];)"not all"===b.getAttribute("media")?v.push(b):("LINK"===b.tagName&&$RM.set(b.getAttribute("href"),b),r.set(b.dataset.precedence,h=b));e=0;b=[];var l,a;for(k=!0;;){if(k){var f=p[e++];if(!f){k=!1;e=0;continue}var c=!1,m=0;var d=f[m++];if(a=$RM.get(d)){var g=a._p;c=!0}else{a=t.createElement("link");a.href=d;a.rel=\n"stylesheet";for(a.dataset.precedence=l=f[m++];g=f[m++];)a.setAttribute(g,f[m++]);g=a._p=new Promise(function(q,x){a.onload=u.bind(a,q);a.onerror=u.bind(a,x)});$RM.set(d,a)}d=a.getAttribute("media");!g||d&&!matchMedia(d).matches||b.push(g);if(c)continue}else{a=v[e++];if(!a)break;l=a.getAttribute("data-precedence");a.removeAttribute("media")}c=r.get(l)||h;c===h&&(h=a);r.set(l,a);c?c.parentNode.insertBefore(a,c.nextSibling):(c=t.head,c.insertBefore(a,c.firstChild))}if(p=document.getElementById(n))p.previousSibling.data=\n"$~";Promise.all(b).then($RC.bind(null,n,w),$RX.bind(null,n,"CSS failed to load"))};$RR("'
           ))
         : destination.push('$RR("'))
-    : (0 === (completedSegments$asResumableState.instructions & 2) &&
-        ((completedSegments$asResumableState.instructions |= 2),
+    : (0 === ((completedSegments as FZ.ResumableState).instructions & 2) &&
+        (((completedSegments as FZ.ResumableState).instructions |= 2),
         destination.push(
           '$RB=[];$RV=function(a){$RT=performance.now();for(var b=0;b<a.length;b+=2){var c=a[b],e=a[b+1];null!==e.parentNode&&e.parentNode.removeChild(e);var f=c.parentNode;if(f){var g=c.previousSibling,h=0;do{if(c&&8===c.nodeType){var d=c.data;if("/$"===d||"/&"===d)if(0===h)break;else h--;else"$"!==d&&"$?"!==d&&"$~"!==d&&"$!"!==d&&"&"!==d||h++}d=c.nextSibling;f.removeChild(c);c=d}while(c);for(;e.firstChild;)f.insertBefore(e.firstChild,c);g.data="$";g._reactRetry&&requestAnimationFrame(g._reactRetry)}}a.length=0};\n$RC=function(a,b){if(b=document.getElementById(b))(a=document.getElementById(a))?(a.previousSibling.data="$~",$RB.push(a,b),2===$RB.length&&("number"!==typeof $RT?requestAnimationFrame($RV.bind(null,$RB)):(a=performance.now(),setTimeout($RV.bind(null,$RB),2300>a&&2E3<a?2300-a:$RT+300-a)))):b.parentNode.removeChild(b)};'
         )),
       requiresViewTransitions &&
-        0 === (completedSegments$asResumableState.instructions & 256) &&
-        ((completedSegments$asResumableState.instructions |= 256),
+        0 === ((completedSegments as FZ.ResumableState).instructions & 256) &&
+        (((completedSegments as FZ.ResumableState).instructions |= 256),
         destination.push(
           '$RV=function(B,g){function h(a,c){var e=a.getAttribute(c);e&&(c=a.style,l.push(a,c.viewTransitionName,c.viewTransitionClass),"auto"!==e&&(c.viewTransitionClass=e),(a=a.getAttribute("vt-name"))||(a="_T_"+N++ +"_"),a=CSS.escape(a)!==a?"r-"+btoa(a).replace(/=/g,""):a,c.viewTransitionName=a,C=!0)}var C=!1,N=0,l=[];try{var f=document.__reactViewTransition;if(f){f.finished.finally($RV.bind(null,g));return}var m=new Map;for(f=1;f<g.length;f+=2)for(var k=g[f].querySelectorAll("[vt-share]"),d=0;d<k.length;d++){var b=k[d];m.set(b.getAttribute("vt-name"),b)}var u=[];for(k=0;k<g.length;k+=2){var D=g[k],x=D.parentNode;if(x){var v=x.getBoundingClientRect();if(v.left||v.top||v.width||v.height){b=D;for(f=0;b;){if(8===b.nodeType){var t=b.data;if("/$"===t)if(0===f)break;else f--;else"$"!==t&&"$?"!==t&&"$~"!==t&&"$!"!==t||f++}else if(1===b.nodeType){d=b;var E=d.getAttribute("vt-name"),y=m.get(E);h(d,y?"vt-share":"vt-exit");y&&(h(y,"vt-share"),m.set(E,null));for(var F=d.querySelectorAll("[vt-share]"),\nz=0;z<F.length;z++){var G=F[z],H=G.getAttribute("vt-name"),I=m.get(H);I&&(h(G,"vt-share"),h(I,"vt-share"),m.set(H,null))}var J=d.querySelectorAll("[vt-parent-exit]");for(d=0;d<J.length;d++)h(J[d],"vt-parent-exit")}b=b.nextSibling}for(var K=g[k+1],n=K.firstElementChild;n;){null!==m.get(n.getAttribute("vt-name"))&&h(n,"vt-enter");var L=n.querySelectorAll("[vt-parent-enter]");for(b=0;b<L.length;b++)h(L[b],"vt-parent-enter");n=n.nextElementSibling}b=x;do for(var p=b.firstElementChild;p;){var M=p.getAttribute("vt-update");\nM&&"none"!==M&&!l.includes(p)&&h(p,"vt-update");p=p.nextElementSibling}while((b=b.parentNode)&&1===b.nodeType&&"none"!==b.getAttribute("vt-update"));u.push.apply(u,K.querySelectorAll(\'img[src]:not([loading="lazy"])\'))}}}if(C){var A=document.__reactViewTransition=document.startViewTransition({update:function(){B(g);for(var a=[document.documentElement.clientHeight,document.fonts.ready],c={},e=0;e<u.length;c={g:c.g},e++)if(c.g=u[e],!c.g.complete){var q=c.g.getBoundingClientRect();0<q.bottom&&0<q.right&&\nq.top<window.innerHeight&&q.left<window.innerWidth&&(q=new Promise(function(w){return function(r){w.g.addEventListener("load",r);w.g.addEventListener("error",r)}}(c)),a.push(q))}return Promise.race([Promise.all(a),new Promise(function(w){var r=performance.now();setTimeout(w,2300>r&&2E3<r?2300-r:500)})])},types:[]});A.ready.finally(function(){for(var a=l.length-3;0<=a;a-=3){var c=l[a],e=c.style;e.viewTransitionName=l[a+1];e.viewTransitionClass=l[a+1];""===c.getAttribute("style")&&c.removeAttribute("style")}});\nA.finished.finally(function(){document.__reactViewTransition===A&&(document.__reactViewTransition=null)});$RB=[];return}}catch(a){}B(g)}.bind(null,$RV);'
         )),
       destination.push('$RC("'));
-  completedSegments$asId = i.toString(16);
-  destination.push(request$asRenderState.boundaryPrefix);
-  destination.push(completedSegments$asId);
+  completedSegments = i.toString(16);
+  destination.push((request as FZ.RenderState).boundaryPrefix);
+  destination.push(completedSegments);
   destination.push('","');
-  destination.push(request$asRenderState.segmentPrefix);
-  destination.push(completedSegments$asId);
+  destination.push((request as FZ.RenderState).segmentPrefix);
+  destination.push(completedSegments);
   requiresStyleInsertion
     ? (destination.push('",'),
-      writeStyleResourceDependenciesInJS(destination, boundary$asHoistables))
+      writeStyleResourceDependenciesInJS(destination, (boundary as FZ.HoistableState)))
     : destination.push('"');
-  boundary$asWritten = destination.push(")\x3c/script>");
-  return writeBootstrap(destination, request$asRenderState) && boundary$asWritten;
+  boundary = destination.push(")\x3c/script>");
+  return writeBootstrap(destination, (request as FZ.RenderState)) && (boundary as boolean);
 }
 function flushPartiallyCompletedSegment(
-  request$given: FZ.Request,
-  destination$given: FZ.Destination,
-  boundary$given: FZ.SuspenseBoundary,
+  request: FZ.Request | FZ.RenderState,
+  destination: FZ.Destination | any,
+  boundary: FZ.SuspenseBoundary | FZ.ResumableState,
   segment: FZ.Segment
-): boolean { var request, destination, boundary; request = request$given; destination = destination$given; boundary = boundary$given;
+): boolean {
   if (2 === segment.status) return !0;
-  var hoistableState = boundary.contentState,
+  var hoistableState = (boundary as FZ.SuspenseBoundary).contentState,
     segmentID: FZ.SegmentId | string = segment.id;
   if (-1 === segmentID) {
-    if (-1 === (segment.id = boundary.rootSegmentID))
+    if (-1 === (segment.id = (boundary as FZ.SuspenseBoundary).rootSegmentID))
       throw Error(formatProdErrorMessage(392));
-    return flushSegmentContainer(request, destination, segment, hoistableState);
+    return flushSegmentContainer((request as FZ.Request), destination, segment, hoistableState);
   }
-  if (segmentID === boundary.rootSegmentID)
-    return flushSegmentContainer(request, destination, segment, hoistableState);
-  flushSegmentContainer(request, destination, segment, hoistableState);
-  boundary = request.resumableState;
-  request = request.renderState;
-  destination.push(request.startInlineScript);
+  if (segmentID === (boundary as FZ.SuspenseBoundary).rootSegmentID)
+    return flushSegmentContainer((request as FZ.Request), destination, segment, hoistableState);
+  flushSegmentContainer((request as FZ.Request), destination, segment, hoistableState);
+  boundary = (request as FZ.Request).resumableState;
+  request = (request as FZ.Request).renderState;
+  destination.push((request as FZ.RenderState).startInlineScript);
   destination.push(">");
-  0 === (boundary.instructions & 1)
-    ? ((boundary.instructions |= 1),
+  0 === ((boundary as FZ.ResumableState).instructions & 1)
+    ? (((boundary as FZ.ResumableState).instructions |= 1),
       destination.push(
         '$RS=function(a,b){a=document.getElementById(a);b=document.getElementById(b);for(a.parentNode.removeChild(a);a.firstChild;)b.parentNode.insertBefore(a.firstChild,b);b.parentNode.removeChild(b)};$RS("'
       ))
     : destination.push('$RS("');
-  destination.push(request.segmentPrefix);
+  destination.push((request as FZ.RenderState).segmentPrefix);
   segmentID = segmentID.toString(16);
   destination.push(segmentID);
   destination.push('","');
-  destination.push(request.placeholderPrefix);
+  destination.push((request as FZ.RenderState).placeholderPrefix);
   destination.push(segmentID);
   destination = destination.push('")\x3c/script>');
   return destination;
 }
 var flushingPartialBoundaries = !1;
-function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination): void { var i$asPostponed: FZ.PostponedState | null, i$asResumable: FZ.ResumableState, renderState$jscomp$1$asDestination: FZ.Destination, clientRenderedBoundaries$asRequest: FZ.Request, boundary$asDestination: FZ.Destination, partialBoundaries$asChunk: FZ.Chunk, i$asChunk: FZ.Chunk;
+function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination): void {
   try {
     if (!(0 < request.pendingRootTasks)) {
-      var i: number,
-        completedRootSegment: FZ.Segment | FZ.int32 | null = request.completedRootSegment;
+      var i: number | FZ.PostponedState | FZ.ResumableState | FZ.Chunk | null,
+        completedRootSegment: FZ.Segment | number | null = request.completedRootSegment;
       if (null !== completedRootSegment) {
         if (5 === completedRootSegment.status) return;
-        var completedPreambleSegments: FZ.Segment[][] | FZ.int32 | null = request.completedPreambleSegments;
+        var completedPreambleSegments: FZ.Segment[][] | number | null = request.completedPreambleSegments;
         if (null === completedPreambleSegments) return;
         flushedByteSize = request.byteSize;
-        var resumableState: FZ.ResumableState | FZ.int32 = request.resumableState,
-          renderState: FZ.RenderState | FZ.int32 = request.renderState,
+        var resumableState: FZ.ResumableState | number = request.resumableState,
+          renderState: FZ.RenderState | number = request.renderState,
           preamble = renderState.preamble,
           htmlChunks = preamble.htmlChunks,
           headChunks = preamble.headChunks,
@@ -6612,9 +6612,9 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
           resumableState < completedPreambleSegments.length;
           resumableState++
         ) {
-          var segments = completedPreambleSegments[resumableState];
+          var segments = completedPreambleSegments[resumableState]!;
           for (renderState = 0; renderState < segments.length; renderState++)
-            flushSegment(request, destination, segments[renderState], null);
+            flushSegment(request, destination, segments[renderState]!, null);
         }
         var preamble$jscomp$0 = request.renderState.preamble,
           headChunks$jscomp$0 = preamble$jscomp$0.headChunks;
@@ -6662,9 +6662,9 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
         }
         writeBootstrap(destination, renderState$jscomp$0);
       }
-      var renderState$jscomp$1 = request.renderState;
+      var renderState$jscomp$1: FZ.RenderState | FZ.Destination = request.renderState;
       completedRootSegment = 0;
-      var viewportChunks$jscomp$0 = renderState$jscomp$1.viewportChunks;
+      var viewportChunks$jscomp$0 = (renderState$jscomp$1 as FZ.RenderState).viewportChunks;
       for (
         completedRootSegment = 0;
         completedRootSegment < viewportChunks$jscomp$0.length;
@@ -6672,21 +6672,21 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
       )
         destination.push(viewportChunks$jscomp$0[completedRootSegment]);
       viewportChunks$jscomp$0.length = 0;
-      renderState$jscomp$1.preconnects.forEach(flushResource, destination);
-      renderState$jscomp$1.preconnects.clear();
-      renderState$jscomp$1.fontPreloads.forEach(flushResource, destination);
-      renderState$jscomp$1.fontPreloads.clear();
-      renderState$jscomp$1.highImagePreloads.forEach(
+      (renderState$jscomp$1 as FZ.RenderState).preconnects.forEach(flushResource, destination);
+      (renderState$jscomp$1 as FZ.RenderState).preconnects.clear();
+      (renderState$jscomp$1 as FZ.RenderState).fontPreloads.forEach(flushResource, destination);
+      (renderState$jscomp$1 as FZ.RenderState).fontPreloads.clear();
+      (renderState$jscomp$1 as FZ.RenderState).highImagePreloads.forEach(
         flushResource,
         destination
       );
-      renderState$jscomp$1.highImagePreloads.clear();
-      renderState$jscomp$1.styles.forEach(preloadLateStyles, destination);
-      renderState$jscomp$1.scripts.forEach(flushResource, destination);
-      renderState$jscomp$1.scripts.clear();
-      renderState$jscomp$1.bulkPreloads.forEach(flushResource, destination);
-      renderState$jscomp$1.bulkPreloads.clear();
-      var hoistableChunks$jscomp$0 = renderState$jscomp$1.hoistableChunks;
+      (renderState$jscomp$1 as FZ.RenderState).highImagePreloads.clear();
+      (renderState$jscomp$1 as FZ.RenderState).styles.forEach(preloadLateStyles, destination);
+      (renderState$jscomp$1 as FZ.RenderState).scripts.forEach(flushResource, destination);
+      (renderState$jscomp$1 as FZ.RenderState).scripts.clear();
+      (renderState$jscomp$1 as FZ.RenderState).bulkPreloads.forEach(flushResource, destination);
+      (renderState$jscomp$1 as FZ.RenderState).bulkPreloads.clear();
+      var hoistableChunks$jscomp$0 = (renderState$jscomp$1 as FZ.RenderState).hoistableChunks;
       for (
         completedRootSegment = 0;
         completedRootSegment < hoistableChunks$jscomp$0.length;
@@ -6694,36 +6694,36 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
       )
         destination.push(hoistableChunks$jscomp$0[completedRootSegment]);
       hoistableChunks$jscomp$0.length = 0;
-      var clientRenderedBoundaries = request.clientRenderedBoundaries;
+      var clientRenderedBoundaries: FZ.SuspenseBoundary[] | FZ.Request = request.clientRenderedBoundaries;
       for (i = 0; i < clientRenderedBoundaries.length; i++) {
-        var boundary = clientRenderedBoundaries[i];
-        renderState$jscomp$1$asDestination = destination;
+        var boundary: FZ.SuspenseBoundary | FZ.Destination = clientRenderedBoundaries[i];
+        renderState$jscomp$1 = destination;
         var resumableState$jscomp$1 = request.resumableState,
           renderState$jscomp$2 = request.renderState,
-          id: FZ.SegmentId = boundary.rootSegmentID as FZ.SegmentId,
-          errorDigest = boundary.errorDigest;
-        renderState$jscomp$1$asDestination.push(renderState$jscomp$2.startInlineScript);
-        renderState$jscomp$1$asDestination.push(">");
+          id: FZ.SegmentId = (boundary as FZ.SuspenseBoundary).rootSegmentID as FZ.SegmentId,
+          errorDigest = (boundary as FZ.SuspenseBoundary).errorDigest;
+        renderState$jscomp$1.push(renderState$jscomp$2.startInlineScript);
+        renderState$jscomp$1.push(">");
         0 === (resumableState$jscomp$1.instructions & 4)
           ? ((resumableState$jscomp$1.instructions |= 4),
-            renderState$jscomp$1$asDestination.push(
+            renderState$jscomp$1.push(
               '$RX=function(b,c,d,e,f){var a=document.getElementById(b);a&&(b=a.previousSibling,b.data="$!",a=a.dataset,null!=c&&(a.dgst=c),d&&(a.msg=d),e&&(a.stck=e),f&&(a.cstck=f),b._reactRetry&&b._reactRetry())};;$RX("'
             ))
-          : renderState$jscomp$1$asDestination.push('$RX("');
-        renderState$jscomp$1$asDestination.push(renderState$jscomp$2.boundaryPrefix);
+          : renderState$jscomp$1.push('$RX("');
+        renderState$jscomp$1.push(renderState$jscomp$2.boundaryPrefix);
         var chunk$jscomp$2 = id.toString(16);
-        renderState$jscomp$1$asDestination.push(chunk$jscomp$2);
-        renderState$jscomp$1$asDestination.push('"');
+        renderState$jscomp$1.push(chunk$jscomp$2);
+        renderState$jscomp$1.push('"');
         if (null != errorDigest)
-          if ((renderState$jscomp$1$asDestination.push(","), null == errorDigest))
-            renderState$jscomp$1$asDestination.push("null");
+          if ((renderState$jscomp$1.push(","), null == errorDigest))
+            renderState$jscomp$1.push("null");
           else {
             var chunk$jscomp$3 =
               escapeJSStringsForInstructionScripts(errorDigest);
-            renderState$jscomp$1$asDestination.push(chunk$jscomp$3);
+            renderState$jscomp$1.push(chunk$jscomp$3);
           }
-        var JSCompiler_inline_result: boolean | FZ.int32 =
-          renderState$jscomp$1$asDestination.push(")\x3c/script>");
+        var JSCompiler_inline_result: boolean | number =
+          renderState$jscomp$1.push(")\x3c/script>");
         if (!JSCompiler_inline_result) {
           request.destination = null;
           i++;
@@ -6735,7 +6735,7 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
       var completedBoundaries = request.completedBoundaries;
       for (i = 0; i < completedBoundaries.length; i++)
         if (
-          !flushCompletedBoundary(request, destination, completedBoundaries[i])
+          !flushCompletedBoundary(request, destination, completedBoundaries[i]!)
         ) {
           request.destination = null;
           i++;
@@ -6744,12 +6744,12 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
         }
       completedBoundaries.splice(0, i);
       flushingPartialBoundaries = !0;
-      var partialBoundaries = request.partialBoundaries;
+      var partialBoundaries: FZ.SuspenseBoundary[] | FZ.Chunk = request.partialBoundaries;
       for (i = 0; i < partialBoundaries.length; i++) {
-        var boundary$70 = partialBoundaries[i];
+        var boundary$70 = partialBoundaries[i]!;
         a: {
-          clientRenderedBoundaries$asRequest = request;
-          boundary$asDestination = destination;
+          clientRenderedBoundaries = request;
+          boundary = destination;
           flushedByteSize = boundary$70.byteSize;
           var completedSegments = boundary$70.completedSegments;
           for (
@@ -6759,10 +6759,10 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
           )
             if (
               !flushPartiallyCompletedSegment(
-                clientRenderedBoundaries$asRequest,
-                boundary$asDestination,
+                clientRenderedBoundaries,
+                boundary,
                 boundary$70,
-                completedSegments[JSCompiler_inline_result]
+                completedSegments[JSCompiler_inline_result]!
               )
             ) {
               JSCompiler_inline_result++;
@@ -6777,15 +6777,15 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
             1 === boundary$70.pendingTasks &&
             (1 === row.pendingTasks
               ? unblockSuspenseListRow(
-                  clientRenderedBoundaries$asRequest,
+                  clientRenderedBoundaries,
                   row,
                   row.hoistables
                 )
               : row.pendingTasks--);
           JSCompiler_inline_result$jscomp$0 = writeHoistablesForBoundary(
-            boundary$asDestination,
+            boundary,
             boundary$70.contentState,
-            clientRenderedBoundaries$asRequest.renderState
+            clientRenderedBoundaries.renderState
           );
         }
         if (!JSCompiler_inline_result$jscomp$0) {
@@ -6799,7 +6799,7 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
       flushingPartialBoundaries = !1;
       var largeBoundaries = request.completedBoundaries;
       for (i = 0; i < largeBoundaries.length; i++)
-        if (!flushCompletedBoundary(request, destination, largeBoundaries[i])) {
+        if (!flushCompletedBoundary(request, destination, largeBoundaries[i]!)) {
           request.destination = null;
           i++;
           largeBoundaries.splice(0, i);
@@ -6809,17 +6809,17 @@ function flushCompletedQueues(request: FZ.Request, destination: FZ.Destination):
     }
   } finally {
     (flushingPartialBoundaries = !1),
-      (i$asPostponed = request.postponedState),
-      null !== i$asPostponed && (i$asPostponed.nextSegmentId = request.nextSegmentId as FZ.SegmentId),
+      (i = request.postponedState),
+      null !== i && (i.nextSegmentId = request.nextSegmentId as FZ.SegmentId),
       0 === request.allPendingTasks &&
         0 === request.clientRenderedBoundaries.length &&
         0 === request.completedBoundaries.length &&
         ((request.flushScheduled = !1),
-        (i$asResumable = request.resumableState),
-        i$asResumable.hasBody &&
-          ((partialBoundaries$asChunk = endChunkForTag("body")),
-          destination.push(partialBoundaries$asChunk)),
-        i$asResumable.hasHtml && ((i$asChunk = endChunkForTag("html")), destination.push(i$asChunk)),
+        (i = request.resumableState),
+        i.hasBody &&
+          ((partialBoundaries = endChunkForTag("body")),
+          destination.push(partialBoundaries)),
+        i.hasHtml && ((i = endChunkForTag("html")), destination.push(i)),
         endRenderLifetime(request),
         (request.status = 13),
         destination.push(null),
@@ -6839,19 +6839,19 @@ function enqueueFlush(request: FZ.Request): void {
       : (request.flushScheduled = !1);
   }
 }
-function startFlowing(request$given: FZ.Request, destination: FZ.Destination): void { var request; request = request$given;
-  if (12 === request.status)
-    (request.status = 13),
-      (request = request.fatalError),
+function startFlowing(request: FZ.Request | any, destination: FZ.Destination): void {
+  if (12 === (request as FZ.Request).status)
+    ((request as FZ.Request).status = 13),
+      (request = (request as FZ.Request).fatalError),
       isRecoverableError(request) &&
         (request = cloneRecoverableErrorAsFatal(request)),
       destination.destroy(request);
-  else if (13 !== request.status && null === request.destination) {
-    request.destination = destination;
+  else if (13 !== (request as FZ.Request).status && null === (request as FZ.Request).destination) {
+    (request as FZ.Request).destination = destination;
     try {
-      flushCompletedQueues(request, destination);
+      flushCompletedQueues((request as FZ.Request), destination);
     } catch (error$72) {
-      logRecoverableError(request, error$72, {}), fatalError(request, error$72);
+      logRecoverableError((request as FZ.Request), error$72, {}), fatalError((request as FZ.Request), error$72);
     }
   }
 }
@@ -6870,11 +6870,11 @@ function finishAbort(request: FZ.Request, abortableTasks: Set<FZ.Task>): void {
     logRecoverableError(request, error$73, {}), fatalError(request, error$73);
   }
 }
-function endRenderLifetime(request$given: FZ.Request): void { var request; request = request$given;
-  request = request.renderLifetimeController;
+function endRenderLifetime(request: FZ.Request | any): void {
+  request = (request as FZ.Request).renderLifetimeController;
   null !== request && request.abort("The render ended.");
 }
-function abort(request: FZ.Request, reason: FZ.Thrown): void { var reason$asTasks: Set<FZ.Task>;
+function abort(request: FZ.Request, reason: FZ.Thrown | Set<FZ.Task>): void {
   if (!(request.aborted || (11 !== request.status && 10 !== request.status))) {
     endRenderLifetime(request);
     var isRecoverableReason =
@@ -6892,11 +6892,11 @@ function abort(request: FZ.Request, reason: FZ.Thrown): void { var reason$asTask
           ? Error(formatProdErrorMessage(530))
           : reason;
     request.fatalError = reason;
-    reason$asTasks = request.abortableTasks;
-    reason$asTasks.forEach(function (task: FZ.Task) {
+    reason = request.abortableTasks;
+    (reason as Set<FZ.Task>).forEach(function (task: FZ.Task) {
       return abortTask(task, request);
     });
-    finishAbort(request, reason$asTasks);
+    finishAbort(request, (reason as Set<FZ.Task>));
   }
 }
 function addToReplayParent(node: FZ.ReplayNode, parentKeyPath: FZ.KeyNode | null, trackedPostpones: FZ.PostponedHoles): void {
@@ -6913,11 +6913,11 @@ function addToReplayParent(node: FZ.ReplayNode, parentKeyPath: FZ.KeyNode | null
 }
 function onError(): void {}
 function renderToStringImpl(
-  children$given: FZ.ReactNode,
-  options$given: FZ.Options,
+  children: FZ.ReactNode | any,
+  options: FZ.Options | any,
   generateStaticMarkup: boolean,
   abortReason: string
-): string { var children, options; children = children$given; options = options$given;
+): string {
   var didFatal = !1,
     fatalError: FZ.Thrown = null,
     result = "",
@@ -6976,105 +6976,105 @@ exports.renderToString = function (children: FZ.ReactNode, options: FZ.Options):
   );
 };
 exports.version = "19.3.1";
-namespace FZ {
-  export type FulfilledValue = any;
-  export type ComparedValue = any;
+declare namespace FZ {
+  type FulfilledValue = any;
+  type ComparedValue = any;
 }
-namespace FZ {
-  export type MemoValue = any;
-  export type UsedValue = any;
+declare namespace FZ {
+  type MemoValue = any;
+  type UsedValue = any;
 }
-namespace FZ {
-  export type int32 = import("bun").int32;
-  export type RequestStatus = int32;
-  export type SegmentStatus = int32;
-  export type BoundaryStatus = int32;
-  export type StylesheetState = int32;
-  export type InsertionMode = int32;
-  export type TagScope = int32;
-  export type InstructionState = int32;
-  export type SegmentId = int32;
-  export type ChildIndex = int32;
-  export type TaskCount = int32;
-  export type ChunkIndex = int32;
-  export type TreeId = int32;
-  export type ContextDepth = int32;
-  export type HookCounter = int32;
-  export type ByteSize = number;
-  export type HeaderCapacity = number;
-  export type ReactNode = any;
-  export type ReactElement = any;
-  export type Props = any;
-  export type PropValue = any;
-  export type ElementType = any;
-  export type ComponentName = any;
-  export type KeyOrIndex = any;
-  export type FunctionComponent = any;
-  export type ClassComponent = any;
-  export type ClassInstance = any;
-  export type ClassState = any;
-  export type Ref = any;
-  export type ReactContext = any;
-  export type ContextValue = any;
-  export type LazyComponent = any;
-  export type Thenable = any;
-  export type Recoverable = any;
-  export type Thrown = any;
-  export type HookState = any;
-  export type HookDeps = any;
-  export type IteratorFn = any;
-  export type Destination = any;
-  export type StreamController = any;
-  export type NodeReadable = any;
-  export type WebReadableStream = any;
-  export type AbortSignalGiven = any;
-  export type AbortControllerGiven = any;
-  export type TextEncoderGiven = any;
-  export type Options = any;
-  export type PostponedStateGiven = any;
-  export type ReactFormState = any;
-  export type FormAction = any;
-  export type CustomFormFields = any;
-  export type FormDataGiven = any;
-  export type Nonce = any;
-  export type SelectedValue = any;
-  export type ViewTransitionValue = any;
-  export type BootstrapScriptContent = any;
-  export type BootstrapScripts = any;
-  export type ImportMap = any;
-  export type ReactModule = any;
-  export type ReactDOMModule = any;
-  export type UtilModule = any;
-  export type StreamModule = any;
-  export type SharedInternals = any;
-  export type DOMSharedInternals = any;
-  export type HostDispatcherGiven = any;
-  export type GivenFunction = any;
-  export type Chunk = string;
-  export type PrecomputedChunk = string;
-  export type Resource = Chunk[];
-  export type PropsBag = { [name: string]: any };
-  export type Assign = (target: PropsBag, ...sources: any[]) => PropsBag;
-  export type NameCache = { [name: string]: boolean };
-  export type PreloadState = PropValue[];
-  export type ResourceDict = { [key: string]: PreloadState | null };
-  export type ExistsDict = { [key: string]: null };
-  export type UnknownResourceDict = { [as: string]: ResourceDict };
-  export type ConnectBucket = "default" | "anonymous" | "credentials";
-  export type ConnectResources = { [bucket: string]: ExistsDict };
-  export type SlotMap = { [index: string]: SegmentId | undefined };
-  export type ThrownInfo = { [name: string]: unknown };
-  export type KeyNode = [parent: KeyNode | null, name: ComponentName, keyOrIndex: KeyOrIndex];
-  export type ReplayNode = [name: ComponentName, keyOrIndex: KeyOrIndex, children: ReplayNode[], slots: ResumeSlots, fallback?: ReplayNode | null, rootSegmentID?: SegmentId];
-  export type ResumeSlots = SlotMap | SegmentId | null;
-  export type ThenableState = Thenable[];
-  export type MemoState = [value: any, deps: HookDeps];
-  export type DispatchTuple = [state: HookState, dispatch: Dispatch | null];
-  export type OptimisticTuple = [state: HookState, dispatch: Dispatch];
-  export type TransitionTuple = [isPending: boolean, start: (callback?: GivenFunction) => void];
-  export type ActionStateTuple = [state: HookState, dispatch: ActionDispatch, isPending: boolean];
-  export type ComponentFrameSample = [sample: string | null, control: string | null];
-  export interface Request {
+declare namespace FZ {
+  type int32 = import("bun").int32;
+  type RequestStatus = int32;
+  type SegmentStatus = int32;
+  type BoundaryStatus = int32;
+  type StylesheetState = int32;
+  type InsertionMode = int32;
+  type TagScope = int32;
+  type InstructionState = int32;
+  type SegmentId = number;
+  type ChildIndex = number;
+  type TaskCount = int32;
+  type ChunkIndex = number;
+  type TreeId = int32;
+  type ContextDepth = number;
+  type HookCounter = number;
+  type ByteSize = number;
+  type HeaderCapacity = number;
+  type ReactNode = any;
+  type ReactElement = any;
+  type Props = any;
+  type PropValue = any;
+  type ElementType = any;
+  type ComponentName = any;
+  type KeyOrIndex = any;
+  type FunctionComponent = any;
+  type ClassComponent = any;
+  type ClassInstance = any;
+  type ClassState = any;
+  type Ref = any;
+  type ReactContext = any;
+  type ContextValue = any;
+  type LazyComponent = any;
+  type Thenable = any;
+  type Recoverable = any;
+  type Thrown = any;
+  type HookState = any;
+  type HookDeps = any;
+  type IteratorFn = any;
+  type Destination = any;
+  type StreamController = any;
+  type NodeReadable = any;
+  type WebReadableStream = any;
+  type AbortSignalGiven = any;
+  type AbortControllerGiven = any;
+  type TextEncoderGiven = any;
+  type Options = any;
+  type PostponedStateGiven = any;
+  type ReactFormState = any;
+  type FormAction = any;
+  type CustomFormFields = any;
+  type FormDataGiven = any;
+  type Nonce = any;
+  type SelectedValue = any;
+  type ViewTransitionValue = any;
+  type BootstrapScriptContent = any;
+  type BootstrapScripts = any;
+  type ImportMap = any;
+  type ReactModule = any;
+  type ReactDOMModule = any;
+  type UtilModule = any;
+  type StreamModule = any;
+  type SharedInternals = any;
+  type DOMSharedInternals = any;
+  type HostDispatcherGiven = any;
+  type GivenFunction = any;
+  type Chunk = string;
+  type PrecomputedChunk = string;
+  type Resource = Chunk[];
+  type PropsBag = { [name: string]: any };
+  type Assign = (target: PropsBag, ...sources: any[]) => PropsBag;
+  type NameCache = { [name: string]: boolean };
+  type PreloadState = PropValue[];
+  type ResourceDict = { [key: string]: PreloadState | null };
+  type ExistsDict = { [key: string]: null };
+  type UnknownResourceDict = { [as: string]: ResourceDict };
+  type ConnectBucket = "default" | "anonymous" | "credentials";
+  type ConnectResources = { [bucket: string]: ExistsDict };
+  type SlotMap = { [index: string]: SegmentId | undefined };
+  type ThrownInfo = { [name: string]: unknown };
+  type KeyNode = [parent: KeyNode | null, name: ComponentName, keyOrIndex: KeyOrIndex];
+  type ReplayNode = [name: ComponentName, keyOrIndex: KeyOrIndex, children: ReplayNode[], slots: ResumeSlots, fallback?: ReplayNode | null, rootSegmentID?: SegmentId];
+  type ResumeSlots = SlotMap | SegmentId | null;
+  type ThenableState = Thenable[];
+  type MemoState = [value: any, deps: HookDeps];
+  type DispatchTuple = [state: HookState, dispatch: Dispatch | null];
+  type OptimisticTuple = [state: HookState, dispatch: Dispatch];
+  type TransitionTuple = [isPending: boolean, start: (callback?: GivenFunction) => void];
+  type ActionStateTuple = [state: HookState, dispatch: ActionDispatch, isPending: boolean];
+  type ComponentFrameSample = [sample: string | null, control: string | null];
+  interface Request {
     destination: Destination;
     flushScheduled: boolean;
     resumableState: ResumableState;
@@ -7107,7 +7107,7 @@ namespace FZ {
     renderLifetimeController: AbortControllerGiven;
     formState: ReactFormState;
   }
-  export interface RequestConstructor {
+  interface RequestConstructor {
     new (
       resumableState: ResumableState,
       renderState: RenderState,
@@ -7135,10 +7135,10 @@ namespace FZ {
       formState: ReactFormState
     ): void;
   }
-  export type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any;
-  export type BailoutHandler = (error: Thrown, errorInfo: ThrownInfo) => void;
-  export type ErrorDigest = string | null | undefined;
-  export interface Task {
+  type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any;
+  type BailoutHandler = (error: Thrown, errorInfo: ThrownInfo) => void;
+  type ErrorDigest = string | null | undefined;
+  interface Task {
     replay: ReplaySet | null;
     node: ReactNode;
     childIndex: ChildIndex;
@@ -7156,8 +7156,8 @@ namespace FZ {
     componentStack: ComponentStackNode | null;
     thenableState: ThenableState | null;
   }
-  export interface Ping { resolve: () => void; reject: (error: Thrown) => void }
-  export interface Segment {
+  interface Ping { resolve: () => void; reject: (error: Thrown) => void }
+  interface Segment {
     status: SegmentStatus;
     parentFlushed: boolean;
     id: number;
@@ -7170,7 +7170,7 @@ namespace FZ {
     lastPushedText: boolean;
     textEmbedded: boolean;
   }
-  export interface SuspenseBoundary {
+  interface SuspenseBoundary {
     status: BoundaryStatus;
     rootSegmentID: number;
     parentFlushed: boolean;
@@ -7186,9 +7186,9 @@ namespace FZ {
     preamble: BoundaryPreamble | null;
     tracked: TrackedBoundary | null;
   }
-  export interface BoundaryPreamble { content: PreambleState; fallback: PreambleState }
-  export interface TrackedBoundary { contentKeyPath: KeyNode | null; fallbackNode: ReplayNode | null }
-  export interface SuspenseListRow {
+  interface BoundaryPreamble { content: PreambleState; fallback: PreambleState }
+  interface TrackedBoundary { contentKeyPath: KeyNode | null; fallbackNode: ReplayNode | null }
+  interface SuspenseListRow {
     pendingTasks: number;
     boundaries: SuspenseBoundary[] | null;
     hoistables: HoistableState;
@@ -7196,9 +7196,9 @@ namespace FZ {
     together: boolean;
     next: SuspenseListRow | null;
   }
-  export interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots }
-  export interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number }
-  export interface PostponedState {
+  interface PostponedHoles { workingMap: Map<KeyNode, ReplayNode>; rootNodes: ReplayNode[]; rootSlots: ResumeSlots }
+  interface ReplaySet { nodes: ReplayNode[]; slots: ResumeSlots; pendingTasks: number }
+  interface PostponedState {
     nextSegmentId: SegmentId;
     rootFormatContext: FormatContext;
     progressiveChunkSize: number;
@@ -7206,7 +7206,7 @@ namespace FZ {
     replayNodes: ReplayNode[];
     replaySlots: ResumeSlots;
   }
-  export interface RenderState {
+  interface RenderState {
     placeholderPrefix: PrecomputedChunk;
     segmentPrefix: PrecomputedChunk;
     boundaryPrefix: PrecomputedChunk;
@@ -7234,20 +7234,20 @@ namespace FZ {
     stylesToHoist: boolean;
     generateStaticMarkup: boolean;
   }
-  export type OnHeaders = (headers: PropsBag) => void;
-  export interface PreloadHeaders { preconnects: string; fontPreloads: string; highImagePreloads: string; remainingCapacity: HeaderCapacity }
-  export interface ResourceResets { font: ResourceDict; dns: ExistsDict; connect: ConnectResources; image: ResourceDict; style: ResourceDict }
-  export interface PreloadMaps {
+  type OnHeaders = (headers: PropsBag) => void;
+  interface PreloadHeaders { preconnects: string; fontPreloads: string; highImagePreloads: string; remainingCapacity: HeaderCapacity }
+  interface ResourceResets { font: ResourceDict; dns: ExistsDict; connect: ConnectResources; image: ResourceDict; style: ResourceDict }
+  interface PreloadMaps {
     images: Map<string, Resource>;
     stylesheets: Map<string, Resource>;
     scripts: Map<string, Resource>;
     moduleScripts: Map<string, Resource>;
   }
-  export interface NoncePair { script: Nonce; style: Nonce }
-  export interface ResumableState {
+  interface NoncePair { script: Nonce; style: Nonce }
+  interface ResumableState {
     idPrefix: string;
     nextFormID: number;
-    streamingFormat: int32;
+    streamingFormat: number;
     bootstrapScriptContent?: BootstrapScriptContent;
     bootstrapScripts?: BootstrapScripts;
     bootstrapModules?: BootstrapScripts;
@@ -7263,14 +7263,14 @@ namespace FZ {
     moduleUnknownResources: UnknownResourceDict;
     moduleScriptResources: ResourceDict;
   }
-  export interface PreambleState { htmlChunks: Chunk[] | null; headChunks: Chunk[] | null; bodyChunks: Chunk[] | null }
-  export interface FormatContext {
+  interface PreambleState { htmlChunks: Chunk[] | null; headChunks: Chunk[] | null; bodyChunks: Chunk[] | null }
+  interface FormatContext {
     insertionMode: InsertionMode;
     selectedValue: SelectedValue;
     tagScope: TagScope;
     viewTransition: ViewTransitionContext | null;
   }
-  export interface ViewTransitionContext {
+  interface ViewTransitionContext {
     update: ViewTransitionValue;
     enter: ViewTransitionValue;
     exit: ViewTransitionValue;
@@ -7281,26 +7281,26 @@ namespace FZ {
     autoName: ViewTransitionValue;
     nameIdx: number;
   }
-  export interface HoistableState { styles: Set<StyleQueue>; stylesheets: Set<StylesheetResource>; suspenseyImages: boolean }
-  export interface StyleQueue { precedence: Chunk; rules: Chunk[]; hrefs: Chunk[]; sheets: Map<string, StylesheetResource> }
-  export interface StylesheetResource { state: StylesheetState; props: PropsBag }
-  export interface ContextNode {
+  interface HoistableState { styles: Set<StyleQueue>; stylesheets: Set<StylesheetResource>; suspenseyImages: boolean }
+  interface StyleQueue { precedence: Chunk; rules: Chunk[]; hrefs: Chunk[]; sheets: Map<string, StylesheetResource> }
+  interface StylesheetResource { state: StylesheetState; props: PropsBag }
+  interface ContextNode {
     parent: ContextNode | null;
     depth: ContextDepth;
     context: ReactContext;
     parentValue: ContextValue;
     value: ContextValue;
   }
-  export interface ComponentStackNode { parent: ComponentStackNode | null; type: ElementType }
-  export interface TreeContext { id: TreeId; overflow: string }
-  export interface Hook { memoizedState: HookState; queue: UpdateQueue | null; next: Hook | null }
-  export interface UpdateQueue { last: Update | null; dispatch: Dispatch | null }
-  export interface Update { action: HookState; next: Update | null }
-  export interface RefObject { current: any }
-  export type Dispatch = (action: any) => void;
-  export type Reducer = (state: any, action: any) => any;
-  export interface ActionDispatch { (payload: any): void; $$FORM_ACTION?: (prefix: any) => CustomFormFields }
-  export interface Dispatcher {
+  interface ComponentStackNode { parent: ComponentStackNode | null; type: ElementType }
+  interface TreeContext { id: TreeId; overflow: string }
+  interface Hook { memoizedState: HookState; queue: UpdateQueue | null; next: Hook | null }
+  interface UpdateQueue { last: Update | null; dispatch: Dispatch | null }
+  interface Update { action: HookState; next: Update | null }
+  interface RefObject { current: any }
+  type Dispatch = (action: any) => void;
+  type Reducer = (state: any, action: any) => any;
+  interface ActionDispatch { (payload: any): void; $$FORM_ACTION?: (prefix: any) => CustomFormFields }
+  interface Dispatcher {
     readContext(context: ReactContext): ContextValue;
     use(usable: any): any;
     useContext(context: ReactContext): ContextValue;
@@ -7326,9 +7326,9 @@ namespace FZ {
     useCacheRefresh(): () => void;
     useEffectEvent(callback?: GivenFunction): () => void;
   }
-  export interface AsyncDispatcher { getCacheForType(resourceType?: GivenFunction): any; cacheSignal(): any }
-  export interface FormStatusNotPending { pending: boolean; data: null; method: null; action: null }
-  export interface HostDispatcher {
+  interface AsyncDispatcher { getCacheForType(resourceType?: GivenFunction): any; cacheSignal(): any }
+  interface FormStatusNotPending { pending: boolean; data: null; method: null; action: null }
+  interface HostDispatcher {
     f: GivenFunction;
     r: GivenFunction;
     D(href: PropValue): void;
@@ -7339,19 +7339,21 @@ namespace FZ {
     S(href: PropValue, precedence?: PropValue, options?: Options): void;
     M(src: PropValue, options?: Options): void;
   }
-  export interface ClassComponentUpdater {
+  interface ClassComponentUpdater {
     enqueueSetState(inst: ClassInstance, payload: any, callback?: any): void;
     enqueueReplaceState(inst: ClassInstance, payload: any, callback?: any): void;
     enqueueForceUpdate(inst?: ClassInstance, callback?: any): void;
   }
-  export interface InternalInstance { queue: any[] | null; replace: boolean }
-  export interface ComponentIdentity { readonly $$fzIdentity?: never }
-  export interface EmptyContext { readonly $$fzEmptyContext?: never }
-  export interface RunInRootFrame { DetermineComponentFrameRoot: { (): ComponentFrameSample; displayName?: string } }
-  export interface FakeWritable { write(chunk: any): any; end(): void; destroy(error: Thrown): void }
-  export interface StaticResult { postponed: PostponedState | null; prelude: WebReadableStream }
-  export interface PipeableStream { pipe(destination: Destination): Destination; abort(reason?: Thrown): void }
+  interface InternalInstance { queue: any[] | null; replace: boolean }
+  interface ComponentIdentity { readonly $$fzIdentity?: never }
+  interface EmptyContext { readonly $$fzEmptyContext?: never }
+  interface RunInRootFrame { DetermineComponentFrameRoot: { (): ComponentFrameSample; displayName?: string } }
+  interface FakeWritable { write(chunk: any): any; end(): void; destroy(error: Thrown): void }
+  interface StaticResult { postponed: PostponedState | null; prelude: WebReadableStream }
+  interface PipeableStream { pipe(destination: Destination): Destination; abort(reason?: Thrown): void }
 }
+declare var require: (name: string) => any;
+declare var exports: any;
 declare var console: { error(...data: any[]): void };
 declare var Buffer: { byteLength(chunk: string, encoding: string): number };
 declare var Bun: { hash(data: string): number | bigint };

@@ -1,4 +1,4 @@
-// node:path is native code in plain Bun and TypeScript compiled with the program under --aot: the same answers on ASCII paths of every kind, the same errors for values that are no strings, and what it hands out are ordinary objects and functions.
+// node:path in a compiled program and in plain Bun: the same answers on ASCII paths of every kind, the same errors for values that are no strings, and what it hands out are ordinary objects and functions.
 import path from "node:path";
 import { basename, join, posix, win32 } from "node:path";
 

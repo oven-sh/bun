@@ -1,0 +1,25 @@
+export class ProbeBase {
+  constructor(probeName) {
+    this.probeName = probeName;
+  }
+  probeValue() {
+    return 1;
+  }
+  static probeCreate() {
+    return new this("probe");
+  }
+}
+export class ProbeDerived extends ProbeBase {
+  probeField = 2;
+  static probeStaticField = 3;
+  constructor() {
+    super("probe");
+  }
+  probeValue() {
+    return super.probeValue() + this.probeField;
+  }
+  get probeAccessor() {
+    return this.probeName;
+  }
+}
+export class ProbeError extends Error {}

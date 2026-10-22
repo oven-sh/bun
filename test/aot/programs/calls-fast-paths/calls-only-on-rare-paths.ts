@@ -1,5 +1,5 @@
 // A large function without calls in its source: all calls in its machine code are on rarely taken paths.
-// IR+ CallDirect f2 
+// IRM= 1 CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
 interface Shape { kind: number; flags: number; objectFlags: number; width: number; height: number; parent: Shape | undefined; label: string }
 
 function measure(shape: Shape, other: Shape, mask: number): number {

@@ -5,13 +5,15 @@
 //! Symbol-naming contract (kept in sync with generate-classes.ts):
 //!   `${T}Prototype__${name}GetCachedValue(JSValue) -> JSValue`
 //!   `${T}Prototype__${name}SetCachedValue(JSValue, *JSGlobalObject, JSValue)`
-//!   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__create` / `${T}__getConstructor`
+//!     (`SetProvenCachedValue` when the getter declares `type`: only `generated_classes.rs` binds it,
+//!     behind a `Proven<K>` parameter, so listing such a property below fails to link)
+//!   `${T}__fromJS` / `${T}__fromJSDirect` / `${T}__isInstance` / `${T}__create` / `${T}__getConstructor`
 
 // ──────────────────────────────────────────────────────────────────────────
 // Per-class cached-accessor modules.
 //
 // Each `JS${Type}` module exposes the C++-side hooks the `.classes.ts`
-// generator emits: `from_js` / `from_js_direct` / `to_js` / `get_constructor`
+// generator emits: `from_js` / `from_js_direct` / `is_wrapper` / `to_js` / `get_constructor`
 // plus one `${name}_get_cached` / `${name}_set_cached` pair per
 // `cache: true` property. The bodies are filled in by
 // `bun_jsc::codegen_cached_accessors!` — see that macro for the extern-symbol
@@ -21,7 +23,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 // `impl_js_class_via_generated!` — single-source `JsClass` impl that delegates
 // to a per-type generated accessor module (any module exposing the standard
-// `from_js` / `from_js_direct` / `to_js` [/ `get_constructor`] free-fn surface:
+// `from_js` / `from_js_direct` / `is_wrapper` / `to_js` [/ `get_constructor`] free-fn surface:
 // `crate::generated_classes::js_$T` from generate-classes.ts, the
 // `js_class_module!` expansions in this file, or `bun_sql_jsc::jsc::codegen`).
 //
@@ -103,6 +105,11 @@ macro_rules! impl_js_class_via_generated {
                 __g::from_js_direct(v).map($crate::generated::IntoRawMut::into_raw_mut)
             }
             #[inline]
+            fn is_wrapper(v: $crate::JSValue) -> bool {
+                use $gen as __g;
+                __g::is_wrapper(v)
+            }
+            #[inline]
             fn to_js(self, g: &$crate::JSGlobalObject) -> $crate::JSValue {
                 use $gen as __g;
                 // Ownership of the boxed payload transfers to the C++ wrapper
@@ -125,7 +132,7 @@ macro_rules! impl_js_class_via_generated {
 
 /// Expands to a `pub mod $mod` containing the standard `.classes.ts` codegen
 /// surface for a JS wrapper class: `from_js` / `from_js_direct` / `from_js_ref`
-/// / `to_js` / `to_js_unchecked` / `get_constructor`,
+/// / `is_wrapper` / `to_js` / `to_js_unchecked` / `get_constructor`,
 /// plus a cached-accessor pair per listed property.
 ///
 /// One impl, generated once — see
@@ -172,7 +179,7 @@ macro_rules! js_class_module {
 
             type Payload = $Payload;
 
-            // `${TypeName}__fromJS` / `__fromJSDirect` / `__create` /
+            // `${TypeName}__fromJS` / `__fromJSDirect` / `__isInstance` / `__create` /
             // `__getConstructor` — implemented in C++ by
             // `src/codegen/generate-classes.ts` (`symbolName(typeName, name)`
             // ⇒ `${typeName}__${name}`). All use `JSC_CALLCONV` (= sysv64 on
@@ -185,7 +192,8 @@ macro_rules! js_class_module {
             // `safe fn`: `JSValue` is a by-value tagged i64 and `JSGlobalObject`
             // is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
             // to a non-null `*mut`). `__from_js*` only type-check the encoded
-            // value and return the stored `m_ctx` pointer (or null) — the C++
+            // value and return the stored `m_ctx` pointer (or null), and
+            // `__is_instance` returns the type check alone — the C++
             // side never dereferences `Payload`, so there is no Rust-side
             // precondition.
             $crate::jsc_abi_extern! {
@@ -195,6 +203,8 @@ macro_rules! js_class_module {
                     safe fn __from_js(value: JSValue) -> *mut Payload;
                     #[link_name = concat!($TypeName, "__fromJSDirect")]
                     safe fn __from_js_direct(value: JSValue) -> *mut Payload;
+                    #[link_name = concat!($TypeName, "__isInstance")]
+                    safe fn __is_instance(value: JSValue) -> bool;
                     #[link_name = concat!($TypeName, "__create")]
                     safe fn __create(global: *mut JSGlobalObject, ptr: *mut Payload) -> JSValue;
                     #[link_name = concat!($TypeName, "__getConstructor")]
@@ -216,6 +226,14 @@ macro_rules! js_class_module {
             pub fn from_js_direct(value: JSValue) -> ::core::option::Option<*mut Payload> {
                 let ptr = __from_js_direct(value);
                 if ptr.is_null() { None } else { Some(ptr) }
+            }
+
+            /// `value` is (a subclass of) the JS wrapper type. True also while
+            /// the wrapper holds no native pointer and `from_js` is `None`:
+            /// detached, or inside a `constructNeedsThis` constructor.
+            #[inline]
+            pub fn is_wrapper(value: JSValue) -> bool {
+                __is_instance(value)
             }
 
             /// [`from_js`] as a [`ParentRef`](::bun_ptr::ParentRef) — wraps the
@@ -260,18 +278,7 @@ js_class_module!(JSImmediate = "Immediate" { callback, arguments });
 // Payload `Blob` lives in this crate (`webcore_types`) — pass it so the extern
 // signatures unify with the typed declarations there.
 js_class_module!(JSBlob      = "Blob"      as crate::webcore_types::Blob { name, stream });
-js_class_module!(JSResponse  = "Response"  { body, headers, url, statusText, stream });
-js_class_module!(JSRequest   = "Request"   { body, headers, url, signal, stream });
+js_class_module!(JSResponse  = "Response"  { stream });
+js_class_module!(JSRequest   = "Request"   { stream });
 // `values: ["resolve", "reject"]` in src/runtime/api/Shell.classes.ts.
 js_class_module!(JSShellInterpreter      = "ShellInterpreter"      { resolve, reject });
-// `src/runtime/crypto/crypto.classes.ts` — one entry per `StaticCryptoHasher`
-// monomorphization. Payload erased;
-// the native struct lives in `bun_runtime::crypto`.
-js_class_module!(JSMD4        = "MD4"        {});
-js_class_module!(JSMD5        = "MD5"        {});
-js_class_module!(JSSHA1       = "SHA1"       {});
-js_class_module!(JSSHA224     = "SHA224"     {});
-js_class_module!(JSSHA256     = "SHA256"     {});
-js_class_module!(JSSHA384     = "SHA384"     {});
-js_class_module!(JSSHA512     = "SHA512"     {});
-js_class_module!(JSSHA512_256 = "SHA512_256" {});

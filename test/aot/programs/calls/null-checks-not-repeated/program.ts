@@ -24,8 +24,8 @@ function handledTwice(t: T) { let x = 0; try { x = t.a; x += t.b; } catch { x = 
 function inFinally(t: T) { let x = 0; try { x = t.a; } finally { log.push("finally " + x); } return x + t.b; }
 // Optional chaining does not throw, and says nothing afterwards.
 function optional(t: T | undefined | null) { const x = t?.a; return String(x) + t!.b; }
-// A cast's result was tested, not its operand: `as string` makes a string of undefined.
-// (What `as` makes of a value is this compiler's own rule, so only the end is compared: the read of `u.a` throws for null or undefined.)
+// A cast yields its operand: undefined and null pass `as string` and stay what they are, so the read of `s.length` that is caught says nothing about `u`, and the read of `u.a` throws.
+// An object is no string: compiled, the cast itself throws a TypeError for it.
 function castResult(u: any) { const s = u as string; let n = 0; try { n = s.length; } catch { } return u.a; }
 // Another value in the same variable.
 function reassigned(t: T, other: T) { let x = t.a; t = other; return x + t.b; }

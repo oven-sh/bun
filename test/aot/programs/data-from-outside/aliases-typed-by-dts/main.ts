@@ -1,0 +1,24 @@
+// A location annotated with a type alias from a declaration file: the value belongs to the embedder, whatever the alias resolves to and however the program combines it.
+import type { Host, Level, Mode, Pair, Port } from "./host";
+const given: any = { port: "eighty", level: 3, mode: "turbo", pair: "not a pair" };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + JSON.stringify(v);
+type Local = Port;
+type Field<T extends { port: unknown }> = T["port"];
+row("a primitive", () => { const port: Port = given.port; return kind(port); });
+row("through an alias of the program's own", () => { const port: Local = given.port; return kind(port); });
+row("a literal", () => { const level: Level = given.level; return kind(level); });
+row("a union of literals", () => { const mode: Mode = given.mode; return kind(mode); });
+row("a union with undefined", () => { const mode: Mode | undefined = given.mode; return kind(mode); });
+row("a tuple", () => { const pair: Pair = given.pair; return kind(pair); });
+row("parameters", () => ((port: Port, mode?: Mode) => [kind(port), kind(mode)])(given.port, given.mode));
+row("a result", () => { function read(): Port { return given.port; } return kind(read()); });
+row("an element", () => { const ports: Port[] = [given.port]; return kind(ports[0]); });
+row("an indexed access", () => { const port: Host["port"] = given.port; return kind(port); });
+row("an indexed access in an alias of the program's own", () => { const port: Field<Host> = given.port; return kind(port); });
+row("a key", () => { const key: keyof Host = given.mode; return kind(key); });
+row("a cast", () => kind(given.port as Port));
+row("a field of a class", () => { class Server { port: Port = given.port; } return kind(new Server().port); });
+row("members of an interface", () => { interface Settings { port: Port; mode: Mode | null } const settings: Settings = { port: given.port, mode: given.mode }; return [kind(settings.port), kind(settings.mode)]; });
+type Own = number;
+row("an alias of the program's own stays a fact", () => { const own: Own = 80; const list: Own[] = [own, 81]; return [kind(own), list[0] + list[1]]; });

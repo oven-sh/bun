@@ -5,7 +5,6 @@
 //! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
 //! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
 
-pub(crate) mod builtin_syntax;
 pub mod error;
 pub mod function_identities;
 pub use error::Error;
@@ -143,7 +142,7 @@ pub mod Macro {
     }
     impl MacroContext {
         #[inline]
-        pub(crate) fn call(
+        pub fn call(
             &mut self,
             import_record_path: &[u8],
             source_dir: &[u8],
@@ -449,7 +448,7 @@ pub mod defines {
             self.flags.method_call_must_be_replaced_with_undefined()
         }
         #[inline]
-        pub(crate) fn valueless(&self) -> bool {
+        pub fn valueless(&self) -> bool {
             self.flags.valueless()
         }
 
@@ -501,8 +500,6 @@ pub mod defines {
         pub drop_debugger: bool,
         /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
         pub user_hash: Option<u64>,
-        /// What the user defined, as written: the dotted name and the JavaScript text of the value.
-        pub user_inputs: Vec<(Box<[u8]>, Box<[u8]>)>,
     }
 
     #[derive(Clone)]

@@ -1,6 +1,6 @@
 // A place whose type says "a function that yields a number or nothing" holds, in turn, functions that yield a number and functions that yield nothing. A call of what the place holds takes the number as it is, without a box. Only a function across whose own parameters or result a number goes gets an entry of its own for such calls: for one that yields nothing there is nothing to spare.
-// IR- ^function \d+ "yieldsNothing" Plain flags 1088
-// IR- ^function \d+ "takesNothingAndYieldsNothing" Plain flags 1088
+// IR- ^function f\d+ "yieldsNothing" \w+ role=SignatureEntrypoint
+// IR- ^function f\d+ "takesNothingAndYieldsNothing" \w+ role=SignatureEntrypoint
 const lines: string[] = [];
 let count = 0;
 type MayYieldANumber = () => number | undefined;

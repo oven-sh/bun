@@ -1,3 +1,0 @@
-interface Acorn {
-  weight: number;
-}

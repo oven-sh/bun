@@ -256,7 +256,7 @@ JSObject* JSCloseEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSCloseEvent>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCloseEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCloseEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCloseEventDOMConstructor, DOMConstructorID::CloseEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

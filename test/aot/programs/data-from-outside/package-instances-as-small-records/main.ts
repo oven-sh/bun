@@ -9,7 +9,7 @@ function span(node: Span): string { return node.start + ".." + node.end; }
 class Keeper { kept: Small | undefined = undefined; keep(node: Small): void { this.kept = node; } }
 function first(): ArrowFunctionExpression { return parser.parse("() => {}").body[0] as ArrowFunctionExpression; }
 function narrow(): Small { return first(); }
-function attempt(name: string, f: () => string): void { try { console.log(name, f()); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun --aot[^)]*\)/, "").slice(0, 170)); } }
+function attempt(name: string, f: () => string): void { try { console.log(name, f()); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun compile[^)]*\)/, "").slice(0, 170)); } }
 attempt("a method of a visitor literal:", () => { let out = ""; walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression(node: Small) { out += show(node); } }); return out; });
 attempt("an arrow in a visitor literal:", () => { let out = ""; walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression: (node: Small) => { out += show(node); } }); return out; });
 attempt("a function by its name in a visitor literal:", () => { let out = ""; function visit(node: Small): void { out += show(node); } walk.simple(parser.parse("() => {}"), { ArrowFunctionExpression: visit }); return out; });

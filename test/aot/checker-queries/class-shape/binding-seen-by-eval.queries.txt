@@ -1,0 +1,3 @@
+# A binding visible to a direct `eval` may not be the class; a binding outside the eval's scope is.
+binding-seen-by-eval.ts:2 class binding `K` = yes
+binding-seen-by-eval.ts:3 class binding `C` = no

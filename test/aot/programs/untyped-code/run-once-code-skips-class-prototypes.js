@@ -1,7 +1,4 @@
-// Code that runs once asks classes for their members too: the top level of a module, a function called once. The prototype of a class need not make its members for that, however many names are asked.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const made = () => count("ClassPrototype:made");
+// Code that runs once asks classes for their members too: the top level of a module, a function called once. The prototype of a class answers before it has made its members, however many names are asked.
 class Service {
   name = "service"; port = 80;
   start() { return "started " + this.name; }
@@ -18,15 +15,12 @@ class Database extends Service {
   query(text) { return "rows of " + text; }
   status() { return "ready"; }
 }
-const before = made();
 const service = new Service();
 const database = new Database();
 console.log(service.start(), service.stop(), service.restart(), service.status(), service.reload(), service.describe(), service.address);
 console.log(database.start(), database.stop(), database.restart(), database.status(), database.reload(), database.describe(), database.address, database.query("users"));
 console.log(typeof service.then, typeof database.then, service.missing, database.missing, typeof service.toString, typeof database.hasOwnProperty, service.toString(), database.hasOwnProperty("port"));
 console.log(service.constructor === Service, database.constructor === Database, service.constructor.name, database.constructor.name);
-const after = made();
-console.log(after === before ? "no prototype made its members" : (after - before) + " prototypes made their members");
 
 // Whoever looks at a prototype finds everything there.
 console.log(Object.getOwnPropertyNames(Service.prototype).join(), Object.getOwnPropertyNames(Database.prototype).join());

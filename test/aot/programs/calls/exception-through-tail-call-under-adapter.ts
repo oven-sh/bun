@@ -56,7 +56,7 @@ const forms: Array<[string, Form]> = [
   ["method by name", (callee, list) => { holder.method = callee; return holder.method((list as any)[0]); }],
   ["untyped apply", (callee: any, list) => callee.apply(undefined, list)],
   ["untyped call of a number", (_callee, list: any) => list.length()],
-  ["construct", (callee, list) => Reflect.construct(function () { return callee((list as any)[0]) as object; }, [])],
+  ["construct", (callee, list) => Reflect.construct(function () { return callee((list as any)[0]) as any; }, [])],
 ];
 
 const lists: Array<[string, () => unknown]> = [
@@ -86,9 +86,9 @@ const callers: Array<[string, Caller]> = [
   ["indirect eval", callIndirectEval],
   ["interpreted through bind", (form, callee, list) => callInterpreted(form.bind(undefined), callee, list)],
   ["compiled", (form, callee, list) => [form(callee, list)]],
-  ["sort", (form, callee, list) => [1, 2].sort(() => form(callee, list) as number)],
+  ["sort", (form, callee, list) => [1, 2].sort(() => form(callee, list) as any)],
   ["reviver", (form, callee, list) => JSON.parse("1", () => form(callee, list))],
-  ["replace", (form, callee, list) => "a".replace("a", () => form(callee, list) as string)],
+  ["replace", (form, callee, list) => "a".replace("a", () => form(callee, list) as any)],
   ["getter", (form, callee, list) => Reflect.get({ get value(): unknown { return form(callee, list); } }, "value")],
   ["toString", (form, callee, list) => String({ toString: () => form(callee, list) })],
 ];

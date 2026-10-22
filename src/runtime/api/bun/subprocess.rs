@@ -1,6 +1,7 @@
 //! The Subprocess object is returned by `Bun.spawn`. This file also holds the
 //! code for `Bun.spawnSync`
 
+use bun_jsc::proven_return::{Proven, return_kind};
 use core::cell::Cell;
 use core::ptr::NonNull;
 
@@ -639,7 +640,7 @@ impl Subprocess<'_> {
             }
         }
 
-        Ok(this.get_exited(this_jsvalue, global))
+        Ok(this.get_exited(this_jsvalue, global).value())
     }
 
     pub(crate) fn set_event_loop_timer_refd(&self, refd: bool) {
@@ -841,24 +842,20 @@ impl Subprocess<'_> {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
-        let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
-        JSValue::from(connected)
+    pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> bool {
+        this.ipc().map(|d| d.is_connected()).unwrap_or(false)
     }
 
     pub(crate) fn pid(&self) -> i32 {
         self.process().pid
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pid(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.pid() as f64)
+    pub(crate) fn get_pid(this: &Self, _global: &JSGlobalObject) -> i32 {
+        this.pid()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_killed(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.has_killed())
+    pub(crate) fn get_killed(this: &Self, _global: &JSGlobalObject) -> bool {
+        this.has_killed()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1184,7 +1181,7 @@ impl Subprocess<'_> {
 
                     let args = [
                         this_value,
-                        self.get_exit_code(global_this),
+                        self.get_exit_code(global_this).value(),
                         self.get_signal_code(global_this),
                         waitpid_value,
                     ];
@@ -1369,12 +1366,16 @@ impl Subprocess<'_> {
         self.update_flags(|f| f.insert(Flags::FINALIZED));
     }
 
-    pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_exited(
+        &self,
+        this_value: JSValue,
+        global_this: &JSGlobalObject,
+    ) -> Proven<return_kind::Promise> {
         if let Some(promise) = js::exited_promise_get_cached(this_value) {
-            return promise;
+            return Proven::expect(promise);
         }
 
-        match &self.process().status {
+        Proven::expect(match &self.process().status {
             Status::Exited(exit) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
             }
@@ -1391,15 +1392,17 @@ impl Subprocess<'_> {
                 js::exited_promise_set_cached(this_value, global_this, promise);
                 promise
             }
-        }
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_exit_code(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_exit_code(
+        &self,
+        _global: &JSGlobalObject,
+    ) -> Proven<return_kind::Nullable<return_kind::Number>> {
         if let Status::Exited(exited) = &self.process().status {
-            return JSValue::js_number(exited.code as f64);
+            return Proven::expect(JSValue::js_number(exited.code as f64));
         }
-        JSValue::NULL
+        Proven::null()
     }
 
     #[bun_jsc::host_fn(getter)]

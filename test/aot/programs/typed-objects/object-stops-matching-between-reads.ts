@@ -1,6 +1,6 @@
 // An object of the program is read through its type, then stops fitting that type (a value of another type is stored by name, a property is
 // deleted, made an accessor, or left to another prototype), then is read again. The second read answers as the language says, by whichever
-// way the object got from the first read to the second.
+// way the object got from the first read to the second. The field that is read again holds a number throughout; the field that holds another kind is not read.
 declare const console: { log(...values: unknown[]): void };
 declare const globalThis: { kept?: unknown };
 declare const JSON: { parse(s: string): any };

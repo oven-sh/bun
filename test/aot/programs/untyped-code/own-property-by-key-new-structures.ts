@@ -1,7 +1,7 @@
 // `Object.hasOwn(o, key)` over thirty-two shapes and four keys in turn, sixty times over with new shapes each time, as a server meets them. What is remembered about shapes that are no longer asked about does not stand in the way of those that are: each question (shape, key) is worked out once, and nearly all after that are answered from what is remembered.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 const keys: any[] = ["alpha", "beta", "gamma", "delta"];
 function ask(o: any, key: any): number { return Object.hasOwn(o, key) ? 1 : 0; }
 const turns = 40, shapes = 32;

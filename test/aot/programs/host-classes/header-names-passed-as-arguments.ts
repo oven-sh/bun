@@ -1,8 +1,4 @@
-// The same in typed code, where the calls are direct and go through a field that holds an arrow function.
-// IRT= 3 header StrictEq v\d+, v\d+$
-// IRT= 1 header = Integer 527$
-// IRT= 1 header = Integer 600$
-// IRT= 1 header = Integer 766$
+// The same as header-names-passed-as-arguments-untyped.js in typed code: the method is an arrow function in a field, and async middleware calls it.
 class Context {
   #response: Response;
   constructor(response: Response) {

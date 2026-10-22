@@ -1,5 +1,5 @@
 // The one function that a field holds captures `this`, and one of its closures is stored into another object than its `this`: the field is read for the closure, and the call adds to the object that the closure was made in.
-// IR= 1 sum IsClassObjectUnmodified
+// IR= 1 sum PropGet v[0-9]+ name="add"(?!.* isFallback)
 // IR= 1 sum GetCapture
 class Context {
   count = 0;

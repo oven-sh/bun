@@ -1,5 +1,5 @@
 // A real stack overflow is still a RangeError that can be caught.
-// ENV JSC_useAOTOperationCounters=1
+// ENV JSC_aotCountsPath=/dev/null
 declare const console: any;
 declare const aotOperationCount: (name: string) => number;
 let deepest = 0;
@@ -15,4 +15,4 @@ console.log("two functions that call each other:", attempt(() => left(0)));
 console.log("again, behind the first:", attempt(() => down(0, 0)));
 function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
 console.log("and what ends, ends:", fib(20));
-console.log("the poll at an entry was entered:", aotOperationCount("operationAOTTypedPollAtPrologue") > 0);
+console.log("the poll at an entry was entered:", aotOperationCount("operationAOTPollAtPrologue") > 0);

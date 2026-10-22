@@ -2100,7 +2100,7 @@ const ways: Record<string, Record<string, string>> = {
 
 const show = [
   `const show = (v: unknown): string => typeof v === "bigint" ? v + "n" : typeof v === "function" ? "function" : typeof v === "symbol" ? "symbol" : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);`,
-  `async function row(who: string, i: number, text: string, f: () => unknown): Promise<void> { try { console.log(who, i, text, "=>", show(await f())); } catch (e) { console.log(who, i, text, "THROWS", (e as Error).name, (e as Error).message.includes("bun --aot") ? (e as Error).message.slice(0, 60) : ""); } }`,
+  `async function row(who: string, i: number, text: string, f: () => unknown): Promise<void> { try { console.log(who, i, text, "=>", show(await f())); } catch (e) { console.log(who, i, text, "THROWS", (e as Error).name, (e as Error).message.includes("(bun compile") ? (e as Error).message.slice(0, 60) : ""); } }`,
   ``,
 ].join("\n");
 
@@ -2162,24 +2162,7 @@ async function printed(cwd: string, args: string[]) {
   return { lines, exitCode };
 }
 
-const suppliesWhatTheTypeDoesNotAllow = /^(inferred-primitives|inferred-record-in-part|inferred-record-of-other-kinds|namespace), /;
-
-test.concurrent.each(Object.keys(cases).filter(name => suppliesWhatTheTypeDoesNotAllow.test(name)))(
-  "bun test --aot holds what a mock supplies to the type of the export: %s",
-  async name => {
-    const { "flags.txt": flags, ...files } = cases[name];
-    using dir = tempDir("mocked-exports", files);
-    const rest = [...(flags ? flags.split(" ") : []), "./main.test.ts"];
-    const plain = await printed(String(dir), ["test", ...rest]);
-    const held = await printed(String(dir), ["test", "--aot", ...rest]);
-    expect(held.lines.length).toBe(plain.lines.length);
-    expect(held.lines.filter((line, i) => line !== plain.lines[i] && !line.includes(" THROWS TypeError expected "))).toEqual([]);
-    expect(held.exitCode).toBe(plain.exitCode);
-  },
-  240_000,
-);
-
-test.concurrent.each(Object.keys(cases).filter(name => !suppliesWhatTheTypeDoesNotAllow.test(name)))(
+test.concurrent.each(Object.keys(cases))(
   "bun test --aot prints what bun test prints: %s",
   async name => {
     const { "flags.txt": flags, ...files } = cases[name];

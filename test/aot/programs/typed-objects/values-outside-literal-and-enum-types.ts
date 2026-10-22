@@ -1,4 +1,4 @@
-// Unions of string or number literals are only checked for their kind, and a numeric enum is checked as a 32-bit integer.
+// A union of string literals and a string enum are tested as `string`, a union of number literals and a numeric enum as `number`, wherever the value enters or is read: a variable, a cast, a parameter, a field, an element. So any value of the kind passes, and nothing here throws.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }

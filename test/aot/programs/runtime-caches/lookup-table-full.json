@@ -1,0 +1,7 @@
+{
+  "skipInVariants": "a build can lower only one limit, and some variants lower another",
+  "build": ["--aot-heat=none", "--aot-limit=lookup-table-bases:256"],
+  "env": {
+    "JSC_aotCountsPath": "/dev/null"
+  }
+}

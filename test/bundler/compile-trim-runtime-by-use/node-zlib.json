@@ -1,1 +1,1 @@
-{ "features": ["node_zlib", "compression_streams"] }
+{ "features": ["NodeZlib", "CompressionStreams"] }

@@ -39,7 +39,7 @@ show("values that are not of the field's type: stored, or refused and the field 
 show("a plain object into a field of a record type, and it is the same object", () => { const x = make(), given = plain(["v", 5]); const got = put(x, "inner", given); given.v = 6; return [got === given, hide(x).inner === given, hide(x).inner.v]; });
 show("garbage between the stores", () => { const x = make(); let kept: unknown; return times(i => { for (let k = 0; k < 20000; k++) kept = { k, s: "s" + k }; return [put(x, "text", "t" + i), put(x, "inner", { v: i } as Inner), put(x, "anything", { fresh: i }), x.text, x.inner.v, kept !== undefined]; }); });
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const left = () => counted("operationAOTPutByKeyGeneric:stored-into-a-field") + counted("operationAOTPutByKeyGeneric:stored-into-a-field-and-offered-to-the-table") + counted("operationAOTPutByKeyGeneric:left-to-the-operation");
+const left = () => counted("operationAOTPutByValGeneric");
 const target = make(), point = new Point(1, 2), within: Inner = { v: 9 };
 const round = (i: number) => { put(target, "whole", i); put(target, "fraction", i + 0.5); put(target, "flag", !(i & 1)); put(target, "text", "text"); put(target, "textOrNull", null); put(target, "both", i); put(target, "anything", within); put(target, "inner", within); put(point, "x", i); putTyped(target, "whole", i); putTyped(target, "text", "typed"); };
 round(0); round(1);

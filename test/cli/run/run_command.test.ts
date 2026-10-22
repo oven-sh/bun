@@ -275,7 +275,7 @@ describe.concurrent.each([
     expect(exitCode).toBe(0);
   });
 
-  test("in the line that says what runs", async () => {
+  test("in the line that prints the command", async () => {
     const { stdout, stderr, exitCode } = await run(`a${raw}b`);
     expect(stderr).toBe(`$ echo 'c${spelled}d'\n`);
     expect(stdout).toBe(`c${raw}d\n`);

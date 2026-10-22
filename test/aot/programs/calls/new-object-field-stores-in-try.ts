@@ -3,7 +3,7 @@ declare const console: any;
 class C { x: number; y: string; z = 0; w?: number; constructor(x: number, y: string) { this.x = x; this.y = y; } }
 class S { _v = 0; sets = 0; set v(n: number) { this.sets++; if (n < 0) throw new RangeError("negative"); this._v = n; } get v(): number { return this._v; } }
 class D extends C { d: number; constructor(x: number) { super(x, "d"); this.d = x; } }
-// The checker has to see which objects are frozen, wrapped in a proxy or given a different prototype: the runtime rejects that for a type that typed code never passes to these functions.
+// An object of a class may be frozen, given an accessor or given another prototype by any code, as in plain JavaScript: the store that follows answers as the language says.
 const O = Object; const kept: C[] = [];
 function freeze(o: C): void { O.freeze(o); }
 function trap(o: C, name: string): void { O.defineProperty(o, name, { set(v: unknown) { throw new EvalError("trap " + name + " " + v); }, get() { return -1; }, configurable: true }); }

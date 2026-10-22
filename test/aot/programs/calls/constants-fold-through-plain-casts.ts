@@ -1,4 +1,4 @@
-// Constants that go through casts which do not convert the value are still folded at build time.
+// Constants that go through casts are still folded at build time: a cast tests its value and never converts it.
 declare const console: any;
 function any(x: unknown): any { return x }
 enum Kind { A = 1, B = 2, C = 5 }

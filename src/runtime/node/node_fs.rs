@@ -185,6 +185,46 @@ use super::util::validators;
 //   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
 use bun_sys_jsc::ErrorJsc as _;
 
+#[cfg(unix)]
+const LARGE_FILE_BYTES: usize = 64 << 20;
+
+/// Fills `buf` from `position` on several threads. Returns how many bytes from the start of `buf` were read.
+#[cfg(unix)]
+fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
+    const MIN_BYTES_PER_THREAD: usize = 16 << 20;
+    let threads = usize::from(bun_core::get_thread_count()).min(buf.len() / MIN_BYTES_PER_THREAD).clamp(1, 8);
+    let part_len = buf.len().div_ceil(threads).next_multiple_of(1 << 16);
+    let read_part = |part: &mut [u8], position: u64| -> Maybe<usize> {
+        let mut count = 0;
+        while count < part.len() {
+            match sys::pread(fd, &mut part[count..], (position + count as u64) as i64)? {
+                0 => break,
+                amount => count += amount,
+            }
+        }
+        Ok(count)
+    };
+    let counts: Vec<Maybe<usize>> = std::thread::scope(|scope| {
+        let mut parts = buf.chunks_mut(part_len).enumerate();
+        let first = parts.next();
+        let others: Vec<_> = parts
+            .map(|(index, part)| scope.spawn(move || read_part(part, position + (index * part_len) as u64)))
+            .collect();
+        let first = first.map(|(_, part)| read_part(part, position));
+        let others = others.into_iter().map(|thread| thread.join().expect("a reader thread panicked"));
+        first.into_iter().chain(others).collect()
+    });
+    let mut total = 0;
+    for (index, count) in counts.into_iter().enumerate() {
+        let count = count?;
+        total += count;
+        if count < part_len.min(buf.len() - index * part_len) {
+            break;
+        }
+    }
+    Ok(total)
+}
+
 /// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
 /// the intrusive `node` zeroed and the supplied callback.
@@ -213,8 +253,6 @@ pub(crate) use super::node_fs_binding::Binding;
 use bun_jsc::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
-#[cfg(not(windows))]
-use bun_resolver::fs::FileSystem;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -317,48 +355,171 @@ fn standalone_module_graph() -> Option<&'static bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get_ref()
 }
 
-/// For a path that the disk does not have: `Graph::compiled_program_files`.
-fn is_compiled_program_path(path: &[u8]) -> bool {
-    standalone_module_graph().is_some_and(|graph| graph.compiled_program_files(path).is_some())
+fn compiled_program_graph() -> Option<&'static bun_standalone_graph::Graph> {
+    standalone_module_graph().filter(|graph| graph.compiled_program.is_some())
 }
 
-fn compiled_program_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
-    let result = standalone_module_graph()?.compiled_program_stat(path)?;
-    Some(StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(&result), big_int))))
+/// The graph, for a path under its own root: it is asked in front of the disk.
+#[inline]
+fn graph_in_front_of_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
+    standalone_module_graph().filter(|_| bun_standalone_graph::is_bun_standalone_file_path(path))
 }
 
-/// A file that the executable holds has no descriptor: its bytes are handed over in a file that has no name.
+/// The graph, for any other path. There it holds only what the disk does not have (`Graph::find_at_source_path`,
+/// `Graph::directory_key`) and every lookup normalizes the path, so it is asked once the disk has failed.
+fn graph_behind_disk(path: &[u8]) -> Option<&'static bun_standalone_graph::Graph> {
+    compiled_program_graph().filter(|_| !bun_standalone_graph::is_bun_standalone_file_path(path))
+}
+
+/// The executable holds read-only data. What would change `path` under its own root fails as on a read-only file system,
+/// where the system looks the path up first: what is not there is ENOENT.
+fn change_in_executable(path: &[u8], syscall: sys::Tag) -> Option<sys::Error> {
+    let graph = graph_in_front_of_disk(path)?;
+    let errno = if graph.contains_file(path) || graph.find_dir(path) { E::EROFS } else { E::ENOENT };
+    Some(sys::Error::from_code(errno, syscall).with_path(path))
+}
+
+/// The same for what would make `path`: `if_there` if it is there already, ENOENT if the folder for it is not.
+pub(crate) fn creation_in_executable(path: &[u8], syscall: sys::Tag, if_there: E) -> Option<sys::Error> {
+    let graph = graph_in_front_of_disk(path)?;
+    let errno = if graph.contains_file(path) || graph.find_dir(path) {
+        if_there
+    } else if graph.find_dir(bun_paths::dirname(strings::without_trailing_slash(path)).unwrap_or(b"/")) {
+        E::EROFS
+    } else {
+        E::ENOENT
+    };
+    Some(sys::Error::from_code(errno, syscall).with_path(path))
+}
+
+fn stats_of(result: &sys::Stat, big_int: bool) -> StatOrNotFound {
+    StatOrNotFound::Stats(Box::new(Stats::init(&PosixStat::init(result), big_int)))
+}
+
+/// `Graph::may_answer_for`: asked once in front of the lookups behind the disk, each of which normalizes the path again.
+fn graph_may_answer_for(path: &[u8]) -> bool {
+    standalone_module_graph().is_some_and(|graph| graph.may_answer_for(path))
+}
+
+/// The disk has failed `stat` or `lstat` with `err`; `path` is what the system call was given.
+fn stat_failure(err: sys::Error, path: &[u8], args: &args::Stat) -> Maybe<StatOrNotFound> {
+    let written = args.path.slice();
+    if graph_may_answer_for(path) || (written != path && graph_may_answer_for(written)) {
+        if let Some(result) = graph_behind_disk(path).and_then(|graph| graph.stat(path)) {
+            return Ok(stats_of(&result, args.big_int));
+        }
+        if err.get_errno() == E::ENOENT
+            && let Some(stats) = source_path_stats(written, args.big_int)
+        {
+            return Ok(stats);
+        }
+    }
+    if err.get_errno() == E::ENOENT && !args.throw_if_no_entry {
+        return Ok(StatOrNotFound::NotFound);
+    }
+    Err(err.with_path(written))
+}
+
+/// `access` of what `graph` holds at `path`; `None` if it holds nothing there.
+fn access_in_graph(
+    graph: &bun_standalone_graph::Graph,
+    path: &[u8],
+    mode: c_int,
+) -> Option<Maybe<ret::Access>> {
+    let is_dir = graph.find_dir(path);
+    if !is_dir && !graph.contains_file(path) {
+        return None;
+    }
+    if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
+        return Some(Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(path)));
+    }
+    Some(Ok(Null))
+}
+
+/// `readFile` of what `graph` holds at `path`; `None` if it holds nothing there.
+fn read_file_in_graph(
+    graph: &bun_standalone_graph::Graph,
+    path: &[u8],
+    path_for_error: &[u8],
+    encoding: Encoding,
+    string_type: ReadFileStringType,
+) -> Option<Maybe<ret::ReadFileWithOptions>> {
+    if let Some(file) = graph.find_ref(path) {
+        let contents: &[u8] = file.utf8_contents();
+        return Some(if encoding == Encoding::Buffer {
+            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
+            // `into_boxed_slice()` so the allocation layout JSC frees with
+            // matches what we hand it (capacity == len).
+            let raw = bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
+            // SAFETY: ownership of the allocation is transferred to JSC; the
+            // ArrayBuffer finalizer reconstructs the Box and frees it
+            // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
+            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
+                unsafe { &mut *raw },
+                bun_jsc::JSType::Uint8Array,
+            )))
+        } else if string_type == ReadFileStringType::Default {
+            Ok(ret::ReadFileWithOptions::String(
+                contents.to_vec().into_boxed_slice(),
+            ))
+        } else {
+            let mut z = contents.to_vec();
+            z.push(0);
+            Ok(ret::ReadFileWithOptions::NullTerminated(
+                bun_core::ZBox::from_vec_with_nul(z),
+            ))
+        });
+    }
+    if graph.find_dir(path) {
+        return Some(Err(
+            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(path_for_error)
+        ));
+    }
+    None
+}
+
+fn embedded_file_of_compiled_program(path: &[u8]) -> Option<&'static bun_standalone_graph::File> {
+    compiled_program_graph()?.find_ref(path)
+}
+
+fn is_embedded_in_compiled_program(path: &[u8]) -> bool {
+    compiled_program_graph().is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
+}
+
+/// For a path that the disk does not have: `Graph::source_path_kind`.
+fn is_source_path(path: &[u8]) -> bool {
+    standalone_module_graph().is_some_and(|graph| graph.source_path_kind(path).is_some())
+}
+
+fn source_path_stats(path: &[u8], big_int: bool) -> Option<StatOrNotFound> {
+    let result = standalone_module_graph()?.source_path_stat(path)?;
+    Some(stats_of(&result, big_int))
+}
+
+fn create_unnamed_file() -> Maybe<FD> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if sys::can_use_memfd()
+        && let Ok(fd) = sys::memfd_create(c"bun-embedded-file", sys::MemfdFlags::NonExecutable)
+    {
+        return Ok(fd);
+    }
+    let mut name_buffer = [0u8; 64];
+    let name = paths::fs::FileSystem::tmpname(b"bun-embedded-file", &mut name_buffer, bun_core::fast_random())
+        .expect("64 bytes hold a temporary name");
+    let path = bun_core::ZBox::from_vec([bun_resolver::fs::RealFS::tmpdir_path(), paths::SEP_STR.as_bytes(), name.as_bytes()].concat());
+    let fd = sys::open(&path, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600)?;
+    let _ = sys::unlink(&path);
+    Ok(fd)
+}
+
+/// An embedded file has no descriptor, so its bytes are copied into an unnamed file.
 fn open_embedded_file(contents: &[u8], flags: i32, path: &[u8]) -> Maybe<FD> {
     if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::TRUNC | sys::O::APPEND) != 0 {
         return Err(sys::Error::from_code(E::EROFS, sys::Tag::open).with_path(path));
     }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    let fd = sys::memfd_create(c"file-of-the-executable", sys::MemfdFlags::NonExecutable).map_err(|err| err.with_path(path))?;
-    #[cfg(windows)]
-    let fd = {
-        let name = format!("\\.file-of-the-executable-{:x}-{:x}", std::process::id(), bun_core::fast_random());
-        let name = bun_core::ZBox::from_vec([bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()].concat());
-        let made = sys::open(&name, sys::O::RDWR | sys::O::CREAT | sys::O::EXCL, 0o600).map_err(|err| err.with_path(path))?;
-        let _ = sys::unlink(&name);
-        made
-    };
-    #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
-    let fd = {
-        let mut name = *b"/tmp/.file-of-the-executable-XXXXXX\0";
-        // SAFETY: `name` is a writable NUL-terminated template, and stays alive for both calls.
-        let made = unsafe { libc::mkstemp(name.as_mut_ptr().cast()) };
-        if made < 0 {
-            return Err(sys::Error::from_code(E::EIO, sys::Tag::open).with_path(path));
-        }
-        // SAFETY: as above; `made` is open.
-        unsafe {
-            libc::unlink(name.as_ptr().cast());
-            libc::fcntl(made, libc::F_SETFD, libc::FD_CLOEXEC);
-        }
-        FD::from_native(made)
-    };
-    let filled = sys::File::borrow(&fd).write_all(contents).and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
-    if let Err(err) = filled {
+    let fd = create_unnamed_file().map_err(|err| err.with_path(path))?;
+    let written = sys::File::borrow(&fd).write_all(contents).and_then(|()| sys::lseek(fd, 0, libc::SEEK_SET));
+    if let Err(err) = written {
         fd.close();
         return Err(err.with_path(path));
     }
@@ -769,7 +930,7 @@ mod _async_tasks {
                         args.path
                             .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf })
                     };
-                    if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(path.as_bytes())) {
+                    if let Some(file) = embedded_file_of_compiled_program(path.as_bytes()) {
                         // SAFETY: identity write — `R == ret::Open` for this `F`.
                         unsafe {
                             core::ptr::write(
@@ -4734,30 +4895,38 @@ fn encode_path_result(bytes: &[u8], encoding: Encoding) -> StringOrBuffer<'stati
 
 impl NodeFS {
     pub(crate) fn access(&mut self, args: &args::Access, _: Flavor) -> Maybe<ret::Access> {
-        if let Some(graph) = standalone_module_graph() {
-            let p = args.path.slice();
-            let is_dir = graph.find_dir(p) && graph.lists(p);
-            if is_dir || graph.contains_file(p) {
-                let mode = args.mode.as_int();
-                if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
-                    return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
-                }
-                return Ok(Null);
-            }
+        let p = args.path.slice();
+        let mode = args.mode.as_int();
+        if let Some(result) =
+            graph_in_front_of_disk(p).and_then(|graph| access_in_graph(graph, p, mode))
+        {
+            return result;
         }
         // The `bun_sys::access` Windows
         // arm takes `&ZStr` and performs the kernel32 widening internally
         // (sys/lib.rs `windows_impl::access`), so feed it the UTF-8 path on
         // every platform.
-        let path: &ZStr = if args.path.slice().is_empty() {
+        let path: &ZStr = if p.is_empty() {
             ZStr::EMPTY
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        match Syscall::access(path, args.mode.as_int()) {
-            Err(err) if err.get_errno() == E::ENOENT && (args.mode.as_int() & sys::posix::W_OK) == 0 && is_compiled_program_path(args.path.slice()) => Ok(Null),
-            Err(err) => Err(err.with_path(args.path.slice())),
+        match Syscall::access(path, mode) {
             Ok(_) => Ok(Null),
+            Err(err) => {
+                if !graph_may_answer_for(p) {
+                    return Err(err.with_path(p));
+                }
+                if let Some(result) =
+                    graph_behind_disk(p).and_then(|graph| access_in_graph(graph, p, mode))
+                {
+                    return result;
+                }
+                if err.get_errno() == E::ENOENT && (mode & sys::posix::W_OK) == 0 && is_source_path(p) {
+                    return Ok(Null);
+                }
+                Err(err.with_path(p))
+            }
         }
     }
 
@@ -4767,6 +4936,11 @@ impl NodeFS {
         _: Flavor,
     ) -> Maybe<ret::AppendFile> {
         let args = &args.0;
+        if let PathOrFileDescriptor::Path(path) = &args.file
+            && let Some(error) = creation_in_executable(path.slice(), sys::Tag::open, E::EROFS)
+        {
+            return Err(error);
+        }
         let mut data = args.data.slice();
         match &args.file {
             PathOrFileDescriptor::Fd(fd) => {
@@ -4977,8 +5151,14 @@ impl NodeFS {
     }
 
     pub(crate) fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
+        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS) {
+            return Err(error);
+        }
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
+            Err(err) if err.get_errno() == E::ENOENT && embedded_file_of_compiled_program(args.src.slice()).is_some() => {
+                Self::copy_embedded_file(args)
+            }
             Err(err) => Err(sys::Error {
                 errno: err.errno,
                 syscall: sys::Tag::copyfile,
@@ -4989,19 +5169,30 @@ impl NodeFS {
         }
     }
 
+    fn copy_embedded_file(args: &args::CopyFile) -> Maybe<ret::CopyFile> {
+        let copied = (|| {
+            let file = embedded_file_of_compiled_program(args.src.slice()).ok_or_else(|| sys::Error::from_code(E::ENOENT, sys::Tag::copyfile))?;
+            let mut dest_buf = bun_paths::path_buffer_pool::get();
+            let overwrite_flag = if args.mode.shouldnt_overwrite() { sys::O::EXCL } else { sys::O::TRUNC };
+            let fd = Syscall::open(args.dest.slice_z(&mut dest_buf), sys::O::WRONLY | sys::O::CREAT | overwrite_flag, 0o644)?;
+            let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
+            fd.close();
+            written
+        })();
+        copied.map_err(|err: sys::Error| sys::Error {
+            errno: err.errno,
+            syscall: sys::Tag::copyfile,
+            path: args.src.slice().into(),
+            dest: args.dest.slice().into(),
+            ..Default::default()
+        })
+    }
+
     /// https://github.com/libuv/libuv/pull/2233
     /// https://github.com/pnpm/pnpm/issues/2761
     /// https://github.com/libuv/libuv/pull/2578
     /// https://github.com/nodejs/node/issues/34624
     fn copy_file_inner(&mut self, args: &args::CopyFile) -> Maybe<ret::CopyFile> {
-        if let Some(file) = standalone_module_graph().and_then(|graph| graph.find_ref(args.src.slice())) {
-            let mut dest_buf = bun_paths::path_buffer_pool::get();
-            let if_there = if args.mode.shouldnt_overwrite() { sys::O::EXCL } else { sys::O::TRUNC };
-            let fd = Syscall::open(args.dest.slice_z(&mut dest_buf), sys::O::WRONLY | sys::O::CREAT | if_there, 0o644)?;
-            let written = sys::File::borrow(&fd).write_all(file.utf8_contents());
-            fd.close();
-            return written;
-        }
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
@@ -5443,10 +5634,11 @@ impl NodeFS {
             return Ok(false);
         };
 
-        if let Some(graph) = standalone_module_graph() {
-            if graph.contains_file(path.slice()) || graph.find_dir(path.slice()) {
-                return Ok(true);
-            }
+        let holds_path = |graph: &bun_standalone_graph::Graph| {
+            graph.contains_file(path.slice()) || graph.find_dir(path.slice())
+        };
+        if graph_in_front_of_disk(path.slice()).is_some_and(holds_path) {
+            return Ok(true);
         }
 
         let slice = if path.slice().is_empty() {
@@ -5455,14 +5647,19 @@ impl NodeFS {
             match path.os_path_kernel32(&mut self.sync_error_buf) {
                 Ok(p) => p,
                 // Over PATH_MAX_WIDE — such a path can't exist on disk.
-                Err(NameTooLong) => return Ok(false),
+                Err(NameTooLong) => return Ok(graph_behind_disk(path.slice()).is_some_and(holds_path)),
             }
         };
 
-        Ok(sys::exists_os_path(slice, false) || is_compiled_program_path(path.slice()))
+        Ok(sys::exists_os_path(slice, false)
+            || (graph_may_answer_for(path.slice())
+                && (graph_behind_disk(path.slice()).is_some_and(holds_path) || is_source_path(path.slice()))))
     }
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::chown) {
+            return Err(error);
+        }
         #[cfg(windows)]
         {
             return match Syscall::chown(
@@ -5482,6 +5679,9 @@ impl NodeFS {
     }
 
     pub(crate) fn chmod(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::chmod) {
+            return Err(error);
+        }
         let path = args.path.slice_z(&mut self.sync_error_buf);
         #[cfg(windows)]
         {
@@ -5626,6 +5826,9 @@ impl NodeFS {
     }
 
     pub(crate) fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::lchown) {
+            return Err(error);
+        }
         // On Windows `Syscall::lchown` routes through uv_fs_lchown, which is
         // a no-op success, matching Node.
         let path = args.path.slice_z(&mut self.sync_error_buf);
@@ -5636,6 +5839,9 @@ impl NodeFS {
     }
 
     pub(crate) fn link(&mut self, args: &args::Link, _: Flavor) -> Maybe<ret::Link> {
+        if let Some(error) = creation_in_executable(args.new_path.slice(), sys::Tag::link, E::EEXIST) {
+            return Err(error);
+        }
         let mut to_buf = bun_paths::path_buffer_pool::get();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
@@ -5659,13 +5865,10 @@ impl NodeFS {
 
     pub(crate) fn lstat(&mut self, args: &args::Lstat, _: Flavor) -> Maybe<ret::Lstat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph() {
-            if let Some(result) = graph.stat(path.as_bytes()) {
-                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
-                    &PosixStat::init(&result),
-                    args.big_int,
-                ))));
-            }
+        if let Some(result) =
+            graph_in_front_of_disk(path.as_bytes()).and_then(|graph| graph.stat(path.as_bytes()))
+        {
+            return Ok(stats_of(&result, args.big_int));
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
@@ -5674,39 +5877,29 @@ impl NodeFS {
                     &result,
                     args.big_int,
                 )))),
-                Err(err) => {
-                    if err.get_errno() == E::ENOENT
-                        && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
-                    {
-                        return Ok(stats);
-                    }
-                    if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
-                        return Ok(StatOrNotFound::NotFound);
-                    }
-                    Err(err.with_path(args.path.slice()))
-                }
+                Err(err) => stat_failure(err, path.as_bytes(), args),
             };
         }
         match Syscall::lstat(path) {
-            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
-                &PosixStat::init(&result),
-                args.big_int,
-            )))),
-            Err(err) => {
-                if err.get_errno() == E::ENOENT
-                    && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
-                {
-                    return Ok(stats);
-                }
-                if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
-                    return Ok(StatOrNotFound::NotFound);
-                }
-                Err(err.with_path(args.path.slice()))
-            }
+            Ok(result) => Ok(stats_of(&result, args.big_int)),
+            Err(err) => stat_failure(err, path.as_bytes(), args),
         }
     }
 
     pub(crate) fn mkdir(&mut self, args: &args::Mkdir, _: Flavor) -> Maybe<ret::Mkdir> {
+        if let Some(graph) = graph_in_front_of_disk(args.path.slice()) {
+            let path = args.path.slice();
+            if args.recursive && graph.find_dir(path) {
+                return Ok(StringOrUndefined::None);
+            }
+            // `mkdir -p` makes the folders above too, so the first one that is missing is what the system refuses.
+            let errno = if graph.contains_file(path) || graph.find_dir(path) { E::EEXIST } else { E::EROFS };
+            let error = match args.recursive {
+                true => Some(sys::Error::from_code(errno, sys::Tag::mkdir).with_path(path)),
+                false => creation_in_executable(path, sys::Tag::mkdir, E::EEXIST),
+            };
+            return Err(error.expect("the path is under the root of the executable"));
+        }
         if args.path.slice().is_empty() {
             return Err(sys::Error {
                 errno: E::ENOENT as _,
@@ -6008,6 +6201,9 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
+        if let Some(error) = creation_in_executable(args.prefix.slice(), sys::Tag::mkdtemp, E::EROFS) {
+            return Err(error);
+        }
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
         // Node rejects an empty prefix with EINVAL (its snprintf builds a
@@ -6073,18 +6269,22 @@ impl NodeFS {
     }
 
     pub(crate) fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
+        if (args.flags.as_int() & (sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::TRUNC | sys::O::APPEND)) != 0
+            && let Some(error) = creation_in_executable(args.path.slice(), sys::Tag::open, E::EROFS)
+        {
+            return Err(error);
+        }
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
             ZStr::from_static(b"\\\\.\\NUL\0")
         } else {
             args.path.slice_z(&mut self.sync_error_buf)
         };
-        if let Some(graph) = standalone_module_graph()
-            && let Some(file) = graph.find_ref(path.as_bytes())
-        {
-            return open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice());
-        }
         match Syscall::open(path, args.flags.as_int(), args.mode) {
+            Err(err) if err.get_errno() == E::ENOENT && embedded_file_of_compiled_program(path.as_bytes()).is_some() => {
+                let file = embedded_file_of_compiled_program(path.as_bytes()).expect("found above");
+                open_embedded_file(file.utf8_contents(), args.flags.as_int(), args.path.slice())
+            }
             Err(err) => Err(err.with_path(args.path.slice())),
             Ok(fd) => Ok(fd),
         }
@@ -6391,7 +6591,7 @@ impl NodeFS {
     pub(crate) fn readdir(&mut self, args: &args::Readdir, flavor: Flavor) -> Maybe<ret::Readdir> {
         if flavor != Flavor::Sync && args.recursive {
             debug_assert!(
-                standalone_module_graph().is_some_and(|graph| graph.lists(args.path.slice())),
+                standalone_module_graph().is_some_and(|graph| graph.owns_directory(args.path.slice())),
                 "async recursive readdir must go through AsyncReaddirRecursiveTask"
             );
         }
@@ -6916,7 +7116,7 @@ impl NodeFS {
         let path = args.path.slice_z(buf);
 
         if let Some(graph) = standalone_module_graph() {
-            if graph.lists(path.as_bytes()) {
+            if graph.owns_directory(path.as_bytes()) {
                 return Self::readdir_standalone::<T>(
                     graph,
                     path.as_bytes(),
@@ -7092,40 +7292,18 @@ impl NodeFS {
         let fd_maybe_windows: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
+                let read_in = |graph: &bun_standalone_graph::Graph| {
+                    read_file_in_graph(graph, path.as_bytes(), p.slice(), args.encoding, string_type)
+                };
 
-                if let Some(graph) = standalone_module_graph() {
-                    if let Some(file) = graph.find_ref(path.as_bytes()) {
-                        let contents: &[u8] = file.utf8_contents();
-                        return if args.encoding == Encoding::Buffer {
-                            // PORTING.md §Forbidden bans `Vec::leak()`; round-trip through
-                            // `into_boxed_slice()` so the allocation layout JSC frees with
-                            // matches what we hand it (capacity == len).
-                            let raw =
-                                bun_core::heap::into_raw(contents.to_vec().into_boxed_slice());
-                            // SAFETY: ownership of the allocation is transferred to JSC; the
-                            // ArrayBuffer finalizer reconstructs the Box and frees it
-                            // (PORTING.md:348 — `heap::alloc`/`from_raw` across FFI).
-                            Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
-                                unsafe { &mut *raw },
-                                bun_jsc::JSType::Uint8Array,
-                            )))
-                        } else if string_type == ReadFileStringType::Default {
-                            Ok(ret::ReadFileWithOptions::String(
-                                contents.to_vec().into_boxed_slice(),
-                            ))
-                        } else {
-                            let mut z = contents.to_vec();
-                            z.push(0);
-                            Ok(ret::ReadFileWithOptions::NullTerminated(
-                                bun_core::ZBox::from_vec_with_nul(z),
-                            ))
-                        };
-                    }
-                    if graph.find_dir(path.as_bytes()) {
-                        return Err(
-                            sys::Error::from_code(E::EISDIR, sys::Tag::read).with_path(p.slice())
-                        );
-                    }
+                // A flag that creates the file would put on the disk what only the graph has.
+                let graph_in_front = if (args.flag.as_int() & sys::O::CREAT) != 0 {
+                    standalone_module_graph()
+                } else {
+                    graph_in_front_of_disk(path.as_bytes())
+                };
+                if let Some(result) = graph_in_front.and_then(read_in) {
+                    return result;
                 }
 
                 match sys::open(
@@ -7133,7 +7311,12 @@ impl NodeFS {
                     args.flag.as_int() | sys::O::NOCTTY,
                     DEFAULT_PERMISSION,
                 ) {
-                    Err(err) => return Err(err.with_path(p.slice())),
+                    Err(err) => {
+                        if let Some(result) = graph_behind_disk(path.as_bytes()).and_then(read_in) {
+                            return result;
+                        }
+                        return Err(err.with_path(p.slice()));
+                    }
                     Ok(fd) => fd,
                 }
             }
@@ -7338,6 +7521,17 @@ impl NodeFS {
         // to the kernel which only stores into it.
         unsafe { buf.expand_to_capacity() };
 
+        #[cfg(unix)]
+        if path_is_path && sys::S::ISREG(stat_.st_mode as u32) {
+            let end = (stat_.st_size as u64).min(max_size).min(buf.len() as u64) as usize;
+            if end.saturating_sub(total) >= LARGE_FILE_BYTES {
+                let position = args.offset as u64 + total as u64;
+                let count = read_large_file(fd, &mut buf[total..end], position)?;
+                total += count;
+                sys::set_file_offset(fd, position + count as u64)?;
+            }
+        }
+
         // Two-phase read: first up to `size`, then keep going until EOF.
         // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
         let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
@@ -7458,6 +7652,9 @@ impl NodeFS {
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
+                if let Some(error) = creation_in_executable(p.slice(), sys::Tag::open, E::EROFS) {
+                    return Err(error);
+                }
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
@@ -7648,17 +7845,12 @@ impl NodeFS {
     // For `fs.realpath`, Node.js uses `lstat`, exposing the native system call under
     // `fs.realpath.native`. In Bun, the system call is the default, but the error
     // code must be changed to make it seem like it is using lstat (tests expect this),
-    // in addition, some more subtle things depend on the variant.
+    // and the path goes through `path.resolve` first, as it does in Node.js.
     pub(crate) fn realpath_inner(
         &mut self,
         args: &args::Realpath,
         variant: RealpathVariant,
     ) -> Maybe<ret::Realpath> {
-        if let Some(graph) = standalone_module_graph()
-            && (graph.contains_file(args.path.slice()) || graph.find_dir(args.path.slice()))
-        {
-            return Ok(encode_path_result(args.path.slice(), args.encoding));
-        }
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -7671,7 +7863,7 @@ impl NodeFS {
                 )
             };
             if let Some(err) = rc.to_error(sys::Tag::realpath) {
-                if err.get_errno() == E::ENOENT && is_compiled_program_path(args.path.slice()) {
+                if err.get_errno() == E::ENOENT && (is_source_path(args.path.slice()) || is_embedded_in_compiled_program(args.path.slice())) {
                     return Ok(encode_path_result(args.path.slice(), args.encoding));
                 }
                 return Err(err.with_path(args.path.slice()));
@@ -7689,17 +7881,8 @@ impl NodeFS {
                     ..Default::default()
                 });
             }
-            let mut buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
-            if variant == RealpathVariant::Emulated {
-                // remove the trailing slash
-                //
-                // `buf` is an immutable view and every consumer below copies by
-                // length, so just shrink the slice — writing a NUL back through
-                // `ptr.cast_mut()` while `buf` is live would be Stacked-Borrows UB.
-                if buf.last() == Some(&b'\\') {
-                    buf = &buf[..buf.len() - 1];
-                }
-            }
+            let buf = unsafe { bun_core::ffi::cstr(ptr) }.to_bytes();
+            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
@@ -7714,27 +7897,26 @@ impl NodeFS {
         {
             let mut outbuf = bun_paths::path_buffer_pool::get();
             let inbuf = &mut self.sync_error_buf;
-            // SAFETY: single-threaded init flag (resolver/fs.rs).
-            debug_assert!(
-                bun_resolver::fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed)
-            );
 
-            let path_slice = args.path.slice();
-            // SAFETY: instance() returns the leaked singleton; INSTANCE_LOADED checked above.
-            let fs = FileSystem::get();
-            let parts = [fs.top_level_dir, path_slice];
-            let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
-                return Err(sys::Error {
-                    errno: E::ENAMETOOLONG as _,
-                    syscall: sys::Tag::realpath,
-                    path: args.path.slice().into(),
-                    ..Default::default()
-                });
+            let path = match variant {
+                RealpathVariant::Native => args.path.slice_z(inbuf),
+                RealpathVariant::Emulated => {
+                    let parts = [args.path.slice()];
+                    let len = bun_node_path::resolve_buf_len(false, &parts);
+                    let mut bufs = vec![0u8; 2 * len];
+                    let (buf, buf2) = bufs.split_at_mut(len);
+                    let resolved = bun_node_path::resolve_posix_t(&parts, buf, buf2)?;
+                    if resolved.len() >= inbuf.len() {
+                        return Err(sys::Error {
+                            errno: E::ENAMETOOLONG as _,
+                            syscall: sys::Tag::realpath,
+                            path: args.path.slice().into(),
+                            ..Default::default()
+                        });
+                    }
+                    paths::resolve_path::z(resolved, inbuf)
+                }
             };
-            let path_len = joined.len();
-            inbuf[path_len] = 0;
-            let path = ZStr::from_buf(&inbuf[..], path_len);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let flags = sys::O::PATH; // O_PATH is faster
@@ -7742,7 +7924,7 @@ impl NodeFS {
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
             let fd = match sys::open(path, flags, 0) {
-                Err(err) if err.get_errno() == E::ENOENT && is_compiled_program_path(path.as_bytes()) => {
+                Err(err) if err.get_errno() == E::ENOENT && (is_source_path(path.as_bytes()) || is_embedded_in_compiled_program(path.as_bytes())) => {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
                 Err(err) => return Err(err.with_path(path)),
@@ -7755,7 +7937,6 @@ impl NodeFS {
                 Ok(buf_) => buf_,
             };
 
-            let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
                     if strings::eql_long(s.slice(), buf, true) {
@@ -7768,6 +7949,11 @@ impl NodeFS {
     }
 
     pub(crate) fn rename(&mut self, args: &args::Rename, _: Flavor) -> Maybe<ret::Rename> {
+        if let Some(error) = change_in_executable(args.old_path.slice(), sys::Tag::rename)
+            .or_else(|| creation_in_executable(args.new_path.slice(), sys::Tag::rename, E::EROFS))
+        {
+            return Err(error.with_path_dest(args.old_path.slice(), args.new_path.slice()));
+        }
         let from_buf = &mut self.sync_error_buf;
         let mut to_buf = bun_paths::path_buffer_pool::get();
         let from = args.old_path.slice_z(from_buf);
@@ -7779,6 +7965,9 @@ impl NodeFS {
     }
 
     pub(crate) fn rmdir(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::rmdir) {
+            return Err(error);
+        }
         if args.recursive {
             // On Windows a rooted-but-driveless path ("/tmp/foo") must resolve
             // against the cwd drive.
@@ -7819,6 +8008,12 @@ impl NodeFS {
     }
 
     pub(crate) fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::rm) {
+            return match args.force && error.get_errno() == E::ENOENT {
+                true => Ok(()),
+                false => Err(error),
+            };
+        }
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
             // See the matching comment in `rmdir`: pre-resolve the path on
@@ -7877,13 +8072,10 @@ impl NodeFS {
 
     pub(crate) fn stat(&mut self, args: &args::Stat, _: Flavor) -> Maybe<ret::Stat> {
         let path = args.path.slice_z(&mut self.sync_error_buf);
-        if let Some(graph) = standalone_module_graph() {
-            if let Some(result) = graph.stat(path.as_bytes()) {
-                return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
-                    &PosixStat::init(&result),
-                    args.big_int,
-                ))));
-            }
+        if let Some(result) =
+            graph_in_front_of_disk(path.as_bytes()).and_then(|graph| graph.stat(path.as_bytes()))
+        {
+            return Ok(stats_of(&result, args.big_int));
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
@@ -7892,39 +8084,19 @@ impl NodeFS {
                     &result,
                     args.big_int,
                 )))),
-                Err(err) => {
-                    if err.get_errno() == E::ENOENT
-                        && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
-                    {
-                        return Ok(stats);
-                    }
-                    if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
-                        return Ok(StatOrNotFound::NotFound);
-                    }
-                    Err(err.with_path(args.path.slice()))
-                }
+                Err(err) => stat_failure(err, path.as_bytes(), args),
             };
         }
         match Syscall::stat(path) {
-            Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
-                &PosixStat::init(&result),
-                args.big_int,
-            )))),
-            Err(err) => {
-                if err.get_errno() == E::ENOENT
-                    && let Some(stats) = compiled_program_stats(args.path.slice(), args.big_int)
-                {
-                    return Ok(stats);
-                }
-                if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
-                    return Ok(StatOrNotFound::NotFound);
-                }
-                Err(err.with_path(args.path.slice()))
-            }
+            Ok(result) => Ok(stats_of(&result, args.big_int)),
+            Err(err) => stat_failure(err, path.as_bytes(), args),
         }
     }
 
     pub(crate) fn symlink(&mut self, args: &args::Symlink, _: Flavor) -> Maybe<ret::Symlink> {
+        if let Some(error) = creation_in_executable(args.new_path.slice(), sys::Tag::symlink, E::EEXIST) {
+            return Err(error);
+        }
         let mut to_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         {
@@ -8039,6 +8211,9 @@ impl NodeFS {
     }
 
     fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+        if let Some(error) = change_in_executable(path.slice(), sys::Tag::truncate) {
+            return Err(error);
+        }
         // Mask `len` to a `u63` envelope so the `i64` cast is always in range,
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
@@ -8094,6 +8269,9 @@ impl NodeFS {
     }
 
     pub(crate) fn unlink(&mut self, args: &args::Unlink, _: Flavor) -> Maybe<ret::Unlink> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::unlink) {
+            return Err(error);
+        }
         #[cfg(windows)]
         {
             return match Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf)) {
@@ -8147,6 +8325,9 @@ impl NodeFS {
     }
 
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::utime) {
+            return Err(error);
+        }
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -8178,6 +8359,9 @@ impl NodeFS {
     }
 
     pub(crate) fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
+        if let Some(error) = change_in_executable(args.path.slice(), sys::Tag::lutime) {
+            return Err(error);
+        }
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -8221,6 +8405,9 @@ impl NodeFS {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub(crate) fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
+        if let Some(error) = creation_in_executable(args.dest.slice(), sys::Tag::copyfile, E::EROFS) {
+            return Err(error);
+        }
         let mut src_buf = bun_paths::os_path_buffer_pool::get();
         let mut dest_buf = bun_paths::os_path_buffer_pool::get();
         let name_too_long = |path: &PathLike| sys::Error {

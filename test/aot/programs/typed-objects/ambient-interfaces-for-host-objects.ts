@@ -1,4 +1,4 @@
-// An interface declared only in ambient declarations (a .d.ts file, `declare global`) describes host objects, so values of that type get no runtime type check.
+// Interfaces written under `declare global` describe host objects. A host object that does not have a declared member passes every place of that type, and the member reads undefined, as in plain Bun.
 declare global {
   namespace NodeJS { interface ProcessEnv { APP_REQUIRED_KEY: string; APP_OPTIONAL_KEY?: string } }
   interface HostThing { id: number; label: string }

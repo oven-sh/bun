@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions.ts";
 function generate(name: string) {
   return define({
     name,
+    types: [{ path: ["$ZigGeneratedClasses", name], isView: false, typeArguments: [] }],
     construct: true,
     noConstructor: false,
     refCounted: true,
@@ -13,12 +14,12 @@ function generate(name: string) {
     values: ["writeCallback", "errorCallback", "pendingInput", "pendingOutput", "writeResult"],
 
     proto: {
-      init: { fn: "init" },
-      write: { fn: "write" },
-      writeSync: { fn: "writeSync" },
-      params: { fn: "params" },
-      reset: { fn: "reset" },
-      close: { fn: "close" },
+      init: { fn: "init", returns: "boolean | undefined", checkedAtRuntime: true },
+      write: { fn: "write", returns: "undefined", checkedAtRuntime: true },
+      writeSync: { fn: "writeSync", returns: "undefined", checkedAtRuntime: true },
+      params: { fn: "params", returns: "undefined", checkedAtRuntime: true },
+      reset: { fn: "reset", returns: "undefined", checkedAtRuntime: true },
+      close: { fn: "close", returns: "undefined", checkedAtRuntime: true },
       onerror: { setter: "setOnError", this: true, getter: "getOnError" },
     },
   });

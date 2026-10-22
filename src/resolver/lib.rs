@@ -80,7 +80,6 @@ pub mod fs {
     // `readdir` appender (`FilenameStoreAppender`). A second declaration here
     // would be a separate store that `exists`/`as_interned` cannot see into.
     pub use crate::fs_full::filename_store_backing;
-    pub use crate::fs_full::{DirectoryListingSource, set_directory_listing_source};
 
     /// Port of `FileSystem.DirnameStore` (`BSSStringList<2048,128>`).
     pub struct DirnameStore(());
@@ -1416,7 +1415,8 @@ pub mod fs {
         }
     }
 
-    /// How `stat()` fails on a link to nothing or a loop; other errors surface when the entry is read.
+    /// Returns true for the errors that `stat()` returns for a dangling symlink or a symlink loop.
+    /// Other errors surface when the entry is read.
     fn is_dangling_link_error(errno: bun_sys::E) -> bool {
         matches!(
             errno,
@@ -2331,7 +2331,9 @@ pub use ::bun_paths::{is_package_path, is_package_path_not_absolute};
 
 // Resolver implementation modules. Each file declares the sibling-crate `use`s
 // it needs; cross-file references go through `crate::*` paths.
+pub mod compiled_program;
 pub mod options;
+pub mod package_names;
 pub mod resolver;
 pub mod result;
 pub mod standalone_module_graph;

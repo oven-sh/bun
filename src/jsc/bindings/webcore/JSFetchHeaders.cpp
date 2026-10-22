@@ -360,7 +360,7 @@ JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSFetchHeaders>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSFetchHeaders::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSFetchHeaders::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSFetchHeadersDOMConstructor, DOMConstructorID::FetchHeaders>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -589,6 +589,11 @@ const JSC::ClassInfo FetchHeadersIterator::s_info = { "Headers Iterator"_s, &Bas
 
 template<>
 const JSC::ClassInfo FetchHeadersIteratorPrototype::s_info = { "Headers Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(FetchHeadersIteratorPrototype) };
+
+JSC::JSObject* fetchHeadersIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<FetchHeadersIterator>(globalObject.vm(), globalObject);
+}
 
 static inline JSC::EncodedJSValue jsFetchHeadersPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSFetchHeaders* thisObject)
 {

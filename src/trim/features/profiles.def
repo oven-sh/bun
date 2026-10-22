@@ -1,0 +1,8 @@
+profile hello :
+  minimum-cut-ratio 80
+
+profile http-server : Serve Fetch Url Headers Bodies WebStreams AbortSignal Events TextEncoder TextDecoder Buffer NodeEvents ProcessOutputStreams ProcessListeners BunFile
+  minimum-cut-ratio 50
+
+profile command-line-tool : NodeFs NodePath NodeOs NodeUtil ParseArgs Glob BunFile BunSpawn Spawn Buffer NodeEvents ProcessOutputStreams ProcessStdin ProcessListeners
+  minimum-cut-ratio 50

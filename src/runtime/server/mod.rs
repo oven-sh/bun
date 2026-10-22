@@ -2598,15 +2598,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
-            if let Some(serve_plugins_config) = jsc::VirtualMachine::get()
+            let vm = jsc::VirtualMachine::get();
+            let names = vm
                 .transpiler
                 .options
                 .serve_plugins
-                .as_ref()
-            {
-                if !serve_plugins_config.is_empty() {
-                    self.plugins = Some(ServePlugins::init(serve_plugins_config.clone()));
-                }
+                .clone()
+                .unwrap_or_default();
+            // `load_and_resolve_plugins` adds the plugins of `bake.config.ts`.
+            if !names.is_empty() || vm.bake_config_plugins.has() {
+                self.plugins = Some(ServePlugins::init(names));
             }
         }
 
@@ -2778,9 +2779,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_core::warn!("http2: true is ignored {}", why);
             return true;
         }
-        if !Self::allocate_mux_request_pool(this) {
-            return false;
-        }
         // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         let Some(h2) =
             uws_sys::h2::App::create::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
@@ -2809,34 +2807,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
         bun_opaque::opaque_deref_mut(h2).on_schedule_drain(schedule_h2_drain, h2.cast::<c_void>());
         // SAFETY: `this` is the live boxed server; uniquely owned here.
-        unsafe { (*this).h2_app = Some(h2) };
-        true
-    }
-
-    /// On failure the server is `deinit()`ed with an exception pending and `false` returned.
-    fn allocate_mux_request_pool(this: *mut Self) -> bool {
-        // SAFETY: `this` is the live boxed server from `init()`; `global_this()` borrows the STATIC global, not `*this`.
-        let (global, is_allocated) =
-            unsafe { ((*this).global_this(), !(*this).mux_request_pool.is_null()) };
-        if is_allocated {
-            return true;
+        unsafe {
+            (*this).h2_app = Some(h2);
+            if (*this).mux_request_pool.is_null() {
+                (*this).mux_request_pool = <Self as ServerPools<SSL, DEBUG>>::mux_request_pool();
+            }
         }
-        let mut request = MuxRequestPool {
-            is_ssl: SSL,
-            is_debug: DEBUG,
-            pool: core::ptr::null_mut(),
-        };
-        let called = bun_jsc::JSFunction::call_with_request(
-            global,
-            __jsc_host_mux_request_pool,
-            &mut request,
-        );
-        if called.is_err() || request.pool.is_null() {
-            Self::deinit(this);
-            return false;
-        }
-        // SAFETY: `this` is the live boxed server; uniquely owned here.
-        unsafe { (*this).mux_request_pool = request.pool.cast() };
         true
     }
 
@@ -2928,9 +2904,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { (*this).app = Some(app) };
 
             if Self::HAS_H3 && this_ref.config.http3 {
-                if !Self::allocate_mux_request_pool(this) {
-                    return JSValue::ZERO;
-                }
                 let idle_timeout = this_ref.config.idle_timeout as u32;
                 let h3 = match uws_sys::h3::App::create(&ssl_options, idle_timeout) {
                     Some(a) => Some(a),
@@ -2944,7 +2917,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                 };
                 // SAFETY: `this` is the live boxed server; uniquely owned here.
-                unsafe { (*this).h3_app = h3 };
+                unsafe {
+                    (*this).h3_app = h3;
+                    (*this).mux_request_pool =
+                        <Self as ServerPools<SSL, DEBUG>>::mux_request_pool();
+                }
             }
             if !Self::attach_http2(this, app) {
                 return JSValue::ZERO;
@@ -3645,34 +3622,6 @@ macro_rules! impl_server_pools {
 }
 impl_server_pools!((false, false), (true, false), (false, true), (true, true));
 
-struct MuxRequestPool {
-    is_ssl: bool,
-    is_debug: bool,
-    pool: *mut c_void,
-}
-
-#[bun_jsc::host_fn(export = "Bun__Server__muxRequestPool")]
-fn mux_request_pool(_global: &JSGlobalObject, callframe: &bun_jsc::CallFrame) -> JsResult<JSValue> {
-    // SAFETY: only `NewServer::allocate_mux_request_pool` calls this, with the address of a
-    // request that outlives the call.
-    let request = unsafe { &mut *callframe.argument(0).as_promise_ptr::<MuxRequestPool>() };
-    request.pool = match (request.is_ssl, request.is_debug) {
-        (false, false) => {
-            <NewServer<false, false> as ServerPools<false, false>>::mux_request_pool().cast()
-        }
-        (true, false) => {
-            <NewServer<true, false> as ServerPools<true, false>>::mux_request_pool().cast()
-        }
-        (false, true) => {
-            <NewServer<false, true> as ServerPools<false, true>>::mux_request_pool().cast()
-        }
-        (true, true) => {
-            <NewServer<true, true> as ServerPools<true, true>>::mux_request_pool().cast()
-        }
-    };
-    Ok(JSValue::UNDEFINED)
-}
-
 // ─── FFI ─────────────────────────────────────────────────────────────────────
 mod ffi {
     use super::*;
@@ -4061,6 +4010,16 @@ impl AnyServer {
     #[inline]
     pub(crate) fn config(&self) -> &ServerConfig {
         any_server_dispatch!(self, |s| &s.config)
+    }
+
+    /// Whether a route of the `routes` option, or a static route, has exactly this path.
+    pub(crate) fn has_route(&self, path: &[u8]) -> bool {
+        any_server_dispatch!(self, |s| {
+            s.user_routes
+                .iter()
+                .any(|r| r.route.path.as_bytes() == path)
+                || s.config.static_routes.iter().any(|r| &*r.path == path)
+        })
     }
 
     #[inline]

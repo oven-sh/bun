@@ -1,5 +1,0 @@
-arithmetic-on-non-numbers: 0 layouts, 0 given, 0 open, places 9 of 17, reads 0 of 3
-builtin-call-effects: 0 layouts, 0 given, 0 open, places 5 of 13, reads 6 of 23
-builtin-effects-one-per-function: 1 layouts, 0 given, 1 open, places 60 of 119, reads 1 of 20
-internal-and-external-calls: 4 layouts, 0 given, 2 open, places 59 of 76, reads 19 of 35
-map-lookup-unknown-key: 2 layouts, 0 given, 1 open, places 4 of 15, reads 1 of 10

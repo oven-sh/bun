@@ -65,8 +65,7 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-/// Version 36: `JSON.parse<T>(text)` and `Bun.validate<T>(value)` validate. A file with such a call is never stored.
-const EXPECTED_VERSION: u32 = 36;
+const EXPECTED_VERSION: u32 = 35;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

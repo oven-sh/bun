@@ -1,16 +1,11 @@
 {
-  "sound": 1,
+  "sound": 2,
   "name": "react-reconciler",
   "version": "0.33.0",
-  "when": {
-    "process.env.NODE_ENV": "production"
-  },
-  "basis": {
-    "cjs/react-reconciler.production.js": "9eab580c6ec672552bf4adabbdb5b3b2f3c719a06c109333809757e060d86e25"
-  },
+  "when": {},
+  "basis": {},
   "lay": {
-    "cjs/react-reconciler.production.ts": "new",
-    "index.js": "fc1202d3830276707d2eecaa0a664e7ca358a264e690dc6aec6c2f797523d2b5"
+    "cjs/react-reconciler.production.js": "9eab580c6ec672552bf4adabbdb5b3b2f3c719a06c109333809757e060d86e25"
   },
   "needs": []
 }

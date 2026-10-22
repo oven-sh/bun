@@ -2,7 +2,7 @@
 // without the trap passes the read on; what the language demands of the trap's answer is demanded; and the lookup in the runtime goes
 // straight to the proxy's own way of reading.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTGetByNameAndCache") > 0; }
+function counted() { return count("operationAOTGetByIdAndCache") > 0; }
 var log = [];
 function note(text) { log.push(text); }
 function flush(label) { console.log(label + ": " + log.join(" ")); log = []; }
@@ -81,7 +81,7 @@ console.log(turns.join(" "));
 
 var calls = 0;
 var busy = new Proxy({}, { get(t, key) { calls++; return key; } });
-function straight() { return count("operationAOTGetByNameAndCache:proxy") + count("operationAOTGetById:proxy") + count("read of a proxy:the trap is called from the stub"); }
+function straight() { return count("operationAOTPrepareProxyGet"); }
 var before = straight();
 for (var i = 0; i < 500; i++) { byName(busy); byOtherName(busy); }
 console.log(calls, !counted() || straight() - before === 1000);

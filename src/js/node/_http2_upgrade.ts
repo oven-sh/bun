@@ -1,44 +1,39 @@
 const { Duplex } = require("node:stream");
-const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+type NativeHandle = $Node.SocketHandle<object>;
+// What the raw socket's 'data', 'end', 'drain' and 'close' events are to call.
+type UpgradeEvents = [(chunk: Buffer) => void, () => void, () => void, () => void];
+type SystemError = Error & { syscall?: string };
+// An `http2.Http2SecureServer`: what this module uses of it.
+type Http2SecureServer = Pick<
+  $Node.TLSServer,
+  "ALPNProtocols" | "_requestCert" | "_rejectUnauthorized" | "_sharedCreds" | "emit"
+>;
 
-interface NativeHandle {
-  resume(): void;
-  close(): void;
-  end(): void;
-  $write(chunk: Buffer, encoding: string): boolean;
-  alpnProtocol?: string;
-}
+const upgradeDuplexToTLS: (
+  duplex: $Node.Duplex,
+  options: $Node.TLSUpgradeOptions<object>,
+) => [handle: NativeHandle, events: UpgradeEvents] = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "jsUpgradeDuplexToTLS",
+  2,
+);
 
-type UpgradeEventListener = (...args: any[]) => void;
-type UpgradeEvents = [UpgradeEventListener, UpgradeEventListener, UpgradeEventListener, UpgradeEventListener];
+// Called with the server as `this`.
+type ConnectionListener = (socket: TLSProxySocket) => void;
 
 interface UpgradeContextType {
-  connectionListener: (...args: any[]) => any;
+  connectionListener: ConnectionListener;
   server: Http2SecureServer;
-  rawSocket: import("node:net").Socket;
+  rawSocket: $Node.Socket;
   nativeHandle: NativeHandle | null;
   events: UpgradeEvents | null;
   handedOver: boolean;
 }
 
-interface Http2SecureServer {
-  key?: Buffer;
-  cert?: Buffer;
-  ca?: Buffer;
-  passphrase?: string;
-  ALPNProtocols?: Buffer;
-  _requestCert?: boolean;
-  _rejectUnauthorized?: boolean;
-  emit(event: string, ...args: any[]): boolean;
-  _sharedCreds: { context: unknown };
-}
-
-type DuplexStream = import("node:stream").Duplex;
-
-interface TLSProxySocket extends DuplexStream {
+interface TLSProxySocket extends $Node.Duplex {
   _ctx: UpgradeContextType;
   _writeCallback: ((err?: Error | null) => void) | null;
-  alpnProtocol: string | null;
+  alpnProtocol: string | false | null;
   authorized: boolean;
   encrypted: boolean;
   server: Http2SecureServer;
@@ -48,6 +43,17 @@ interface TLSProxySocket extends DuplexStream {
   secureConnecting: boolean;
   _secureEstablished: boolean;
   authorizationError?: string;
+
+  // A net.Socket has these. An HTTP/2 session asks for them on whatever stream it stands on.
+  _handle?: undefined;
+  connecting?: undefined;
+  servername?: undefined;
+  remoteFamily?: undefined;
+  remoteAddress?: undefined;
+  remotePort?: undefined;
+  bytesWritten?: undefined;
+  ref?: undefined;
+  unref?: undefined;
 }
 
 /**
@@ -56,9 +62,10 @@ interface TLSProxySocket extends DuplexStream {
  * (Duplex methods) or via a bound `this` (socket callbacks).
  */
 function UpgradeContext(
-  connectionListener: (...args: any[]) => any,
+  this: UpgradeContextType,
+  connectionListener: ConnectionListener,
   server: Http2SecureServer,
-  rawSocket: import("node:net").Socket,
+  rawSocket: $Node.Socket,
 ) {
   this.connectionListener = connectionListener;
   this.server = server;
@@ -86,7 +93,12 @@ function tlsSocketRead(this: TLSProxySocket) {
 // _write: called when the H2 session writes outbound frames.
 // Forward to the native TLS handle for encryption, then back to rawSocket.
 // Mirrors net.ts Socket.prototype._write which calls socket.$write().
-function tlsSocketWrite(this: TLSProxySocket, chunk: Buffer, encoding: string, callback: (err?: Error | null) => void) {
+function tlsSocketWrite(
+  this: TLSProxySocket,
+  chunk: Uint8Array,
+  encoding: string,
+  callback: (err?: Error | null) => void,
+) {
   const h = this._ctx.nativeHandle;
   if (!h) {
     callback(new Error("Socket is closed"));
@@ -175,7 +187,7 @@ function socketClose(this: TLSProxySocket) {
 // error: TLS-level error (e.g. certificate verification failure).
 // In server mode without _requestCert, the server doesn't request a client cert,
 // so issuer verification errors on the server's own cert are non-fatal.
-function socketError(this: TLSProxySocket, _socket: NativeHandle, err: NodeJS.ErrnoException) {
+function socketError(this: TLSProxySocket, _socket: NativeHandle, err: SystemError) {
   const ctx = this._ctx;
   if (!ctx.server._requestCert && err?.code === "UNABLE_TO_GET_ISSUER_CERT") {
     return;
@@ -203,7 +215,7 @@ function socketHandshake(
   this: TLSProxySocket,
   nativeHandle: NativeHandle,
   success: boolean,
-  verifyError: NodeJS.ErrnoException | null,
+  verifyError: SystemError | null,
 ) {
   const tlsSocket = this; // bound
   const ctx = tlsSocket._ctx;
@@ -306,9 +318,9 @@ function noop() {}
 // can use it, while the H2 session sees _handle as null and uses the JS-level
 // socket.on("data") → Duplex → parser.read() path for incoming frames.
 function upgradeRawSocketToH2(
-  connectionListener: (...args: any[]) => any,
+  connectionListener: ConnectionListener,
   server: Http2SecureServer,
-  rawSocket: import("node:net").Socket,
+  rawSocket: $Node.Socket,
 ): boolean {
   // Create a Duplex stream that acts as the TLS "socket" from the H2 session's perspective.
   const tlsSocket = new Duplex() as TLSProxySocket;
@@ -353,7 +365,7 @@ function upgradeRawSocketToH2(
     [handle, events] = upgradeDuplexToTLS(rawSocket, {
       isServer: true,
       tls: {
-        secureContext: server._sharedCreds.context,
+        secureContext: server._sharedCreds!.context,
         requestCert: server._requestCert,
         rejectUnauthorized: server._rejectUnauthorized,
         ALPNProtocols: server.ALPNProtocols

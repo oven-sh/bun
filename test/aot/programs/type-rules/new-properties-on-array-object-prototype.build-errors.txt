@@ -1,4 +1,0 @@
-error: TS100014: This always fails under --aot: `Array.prototype.foo` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Array.prototype[1]` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Array.prototype[2]` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Object.prototype[2]` is assigned: built-in prototypes are frozen.

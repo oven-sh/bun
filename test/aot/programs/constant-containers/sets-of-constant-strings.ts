@@ -1,6 +1,6 @@
 // Sets made from literals of constant strings: lookups with every kind of key, order, the first change, copies, iteration while changing, subclasses, collections.
-// IR+ table in image \d+ = CallBuiltin Set#\d+ \(\)
-// IR= 1 fresh table in image \d+ = CallBuiltin Set#\d+ \(\)
+// IR+  = NewSetFromTable( table=\d+)?( @|$)
+// IR= 1 fresh  = NewSetFromTable( table=\d+)?( @|$)
 // IR= 0 fresh NewArray
 const ONE = new Set(["only"]);
 const TWO = new Set(["a", "bb"]);

@@ -136,6 +136,8 @@ const FILTER = process.env.BUN_BUNDLER_TEST_FILTER;
 const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 /** Path to the bun. */
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
+/** Set by test/aot/transpiler-parity.test.ts: a test that runs its outputs is built with `bun build --compile --aot`, one executable per entry point, so what runs is compiled code. Each such test prints `[aot] bundle: <id>` on stderr. */
+const COMPILES_AHEAD_OF_TIME = process.env.BUN_BUNDLER_TEST_AOT;
 export const RUN_UNCHECKED_TESTS = false;
 
 const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
@@ -607,6 +609,24 @@ function expectBundled(
 
   entryPoints ??= entryPointsRaw ? [] : [Object.keys(files)[0]];
   if (run === true) run = {};
+  if (
+    COMPILES_AHEAD_OF_TIME &&
+    run &&
+    !compile &&
+    !bundleErrors &&
+    !bundleWarnings &&
+    bundling &&
+    !ESBUILD &&
+    format === "esm" &&
+    entryPoints.length === 1 &&
+    (Array.isArray(run) ? run : [run]).every(({ file, bunArgs, runtime }) => !file && !bunArgs && runtime !== "node")
+  ) {
+    compile = { aot: true };
+    target = "bun";
+    // The hook reads the bundle's text, and an executable has none.
+    onAfterBundle = undefined;
+    if (!dryRun) console.error(`[aot] bundle: ${id}`);
+  }
   if (metafile === true) metafile = "/metafile.json";
   if (bundleErrors === true) bundleErrors = {};
   if (bundleWarnings === true) bundleWarnings = {};
@@ -1962,6 +1982,24 @@ for (const [key, blob] of build.outputs) {
   })();
 }
 
+/** An executable has one entry point. */
+function splitByEntryPoint(id: string, opts: BundlerTestInput): [id: string, opts: BundlerTestInput][] | undefined {
+  const { entryPoints = [], run, outdir = "/out" } = opts;
+  if (!COMPILES_AHEAD_OF_TIME || entryPoints.length < 2 || !Array.isArray(run)) return undefined;
+  const parts: [string, BundlerTestInput][] = [];
+  for (const { file, ...rest } of run) {
+    const entryPoint = entryPoints.find(
+      entry => path.posix.join(outdir, path.basename(entry).replace(/\.[jt]sx?$/, ".js")) === file,
+    );
+    if (entryPoint === undefined) return undefined;
+    parts.push([
+      `${id}/${path.basename(entryPoint)}`,
+      { ...opts, entryPoints: [entryPoint], outdir: undefined, outputPaths: undefined, run: rest },
+    ]);
+  }
+  return parts;
+}
+
 /** Shorthand for test and expectBundled. See `expectBundled` for what this does.
  */
 export function itBundled(
@@ -1973,6 +2011,11 @@ export function itBundled(
     opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
+  }
+  const parts = splitByEntryPoint(id, opts);
+  if (parts) {
+    for (const [partId, partOpts] of parts) itBundled(partId, partOpts);
+    return testRef(id, opts);
   }
   const ref = testRef(id, opts);
   const { it } = testForFile(currentFile ?? callerSourceOrigin()!) as any;
@@ -1997,7 +2040,7 @@ export function itBundled(
     // cannot run concurrently with other tests. it.serial is a no-op outside
     // of describe.concurrent / --concurrent.
     const testFn = resolveBackend(opts) === "api" ? it.serial : it;
-    const baseTimeout = opts.snapshotSourceMap || opts.compile ? 30_000 : 5_000;
+    const baseTimeout = opts.snapshotSourceMap || opts.compile || COMPILES_AHEAD_OF_TIME ? 30_000 : 5_000;
     testFn(
       id,
       () => expectBundled(id, opts as any),

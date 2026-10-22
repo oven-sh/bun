@@ -213,7 +213,7 @@ JSObject* JSByteLengthQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& glob
     return getDOMPrototype<JSByteLengthQueuingStrategy>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSByteLengthQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSByteLengthQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSByteLengthQueuingStrategyConstructor, DOMConstructorID::ByteLengthQueuingStrategy>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

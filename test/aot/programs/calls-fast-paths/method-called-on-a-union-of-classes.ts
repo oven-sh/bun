@@ -1,7 +1,7 @@
 // A method is called on a union of two classes. The test of the shape proves the receiver's class, so the typed method is called, not the entry that tests `this` again and boxes the result.
 // IR= 0 total CallMethod
 // IR= 0 total CallDirect
-// IR= 1 total HasShapeOf
+// IR= 1 total TypeTest v[0-9]+ testedType==?L[0-9]+
 class Circle {
   constructor(public radius: number) {}
   area(): number {

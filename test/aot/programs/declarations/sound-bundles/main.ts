@@ -1,4 +1,4 @@
-// Bundles written by `bun build --dts=sound`: JavaScript as the bundler prints it, with the types of its sources put back.
+// Bundles: JavaScript as the bundler prints it, with the types of its sources put back.
 import { watch } from "./augments";
 import { Machine, depth, everything, leaf, mark, paint, pick, sum, type Tree } from "./constants";
 import { Polite, serve, type Server } from "./greeter";

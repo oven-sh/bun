@@ -9,6 +9,8 @@ pub enum HardcodedModule {
     Bun,
     #[strum(serialize = "abort-controller")]
     AbortController,
+    #[strum(serialize = "bun:bake")]
+    BunBake,
     #[strum(serialize = "bun:ffi")]
     BunFfi,
     #[strum(serialize = "bun:jsc")]
@@ -19,8 +21,6 @@ pub enum HardcodedModule {
     BunTest,
     #[strum(serialize = "bun:wrap")]
     BunWrap,
-    #[strum(serialize = "bun:wrap/validation")]
-    BunWrapValidation,
     #[strum(serialize = "bun:sqlite")]
     BunSqlite,
     #[strum(serialize = "node:assert")]
@@ -207,13 +207,13 @@ bun_core::comptime_string_map! {
     pub static HARDCODED_MODULE_MAP: HardcodedModule = {
         // Bun
         b"bun" => HardcodedModule::Bun,
+        b"bun:bake" => HardcodedModule::BunBake,
         b"bun:ffi" => HardcodedModule::BunFfi,
         b"bun:jsc" => HardcodedModule::BunJsc,
         b"bun:main" => HardcodedModule::BunMain,
         b"bun:test" => HardcodedModule::BunTest,
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
-        b"bun:wrap/validation" => HardcodedModule::BunWrapValidation,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
         b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
         b"internal/repl" => HardcodedModule::NodeInternalRepl,
@@ -710,12 +710,12 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
         },
     ),
     entry!("bun:test"),
+    entry!("bun:bake"),
     entry!("bun:ffi"),
     entry!("bun:jsc"),
     entry!("bun:main"),
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
-    entry!("bun:wrap/validation"),
     entry!("bun:internal-for-testing"),
     (
         b"internal/cluster/round_robin_handle",
@@ -835,10 +835,20 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 ];
 
 static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static ARE_INTERNALS_SEALED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// Node's `--expose-internals`.
 pub fn expose_internals_enabled() -> bool {
-    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed) && !are_internals_sealed()
+}
+
+pub fn are_internals_sealed() -> bool {
+    ARE_INTERNALS_SEALED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn seal_internals() {
+    ARE_INTERNALS_SEALED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_expose_internals_enabled(enabled: bool) {
@@ -883,39 +893,31 @@ pub fn stream_iter_alias_gated(name: &[u8]) -> bool {
         && !stream_iter_enabled()
 }
 
-struct AliasMap {
-    by_name: bun_collections::HashMap<&'static [u8], Alias>,
-    longest_name: usize,
-    begins_a_name: [bool; 256],
-}
-
-fn build_alias_map(tables: &[&[AliasKv]]) -> AliasMap {
-    let mut by_name = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
-    let (mut longest_name, mut begins_a_name) = (0, [false; 256]);
+fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
+    let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
             // First table wins, matching the previous in-order scan
             // (keys are unique across tables anyway).
-            by_name.entry(*k).or_insert_with(|| *v);
-            longest_name = longest_name.max(k.len());
-            if let Some(&first) = k.first() {
-                begins_a_name[first as usize] = true;
-            }
+            map.entry(*k).or_insert_with(|| *v);
         }
     }
-    AliasMap { by_name, longest_name, begins_a_name }
+    map
 }
 
-static NODE_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
-static BUN_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
-static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<AliasMap> = std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
+static NODE_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(NODE_ALIASES));
+static BUN_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(BUN_ALIASES));
+static BUN_TEST_ALIAS_MAP: std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>> =
+    std::sync::LazyLock::new(|| build_alias_map(BUN_TEST_ALIASES));
 
 #[inline]
-fn lookup(map: &std::sync::LazyLock<AliasMap>, name: &[u8]) -> Option<Alias> {
-    if name.len() > map.longest_name || !name.first().is_some_and(|&first| map.begins_a_name[first as usize]) {
-        return None;
-    }
-    map.by_name.get(name).copied()
+fn lookup(
+    map: &std::sync::LazyLock<bun_collections::HashMap<&'static [u8], Alias>>,
+    name: &[u8],
+) -> Option<Alias> {
+    map.get(name).copied()
 }
 
 #[derive(Copy, Clone, Default)]

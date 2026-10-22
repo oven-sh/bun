@@ -1,4 +1,5 @@
 // A union that contains itself: the arms are told apart by a constant member of any kind, wherever it stands, and no nested value is parsed twice: a text of sixty levels would otherwise take longer than the sun has left.
+import { validate } from "bun:bundle";
 type ByNumber = { below: ByNumber | null; k: 1 } | { below: ByNumber | null; k: 2 };
 type ByBoolean = { below: ByBoolean | null; k: true } | { below: ByBoolean | null; k: false };
 type ByNull = { below: ByNull | null; k: null } | { below: ByNull | null; k: 1 };
@@ -38,7 +39,7 @@ for (const levels of [1, 2, 3, 20, 40, 60, 63, 64, 65, 66, 200]) {
   say("tags of four kinds, no arm has it " + levels, text => JSON.parse<Mixed>(text), nested(levels, ',"k":true}'));
   for (const tail of [',"k":null}', ',"k":"one"}', ',"k":2}', ',"k":false}']) {
     say("tags of four kinds, read by the engine and converted " + tail + " " + levels, text => JSON.parse<Mixed>(text), nested(levels, tail).replace("below", "\\u0062elow"));
-    say("tags of four kinds, validated and converted " + tail + " " + levels, text => Bun.validate<Mixed>(JSON.parse(text)), nested(levels, tail));
+    say("tags of four kinds, validated and converted " + tail + " " + levels, text => validate<Mixed>(JSON.parse(text)), nested(levels, tail));
   }
   say("a text or null, read by the engine and converted " + levels, text => JSON.parse<TextOrNull>(text), nested(levels, ',"k":null}').replace("below", "\\u0062elow"));
 }
@@ -47,7 +48,7 @@ function tree(levels: number): string {
 }
 for (const levels of [1, 2, 6, 10]) {
   say("a tree of two branches " + levels, text => JSON.parse<Wide>(text), tree(levels));
-  say("a tree of two branches, validated and converted " + levels, text => Bun.validate<Wide>(JSON.parse(text)), tree(levels));
+  say("a tree of two branches, validated and converted " + levels, text => validate<Wide>(JSON.parse(text)), tree(levels));
 }
 
 type Flat = { value: number; unit: string } | { error: string; code: number } | { value: string };

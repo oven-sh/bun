@@ -1,0 +1,13 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "built-ins-alone-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+const handle = await fs.promises.open(file, "r+");
+const read = await handle.readv([Buffer.alloc(2), Buffer.alloc(2)], 0);
+console.log(read.bytesRead + 1, read.buffers[1].toString());
+const written = await handle.writev([Buffer.from("H"), Buffer.from("E")], 0);
+console.log(written.bytesWritten + 1, written.buffers.length);
+await handle.close();
+fs.rmSync(folder, { recursive: true });

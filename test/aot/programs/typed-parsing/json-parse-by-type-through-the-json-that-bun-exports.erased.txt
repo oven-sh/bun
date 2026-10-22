@@ -1,0 +1,10 @@
+one object true true
+global, right {"id":7,"name":"Ada"}
+global, wrong TypeError
+imported, right {"id":7,"name":"Ada"}
+imported, wrong TypeError
+Bun.JSON, right {"id":7,"name":"Ada"}
+Bun.JSON, wrong TypeError
+imported, taken off TypeError
+no type argument {"id":"7"}
+imported, any {"id":"7"}

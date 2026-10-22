@@ -1,15 +1,4 @@
 // Untyped code, as a framework writes it: the request stands in a field of a wrapper, and the name is a parameter.
-// IR= 1 header CallBuiltin GetRequestOrResponseHeader
-// IR= 1 constantName CallBuiltin GetRequestOrResponseHeader
-// IR= 0 keptHeaders CallBuiltin GetRequestOrResponseHeader
-// IR= 0 twoArguments CallBuiltin GetRequestOrResponseHeader
-// IR= 0 noArgument CallBuiltin GetRequestOrResponseHeader
-// IR= 0 nameRunsCode CallBuiltin GetRequestOrResponseHeader
-// IR= 0 nameByCall CallBuiltin GetRequestOrResponseHeader
-// IR= 0 nameByAwait CallBuiltin GetRequestOrResponseHeader
-// IR= 0 nameByYield CallBuiltin GetRequestOrResponseHeader
-// IR= 0 headersThenCall CallBuiltin GetRequestOrResponseHeader
-// IR= 0 headersThenAwait CallBuiltin GetRequestOrResponseHeader
 class Wrapper {
   raw;
   constructor(raw) {

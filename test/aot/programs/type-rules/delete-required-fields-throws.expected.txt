@@ -1,9 +1,0 @@
-by name: no error
-{"error":"m","code":7} false undefined error,code 8
-by name, after an extra property: no error
-by name, nested: no error
-{"code":8.5,"nested":{"keep":true,"error":"inner"},"error":"n"} 17 true
-by key: TypeError
-{"width":1,"height":2,"label":"b"} 2 2 true 1
-Reflect.deleteProperty: TypeError
-b width,height,label

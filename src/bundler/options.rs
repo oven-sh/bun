@@ -10,7 +10,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
-use bun_resolver::package_json::MacroMap as MacroRemap;
+use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use enum_map::EnumMap;
 use std::borrow::Cow;
 
@@ -91,7 +91,7 @@ pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
-const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
+pub(crate) const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),
     // (b"/blob:", b""),
@@ -273,7 +273,6 @@ pub trait TargetExt: Copy {
             Target::Bun => DEFAULT_MAIN_FIELDS_BUN,
             Target::BunMacro => DEFAULT_MAIN_FIELDS_BUN,
             Target::ServerComponentsSsr => DEFAULT_MAIN_FIELDS_BUN,
-            Target::BunBuiltins => DEFAULT_MAIN_FIELDS_BUN,
         })
     }
 
@@ -283,7 +282,6 @@ pub trait TargetExt: Copy {
             Target::Browser => &[b"browser" as &[u8], b"module"][..],
             Target::Bun => &[b"bun" as &[u8], b"node"][..],
             Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
-            Target::BunBuiltins => &[b"bun" as &[u8], b"node"][..],
             Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
         })
     }
@@ -294,9 +292,7 @@ impl TargetExt for Target {
         match self {
             Target::Browser => crate::bake_types::Graph::Client,
             Target::ServerComponentsSsr => crate::bake_types::Graph::Ssr,
-            Target::BunMacro | Target::Bun | Target::Node | Target::BunBuiltins => {
-                crate::bake_types::Graph::Server
-            }
+            Target::BunMacro | Target::Bun | Target::Node => crate::bake_types::Graph::Server,
         }
     }
 
@@ -471,6 +467,9 @@ pub struct LoaderResult<'a> {
     pub path: Fs::Path<'a>,
     pub is_main: bool,
     pub specifier: &'a [u8],
+    /// NOTE: This is always `null` for non-js-like loaders since it's not
+    /// needed for them.
+    pub package_json: Option<&'a PackageJSON>,
 }
 
 pub fn get_loader_and_virtual_source<'a>(
@@ -555,7 +554,23 @@ pub fn get_loader_and_virtual_source<'a>(
         }
     }
 
-    let is_main = strings::eql_long(specifier, jsc_vm.main(), true);
+    let is_main = jsc_vm
+        .main()
+        .is_some_and(|main| strings::eql_long(specifier, main, true));
+
+    let dir = path.name().dir;
+    // NOTE: we cannot trust `path.isFile()` since it's not always correct
+    // NOTE: assume we may need a package.json when no loader is specified
+    let is_js_like = loader.map(|l| l.is_js_like()).unwrap_or(true);
+    let package_json: Option<&PackageJSON> = if is_js_like && bun_paths::is_absolute(dir) {
+        jsc_vm
+            .read_dir_info_package_json(dir)
+            // SAFETY: the vtable returns a pointer into the resolver's DirInfo
+            // cache owned by `jsc_vm.owner`, which outlives `'a`.
+            .map(|p| unsafe { &*p })
+    } else {
+        None
+    };
 
     Ok(LoaderResult {
         loader,
@@ -563,6 +578,7 @@ pub fn get_loader_and_virtual_source<'a>(
         path,
         is_main,
         specifier,
+        package_json,
     })
 }
 
@@ -812,7 +828,6 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
-    keeps_inputs: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
     let (input_keys, input_values): (&[Box<[u8]>], &[Box<[u8]>]) = match maybe_input_define {
@@ -935,23 +950,6 @@ pub(crate) fn defines_from_transform_options(
         drop.iter().copied(),
     );
 
-    let inputs: Vec<(Box<[u8]>, Box<[u8]>)> = if keeps_inputs {
-        (user_defines.keys().iter().zip(user_defines.values().iter()))
-            .map(|(key, value)| (Box::from(key.as_ref()), Box::from(value.as_ref())))
-            .chain((environment_defines.keys().iter().zip(environment_defines.values().iter())).filter_map(|(key, value)| match &value.value {
-                defines::DefineValue::EString(text) if text.is_utf8() => {
-                    let mut quoted = bun_core::MutableString::init_empty();
-                    bun_js_printer::quote_for_json(text.slice8(), &mut quoted, false).ok()?;
-                    Some((Box::from(key.as_ref()), quoted.take_slice().into_boxed_slice()))
-                }
-                _ => None,
-            }))
-            .chain(drop.iter().filter(|dropped| !dropped.is_empty() && **dropped != b"debugger").map(|dropped| (Box::from(*dropped), Box::default())))
-            .collect()
-    } else {
-        Vec::new()
-    };
-
     let mut define = defines::Define::init(
         Some(resolved_defines),
         Some(environment_defines),
@@ -959,7 +957,6 @@ pub(crate) fn defines_from_transform_options(
         omit_unused_global_calls,
     )?;
     define.user_hash = user_hash;
-    define.user_inputs = inputs;
     Ok(define)
 }
 
@@ -1196,204 +1193,14 @@ pub struct TypeChecked<'a, 'i> {
     /// The path of each JavaScript or TypeScript file that an entry point resolved to, or that a
     /// page imports.
     pub entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
-    /// Those of `entry_points` that are entry points of the bundle themselves, in their order: what the executable runs, and what it
-    /// starts workers with.
-    pub own_entry_points: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
-    /// What each import of those files has been resolved to: the path of the file, the specifier as it is written, and the path of
-    /// the file of the bundle it stands for.
-    pub imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], &'a [u8])>,
-    /// The imports that are not in the bundle: the path of the file and the specifier. An import of TypeScript that turned out to be
-    /// of types only, and what a barrel file re-exports and nothing asks it for.
-    pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
-    pub side_effect_free_files: &'i mut dyn Iterator<Item = &'a [u8]>,
-    pub lifted_commonjs: &'i mut dyn Iterator<Item = &'a [u8]>,
-    pub kinds: &'i mut dyn Iterator<Item = (&'a [u8], bool)>,
-    /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
-    /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
-    pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
-    /// The path and the text of each file of the bundle that is imported as a string.
-    pub texts: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
-    /// The path of each file that is copied next to the bundle, or into the executable, and what stands for its final path until that
-    /// is known (`unique_key_for_additional_file`).
-    pub assets: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
-    pub has_late_strings: bool,
-    pub has_native_addon: bool,
-    /// `Define::user_inputs`
-    pub defines: &'a [(Box<[u8]>, Box<[u8]>)],
-    /// The flags for which `feature()` of `bun:bundle` is true.
-    pub features: &'i mut dyn Iterator<Item = &'a [u8]>,
-    /// `BundleOptions::rewrite_jest_for_tests`
-    pub rewrite_jest_for_tests: bool,
-    pub ignore_dce_annotations: bool,
-    pub jsx_side_effects: bool,
-    pub minify_syntax: bool,
-    pub minifies_identifiers: bool,
-    /// `BundleOptions::preserve_source_paths`
-    pub preserve_source_paths: bool,
-    /// The path of each of `sources` in which the React Compiler has given a function a cache, and the module as it leaves it, as
-    /// JavaScript: the code that runs in the place of what is written. The types are those of what is written.
-    pub react_compiler_outputs: DeferredReactCompilerOutputs<'a>,
-    /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
-    pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], FileJsxOptions<'a>)>,
-    pub classes: &'i mut dyn Iterator<Item = (&'a [u8], FileClassOptions)>,
-    pub function_sources: Option<DeferredFunctionSources>,
-    pub function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart>,
-    pub explain: &'a [Box<[u8]>],
-    pub explain_to_log: bool,
-    pub rules: &'a [Box<[u8]>],
-    pub logs_type_errors: bool,
-    pub early_analysis: Option<EarlyAnalysis>,
-    pub early_sources: Option<(std::sync::Arc<EarlySources>, PrintedReactCompilerOutputs)>,
-    pub release_asts: &'i mut dyn FnMut(),
-}
-
-pub type PrintedReactCompilerOutputs = std::sync::mpsc::Receiver<(usize, Option<Box<[u8]>>)>;
-
-pub struct EarlySource {
-    pub path: Box<[u8]>,
-    pub text: std::borrow::Cow<'static, [u8]>,
-    pub loader: Loader,
-}
-
-impl PartialEq for EarlySource {
-    fn eq(&self, other: &EarlySource) -> bool {
-        self.path == other.path && self.loader == other.loader && (std::ptr::eq::<[u8]>(&raw const *self.text, &raw const *other.text) || self.text == other.text)
-    }
-}
-
-#[derive(PartialEq)]
-pub struct EarlySources {
-    pub has_deferred_sources: bool,
-    pub entry_points: Vec<Box<[u8]>>,
-    pub own_entry_points: Vec<Box<[u8]>>,
-    pub sources: Vec<EarlySource>,
-    pub constant_imports: Vec<[Box<[u8]>; 3]>,
-    pub deferred_imports: Vec<[Box<[u8]>; 2]>,
-    pub deferred_paths: Vec<Box<[u8]>>,
-    pub kinds: Vec<(Box<[u8]>, bool)>,
-    pub jsx: Vec<(Box<[u8]>, OwnedFileJsxOptions)>,
-    pub classes: Vec<(Box<[u8]>, FileClassOptions)>,
-    pub react_compiler_paths: Vec<Box<[u8]>>,
-}
-
-#[derive(PartialEq, Eq)]
-pub struct OwnedFileJsxOptions {
-    pub is_classic: bool,
-    pub factory: Box<[u8]>,
-    pub fragment: Box<[u8]>,
-    pub import_source: Box<[u8]>,
-    pub overrides_pragmas: bool,
-}
-
-impl OwnedFileJsxOptions {
-    pub fn borrowed(&self) -> FileJsxOptions<'_> {
-        FileJsxOptions { is_classic: self.is_classic, factory: &self.factory, fragment: &self.fragment, import_source: &self.import_source, overrides_pragmas: self.overrides_pragmas }
-    }
-}
-
-pub type EarlyAnalysis = Box<dyn core::any::Any + Send>;
-
-pub type FileFunctionSources = Vec<(Box<[u8]>, Box<[u8]>, Vec<bun_js_printer::FunctionSource>)>;
-
-pub struct DeferredFunctionSources {
-    pub printed: std::sync::mpsc::Receiver<FileFunctionSources>,
-    pub list_count: usize,
-}
-
-pub struct DeferredReactCompilerOutputs<'a> {
-    pub printed: std::sync::mpsc::Receiver<(usize, Option<Box<[u8]>>)>,
-    pub paths: Vec<&'a [u8]>,
-}
-
-impl<'a> DeferredReactCompilerOutputs<'a> {
-    pub fn none() -> Self {
-        Self { printed: std::sync::mpsc::channel().1, paths: Vec::new() }
-    }
-
-    pub fn wait(self) -> Vec<(&'a [u8], Box<[u8]>)> {
-        let mut outputs: Vec<Option<Box<[u8]>>> = self.paths.iter().map(|_| None).collect();
-        for _ in 0..outputs.len() {
-            let Ok((number, printed)) = self.printed.recv() else { break };
-            outputs[number] = printed;
-        }
-        self.paths.into_iter().zip(outputs).filter_map(|(path, printed)| Some((path, printed?))).collect()
-    }
-}
-
-/// `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource` as they hold for a file.
-#[derive(Clone, Copy)]
-pub struct FileJsxOptions<'a> {
-    pub is_classic: bool,
-    pub factory: &'a [u8],
-    pub fragment: &'a [u8],
-    pub import_source: &'a [u8],
-    pub overrides_pragmas: bool,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct FileClassOptions {
-    pub use_define_for_class_fields: bool,
-    pub experimental_decorators: bool,
-    pub emit_decorator_metadata: bool,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
 /// whether the build goes on.
 pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
-
-/// `BundleOptions::analyze`: the whole-program analysis that ahead-of-time compilation is driven by. `None`: there is nothing to say
-/// about the program.
-pub type Analyze =
-    fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<bun_ast::type_tags::ProgramFacts>;
-
-pub type DeclarationFiles = Vec<(Box<[u8]>, Box<[u8]>)>;
-
-pub struct Declarations {
-    pub files: DeclarationFiles,
-    pub module_types: Option<Box<dyn core::any::Any + Send>>,
-}
-
-pub type EmitDeclarations = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<Declarations>;
-
-pub struct WrittenJavaScript<'a> {
-    pub path: &'a [u8],
-    pub text: &'a [u8],
-    pub source_map: &'a [u8],
-    pub entry_point: Option<&'a [u8]>,
-}
-
-pub struct SoundFilesRequest<'a> {
-    pub cwd: &'a [u8],
-    pub tsconfig: Option<&'a [u8]>,
-    pub conditions: &'a [Box<[u8]>],
-    pub loaders: &'a LoaderHashTable,
-    pub outdir: &'a [u8],
-    pub written: &'a [WrittenJavaScript<'a>],
-    pub module_types: Option<&'a (dyn core::any::Any + Send)>,
-    pub rolls_up_declarations: bool,
-    pub keeps_modules_apart: bool,
-}
-
-pub struct SoundFile {
-    pub path: Box<[u8]>,
-    pub text: Box<[u8]>,
-}
-
-#[derive(Default)]
-pub struct TypedOutputs {
-    pub sound_files: Vec<SoundFile>,
-    pub declaration_files: DeclarationFiles,
-}
-
-pub const SKIPPED_SOUND_FILES: &str = "the typed JavaScript that --aot compiles a package from is left out";
-
-pub type WriteSoundFiles = fn(request: &SoundFilesRequest<'_>, log: &mut bun_ast::Log) -> TypedOutputs;
-
-pub type TypedPackage =
-    fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>, bool)>, Option<Box<str>>);
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1532,13 +1339,6 @@ pub struct BundleOptions<'a> {
     /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
     /// checker.
     pub type_check: Option<TypeCheck>,
-    pub emit_declarations: Option<EmitDeclarations>,
-    pub write_sound_files: Option<WriteSoundFiles>,
-    pub skips_sound_files_for: Option<&'static str>,
-    pub rolls_up_declarations: bool,
-    pub drops_source_maps: bool,
-    pub analyze: Option<Analyze>,
-    pub typed_package: Option<TypedPackage>,
     /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
     pub custom_conditions: Vec<Box<[u8]>>,
 
@@ -1553,14 +1353,6 @@ pub struct BundleOptions<'a> {
     pub bytecode_depth: u32,
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
-    pub aot: bool,
-    pub aot_explain: Vec<Box<[u8]>>,
-    pub aot_explain_to_log: bool,
-    pub aot_rules: Vec<Box<[u8]>>,
-    pub aot_logs_type_errors: bool,
-    pub modules_removed_by_trim: Vec<(Vec<u8>, Vec<u8>)>,
-    pub preserve_source_paths: bool,
-    pub compile_function_source: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
     pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
@@ -1631,32 +1423,9 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
     out
 }
 
-const EFFECTIVE_AOT_ENV_VARS: [&[u8]; 5] = [
-    b"BUN_AOT_TYPED_FILE",
-    b"BUN_AOT_TYPED_SNAPSHOT",
-    b"BUN_AOT_TYPE_ERROR_LOG",
-    b"BUN_AOT_TYPE_ERROR_LOG_FORMAT",
-    b"BUN_AOT_VERBOSE",
-];
-const AOT_ENV_VAR_PREFIXES: [&[u8]; 4] = [b"BUN_AOT", b"AOT_SWITCH_", b"AOT_X_", b"BUN_SOUND_"];
-
-pub(crate) fn ineffective_aot_env_vars() -> impl Iterator<Item = &'static [u8]> {
-    bun_sys::environ().iter().filter_map(|&entry| {
-        // SAFETY: environ entries are NUL-terminated C strings from the OS
-        let entry: &'static [u8] = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
-        let name = bun_core::strings::split(entry, b"=").next().unwrap_or(entry);
-        let is_aot_name = AOT_ENV_VAR_PREFIXES.iter().any(|family| name.starts_with(family));
-        (is_aot_name && !EFFECTIVE_AOT_ENV_VARS.contains(&name)).then_some(name)
-    })
-}
-
 impl<'a> BundleOptions<'a> {
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
-    }
-
-    pub fn compiles_ahead_of_time(&self) -> bool {
-        self.aot
     }
 
     pub(crate) fn set_production(&mut self, value: bool) {
@@ -1697,7 +1466,6 @@ impl<'a> BundleOptions<'a> {
                 dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
                 user_hash: self.define.user_hash,
-                user_inputs: self.define.user_inputs.clone(),
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1785,13 +1553,6 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             type_check: self.type_check,
-            emit_declarations: self.emit_declarations,
-            write_sound_files: self.write_sound_files,
-            skips_sound_files_for: self.skips_sound_files_for,
-            rolls_up_declarations: self.rolls_up_declarations,
-            drops_source_maps: self.drops_source_maps,
-            analyze: self.analyze,
-            typed_package: self.typed_package,
             custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
@@ -1799,14 +1560,6 @@ impl<'a> BundleOptions<'a> {
             bytecode: self.bytecode,
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
-            aot: self.aot,
-            aot_explain: self.aot_explain.clone(),
-            aot_explain_to_log: self.aot_explain_to_log,
-            aot_rules: self.aot_rules.clone(),
-            aot_logs_type_errors: self.aot_logs_type_errors,
-            modules_removed_by_trim: self.modules_removed_by_trim.clone(),
-            preserve_source_paths: self.preserve_source_paths,
-            compile_function_source: self.compile_function_source,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
@@ -1931,7 +1684,6 @@ impl<'a> BundleOptions<'a> {
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
-            self.analyze.is_some(),
             arena,
         )?;
         self.defines_loaded = true;
@@ -1986,13 +1738,6 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: true,
             module_preload: true,
             type_check: None,
-            emit_declarations: None,
-            write_sound_files: None,
-            skips_sound_files_for: None,
-            rolls_up_declarations: false,
-            drops_source_maps: false,
-            analyze: None,
-            typed_package: None,
             custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
@@ -2065,14 +1810,6 @@ impl<'a> BundleOptions<'a> {
             emit_dce_annotations: false,
             deprecated_namespace_object_setters: true,
             bytecode: false,
-            aot: false,
-            aot_explain: Vec::new(),
-            aot_explain_to_log: false,
-            aot_rules: Vec::new(),
-            aot_logs_type_errors: false,
-            modules_removed_by_trim: Vec::new(),
-            preserve_source_paths: false,
-            compile_function_source: true,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             bytecode_order: Vec::new(),
@@ -2158,7 +1895,7 @@ impl<'a> BundleOptions<'a> {
                 opts.import_path_format = ImportPathFormat::Relative;
                 opts.allow_runtime = false;
             }
-            Target::Bun | Target::BunBuiltins => {
+            Target::Bun => {
                 opts.import_path_format =
                     if opts.import_path_format == ImportPathFormat::AbsoluteUrl {
                         ImportPathFormat::AbsoluteUrl

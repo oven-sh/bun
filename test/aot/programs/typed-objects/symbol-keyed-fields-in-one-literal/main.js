@@ -1,10 +1,10 @@
 // A record made by one literal held to an interface whose members are keyed by imported symbols, then given a prototype; untyped code reaches the same fields by the same symbols.
-// IR+ shape [0-9]+ Record "Response"
-// IR= 9 make PutField
-// IR= 0 make (PutByVal|DefineField|GetModuleVariable)
-// IR= 0 finish GetByVal
-// IR= 0 end (GetByVal|PutByVal)
-// IR= 0 header (GetByVal|PutByVal)
+// IR+ ^layout L[0-9]+ name="Response" (?!.*isNeverAllocated=true)
+// IR= 1 make NewObject \(v[0-9]+(, v[0-9]+){8}\)
+// IR= 0 make (ElemSet|ElemDefine|GetModuleVariable)
+// IR= 0 finish ElemGet
+// IR= 0 end (ElemGet|ElemSet)
+// IR= 0 header (ElemGet|ElemSet)
 import { make, finish } from "./typed.ts";
 import { kHandle, kState, kCallback, kSocket } from "./symbols.ts";
 let total = 0;

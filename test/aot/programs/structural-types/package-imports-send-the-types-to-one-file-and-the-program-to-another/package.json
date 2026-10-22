@@ -1,0 +1,17 @@
+{
+  "name": "split-app",
+  "type": "module",
+  "imports": {
+    "#config": {
+      "types": "./types/config.d.ts",
+      "default": "./src/config.js"
+    },
+    "#shapes": {
+      "types": "./types/shapes.d.ts",
+      "bun": "./src/shapes-for-bun.js",
+      "default": "./src/shapes.js"
+    },
+    "#typed": "./src/typed.ts",
+    "#many/*": "./src/many/*.ts"
+  }
+}

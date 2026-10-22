@@ -879,13 +879,45 @@ type AotTests = "all" | "a tenth";
 const aotSources = [
   "src/aot/",
   "src/sema/",
-  "src/builtin_syntax/",
+  "src/builtin_sources/",
+  "src/bundler/aot/",
+  "src/trim/",
+  "src/exe_format/",
+  "src/codegen/aot-schema/",
+  "src/codegen/builtins/",
+  "src/codegen/generate-removable-features.ts",
+  "src/codegen/removable-entry-points.ts",
+  "src/options_types/aot_options.rs",
+  "src/options_types/trim.rs",
+  "src/resolver/compiled_program.rs",
+  "src/standalone_graph/compiled_program.rs",
+  "src/standalone_graph/executable_",
+  "src/crash_handler/compiled_frames.rs",
+  "src/sql_jsc/shared/RowDecoder.rs",
+  "src/runtime/api/compile_ahead_of_time.rs",
+  "src/runtime/api/removed_module_imports.rs",
+  "src/runtime/cli/check_command/compile_check.rs",
+  "src/runtime/cli/compile_",
+  "src/runtime/cli/run_compiled.rs",
+  "src/runtime/cli/startup_options",
+  "src/runtime/removed_feature.rs",
+  "src/jsc/compiled_program.rs",
+  "src/jsc/proven_return.rs",
+  "src/jsc/bindings/BunAOT",
+  "src/jsc/bindings/BunCompiled",
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/RemovableFeatures.h",
+  "src/jsc/bindings/RemovedFeature.cpp",
   "packages/bun-sound/",
   "test/aot/",
+  "scripts/build/aot",
+  "scripts/build/trim/",
   "scripts/build/deps/webkit.ts",
 ];
-const aotGroupsOfLinuxX64 = ["aot/collector-stress/", "aot/bad-time/", "aot/heat/", "aot/instruction-counts/"];
-const aotGroupsOfTheCompiler = [...aotGroupsOfLinuxX64, "aot/startup-scaling/", "aot/variant-"];
+// A git pathspec that names no directory or file matches nothing, so a file name prefix becomes a glob.
+const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
+const linuxX64AotGroups = ["aot/collector-stress/", "aot/bad-time/", "aot/instruction-counts/"];
+const fullRunAotGroups = [...linuxX64AotGroups, "aot/startup-scaling/", "aot/variant-"];
 
 // The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
 function git(...args: string[]): string | undefined {
@@ -894,10 +926,11 @@ function git(...args: string[]): string | undefined {
 }
 
 let aotChanges: boolean | undefined;
+// A diff that fails says nothing about the files, so it counts as a change.
 function hasAotChanges({ changedFiles }: PipelineOptions): boolean {
   return (aotChanges ??= changedFiles?.length
     ? changedFiles.some(file => aotSources.some(source => file.startsWith(source)))
-    : !!git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotSources)?.trim());
+    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotPathspecs)?.trim() !== "");
 }
 
 function getAotTests(platform: Platform, options: PipelineOptions): AotTests | undefined {
@@ -910,8 +943,8 @@ function getAotTests(platform: Platform, options: PipelineOptions): AotTests | u
 }
 
 function getAotExcludes({ arch, distro, profile }: Platform, aot: AotTests): string[] {
-  if (aot === "a tenth") return aotGroupsOfTheCompiler;
-  return arch === "x64" && distro === "debian" && !profile ? [] : aotGroupsOfLinuxX64;
+  if (aot === "a tenth") return fullRunAotGroups;
+  return arch === "x64" && distro === "debian" && !profile ? [] : linuxX64AotGroups;
 }
 
 let expectedDurations: Record<string, Record<string, unknown>> | undefined;
@@ -997,13 +1030,13 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      ...(aot === "a tenth" ? { AOT_PROGRAMS: "quick" } : {}),
       // Platform smoke check: runner.node.ts asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
       // `release` is only asserted where the lane pins an exact version:
       // darwin aarch64 "previous" and darwin x64 intentionally float across
       // macOS versions, and the windows "2019" label doesn't match the
       // kernel-style version the agent reports.
-      ...(aot === "a tenth" ? { AOT_PROGRAMS: "quick" } : {}),
       EXPECTED_PLATFORM_OS: platform.os,
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),

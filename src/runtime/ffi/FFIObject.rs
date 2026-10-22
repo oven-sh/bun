@@ -763,6 +763,7 @@ macro_rules! wrap_host_fn {
                 global: *mut JSGlobalObject,
                 callframe: *mut CallFrame,
             ) -> JSValue {
+                bun_removable_features::removable_host_function_definition!(Ffi, thunk);
                 // SAFETY: JSC guarantees both pointers are live for the host call.
                 let (global, callframe) = unsafe { (&*global, &*callframe) };
                 jsc::to_js_host_fn_result(global, $body(global, callframe))

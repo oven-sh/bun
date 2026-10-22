@@ -1,7 +1,4 @@
 // Untyped code, as a framework writes it: the construction stands in a helper, the Response in a private field that is read twice.
-// IR= 1 header CallBuiltin NewResponseFromResponse
-// IR= 1 replace CallBuiltin NewResponseFromResponse
-// IR= 0 throughAccessor CallBuiltin NewResponseFromResponse
 const createResponse = (body, init) => new Response(body, init);
 const log = [];
 class Context {

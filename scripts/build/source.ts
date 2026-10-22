@@ -18,11 +18,11 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { ar, cc, cxx, link, nasm, pch } from "./compile.ts";
+import { ar, cc, cxx, link, nasm, pch, type PrecompiledHeader } from "./compile.ts";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeSourceIdentity, fetchCliPath } from "./fetch-cli.ts";
-import { computeDepFlags, computeTargetLinkFlags } from "./flags.ts";
+import { computeDepFlags, computeTargetLinkFlags, safeStackFlags } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
@@ -174,6 +174,7 @@ export interface DirectSource {
   implicitInputs?: string[];
   /** Compile without the group's PCH (a TU whose flags differ from the PCH's). */
   noPch?: boolean;
+  pch?: string;
   /** "cxx": a `.c` file compiled as C++ (bmalloc_SOURCES' libpas files). */
   lang?: "cxx";
 }
@@ -197,6 +198,7 @@ export interface SourceGroup {
   cxxflags?: string[];
   /** Header to precompile for this group's C++ TUs (absolute or relative to srcDir), built with the group's C++ flags. */
   pch?: string;
+  chainedPch?: Array<{ header: string; base: string }>;
   /** Generated files every TU of the group waits for before its first compile. The depfiles track the exact set afterwards. Absolute. */
   orderOnly?: string[];
   /** false: the objects only feed `steps` executables that name this group; they are not part of bun's link. Default true. */
@@ -420,12 +422,11 @@ export interface CargoBuild {
  */
 export interface Provides {
   /**
-   * Library outputs to link. Paths relative to the dep's BUILD directory
-   * (or its libSubdir if set). May be bare names ("mimalloc" → libmimalloc.a)
-   * or exact paths ("CMakeFiles/mimalloc-obj.dir/src/static.c.o").
+   * Libraries of a `prebuilt` tarball to link: full file names, relative to
+   * the extracted directory.
    *
-   * Ignored for `direct` builds — emitDirect names the archive
-   * `lib<dep.name>` and returns that path itself.
+   * Ignored for every other source — emitDirect and emitCargo name what they
+   * produce and return those paths themselves.
    */
   libs: string[];
   /** Include directories. Paths relative to the dep's SOURCE directory. */
@@ -442,6 +443,12 @@ export interface Provides {
    * a single-file dep with no build system (picohttpparser: one .c file).
    */
   sources?: string[];
+  /**
+   * Other files of a prebuilt tarball that an edge of the graph reads,
+   * relative to the extracted directory. Implicit outputs of the fetch edge,
+   * like `libs`. Only for a `prebuilt` source.
+   */
+  files?: string[];
 }
 
 /**
@@ -480,6 +487,14 @@ export type DepName =
  */
 export interface Dependency {
   name: DepName;
+
+  /**
+   * The upstream release the pinned source is, e.g. "1.2.0". Update it with
+   * the commit. The list of libraries in a trimmable executable reports it;
+   * without one it reports the first 8 characters of the commit. An `in-tree`
+   * source has no commit, so it needs a release.
+   */
+  release?: string;
 
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
@@ -768,7 +783,7 @@ export function depSource(cfg: Config, dep: Dependency): Source {
 }
 
 /**
- * Resolve a dependency: emit ninja rules for fetch → configure → build,
+ * Resolve a dependency: emit ninja rules for fetch → build,
  * return absolute paths for linking.
  *
  * If the dep is disabled (enabled() returns false), returns null. Caller
@@ -796,6 +811,7 @@ export function resolveDep(
   if (source.kind === "prebuilt") {
     return emitPrebuilt(n, cfg, dep.name, source, provides);
   }
+  assert(provides.files === undefined, `${dep.name}: Provides.files is for a prebuilt source`);
 
   // Source directory. For in-tree deps (sqlite), this points into the bun
   // repo instead of vendor/. Local deps can override via `path` to point
@@ -1007,8 +1023,8 @@ function emitFetch(
  * Emit a prebuilt fetch rule. Returns a complete ResolvedDep — no further
  * build steps needed, the tarball IS the output.
  *
- * `provides.libs` and `provides.includes` are paths relative to the
- * extracted directory (`destDir` or the default `vendor/<name>/`).
+ * `provides.libs`, `provides.files` and `provides.includes` are paths relative
+ * to the extracted directory (`destDir` or the default `vendor/<name>/`).
  */
 function emitPrebuilt(
   n: Ninja,
@@ -1025,17 +1041,18 @@ function emitPrebuilt(
   // Libs: prebuilt tarballs ship full filenames — `provides.libs` entries
   // are taken as-is relative to destDir.
   const libs = provides.libs.map(lib => resolve(destDir, lib));
+  const files = (provides.files ?? []).map(f => resolve(destDir, f));
   const includes = provides.includes.map(inc => {
     if (isAbsolute(inc)) return inc;
     return inc === "." ? destDir : resolve(destDir, inc);
   });
 
-  // Outputs: stamp + all libs. Stamp is the explicit output; libs are
-  // implicit (so deleting them correctly retriggers fetch, and restat
+  // Outputs: stamp + all libs and files. Stamp is the explicit output; the
+  // rest are implicit (so deleting them correctly retriggers fetch, and restat
   // prunes downstream when fetch was a no-op).
   n.build({
     outputs: [stamp],
-    implicitOutputs: libs,
+    implicitOutputs: [...libs, ...files],
     rule: "dep_fetch_prebuilt",
     inputs: [],
     // Only fetch-cli.ts. download.ts has a lot of shared helpers — editing
@@ -1226,6 +1243,7 @@ interface EmitDirectInput {
  */
 function picFlags(cfg: Config, pic: boolean | undefined): string[] {
   if (pic || cfg.abi === "android") return cfg.windows ? [] : ["-fPIC"];
+  if (cfg.hardened) return ["-fPIE", "-DBUN_HARDENED=1", "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1"];
   return cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
 }
 
@@ -1287,7 +1305,14 @@ function emitDirect(
 
   const incFlags = (spec.includes ?? []).map(i => `-I${q(resolve(srcDir, i))}`);
   const defFlags = Object.entries(spec.defines ?? {}).map(([k, v]) => defineFlag(k, v));
-  const libFlags = [...baseFlags, ...picFlags(cfg, spec.pic), ...incFlags, ...defFlags, ...(spec.cflags ?? [])];
+  const libFlags = [
+    ...baseFlags,
+    ...picFlags(cfg, spec.pic),
+    ...incFlags,
+    ...defFlags,
+    ...(spec.cflags ?? []),
+    ...safeStackFlags(cfg, name),
+  ];
 
   // Sources must exist before compile attempts. sourceStamp (or the fetch
   // .ref) is order-only: we don't want every .o recompiling when the stamp
@@ -1432,6 +1457,16 @@ function emitDirect(
       g.pch === undefined
         ? undefined
         : pch(n, cfg, resolve(srcDir, g.pch), { flags: flags.cxx, orderOnlyInputs: [groupReady] });
+    const pchByHeader = new Map<string, PrecompiledHeader>();
+    if (g.pch !== undefined && groupPch !== undefined) pchByHeader.set(g.pch, groupPch);
+    for (const { header, base } of g.chainedPch ?? []) {
+      const basePch = pchByHeader.get(base);
+      assert(basePch !== undefined, `${name}: ${header} builds on ${base}, which ${g.name} has not precompiled before it`);
+      pchByHeader.set(
+        header,
+        pch(n, cfg, resolve(srcDir, header), { flags: flags.cxx, orderOnlyInputs: [groupReady], base: basePch }),
+      );
+    }
 
     const groupObjects = g.sources.map(s => {
       const src = typeof s === "string" ? { path: s } : s;
@@ -1445,10 +1480,16 @@ function emitDirect(
           flags: asCxx ? ["-x", "c++", ...flags.cxx, ...extra] : [...flags.c, ...extra],
         });
       }
+      const sourcePch = src.noPch ? undefined : src.pch === undefined ? groupPch : pchByHeader.get(src.pch);
+      assert(src.pch === undefined || sourcePch !== undefined, `${name}: ${src.path} names a PCH ${g.name} does not have`);
       return cxx(n, cfg, abs, {
         ...opts,
         flags: [...flags.cxx, ...extra],
-        ...(groupPch !== undefined && !src.noPch && { pch: groupPch.pch, pchHeader: groupPch.wrapperHeader }),
+        ...(sourcePch !== undefined && {
+          pch: sourcePch.pch,
+          pchHeader: sourcePch.wrapperHeader,
+          pchBases: sourcePch.bases,
+        }),
       });
     });
     objectsByGroup.set(g.name, groupObjects);

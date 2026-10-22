@@ -1,3 +1,4 @@
+import { validate } from "bun:bundle";
 type Row = { id: number; name: string; tags: string[]; inner: { a: number; b?: string } };
 
 export function rows(count: number): string {
@@ -9,6 +10,6 @@ export function rows(count: number): string {
 export function work(text: string): number {
   const parsed = JSON.parse<Row[]>(text);
   const written = JSON.stringify(parsed);
-  const validated = Bun.validate<Row[]>(parsed);
+  const validated = validate<Row[]>(parsed);
   return written.length === text.length ? validated.length : -1;
 }

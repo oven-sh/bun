@@ -1,4 +1,5 @@
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSCookieMap.h"
 
 #include "Cookie.h"
@@ -96,6 +97,7 @@ using JSCookieMapDOMConstructor = JSDOMConstructor<JSCookieMap>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieMapDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieMapDOMConstructor>(callFrame->jsCallee());
@@ -167,7 +169,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            if (object->type() == JSC::ObjectType)
+            if (object->type() == JSC::CompiledObjectType)
                 object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
             else
                 JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
@@ -270,7 +272,7 @@ JSObject* JSCookieMap::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSCookieMap>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCookieMap::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCookieMap::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCookieMapDOMConstructor, DOMConstructorID::CookieMap>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -647,12 +649,12 @@ void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<CookieMap>&& impl)
 {
     return createWrapper<CookieMap>(globalObject, WTF::move(impl));
 }
 
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap& impl)
+JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, CookieMap& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }

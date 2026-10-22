@@ -172,11 +172,6 @@ bun build <entry points>
   Type check the entry points and everything they import. Nothing is bundled if there are type errors
 </ParamField>
 
-<ParamField path="--dts" type="boolean">
-  Write TypeScript declaration files (<code>.d.ts</code>) to <code>--outdir</code>, and each output file with its types
-  kept, for <code>--aot</code>. Implies <code>--check</code>
-</ParamField>
-
 <ParamField path="--watch" type="boolean">
   Rebuild automatically when files change
 </ParamField>
@@ -205,35 +200,55 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--disallow-code-generation-from-strings" type="string">
-  In the standalone executable, <code>eval()</code> and <code>new Function()</code> throw an <code>EvalError</code>, as
-  with the flag of the same name in Node.js. <code>=strict</code> refuses every way a string becomes code. Requires{" "}
-  <code>--compile</code>
+  In the standalone executable, <code>eval()</code> and <code>new Function()</code> throw an <code>EvalError</code>,
+  like Node.js's flag of the same name. <code>=strict</code> also blocks every other way to run code from a string.
+  Requires <code>--compile</code>
 </ParamField>
 
 <ParamField path="--aot" type="boolean">
-  Compile JavaScript to machine code when the executable is built. Requires <code>--compile</code>. Implies{" "}
-  <code>--bytecode</code> and <code>--format=esm</code>
+  Compile JavaScript and TypeScript to machine code at build time. Requires <code>--compile</code>. Implies{" "}
+  <code>--format=esm</code>
 </ParamField>
 
-<ParamField path="--aot-type-errors" type="string" default="throw">
-  With <code>--aot</code>: what the executable does when a value does not match its TypeScript type: <code>throw</code>,
-  or <code>log</code> to write a line to stderr and continue
+<ParamField path="--explain" type="string">
+  With <code>--aot</code>: list the code that compiled to a slow path, worst first, with a fix for each.{" "}
+  <code>--explain=json</code> prints one object per line. Other reports: <code>guards</code>, <code>guards-json</code>,{" "}
+  <code>trim</code>, <code>missed-optimizations</code>, <code>allocations</code>
 </ParamField>
 
-<ParamField path="--aot-explain" type="string">
-  With <code>--aot</code>: list what keeps the compiler from using your types, the most expensive cause first, with a
-  fix for each. <code>--aot-explain=json</code> prints one object per line. <code>--aot-explain=throws</code> lists
-  every type check that can fail when the program runs
+<ParamField path="--aot-log-type-mismatches" type="boolean">
+  With <code>--aot</code>: the executable logs every value that doesn't match its declared type
 </ParamField>
 
 <ParamField path="--aot-huge-heap" type="boolean">
-  With <code>--aot</code>: let each thread have more than 32 GB of objects. The executable uses more memory and runs
-  slower
+  With <code>--aot</code>: remove the 32 GB heap limit per thread. The executable uses more memory and runs slower
 </ParamField>
 
 <ParamField path="--no-compile-function-source" type="boolean">
-  With <code>--aot</code>: leave out the source text of functions. <code>Function.prototype.toString()</code> then
-  returns <code>[native code]</code> for them
+  With <code>--aot</code>: don't embed function source code. <code>fn.toString()</code> returns{" "}
+  <code>[native code]</code>, and the executable only runs code that was compiled into it
+</ParamField>
+
+<ParamField path="--compile-inspector" type="boolean">
+  With <code>--aot</code>: let a debugger attach to the executable. Makes it larger and slower
+</ParamField>
+
+<ParamField path="--compile-in-place" type="boolean">
+  With <code>--aot</code>: keep modules at their paths on disk and load anything that wasn't compiled from there. The
+  executable only runs on the machine that built it
+</ParamField>
+
+<ParamField path="--obfuscate" type="boolean">
+  With <code>--aot</code>: strip function names and source locations from the executable and write them to{" "}
+  <code>&lt;outfile&gt;.map</code>
+</ParamField>
+
+<ParamField path="--trim" type="boolean">
+  Remove the Bun and Node.js APIs your code never calls from the executable. Requires <code>--compile</code>
+</ParamField>
+
+<ParamField path="--trim-locales" type="string">
+  With <code>--trim</code>: keep only these locales, such as <code>en,de-AT</code>
 </ParamField>
 
 <ParamField path="--compile-jit-policy" type="number" default="1">

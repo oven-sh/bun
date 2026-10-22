@@ -698,7 +698,7 @@ export declare const enum CE { A = 10, B = 20 }
 export interface Shape { a: number }
 `;
 
-const differs = "The code passes a value that does not match the declaration file. --aot checks a value where it enters a declared type and throws a TypeError, or reports it at build time where the mismatch is certain; plain Bun carries on with the wrong value. A `const enum` in a declaration file is replaced by its values, as tsc does.";
+const differs = "A value that does not match the declaration file is carried on with, as under plain Bun: nothing throws on a type. What the build reports: a type error of the importer itself, and an import from an ES module of a name that only the declaration file has, which `bun run` reports when the file is loaded.";
 
 export const cases: Case[] = (
   [
@@ -707,6 +707,8 @@ export const cases: Case[] = (
   ] as const
 ).map(([name, from, code, packageJson]) => ({
   name,
+  // A name that only the declaration file has is a SyntaxError under `bun run` too.
+  fails: true as const,
   differs,
   files: pkg(from, { "index.js": code, "index.d.ts": declarations }, { main: "index.js", types: "index.d.ts", ...packageJson }),
   importers: {

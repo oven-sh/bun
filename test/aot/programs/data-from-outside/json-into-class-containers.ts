@@ -1,12 +1,12 @@
-// TypeScript's classes are structural: plain data with all the members of a class is of its type. Parsed data that is held to an array, a Map, a Set, a Promise, a tuple or a record OF such a class is read as in plain Bun, as data held to the class itself is. Each row has a class of its own, because a class that admits such objects does so in the whole program. A class with a private or protected member or a #name is compared by its declaration: only its own instances are of its type, and it stays as it is.
-// IR+ ^shape .*"InAnnotatedArray".* accepts-untyped
-// IR+ ^shape .*"InResultArray".* accepts-untyped
-// IR+ ^shape .*"InCastArrayPassedOn".* accepts-untyped
-// IR+ ^shape .*"InCastArrayStored".* accepts-untyped
-// IR+ ^shape .*"InFieldOfAClass".* accepts-untyped
-// IR- ^shape .*"NeverGiven".* accepts-untyped
-// IR- ^shape .*"WithAPrivateField".* accepts-untyped
-// IR- ^shape .*"WithAPrivateName".* accepts-untyped
+// TypeScript's classes are structural: plain data with all the members of a class is of its type. Parsed data that is held to an array, a Map, a Set, a Promise, a tuple or a record OF such a class is read as in plain Bun, as data held to the class itself is. Each row has a class of its own, so that what enters in one row shows in the types of that class alone. A class with a private or protected member or a #name is compared by its declaration: only its own instances are of its type, and it stays as it is.
+// IR+ ^layout (L\d+) .*name="InAnnotatedArray" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="InResultArray" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="InCastArrayPassedOn" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="InCastArrayStored" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="InFieldOfAClass" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 class InAnnotatedArray { field: string = "made"; }
 class InResultArray { field: string = "made"; }
 class InCastArrayPassedOn { field: string = "made"; }

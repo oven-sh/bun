@@ -287,7 +287,7 @@ JSObject* JSErrorEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSErrorEvent>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSErrorEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSErrorEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSErrorEventDOMConstructor, DOMConstructorID::ErrorEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

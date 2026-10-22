@@ -3,7 +3,7 @@
     "output": "A,late,make\nA fn:A\nmake fn:make\nlate \"late\"\n"
   },
   "effects-only.x.default.mjs": {
-    "errors": "error: <folder>/effects-only.x.default.mjs:7: --aot does not support an import of a name that the module does not export\nerror: <folder>/effects-only.x.default.mjs:8: --aot does not support an import of a name that the module does not export\n"
+    "errors": "error: TS100200: No matching export in \"<folder>/node_modules/s_effects_only/index.js\" for import \"default\"\n"
   },
   "lazy-getters.x.default.mjs": "compiled",
   "lazy-getters.x.later.mjs": "compiled",

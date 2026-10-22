@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { canTrim } from "../bundler/compile-trim-features";
+import { built, slot, spawned, unsupported } from "./run-programs";
 
-const registers = `Bun.plugin({
+type Completeness = "Complete" | "Incomplete";
+
+const registerPlugin = `Bun.plugin({
   name: "late",
   setup(build) {
     build.onResolve({ filter: /^late:/ }, args => ({ path: args.path, namespace: "late" }));
@@ -11,47 +14,60 @@ const registers = `Bun.plugin({
   },
 });
 `;
-const programs = {
-  "named alone, the world is closed and the call throws an Error that the program catches": {
-    source: `let answer;\ntry {\n${registers}answer = "registered";\n} catch (error) {\n  answer = error.name + " " + error.code;\n}\nconsole.log("answer:", answer);\n`,
-    world: "closed",
-    whole: "answer: registered",
-    trimmed: "answer: Error ERR_FEATURE_REMOVED",
+const programs: Record<string, { source: string; completeness: Completeness; untrimmed: string; trimmed: string }> = {
+  "Bun.plugin alone: the plugin is registered, like in the untrimmed executable": {
+    source: `let answer;\ntry {\n${registerPlugin}answer = "registered";\n} catch (error) {\n  answer = error.name + " " + error.code;\n}\nconsole.log("answer:", answer);\n`,
+    completeness: "Incomplete",
+    untrimmed: "answer: registered",
+    trimmed: "answer: registered",
   },
-  "beside an import() of a computed name, the world is open and the plugin works as in the whole executable": {
-    source: `${registers}const { value } = await import(["late", "module"].join(":"));\nconsole.log("answer:", value);\n`,
-    world: "open",
-    whole: "answer: 2,4,6",
+  "Bun.plugin with import() of a computed specifier: the plugin loads the module": {
+    source: `${registerPlugin}const { value } = await import(["late", "module"].join(":"));\nconsole.log("answer:", value);\n`,
+    completeness: "Incomplete",
+    untrimmed: "answer: 2,4,6",
     trimmed: "answer: 2,4,6",
   },
 };
 
-async function run(cmd: string[], cwd: string) {
-  await using child = Bun.spawn({ cmd, cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe", timeout: 90_000, killSignal: "SIGKILL" });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  return { stdout, stderr, exitCode };
+const env = { ...bunEnv, NO_COLOR: "1" };
+
+function findCompleteness(report: string): Completeness | undefined {
+  if (/^aot: trim: blocked by /m.test(report)) return "Incomplete";
+  return /^aot: trim: the compiler can see every API this program uses$/m.test(report) ? "Complete" : undefined;
 }
 
-using probe = tempDir("bun-plugin-probe", { "hello.ts": "console.log(1);" });
-const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stderr: "pipe" });
-
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)("Bun.plugin in a trimmed executable", () => {
-  for (const [name, { source, world, whole, trimmed }] of Object.entries(programs)) {
+(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)("Bun.plugin in a trimmed executable", () => {
+  for (const [name, { source, completeness, untrimmed, trimmed }] of Object.entries(programs)) {
     test(
       name,
       () =>
         slot(async () => {
           using dir = tempDir("bun-plugin", { "program.mjs": source });
+          const folder = String(dir);
           const found: Record<string, unknown> = {};
-          for (const [kind, flags] of [["whole", []], ["trimmed", ["--compile-trim-runtime"]]] as const) {
-            const build = await run([bunExe(), "build", "--compile", "--aot", "--aot-explain=runtime-use", ...flags, "program.mjs", "--outfile", kind], String(dir));
-            expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
-            const ran = await run([join(String(dir), kind)], String(dir));
-            found[kind] = { world: /^aot: runtime use: (closed|open)\b/m.exec(build.stderr)?.[1], answer: ran.stdout.trim(), exitCode: ran.exitCode };
+          for (const [kind, flags] of [["untrimmed", []], ["trimmed", ["--trim"]]] as const) {
+            const build = await spawned([bunExe(), "build", "--compile", "--aot", "--explain=trim", ...flags, "program.mjs", "--outfile", kind], folder, env);
+            built(build);
+            const ran = await spawned([join(folder, kind)], folder, env);
+            found[kind] = { completeness: findCompleteness(build.stderr), answer: ran.stdout.trim(), exitCode: ran.exitCode };
           }
-          expect(found).toEqual({ whole: { world, answer: whole, exitCode: 0 }, trimmed: { world, answer: trimmed, exitCode: 0 } });
+          expect(found).toEqual({ untrimmed: { completeness, answer: untrimmed, exitCode: 0 }, trimmed: { completeness, answer: trimmed, exitCode: 0 } });
         }),
       600_000,
     );
   }
+
+  test(
+    "code that onLoad yields, in an executable whose transpiler was taken out by force: an error that the program catches",
+    () =>
+      slot(async () => {
+        const source = `${registerPlugin}let answer;\ntry {\n  answer = (await import(["late", "module"].join(":"))).value;\n} catch (error) {\n  answer = error.name + " " + error.code;\n}\nconsole.log("answer:", answer);\n`;
+        using dir = tempDir("bun-plugin", { "program.mjs": source });
+        const folder = String(dir);
+        built(await spawned([bunExe(), "build", "--compile", "--aot", "--trim", "--trim-without", "RuntimeTranspiler", "program.mjs", "--outfile", "forced"], folder, env));
+        const ran = await spawned([join(folder, "forced")], folder, env);
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ stdout: "answer: Error ERR_FEATURE_REMOVED\n", exitCode: 0, signal: null });
+      }),
+    600_000,
+  );
 });

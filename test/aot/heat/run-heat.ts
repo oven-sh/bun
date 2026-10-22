@@ -5,28 +5,28 @@
 //
 // All programs take an hour of one processor with every function hot and three quarters of an hour with every function cold, so each is dealt out to eight files. ../shell/tools.ts says what it
 // needs. A sanitizer or debug build takes a tenth of each file's programs.
-//   JSC=.. SEMA=.. PLAIN=.. python3 test/aot/shell/heat.py hot calls/members-called-by-signature     one program
+//   JSC=.. TESTAOT=.. FRONT_END=.. PLAIN=.. python3 test/aot/shell/heat.py hot calls/members-called-by-signature     one program
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { isASAN, isDebug } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { unsupported } from "../run-programs";
-import { jsc, python, sema, whyNoScriptRuns } from "../shell/tools";
+import { partInShare, unsupported } from "../run-programs";
+import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 
-export function heat(which: "hot" | "cold" | "neither", part: number, parts: number) {
-  if (whyNoScriptRuns && !unsupported) console.error(`SKIPPED: test/aot/heat/${which}-${part}.test.ts: ${whyNoScriptRuns}`);
+export function heat(heatOverride: "hot" | "cold" | "neither", part: number, parts: number) {
+  if (scriptSkipReason && !unsupported) console.error(`SKIPPED: test/aot/heat/${heatOverride}-${part}.test.ts: ${scriptSkipReason}`);
 
-  test.skipIf(!!whyNoScriptRuns)(
-    `the programs answer the same with every function ${which} (part ${part} of ${parts})`,
+  test.skipIf(!!scriptSkipReason)(
+    `the programs answer the same with every function ${heatOverride} (part ${part} of ${parts})`,
     async () => {
-      await using forced = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", `${part}/${isASAN || isDebug ? parts * 10 : parts}`, which, "all"],
-        env: { ...bunEnv, JSC: jsc!, SEMA: sema!, PLAIN: bunExe() },
+      await using script = Bun.spawn({
+        cmd: [python!, join(import.meta.dir, "..", "shell", "heat.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", isASAN || isDebug ? `${part}/${parts * 10}` : partInShare(part, parts, 10), heatOverride, "all"],
+        env: scriptEnvironment(),
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([forced.stdout.text(), forced.stderr.text(), forced.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs answer the same with every function (hot|cold|neither), [0-9]+ do not$/);

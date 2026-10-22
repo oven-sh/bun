@@ -1,4 +1,4 @@
-// IR- Cast v\d+ As integer
+// IR- : (i32|int\S*) = Claim v\d+(?!.* isProven)
 import type { int32 } from "bun";
 
 function countUp(bytes: Uint8Array, from: int32, to: int32): int32 {

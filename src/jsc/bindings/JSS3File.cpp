@@ -137,7 +137,7 @@ JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
     return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
 }
 
-NEVER_INLINE Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSS3File::createStructure(globalObject);
 }

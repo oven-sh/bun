@@ -1,16 +1,4 @@
-// A header name that is a constant is looked up when the program is built: the number of a common name in any case, 254 for a token that is not common, 255 for what is no token or no constant.
-// IR= 1 contentType = Integer 25$
-// IR= 1 contentTypeInCapitals = Integer 25$
-// IR= 1 firstName = Integer 0$
-// IR= 1 lastName = Integer 93$
-// IR= 1 setCookie = Integer 75$
-// IR= 1 uncommon = Integer 254$
-// IR= 1 everyTokenCharacter = Integer 254$
-// IR= 1 withSpace = Integer 255$
-// IR= 1 withColon = Integer 255$
-// IR= 1 empty = Integer 255$
-// IR= 1 notASCII = Integer 255$
-// IR= 1 variable = Integer 255$
+// `x.headers.get(name)` with a constant name: well-known names in lower case and in capitals, set-cookie, another valid name, every character a name may have, invalid names, and a variable beside them. For every kind of holder, before and after its Headers object is changed.
 export function contentType(holder) {
   return holder.headers.get("content-type");
 }

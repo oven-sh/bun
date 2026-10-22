@@ -1,0 +1,84 @@
+number tags, 20 levels: accepted, accepted, accepted, refused, refused
+number tags, 40 levels: accepted, accepted, accepted, refused, refused
+number tags, 200 levels: accepted, accepted, accepted, refused, refused
+number tags, 2000 levels: accepted, accepted, accepted, refused, refused
+true or false, 20 levels: accepted, accepted, accepted, refused, refused
+true or false, 40 levels: accepted, accepted, accepted, refused, refused
+true or false, 200 levels: accepted, accepted, accepted, refused, refused
+true or false, 2000 levels: accepted, accepted, accepted, refused, refused
+text tags, 20 levels: accepted, accepted, accepted, refused, refused
+text tags, 40 levels: accepted, accepted, accepted, refused, refused
+text tags, 200 levels: accepted, accepted, accepted, refused, refused
+text tags, 2000 levels: accepted, accepted, accepted, refused, refused
+a number or a string, 20 levels: accepted, accepted, accepted, refused, refused
+a number or a string, 40 levels: accepted, accepted, accepted, refused, refused
+a number or a string, 200 levels: accepted, accepted, accepted, refused, refused
+a number or a string, 2000 levels: accepted, accepted, accepted, refused, refused
+four kinds, 20 levels: accepted, accepted, accepted, refused, refused
+four kinds, 40 levels: accepted, accepted, accepted, refused, refused
+four kinds, 200 levels: accepted, accepted, accepted, refused, refused
+four kinds, 2000 levels: accepted, accepted, accepted, refused, refused
+a number tag one level below, 20 levels: accepted, accepted, accepted, refused, refused
+a number tag one level below, 40 levels: accepted, accepted, accepted, refused, refused
+a number tag one level below, 200 levels: accepted, accepted, accepted, refused, refused
+a number tag one level below, 2000 levels: accepted, accepted, accepted, refused, refused
+a text tag one level below, 20 levels: accepted, accepted, accepted, refused, refused
+a text tag one level below, 40 levels: accepted, accepted, accepted, refused, refused
+a text tag one level below, 200 levels: accepted, accepted, accepted, refused, refused
+a text tag one level below, 2000 levels: accepted, accepted, accepted, refused, refused
+lists of numbers or of strings, 20 levels: accepted, accepted, accepted, refused, refused
+lists of numbers or of strings, 40 levels: accepted, accepted, accepted, refused, refused
+lists of numbers or of strings, 200 levels: accepted, accepted, accepted, refused, refused
+lists of numbers or of strings, 2000 levels: accepted, accepted, accepted, refused, refused
+tuples, 20 levels: accepted, accepted, accepted, refused, refused
+tuples, 40 levels: accepted, accepted, accepted, refused, refused
+tuples, 200 levels: accepted, accepted, accepted, refused, refused
+tuples, 2000 levels: accepted, accepted, accepted, refused, refused
+arrays, 20 levels: accepted, accepted, accepted, refused, refused
+arrays, 40 levels: accepted, accepted, accepted, refused, refused
+arrays, 200 levels: accepted, accepted, accepted, refused, refused
+arrays, 2000 levels: accepted, accepted, accepted, refused, refused
+a dictionary of a union, 20 levels: accepted, accepted, accepted, refused, refused
+a dictionary of a union, 40 levels: accepted, accepted, accepted, refused, refused
+a dictionary of a union, 200 levels: accepted, accepted, accepted, refused, refused
+a dictionary of a union, 2000 levels: accepted, accepted, accepted, refused, refused
+optional members only, 20 levels: accepted, accepted, accepted, refused, refused
+optional members only, 40 levels: accepted, accepted, accepted, refused, refused
+optional members only, 200 levels: accepted, accepted, accepted, refused, refused
+optional members only, 2000 levels: accepted, accepted, accepted, refused, refused
+other names, 20 levels: accepted, accepted, accepted, refused, refused
+other names, 40 levels: accepted, accepted, accepted, refused, refused
+other names, 200 levels: accepted, accepted, accepted, refused, refused
+other names, 2000 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, null, 20 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, null, 40 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, null, 200 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, null, 2000 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a text, 20 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a text, 40 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a text, 200 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a text, 2000 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a number, 20 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a number, 40 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a number, 200 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, a number, 2000 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, false, 20 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, false, 40 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, false, 200 levels: accepted, accepted, accepted, refused, refused
+tags of four kinds, false, 2000 levels: accepted, accepted, accepted, refused, refused
+a text or null, 20 levels: accepted, accepted, accepted, refused, refused
+a text or null, 40 levels: accepted, accepted, accepted, refused, refused
+a text or null, 200 levels: accepted, accepted, accepted, refused, refused
+a text or null, 2000 levels: accepted, accepted, accepted, refused, refused
+two nested members, a text or null, 20 levels: accepted, accepted, accepted, refused, refused
+two nested members, a text or null, 40 levels: accepted, accepted, accepted, refused, refused
+two nested members, a text or null, 200 levels: accepted, accepted, accepted, refused, refused
+two nested members, a text or null, 2000 levels: accepted, accepted, accepted, refused, refused
+two nested members, 20 levels: accepted, accepted, accepted, refused, refused
+two nested members, 40 levels: accepted, accepted, accepted, refused, refused
+two nested members, 200 levels: accepted, accepted, accepted, refused, refused
+two nested members, 2000 levels: accepted, accepted, accepted, refused, refused
+a full tree of 2 levels: accepted, accepted, accepted, accepted, accepted
+a full tree of 6 levels: accepted, accepted, accepted, accepted, accepted
+a full tree of 10 levels: accepted, accepted, accepted, accepted, accepted
+a full tree of 14 levels: accepted, accepted, accepted, accepted, accepted

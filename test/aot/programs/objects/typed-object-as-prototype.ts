@@ -14,7 +14,7 @@ console.log(q.x, q.y, q instanceof Point, p.sum())
 const many: unknown[] = []
 for (let i = 0; i < 20000; i++) many.push(Object.create({ i }))
 console.log((many[19999] as any).i)
-// The prototype of a compiled object is not changed where JavaScript refuses it too. Where JavaScript changes it: type-rules/typed-object-prototype-immutable.
+// The prototype of a compiled object is not changed where JavaScript refuses it too. Where JavaScript changes it: type-rules/typed-object-prototype-changes.
 const parent = { inherited: "yes", hello() { return "hi " + (this as any).a } }
 try { Object.setPrototypeOf(parent, Object.create(parent)); console.log("no cycle found") } catch (e) { console.log((e as Error).name) }
 const sealed = Object.preventExtensions({ b: 2 })

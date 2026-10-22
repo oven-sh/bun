@@ -1,0 +1,25 @@
+undeclared member first: accepted {"x":0,"a":1,"d":1}
+undeclared member last, then white space: accepted {"a":1,"x":0,"d":1}
+undeclared members everywhere: accepted {"x":0,"a":1,"y":[1],"b":2,"z":null}
+undeclared member, then a trailing comma: refused SyntaxError with no issues
+first of two members has another type: accepted {"x":1,"d":1}
+last of two members has another type: accepted {"x":"s"}
+only member has another type: accepted {"x":"s"}
+same, keys out of order: accepted {"d":2,"x":1}
+same, one level down: accepted {"in":{"x":1,"d":1}}
+dictionary key again: accepted {"a":1}
+dictionary key once: accepted {"a":"s","d":1}
+key under an index signature again: accepted {"k":1,"q":2}
+default below its minimum: refused TypeError with 1 issues
+same on the generic path: refused TypeError with 1 issues
+null for a string: refused TypeError with 1 issues
+null for an object: refused TypeError with 1 issues
+string for a number: refused TypeError with 1 issues
+defaults that fit: accepted {"port":80,"host":"localhost"}
+defaults after the keys of the text: accepted {"more":1,"host":"h","port":80}
+default in an arm of a member: accepted {"z":1}
+refused default, then another arm: accepted {}
+optional members out of order: accepted {"id":1,"email":"e","name":"n"}
+every member out of order: accepted {"email":"e","more":[],"name":"n","id":1}
+strict: accepted {"id":1} refused TypeError with 1 issues
+keys out of order at every level: 65

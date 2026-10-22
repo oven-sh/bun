@@ -2,7 +2,7 @@
 // order, with the plain attributes; where the storage of the object has to grow, what was there stays; and an object whose storage holds
 // more than properties (an array its elements, a typed array its buffer) keeps that too.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTTypedDefineByKey") > 0; }
+function counted() { return count("operationAOTDefineField") > 0; }
 function show(value) { return typeof value === "function" ? "function" : typeof value === "symbol" ? String(value) : value === undefined ? "undefined" : JSON.stringify(value); }
 function describe(o) {
   var parts = [];
@@ -73,7 +73,7 @@ attempt("keys that are objects", function () { var asked = []; var key = { toStr
 var Ten = withFields(Promise, s, 10), Twenty = withFields(Plain, t, 20), made = [];
 // The table is full of what the classes above left there, and a full set takes a newcomer now and then.
 for (var i = 0; i < 60; i++) { new Ten(function () {}); new Twenty; }
-var visits = count("operationAOTTypedDefineByKey");
+var visits = count("operationAOTDefineField");
 // Some 1,800 of these 9,000 definitions make or double the storage. The operation is visited where the allocator has nothing at hand.
 for (var i = 0; i < 300; i++) { made.push(new Ten(function () {})); made.push(new Twenty); }
-console.log(made.length, made[598][s[9]], made[599].t19, !counted() || count("operationAOTTypedDefineByKey") - visits < 100);
+console.log(made.length, made[598][s[9]], made[599].t19, !counted() || count("operationAOTDefineField") - visits < 100);

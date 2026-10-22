@@ -1,13 +1,13 @@
 // A TypeScript `namespace` that is used as a value is a real object: `this` in its functions, uses before its statement has run, nested and merged namespaces.
 declare const console: any;
 function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name); } }
-line("61: ahead of the statement", () => { Late.f(); return "ran"; });
-line("ahead: a variable", () => Late.v);
-line("ahead: nested", () => Late.Inner.g());
+line("before the statement: a function", () => { Late.f(); return "ran"; });
+line("before the statement: a variable", () => Late.v);
+line("before the statement: nested", () => Late.Inner.g());
 namespace Late { export function f() { return 1; } export const v = 2; export namespace Inner { export function g() { return 3; } } }
-line("behind the statement", () => [Late.f(), Late.v, Late.Inner.g()]);
+line("after the statement", () => [Late.f(), Late.v, Late.Inner.g()]);
 namespace N { export function g(this: unknown) { return typeof this; } export function self(this: unknown) { return this === N; } export const arrow = () => 5; export let count = 0; export function bump() { return ++count; } }
-line("60: this", () => N.g());
+line("this", () => N.g());
 line("this is the namespace", () => N.self());
 line("detached", () => { const g = N.g; return g(); });
 line("by key", () => (N as any)["g"]());
@@ -25,5 +25,5 @@ class Cl { static s(this: unknown) { return this === Cl; } }
 namespace Cl { export function member(this: unknown) { return this === Cl; } }
 line("with a class", () => [Cl.s(), Cl.member()]);
 namespace Unused { export function never() { return 1; } }
-line("keys", () => [Object.keys(N).sort(), Object.keys(Outer), Object.keys(Merged).sort()]);
+line("keys", () => [Object.keys(Late), Object.keys(N), Object.keys(Outer), Object.keys(Merged), Object.keys(Fn), Object.keys(Cl)]);
 line("stored to from outside", () => { (N as any).g = function () { return "replaced"; }; return N.g(); });

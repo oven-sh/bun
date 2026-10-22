@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// A value that satisfies its type is never refused: each of these programs prints under `bun run --aot` what plain Bun prints.
+// A value that satisfies its type is never refused: each of these programs prints under `bun run --aot`, and as compiled code under `--debug-aot`, what plain Bun prints.
 const head = `declare const console: { log(...values: unknown[]): void };
 type Item = { flag?: boolean };
 const attempt = (f: () => unknown): void => { try { console.log(JSON.stringify(f()) ?? "undefined"); } catch (e) { console.log(String(e).split(" (bun")[0]); } };
@@ -35,6 +35,10 @@ const fits: Record<string, string> = {
   "a member that a spread leaves out is read as undefined where the executable reads it so": `
     interface Pair { a: number; b: number }
     attempt(() => { const heir: Pair = Object.assign(Object.create({ b: 2 }), { a: 1 }); const copy: Pair = { ...heir }; return copy.a + " " + copy.b; });`,
+  "and what does not satisfy its type is not refused either: a string out of a function that is declared to answer a boolean": `
+    function first(ask: () => boolean) { const found = ask() || undefined; return found; }
+    const lies: any = () => "text";
+    attempt(() => first(() => false)); attempt(() => first(() => true)); attempt(() => first(lies));`,
 };
 
 async function ran(text: string, ...flags: string[]) {
@@ -46,15 +50,5 @@ async function ran(text: string, ...flags: string[]) {
 
 test.concurrent.each(Object.entries(fits))("%s", async (_, text) => {
   expect(await ran(text, "--aot")).toEqual(await ran(text));
-});
-
-test("what the first arm yields is still held to a type", async () => {
-  const { stdout, exitCode } = await ran(
-    `function first(ask: () => boolean) { const found = ask() || undefined; return found; }
-    const lies: any = () => "text";
-    attempt(() => first(() => false)); attempt(() => first(() => true)); attempt(() => first(lies));`,
-    "--aot",
-  );
-  expect(stdout).toMatch(/^undefined\ntrue\nTypeError: expected .*, got string "text"\n$/);
-  expect(exitCode).toBe(0);
+  expect(await ran(text, "--debug-aot")).toEqual(await ran(text));
 });

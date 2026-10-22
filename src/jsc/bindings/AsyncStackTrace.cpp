@@ -20,6 +20,74 @@
 
 using namespace JSC;
 
+// collectAsyncStackFramesFromPromise for a process with compiled code: what awaits a promise is a
+// JSAsyncFunctionGenerator or a suspended compiled async function, and the engine answers for both.
+static NEVER_INLINE void collectAsyncStackFramesFromPromiseWithCompiledCode(JSC::VM& vm, JSC::JSCell* owner, JSC::JSPromise* promise, WTF::Vector<JSC::StackFrame>& results, size_t maxStackSize)
+{
+    JSC::AssertNoGC assertNoGC;
+
+    auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
+        if (!v || !v.isCell())
+            return false;
+        *out = dynamicDowncast<T>(v.asCell());
+        return *out != nullptr;
+    };
+
+    auto unwrapAsyncFunctionFromContext = [&](JSC::JSValue context) -> JSC::JSCell* {
+        JSC::InternalFieldTuple* tuple = nullptr;
+        if (dynamicCastValue(context, &tuple))
+            context = tuple->getInternalField(0);
+        return JSC::Interpreter::asyncFunctionIn(context);
+    };
+
+    auto getAwaitingAsyncFunction = [&](JSC::JSPromise* p) -> JSC::JSCell* {
+        for (unsigned hops = 0; p && hops < 32; hops++) {
+            if (p->status() != JSC::JSPromise::Status::Pending)
+                return nullptr;
+            switch (p->inlineReactionKind()) {
+            case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
+                if (auto* asyncFunction = unwrapAsyncFunctionFromContext(p->inlineReactionContext()))
+                    return asyncFunction;
+                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                    p = next;
+                    continue;
+                }
+                return nullptr;
+            }
+            case JSC::JSPromise::InlineReactionKind::FulfillHandler:
+            case JSC::JSPromise::InlineReactionKind::RejectHandler: {
+                p = p->inlineHandlerResultPromise();
+                continue;
+            }
+            case JSC::JSPromise::InlineReactionKind::None:
+                break;
+            }
+            auto* reaction = dynamicDowncast<JSC::JSPromiseReaction>(p->payloadCell());
+            if (!reaction)
+                return nullptr;
+            if (auto* asyncFunction = unwrapAsyncFunctionFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
+                return asyncFunction;
+            if (!dynamicCastValue(reaction->promise(), &p))
+                return nullptr;
+        }
+        return nullptr;
+    };
+
+    JSC::JSCell* asyncFunction = getAwaitingAsyncFunction(promise);
+    while (asyncFunction && results.size() < maxStackSize) {
+        JSC::Interpreter::appendAsyncStackFrame(vm, owner, results, asyncFunction);
+        asyncFunction = JSC::Interpreter::appendDirectAsyncCallers(vm, owner, results, asyncFunction, maxStackSize);
+        if (!asyncFunction)
+            break;
+        JSC::JSPromise* returnPromise = JSC::Interpreter::asyncFunctionPromise(asyncFunction);
+        if (!returnPromise)
+            break;
+        asyncFunction = getAwaitingAsyncFunction(returnPromise);
+    }
+    if (results.size() > maxStackSize)
+        results.shrink(maxStackSize);
+}
+
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
 // native code at the top of the event loop (e.g. run_from_js_thread in node_fs.rs)
@@ -34,6 +102,11 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     if (!JSC::Options::useAsyncStackTrace() || !promise)
         return;
 
+    if (vm.hasCompiledCode()) [[unlikely]] {
+        collectAsyncStackFramesFromPromiseWithCompiledCode(vm, owner, promise, results, maxStackSize);
+        return;
+    }
+
     JSC::AssertNoGC assertNoGC;
 
     auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
@@ -43,22 +116,13 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return *out != nullptr;
     };
 
-#if ENABLE(AOT)
-    using AsyncFunction = JSC::JSCell;
-#else
-    using AsyncFunction = JSC::JSAsyncFunctionGenerator;
-#endif
-    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> AsyncFunction* {
+    auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
         JSC::InternalFieldTuple* tuple = nullptr;
         if (dynamicCastValue(context, &tuple))
             context = tuple->getInternalField(0);
-#if ENABLE(AOT)
-        return JSC::Interpreter::asyncFunctionIn(context);
-#else
         JSC::JSAsyncFunctionGenerator* generator = nullptr;
         dynamicCastValue(context, &generator);
         return generator;
-#endif
     };
 
     // Walk reaction->context → generator. If context is not a generator (e.g.
@@ -73,7 +137,7 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     //    payloadCell() and the handler in m_slot.
     //  - As a heap-allocated JSPromiseReaction list once a second handler is
     //    attached, headed at payloadCell().
-    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> AsyncFunction* {
+    auto getAwaitingGenerator = [&](JSC::JSPromise* p) -> JSC::JSAsyncFunctionGenerator* {
         for (unsigned hops = 0; p && hops < 32; hops++) {
             if (p->status() != JSC::JSPromise::Status::Pending)
                 return nullptr;
@@ -114,21 +178,46 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    AsyncFunction* gen = getAwaitingGenerator(promise);
+    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
+        JSC::BytecodeIndex bytecodeIndex(0);
+        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
+        if (stateValue.isInt32()) {
+            int32_t state = stateValue.asInt32();
+            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+            if (state > 0 && numberOfJumpTables > 0) {
+                size_t lastTableIndex = numberOfJumpTables - 1;
+                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+                int32_t offset = jumpTable.offsetForValue(state);
+                if (offset)
+                    bytecodeIndex = JSC::BytecodeIndex(offset);
+            }
+        }
+        return bytecodeIndex;
+    };
+
+    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
+        JSC::JSFunction* asyncFunction = nullptr;
+        if (!dynamicCastValue(generator->next(), &asyncFunction))
+            return;
+        if (asyncFunction->isHostOrPrivateBuiltinFunction())
+            return;
+        JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
+        if (!executable)
+            return;
+        if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
+            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
+            results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+        } else {
+            results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+        }
+    };
+
+    JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
-        JSC::Interpreter::appendAsyncStackFrame(vm, owner, results, gen);
-#if ENABLE(AOT)
-        gen = JSC::Interpreter::appendDirectAsyncCallers(vm, owner, results, gen, maxStackSize);
-        if (!gen)
-            break;
-        JSC::JSPromise* returnPromise = JSC::Interpreter::asyncFunctionPromise(gen);
-        if (!returnPromise)
-            break;
-#else
+        appendFrame(gen);
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;
-#endif
         gen = getAwaitingGenerator(returnPromise);
     }
 }

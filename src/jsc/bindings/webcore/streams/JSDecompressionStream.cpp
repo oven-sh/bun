@@ -1,4 +1,5 @@
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSDecompressionStream.h"
 
 #include "DOMClientIsoSubspaces.h"
@@ -142,6 +143,7 @@ template<> void JSDecompressionStreamConstructor::finishCreation(VM& vm, JSDOMGl
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(DecompressionStream, JSDecompressionStreamConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSDecompressionStreamConstructor>(callFrame->jsCallee());
@@ -152,7 +154,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDecompressionStreamCon
     CodecOptions options = parseCodecOptions(lexicalGlobalObject, callFrame->argument(1), std::nullopt);
     RETURN_IF_EXCEPTION(scope, {});
 
-    void* coder = CompressionStreamCoder__create(lexicalGlobalObject, callFrame, static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
+    if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliDecoder)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliDecoder)));
+
+    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), true, options.highWaterMark, false, 0);
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize decompressor"_s);
         return {};
@@ -209,7 +214,7 @@ JSObject* JSDecompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObje
     return getDOMPrototype<JSDecompressionStream>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSDecompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDecompressionStreamConstructor, DOMConstructorID::DecompressionStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

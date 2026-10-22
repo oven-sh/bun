@@ -20,6 +20,14 @@ function bytesOf(base64: string): number[] {
   }
   return bytes;
 }
+function bytesOfFile(stored: string | { repeat: string; times: number; then: string }): number[] {
+  if (typeof stored === "string") return bytesOf(stored);
+  const unit = bytesOf(stored.repeat);
+  const bytes: number[] = [];
+  for (let count = 0; count < stored.times; count++) bytes.push(...unit);
+  bytes.push(...bytesOf(stored.then));
+  return bytes;
+}
 
 function textOf(units: number[]): string {
   let text = "";
@@ -91,7 +99,7 @@ const roads: [string, (text: string) => unknown, (text: string) => string][] = [
 const names = Object.keys(files);
 const texts = new Map<string, string[]>();
 for (const name of names) {
-  const bytes = bytesOf((files as Record<string, string>)[name]);
+  const bytes = bytesOfFile((files as Record<string, string | { repeat: string; times: number; then: string }>)[name]);
   texts.set(name, [fromUTF8(bytes), textOf(bytes)]);
 }
 

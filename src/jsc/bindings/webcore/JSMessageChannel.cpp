@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 
 #include "JSMessageChannel.h"
 
@@ -90,6 +91,7 @@ using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel, Bun::E
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(MessageChannel, JSMessageChannelDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSMessageChannelDOMConstructor>(callFrame->jsCallee());
@@ -161,7 +163,7 @@ JSObject* JSMessageChannel::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSMessageChannel>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSMessageChannel::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessageChannelDOMConstructor, DOMConstructorID::MessageChannel>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

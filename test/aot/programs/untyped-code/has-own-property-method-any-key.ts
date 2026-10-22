@@ -22,7 +22,7 @@ const shadowed = Object.create({ hasOwnProperty: () => "inherited" });
 console.log(say(() => method(own, "a")), say(() => method(nothing, "a")), say(() => method(shadowed, "a")), say(() => method(null, "a")), say(() => method(undefined, { toString() { log.push("never"); return "a"; } })), log.includes("never"));
 console.log(say(() => (typed as any).hasOwnProperty()), say(() => (typed as any).hasOwnProperty("a", "b")), say(() => (typed as any).hasOwnProperty(...["b"])));
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 const things: any[] = [{ q1: 1 } as { q1: number; q2?: number }, JSON.parse('{"q1":1,"q9":2}')], names: unknown[] = ["q1", "q2", "q3", "q9"];
 const before = entered();
 let total = 0;

@@ -1,5 +1,6 @@
 // Functions with a declared result type that return values of their own on some paths and end in a tail call of a function value on
 // others. Typed code calls them directly, other code calls them as values, and chains of such tail calls of any length run in constant space.
+// A result of another kind than the declared one throws a TypeError, whatever the caller does with it.
 const lines: string[] = [];
 function say(...parts: unknown[]) {
   lines.push(parts.map(part => (typeof part === "object" && part !== null ? JSON.stringify(part) : String(part))).join(" "));
@@ -166,7 +167,11 @@ function wrong(n: number, acc: number, next: Next<number>): number {
 }
 const liar = ((n: number) => "not a number " + n) as unknown as Next<number>;
 sink = wrong;
-say((wrong as any)(1, 0, liar), [wrong].map(f => (f as any)(1, 0, liar)));
+try {
+  say((wrong as any)(1, 0, liar), [wrong].map(f => (f as any)(1, 0, liar)));
+} catch (error) {
+  say("a result of another kind:", (error as Error).constructor.name);
+}
 
 let many = 0;
 for (let round = 0; round < 20000; round++) many += sumDown(round & 3, round, sumDown) + countDown(round & 1, round, countDown) + (isEven(round & 7, true, isEven) ? 1 : 0) + spell(round & 1, "a", spell).length;

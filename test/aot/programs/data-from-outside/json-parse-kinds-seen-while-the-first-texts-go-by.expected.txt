@@ -1,7 +1,0 @@
-two kinds in turn: 100 texts, 52 by expecting keys, told apart by more 1 times, set aside 0 times, 0 wrong
-one kind: 100 texts, 84 by expecting keys, told apart by more 0 times, set aside 0 times, 0 wrong
-a first value that is new every time: 100 texts, 84 by expecting keys, told apart by more 0 times, set aside 0 times, 0 wrong
-twenty first values in turn: 100 texts, 84 by expecting keys, told apart by more 0 times, set aside 0 times, 0 wrong
-a rare kind comes first: 100 texts, 52 by expecting keys, told apart by more 1 times, set aside 0 times, 0 wrong
-three rare kinds come first: 100 texts, 52 by expecting keys, told apart by more 1 times, set aside 0 times, 0 wrong
-a small kind and one of long strings: 600 texts, 499 by expecting keys, told apart by more 1 times, set aside 1 times, 0 wrong

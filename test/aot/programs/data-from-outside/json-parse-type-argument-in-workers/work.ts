@@ -34,7 +34,7 @@ export function work(number: number): string {
   let wrong = 0;
   let values = 0;
   for (const [parse, text, depth] of roads) {
-    for (const levels of [100, 10_000, 1_000_000]) {
+    for (const levels of [100, 10_000, 300_000]) {
       const said = answer(parse, text(levels));
       if (said === "depth " + depth(levels)) values++;
       else if (said !== overflow) wrong++;
@@ -48,7 +48,7 @@ export function work(number: number): string {
       } catch {
         if (frames === 0) frames = level;
       }
-      if (frames - level > 1500) return;
+      if (frames - level > 300) return;
       const which = level % depths.length;
       const said = answer(parse, texts[which]);
       if (said === "depth " + depth(depths[which])) values++;

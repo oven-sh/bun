@@ -19,7 +19,7 @@ attempt("an heir of a literal with the methods", () => { const inherited: Speake
 attempt("an heir of a Speaker", () => talk(Object.create(literalMethod)))
 // A proxy does not have the type of its target, and is accepted unchanged.
 attempt("a proxy", () => { const proxied: Speaker = new Proxy<Speaker>({ id: 13, speak: sharedSpeak }, {}); return talk(proxied) })
-// A method of a class takes for `this` what was made as a type that is assignable to the class. A Speaker is a ClassSpeaker (typed-objects/methods-through-interfaces), and no LoudSpeaker: its `shout` is optional.
+// A method takes for `this` whatever object the call gives it: `this` of a method is not tested.
 attempt("a method of an extending class on a literal", () => new LoudSpeaker(5).speak.call(literalArrow, "d"))
 attempt("a method of a literal on another literal", () => literalMethod.speak.call(literalArrow, "d"))
 attempt("a method of a literal on an object of a class", () => literalMethod.speak.call(new LoudSpeaker(5), "d"))

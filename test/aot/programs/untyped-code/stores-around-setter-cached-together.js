@@ -35,11 +35,11 @@ Object.defineProperty(prototypeOf(HeirOfKnown), "guarded", { get() { return "got
 Object.defineProperty(prototypeOf(HeirOfUnknown), ["vei", "led"].join(""), { get() { return "got"; }, set(value) { calls++; this.kept = Object.keys(this).join(""); } });
 function describe(object) { return object.constructor.name + " " + Object.keys(object).map(key => key + "=" + object[key]).join() + " " + object.guarded + " " + object.veiled; }
 function asked(make) {
-  const before = count("operationAOTTypedTryPutProperties");
+  const before = count("operationAOTTryPutProperties");
   const said = new Set();
   for (let i = 0; i < 2000; i++) said.add(describe(make(i & 1)));
   console.log([...said].join("\n"));
-  return count("operationAOTTypedTryPutProperties") - before;
+  return count("operationAOTTryPutProperties") - before;
 }
 const known = asked(value => new HeirOfKnown(value));
 const unknown = asked(value => new HeirOfUnknown(value));

@@ -1,4 +1,4 @@
-// A parsed body that stays a plain object holds several objects whose types ask for a conversion, some of them the same object under two names. Either all of them fit and are converted in place, or none is touched.
+// A parsed body holds several objects, some of them the same object under two names, and is cast to a record type. The cast looks at no field and touches no object: whether they fit or not, untyped code stores whatever it likes into them afterwards. Only a field of the wrong kind that typed code reads throws.
 type Customer = { id: number; name: string; tags: string[] };
 type Owner = { id: number; name: string; tags: string[]; level?: number };
 type Deal = { buyer: Customer; seller: Customer; owner: Owner; note?: string };

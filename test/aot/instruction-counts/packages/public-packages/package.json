@@ -1,9 +1,0 @@
-{
-  "name": "public-packages",
-  "private": true,
-  "dependencies": {
-    "ajv": "8.17.1",
-    "fast-json-stringify": "6.0.1",
-    "zod": "4.6.5"
-  }
-}

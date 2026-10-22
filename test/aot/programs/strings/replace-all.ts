@@ -1,9 +1,9 @@
 // `replaceAll()` with (string, string), with (RegExp, anything), with other arguments, and with a RegExp that is not global.
-// CALLS+ texts operationAOTTypedStringReplaceAllString
+// CALLS+ texts operationAOTStringReplaceAllString
 // CALLS- texts CallHostFunction
-// CALLS+ byRegExp operationAOTTypedStringReplaceAllRegExp
-// CALLS+ byRegExpAndFunction operationAOTTypedStringReplaceAllRegExp
-// CALLS- byAnything operationAOTTypedStringReplaceAll
+// CALLS+ byRegExp operationAOTStringReplaceAllRegExp
+// CALLS+ byRegExpAndFunction operationAOTStringReplaceAllRegExp
+// CALLS- byAnything operationAOTStringReplaceAll
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

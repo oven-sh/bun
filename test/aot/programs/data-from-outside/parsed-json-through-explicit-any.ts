@@ -1,5 +1,5 @@
-// Parsed JSON passes through the program's own `any` or `unknown` (a result, a parameter, a property, a `yield`) before it reaches a declared type.
-function row(name: string, run: () => unknown): void { try { console.log(name, "|", run()) } catch (e) { console.log(name, "| THROWN", (e as Error).message.split("\n")[0]) } }
+// Parsed JSON passes through the program's own `any` or `unknown` (a result, a parameter, a property, a `yield`) before it reaches a declared type. Any object passes, a member that is missing reads undefined, and a member of another kind throws a TypeError where typed code reads it.
+function row(name: string, run: () => unknown): void { try { console.log(name, "|", run()) } catch (e) { console.log(name, "| THROWN", (e as Error).constructor.name) } }
 function pass(x: any): any { return x }
 interface Settings { name: string; nested: { on: boolean } }
 function show(x: Settings): string { return x.name + (x.nested ? x.nested.on : "-") }

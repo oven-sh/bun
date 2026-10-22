@@ -1,0 +1,76 @@
+A base class, a derived class, a class that extends null and one that extends Error: prototype chains, inherited statics, the `constructor` property, super calls, and what a base that is no constructor throws.
+//// main.js
+class Base {
+  constructor(name) {
+    this.name = name;
+  }
+  value() {
+    return 1;
+  }
+  get label() {
+    return "base " + this.name;
+  }
+  static create() {
+    return new this("created");
+  }
+}
+Base.shared = "a static of the base";
+
+class Derived extends Base {
+  constructor(name) {
+    super(name + "!");
+    this.extra = 2;
+  }
+  value() {
+    return super.value() + this.extra;
+  }
+  get label() {
+    return "derived, " + super.label;
+  }
+  static create() {
+    return super.create();
+  }
+}
+
+class Failure extends Error {
+  constructor(message) {
+    super(message);
+    this.code = 7;
+  }
+}
+
+function attempt(label, action) {
+  try {
+    console.log(label, action());
+  } catch (error) {
+    console.log(label, error.constructor.name + ": " + error.message);
+  }
+}
+
+const derived = new Derived("d");
+console.log(derived.value(), derived.label, derived.name, derived instanceof Base, derived instanceof Derived);
+console.log(Object.getPrototypeOf(Derived) === Base, Object.getPrototypeOf(Derived.prototype) === Base.prototype, Derived.shared, Object.keys(Derived).join(","));
+Base.later = "stored later";
+console.log(Derived.later, Derived.create() instanceof Derived, Derived.create().name);
+const constructorProperty = Object.getOwnPropertyDescriptor(Derived.prototype, "constructor");
+console.log(constructorProperty.value === Derived, constructorProperty.enumerable, constructorProperty.writable, constructorProperty.configurable);
+const names = [];
+for (const name in derived) names.push(name);
+console.log(names.join(","));
+const failure = new Failure("went wrong");
+console.log(failure instanceof Error, failure instanceof Failure, failure.message, failure.code, Object.prototype.toString.call(failure));
+attempt("extends null", () => {
+  class Empty extends null {}
+  return Object.getPrototypeOf(Empty.prototype) === null;
+});
+attempt("extends a number", () => {
+  const base = 5;
+  class Wrong extends base {}
+  return Wrong;
+});
+attempt("extends undefined", () => {
+  const base = undefined;
+  class Wrong extends base {}
+  return Wrong;
+});
+attempt("called without new", () => Derived.call({}, "x"));

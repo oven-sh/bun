@@ -1,0 +1,1 @@
+{ "env": { "NAMES": "node:dgram,node:zlib,node:readline" }, "skipInShell": "it asks for modules of Bun" }

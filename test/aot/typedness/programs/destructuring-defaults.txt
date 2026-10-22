@@ -1,3 +1,0 @@
-parameter-typed-by-literal-default: 9 layouts, 0 given, 10 open, places 28 of 64, reads 4 of 14
-parameter-typed-by-pattern-only: 7 layouts, 0 given, 4 open, places 21 of 65, reads 2 of 25
-union-variable-assigned-by-pattern: 0 layouts, 0 given, 0 open, places 6 of 14, reads 1 of 4

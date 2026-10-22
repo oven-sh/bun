@@ -1,0 +1,3 @@
+node:tty throws while it is evaluated: it defines `WriteStream.prototype`, which compiled code created as not configurable.
+node:events does not export `prototype`: `EventEmitter.prototype = {}` leaves the property not enumerable.
+node:repl throws on the first read of an export: internal/repl/utils stores to a top-level `let` inside its initializer, which plain Bun runs as a `var`.

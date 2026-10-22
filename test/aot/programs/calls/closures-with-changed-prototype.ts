@@ -8,7 +8,7 @@ const rest: any = function (this: any, a: any, ...r: any[]) { return "rest " + S
 const arrow: any = (a: any) => "arrow " + String(a);
 let captured = 5; const capturing: any = (a: any) => "capturing " + (captured + a);
 const typed = (a: number, b: number): number => a * 10 + b;
-// `typed` is only ever called with two numbers: an argument of a wrong type, or a missing one, throws by design.
+// `typed` is only ever called with two numbers: an argument of another kind throws a TypeError on entry.
 const closures: any[] = [none, two, rest, arrow, capturing];
 function callTyped(f: (a: number, b: number) => number, a: number): number { return f(a, 1) + 1; }
 const other = { marker: "other", call: Function.prototype.call, apply: Function.prototype.apply };

@@ -1,0 +1,21 @@
+[package]
+name = "bun_builtin_sources"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+linked_archive = []
+
+[dependencies]
+bun_core.workspace = true
+bun_zstd.workspace = true
+
+[dev-dependencies]
+# The native symbols that Bun's C and C++ side provides to `bun_core`.
+bun_sema_standalone = { path = "../sema/standalone" }
+
+[lints]
+workspace = true

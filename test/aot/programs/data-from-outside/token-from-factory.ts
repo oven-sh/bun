@@ -1,4 +1,4 @@
-// An object created as `Node` with `kind` equal to `Kind.Dot` cannot become a `Token<Kind.Dot>`.
+// An object that a constructor function creates as `Node`, with `kind` equal to `Kind.Dot`, is used as a `Token<Kind.Dot>`: any object passes an object type, under a cast and under an annotation.
 const enum Kind { Unknown, Dot, Comma }
 interface Node { readonly kind: Kind; readonly pos: number }
 interface Token<K extends Kind> extends Node { readonly kind: K }

@@ -224,7 +224,7 @@ enum class CommonStringsForRust : uint8_t {
     fetchOptionVerbose = 36,
 };
 
-static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
+static JSC::JSString* toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
 {
     auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (commonString) {
@@ -302,10 +302,8 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust c
         return commonStrings.fetchOptionUnixString();
     case CommonStringsForRust::fetchOptionVerbose:
         return commonStrings.fetchOptionVerboseString();
-    default: {
-        ASSERT_NOT_REACHED();
-        return jsUndefined();
-    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
     }
 }
 
@@ -324,7 +322,7 @@ extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__getProperty(JSC::Encod
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(encodedObject).getObject();
     ASSERT(object);
-    auto identifier = JSC::asString(toJS(globalObject, commonString))->toIdentifier(globalObject);
+    auto identifier = toJS(globalObject, commonString)->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(identifier))));
 }

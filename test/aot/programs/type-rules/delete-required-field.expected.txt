@@ -1,9 +1,0 @@
-required field deleted through a view where it is optional: no error
-required field deleted through any: TypeError
-required number deleted through any: TypeError
-the same by Reflect.deleteProperty: TypeError
-{"id":4,"title":"t4","refs":[4]} true
-all fields deleted: TypeError
-{"id":8,"title":"t8","author":{"nick":"a8"},"refs":[8]}
-own property named like a method: no error
-own label true p1 num

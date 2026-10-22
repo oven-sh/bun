@@ -17,7 +17,7 @@ static napi_value failed(napi_env env, napi_status status) {
     napi_value error, message; char buffer[300] = ""; size_t length = 0;
     napi_get_and_clear_last_exception(env, &error);
     if (napi_get_named_property(env, error, "message", &message) == napi_ok) napi_get_value_string_utf8(env, message, buffer, sizeof buffer, &length);
-    char* note = strstr(buffer, " (bun --aot"); if (note) *note = 0;
+    char* note = strstr(buffer, " (bun compile"); if (note) *note = 0;
     snprintf(out, sizeof out, "threw %s", buffer);
   } else snprintf(out, sizeof out, "status %d", (int)status);
   return text(env, out);

@@ -98,3 +98,9 @@ function feed(sink: Sink): number {
 const fed = memoizeOne(feed);
 const sink = createSink();
 console.log(fed(sink), sink.value, sink.seen, Object.keys(sink).join());
+
+interface Control {
+  control: number;
+}
+const control: Control = JSON.parse('{"control":1}');
+console.log(control.control);

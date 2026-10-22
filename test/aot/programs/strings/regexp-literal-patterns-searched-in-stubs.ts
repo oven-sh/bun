@@ -1,5 +1,6 @@
+// A pattern that is one literal text (`/%/`, `/bull/`) has no compiled code and is searched for as a string: `test`, `exec` and `match` on flat strings, substrings, ropes and 16-bit strings.
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
-const names = ["operationAOTTypedRegExpTest", "operationAOTTypedRegExpTestBoxed", "operationAOTTypedRegExpExec", "operationAOTTypedRegExpExecFound", "operationAOTTypedStringMatchRegExp"];
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp"];
 const entries = () => names.reduce((sum, name) => sum + count(name), 0);
 function legacy() {
   return [RegExp.lastMatch, RegExp.leftContext, RegExp.rightContext, RegExp.$1].map(part => JSON.stringify(part)).join();

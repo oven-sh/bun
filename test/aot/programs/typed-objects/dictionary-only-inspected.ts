@@ -1,7 +1,7 @@
 // A record enters a type with an index signature that takes more than its fields hold, and nobody stores through that type: the function only looks.
 // The record keeps its layout, and typed code reads its fields without a test of the shape.
-// IR+ shape \d+ Record "Point" .*allocated
-// IR- shape \d+ Record "Point" .*foreign
+// IR+ ^layout L\d+ .*name="Point" (?!.*isNeverAllocated=true)
+// IR- ^layout (L\d+) .*name="Point" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 type Looked = { [key: string]: any };
 type Point = { x: number; y: number };
 const hasOwnProperty = Object.prototype.hasOwnProperty;

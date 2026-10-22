@@ -1,21 +1,21 @@
-// IR= 1 paintedPosts TypedArray#
-// IR= 0 paintedPosts Array\.fill
-// IR= 1 bornTrue TypedArray#
-// IR= 1 askedForItsLength TypedArray#
-// IR= 1 ofAConstantLength TypedArray#
-// IR= 2 storesWhatATestSays TypedArray#
-// IR= 2 twoAtOnce TypedArray#
-// IR= 1 bornInALoop TypedArray#
-// IR= 0 isReturned TypedArray#
-// IR= 0 isPassedOn TypedArray#
-// IR= 0 isCaptured TypedArray#
-// IR= 0 keyOutOfData TypedArray#
-// IR= 0 storesPastTheEnd TypedArray#
-// IR= 0 mayReadBelowZero TypedArray#
-// IR= 0 fractionalSteps TypedArray#
-// IR= 0 isNeverFilled TypedArray#
-// IR= 0 holdsOtherThings TypedArray#
-// IR= 0 isMadeShorter TypedArray#
+// IR= 1 paintedPosts CallBuiltin .* overload=Uint8Array/
+// IR= 0 paintedPosts overload=ArrayPrototypeFill/
+// IR= 1 bornTrue CallBuiltin .* overload=Uint8Array/
+// IR= 1 askedForItsLength CallBuiltin .* overload=Uint8Array/
+// IR= 1 ofAConstantLength CallBuiltin .* overload=Uint8Array/
+// IR= 2 storesWhatATestSays CallBuiltin .* overload=Uint8Array/
+// IR= 2 twoAtOnce CallBuiltin .* overload=Uint8Array/
+// IR= 1 bornInALoop CallBuiltin .* overload=Uint8Array/
+// IR= 0 isReturned CallBuiltin .* overload=Uint8Array/
+// IR= 0 isPassedOn CallBuiltin .* overload=Uint8Array/
+// IR= 0 isCaptured CallBuiltin .* overload=Uint8Array/
+// IR= 0 keyOutOfData CallBuiltin .* overload=Uint8Array/
+// IR= 0 storesPastTheEnd CallBuiltin .* overload=Uint8Array/
+// IR= 0 mayReadBelowZero CallBuiltin .* overload=Uint8Array/
+// IR= 0 fractionalSteps CallBuiltin .* overload=Uint8Array/
+// IR= 0 isNeverFilled CallBuiltin .* overload=Uint8Array/
+// IR= 0 holdsOtherThings CallBuiltin .* overload=Uint8Array/
+// IR= 0 isMadeShorter CallBuiltin .* overload=Uint8Array/
 function paintedPosts(lastPost: number): string {
   const painted = new Array<boolean>(1 + lastPost).fill(false);
   for (let painter = 1; painter <= lastPost; painter++) {

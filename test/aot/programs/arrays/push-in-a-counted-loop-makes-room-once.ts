@@ -1,6 +1,6 @@
 // `for (let i = 0; i < n; i++) out.push(..)`: when the vector is full, the slow path makes room for all the turns that are left, whatever kind of number n is. A push that is not made in every turn, or a loop with a second way out, grows step by step.
 declare const aotOperationCount: undefined | ((name: string) => number);
-const slowPushes = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedArrayPush") + aotOperationCount("operationAOTTypedArrayPushNumber") : 0;
+const slowPushes = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTArrayPush") + aotOperationCount("operationAOTArrayPushNumber") : 0;
 function measured(what: string, atMost: number, atLeast: number, run: () => unknown[]): void {
   const before = slowPushes();
   const made = run();

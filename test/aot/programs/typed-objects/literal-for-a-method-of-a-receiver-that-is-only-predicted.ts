@@ -1,7 +1,7 @@
 // The receiver of `tracer.span({ .. })` is read out of parsed data, so the compiler only predicts what is called. The parameter's type is a record
-// that this program declares: the literal is born as that record, and the function that is called has nothing to convert.
+// that this program declares: the literal is created with that record's layout, and the parameter's test passes in compiled code, without a call into the run time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-// IR= 0 makeSpan NewObject$
+// IR= 0 makeSpan  = NewPlainObject
 declare const aotOperationCount: undefined | ((name: string) => number)
 const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
 type Kind = 'internal' | 'server' | 'client' | 'producer' | 'consumer'
@@ -43,9 +43,9 @@ function makeSpan(fiber: Fiber<any>, name: string, kind: Kind | undefined): Nati
 const fiber: Fiber<any> = JSON.parse('{"cache":{},"value":1}')
 let total = 0
 for (let r = 0; r < 20; r++) total += makeSpan(fiber, 'n', r % 7 === 0 ? 'server' : undefined).name.length
-const before = count('operationAOTTypedCoerce')
+const before = count('operationAOTEnforceType')
 for (let r = 0; r < 2000; r++) total += makeSpan(fiber, 'name', r % 7 === 0 ? 'server' : undefined).kind.length
-console.log(total, count('operationAOTTypedCoerce') - before < 200 ? 'nothing to convert' : 'converted ' + (count('operationAOTTypedCoerce') - before) + ' times')
+console.log(total, count('operationAOTEnforceType') - before < 200 ? 'tested in compiled code' : 'tested by the run time ' + (count('operationAOTEnforceType') - before) + ' times')
 
 const seen: string[] = []
 const untyped: any = {

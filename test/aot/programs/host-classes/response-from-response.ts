@@ -1,10 +1,4 @@
 // `new Response(other.body, other)` makes a Response from another one and shares its body with it. Whatever is done afterwards to either of the two gives what plain Bun gives.
-// IR= 1 from CallBuiltin NewResponseFromResponse
-// IR= 1 fromAnother CallBuiltin NewResponseFromResponse
-// IR= 1 throughHelper CallBuiltin NewResponseFromResponse
-// IR= 1 header CallBuiltin NewResponseFromResponse
-// IR= 0 readAhead CallBuiltin NewResponseFromResponse
-// IR= 0 bodyOfACall CallBuiltin NewResponseFromResponse
 const lines: string[] = [];
 async function say(label: string, work: () => unknown) {
   let text: string;

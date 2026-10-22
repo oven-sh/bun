@@ -1,0 +1,8 @@
+vm 3,6,9
+fromctx 42
+fromctx m2
+script 3
+shadow 6
+shadowfn 42
+shadowimport threw TypeError
+path a/b

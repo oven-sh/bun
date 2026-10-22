@@ -43,19 +43,17 @@ const files = {
   `,
 };
 
-const operations = [
-  "operationAOTTypedGetByName",
-  "operationAOTTypedGetAbsentField",
-  "operationAOTTypedGetByNameChecked",
-  "operationAOTTypedGetByNameCheckedAsNumber",
-  "operationAOTTypedSetByName",
-  "operationAOTTypedDidCreateField",
-  "operationAOTTypedDidCreateFieldAt",
-  "operationAOTTypedDidCreateFieldOutOfLineAt",
-  "operationAOTTypedDidCreateFieldsAt",
-  "operationAOTGetByNameAndCache",
-  "operationAOTPutByNameAndCache",
+const reads = ["operationAOTGetById", "operationAOTGetByIdAndCache", "operationAOTGetExtraProperty"];
+const stores = [
+  "operationAOTPutById",
+  "operationAOTPutByIdAndCache",
+  "operationAOTPutExtraProperty",
+  "operationAOTDidCreateField",
+  "operationAOTDidCreateFieldAt",
+  "operationAOTDidCreateFieldOutOfLineAt",
+  "operationAOTDidCreateFieldsAt",
 ];
+const operations = [...reads, ...stores];
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   await using ran = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "pipe" });
@@ -67,20 +65,22 @@ test("optional fields that are absent at birth stop asking the run time under a 
   using dir = tempDir("aot-absent-fields-under-another-prototype", files);
   const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
   const built = await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", executable], String(dir), bunEnv);
-  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
   const counted = async (rounds: number) => {
     const path = join(String(dir), "counts" + rounds);
-    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_useAOTOperationCounters: "1", BUN_JSC_aotTypeCoverageCountsPath: path };
+    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1", BUN_JSC_aotCountsPath: path };
     expect(await run([executable, String(rounds)], String(dir), env)).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
     const counts: Record<string, number> = Object.fromEntries(operations.map(name => [name, 0]));
-    for (const line of readFileSync(path + ".operations", "utf8").split("\n")) {
-      const [count, name] = line.split("\t");
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const [count, name] = line.split("\toperation:");
       if (name !== undefined && name in counts) counts[name] = Number(count);
     }
     return counts;
   };
   const few = await counted(500);
   const many = await counted(2500);
+  // The first read and the first store miss their caches, so each list counts at least one call. A renamed operation would count none.
+  expect({ reads: reads.some(name => few[name]! > 0), stores: stores.some(name => few[name]! > 0) }).toEqual({ reads: true, stores: true });
   const more = Object.fromEntries(operations.map(name => [name, many[name]! - few[name]! > 200 ? many[name]! - few[name]! : "level"]));
   expect(more).toEqual(Object.fromEntries(operations.map(name => [name, "level"])));
 }, 240_000);

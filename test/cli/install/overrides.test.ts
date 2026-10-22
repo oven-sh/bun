@@ -332,7 +332,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       overridden: false,
     },
   ])("$title", ({ rules, overridden = true }) => {
-    test.concurrent.each([...frozen, "install"])("bun %s says nothing", async command => {
+    test.concurrent.each([...frozen, "install"])("bun %s prints nothing", async command => {
       const { dir, lock } = await upgraded(rules, overridden);
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe("");
@@ -361,7 +361,7 @@ describe("a bun.lock written by Bun 1.4", () => {
     }
   });
 
-  test.concurrent("a rule that bun.lock has from resolutions goes with the next install", async () => {
+  test.concurrent("a rule that bun.lock has from resolutions is removed by the next install", async () => {
     const dir = await project({ name: "foo", dependencies, overrides: { ...both.overrides, ...both.resolutions } });
     expect((await bun(dir, "install")).exitCode).toBe(0);
     expect(await lockfile(dir)).toContain('"a-dep": "1.0.2"');
@@ -379,7 +379,7 @@ describe("a bun.lock written by Bun 1.4", () => {
     await expectLockfileStable(dir, saved);
   });
 
-  // What the registry's packages declare, as bun.lock prints it.
+  // What the registry's packages declare, the way bun.lock prints it.
   const declares: Record<string, string> = {
     "bundled-1@1.0.0": `{ "dependencies": { "no-deps": "1.0.0" } }`,
     "one-dep@1.0.0": `{ "dependencies": { "no-deps": "1.0.1" } }`,
@@ -437,7 +437,8 @@ describe("a bun.lock written by Bun 1.4", () => {
     return `${block(sections, "").slice(0, -1)}  "packages": {\n${packages().map(entryOf14).join("\n")}  }\n}\n`;
   }
 
-  // A fresh install of Bun 1.4 saves each of these: a version stands next to a rule that does not name it, and rightly.
+  // A fresh install with Bun 1.4 saves each of these. A version is next to a rule that doesn't mention it, and that's
+  // correct.
   test.concurrent.each<Saved>([
     {
       title: "the rule is a dist-tag",
@@ -855,7 +856,7 @@ describe("a bun.lock written by Bun 1.4", () => {
       return { lock, dir: await project({ name: "foo", ...saved.pkg() }, { "bun.lock": lock }) };
     };
 
-    test.concurrent.each(frozen)("bun %s names the entry and the rule", async command => {
+    test.concurrent.each(frozen)("bun %s prints the entry and the rule", async command => {
       const { dir, lock } = await held();
       const { stderr, exitCode } = await bun(dir, ...command.split(" "));
       expect(stderr).toBe(

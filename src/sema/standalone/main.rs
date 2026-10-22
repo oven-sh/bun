@@ -1,61 +1,18 @@
-use bun_sema::atom::Interner;
 use bun_sema::messages::text;
-use bun_sema::resolve::Host;
-use bun_sema_baselines::{error_line, lines, output_line, read_file, write_file, write_file_to_look_at};
-use bun_threading::Guarded;
+use bun_sema_baselines::error_line;
 use std::io::Write;
-use std::sync::Arc;
-
-/// Every file under `dir` that the front end reads, including those in `node_modules`.
-fn collect_sources(disk: &dyn Host, dir: &str, out: &mut Vec<String>) {
-    const EXTENSIONS: [&[u8]; 8] = [
-        b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs",
-    ];
-    let (files, directories) = disk.entries(dir.as_bytes());
-    let is_source = |name: &&Vec<u8>| EXTENSIONS.iter().any(|it| name.ends_with(it));
-    out.extend((files.iter().filter(is_source)).map(|name| format!("{dir}/{}", text(name))));
-    for name in &directories {
-        collect_sources(disk, &format!("{dir}/{}", text(name)), out);
-    }
-}
 
 fn variable(name: &bun_core::ZStr) -> Option<String> {
     bun_core::getenv_z(name).map(text)
 }
 
-/// `--timing`: the ten tables whose shared parts use the most memory. Without `--keep` the tasks of
-/// the last step, which has most of the files, publish no entries, so theirs are not counted.
-fn list_largest_tables(program: &bun_sema::check::Program) {
-    let mut tables = program.table_footprints();
-    tables.sort_by_key(|table| std::cmp::Reverse(table.1.touched));
-    for (name, footprint) in tables.iter().take(10) {
-        error_line!(
-            "table {name}: {:.1} MB touched, {} entries, {} kept",
-            footprint.touched as f64 / (1u64 << 20) as f64,
-            footprint.entries,
-            footprint.kept
-        );
-    }
-}
-
-/// `BUN_SEMA_LIST=<file>`: the paths of all loaded files, one per line.
-fn list_loaded(program: &bun_sema::check::Program) {
-    if let Some(to) = variable(bun_core::zstr!("BUN_SEMA_LIST")) {
-        let paths: Vec<&[u8]> = program
-            .files
-            .modules
-            .iter()
-            .map(|m| m.file_name())
-            .collect();
-        write_file_to_look_at(&to, &paths.join(&b"\n"[..]));
-    }
-}
-
-#[cfg(feature = "mimalloc")]
+#[cfg(bun_sema_mimalloc)]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
 fn main() {
+    bun_core::output::stdio::init();
+    let _flush = bun_core::output::flush_guard();
     // The main thread parses tsconfig.json. Its stack is 8 MB on macOS and Linux.
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -64,94 +21,9 @@ fn main() {
 
 fn run(args: &[String]) {
     match args.first().map(String::as_str) {
-        // hir <files or directories> --print: the HIR the front end produces for each file. For
-        // detecting whether a change to the front end changes any HIR.
-        Some("hir") => {
-            let mut files: Vec<String> = Vec::new();
-            let disk = bun_sema_driver::host::Disk::with_already_read(1, Default::default(), b"/");
-            for arg in args[1..].iter().filter(|a| !a.starts_with("--")) {
-                if disk.is_dir(arg.as_bytes()) {
-                    collect_sources(&disk, arg.trim_end_matches('/'), &mut files)
-                } else {
-                    files.push(arg.clone())
-                }
-            }
-            let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
-            if let Some(list) = flag("--list=") {
-                let list = text(&read_file(list).unwrap());
-                files.extend(lines(&list).map(str::to_owned));
-            }
-            files.sort();
-            let session = bun_sema::session::Session::new();
-            let atoms = Interner::new_in(&session);
-            // --repeat=n [--threads=n]: all files are read first, then parsed n times, to measure
-            // parsing alone.
-            if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
-                let threads = flag("--threads=").and_then(|n| n.parse().ok());
-                let read = |file: &String| read_file(file).unwrap_or_default();
-                let texts: Vec<Vec<u8>> = files.iter().map(read).collect();
-                let before = bun_sema_standalone::instructions_and_cycles().0;
-                for _ in 0..repeat {
-                    bun_sema_standalone::for_each_parallel(
-                        threads.unwrap_or(1),
-                        files.len(),
-                        |i| {
-                            let arena = session.arena();
-                            drop(bun_sema_standalone::parse(
-                                arena, &files[i], &texts[i], &atoms, false,
-                            ));
-                        },
-                    );
-                }
-                let after = bun_sema_standalone::instructions_and_cycles().0;
-                let a_pass = (after - before) as f64 / 1e9 / repeat as f64;
-                return error_line!("{} files: {a_pass:.3} G instructions a pass", files.len());
-            }
-            let dumped = Guarded::new(Vec::<String>::new());
-            bun_sema_standalone::for_each_parallel(4, files.len(), |i| {
-                let Some(text) = read_file(&files[i]) else {
-                    return;
-                };
-                let path = &files[i];
-                let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
-                // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
-                if args.iter().any(|a| a == "--quiet") {
-                    return;
-                }
-                if args.iter().any(|a| a == "--nodes") {
-                    // As the checker sees it: some kinds are determined by the spelling of a name.
-                    let mut file = file;
-                    file.text = text.into();
-                    let nodes = bun_sema_standalone::hir_dump::nodes(&file);
-                    let line = format!("=== {path}\n{nodes}");
-                    return dumped.lock().push(line);
-                }
-                let (dump, orphans) =
-                    bun_sema_standalone::hir_dump::dump_and_orphans(&file, &atoms);
-                let line = if args.iter().any(|a| a == "--orphans") {
-                    // The unreachable nodes.
-                    if orphans.is_empty() {
-                        return;
-                    }
-                    format!("{path}\t{}", orphans.join(" | "))
-                } else {
-                    format!("=== {path}\n{dump}")
-                };
-                dumped.lock().push(line);
-            });
-            let mut dumped = std::mem::take(&mut *dumped.lock());
-            dumped.sort();
-            for line in &dumped {
-                output_line!("{line}");
-            }
-            if args.iter().any(|a| a == "--quiet") {
-                let (instructions, _) = bun_sema_standalone::instructions_and_cycles();
-                error_line!("instructions {:.3} G", instructions as f64 / 1e9);
-            }
-        }
         Some("cli") => {
             // cli [paths..] [@<response file>] [-b] [-p <project>] [--<compiler option> [value]]
-            // [--threads=n] [--plain] [--no-color] [--github]: behaves like `bun check`.
+            // [--threads=n] [--plain] [--no-color] [--github] [--timing]: behaves like `bun check`.
             use bun_sema_driver::format::{Layout, Style, write_diagnostics, write_summary};
             let has = |flag: &str| args.iter().any(|a| a == flag);
             let cwd = std::env::current_dir()
@@ -160,584 +32,67 @@ fn run(args: &[String]) {
                 .into_owned();
             let arguments: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             let command_line = bun_sema_driver::parse_command_line(&arguments, cwd.as_bytes());
-            // `--snapshot=<file>`: the files, the entry points and the resolutions of a bundle, as `bun build --compile --aot` wrote them.
-            let mut snapshot = args.iter().find_map(|a| a.strip_prefix("--snapshot=")).map(|path| {
-                let bytes = read_file(path).expect("the snapshot cannot be read");
-                bun_sema_driver::snapshot::Snapshot::from_bytes(&bytes).expect("not a snapshot")
-            });
-            let deferred_sources = snapshot.as_mut().and_then(|it| it.take_deferred_sources());
-            let (cwd, paths, project) = match &snapshot {
-                // `--project` on the command line goes before the one the bundle was made with.
-                Some(it) => (text(&it.cwd), it.entry_points.clone(), command_line.project.clone().or_else(|| it.tsconfig.clone())),
-                None => (cwd, command_line.paths.clone(), command_line.project.clone()),
-            };
-            if has("--aot") && paths.is_empty() && project.is_none() {
-                error_line!("bun-sema: --aot needs an entry point");
-                std::process::exit(2);
-            }
-            let mut code = snapshot.as_ref().map_or_else(Vec::new, |it| it.code.clone());
-            if has("--aot") {
-                code.extend(bun_aot::prelude::FILES.iter().map(|&(name, _)| bun_aot::prelude::path_of(cwd.as_bytes(), name)));
-            }
-            let script_kinds = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds.clone());
-            let script_kinds_by_extension = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds_by_extension.clone());
-            let conditions = snapshot.as_ref().map_or_else(Vec::new, |it| it.conditions.clone());
-            // `--define=name=value` and `--feature=FLAG`, as for `bun build`.
-            let mut constants = bun_aot::Constants { root: bun_sema_driver::host::from_native(cwd.as_bytes()), ..Default::default() };
-            if let Some(it) = &snapshot {
-                constants.defines.clone_from(&it.defines);
-                constants.features.clone_from(&it.features);
-                let mut resolved = bun_aot::ResolvedImports::default();
-                for ((from, specifier), to) in &it.resolved {
-                    let [from, to] = [from, to].map(|path| resolved.number_of(path));
-                    resolved.insert(from, specifier, to);
-                }
-                constants.resolved = Some(resolved);
-                constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
-                constants.side_effect_free_files = it.side_effect_free_files.iter().cloned().collect();
-                constants.lifted_commonjs = it.lifted_commonjs.iter().cloned().collect();
-                constants.statements = bun_aot::Constants::statements_by_file(it.statements.iter().cloned());
-                constants.texts = it.texts.iter().cloned().collect();
-                constants.assets = it.assets.iter().cloned().collect();
-            }
-            // `--test-globals`: as for `bun test --aot`.
-            constants.has_test_globals = has("--test-globals");
-            constants.logs_type_errors = has("--aot-type-errors=log");
-            constants.minifies_identifiers = (has("--minify") || has("--minify-identifiers")) && !has("--keep-names");
-            constants.records_spans = args.iter().any(|a| a.starts_with("--audit-sites-out="));
-            // `--own-paths`: as for `bun run --aot`, each module reports its own path.
-            if has("--own-paths") || snapshot.as_ref().is_some_and(|it| it.preserve_source_paths) {
-                constants.source_path_to_url = Some(|path| {
-                    let mut url = b"file://".to_vec();
-                    for &byte in path {
-                        match byte {
-                            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' | b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' => url.push(byte),
-                            _ => url.extend(format!("%{byte:02X}").into_bytes()),
-                        }
-                    }
-                    url
-                });
-            }
-            // `--removable=path:offset`: what the bundler says of the statement that starts there, for a test without a bundler.
-            for (path, offset) in args.iter().filter_map(|a| a.strip_prefix("--removable=")).filter_map(|a| bun_core::strings::last_index_of_char(a.as_bytes(), b':').map(|at| (&a[..at], &a[at + 1..]))) {
-                let path = bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(path).to_string_lossy().as_bytes());
-                constants.statements.entry(path).or_default().push((offset.parse().expect("--removable=path:offset"), true));
-            }
-            for define in args.iter().filter_map(|a| a.strip_prefix("--define=")) {
-                if let Some((name, value)) = bun_core::strings::split_once_char(define.as_bytes(), b'=') {
-                    constants.defines.push((name.to_vec(), value.to_vec()));
-                }
-            }
-            // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
-            constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
-            const OWN_FLAGS: [&str; 57] = ["--agent", "--all", "--aot", "--aot-allow", "--aot-baseline", "--aot-deny", "--aot-explain", "--aot-out", "--aot-type-errors", "--aot-update-baseline", "--aot-warn", "--audit-only", "--audit-sites-out", "--builtin-sources", "--checkers", "--chunk-bytes", "--declarations-out", "--define", "--disallow-code-generation-from-strings", "--error-types", "--every-stage", "--feature", "--file-cost", "--file-instructions", "--follow-every-import", "--github", "--json-parse-schemas", "--keep", "--keep-names", "--memory", "--min-tasks", "--minify", "--minify-identifiers", "--no-builtin-modules", "--no-color", "--only", "--order", "--own-paths", "--plain", "--progress", "--projects-at-once", "--removable", "--repeat", "--slices", "--snapshot", "--split-files", "--split-publishes-everything", "--split-tolerates", "--step-growth", "--task-instructions", "--test-globals", "--threads", "--timing", "--type-node-cost", "--warm-up-files", "--warm-up-max-bytes", "--width"];
-            const EXPLAINED: [&str; 20] = ["mutations", "builtins", "json", "deferred", "errors", "fields", "foreign", "given", "integers", "joins", "progress", "react", "react-locations", "rows", "rules-json", "runtime-use", "throws", "throws-all", "throws-all-json", "throws-json"];
             for rejected in &command_line.rejected {
-                let flag = text(&rejected.flag);
-                // A flag that is no compiler option is one of the tool's own, looked for below, or an error.
+                // A flag that isn't a compiler option is one of this tool's own flags, handled below.
                 if !matches!(rejected.error, bun_sema_driver::FlagError::Unknown) {
-                    error_line!("{flag} is left out: it has no value that it accepts");
-                    continue;
-                }
-                let value = rejected.value.as_deref().map(text).unwrap_or_default();
-                if !OWN_FLAGS.contains(&&*flag) {
-                    error_line!("error: Unknown flag \"{flag}\"");
-                    std::process::exit(1);
-                }
-                if flag == "--aot-explain" && !value.is_empty() && !EXPLAINED.contains(&&*value) {
-                    error_line!("error: Unknown flag \"{flag}={value}\"");
-                    std::process::exit(1);
+                    let flag = text(&rejected.flag);
+                    error_line!("skipping {flag}: missing or invalid value");
                 }
             }
-            if let Some(level) = args.iter().find_map(|a| a.strip_prefix("--disallow-code-generation-from-strings")).and_then(|value| bun_core::CodeGenerationFromStrings::from_flag_value(value.strip_prefix('=').unwrap_or(value).as_bytes())) {
-                bun_core::set_code_generation_from_strings_in_built_executable(level);
-            }
-            let Some(lib_dir) = variable(bun_core::zstr!("BUN_SEMA_TS_LIB")) else {
-                error_line!(
-                    "bun-sema: BUN_SEMA_TS_LIB is not set: it names the directory of the lib.*.d.ts files"
-                );
-                std::process::exit(2);
-            };
-            if has("--json-parse-schemas") {
-                let absolute: Vec<Vec<u8>> = paths.iter().map(|path| std::path::Path::new(&cwd).join(text(path)).to_string_lossy().into_owned().into_bytes()).collect();
-                let asked = bun_sema_driver::json_schemas::Asked {
-                    cwd: cwd.as_bytes(),
-                    paths: &absolute,
-                    read: &[],
-                    libs: bun_sema_driver::Libs::Directory(lib_dir.as_bytes()),
-                    follows_every_import: has("--follow-every-import"),
-                };
-                let repeats = args.iter().find_map(|a| a.strip_prefix("--repeat=")).and_then(|count| count.parse().ok()).unwrap_or(1usize);
-                let answer = bun_sema_driver::json_schemas::with_shared_parses(|shared| {
-                    let mut answer = bun_sema_driver::json_schemas::json_parse_schemas(&asked, shared);
-                    for _ in 1..repeats {
-                        let (began, before) = (std::time::Instant::now(), bun_sema_standalone::instructions_and_cycles().0);
-                        answer = bun_sema_driver::json_schemas::json_parse_schemas(&asked, shared);
-                        error_line!("again: {:.1} ms, {:.1} M on this thread", began.elapsed().as_secs_f64() * 1e3, (bun_sema_standalone::instructions_and_cycles().0 - before) as f64 / 1e6);
-                    }
-                    answer
-                });
-                output_line!("{} files loaded", answer.files_loaded);
-                let mut by_path: Vec<_> = answer.by_path.iter().collect();
-                by_path.sort_by_key(|it| it.0);
-                for (path, of_file) in by_path {
-                    for it in &of_file.schemas {
-                        match &it.schema {
-                            Ok(schema) => output_line!("{}:{}-{} {}", text(path), it.start, it.end, text(schema)),
-                            Err(why) => output_line!("{}:{}-{} error: {why}", text(path), it.start, it.end),
-                        }
-                    }
-                }
-                return;
-            }
-            // `--progress`: as `bun check` displays it on a terminal.
-            let shows_progress = args.iter().any(|a| a == "--progress");
-            let is_timed = args.iter().any(|a| a == "--timing");
-            // `--task-instructions`, with `--timing --threads=1`: every task is listed, with its
-            // instructions in place of its time (1 s = 1 G).
-            let task_instructions = || bun_sema_standalone::instructions_and_cycles().0;
-            let progress = (shows_progress || is_timed)
-                .then(|| std::sync::Arc::new(bun_sema_driver::Progress::default()));
-            // `--timing`: the instruction count of loading, so that checking can be measured
-            // separately. Loading opens every file, and the operating system's work for that varies
-            // between runs.
-            let instructions_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            // The HIRs of all files are live at that point.
-            let peak_memory_of_loading = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-            if let (true, Some(progress)) = (is_timed, progress.clone()) {
-                let noted = Arc::clone(&instructions_of_loading);
-                let noted_peak = Arc::clone(&peak_memory_of_loading);
-                let _ = std::thread::Builder::new().spawn(move || {
-                    use std::sync::atomic::Ordering::Relaxed;
-                    while progress.to_check.load(Relaxed) == 0 {
-                        std::thread::sleep(std::time::Duration::from_micros(200));
-                    }
-                    noted.store(bun_sema_standalone::instructions_and_cycles().0, Relaxed);
-                    noted_peak.store(bun_sema_standalone::peak_memory(), Relaxed);
-                });
-            }
-            if let (true, Some(progress)) = (shows_progress, progress.clone()) {
-                let _ = std::thread::Builder::new().spawn(move || {
-                    let style = Style {
-                        layout: Layout::Pretty,
-                        color: true,
-                        cwd: b"",
-                        is_case_sensitive: true,
-                        github_annotations: false,
-                        width: bun_sema_standalone::terminal_width(),
-                        show_all: false,
-                    };
-                    let mut tick = 0;
-                    loop {
-                        let mut line = Vec::new();
-                        bun_sema_driver::format::write_progress(&mut line, &progress, &style, tick);
-                        let _ = std::io::stderr().write_all(&line);
-                        std::thread::sleep(std::time::Duration::from_millis(80));
-                        tick += 1;
-                    }
-                });
-            }
-            // `--error-types`: the nodes whose type is the error type, in files without errors. Path, line, column, kind of node.
-            let error_types: Guarded<Vec<(String, usize, usize, String)>> =
-                Guarded::new(Vec::new());
-            let note_error_types =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    let found = checker.error_types_at_locations(file);
-                    let module = &checker.p.files.modules[file.idx()];
-                    let source = &module.hir.text;
-                    let mut error_types = error_types.lock();
-                    for (start, kind) in found {
-                        let before = &source[..(start as usize).min(source.len())];
-                        let line_start = bun_core::strings::last_index_of_char(before, b'\n')
-                            .map_or(0, |n| n + 1);
-                        let line = bun_core::strings::count_char(before, b'\n') + 1;
-                        let column = before.len() - line_start + 1;
-                        let path = text(module.file_name());
-                        error_types.push((path, line, column, kind));
-                    }
-                };
-            // `--aot`: what the front end of the compiler makes of the program that starts at the first file on the command line.
-            let roots = paths.clone();
-            let working_directory = bun_sema_driver::host::from_native(cwd.as_bytes());
-            // `--aot-explain=foreign`: why a view admits objects that are not laid out.
-            // `--aot-explain=fields`: the fields whose name nothing stores, by name and by layout.
-            // `--aot-explain=integers`: by name of a field, whether the numbers stored under it are expected to be int32s, and if not, the first evidence to the contrary.
-            // `--aot-explain=progress`: where the soundness closure of the link is, on stderr as it goes, with the sizes of its tables, and at the end what has grown, in numbers alone.
-            // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
-            let explain = bun_aot::Explain { throws: has("--aot-explain=throws") || has("--aot-explain=throws-all"), throws_json: has("--aot-explain=throws-json") || has("--aot-explain=throws-all-json"), throws_all: has("--aot-explain=throws-all") || has("--aot-explain=throws-all-json"), rows: has("--aot-explain=rows"), joins: has("--aot-explain=joins"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), includes_builtin_modules: true, mutations: has("--aot-explain=mutations"), fields: has("--aot-explain=fields"), integers: has("--aot-explain=integers"), plugins: false, rules_json: has("--aot-explain=rules-json"), causes: has("--aot-explain"), causes_json: has("--aot-explain=json"), progress: has("--aot-explain=progress").then_some((|line: std::fmt::Arguments<'_>| error_line!("{line}")) as fn(std::fmt::Arguments<'_>)), deferred: has("--aot-explain=deferred"), runtime_use: has("--aot-explain=runtime-use") };
-            let mut rules = bun_aot::rules::Settings::default();
-            let rule_flags = [("--aot-allow=", bun_aot::rules::Severity::Allow), ("--aot-warn=", bun_aot::rules::Severity::Warn), ("--aot-deny=", bun_aot::rules::Severity::Deny)];
-            for (list, severity) in args.iter().filter_map(|a| rule_flags.iter().find_map(|&(flag, severity)| Some((a.strip_prefix(flag)?, severity)))) {
-                if let Err(unknown) = rules.add(severity, list.as_bytes()) {
-                    error_line!("error: Unknown rule \"{}\"", text(&unknown.written));
-                    std::process::exit(1);
-                }
-            }
-            let baseline_path = args.iter().find_map(|a| a.strip_prefix("--aot-baseline="));
-            rules.updates_baseline = has("--aot-update-baseline");
-            rules.baseline = baseline_path.and_then(read_file).and_then(|text| bun_aot::rules::Baseline::from_json(&bun_sema_driver::host::parse_json_object(&text)?));
-            let translation = bun_aot::Translation::new(&constants).explaining(explain).enforcing(rules);
-            // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
-            // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
-            let explains_react = has("--aot-explain=react") || has("--aot-explain=react-locations");
-            let react = bun_aot::build::react::Report::new(&constants, has("--aot-explain=react-locations"));
-            let is_replayed = snapshot.is_some();
-            let entry_functions = snapshot.as_ref().map_or_else(Vec::new, |it| it.entry_functions.clone());
-            let begin_translation = |program: &bun_sema::check::Program,
-                                     in_parallel: bun_sema::util::InParallel<'_>| {
-                let roots: Vec<bun_sema::program::FileId> = (roots.iter())
-                    .filter_map(|path| {
-                        let path = bun_sema_driver::host::from_argument(&working_directory, path);
-                        program.files.by_path.get(&path)
-                    })
-                    .collect();
-                // As `bun build --compile` does: the executable runs its first entry point and starts workers with the others. The paths of a
-                // snapshot also have what a page imports.
-                let roots = if is_replayed { &roots[..roots.len().min(1)] } else { &roots[..] };
-                if has("--aot") {
-                    let entry_points: Vec<Vec<bun_sema::program::FileId>> = if entry_functions.is_empty() {
-                        roots.iter().map(|&root| vec![root]).collect()
-                    } else {
-                        (entry_functions.iter())
-                            .map(|files| files.iter().filter_map(|path| program.files.by_path.get(&bun_sema_driver::host::from_native(path))).collect())
-                            .collect()
-                    };
-                    let started = std::time::Instant::now();
-                    translation.begin(program, &entry_points, in_parallel);
-                    if is_timed {
-                        error_line!("aot: begun in {:.3} s", started.elapsed().as_secs_f64());
-                    }
-                }
-                if explains_react {
-                    react.begin(program, roots, in_parallel);
-                }
-            };
-            let loaded = |program: &bun_sema::check::Program,
-                          in_parallel: bun_sema::util::InParallel<'_>| {
-                if has("--memory") {
-                    list_loaded(program);
-                }
-                if has("--aot") || explains_react {
-                    begin_translation(program, in_parallel);
-                }
-            };
-            let audited_separately = args.iter().find_map(|a| a.strip_prefix("--audit-only="));
-            let is_left_out = |checker: &bun_sema::check::Checker<'_, '_>, file: bun_sema::program::FileId| {
-                audited_separately.is_some_and(|only| !only.is_empty() && !bun_core::strings::contains(text(checker.p.files.modules[file.idx()].file_name()).as_bytes(), only.as_bytes()))
-            };
-            let translate_file =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    if !is_left_out(checker, file) {
-                        translation.translate_file(checker, file);
-                    }
-                };
-            let explain_react =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    if has("--aot") {
-                        translation.translate_file(checker, file);
-                    }
-                    react.explain_file(checker, file);
-                };
-            let record_file =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    if !is_left_out(checker, file) {
-                        translation.record_file(checker, file);
-                    }
-                };
-            let merge_notes = |program: &bun_sema::check::Program| translation.merge_notes(program);
-            // By entry of `Report::unreachable_diagnostics`.
-            let error_dismissal_reasons: Guarded<Vec<String>> = Guarded::new(Vec::new());
-            // `--aot-out=<file>`, and the file is not written.
-            let lacks_output = std::sync::atomic::AtomicBool::new(false);
-            let translate = |program: &bun_sema::check::Program,
-                             in_parallel: bun_sema::util::InParallel<'_>,
-                             errors: &[(bun_sema::program::FileId, u32)]|
-             -> Vec<bool> {
-                let started = std::time::Instant::now();
-                if audited_separately.is_some() {
-                    let path = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")).expect("--audit-only goes with --audit-sites-out");
-                    let tables: Vec<String> = (translation.take_fragment_programs(program).iter())
-                        .map(|of_fragment| bun_aot::audit::to_json(&bun_aot::audit::table(of_fragment, false, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &[]))
-                        .collect();
-                    let is_written = write_file(path, tables.join("\n").as_bytes()).is_ok();
-                    lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
-                    error_line!("aot: sites of {} fragments written in {:.3} s", tables.len(), started.elapsed().as_secs_f64());
-                    return vec![false; errors.len()];
-                }
-                let mut translated = translation.finish(program, in_parallel, errors);
-                *error_dismissal_reasons.lock() = std::mem::take(&mut translated.error_dismissal_reasons);
-                if translated.kept_errors.contains(&true) {
-                    return translated.kept_errors;
-                }
-                for problem in &translated.problems {
-                    error_line!("{problem}");
-                }
-                error_line!("aot: members: {}", translated.members);
-                if let (Some(path), Some(outcome)) = (baseline_path, program.rule_scopes.get().and_then(|scopes| scopes.baseline_outcome())) {
-                    error_line!("aot: baseline: {} counts are lower", outcome.lower_counts);
-                    if let Some(text) = outcome.updated_text {
-                        write_file_to_look_at(path, &text);
-                    }
-                }
-                let bun_aot::Typedness { reads, typed_reads, accesses, typed_accesses, dependency_accesses, typed_dependency_accesses, layouts, open_layouts, classes_without_layout, untyped_packages, untyped_files } = translated.typedness;
-                error_line!("aot: accesses: {typed_accesses} of {accesses} typed in the program, {typed_dependency_accesses} of {dependency_accesses} in dependencies");
-                error_line!("aot: typedness: {typed_reads} of {reads} reads typed, {open_layouts} of {layouts} types open, {classes_without_layout} classes without a layout, {untyped_packages} packages and {untyped_files} files untyped");
-                for line in &translated.explained {
-                    if line.starts_with('{') {
-                        output_line!("{line}");
-                    } else if line.is_empty() || line.starts_with(['[', ' ']) {
-                        error_line!("{line}");
-                    } else {
-                        error_line!("aot: {line}");
-                    }
-                }
-                for (id, why) in translated.skipped_builtin_modules.iter().filter(|_| has("--aot-explain=builtins")) {
-                    let module = bun_builtin_syntax::Archive::embedded().manifest().module(*id);
-                    error_line!("aot: builtins: left out {id} \"{}\": {why}", module.map_or_else(String::new, |module| text(&module.name)));
-                }
-                for (id, why) in translated.skipped_builtin_functions.iter().filter(|_| has("--aot-explain=builtins")) {
-                    error_line!("aot: builtins: left out the function {id}: {why}");
-                }
-                let steps: Vec<String> = (translated.times.steps.iter())
-                    .map(|(step, spent)| format!("{step} {:.3} s", spent.as_secs_f64()))
-                    .collect();
-                error_line!(
-                    "aot: link: {}; {} layouts described in {} rounds",
-                    steps.join(", "),
-                    translated.times.layouts_described,
-                    translated.times.rounds
-                );
-                if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--audit-sites-out=")) {
-                    let linked_in = started.elapsed().as_secs_f64();
-                    bun_aot::audit::widen_layoutless_classes_to_any_object(&mut translated.program);
-                    let is_written = write_file(path, bun_aot::audit::to_json(&bun_aot::audit::table(&translated.program, true, &|path| program.files.by_path.get(&bun_sema_driver::host::from_native(std::path::Path::new(&cwd).join(bstr::BStr::new(path).to_string()).to_string_lossy().as_bytes())).map(|file| &program.files.hir(file).text[..]), in_parallel), &bun_aot::audit::shapes(&translated.program)).as_bytes()).is_ok();
-                    lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
-                    error_line!("aot: linked in {:.3} s, sites written in {:.3} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
-                    return translated.kept_errors;
-                }
-                if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
-                    let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = translated.problems.is_empty() && write_file(path, &bun_aot::format::write_releasing(&mut translated.program, in_parallel)).is_ok();
-                    if let Some(tokens) = &translated.tokens {
-                        let _ = write_file(&format!("{path}.map"), &[&b"{\n  \"version\": 3,\n  \"sources\": [],\n  \"mappings\": \"\",\n  \"names\": [],\n  \"x_bun_aot\": "[..], tokens, b"\n}\n"].concat());
-                    }
-                    lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
-                    error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
-                    let written_in = started.elapsed().as_secs_f64();
-                    bun_aot::release(translated.program, in_parallel);
-                    error_line!("aot: the linked program was released in {:.3} s", started.elapsed().as_secs_f64() - written_in);
-                    return translated.kept_errors;
-                }
-                output_line!("{}", translated.program.dump().trim_end());
-                error_line!("aot: {:.3} s", started.elapsed().as_secs_f64());
-                translated.kept_errors
-            };
-            type AfterFile<'a> = &'a (
-                    dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
-                );
-            // `--file-instructions`, with `--threads=1 --checkers=1`: the instructions since the
-            // previous file was checked, for each file. One checker in program order charges what
-            // several files need to the first of them, as typescript-go's `--singleThreaded` does.
-            let instructions_so_far = std::sync::atomic::AtomicU64::new(0);
-            let note_instructions =
-                |checker: &mut bun_sema::check::Checker<'_, '_>,
-                 file: bun_sema::program::FileId| {
-                    let now = bun_sema_standalone::instructions_and_cycles().0;
-                    let before =
-                        instructions_so_far.swap(now, std::sync::atomic::Ordering::Relaxed);
-                    let path = text(checker.p.files.modules[file.idx()].file_name());
-                    error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
-                };
-            let after_file = if explains_react {
-                Some(&explain_react as AfterFile<'_>)
-            } else if has("--aot") {
-                Some(&translate_file as AfterFile<'_>)
-            } else if has("--file-instructions") {
-                Some(&note_instructions as AfterFile<'_>)
-            } else {
-                has("--error-types").then_some(&note_error_types as AfterFile<'_>)
-            };
-            // `--declarations-out=<directory>`: the declaration files of a `tsc -b` run, each at
-            // its absolute path inside that directory.
-            let declarations_out =
-                (args.iter()).find_map(|a| a.strip_prefix("--declarations-out="));
-            let write_declaration_file = |path: &[u8], text: &[u8]| {
-                let path = format!(
-                    "{}{}",
-                    declarations_out.unwrap(),
-                    bun_sema::messages::text(path)
-                );
-                write_file_to_look_at(&path, text);
-            };
-            // For tuning the constants of the plan without rebuilding. To be removed once the
-            // constants are chosen.
-            let number = |name: &str, default: usize| {
-                let actual = args.iter().find_map(|a| a.strip_prefix(name));
-                actual.map_or(default, |n| n.parse().expect(name))
-            };
-            let defaults = bun_sema_driver::PlanOptions::default();
+            let lib_dir = variable(bun_core::zstr!("BUN_SEMA_TS_LIB"));
             let plan_options = bun_sema_driver::PlanOptions {
-                step_growth: number("--step-growth=", defaults.step_growth),
-                warm_up_files: number("--warm-up-files=", defaults.warm_up_files),
-                warm_up_max_bytes: number("--warm-up-max-bytes=", defaults.warm_up_max_bytes),
-                chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
-                min_tasks: number("--min-tasks=", defaults.min_tasks),
-                tasks_on_one_thread: has("--tasks-on-one-thread"),
-                one_thread_task_cost: number(
-                    "--one-thread-task-cost=",
-                    defaults.one_thread_task_cost,
-                ),
-                one_thread_max_cost: number("--one-thread-max-cost=", defaults.one_thread_max_cost),
-                type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
-                file_cost: number("--file-cost=", defaults.file_cost),
-                slices: number("--slices=", defaults.slices),
-                split_files: number("--split-files=", defaults.split_files as usize) as u32,
-                split_tolerates: number("--split-tolerates=", 0) as u8,
-                split_publishes_everything: has("--split-publishes-everything"),
-                checkers: number("--checkers=", defaults.checkers),
-                reproduces_symbol_ids: defaults.reproduces_symbol_ids,
-                projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
-                after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
-                checks_only_named: defaults.checks_only_named,
-                reads_sources_of_references: defaults.reads_sources_of_references,
-                current_directory_is_of_the_project: defaults.current_directory_is_of_the_project,
-                project_is_for_the_rest: defaults.project_is_for_the_rest,
-                reports_nothing_about_files: defaults.reports_nothing_about_files,
-                only_in_a_project_that_includes: defaults.only_in_a_project_that_includes,
-                refuses_broken_configurations: defaults.refuses_broken_configurations,
-                prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
-                shares_every_file: defaults.shares_every_file,
-                early_run: defaults.early_run,
-                early_parse_only: defaults.early_parse_only,
-                early_scan_only: defaults.early_scan_only,
-                only_the_globals: defaults.only_the_globals,
-                writes_declaration_files: defaults.writes_declaration_files,
-                without_sources_of_the_project: defaults.without_sources_of_the_project,
-                checks_what_only_augments: defaults.checks_what_only_augments,
-                declares_bun_intrinsics: defaults.declares_bun_intrinsics,
-                bun_intrinsics_add_no_file: defaults.bun_intrinsics_add_no_file,
-                memory: defaults.memory,
+                task_size: match args.iter().find_map(|a| a.strip_prefix("--task-size=")) {
+                    None => bun_sema_driver::TaskSize::ByCost,
+                    Some("one-file") => bun_sema_driver::TaskSize::OneFile,
+                    Some("unlimited") => bun_sema_driver::TaskSize::Unlimited,
+                    Some(other) => panic!("--task-size={other}"),
+                },
+                discards_first_visits: has("--discard-first-visits"),
+                ..Default::default()
             };
             let request = bun_sema_driver::Request {
                 compiler_options: &command_line.compiler_options,
                 cwd: cwd.as_bytes(),
-                project: project.as_deref(),
+                project: command_line.project.as_deref(),
                 listed_projects: None,
                 build: command_line.build,
                 errors: &command_line.errors,
-                paths: &paths,
-                are_entry_points: snapshot.is_some() || has("--aot"),
-                is_one_program: has("--aot"),
-                code: &code,
+                paths: &command_line.paths,
+                are_entry_points: false,
                 threads: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--threads="))
                     .and_then(|t| t.parse().ok())
                     .unwrap_or(0),
-                libs: bun_sema_driver::Libs::Directory(lib_dir.as_bytes()),
-                progress: progress.as_deref(),
-                only: args
-                    .iter()
-                    .find_map(|a| a.strip_prefix("--only="))
-                    .map(str::as_bytes),
-                retains_everything: args.iter().any(|a| a == "--keep"),
+                libs: bun_sema_driver::Libs::Directory(
+                    lib_dir
+                        .as_deref()
+                        .expect("BUN_SEMA_TS_LIB: the directory of the lib.*.d.ts files")
+                        .as_bytes(),
+                ),
+                progress: None,
                 order: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--order="))
                     .and_then(|n| n.parse().ok())
                     .unwrap_or(1),
-                digests: is_timed && !has("--task-instructions"),
-                task_clock: has("--task-instructions")
-                    .then_some(&task_instructions as &(dyn Fn() -> u64 + Sync)),
                 plan_options,
-                script_kinds: &script_kinds,
-                script_kinds_by_extension: &script_kinds_by_extension,
-                conditions: &conditions,
+                script_kinds: &[],
+                script_kinds_by_extension: &[],
+                conditions: &[],
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,
-                loaded: (has("--memory") || has("--aot") || explains_react).then_some(
-                    &loaded
-                        as &(dyn Fn(&bun_sema::check::Program, bun_sema::util::InParallel<'_>)
-                             + Sync),
-                ),
-                compile: has("--aot").then_some(
-                    &translate
-                        as &(dyn Fn(
-                            &bun_sema::check::Program,
-                            bun_sema::util::InParallel<'_>,
-                            &[(bun_sema::program::FileId, u32)],
-                        ) -> Vec<bool>
-                            + Sync),
-                ),
-                checked: is_timed.then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-                after_file,
-                before_visits: has("--aot").then_some(&record_file as AfterFile<'_>),
-                all_visited_once: has("--aot")
-                    .then_some(&merge_notes as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-                declaration_file_emitted: declarations_out
-                    .is_some()
-                    .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
+                after_file: None,
             };
-            // A binary without the flag ignores it silently. A script that tests start orders looks for this line.
+            // A binary without the flag silently ignores it, so a script that tests start orders looks for this line.
             if request.order != 1 {
                 error_line!("order {}", request.order);
             }
-            for round in 1..=number("--repeat=", 0) {
-                let started = std::time::Instant::now();
-                let (errors, checked) = bun_sema_driver::check_then(&request, |report| {
-                    (report.diagnostics.len(), started.elapsed())
-                });
-                error_line!(
-                    "repeat {round}: {errors} errors, {:.3} s to the report, {:.3} s with the memory given back, {} MB held",
-                    checked.as_secs_f64(),
-                    started.elapsed().as_secs_f64(),
-                    bun_sema_standalone::current_memory() >> 20
-                );
-            }
-            if number("--repeat=", 0) > 0 {
-                // Memory that the allocator caches for future allocations is not memory retained by
-                // the checks.
-                bun_alloc::mimalloc::mi_collect(true);
-                error_line!(
-                    "after the allocator gave back what is free: {} MB held",
-                    bun_sema_standalone::current_memory() >> 20
-                );
-            }
-            let mut provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
-                already_read: std::mem::take(&mut it.already_read),
-                code_kinds: std::mem::take(&mut it.code_kinds).into_iter().collect(),
-                deferred_imports: std::mem::take(&mut it.deferred_imports),
-                deferred_paths: std::mem::take(&mut it.deferred_paths),
+            let provided = bun_sema_driver::host::Provided {
+                ends_the_process: true,
                 ..Default::default()
-            });
-            if let Some(sources) = deferred_sources {
-                provided.deferred_sources = Some(Box::new(move || Some(sources)));
-            }
-            if has("--aot") {
-                provided.build_constants = Some(constants.build_constants());
-                for &(name, text) in bun_aot::prelude::FILES {
-                    provided.already_read.insert(bun_sema_driver::host::from_native(&bun_aot::prelude::path_of(cwd.as_bytes(), name)), text.as_bytes().into());
-                }
-            }
-            // `--no-builtin-modules`: for a program that is run where nothing runs the modules of the runtime, in the `jsc` shell.
-            provided.without_builtin_modules = has("--no-builtin-modules");
-            provided.preserves_source_paths = constants.source_path_to_url.is_some();
-            // `--builtin-sources=<folder>`: a source of the runtime is read from `<folder>/<path under src/js>` if that file is there, else
-            // from the archive. The ids, the names and what requires what stay the manifest's.
-            if let Some(folder) = args.iter().find_map(|a| a.strip_prefix("--builtin-sources=")) {
-                let manifest = bun_builtin_syntax::Archive::embedded().manifest();
-                let with_source = manifest.modules().iter().map(|module| &module.path).filter(|path| !path.is_empty());
-                for file in with_source.chain(manifest.function_files()) {
-                    if let Some(source) = read_file(&format!("{folder}/{}", text(file))) {
-                        provided.already_read.insert([bun_builtin_syntax::VIRTUAL_ROOT, file].concat(), source.into());
-                    }
-                }
-            }
-            bun_sema_driver::check_provided_then(&request, provided, |report| {
+            };
+            let report = bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
                     layout: if has("--plain") {
@@ -758,87 +113,9 @@ fn run(args: &[String]) {
                         .unwrap_or_else(bun_sema_standalone::terminal_width),
                     show_all: has("--all"),
                 };
-                if shows_progress {
-                    let _ = std::io::stderr().write_all(bun_sema_driver::format::ERASE_LINE);
-                }
                 let mut out = Vec::new();
                 write_diagnostics(&mut out, &report, &style);
                 let _ = std::io::stdout().write_all(&out);
-                if has("--aot-explain=rules-json") {
-                    for line in bun_sema_driver::format::rule_findings_as_json(&report, style.cwd) {
-                        output_line!("{line}");
-                    }
-                }
-                if explains_react {
-                    for line in react.finish() {
-                        output_line!("react: {line}");
-                    }
-                }
-                // `--aot-explain=builtins`: the modules of the runtime that are compiled with the program, and why each is.
-                if has("--aot-explain=builtins")
-                    && let Some(found) = &report.builtin_modules
-                {
-                    use bun_sema_driver::builtins::InclusionReason;
-                    let archive = bun_builtin_syntax::Archive::embedded();
-                    let name_of = |id: u32| archive.manifest().module(id).map_or_else(String::new, |module| text(if module.specifier.is_empty() { &module.label } else { &module.specifier }));
-                    let mut bytes = 0;
-                    for module in &found.included {
-                        let size = archive.source(module.id).len();
-                        bytes += size;
-                        let why = match &module.why {
-                            InclusionReason::Always => "native code requires it".to_owned(),
-                            InclusionReason::Named(specifier) => format!("the program names \"{}\"", text(specifier)),
-                            InclusionReason::Trigger(property) => format!("the program may read {}", text(property)),
-                            InclusionReason::AnyName(loader_entry) => format!("a name that is made at run time can reach the module loader: {loader_entry}"),
-                            InclusionReason::RequiredBy(by) => format!("{} can require it", name_of(*by)),
-                        };
-                        error_line!("aot: builtins: included {} {} {} {size} bytes: {why}", module.id, name_of(module.id), text(archive.path(module.id)));
-                    }
-                    for (loader_entry, path, position) in &found.loader_entries {
-                        error_line!("aot: builtins: loader entry: {loader_entry} at {}:{position}", text(path));
-                    }
-                    for file in archive.manifest().function_files() {
-                        error_line!("aot: builtins: functions {}{}", text(bun_builtin_syntax::VIRTUAL_ROOT), text(file));
-                    }
-                    for (name, id) in &found.native {
-                        error_line!("aot: builtins: left out {} \"{}\": it is native code", id.map_or_else(|| "-".to_owned(), |id| id.to_string()), text(name));
-                    }
-                    let mut native_bindings: Vec<_> = archive.manifest().native_bindings().collect();
-                    native_bindings.sort_unstable_by_key(|binding| binding.id);
-                    for binding in native_bindings {
-                        error_line!("aot: builtins: native {} {} {} {}", binding.id, text(binding.kind), text(binding.file), text(binding.symbol));
-                    }
-                    error_line!("aot: builtins: {} modules, {bytes} bytes of source", found.included.len());
-                }
-                if has("--aot-explain=runtime-use")
-                    && let Some(found) = &report.builtin_modules
-                {
-                    for line in bun_core::strings::split(&found.runtime_use.text(), b"\n").filter(|line| !line.is_empty()) {
-                        error_line!("aot: runtime use: {}", text(line));
-                    }
-                    if let Some(hint) = found.runtime_use.what_the_flag_against_code_from_strings_would_do() {
-                        error_line!("aot: runtime use: hint: {hint}");
-                    }
-                }
-                // `--aot-explain=errors`: the errors that do not fail the build, and why each does not.
-                if has("--aot") {
-                    error_line!("aot: {} errors in code that is not in the program", report.unreachable_diagnostics.len());
-                    if !report.unjudged_diagnostics.is_empty() {
-                        error_line!("aot: {} errors of which it is not known whether they lie in code that is in the program", report.unjudged_diagnostics.len());
-                    }
-                }
-                let why = error_dismissal_reasons.lock();
-                for (d, why) in report.unreachable_diagnostics.iter().zip(why.iter()).filter(|_| has("--aot-explain=errors")) {
-                    let message = bun_core::strings::split(&d.text, b"\n").next().unwrap_or_default();
-                    error_line!("aot: {}({},{}): error TS{}: {} [{why}]", text(&d.path), d.line, d.column, d.code, text(message));
-                }
-                let mut error_types = std::mem::take(&mut *error_types.lock());
-                error_types
-                    .retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));
-                error_types.sort();
-                for (path, line, column, kind) in &error_types {
-                    output_line!("{path}({line},{column}): ERROR-TYPE {kind}");
-                }
                 let mut summary = Vec::new();
                 write_summary(&mut summary, &report, &style);
                 let _ = std::io::stderr().write_all(&summary);
@@ -851,173 +128,20 @@ fn run(args: &[String]) {
                         report.check_time.as_secs_f64(),
                         bun_sema_standalone::peak_memory() as f64 / (1u64 << 30) as f64
                     );
-                    // Discover, link and merge are the wall time of one thread. The others are summed over all threads.
-                    let phases = bun_sema::resolve::Phase::ALL.iter().zip(report.load_phases);
-                    let phases: Vec<String> = phases
-                        .map(|(phase, time)| format!("{phase:?} {:.3}", time.as_secs_f64()))
-                        .collect();
-                    error_line!("load: {}", phases.join(", ").to_lowercase());
-                    let (instructions, cycles) = bun_sema_standalone::instructions_and_cycles();
-                    error_line!(
-                        "instructions {:.2} G, cycles {:.2} G",
-                        instructions as f64 / 1e9,
-                        cycles as f64 / 1e9
-                    );
-                    let loading =
-                        instructions_of_loading.load(std::sync::atomic::Ordering::Relaxed);
-                    error_line!(
-                        "instructions of checking {:.2} G",
-                        instructions.saturating_sub(loading) as f64 / 1e9
-                    );
-                    let peak = peak_memory_of_loading.load(std::sync::atomic::Ordering::Relaxed);
-                    error_line!(
-                        "peak of loading {:.2} GB",
-                        peak as f64 / (1u64 << 30) as f64
-                    );
-                    let seconds = |of: fn(&bun_sema_driver::StepReport) -> std::time::Duration| {
-                        report
-                            .steps
-                            .iter()
-                            .map(of)
-                            .sum::<std::time::Duration>()
-                            .as_secs_f64()
-                    };
-                    let count = |of: fn(&bun_sema_driver::StepReport) -> u64| {
-                        report.steps.iter().map(of).sum::<u64>()
-                    };
-                    // fan/r7/tools/oracle.py reads these lines. It compares the counts between
-                    // runs: they are deterministic for a given program.
-                    error_line!(
-                        "plan options: step growth {}, warm-up files {}, warm-up max bytes {}, chunk bytes {}, min tasks {}",
-                        plan_options.step_growth,
-                        plan_options.warm_up_files,
-                        plan_options.warm_up_max_bytes,
-                        plan_options.chunk_bytes,
-                        plan_options.min_tasks
-                    );
-                    error_line!("steps: {}", report.steps.len());
-                    error_line!("tasks: {}", count(|step| step.tasks as u64));
-                    error_line!("seconds in steps: {:.3}", seconds(|step| step.in_tasks));
-                    error_line!("seconds in link: {:.3}", seconds(|step| step.in_link));
-                    error_line!(
-                        "seconds in publishes: {:.3}",
-                        seconds(|step| step.in_publish)
-                    );
-                    error_line!("seconds idle at barriers: {:.3}", seconds(|step| step.idle));
-                    error_line!("entries buffered: {}", count(|step| step.entries.buffered));
-                    error_line!(
-                        "entries published: {}",
-                        count(|step| step.entries.published)
-                    );
-                    error_line!("entries lost: {}", count(|step| step.entries.lost));
-                    error_line!(
-                        "records linked: {}, joined: {}",
-                        count(|step| step.records.linked.iter().sum::<usize>() as u64),
-                        count(|step| step.records.joined.iter().sum::<usize>() as u64)
-                    );
-                    let by_kind = bun_sema::types::LinkCounts::NAMES.iter().enumerate();
-                    let by_kind = by_kind.map(|(kind, name)| {
-                        let sum = |of: fn(&bun_sema::types::LinkCounts) -> &[usize]| {
-                            report
-                                .steps
-                                .iter()
-                                .map(|step| of(&step.records)[kind])
-                                .sum::<usize>()
-                        };
-                        format!("{name} {} / {}", sum(|it| &it.linked), sum(|it| &it.joined))
-                    });
-                    error_line!(
-                        "records linked / joined by kind: {}",
-                        by_kind.collect::<Vec<String>>().join(", ")
-                    );
-                    error_line!(
-                        "generic relation entries not published: {}",
-                        count(|step| step.generic_relation_entries_not_published)
-                    );
-                    // What a task computed about a source file of another component. The first eight kinds are inference. The others are
-                    // type syntax.
-                    let kinds = bun_sema::check::FOREIGN_EVALUATION_KINDS;
-                    let foreign: Vec<u64> = (0..kinds.len())
-                        .map(|kind| {
-                            report
-                                .steps
-                                .iter()
-                                .map(|step| step.foreign_evaluations[kind])
-                                .sum()
-                        })
-                        .collect();
-                    error_line!(
-                        "foreign evaluations: {} inference, {} type syntax",
-                        foreign[..8].iter().sum::<u64>(),
-                        foreign[8..].iter().sum::<u64>()
-                    );
-                    let by_kind: Vec<String> = (kinds.iter().zip(&foreign))
-                        .map(|(kind, count)| format!("{kind} {count}"))
-                        .collect();
-                    error_line!("foreign evaluations by kind: {}", by_kind.join(", "));
-                    let by_step = report.steps.iter().map(|step| step.entries.published);
-                    let by_step: Vec<String> = by_step.map(|n| n.to_string()).collect();
-                    error_line!("entries published by step: {}", by_step.join(" "));
-                    // The ten tables with the most duplicated work.
-                    let names = bun_sema::check::task::table_names();
-                    let mut by_table = vec![(0u64, 0u64); names.len()];
-                    for step in &report.steps {
-                        for (sum, more) in by_table.iter_mut().zip(&step.entries.by_table) {
-                            (sum.0, sum.1) = (sum.0 + more.0, sum.1 + more.1);
-                        }
-                    }
-                    let mut by_table: Vec<(&str, (u64, u64))> =
-                        names.into_iter().zip(by_table).collect();
-                    by_table.sort_by_key(|(_, (buffered, published))| {
-                        std::cmp::Reverse(buffered - published)
-                    });
-                    for (name, (buffered, published)) in by_table.iter().take(10) {
-                        error_line!("lost {name}: {} of {buffered}", buffered - published);
-                    }
-                    for (number, step) in report.steps.iter().enumerate() {
-                        error_line!(
-                            "step {number}: {} tasks, {} files, {:.3} s, link {:.3}, publish {:.3}, idle {:.3}, entries {} / {} / {}, records {} / {}, digest {:016x}",
-                            step.tasks,
-                            step.files,
-                            step.in_tasks.as_secs_f64(),
-                            step.in_link.as_secs_f64(),
-                            step.in_publish.as_secs_f64(),
-                            step.idle.as_secs_f64(),
-                            step.entries.buffered,
-                            step.entries.published,
-                            step.entries.lost,
-                            step.records.linked.iter().sum::<usize>(),
-                            step.records.joined.iter().sum::<usize>(),
-                            step.entries.digest
-                        );
-                        if step.ranges != 0 {
-                            let [cycle, limit, nesting] = step.ranges_by_obstacle;
-                            error_line!(
-                                "  ranges checked ahead {}, not published {}; met a cycle {cycle}, a limit {limit}, a cut at nested types {nesting}",
-                                step.ranges,
-                                step.ranges_dropped
-                            );
-                        }
-                        for (elapsed, files, path) in &step.slowest_tasks {
-                            error_line!(
-                                "  task {:.3} s, {files} files, from {}",
-                                elapsed.as_secs_f64(),
-                                text(path)
-                            );
-                        }
-                    }
                 }
-                std::process::exit(i32::from(!report.is_ok() || lacks_output.load(std::sync::atomic::Ordering::Relaxed)));
-            })
+                report
+            });
+            std::process::exit(i32::from(!report.is_ok()));
         }
         // each --out=<directory> [--jobs=<n>] [--limit=<seconds>]: for thousands of small programs,
-        // where launching a process costs more than checking. A line of standard input is a
+        // where launching a process costs more than checking. Each line of standard input is a
         // directory and the arguments to run there, separated by tabs. Line `n` runs in a fork of
-        // this process and writes `<n>.out` and `<n>.err`. `<n>.status` has its exit code, or the
-        // signal that ended it.
+        // this process and writes `<n>.out` and `<n>.err`. `<n>.status` gets its exit code, or the
+        // signal that killed it.
         #[cfg(unix)]
         Some("each") => {
             use bun_core::Fd;
+            use bun_sema_baselines::write_debug_file;
             let option = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
             let out = option("--out=").expect("--out=");
             let jobs: usize = option("--jobs=").map_or(8, |n| n.parse().expect("--jobs="));
@@ -1025,7 +149,7 @@ fn run(args: &[String]) {
             let mut running: Vec<(libc::pid_t, usize)> = Vec::new();
             let wait_for_one = |running: &mut Vec<(libc::pid_t, usize)>| {
                 let mut status = 0;
-                // SAFETY: `status` is a valid place for the result.
+                // SAFETY: `status` is valid for the call to write the result to.
                 let pid = unsafe { libc::wait(&raw mut status) };
                 let Some(at) = running.iter().position(|it| it.0 == pid) else {
                     return;
@@ -1036,9 +160,9 @@ fn run(args: &[String]) {
                 } else {
                     format!("signal {}", libc::WTERMSIG(status))
                 };
-                write_file_to_look_at(&format!("{out}/{number}.status"), status.as_bytes());
+                write_debug_file(&format!("{out}/{number}.status"), status.as_bytes());
             };
-            // No thread has been started yet, so a fork has everything it needs.
+            // No thread has been started yet, so a fork is a complete copy of the process.
             for (number, line) in std::io::stdin().lines().map_while(Result::ok).enumerate() {
                 if running.len() == jobs {
                     wait_for_one(&mut running);
@@ -1064,7 +188,7 @@ fn run(args: &[String]) {
                 if redirected.is_err() {
                     std::process::exit(127);
                 }
-                // SAFETY: no handler is installed, so the signal ends a program that hangs.
+                // SAFETY: no handler is installed, so the signal kills a program that hangs.
                 unsafe { libc::alarm(limit) };
                 let arguments: Vec<String> = fields.collect();
                 run(&arguments);
@@ -1080,6 +204,6 @@ fn run(args: &[String]) {
                 std::process::exit(1);
             }
         }
-        _ => error_line!("usage: bun-sema cli | each | baselines | hir"),
+        _ => error_line!("usage: bun-sema cli | each | baselines"),
     }
 }

@@ -33,41 +33,65 @@ describe.concurrent("--aot-huge-heap", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
+  // A loop in a function with a try of its own gets no RangeError where it allocates: there the process ends and says what to do.
   test("an executable built without it stops at the limit", async () => {
-    using folder = tempDir("aot-huge-heap", { "program.ts": program });
+    using folder = tempDir("aot-huge-heap", { "program.ts": `try {\n${program}} finally {\n  console.log("finally");\n}\n` });
     const cwd = String(folder);
     const built = await run([bunExe(), "build", "--compile", "--aot", "program.ts", "--outfile", "program"], cwd);
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
     const { stdout, stderr, exitCode } = await run([join(cwd, "program")], cwd, smallHeap);
-    expect(stderr).toContain("FATAL: MarkedBlocks fill the");
+    expect(stderr).toContain("FATAL: out of memory. Each thread of a compiled executable can use");
     expect(stderr).toContain("--aot-huge-heap");
     expect(stdout).not.toContain("kept");
     expect(exitCode).not.toBe(0);
   }, 120_000);
 
-  test("bun run --aot takes it too", async () => {
+  test("bun run --debug-aot, which builds, takes it too", async () => {
     using folder = tempDir("aot-huge-heap", { "program.ts": program });
     const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", "--aot-huge-heap", "program.ts"], String(folder), smallHeap);
     expect({ stdout, exitCode }).toEqual({ stdout: printed, exitCode: 0 });
   }, 120_000);
 
-  test("bun test --aot takes it too", async () => {
+  test("bun test --debug-aot takes it too", async () => {
     using folder = tempDir("aot-huge-heap", { "program.test.ts": 'import { expect, test } from "bun:test";\ntest("runs", () => expect(1 + 1).toBe(2));\n' });
     const { stderr, exitCode } = await run([bunExe(), "test", "--debug-aot", "--aot-huge-heap", "program.test.ts"], String(folder));
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   }, 120_000);
 
-  test.each([
-    [["build", "--compile", "--aot-huge-heap", "program.ts", "--outfile", "program"]],
-    [["run", "--aot-huge-heap", "program.ts"]],
-    [["--aot-huge-heap", "program.ts"]],
-    [["test", "--aot-huge-heap", "program.test.ts"]],
-  ])("it requires --aot: bun %j", async args => {
-    using folder = tempDir("aot-huge-heap", { "program.ts": 'console.log("ran");\n', "program.test.ts": 'import { test } from "bun:test";\ntest("runs", () => {});\n' });
-    const { stdout, stderr, exitCode } = await run([bunExe(), ...args], String(folder));
+  const small = { "program.ts": 'console.log("ran");\n', "program.test.ts": 'import { test } from "bun:test";\ntest("runs", () => {});\n' };
+
+  test("it requires --aot", async () => {
+    using folder = tempDir("aot-huge-heap", small);
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "--compile", "--aot-huge-heap", "program.ts", "--outfile", "program"], String(folder));
     expect(stderr).toContain("--aot-huge-heap requires --aot");
     expect(stdout).toBe("");
     expect(exitCode).not.toBe(0);
+  });
+
+  test.each([
+    [["run", "--aot", "--aot-huge-heap", "program.ts"]],
+    [["--aot", "--aot-huge-heap", "program.ts"]],
+    [["test", "--aot", "--aot-huge-heap", "program.test.ts"]],
+    [["run", "--aot-huge-heap", "program.ts"]],
+    [["test", "--aot-huge-heap", "program.test.ts"]],
+  ])("nothing is built here, so it is an error: bun %j", async args => {
+    using folder = tempDir("aot-huge-heap", small);
+    const { stdout, stderr, exitCode } = await run([bunExe(), ...args], String(folder));
+    expect(stderr).toContain("error: --aot-huge-heap is only valid with bun build --compile --aot and bun compile\n");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.each([
+    [["build"], true],
+    [["compile"], true],
+    [[], false],
+    [["run"], false],
+    [["test"], false],
+  ] as [string[], boolean][])("bun %j --help lists it: %p", async (command, lists) => {
+    using folder = tempDir("aot-huge-heap", {});
+    const { stdout, stderr } = await run([bunExe(), ...command, "--help"], String(folder));
+    expect((stdout + stderr).includes("--aot-huge-heap")).toBe(lists);
   });
 });

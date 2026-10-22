@@ -17,7 +17,13 @@ test.concurrent.each(programs)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: readFileSync(join(folder, name + ".expected.txt"), "utf8"), stderr: "", exitCode: 0 });
+    const diagnostics = stderr.split("\n").filter(line => /^(warn|error)\b/.test(line));
+    expect({ stdout, otherDiagnostics: diagnostics.filter(line => !line.startsWith("warn: TS100064: this import path isn't a constant.")), exitCode }).toEqual({
+      stdout: readFileSync(join(folder, name + ".expected.txt"), "utf8"),
+      otherDiagnostics: [],
+      exitCode: 0,
+    });
+    expect(diagnostics).not.toBeEmpty();
   },
   120_000,
 );

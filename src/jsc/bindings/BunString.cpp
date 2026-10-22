@@ -136,7 +136,7 @@ JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
     }
 
     if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
-        ASSERT((this->impl.wtf->refCount() > 0 || this->impl.wtf->isStatic()) && !this->impl.wtf->isEmpty());
+        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = { .tag = BunStringTag::Dead };
         return jsString(vm, WTF::move(str));
@@ -773,7 +773,7 @@ WTF::String BunString::toWTFString(ZeroCopyTag) const
     } else if (this->tag == BunStringTag::StaticEncodedSlice) {
         return Zig::toStringStatic(this->impl.encoded);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT((this->impl.wtf->refCount() > 0 || this->impl.wtf->isStatic()) && !this->impl.wtf->isEmpty());
+        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
     }
 
@@ -808,7 +808,7 @@ WTF::String BunString::transferToWTFString()
         *this = Zig::BunStringEmpty;
         return str;
     } else if (this->tag == BunStringTag::WTFStringImpl) {
-        ASSERT((this->impl.wtf->refCount() > 0 || this->impl.wtf->isStatic()) && !this->impl.wtf->isEmpty());
+        ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
 
         auto str = WTF::String(adoptRef(*this->impl.wtf));
         *this = Zig::BunStringEmpty;

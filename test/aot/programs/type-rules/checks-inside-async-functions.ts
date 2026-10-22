@@ -3,7 +3,7 @@ interface Entry { name: string; tags: string[] }
 class Holder { constructor(public held: number) {} }
 
 const untyped: any = {
-  text: "text", count: 3, list: ["a", "b"], entry: { name: "n", tags: ["t"] }, holder: new Holder(5), nothing: undefined, call: (x: number) => x + 1,
+  text: "text", count: 3, list: ["a", "b"], entry: { name: "n", tags: ["t"] }, holder: new Holder(5), nothing: undefined, call: () => 2,
   give(key: string) { return this[key]; },
 };
 
@@ -45,7 +45,7 @@ async function inATry(key: string): Promise<string> {
     const value: string = untyped.give(key);
     return "fine " + value.length;
   } catch (error) {
-    return "caught " + (error as Error).message;
+    return "caught " + (error as Error).name;
   }
 }
 async function inALoop(keys: string[]): Promise<string> {
@@ -67,7 +67,7 @@ async function row(name: string, run: () => Promise<unknown>): Promise<void> {
     const value = await run();
     console.log(name, typeof value === "function" ? "a function" : String(value));
   } catch (error) {
-    console.log(name, "threw", (error as Error).name + ": " + (error as Error).message);
+    console.log(name, "threw", (error as Error).name);
   }
 }
 async function main(): Promise<void> {

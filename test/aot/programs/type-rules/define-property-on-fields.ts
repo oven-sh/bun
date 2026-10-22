@@ -1,4 +1,4 @@
-// `Object.defineProperty` and `Reflect.defineProperty` that would make a field of a typed object an accessor, read-only, non-enumerable or non-configurable throw.
+// `Object.defineProperty` and `Reflect.defineProperty` make a field of a typed object an accessor, read-only, non-enumerable or non-configurable as in plain JavaScript. A value of another kind is defined too, and the next typed read of that field throws a TypeError.
 interface Item { id: number; title: string; price: number; stock?: number; tags: string[] }
 const calls: string[] = []
 function make(id: number): Item { return { id, title: "item" + id, price: id * 1.5, tags: ["t" + id] } }

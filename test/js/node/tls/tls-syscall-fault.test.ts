@@ -57,7 +57,7 @@ afterAll(() => {
   server?.close();
 });
 
-function connect(options: tls.ConnectionOptions & { allowHalfOpen?: boolean } = {}) {
+function connect(options: tls.ConnectionOptions = {}) {
   return tls.connect({ port, host: "127.0.0.1", ca: certs.cert, rejectUnauthorized: true, ...options });
 }
 
@@ -177,7 +177,10 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     const closed = Promise.withResolvers<void>();
     let received = "";
     let arrived = Promise.withResolvers<void>();
-    const options = {
+    const socket = await Bun.connect({
+      ...(unix
+        ? { unix: streaming.address() as string }
+        : { hostname: "127.0.0.1", port: (streaming.address() as AddressInfo).port }),
       tls: { ca: certs.cert, serverName: "localhost" },
       socket: {
         handshake: () => handshake.resolve(),
@@ -187,10 +190,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
         },
         close: () => closed.resolve(),
       },
-    };
-    const socket = unix
-      ? await Bun.connect({ unix: streaming.address() as string, ...options })
-      : await Bun.connect({ hostname: "127.0.0.1", port: (streaming.address() as AddressInfo).port, ...options });
+    });
     const [[peer]] = await Promise.all([accepted, handshake.promise]);
     peer.on("error", () => {});
     // Then the socket has had time to close for an empty queue.

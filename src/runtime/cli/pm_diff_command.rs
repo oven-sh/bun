@@ -106,7 +106,8 @@ pub(crate) fn exec(
         .collect();
 
     let (mut left_spec, mut right_spec) = resolve_sides(pm, &args, original_cwd);
-    // Two folders compare as written: the patch between them has to apply to the files on disk.
+    // Two folders are compared as written, because the patch between them has to apply to the files
+    // on disk.
     let as_published = !matches!((&left_spec, &right_spec), (Spec::Dir(_), Spec::Dir(_)));
     // `bun pm diff ./pkg` / `./pkg 2.0.0`: a registry side without a name takes it from the local side's package.json.
     let mut left_early: Option<Tree> = None;
@@ -621,7 +622,7 @@ fn read_dir_tree(
     // bins — not the whole checkout with its vendor/ and build/.
     'package: {
         if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
-            // Before the parse below: this one parses other package.json files.
+            // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
             let bump = Bump::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
@@ -753,7 +754,8 @@ fn read_dir_tree(
     Ok(tree)
 }
 
-/// What `bun pm pack` in `dir` resolves the `workspace:` and `catalog:` of `manifest` through.
+/// Returns the manifests that `bun pm pack` in `dir` would use to resolve the `workspace:` and
+/// `catalog:` specifiers in `manifest`.
 fn manifests_for(
     pm: &mut PackageManager,
     dir: &[u8],
@@ -791,7 +793,7 @@ fn with_published_versions(
         ) else {
             return;
         };
-        // A version that does not resolve stays as written: pack refuses to publish it.
+        // A version that doesn't resolve is left as written. pack would refuse to publish it.
         let Some(Ok(published)) =
             Substitution::for_spec(spec).map(|found| found.published(manifests, dir, name))
         else {

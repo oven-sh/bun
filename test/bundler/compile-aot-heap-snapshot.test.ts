@@ -20,6 +20,9 @@ interface Settings {
 const orders: Order[] = [];
 for (let i = 0; i < 100; i++) orders.push(new Order(i, "customer " + i, [i, i + 1], orders[i - 1] ?? null));
 const settings: Settings = { hostName: "host " + orders.length, labels: ["label " + orders.length], newest: orders[99]! };
+// The compiler gives no room to a field that nothing reads, and a snapshot shows what is there.
+let read = settings.hostName.length + settings.labels.length + settings.newest.id;
+for (const order of orders) read += order.customer.length + order.lines.length + (order.previous ? 1 : 0);
 function makeCounter() {
   let count = 0;
   return function counter(): number {
@@ -59,6 +62,7 @@ for (let i = 0; i < v8.nodes.length; i += fields.length) {
 }
 console.log(
   JSON.stringify({
+    read,
     first: seen.get("Order: customer -> string, lines -> Array"),
     others: seen.get("Order: customer -> string, lines -> Array, previous -> Order"),
     settings: seen.get("Object: hostName -> string, labels -> Array, newest -> Order"),
@@ -88,7 +92,7 @@ test.each([[["--aot"]], [[]]])("a heap snapshot names the properties that hold o
   await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ first: 1, others: 99, settings: 1, v8: [], closures: [] });
+  expect(JSON.parse(stdout)).toEqual({ read: 1497, first: 1, others: 99, settings: 1, v8: [], closures: [] });
   expect(exitCode).toBe(0);
 });
 

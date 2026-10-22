@@ -1,0 +1,10 @@
+export interface Options {
+  limit?: number;
+  step: number;
+}
+export function defaults(): Options {
+  return { limit: undefined, step: 1 };
+}
+export function read(options: Options): number {
+  return (options.limit ?? 10) + options.step;
+}

@@ -1,5 +1,4 @@
-import "./setup";
-declare function host(): number;
+import { host } from "./host.js";
 export const predicted = { a: host(), b: "x" };
 let later: number | undefined = undefined;
 export function store() { later = 5 }

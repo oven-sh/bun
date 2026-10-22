@@ -1,0 +1,4 @@
+true 3 object
+get 1 true
+set 1 true number
+get 1 true

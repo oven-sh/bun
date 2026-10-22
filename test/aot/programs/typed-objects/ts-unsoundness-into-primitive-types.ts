@@ -1,27 +1,4 @@
-// TypeScript's own unsoundness (covariant fields, generics, bivariant method parameters, index signatures) puts a value of another kind into a primitive type without any cast.
-/* expected
-a1 2
-a2 text
-a3 TypeError
-a4 text
-a5 {"v":"text"}
-a6 6
-b1 TypeError
-b2 0
-b3 3
-c1 TypeError
-c2 s
-c3 8
-d1 TypeError
-d2 2v,w
-e1 TypeError
-e2 s
-e3 5
-f1 TypeError
-f2 ok 2
-g1 TypeError
-g2 4
-*/
+// TypeScript's own unsoundness (covariant fields, generics, bivariant method parameters, index signatures) puts a value of another kind into a primitive type without any cast. The store through the wider type is taken, and the typed read through the narrower type throws a TypeError. `this.v` in a method is not such a read (e1).
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }

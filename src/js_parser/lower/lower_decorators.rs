@@ -159,7 +159,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// recordUsage + Expr.assign.
     fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
-        self.record_assignment(ref_);
         Expr::assign(self.use_ref(ref_, l), value)
     }
 

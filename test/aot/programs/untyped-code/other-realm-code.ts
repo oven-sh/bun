@@ -1,4 +1,4 @@
-// Code that runs in another realm (node:vm contexts, ShadowRealm) has built-ins of its own and works beside the compiled program.
+// Code that runs in another realm (node:vm contexts, ShadowRealm) has built-ins of its own and works beside the compiled program. One row differs from plain Bun: a ShadowRealm cannot import a module that was compiled, and Bun's own modules are: importValue throws a TypeError.
 import vm from "node:vm";
 import path from "node:path";
 const out: string[] = [];

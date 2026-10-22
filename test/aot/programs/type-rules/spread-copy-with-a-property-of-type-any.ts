@@ -1,8 +1,8 @@
 // `{ ...typed, property }`: the copy is a new object, and a property that comes after the spread has its own type, whatever the spread brought under that name.
 // Where nothing written says what the copy is, a property of type any is not held to the type the spread's source declares for it.
-// IR= 0 withAny CloneObject
-// IR= 1 declared CloneObject
-// IR= 1 withCount CloneObject
+// IR= 0 withAny CloneAs 
+// IR= 1 declared CloneAs 
+// IR= 1 withCount CloneAs 
 interface Field { kind: string }
 interface Entries { key1: Field; key2: Field }
 interface Schema { type: "object"; entries: Entries; count: number }

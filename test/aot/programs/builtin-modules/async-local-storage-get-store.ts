@@ -6,7 +6,7 @@ const say = (...parts: unknown[]) => lines.push(parts.map(part => (typeof part =
 const first = new AsyncLocalStorage<{ id: number }>();
 const second = new AsyncLocalStorage<string>();
 const third = new AsyncLocalStorage<number>();
-const withDefault = new AsyncLocalStorage<string>({ defaultValue: "default", name: "named" } as never);
+const withDefault = new AsyncLocalStorage<string>({ defaultValue: "default", name: "named" } as any);
 
 const where = (error: unknown, frames: number) => (error as Error).stack!.split("\n").slice(1, 1 + frames).map(line => /at (?:(\S+) \()?.*?:(\d+):\d+\)?$/.exec(line.trim())).map(found => (found ? (found[1] ?? "") + ":" + found[2] : "?")).join(" < ");
 function read(storage: any): unknown {
@@ -28,7 +28,7 @@ first.run({ id: 1 }, () => {
       say("back", all());
       second.exit(() => say("second left", all()));
       withDefault.run("given", () => say("default replaced", all()));
-      withDefault.run(undefined as never, () => say("default replaced by undefined", all()));
+      withDefault.run(undefined as any, () => say("default replaced by undefined", all()));
     });
   });
   say("first alone", all());

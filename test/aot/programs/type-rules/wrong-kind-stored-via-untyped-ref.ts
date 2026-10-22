@@ -1,4 +1,4 @@
-// Untyped code stores a string to a field of type number of parsed JSON that typed code holds too.
+// Untyped code stores a string to a field of type number of parsed JSON that typed code holds too. The store succeeds, and the next typed read of the field throws.
 declare const console: { log(...values: unknown[]): void };
 function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
 function hide(v: unknown): any { return v }

@@ -1,7 +1,7 @@
 // A class field of a class that extends a host class is defined by a stub from the second instance on. The program counts the entries of the operation that the stub leaves for.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-function entered(): number { return counted ? counted("operationAOTPutByNameAndCache") : 0; }
+function entered(): number { return counted ? counted("operationAOTPutByIdAndCache") : 0; }
 const lines: string[] = [];
 
 class OfPromise extends Promise<void> { first = 1; second = "two"; }

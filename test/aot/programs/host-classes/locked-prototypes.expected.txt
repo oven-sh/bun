@@ -1,126 +1,126 @@
-Request.prototype.text = f: throws TypeError: Cannot change 'text' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Request.prototype.text = f: throws TypeError
 Request.prototype.text = the same function: allowed
-Object.defineProperty(Request.prototype, "text", value): throws TypeError: Cannot change 'text' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Request.prototype, "url", getter): throws TypeError: Cannot change 'url' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Request.prototype.added = 1: throws TypeError: Cannot change 'added' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Request.prototype[0] = 1: throws TypeError: Cannot change '0' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Request.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Request.prototype, "added", value): throws TypeError: Cannot change 'added' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(Request.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Request.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(Request.prototype, "text", value): throws TypeError
+Object.defineProperty(Request.prototype, "url", getter): throws TypeError
+Request.prototype.added = 1: throws TypeError
+Request.prototype[0] = 1: throws TypeError
+Request.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Request.prototype, "added", value): throws TypeError
+Object.assign(Request.prototype, { added: 1 }): throws TypeError
+Request.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(Request.prototype, "added", 1): false
 Reflect.defineProperty(Request.prototype, "added", value): false
 Reflect.deleteProperty(Request.prototype, "missing"): true
 Object.isExtensible(Request.prototype): false
-Object.isFrozen(Request.prototype): true
+Object.isFrozen(Request.prototype): false
 Object.setPrototypeOf(Request.prototype, its own prototype): allowed
-Object.setPrototypeOf(Request.prototype, another object): throws TypeError: Cannot change the prototype of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Request.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(Request.prototype, another object): throws TypeError
+Request.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(Request.prototype, another object): false
 Request.prototype has the same keys afterwards: true
 Request.prototype.text is the same function afterwards: true
-Response.prototype.json = f: throws TypeError: Cannot change 'json' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Response.prototype.json = f: throws TypeError
 Response.prototype.json = the same function: allowed
-Object.defineProperty(Response.prototype, "json", value): throws TypeError: Cannot change 'json' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Response.prototype, "status", getter): throws TypeError: Cannot change 'status' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Response.prototype.added = 1: throws TypeError: Cannot change 'added' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Response.prototype[0] = 1: throws TypeError: Cannot change '0' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Response.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Response.prototype, "added", value): throws TypeError: Cannot change 'added' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(Response.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Response.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(Response.prototype, "json", value): throws TypeError
+Object.defineProperty(Response.prototype, "status", getter): throws TypeError
+Response.prototype.added = 1: throws TypeError
+Response.prototype[0] = 1: throws TypeError
+Response.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Response.prototype, "added", value): throws TypeError
+Object.assign(Response.prototype, { added: 1 }): throws TypeError
+Response.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(Response.prototype, "added", 1): false
 Reflect.defineProperty(Response.prototype, "added", value): false
 Reflect.deleteProperty(Response.prototype, "missing"): true
 Object.isExtensible(Response.prototype): false
-Object.isFrozen(Response.prototype): true
+Object.isFrozen(Response.prototype): false
 Object.setPrototypeOf(Response.prototype, its own prototype): allowed
-Object.setPrototypeOf(Response.prototype, another object): throws TypeError: Cannot change the prototype of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Response.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(Response.prototype, another object): throws TypeError
+Response.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(Response.prototype, another object): false
 Response.prototype has the same keys afterwards: true
 Response.prototype.json is the same function afterwards: true
-Blob.prototype.slice = f: throws TypeError: Cannot change 'slice' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Blob.prototype.slice = f: throws TypeError
 Blob.prototype.slice = the same function: allowed
-Object.defineProperty(Blob.prototype, "slice", value): throws TypeError: Cannot change 'slice' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Blob.prototype, "size", getter): throws TypeError: Cannot change 'size' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Blob.prototype.added = 1: throws TypeError: Cannot change 'added' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Blob.prototype[0] = 1: throws TypeError: Cannot change '0' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Blob.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Blob.prototype, "added", value): throws TypeError: Cannot change 'added' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(Blob.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Blob.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(Blob.prototype, "slice", value): throws TypeError
+Object.defineProperty(Blob.prototype, "size", getter): throws TypeError
+Blob.prototype.added = 1: throws TypeError
+Blob.prototype[0] = 1: throws TypeError
+Blob.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Blob.prototype, "added", value): throws TypeError
+Object.assign(Blob.prototype, { added: 1 }): throws TypeError
+Blob.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(Blob.prototype, "added", 1): false
 Reflect.defineProperty(Blob.prototype, "added", value): false
 Reflect.deleteProperty(Blob.prototype, "missing"): true
 Object.isExtensible(Blob.prototype): false
-Object.isFrozen(Blob.prototype): true
+Object.isFrozen(Blob.prototype): false
 Object.setPrototypeOf(Blob.prototype, its own prototype): allowed
-Object.setPrototypeOf(Blob.prototype, another object): throws TypeError: Cannot change the prototype of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Blob.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(Blob.prototype, another object): throws TypeError
+Blob.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(Blob.prototype, another object): false
 Blob.prototype has the same keys afterwards: true
 Blob.prototype.slice is the same function afterwards: true
-Headers.prototype.get = f: throws TypeError: Cannot change 'get' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Headers.prototype.get = f: throws TypeError
 Headers.prototype.get = the same function: allowed
-Object.defineProperty(Headers.prototype, "get", value): throws TypeError: Cannot change 'get' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Headers.prototype, "count", getter): throws TypeError: Cannot change 'count' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Headers.prototype.added = 1: throws TypeError: Cannot change 'added' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Headers.prototype[0] = 1: throws TypeError: Cannot change '0' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Headers.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(Headers.prototype, "added", value): throws TypeError: Cannot change 'added' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(Headers.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Headers.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(Headers.prototype, "get", value): defined
+Object.defineProperty(Headers.prototype, "count", getter): throws TypeError
+Headers.prototype.added = 1: throws TypeError
+Headers.prototype[0] = 1: throws TypeError
+Headers.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(Headers.prototype, "added", value): throws TypeError
+Object.assign(Headers.prototype, { added: 1 }): throws TypeError
+Headers.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(Headers.prototype, "added", 1): false
 Reflect.defineProperty(Headers.prototype, "added", value): false
 Reflect.deleteProperty(Headers.prototype, "missing"): true
 Object.isExtensible(Headers.prototype): false
 Object.isFrozen(Headers.prototype): false
 Object.setPrototypeOf(Headers.prototype, its own prototype): allowed
-Object.setPrototypeOf(Headers.prototype, another object): throws TypeError: Cannot change the prototype of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Headers.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(Headers.prototype, another object): throws TypeError
+Headers.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(Headers.prototype, another object): false
 Headers.prototype has the same keys afterwards: true
 Headers.prototype.get is the same function afterwards: true
-URL.prototype.toJSON = f: throws TypeError: Cannot change 'toJSON' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+URL.prototype.toJSON = f: throws TypeError
 URL.prototype.toJSON = the same function: allowed
-Object.defineProperty(URL.prototype, "toJSON", value): throws TypeError: Cannot change 'toJSON' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(URL.prototype, "pathname", getter): throws TypeError: Cannot change 'pathname' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URL.prototype.added = 1: throws TypeError: Cannot change 'added' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URL.prototype[0] = 1: throws TypeError: Cannot change '0' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URL.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(URL.prototype, "added", value): throws TypeError: Cannot change 'added' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(URL.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URL.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(URL.prototype, "toJSON", value): defined
+Object.defineProperty(URL.prototype, "pathname", getter): throws TypeError
+URL.prototype.added = 1: throws TypeError
+URL.prototype[0] = 1: throws TypeError
+URL.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(URL.prototype, "added", value): throws TypeError
+Object.assign(URL.prototype, { added: 1 }): throws TypeError
+URL.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(URL.prototype, "added", 1): false
 Reflect.defineProperty(URL.prototype, "added", value): false
 Reflect.deleteProperty(URL.prototype, "missing"): true
 Object.isExtensible(URL.prototype): false
 Object.isFrozen(URL.prototype): false
 Object.setPrototypeOf(URL.prototype, its own prototype): allowed
-Object.setPrototypeOf(URL.prototype, another object): throws TypeError: Cannot change the prototype of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URL.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(URL.prototype, another object): throws TypeError
+URL.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(URL.prototype, another object): false
 URL.prototype has the same keys afterwards: true
 URL.prototype.toJSON is the same function afterwards: true
-URLSearchParams.prototype.get = f: throws TypeError: Cannot change 'get' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+URLSearchParams.prototype.get = f: throws TypeError
 URLSearchParams.prototype.get = the same function: allowed
-Object.defineProperty(URLSearchParams.prototype, "get", value): throws TypeError: Cannot change 'get' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(URLSearchParams.prototype, "size", getter): throws TypeError: Cannot change 'size' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URLSearchParams.prototype.added = 1: throws TypeError: Cannot change 'added' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URLSearchParams.prototype[0] = 1: throws TypeError: Cannot change '0' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URLSearchParams.prototype[Symbol.for("added")] = 1: throws TypeError: Cannot change [added] of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.defineProperty(URLSearchParams.prototype, "added", value): throws TypeError: Cannot change 'added' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-Object.assign(URLSearchParams.prototype, { added: 1 }): throws TypeError: Cannot change 'added' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URLSearchParams.prototype.__defineGetter__("added", f): throws TypeError: Cannot change 'added' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.defineProperty(URLSearchParams.prototype, "get", value): defined
+Object.defineProperty(URLSearchParams.prototype, "size", getter): throws TypeError
+URLSearchParams.prototype.added = 1: throws TypeError
+URLSearchParams.prototype[0] = 1: throws TypeError
+URLSearchParams.prototype[Symbol.for("added")] = 1: throws TypeError
+Object.defineProperty(URLSearchParams.prototype, "added", value): throws TypeError
+Object.assign(URLSearchParams.prototype, { added: 1 }): throws TypeError
+URLSearchParams.prototype.__defineGetter__("added", f): throws TypeError
 Reflect.set(URLSearchParams.prototype, "added", 1): false
 Reflect.defineProperty(URLSearchParams.prototype, "added", value): false
 Reflect.deleteProperty(URLSearchParams.prototype, "missing"): true
 Object.isExtensible(URLSearchParams.prototype): false
 Object.isFrozen(URLSearchParams.prototype): false
 Object.setPrototypeOf(URLSearchParams.prototype, its own prototype): allowed
-Object.setPrototypeOf(URLSearchParams.prototype, another object): throws TypeError: Cannot change the prototype of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-URLSearchParams.prototype.__proto__ = another object: throws TypeError: Cannot change '__proto__' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.setPrototypeOf(URLSearchParams.prototype, another object): throws TypeError
+URLSearchParams.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(URLSearchParams.prototype, another object): false
 URLSearchParams.prototype has the same keys afterwards: true
 URLSearchParams.prototype.get is the same function afterwards: true
@@ -189,8 +189,8 @@ TextEncoder.prototype has the same keys afterwards: true
 TextEncoder.prototype.encode is the same function afterwards: true
 TextDecoder.prototype.decode = f: replaced
 TextDecoder.prototype.decode = the same function: allowed
-Object.defineProperty(TextDecoder.prototype, "decode", value): throws TypeError: Attempting to change configurable attribute of unconfigurable property.
-Object.defineProperty(TextDecoder.prototype, "encoding", getter): throws TypeError: Attempting to change configurable attribute of unconfigurable property.
+Object.defineProperty(TextDecoder.prototype, "decode", value): throws TypeError
+Object.defineProperty(TextDecoder.prototype, "encoding", getter): throws TypeError
 TextDecoder.prototype.added = 1: added and deleted
 TextDecoder.prototype[0] = 1: added and deleted
 TextDecoder.prototype[Symbol.for("added")] = 1: added and deleted
@@ -245,17 +245,17 @@ Reflect.deleteProperty(EventTarget.prototype, "missing"): true
 Object.isExtensible(EventTarget.prototype): true
 Object.isFrozen(EventTarget.prototype): false
 Object.setPrototypeOf(EventTarget.prototype, its own prototype): allowed
-Object.setPrototypeOf(EventTarget.prototype, another object): throws TypeError: Cannot set prototype of immutable prototype object
-EventTarget.prototype.__proto__ = another object: throws TypeError: Cannot set prototype of immutable prototype object
+Object.setPrototypeOf(EventTarget.prototype, another object): throws TypeError
+EventTarget.prototype.__proto__ = another object: throws TypeError
 Reflect.setPrototypeOf(EventTarget.prototype, another object): false
 EventTarget.prototype has the same keys afterwards: true
 EventTarget.prototype.addEventListener is the same function afterwards: true
-Buffer.prototype.readInt8 = f: replaced
+Buffer.prototype.readInt8 = f: throws TypeError
 Buffer.prototype.readInt8 = the same function: allowed
 Object.defineProperty(Buffer.prototype, "readInt8", value): defined
-Object.defineProperty(Buffer.prototype, "parent", getter): replaced and restored
+Object.defineProperty(Buffer.prototype, "parent", getter): throws TypeError
 Buffer.prototype.added = 1: added and deleted
-Buffer.prototype[0] = 1: added and deleted
+Buffer.prototype[0] = 1: throws TypeError
 Buffer.prototype[Symbol.for("added")] = 1: added and deleted
 Object.defineProperty(Buffer.prototype, "added", value): added and deleted
 Object.assign(Buffer.prototype, { added: 1 }): added and deleted
@@ -266,45 +266,45 @@ Reflect.deleteProperty(Buffer.prototype, "missing"): true
 Object.isExtensible(Buffer.prototype): true
 Object.isFrozen(Buffer.prototype): false
 Object.setPrototypeOf(Buffer.prototype, its own prototype): allowed
-Object.setPrototypeOf(Buffer.prototype, another object): changed and restored
-Buffer.prototype.__proto__ = another object: changed and restored
-Reflect.setPrototypeOf(Buffer.prototype, another object): true
+Object.setPrototypeOf(Buffer.prototype, another object): throws TypeError
+Buffer.prototype.__proto__ = another object: throws TypeError
+Reflect.setPrototypeOf(Buffer.prototype, another object): false
 Buffer.prototype has the same keys afterwards: true
 Buffer.prototype.readInt8 is the same function afterwards: true
-delete Request.prototype.text: throws TypeError: Cannot delete 'text' of Request.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Request or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete Request.prototype.text: throws TypeError
 Reflect.deleteProperty(Request.prototype, "text"): false
 Request.prototype.text is still a function: function
 Object.freeze(Request.prototype): true
 Object.seal(Request.prototype): true
 Object.preventExtensions(Request.prototype): true
-delete Response.prototype.json: throws TypeError: Cannot delete 'json' of Response.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Response or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete Response.prototype.json: throws TypeError
 Reflect.deleteProperty(Response.prototype, "json"): false
 Response.prototype.json is still a function: function
 Object.freeze(Response.prototype): true
 Object.seal(Response.prototype): true
 Object.preventExtensions(Response.prototype): true
-delete Blob.prototype.slice: throws TypeError: Cannot delete 'slice' of Blob.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Blob or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete Blob.prototype.slice: throws TypeError
 Reflect.deleteProperty(Blob.prototype, "slice"): false
 Blob.prototype.slice is still a function: function
 Object.freeze(Blob.prototype): true
 Object.seal(Blob.prototype): true
 Object.preventExtensions(Blob.prototype): true
-delete Headers.prototype.get: throws TypeError: Cannot delete 'get' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete Headers.prototype.get: throws TypeError
 Reflect.deleteProperty(Headers.prototype, "get"): false
 Headers.prototype.get is still a function: function
-Object.freeze(Headers.prototype): throws TypeError: Cannot change 'constructor' of Headers.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of Headers or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.freeze(Headers.prototype): true
 Object.seal(Headers.prototype): true
 Object.preventExtensions(Headers.prototype): true
-delete URL.prototype.toJSON: throws TypeError: Cannot delete 'toJSON' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete URL.prototype.toJSON: throws TypeError
 Reflect.deleteProperty(URL.prototype, "toJSON"): false
 URL.prototype.toJSON is still a function: function
-Object.freeze(URL.prototype): throws TypeError: Cannot change 'constructor' of URL.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URL or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.freeze(URL.prototype): true
 Object.seal(URL.prototype): true
 Object.preventExtensions(URL.prototype): true
-delete URLSearchParams.prototype.get: throws TypeError: Cannot delete 'get' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+delete URLSearchParams.prototype.get: throws TypeError
 Reflect.deleteProperty(URLSearchParams.prototype, "get"): false
 URLSearchParams.prototype.get is still a function: function
-Object.freeze(URLSearchParams.prototype): throws TypeError: Cannot change 'constructor' of URLSearchParams.prototype: built-ins are locked in a program compiled with --aot. Use a subclass of URLSearchParams or a wrapper function instead (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Object.freeze(URLSearchParams.prototype): true
 Object.seal(URLSearchParams.prototype): true
 Object.preventExtensions(URLSearchParams.prototype): true
 Request.added = 1: added and deleted

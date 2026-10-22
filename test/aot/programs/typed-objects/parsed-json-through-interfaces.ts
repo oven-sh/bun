@@ -51,7 +51,7 @@ console.log(team.members.map(m => m.address.city).join(), team.lead.boss === nat
 const copy: Person = { ...team.members[1], id: 50 }
 const { address, ...others } = team.members[1]
 console.log(JSON.stringify(copy), address.city, JSON.stringify(others))
-// Last, because the rules for both are not decided yet: parsed JSON through a generic function, and as the values of a dictionary.
+// Parsed JSON through a generic function, and as the values of a dictionary.
 function load<T>(json: string): T { return JSON.parse(json) }
 console.log(card(load<Person>(source)), card(load<Person>(JSON.stringify(native))))
 const byNick: Record<string, Person> = JSON.parse('{"ann":' + source + "}")

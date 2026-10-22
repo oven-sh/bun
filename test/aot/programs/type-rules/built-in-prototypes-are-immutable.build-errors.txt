@@ -1,4 +1,0 @@
-error: TS100014: This always fails under --aot: `Object.prototype.polluted` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Reflect.set(Object.prototype, ..)` returns false where plain JavaScript returns true: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Reflect.defineProperty(Object.prototype, ..)` returns false where plain JavaScript returns true: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Object.prototype.polluted4` is assigned: built-in prototypes are frozen.

@@ -1,6 +1,6 @@
-// Proxies over records, instances, arrays, functions and parsed data are read, stored to and called by typed code.
+// Proxies over records, instances, arrays, functions and parsed data are read, stored to and called by typed code. One row differs from plain Bun: `number[]` is an array and a Proxy over an array is none, so the variable that is written so throws a TypeError.
 declare const console: { log(...values: unknown[]): void };
-function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
 function hide(v: unknown): any { return v }
 function parse(t: string): any { return JSON.parse(t) }
 type Item = { id: number; n: number; tag?: string };

@@ -1,6 +1,4 @@
-// JSON.parse without a reviver goes by the keys it has seen at each place, once sixteen texts that begin with the same eight characters have gone by. What stays on that path, which objects are filled member by member, and which values go to the general parser.
-declare const aotOperationCount: (name: string) => number;
-const names = ["jsonParsedWithLearnedShapes", "jsonObjectParsedMemberByMember", "jsonValueParsedWithoutShape"];
+// JSON.parse without a reviver goes by the keys it has seen at each place, once sixteen texts that begin with the same eight characters have gone by. Whatever comes then, keys in another order, absent, new, repeated or escaped, another kind of value, no JSON at all, the answer is that of the general parser.
 const order = '{"customer":{"id":1,"name":"n"},"items":[{"sku":"a","quantity":2},{"sku":"b","quantity":3}],"coupon":"c"}';
 function measure(label: string, text: string, parse: (text: string) => unknown = text => JSON.parse(text), isSeenBefore = true) {
   if (isSeenBefore) {
@@ -11,15 +9,13 @@ function measure(label: string, text: string, parse: (text: string) => unknown =
       } catch {}
     }
   }
-  const before = names.map(name => aotOperationCount(name));
   let seen: string;
   try {
     seen = JSON.stringify(parse(text)) === JSON.stringify(JSON.parse(text, (_, held) => held)) ? "right" : "WRONG";
   } catch (error) {
     seen = (error as Error).name;
   }
-  const [calls, memberByMember, withoutShape] = names.map((name, at) => aotOperationCount(name) - before[at]!);
-  console.log(label + ": calls " + calls + ", objects filled member by member " + memberByMember + ", values without a shape " + withoutShape + ", " + seen);
+  console.log(label + ": " + seen);
 }
 measure("a text that begins as none before", order, undefined, false);
 measure("the second that begins so", order, undefined, false);

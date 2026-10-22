@@ -1,4 +1,4 @@
-// A field declared `number` or `boolean` is read before anything was assigned to it.
+// A field declared `number` or `boolean` is read before anything was assigned to it: it reads undefined, which passes every written type and stays undefined.
 function kind(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v }
 function plusOne(n: number): number { return n + 1 }
 function withDefault(n: number = 42): number { return n }
@@ -42,12 +42,12 @@ try { new Early(0); console.log("own number in the constructor: no error") } cat
 try { new Early(1); console.log("own boolean in the constructor: no error") } catch (e) { console.log("own boolean in the constructor:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(new Early(2).n); console.log("neither: no error") } catch (e) { console.log("neither:", e instanceof TypeError ? "TypeError" : "other " + e) }
 
-// HONEST. The base constructor calls a method of the derived class, whose initializers have not run. ECMAScript: NaN.
+// The base constructor calls a method of the derived class, whose initializers have not run. ECMAScript: NaN.
 class Shape0 { area: number; constructor() { this.area = this.compute() } compute(): number { return 0 } }
 class Square0 extends Shape0 { side = 3; unit = "cm"; compute() { return this.side * this.side } text() { return this.area + this.unit } }
 try { new Square0(); console.log("initializer that has not run: no error") } catch (e) { console.log("initializer that has not run:", e instanceof TypeError ? "TypeError" : "other " + e) }
 
-// What was read too early is stored in typed fields (refused) and arrays (which have no door).
+// What was read too early is stored in typed fields and arrays: undefined passes there too.
 interface Sink { n: number; b: boolean }
 class Leaky {
   value: number; on: boolean

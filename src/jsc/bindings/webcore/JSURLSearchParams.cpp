@@ -359,7 +359,7 @@ JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSURLSearchParams>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSURLSearchParams::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSURLSearchParams::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSURLSearchParamsDOMConstructor, DOMConstructorID::URLSearchParams>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -589,7 +589,7 @@ static void putIntoObject(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject,
             } else {
                 obj->putDirect(vm, ident, array);
             }
-        } else if (dynamicDowncast<JSC::JSArray>(jsValue)) {
+        } else if (jsValue.isCell() && jsValue.asCell()->type() == ArrayType) {
             JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(jsValue.getObject());
             array->push(lexicalGlobalObject, stringValue);
             RETURN_IF_EXCEPTION(throwScope, );
@@ -708,6 +708,11 @@ const JSC::ClassInfo URLSearchParamsIterator::s_info = { "URLSearchParams Iterat
 
 template<>
 const JSC::ClassInfo URLSearchParamsIteratorPrototype::s_info = { "URLSearchParams Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(URLSearchParamsIteratorPrototype) };
+
+JSC::JSObject* urlSearchParamsIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<URLSearchParamsIterator>(globalObject.vm(), globalObject);
+}
 
 static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSURLSearchParams* thisObject)
 {

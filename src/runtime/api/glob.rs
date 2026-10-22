@@ -229,7 +229,7 @@ pub(crate) mod standalone_accessor {
             let mut buf = bun_paths::path_buffer_pool::get();
             let resolved = resolve(handle, path.as_bytes(), &mut buf);
             Graph::get_ref()
-                .and_then(|graph| graph.stat(resolved).or_else(|| graph.compiled_program_stat(resolved)))
+                .and_then(|graph| graph.stat(resolved).or_else(|| graph.source_path_stat(resolved)))
                 .ok_or_else(|| SysError::from_code(E::ENOENT, Tag::fstatat))
         }
 
@@ -382,7 +382,7 @@ impl Glob {
         // Match the walker's root choice (`Iterator::init`): an absolute
         // pattern roots at its literal prefix and ignores the cwd, a relative
         // pattern roots at the cwd. A `/$bunfs/` root walks the graph, and so does
-        // a folder that the executable holds at its own path and the disk lacks.
+        // a directory embedded under its source path that is not on disk.
         let pattern_is_absolute = resolve_path::is_absolute(self.pattern.slice())
             || (cfg!(windows) && resolve_path::is_absolute_posix(self.pattern.slice()));
         let in_standalone_graph = bun_standalone_graph::Graph::get_ref().is_some_and(|graph| {
@@ -390,9 +390,9 @@ impl Glob {
                 let pattern = self.pattern.slice();
                 let literal = pattern.iter().position(|c| b"*?[{".contains(c)).unwrap_or(pattern.len());
                 let folder = pattern[..literal].iter().rposition(|&c| resolve_path::is_sep_any(c)).unwrap_or(0);
-                bun_standalone_graph::is_bun_standalone_file_path(pattern) || graph.lists(&pattern[..folder])
+                bun_standalone_graph::is_bun_standalone_file_path(pattern) || graph.owns_directory(&pattern[..folder])
             } else {
-                match_opts.cwd.as_deref().is_some_and(|cwd| graph.lists(cwd))
+                match_opts.cwd.as_deref().is_some_and(|cwd| graph.owns_directory(cwd))
             }
         });
 

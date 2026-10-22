@@ -1,11 +1,11 @@
 // An object that comes from one of several calls and is only read is never made: its fields are read where each call returns.
-// IR= 0 forwardedByBranches GetById|NewObjectWithShape
-// IR= 0 dispatchedByClass GetById|NewObjectWithShape
-// IR= 0 chosenByCondition GetById|NewObjectWithShape
-// IR= 0 chosenOfThree GetById|NewObjectWithShape
-// IR= 0 carriedByLoop GetById|NewObjectWithShape
-// IR= 0 differentOrderOfFields GetById|NewObjectWithShape
-// IR= 1 readAfterOtherWork GetById|NewObjectWithShape
+// IR= 0 forwardedByBranches PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 dispatchedByClass PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 chosenByCondition PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 chosenOfThree PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 carriedByLoop PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 differentOrderOfFields PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 readAfterOtherWork PropGet|: =?L[0-9]+ = NewObject 
 type P = { x: number; y: number };
 let noise = 0;
 let guard = 0;

@@ -1,18 +1,18 @@
 // A record type that `any` is held to also admits objects that were not created as that type: a record of another type that was given the properties later, a Proxy, an object that inherits
 // them, an object with accessors. Compiled code tests the shape of such a receiver. An object that was created as the type stays one for good, so one test covers the accesses that follow it,
 // calls between them included. Whatever fails the test is served by name from there on: every trap, getter and setter runs once, in the order of the source.
-// IRT= 1 readsAroundCall HasShapeOf
-// IRT= 1 storesAroundCall HasShapeOf
-// IRT= 2 twoReceivers HasShapeOf
-// IRT= 1 walk HasShapeOf
-// IRT= 1 caught HasShapeOf
-// IRT= 1 whileMaking HasShapeOf
-// IRT= 1 ofNothing HasShapeOf
-// IRT= 2 throughNext HasShapeOf
-// IRT= 1 inClosure HasShapeOf
-// IRT= 2 deep HasShapeOf
-// IRT= 2 farApart HasShapeOf
-// IRT= 0 readsLoose HasShapeOf
+// IRT= 1 readsAroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 storesAroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 twoReceivers TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 walk TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 caught TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 whileMaking TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 ofNothing TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 throughNext TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 inClosure TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 deep TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 farApart TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 0 readsLoose TypeTest v[0-9]+ testedType=L[0-9]+!
 interface Item { id: number; weight: number; label: string; next: Item | null }
 interface Crate { id: number; depth: number }
 interface Wider extends Item { extra?: number; more?: string }

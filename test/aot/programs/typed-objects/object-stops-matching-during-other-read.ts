@@ -1,4 +1,4 @@
-// Two objects of one type that admits objects from outside are read in one stretch of code. The second is an object from outside whose
+// Two objects are read through one type in one stretch of code. The second is an object made by untyped code whose
 // accessor changes the first: stores, deletes, redefines, gives it another parent, always so that it still has what its type says. What is read of the first behind that is
 // what the language says, however many tests of its shape the stretch shares.
 declare const console: { log(...values: unknown[]): void };

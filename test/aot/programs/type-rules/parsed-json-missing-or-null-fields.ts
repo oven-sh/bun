@@ -1,4 +1,4 @@
-// Parsed JSON is cast to a type although required fields are missing or hold null.
+// Parsed JSON is cast to a type although required fields are missing or hold null: a missing field reads undefined, and undefined and null pass every written type, so nothing throws.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -12,7 +12,7 @@ attempt("null for a boolean", () => (JSON.parse('{"x":1,"label":"l","ok":null,"c
 attempt("null for an optional number", () => (JSON.parse('{"x":1,"label":"l","ok":true,"opt":null,"child":{"v":1}}') as P).label)
 attempt("null for a number, one level down", () => (JSON.parse('{"x":1,"label":"l","ok":true,"child":{"v":null}}') as P).label)
 attempt("null for a string and an object", () => { const p = JSON.parse('{"x":1,"label":null,"ok":true,"child":null}') as P; return p.label + "/" + p.child })
-// The type of `child` does not include null, so `child?.v` is a number according to its type. An optional chain may still produce undefined; a slot for a number does not accept it.
+// The type of `child` does not include null, so `child?.v` is a number according to its type. An optional chain may still produce undefined, which passes every written type.
 attempt("optional chain on a reference that is null against its type", () => (JSON.parse('{"x":1,"label":null,"ok":true,"child":null}') as P).child?.v)
 attempt("the same into a number", () => { const v: number = (JSON.parse('{"x":1,"label":null,"ok":true,"child":null}') as P).child?.v; return v })
 attempt("over null, empty", () => (Object.create(null) as P).x)
@@ -20,7 +20,7 @@ attempt("inherits the fields", () => (Object.create({ x: 1, label: "l", ok: true
 attempt("getters", () => (Object.defineProperty(JSON.parse('{"label":"l","ok":true,"child":{"v":1}}'), "x", { get() { return 1 }, enumerable: true, configurable: true }) as P).x)
 attempt("an empty literal", () => ({} as P).x)
 attempt("a proxy", () => new Proxy(JSON.parse('{"x":1,"label":"l","ok":true,"child":{"v":1}}') as P, {}).x)
-// Arrays, tuples and maps: their contents are not guaranteed, the read is tested.
+// Arrays, tuples and maps: their contents are not guaranteed, the read is tested, and null and undefined pass the test.
 const withNull = JSON.parse("[1,null,3]") as number[]
 attempt("element, a number", () => withNull[0])
 attempt("element, null for a number", () => withNull[1])

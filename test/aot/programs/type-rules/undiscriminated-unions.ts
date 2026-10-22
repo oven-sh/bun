@@ -1,4 +1,4 @@
-// Only a class's constructor creates instances of it: `Object.create(C.prototype) as C` throws a TypeError.
+// An object that a class's constructor did not create passes for the class type: `Object.create(C.prototype) as C` is used as a C, by typed and by untyped code.
 class Feline { lives = 9; sound() { return "meow" } }
 function tell(c: Feline): string { return c.sound() + c.lives }
 try { const made = Object.create(Feline.prototype) as Feline; made.lives = 1; console.log(tell(made)); console.log("Object.create(C.prototype) as C: no error") } catch (e) { console.log("Object.create(C.prototype) as C:", e instanceof TypeError ? "TypeError" : "other " + e) }

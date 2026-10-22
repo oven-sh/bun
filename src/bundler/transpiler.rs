@@ -776,15 +776,6 @@ impl AlreadyBundled {
 // lifetime-free — `runtime_transpiler_cache` is a raw pointer
 // so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
-fn with_javascript_extension(specifier: &[u8]) -> Option<Vec<u8>> {
-    const EXTENSIONS: [(&[u8], &[u8], &[u8]); 4] = [(b".ts", b".d.ts", b".js"), (b".tsx", b".d.tsx", b".js"), (b".mts", b".d.mts", b".mjs"), (b".cts", b".d.cts", b".cjs")];
-    if !specifier.starts_with(b"./") && !specifier.starts_with(b"../") {
-        return None;
-    }
-    let (typescript, _, javascript) = EXTENSIONS.iter().find(|(typescript, declarations, _)| specifier.ends_with(typescript) && !specifier.ends_with(declarations))?;
-    Some([&specifier[..specifier.len() - typescript.len()], *javascript].concat())
-}
-
 pub struct ParseResult<'a> {
     pub source: bun_ast::Source,
     pub loader: options::Loader,
@@ -1473,7 +1464,7 @@ impl<'a> Transpiler<'a> {
                     jsx: to_parser_jsx_pragma(jsx),
                     keep_names: true,
                     ignore_dce_annotations: self.options.ignore_dce_annotations,
-                    keep_directives: bun_ast::audited::keeps_directives(),
+                    keep_directives: false,
                     preserve_unused_imports_ts: false,
                     use_define_for_class_fields: this_parse.use_define_for_class_fields,
                     suppress_warnings_about_weird_code: true,
@@ -1487,15 +1478,10 @@ impl<'a> Transpiler<'a> {
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
                     jsc_builtin_syntax: false,
-                    bun_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
-                    inline_import_meta_paths: false,
-                    defers_import_assignment_errors: false,
-                    compiles_ahead_of_time: false,
-                    keeps_reexport_only_modules: false,
                     framework: None,
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
@@ -1536,9 +1522,6 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;
-                if loader.is_jsx() && !source.path.is_node_module() {
-                    opts.features.react_compiler = self.options.react_compiler;
-                }
                 // JavaScriptCore implements `using` / `await using` natively, so
                 // when targeting Bun there is no need to lower them.
                 opts.features.lower_using = !target.is_bun();
@@ -1559,7 +1542,6 @@ impl<'a> Transpiler<'a> {
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
                 opts.features.define_hash = self.options.define.user_hash;
-                opts.features.audited = bun_ast::audited::table_for(source.path.text, &source.contents);
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -2208,7 +2190,6 @@ fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
         crate::options_impl::Target::BunMacro => T::BunMacro,
         crate::options_impl::Target::Node => T::Node,
         crate::options_impl::Target::ServerComponentsSsr => T::ServerComponentsSsr,
-        crate::options_impl::Target::BunBuiltins => T::BunBuiltins,
     }
 }
 
@@ -2239,7 +2220,6 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2314,7 +2294,6 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
-                        function_sources,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2327,7 +2306,6 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
-                        function_sources,
                     )
                 }
             }
@@ -2393,7 +2371,6 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2405,7 +2382,6 @@ impl<'a> Transpiler<'a> {
             exports_kind,
             runtime_transpiler_cache,
             module_info,
-            function_sources,
         )
     }
 
@@ -2423,7 +2399,6 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
-        function_sources: Option<&mut Vec<js_printer::FunctionSource>>,
     ) -> crate::Result<usize> {
         // Both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
@@ -2458,8 +2433,6 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
-            function_sources,
-            audited: bun_ast::audited::current(),
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -2499,28 +2472,6 @@ impl<'a> Transpiler<'a> {
             None,
             None,
             None,
-            None,
-        )
-    }
-
-    #[inline(never)]
-    pub fn print_recording_function_sources(
-        &mut self,
-        print_arena: &Arena,
-        result: ParseResult,
-        writer: &mut js_printer::BufferPrinter,
-        function_sources: &mut Vec<js_printer::FunctionSource>,
-    ) -> crate::Result<usize> {
-        self.print_with_source_map_maybe::<false>(
-            print_arena,
-            result.ast,
-            &result.source,
-            writer,
-            js_printer::Format::EsmAscii,
-            None,
-            None,
-            None,
-            Some(function_sources),
         )
     }
 
@@ -2555,7 +2506,6 @@ impl<'a> Transpiler<'a> {
                 Some(handler),
                 result.runtime_transpiler_cache,
                 module_info,
-                None,
             );
         }
         self.print_with_source_map_maybe::<true>(
@@ -2567,7 +2517,6 @@ impl<'a> Transpiler<'a> {
             Some(handler),
             result.runtime_transpiler_cache,
             module_info,
-            None,
         )
     }
 
@@ -2925,14 +2874,6 @@ impl<'a> Transpiler<'a> {
                     return Ok(None);
                 };
 
-                if self.options.transform_only && resolve_result.flags.rewrite_relative_import_extensions() {
-                    for record in result.ast.import_records.as_mut_slice() {
-                        if let Some(rewritten) = with_javascript_extension(record.path.text) {
-                            record.path.text = crate::linker::dupe(&rewritten);
-                        }
-                    }
-                }
-
                 if !self.options.transform_only {
                     let origin = self.options.origin.url();
                     if !self.options.target.is_bun() {
@@ -2959,48 +2900,19 @@ impl<'a> Transpiler<'a> {
                 // `result.ast` above. (`bun build` is one-shot — `self.arena`
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
-                let format = match self.options.target {
-                    options::Target::Browser | options::Target::Node => js_printer::Format::Esm,
+                output_file.size = match self.options.target {
+                    options::Target::Browser | options::Target::Node => {
+                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
+                    }
                     options::Target::Bun
                     | options::Target::BunMacro
-                    | options::Target::ServerComponentsSsr
-                    | options::Target::BunBuiltins => js_printer::Format::EsmAscii,
+                    | options::Target::ServerComponentsSsr => self.print(
+                        print_arena,
+                        result,
+                        &mut writer,
+                        js_printer::Format::EsmAscii,
+                    )?,
                 };
-                if self.options.write_sound_files.is_some() {
-                    struct ChunkCollector(Option<bun_sourcemap::Chunk>);
-                    impl js_printer::OnSourceMapChunk for ChunkCollector {
-                        fn on_source_map_chunk(&mut self, chunk: bun_sourcemap::Chunk, _: &bun_ast::Source) -> js_printer::Result<()> {
-                            self.0 = Some(chunk);
-                            Ok(())
-                        }
-                    }
-                    let mut collector = ChunkCollector(None);
-                    let source_text: Box<[u8]> = Box::from(result.source.contents());
-                    output_file.size = self.print_with_source_map(print_arena, result, &mut writer, format, js_printer::SourceMapHandler::for_(&mut collector), None)?;
-                    let mut mappings = bun_core::MutableString::init_empty();
-                    match collector.0 {
-                        Some(chunk) if self.options.target.is_bun() => bun_sourcemap::InternalSourceMap { data: chunk.buffer.list.as_ptr() }.append_vlq_to(&mut mappings),
-                        Some(chunk) => mappings = chunk.buffer,
-                        None => {}
-                    }
-                    let mut json = bun_core::MutableString::init_empty();
-                    let pieces: [(&[u8], &[u8]); 3] = [(b"{\"version\":3,\"sources\":[", file_path_text), (b"],\"sourcesContent\":[", &source_text), (b"],\"mappings\":", mappings.list.as_slice())];
-                    for (label, text) in pieces {
-                        let _ = json.append(label);
-                        let _ = bun_core::quote_for_json(text, &mut json, false);
-                    }
-                    let _ = json.append(b",\"names\":[]}");
-                    let mut source_map = options::OutputFile::zero_value();
-                    source_map.loader = options::Loader::Json;
-                    source_map.output_kind = options::OutputKind::Sourcemap;
-                    source_map.dest_path = [file_path_text, b".map"].concat().into_boxed_slice();
-                    source_map.size = json.list.len();
-                    source_map.value = crate::output_file::Value::Buffer { bytes: json.list.as_slice().into() };
-                    output_file.source_map_index = self.output_files.len() as u32;
-                    self.output_files.push(source_map);
-                } else {
-                    output_file.size = self.print(print_arena, result, &mut writer, format)?;
-                }
                 output_file.value = crate::output_file::Value::Buffer {
                     bytes: writer.ctx.written().to_vec().into_boxed_slice(),
                 };

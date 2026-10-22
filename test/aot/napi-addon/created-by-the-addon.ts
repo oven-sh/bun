@@ -1,5 +1,5 @@
 // Objects that the addon creates with napi_create_object() enter types that the program also creates objects of, in the ways a database wrapper hands rows on. The addon itself is `any`.
-const raw: any = require(process.env.ADDON!);
+const loaded: { exports: any } = { exports: {} }; process.dlopen(loaded, process.env.ADDON!); const raw: any = loaded.exports;
 interface Row { id: number; name: string; list: number[] }
 interface Inner { x: number; tag: string } interface Deep { id: number; inner: Inner }
 function row1(): Row { return { id: 9, name: "made by the program", list: [] }; }
@@ -9,7 +9,7 @@ class Statement<T> { get(): T { return raw.makeRow(); } all(): T[] { return raw.
 function one<T>(): T { return raw.makeRow(); }
 function like(): any { return JSON.parse('{"id":1,"name":"n","list":[1,2]}'); }
 let at = 0;
-function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f()); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
+function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f()); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
 row("the program's own", () => [nameOf(row1()), tagOf(deep1())]);
 row("parsed JSON of the same look, into a variable", () => { const r: Row = like(); return nameOf(r); });
 row("into a variable", () => { const r: Row = raw.makeRow(); return nameOf(r); });
@@ -26,5 +26,5 @@ row("rows: map", () => (raw.makeRows() as Deep[]).map(tagOf));
 row("rows: a generic class", () => new Statement<Deep>().all().map(tagOf));
 row("rows: the object below", () => { const all: Deep[] = raw.makeRows(); const inner: Inner = all[0].inner; return inner.tag + inner.x; });
 row("await", () => "see below");
-console.log(await (async () => { try { const r: Row = await Promise.resolve(raw.makeRow()); return "    awaited: " + nameOf(r); } catch (e) { return "    awaited: THROWN " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); } })());
+console.log(await (async () => { try { const r: Row = await Promise.resolve(raw.makeRow()); return "    awaited: " + nameOf(r); } catch (e) { return "    awaited: THROWN " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); } })());
 export {};

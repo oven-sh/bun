@@ -1,10 +1,11 @@
-// CALLS- ignoresInOneFunction operationAOTTypedNewError
-// CALLS- ignoresWhatACalleeThrows operationAOTTypedNewError
-// CALLS- ignoresABoundName operationAOTTypedNewError
-// CALLS+ readsTheMessage operationAOTTypedNewError
-// CALLS+ passesItOn operationAOTTypedNewError
-// CALLS+ keepsIt operationAOTTypedNewError
+// CALLS- ignoresInOneFunction operationAOTNewError
+// CALLS- ignoresWhatACalleeThrows operationAOTNewError
+// CALLS- ignoresABoundName operationAOTNewError
+// CALLS+ readsTheMessage operationAOTNewError
+// CALLS+ passesItOn operationAOTNewError
+// CALLS+ keepsIt operationAOTNewError
 // An error that is made, thrown and caught in one function by a handler that never looks at it is not made. Whatever making it can be seen to do still happens.
+// `messageIsAnObject` and `messageThrows` cast an object to `string`: a cast refuses no object, so the error is made of it and `toString` is called.
 declare const console: { log(...args: unknown[]): void }
 const seen: string[] = []
 function ignoresInOneFunction(x: number): number { try { if (x < 5) throw new Error("too small"); return x } catch { return -1 } }

@@ -20,10 +20,10 @@ function tell(tag) {
 tell("at first");
 {
   for (let i = 0; i < 100; i++) for (const node of nodes) option(node, "ssr");
-  const before = count("operationAOTGetByNameAndCache");
+  const before = count("operationAOTGetByIdAndCache");
   let seen = 0;
   for (let i = 0; i < 3000; i++) for (const node of nodes) seen += option(node, "ssr") === undefined ? 0 : 1;
-  const asked = count("operationAOTGetByNameAndCache") - before;
+  const asked = count("operationAOTGetByIdAndCache") - before;
   lines.push("rounds " + seen);
   lines.push(asked <= 200 ? "the reads asked the run time at most 200 times" : "the reads asked the run time " + asked + " times");
 }

@@ -1,9 +1,0 @@
-{
-  "name": "each-row",
-  "version": "1.0.0",
-  "license": "MIT",
-  "type": "module",
-  "main": "./index.js",
-  "module": "./index.js",
-  "types": "./index.d.ts"
-}

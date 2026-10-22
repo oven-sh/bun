@@ -13,9 +13,9 @@ function uint32(a: Uint32Array, i: number, v: number): string { return [Atomics.
 function stores(a: Int32Array, v: number): string { return said(() => Atomics.store(a, 0, v)) + ":" + a[0]; }
 function loads(a: Int32Array, i: number): string { return said(() => Atomics.load(a, i)); }
 function adds(a: Int32Array, i: number, v: number): string { return said(() => Atomics.add(a, i, v)) + ":" + a[0]; }
-function floats(a: Float64Array): string { return said(() => Atomics.load(a as unknown as Int32Array, 0)) + said(() => Atomics.add(a as unknown as Int32Array, 0, 1)); }
-function clamped(a: Uint8ClampedArray): string { return said(() => Atomics.load(a as unknown as Uint8Array, 0)) + said(() => Atomics.store(a as unknown as Uint8Array, 0, 1)); }
-function big(a: BigInt64Array): string { return said(() => Atomics.add(a, 0, 5n)) + said(() => Atomics.load(a, 0)) + said(() => Atomics.add(a as unknown as Int32Array, 0, 5)); }
+function floats(a: Float64Array): string { return said(() => Atomics.load(a as any, 0)) + said(() => Atomics.add(a as any, 0, 1)); }
+function clamped(a: Uint8ClampedArray): string { return said(() => Atomics.load(a as any, 0)) + said(() => Atomics.store(a as any, 0, 1)); }
+function big(a: BigInt64Array): string { return said(() => Atomics.add(a, 0, 5n)) + said(() => Atomics.load(a, 0)) + said(() => Atomics.add(a as any, 0, 5)); }
 class Own extends Int32Array { get length(): number { return 0; } }
 
 const shared = new Int32Array(new SharedArrayBuffer(64));
@@ -32,5 +32,5 @@ out.push(adds(tracking, 3, 7), loads(tracking, 4), loads(fixed, 1), loads(fixed,
 const growable = new SharedArrayBuffer(8, { maxByteLength: 32 }); const grown = new Int32Array(growable); out.push(loads(grown, 2)); growable.grow(16); out.push(loads(grown, 2), adds(grown, 3, 9), loads(grown, 3));
 const gone = new Int32Array(4); structuredClone(gone.buffer, { transfer: [gone.buffer] }); out.push(loads(gone, 0), adds(gone, 0, 1), stores(gone, 1));
 const subclass = new Own(4); out.push(adds(subclass, 3, 4), loads(subclass, 3), loads(subclass, 4));
-out.push(said(() => Atomics.load(undefined as unknown as Int32Array, 0)), said(() => Atomics.add(null as unknown as Int32Array, 0, 1)), said(() => Atomics.add([1, 2] as unknown as Int32Array, 0, 1)));
+out.push(said(() => Atomics.load(undefined as unknown as Int32Array, 0)), said(() => Atomics.add(null as unknown as Int32Array, 0, 1)), said(() => Atomics.add([1, 2] as any, 0, 1)));
 console.log(out.join(" "));

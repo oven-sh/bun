@@ -1,0 +1,5 @@
+# A reference without type arguments takes the defaults of the type parameters. A default that names a `.d.ts` alias makes the written type `unknown`.
+interface-default-from-declaration-file.ts:5 written `Box` = unknown
+absent: interface-default-from-declaration-file.ts:5 written `Box` = Box<string>
+interface-default-from-declaration-file.ts:6 written `Case` = Case<string>
+interface-default-from-declaration-file.ts:7 written `Box<number>` = Box<number>

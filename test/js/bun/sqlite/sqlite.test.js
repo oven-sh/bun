@@ -18,6 +18,7 @@ import {
 } from "harness";
 import { tmpdir } from "os";
 import path from "path";
+import vm from "vm";
 import { Worker } from "worker_threads";
 
 const tmpbase = tmpdir() + path.sep;
@@ -2500,10 +2501,8 @@ it("can continue to use existing statements after database has been GC'd", async
     expect(stmt.all()).toEqual([{ id: 1, name: "foo" }]);
     stmt.finalize();
     expect(() => stmt.all()).toThrow();
-    return registry;
   }
-  // a FinalizationRegistry that is collected never calls its callback, so keep it reachable until the database is gone.
-  const registry = await run();
+  await run();
   Bun.gc(true);
   await Bun.sleep(1);
   Bun.gc(true);
@@ -2511,7 +2510,6 @@ it("can continue to use existing statements after database has been GC'd", async
     // on Windows, FinalizationRegistry is more flaky than on POSIX.
     expect(called).toBe(true);
   }
-  expect(registry).toBeInstanceOf(FinalizationRegistry);
 });
 
 it("statements should be disposable", () => {
@@ -2736,46 +2734,31 @@ it("binds blob parameters by copy and rejects statements finalized while binding
   expect(exitCode).toBe(0);
 });
 
-// Pushing a result row into the output array can re-enter JavaScript when an
-// indexed accessor is installed on Array.prototype. If that JS finalizes the
-// statement being iterated, the row-collection loop must stop with an error
-// instead of stepping the freed sqlite3_stmt. Run in a subprocess because the
-// unsafe variant operates on freed memory and because installing an indexed
-// accessor on Array.prototype affects every array in the process.
-it("all() reports an error when a result-row push finalizes the statement", async () => {
+// In a child: the accessors are there for every array of the process.
+it("an indexed accessor on Array.prototype is not called for the rows", async () => {
   const src = `
     const { Database } = require("bun:sqlite");
-    const out = {};
-
     const db = new Database(":memory:");
-    db.exec("CREATE TABLE t (a INTEGER)");
-    db.run("INSERT INTO t VALUES (1), (2), (3)");
-
-    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
-    Object.defineProperty(Array.prototype, 0, {
-      configurable: true,
-      get() {
-        return undefined;
-      },
-      set(_row) {
-        stmt.finalize();
-      },
-    });
-
-    let message = "did not throw";
-    try {
-      stmt.all();
-    } catch (e) {
-      message = e.message;
+    db.run("CREATE TABLE t (a)");
+    const insert = db.prepare("INSERT INTO t VALUES (1), (2), (3) RETURNING a");
+    let calls = 0;
+    for (const index of [0, 1, 2]) {
+      Object.defineProperty(Array.prototype, index, {
+        configurable: true,
+        get() {
+          calls++;
+          return "from the prototype";
+        },
+        set() {
+          calls++;
+        },
+      });
     }
-    out.finalizeDuringAll = message;
-
-    // Remove the accessor; result collection must still work afterwards.
-    delete Array.prototype[0];
-    out.rows = db.query("SELECT a FROM t ORDER BY a DESC").all();
-    db.close();
-
-    console.log(JSON.stringify(out));
+    let iterated = "";
+    for (const row of insert.iterate()) iterated += JSON.stringify(row);
+    const firstByte = (_, value) => (value instanceof Uint8Array ? value[0] : value);
+    const rows = JSON.stringify({ all: insert.all(), values: insert.values(), raw: insert.raw(), iterated }, firstByte);
+    console.log(rows, calls);
   `;
 
   await using proc = Bun.spawn({
@@ -2784,67 +2767,12 @@ it("all() reports an error when a result-row push finalizes the statement", asyn
     stdout: "pipe",
     stderr: "pipe",
   });
-
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(
-    JSON.stringify({
-      finalizeDuringAll: "Statement has finalized",
-      rows: [{ a: 3 }, { a: 2 }, { a: 1 }],
-    }),
+    `{"all":[{"a":1},{"a":2},{"a":3}],"values":[[1],[2],[3]],"raw":[[1],[2],[3]],"iterated":"{\\"a\\":1}{\\"a\\":2}{\\"a\\":3}"} 0`,
   );
-  expect(exitCode).toBe(0);
-});
-
-// A result-row push can also close the whole database (which finalizes every
-// statement) and then throw; the raw() loop must not touch the freed stmt.
-// Run in a subprocess because the unsafe variant resets freed memory and the
-// Array.prototype accessor affects every array in the process.
-it("raw() does not touch the statement when a result-row push closes the database and throws", async () => {
-  const src = `
-    const { Database } = require("bun:sqlite");
-    const out = {};
-
-    const db = new Database(":memory:");
-    db.exec("CREATE TABLE t (a INTEGER)");
-    db.run("INSERT INTO t VALUES (1), (2), (3)");
-
-    const stmt = db.query("SELECT a FROM t ORDER BY a ASC");
-    Object.defineProperty(Array.prototype, 0, {
-      configurable: true,
-      get() {
-        return undefined;
-      },
-      set(_row) {
-        db.close();
-        throw new Error("boom");
-      },
-    });
-
-    let message = "did not throw";
-    try {
-      stmt.raw();
-    } catch (e) {
-      message = e.message;
-    }
-    delete Array.prototype[0];
-    out.closeDuringRaw = message;
-
-    console.log(JSON.stringify(out));
-  `;
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe(JSON.stringify({ closeDuringRaw: "boom" }));
   expect(exitCode).toBe(0);
 });
 
@@ -6592,5 +6520,110 @@ describe("the column name transform of a Statement", () => {
     const query = db.prepare("SELECT 1 AS a");
     query.finalize();
     expect(() => setTransform(query, () => "b")).toThrow("Statement has finalized");
+  });
+});
+
+// No callback is involved: the exception is asked for from outside while SQLite runs the statement, and raised behind the step.
+describe("an exception that is raised behind a step ends a statement that writes", () => {
+  const tables = [
+    ["a full-text table", "CREATE VIRTUAL TABLE ft USING fts5(body)", "ft"],
+    [
+      // PRAGMA integrity_check does not compare such an index with its table.
+      "a table whose trigger feeds a full-text index",
+      `
+        CREATE TABLE docs (id INTEGER PRIMARY KEY, body);
+        CREATE VIRTUAL TABLE ft USING fts5(body, content = 'docs', content_rowid = 'id');
+        CREATE TRIGGER ai AFTER INSERT ON docs BEGIN INSERT INTO ft (rowid, body) VALUES (new.id, new.body); END;
+      `,
+      "docs",
+    ],
+  ];
+  const insert = (table, rows) => `
+    WITH RECURSIVE n (i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < ${rows})
+    INSERT INTO ${table} (body) SELECT 'hello ' || i FROM n RETURNING 1
+  `;
+  const count = (db, from) => db.query(`SELECT count(*) AS n FROM ${from}`).get().n;
+
+  describe.each(tables)("a timeout of node:vm, in the load of %s", (_, schema, table) => {
+    it.each([
+      ["all()", load => load.all()],
+      ["values()", load => load.values()],
+      ["get()", load => load.get()],
+      ["run()", load => load.run()],
+      ["iterate()", load => load.iterate().next()],
+    ])("by %s: all of it is in the file, and nothing is locked", (_, read) => {
+      using dir = tempDir("sqlite-timeout-in-a-load", {});
+      const file = path.join(String(dir), "db.sqlite");
+      using db = new Database(file);
+      db.run(schema);
+      using other = new Database(file);
+      const load = db.prepare(insert(table, 5000));
+      const context = vm.createContext({ read: () => void read(load) });
+
+      // A timeout that comes before the step ends a call that has done nothing. The step takes longer than all that comes
+      // before it, so one of these falls into it.
+      let code;
+      for (let timeout = 1; !count(db, table); timeout *= 2) {
+        code = "did not throw";
+        try {
+          vm.runInContext("read()", context, { timeout });
+        } catch (error) {
+          code = error.code;
+        }
+      }
+      let write = "did not throw";
+      try {
+        other.run("CREATE TABLE later (x)");
+      } catch (error) {
+        write = error.message;
+      }
+      expect({ code, write, stored: count(other, table), found: count(other, "ft WHERE ft MATCH 'hello'") }).toEqual({
+        code: "ERR_SCRIPT_EXECUTION_TIMEOUT",
+        write: "did not throw",
+        stored: 5000,
+        found: 5000,
+      });
+    });
+  });
+
+  // Should terminate() come before or after the statement, the case passes as well. The file is read once the process of
+  // that thread is gone.
+  describe.concurrent("the termination of a Worker", () => {
+    it.each(tables)("in the load of %s: all of it is in the file or none", async (_, schema, table) => {
+      using dir = tempDir("sqlite-terminated-in-a-load", {});
+      const file = path.join(String(dir), "db.sqlite");
+      const inTheWorker = `
+        const { Database } = require("bun:sqlite");
+        const db = new Database(${JSON.stringify(file)});
+        db.run(${JSON.stringify(schema)});
+        // Once before, so that the second call is in SQLite at once.
+        db.prepare(${JSON.stringify(insert(table, 1))}).all();
+        const load = db.prepare(${JSON.stringify(insert(table, 10000))});
+        require("node:worker_threads").parentPort.postMessage(1);
+        load.all();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker } = require("node:worker_threads");
+            const worker = new Worker(${JSON.stringify(inTheWorker)}, { eval: true });
+            await new Promise(resolve => worker.once("message", resolve));
+            await worker.terminate();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+
+      using db = new Database(file, { readonly: true });
+      const stored = count(db, table);
+      expect([1, 10001]).toContain(stored);
+      expect(count(db, "ft WHERE ft MATCH 'hello'")).toBe(stored);
+    });
   });
 });

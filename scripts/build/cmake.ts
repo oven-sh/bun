@@ -271,7 +271,7 @@ export function evaluateCMake(file: string, options: CMakeEvaluateOptions): CMak
   const condition = (inv: Invocation): boolean => {
     const fail = (why: string): never => {
       throw new BuildError(`${inv.file}:${inv.line}: cannot evaluate ${inv.name}(${render(inv.args)}): ${why}`, {
-        hint: "scripts/build/cmake.ts implements the conditions WebKit's file lists use; teach it this one",
+        hint: "scripts/build/cmake.ts only implements the conditions that WebKit's file lists use. Add this one to it",
       });
     };
     const tokens = inv.args.flatMap(a =>

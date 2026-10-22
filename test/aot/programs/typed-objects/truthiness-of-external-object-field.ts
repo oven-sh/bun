@@ -1,4 +1,4 @@
-// As truthiness-of-field-via-cast.ts, with objects from outside among the nodes. `if ((node as Declaration).symbol)`: a written cast asserts nothing, so what is read through it may be anything. Where the object has the field, the test looks at the field as it is kept; where its layout lacks the field, the answer is known. Objects of other layouts, objects from outside and every kind of falsy value must take the same side as in plain Bun.
+// As truthiness-of-field-via-cast.ts, with objects from outside among the nodes. `if ((node as Declaration).symbol)`: any object passes the cast, and the read behind it is a typed read, also under `if`, `!`, `&&`, `||` and `while`. A field that the object lacks reads undefined, a getter and an inherited field answer as in plain Bun, and every falsy value of the declared kind takes the same side as in plain Bun. A field that holds another kind than `Decl` or `Other` declares throws a TypeError.
 interface Sym { name: string; flags: number }
 interface Base { kind: number; parent: Base | undefined }
 interface Decl extends Base { symbol: Sym | undefined; locals: Map<string, Sym> | undefined; count: number; label: string; done: boolean; big: bigint; maybe: Sym | null; mixed: string | number | undefined }
@@ -36,6 +36,7 @@ const extended = decl(undefined, undefined, 0, "", false, 0n, null, undefined) a
 (other as any).symbol = sym;
 (empty as any).count = 3;
 const nodes: Base[] = [a, b, c, d, e, other, empty, ...outside, withGetter, withGetter, inherits, extended];
+function tried(f: (n: Base) => number, n: Base): number | string { try { return f(n); } catch (error) { return "<" + (error as Error).constructor.name + ">"; } }
 for (const f of [hasSymbol, hasLocals, lacksSymbol, hasCount, hasLabel, isDone, hasBig, hasMaybe, hasMixed, hasText, both, either, climbs])
-  console.log(f.name, nodes.map(f).join(""));
-console.log(inLoop(nodes), reads);
+  console.log(f.name, nodes.map(n => tried(f, n)).join(""));
+try { console.log(inLoop(nodes), reads); } catch (error) { console.log("inLoop:", (error as Error).constructor.name, reads); }

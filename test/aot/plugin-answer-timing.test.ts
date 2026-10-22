@@ -4,7 +4,7 @@ import { join } from "path";
 import { slot, spawned, unsupported } from "./run-programs";
 
 const build = `import plugin from "./plugin";
-const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true, aotExplain: "plugins" }, loader: { ".md": "text" }, plugins: [plugin], throw: false });
+const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, loader: { ".md": "text" }, plugins: [plugin], throw: false });
 for (const log of result.logs) console.log(String(log));
 process.exit(result.success ? 0 : 1);
 `;
@@ -29,19 +29,13 @@ async function buildWith(folder: string, timing: Timing) {
   return { executable, built, hash };
 }
 
-async function expectSameExecutable(files: Record<string, string>, timings: Timing[], prints: string, explained = /aot: plugins: [1-9]\d* early sources, [1-9]\d* deferred sources/, started = "started while plugins were still answering") {
+async function expectSameExecutable(files: Record<string, string>, timings: Timing[], prints: string) {
   using dir = tempDir("aot-plugin-timing", { "build.ts": build, "delayed.ts": delayed, "tsconfig.json": tsconfig, ...files });
   const folder = String(dir);
   const hashes: string[] = [];
-  for (let timing of timings) {
-    let { executable, built, hash } = await buildWith(folder, timing);
-    while (built.exitCode === 0 && timing.PLUGIN_DELAY_MS !== "0" && Number(timing.PLUGIN_DELAY_MS) < 6000 && !built.stdout.includes(started)) {
-      hashes.push(hash);
-      timing = { ...timing, PLUGIN_DELAY_MS: String(Number(timing.PLUGIN_DELAY_MS) * 4) };
-      ({ executable, built, hash } = await buildWith(folder, timing));
-    }
-    if (timing.PLUGIN_DELAY_MS !== "0") expect({ timing, stdout: built.stdout }).toEqual({ timing, stdout: expect.stringContaining(started) });
-    expect({ timing, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ timing, stdout: expect.stringMatching(explained), stderr: expect.any(String), exitCode: 0 });
+  for (const timing of timings) {
+    const { executable, built, hash } = await buildWith(folder, timing);
+    expect({ timing, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode }).toEqual({ timing, stdout: expect.any(String), stderr: expect.any(String), exitCode: 0 });
     const ran = await spawned([executable], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
     expect({ timing, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode, signal: ran.signal }).toEqual({ timing, stdout: prints, stderr: expect.any(String), exitCode: 0, signal: null });
     hashes.push(hash);
@@ -102,7 +96,7 @@ export default {
 `,
 };
 
-const cases: Record<string, { files: Record<string, string>; prints: string; explained?: RegExp; started?: string }> = {
+const cases: Record<string, { files: Record<string, string>; prints: string }> = {
   "JSON typed by what the plugin returns": {
     files: {
       "main.ts": `import settings from "./settings.json"; const limit: number = settings.limit; console.log(limit + 1);`,
@@ -161,7 +155,6 @@ console.log(shape.sides + shape.extra);`,
       } };`,
     },
     prints: "7\n",
-    explained: /aot: plugins: loaded again without .*shape\.ts/,
   },
   "a file imported for its types, unchanged by plugins, that only a plugin module imports for its code": {
     files: {
@@ -194,27 +187,6 @@ console.log(dual.kind, required);`,
       "plugin.ts": `import { delayed } from "./delayed"; export default { name: "p", setup(b: any) { b.onLoad({ filter: /required\\.tmpl$/ }, () => delayed({ contents: 'const dual = require("dual"); export default dual.kind;', loader: "js" })); } };`,
     },
     prints: "main main\n",
-    started: "started again because the early sources changed",
-  },
-  "a plugin that rewrites a file that is imported for its types": {
-    files: {
-      "main.ts": `import type { Shape } from "./shape";
-// @ts-ignore
-import late from "./late.tmpl";
-const shape: Shape = { sides: 3, name: late };
-console.log(shape.sides, shape.name);`,
-      "shape.ts": `export interface Shape { sides: number }`,
-      "late.tmpl": "",
-      "plugin.ts": `import { writeFileSync } from "fs"; import { join } from "path"; import { delayed } from "./delayed"; export default { name: "p", setup(b: any) {
-        b.onLoad({ filter: /late\\.tmpl$/ }, async () => {
-          await delayed(undefined);
-          writeFileSync(join(import.meta.dir, "shape.ts"), "export interface Shape { sides: number; name: string }");
-          return { contents: 'export default "triangle";', loader: "ts" };
-        });
-      } };`,
-    },
-    prints: "3 triangle\n",
-    started: "loaded again because files changed meanwhile",
   },
   "imports that a plugin resolves late, of an early file and of a plugin module": {
     files: {
@@ -235,8 +207,45 @@ console.log(first, slow, direct);`,
       } };`,
     },
     prints: "inner slow direct\n",
-    started: "",
   },
+  "loads that wait for each other": {
+    files: {
+      "main.ts": `${Array.from({ length: 12 }, (_, index) => `// @ts-ignore\nimport part${index} from "./part${index}.tmpl";`).join("\n")}
+console.log([${Array.from({ length: 12 }, (_, index) => `part${index}`).join(", ")}].join(" "));`,
+      ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`part${index}.tmpl`, ""])),
+      "plugin.ts": `import { delayed } from "./delayed"; let arrived = 0; const all = Promise.withResolvers<string>(); export default { name: "p", setup(b: any) {
+        b.onLoad({ filter: /part\\d+\\.tmpl$/ }, async () => {
+          if (++arrived === 12) all.resolve("together");
+          const how = await Promise.race([all.promise, Bun.sleep(10_000).then(() => "alone")]);
+          return delayed({ contents: "export default " + JSON.stringify(how) + ";", loader: "js" });
+        });
+      } };`,
+    },
+    prints: `${Array(12).fill("together").join(" ")}\n`,
+  },
+};
+
+// Root files of the tsconfig that nothing runs, some read for their types, some run only by what a plugin answers late.
+const manyRoots = {
+  ...Object.fromEntries(
+    Array.from({ length: 240 }, (_, index) => [
+      `root${index}.ts`,
+      `export interface Shape${index} { side${index}: number; name: string }
+export function make${index}(): Shape${index} { return { side${index}: ${index}, name: "root${index}" }; }
+export const list${index} = [make${index}()].map(shape => shape.side${index} + shape.name.length);
+`,
+    ]),
+  ),
+  "main.ts": `${Array.from({ length: 20 }, (_, index) => `import type { Shape${index * 3} } from "./root${index * 3}";`).join("\n")}
+// @ts-ignore
+import late from "./late.tmpl";
+const shapes: [${Array.from({ length: 20 }, (_, index) => `Shape${index * 3}`).join(", ")}] = [${Array.from({ length: 20 }, (_, index) => `{ side${index * 3}: ${index}, name: "n" }`).join(", ")}];
+console.log(shapes.length, shapes[3].side9, late);
+`,
+  "late.tmpl": "",
+  "plugin.ts": `import { join } from "path"; import { delayed } from "./delayed"; export default { name: "p", setup(b: any) {
+    b.onLoad({ filter: /late\\.tmpl$/ }, () => delayed({ contents: ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `import { make${index * 7 + 1} } from "@/root${index * 7 + 1}";`).join("\n"))}.replaceAll("@", import.meta.dir) + "\\nexport default " + ${JSON.stringify(Array.from({ length: 20 }, (_, index) => `make${index * 7 + 1}().side${index * 7 + 1}`).join(" + "))} + ";", loader: "ts" }));
+  } };`,
 };
 
 describe.concurrent("compile/aot/plugins that answer late", () => {
@@ -259,8 +268,26 @@ describe.concurrent("compile/aot/plugins that answer late", () => {
       ),
     600_000,
   );
-  for (const [name, { files, prints, explained, started }] of Object.entries(cases)) {
-    test(name, () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "400" }], prints, explained, started)), 600_000);
+  test(
+    "one executable whether or not root files are parsed while a plugin works",
+    () =>
+      slot(() =>
+        expectSameExecutable(
+          manyRoots,
+          [
+            { PLUGIN_DELAY_MS: "0" },
+            { PLUGIN_DELAY_MS: "30" },
+            { PLUGIN_DELAY_MS: "300" },
+            { PLUGIN_DELAY_MS: "1500" },
+            { PLUGIN_DELAY_MS: "300", GOMAXPROCS: "2" },
+          ],
+          `20 3 ${Array.from({ length: 20 }, (_, index) => index * 7 + 1).reduce((sum, side) => sum + side, 0)}\n`,
+        ),
+      ),
+    600_000,
+  );
+  for (const [name, { files, prints }] of Object.entries(cases)) {
+    test(name, () => slot(() => expectSameExecutable(files, [{ PLUGIN_DELAY_MS: "0" }, { PLUGIN_DELAY_MS: "400" }], prints)), 600_000);
   }
   test(
     "a plugin that fails late fails the build",

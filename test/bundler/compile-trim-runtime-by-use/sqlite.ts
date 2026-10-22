@@ -17,7 +17,7 @@ memory.close();
 const sync = new DatabaseSync(":memory:");
 sync.exec("create table t (k text primary key, v real)");
 sync.prepare("insert into t values (?, ?)").run("pi", 3.25);
-sync.function("twice", (value: number) => value * 2);
+sync.function("twice", (value: any) => value * 2);
 console.log("node:sqlite", sync.prepare("select k, twice(v) as doubled from t").all());
 sync.close();
 

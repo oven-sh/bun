@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions.ts";
 export default [
   define({
     name: "ShellInterpreter",
+    types: [{ path: ["$ZigGeneratedClasses", "ShellInterpreter"], isView: false, typeArguments: [] }],
     rustPath: "crate::shell::Interpreter",
     construct: true,
     noConstructor: true,
@@ -17,6 +18,8 @@ export default [
     proto: {
       run: {
         fn: "runFromJS",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
     },

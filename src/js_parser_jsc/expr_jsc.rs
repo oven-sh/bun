@@ -76,7 +76,6 @@ fn data_to_js_with_check(
             }
             string_to_js(e, global)
         }
-        ExprData::ECall(call) if matches!(call.target.data, ExprData::EMissing(..)) => data_to_js_with_check(&call.args[0].data, global, stack_check),
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
         ExprData::EBoolean(boolean) | ExprData::EBranchBoolean(boolean) => Ok(if boolean.value {

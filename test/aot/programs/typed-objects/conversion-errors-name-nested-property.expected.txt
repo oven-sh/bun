@@ -1,6 +1,0 @@
-1 known s-0
-a s-1 s-1
-2 b s-1 s-1
-TypeError: expected Crate, got untyped object | property 'gadget.serial': expected string, got number 7
-TypeError: expected Shipment, got untyped object | property 'crate.gadget.serial': expected string, got number 7
-TypeError: expected Shipment, got untyped object | property 'crate.gadget' is missing in untyped object but required in Crate

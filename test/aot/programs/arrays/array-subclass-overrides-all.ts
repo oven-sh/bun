@@ -118,7 +118,7 @@ for (const name of Object.keys(typedOperations)) heldOperations[name] = a => typ
 for (const [family, operations] of Object.entries({ typed: typedOperations, throughUntyped: untypedOperations, readByName: heldOperations, any: anyOperations })) {
     for (const maker of Object.keys(makers)) {
         for (const name of Object.keys(operations)) {
-            // An iterator of its own is not entered where the declared type is an array: that has a program of its own.
+            // for-of and destructuring over a class with an iterator of its own have a program of their own: arrays/array-subclass-with-own-iterator.
             if (maker === "walked" && family !== "any" && (name === "forOf" || name === "destructure")) continue;
             for (let round = 0; round < 2; round++) {
                 const a = makers[maker]!();

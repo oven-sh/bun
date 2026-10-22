@@ -1013,7 +1013,9 @@ pub(crate) extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: 
         // Subprocess.
         let subprocess: &mut Subprocess<'_> =
             unsafe { &mut *(ptr.as_uintptr() as usize as *mut Subprocess<'_>) };
-        subprocess.on_stdin_destroyed();
+        bun_removable_features::removable_body!(Spawn, Abort, {
+            subprocess.on_stdin_destroyed();
+        });
         return;
     }
     bun_core::debug_warn!("Unknown sink type");

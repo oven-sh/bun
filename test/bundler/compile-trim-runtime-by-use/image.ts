@@ -35,6 +35,6 @@ await describe("png", png);
 await describe("jpeg", await new Bun.Image(png).resize(8, 4).jpeg({ quality: 80 }).bytes());
 await describe("webp", await new Bun.Image(png).rotate(90).webp({ quality: 80 }).bytes());
 await describe("palette", await new Bun.Image(png).png({ palette: true }).bytes());
-const response = new Response(new Bun.Image(png).flip().png());
+const response = new Response(new Bun.Image(png).flip().png() as any);
 console.log("body", response.headers.get("content-type"), (await response.bytes()).length);
 console.log("placeholder", (await new Bun.Image(png).placeholder()).slice(0, 22));

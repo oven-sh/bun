@@ -1,4 +1,4 @@
-// The program tests a property for a kind that its declared type rules out: inside the branch the read has type `never`, and the value is used as it is.
+// The program tests a property for a kind that its declared type rules out. The operand of `typeof` is a typed read like any other: a string where `string[] | true` is written throws a TypeError at the read, so the branch is never entered.
 interface Meta { sign: string[] | true; secrets?: string }
 const own: Meta = { sign: ["own"] };
 function normalize(meta: Meta): string {
@@ -6,4 +6,4 @@ function normalize(meta: Meta): string {
   return JSON.stringify(meta);
 }
 const mistyped = { sign: "one" } as unknown as Meta;
-console.log(normalize(own), normalize(mistyped));
+try { console.log(normalize(own), normalize(mistyped)); } catch (e) { console.log("a string:", (e as Error).constructor.name); }

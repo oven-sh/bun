@@ -22,6 +22,7 @@ use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFSt
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bun_string_jsc;
+use bun_jsc::proven_return::{Proven, return_kind::{Instance, Nullable}};
 
 /// Deref the `Value::WTFStringImpl` payload.
 ///
@@ -489,15 +490,26 @@ impl PartialEq for Action {
     }
 }
 
+pub(crate) type ProvenBody = Proven<Nullable<Instance<ReadableStream>>>;
+
+impl bun_jsc::proven_return::InstanceClass for ReadableStream {
+    #[inline]
+    fn is_instance(value: JSValue) -> bool {
+        ReadableStream::is_readable_stream(value)
+    }
+}
+
 /// Per-class codegen'd cached-slot accessors for the `body` and `stream`
 /// JS-side properties, plus the weak `JsRef` back-pointer. Both `Request` and
-/// `Response` forward these 1:1 to `bun_jsc::generated::JS{Request,Response}`.
+/// `Response` forward `body` 1:1 to `crate::generated_classes` and `stream`
+/// 1:1 to `bun_jsc::generated::JS{Request,Response}`.
 pub(crate) trait BodyOwnerJs {
     /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
     fn js_ref(&self) -> Option<JSValue>;
 
     fn body_get_cached(this: JSValue) -> Option<JSValue>;
-    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
+    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: ProvenBody);
+    fn body_clear_cached(this: JSValue, global: &JSGlobalObject);
     fn stream_get_cached(this: JSValue) -> Option<JSValue>;
     fn stream_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue);
 }
@@ -670,81 +682,6 @@ impl ValueError {
             }
             ValueError::AbortReason(r) => ValueError::AbortReason(*r),
         }
-    }
-}
-
-pub(crate) struct SharedBody {
-    value: JsCell<Value>,
-    global: bun_jsc::GlobalRef,
-    context: bun_jsc::ContextId,
-}
-
-impl SharedBody {
-    pub(crate) fn can_hold(value: &Value) -> bool {
-        matches!(value, Value::WTFStringImpl(_) | Value::InternalBlob(_))
-    }
-
-    pub(crate) fn new(value: Value, global: &JSGlobalObject) -> std::rc::Rc<SharedBody> {
-        std::rc::Rc::new(SharedBody {
-            value: JsCell::new(value),
-            global: bun_jsc::GlobalRef::new(global),
-            context: global.bun_vm().context_of_caller_no_frame().id(),
-        })
-    }
-
-    pub(crate) fn global(&self) -> &JSGlobalObject {
-        &self.global
-    }
-
-    pub(crate) fn is_unread(&self) -> bool {
-        Self::can_hold(self.value.get())
-    }
-
-    pub(crate) fn take_unread(&self) -> Option<Value> {
-        let bytes = self.value.with_mut(|value| match value {
-            Value::InternalBlob(blob) => Some(core::mem::take(&mut blob.bytes)),
-            Value::WTFStringImpl(string) => Some(wtf_impl(string).to_utf8().into_vec()),
-            _ => None,
-        })?;
-        self.value.set(Value::Used);
-        Some(Value::InternalBlob(InternalBlob {
-            bytes,
-            was_string: false,
-        }))
-    }
-
-    pub(crate) fn stream_body(&self) -> Value {
-        let global = self.global();
-        let vm = global.bun_vm();
-        let _context = vm.enter_context(self.context);
-        self.value.with_mut(|value| {
-            if !matches!(value, Value::Locked(_)) {
-                let was_taken = matches!(value, Value::Used);
-                if was_taken {
-                    *value = Value::InternalBlob(InternalBlob {
-                        bytes: vec![0],
-                        was_string: false,
-                    });
-                }
-                let made = value.to_readable_stream(&global.js_thread(vm.context_of_caller_no_frame()));
-                if made.is_err() {
-                    return Value::Used;
-                }
-                if was_taken
-                    && let Value::Locked(locked) = value
-                    && let Some(mut stream) = locked.readable.get()
-                    && let Some(mut blob) = stream.to_any_blob(global)
-                {
-                    blob.detach();
-                }
-            }
-            if let Value::Locked(locked) = value
-                && let Some(stream) = locked.readable.get()
-            {
-                return Value::from_readable_stream_without_lock_check(stream, global);
-            }
-            Value::Used
-        })
     }
 }
 
@@ -1760,8 +1697,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
-        if let Value::Locked(locked) = self.get_body_value() {
-            if let Some(js_value) = self.js_ref() {
+        if let Some(js_value) = self.js_ref() {
+            if let Value::Locked(locked) = self.get_body_value() {
                 if let Some(stream) = locked.readable.get() {
                     stream.value.ensure_still_alive();
                     Self::stream_set_cached(js_value, global_object, stream.value);
@@ -1779,13 +1716,13 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         match self.get_body_value() {
             Value::Locked(locked) => {
                 if let Some(readable) = locked.readable.get() {
-                    Self::body_set_cached(this_value, global_this, readable.value);
+                    Self::body_set_cached(this_value, global_this, Proven::expect(readable.value));
                 }
             }
             _ => {
                 if Self::stream_get_cached(this_value).is_some() {
                     Self::stream_set_cached(this_value, global_this, JSValue::ZERO);
-                    Self::body_set_cached(this_value, global_this, JSValue::ZERO);
+                    Self::body_clear_cached(this_value, global_this);
                 }
             }
         }
@@ -1803,7 +1740,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     ) {
         if !js_wrapper.is_empty() {
             if let Some(cloned_stream) = Self::stream_get_cached(js_wrapper) {
-                Self::body_set_cached(js_wrapper, global_this, cloned_stream);
+                Self::body_set_cached(js_wrapper, global_this, Proven::expect(cloned_stream));
             }
         }
         self.sync_body_stream_caches(this_value, global_this);
@@ -1874,17 +1811,17 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         result
     }
 
-    fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<ProvenBody> {
         // The stream the getter makes is the reading script's.
         let context = global_this.bun_vm().context_of_caller_no_frame();
         let body = self.get_body_value();
 
         if matches!(body, Value::Used) {
-            return ReadableStream::used(global_this);
+            return ReadableStream::used(global_this).map(Proven::expect);
         }
         if matches!(body, Value::Locked(_)) {
             if let Some(readable) = self.get_body_readable_stream() {
-                return Ok(readable.value);
+                return Ok(Proven::expect(readable.value));
             }
         }
         let stream = self
@@ -1893,7 +1830,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);
-        Ok(stream)
+        Ok(Proven::expect(stream))
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>
@@ -1955,8 +1892,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
     }
 
-    fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
+    fn get_body_used(&self, global_object: &JSGlobalObject) -> bool {
+        self.body_stream_check(global_object, ReadableStream::is_disturbed)
     }
 
     /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`

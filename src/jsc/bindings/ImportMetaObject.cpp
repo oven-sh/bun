@@ -43,6 +43,7 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
@@ -135,7 +136,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
+                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
@@ -198,6 +199,27 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
+// require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath)
+{
+    if (!Bun::hasCompiledModules()) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto resolved = resolvedPath.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (auto module = Bun::compiledModuleForPath(resolved)) {
+        scope.release();
+        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        return;
+    }
+    size_t query = resolved.find('?');
+    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    if (!path.endsWith(".node"_s))
+        return;
+    if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))
+        JSC::throwException(globalObject, scope, error);
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -215,6 +237,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
     if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
         Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!isRequireDotResolve) {
+        Bun::willRequire(lexicalGlobalObject, moduleName);
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -259,6 +286,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     if (!prefixed.isNull()) {
                         return JSValue::encode(jsString(vm, prefixed));
                     }
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string);
+                    RETURN_IF_EXCEPTION(scope, {});
                     return JSC::JSValue::encode(string);
                 }
                 return JSC::JSValue::encode(result);
@@ -309,6 +338,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     goto cleanup;
                 }
 
+                if (!isRequireDotResolve) {
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+                    if (scope.exception()) [[unlikely]]
+                        result = {};
+                }
+
             cleanup:
                 for (auto& path : paths) {
                     path.deref();
@@ -334,6 +369,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
         return {};
+    }
+
+    if (!isESM && !isRequireDotResolve) {
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     scope.release();
@@ -363,7 +403,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
+                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
                     auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
@@ -537,12 +577,13 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
 #if OS(WINDOWS)
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
-#else
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == key));
+        if (Bun::hasCompiledModules()) [[unlikely]] {
+            auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
+            return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
+        }
 #endif
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())

@@ -1,9 +1,8 @@
 // A JSON.stringify call that falls back to the generic writer before it has written anything has no output to discard.
-// ENV JSC_useAOTOperationCounters=1
-declare const aotOperationCount: undefined | ((name: string) => number);
-const isCounted = typeof aotOperationCount === "function";
+declare const aotRuntimeCounters: undefined | (() => string);
+const isCounted = typeof aotRuntimeCounters === "function";
 const discards = () =>
-  typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedJSONDiscard") : 0;
+  typeof aotRuntimeCounters === "function" ? Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]) : 0;
 
 type Circle = { kind: "circle"; radius: number };
 type Square = { kind: "square"; side: number };

@@ -1,4 +1,4 @@
-// `if ((node as Declaration).symbol)`: a written cast asserts nothing, so what is read through it may be anything. Where the object has the field, the test looks at the field as it is kept; where its layout lacks the field, the answer is known. Objects of other layouts, properties added behind the type's back and every kind of falsy value must take the same side as in plain Bun. No object from outside is among them: see truthiness-of-external-object-field.ts.
+// `if ((node as Declaration).symbol)`: any object passes a written cast, and the read behind it finds what the object holds. Where the object has the field, the test looks at the field as it is kept; where its layout lacks the field, the answer is known. Objects of other layouts, properties added through `any` and every kind of falsy value must take the same side as in plain Bun. Every value here is of the kind its field declares, and no object from outside is among them: see truthiness-of-external-object-field.ts.
 // SIZE< hasSymbol 90
 interface Sym { name: string; flags: number }
 interface Base { kind: number; parent: Base | undefined }

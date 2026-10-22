@@ -1,4 +1,5 @@
 import { createRequestHandler } from "react-router";
+// @ts-ignore: what `react-router build` writes has no declarations (TS7016)
 import * as build from "./build/server/index.js";
 
 const handle = createRequestHandler(build as never, "production");

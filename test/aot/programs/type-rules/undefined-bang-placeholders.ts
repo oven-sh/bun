@@ -1,4 +1,4 @@
-// `undefined!` and `null!` as placeholders for a `number`, `boolean` or numeric enum throw where they are written.
+// `undefined!` and `null!` as placeholders for a `number`, `boolean` or numeric enum: `x!` tests nothing, and undefined and null pass every written type and stay what they are.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -20,5 +20,5 @@ attempt("field of a literal", () => { const links: Links = { type: undefined!, i
 function visit(depth: number = undefined!): string { return String(depth) }
 attempt("default of a parameter, taken", () => visit())
 attempt("default of a parameter, not taken", () => visit(1))
-// With room in the type it is as ever.
+// A type that names undefined takes it too.
 attempt("variable, number | undefined", () => { let position: number | undefined = undefined!; return position })

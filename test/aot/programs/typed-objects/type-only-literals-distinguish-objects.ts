@@ -1,4 +1,4 @@
-// Objects are made as the parts of a union whose string literal types no expression of the program spells: the texts are put together while the program runs. Plain data and wider records that hold such a text are told apart by it.
+// Objects are made as the parts of a union whose string literal types no expression of the program spells: the texts are put together while the program runs. Plain data and wider records that hold such a text are told apart by it. A text that is none of the union's is read as it is.
 const shift = Date.now() < 1 ? 1 : 0;
 function spell(reversed: string): string {
   let text = "";
@@ -71,8 +71,8 @@ function loose(kind: string, size: number) {
 }
 console.log(describe(loose(square, 3) as Shape));
 console.log(describe(loose(forms[1], 4) as Shape));
-console.log((loose(spell("erauqs-delaet"), 5) as Shape).kind.length);
-console.log((loose(spell("erauqs-delae"), 6) as Shape).kind.length);
+try { console.log((loose(spell("erauqs-delaet"), 5) as Shape).kind.length); } catch (e) { console.log("a kind with another first letter:", (e as Error).constructor.name); }
+try { console.log((loose(spell("erauqs-delae"), 6) as Shape).kind.length); } catch (e) { console.log("a kind without its first letter:", (e as Error).constructor.name); }
 
 interface Tagged {
   tag: "sealed-tag";
@@ -87,7 +87,7 @@ console.log(show(tagged));
 (tagged as any).tag = tag.slice(0, 4) + tag.slice(4);
 console.log(show(tagged));
 (tagged as any).tag = spell("gat-delaet");
-console.log(show(tagged));
+try { console.log(show(tagged)); } catch (e) { console.log("a tag with another first letter:", (e as Error).constructor.name); }
 
 const stored = madeHere[1];
 (stored as any).kind = forms[1];

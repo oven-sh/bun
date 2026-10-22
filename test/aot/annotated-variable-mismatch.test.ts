@@ -19,4 +19,5 @@ test.concurrent.each(programs)("%s", async name => {
   const stored = join(folder, name.replace(/\.ts$/, ".expected.txt"));
   const expected = existsSync(stored) ? readFileSync(stored, "utf8") : (await run(name)).stdout;
   expect(await run("--aot", name)).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+  expect(await run("--debug-aot", name)).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
 });

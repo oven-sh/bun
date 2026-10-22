@@ -12,13 +12,14 @@ class G { constructor(public a: number, public b: number, public c: number, publ
 class H { constructor(public kind: string) {} }
 interface Tagged { kind: Kind; weight: number }
 const kinds: Kind[] = ["circle", "square", "ring", ""];
-const fromOutside = JSON.parse('[{"kind":"ring","weight":1},{"kind":"nobody knows this one","weight":2}]') as Tagged[];
+const fromOutside: any[] = JSON.parse('[{"kind":"ring","weight":1},{"kind":"nobody knows this one","weight":2}]');
 function make(i: number): unknown[] {
     const kind = kinds[i % 4];
     const f = new F("off");
     if (i % 3) f.kind = kind;
     const literal: Tagged = { kind, weight: i };
-    const stranger: Tagged = { kind: fromOutside[1].kind, weight: i };
+    const stranger: Tagged = { kind: "", weight: i };
+    (stranger as any).kind = fromOutside[1].kind;
     return [new A(kind), new B(i, kind), new C(i, "n" + i, kind), new D("on", i % 2 ? kind : undefined), new E("off", i, i % 2 ? null : kind), f, new G(1, 2, 3, 4, kind, "on"), new H("free " + i), literal, stranger, { kind: "plain " + kind }, fromOutside[i % 2]];
 }
 const all: unknown[] = [];

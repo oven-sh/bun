@@ -1,5 +1,5 @@
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTTypedCloneObject") + count("operationAOTTypedCloneObjectAndExtend");
+const visits = () => count("operationAOTCloneObject") + count("operationAOTCloneObjectAndExtend");
 const sources = [];
 for (let kind = 0; kind < 48; kind++) {
     const source = {};

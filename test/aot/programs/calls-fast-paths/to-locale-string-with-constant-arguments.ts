@@ -1,25 +1,25 @@
 // date.toLocaleString, toLocaleDateString, toLocaleTimeString and number.toLocaleString with a constant locale and constant options
 // format from a pattern computed at build time: no formatter is made and the options object is only allocated on the slow path.
 // Every result is compared with the same call with arguments that are not constants.
-// CALLS+ longDate operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ dateAndTimeInUTC operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ timeOnly operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ ofNewDate operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ grouped operationAOTTypedFormatNumberWithPattern
-// CALLS+ wholeDollars operationAOTTypedFormatNumberWithPattern
-// CALLS+ percent operationAOTTypedFormatNumberWithPattern
-// CALLS+ twoDigits operationAOTTypedFormatNumberWithPattern
-// CALLS- fourDigits operationAOTTypedFormatNumberWithPattern
-// CALLS- withSharedOptions operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ dollarsWithSharedOptions operationAOTTypedFormatNumberWithPattern
-// CALLS- withOptionsThatAreChanged operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ inUntypedCode operationAOTTypedFormatTimeValueWithPattern
-// CALLS- hostLocale operationAOTTypedFormatTimeValueWithPattern
-// CALLS- localeFromOutside operationAOTTypedFormatTimeValueWithPattern
-// CALLS- optionsFromOutside operationAOTTypedFormatTimeValueWithPattern
-// CALLS+ inNewYork operationAOTTypedFormatTimeValueWithPattern
-// CALLS- inNewYorkByName operationAOTTypedFormatTimeValueWithPattern
-// CALLS- threeArguments operationAOTTypedFormatTimeValueWithPattern
+// CALLS+ longDate operationAOTFormatWithPattern
+// CALLS+ dateAndTimeInUTC operationAOTFormatWithPattern
+// CALLS+ timeOnly operationAOTFormatWithPattern
+// CALLS+ ofNewDate operationAOTFormatWithPattern
+// CALLS+ grouped operationAOTFormatWithPattern
+// CALLS+ wholeDollars operationAOTFormatWithPattern
+// CALLS+ percent operationAOTFormatWithPattern
+// CALLS+ twoDigits operationAOTFormatWithPattern
+// CALLS- fourDigits operationAOTFormatWithPattern
+// CALLS- withSharedOptions operationAOTFormatWithPattern
+// CALLS+ dollarsWithSharedOptions operationAOTFormatWithPattern
+// CALLS- withOptionsThatAreChanged operationAOTFormatWithPattern
+// CALLS+ inUntypedCode operationAOTFormatWithPattern
+// CALLS- hostLocale operationAOTFormatWithPattern
+// CALLS- localeFromOutside operationAOTFormatWithPattern
+// CALLS- optionsFromOutside operationAOTFormatWithPattern
+// CALLS+ inNewYork operationAOTFormatWithPattern
+// CALLS- inNewYorkByName operationAOTFormatWithPattern
+// CALLS- threeArguments operationAOTFormatWithPattern
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }

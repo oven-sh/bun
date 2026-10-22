@@ -1,4 +1,4 @@
-// Bun: plain Bun calls the getter in every row and prints 9 or g with [get]. With --aot an array type means an ordinary array, so each read throws, and the message says so even where the type of the element allows undefined.
+// A typed read of an array element that is an accessor runs the getter, as in plain Bun, also where the element type allows undefined.
 declare const console: { log(...values: unknown[]): void };
 function optional(a: (number | undefined)[], i: number): number | undefined { return a[i]; }
 function optionalReadonly(a: readonly (number | undefined)[], i: number): number | undefined { return a[i]; }

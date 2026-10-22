@@ -1,4 +1,4 @@
-// The records whose prototype may be replaced cannot get consecutive shape numbers here: First and Third are marked, and Second must lie between them, because First | Second and Second | Third are both tested often. `v instanceof Known` still follows the prototype of each.
+// The records whose prototype may be replaced cannot get consecutive shape numbers here: First and Third are marked, and Second must lie between them, because First | Second and Second | Third are both tested often. `v instanceof Known` still follows the prototype of each. The guard reads `kind` through `as Second`, where it is written "second": for a Third, Fourth or Fifth that typed read gives their own text.
 class Known {
   x = 1;
 }
@@ -50,7 +50,7 @@ const pairs: any[] = [first(1), second(2), third(3), fourth(4), fifth(5)];
 let sum = 0;
 for (let turn = 0; turn < 50; turn++) {
   sum += low(pairs[turn & 1] as First | Second) + middle(pairs[1 + (turn & 1)] as Second | Third) + high(pairs[2 + (turn & 1)] as Third | Fourth) + top(pairs[3 + (turn & 1)] as Fourth | Fifth);
-  if (isFirstOrSecond(pairs[turn % 5])) sum++;
+  try { if (isFirstOrSecond(pairs[turn % 5])) sum++; } catch (e) { console.log("guard", turn % 5, (e as Error).constructor.name); }
 }
 console.log("sum", sum);
 const isKnown = [(v: any) => v instanceof Known][0]!;

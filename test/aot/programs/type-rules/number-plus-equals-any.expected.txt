@@ -1,8 +1,0 @@
-field: TypeError 1
-variable: TypeError 1
-local: TypeError
-element: no error
-read of the element: TypeError
-right 3 3 ab 1x
-store to number | string: no error
-read narrowed to number: TypeError

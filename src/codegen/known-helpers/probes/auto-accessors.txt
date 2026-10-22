@@ -1,0 +1,7 @@
+function probeDecorator(...probeArguments) {}
+export class ProbeAccessors {
+  accessor probePlain = 1;
+  static accessor probeStatic = 2;
+  @probeDecorator accessor probeDecorated = 3;
+  @probeDecorator #probePrivate() {}
+}

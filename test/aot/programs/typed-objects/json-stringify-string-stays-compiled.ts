@@ -1,3 +1,5 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 
 function hide(value: unknown): any {
@@ -5,10 +7,10 @@ function hide(value: unknown): any {
 }
 
 function measure(label: string, run: () => string | undefined): void {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
     let length = 0;
     for (let i = 0; i < 100; i++) length += run()!.length;
-    console.log(label + ": " + length + " characters, " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code");
+    console.log(label + ": " + length + " characters, " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
 }
 
 function quote(text: string): string {

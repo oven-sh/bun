@@ -1,5 +1,5 @@
 // A method is loaded before its arguments are evaluated. When the receiver class determines the callee, the call is direct whatever the arguments are, and a local object used only by its own methods is not allocated. When the method may have been replaced or the receiver is nullish, evaluation order and exceptions follow the spec.
-// IR= 0 gauged NewObjectWithShape|IsClosureOf|Call v
+// IR= 0 gauged : =?L[0-9]+ = (NewObject|CreateThis) |IsClosureOf|Call v
 // IR= 0 chained IsClosureOf|Call v
 // IR= 0 byKind IsClosureOf|Call v
 declare const console: { log(...v: unknown[]): void };

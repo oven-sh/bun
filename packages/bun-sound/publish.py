@@ -16,7 +16,7 @@ if sys.argv[1] == 'gates':
     if not os.path.exists(D + '/sound.json'): sys.exit('publish.py: no %s/%s in this folder' % (name, v))
     r = subprocess.run([sys.executable, H + '/check.py', N, OUT + '/check', '--elements=plain', '--no-options'], capture_output=True, text=True)
     if r.returncode or ('%s@%s' % (name, v)).ljust(42) + ' same' not in r.stdout: sys.exit('publish.py: the gates fail:\n' + '\n'.join(l for l in r.stdout.split('\n') if l.startswith('FAIL') or ' same ' in l))
-    r = subprocess.run([sys.executable, '-I', H + '/pack.py', N, OUT + '/check/node_modules', OUT + '/pack', name], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, '-I', H + '/pack.py', N, OUT + '/check/sound', OUT + '/pack', name], capture_output=True, text=True)
     if r.returncode: sys.exit('publish.py: pack.py: ' + r.stderr[-400:])
     for f in ('sound.json', 'package.json', 'LICENSE', 'NOTICE', 'lay.sums'):
         if read(OUT + '/pack/' + name + '/' + v + '/' + f) != read(D + '/' + f): sys.exit('publish.py: %s is not this folder\'s' % f)
@@ -43,7 +43,7 @@ Licence: %(license)s, the package's own. See `LICENSE` and `NOTICE`.
 '''
 made = []
 for d, ds, fs in sorted(os.walk(H)):
-    ds[:] = sorted(x for x in ds if x not in ('lay', 'src', 'tools', 'trees', 'recipe', 'node_modules'))
+    ds[:] = sorted(x for x in ds if x not in ('lay', 'src', 'tools', 'trees', 'node_modules'))
     if 'sound.json' not in fs: continue
     S = json.loads(read(d + '/sound.json')); P = json.loads(read(d + '/package.json')); name, v = S['name'], S['version']; who = '%s@%s' % (name, v)
     if only and who not in only: continue

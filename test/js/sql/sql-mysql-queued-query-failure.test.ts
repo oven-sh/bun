@@ -180,7 +180,7 @@ function suite(container: { host: string; port: number; ready: Promise<void> }) 
 
     // That call also makes the handle, so only the prototype's run() gets to see it.
     const prototype = Object.getPrototypeOf(
-      warm[Object.getOwnPropertySymbols(warm).find(symbol => symbol.description === "state")!].handle,
+      warm[Object.getOwnPropertySymbols(warm).find(symbol => symbol.description === "handle")!],
     );
     const run = prototype.run;
     let handle: unknown, connection: unknown;

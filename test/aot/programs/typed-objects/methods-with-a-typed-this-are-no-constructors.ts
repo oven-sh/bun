@@ -1,7 +1,7 @@
-// A function with a typed `this` that is stored as a member, or that stores nothing first, is no constructor of that type: the fields of the type stay "never observed absent" (2048 in the printed flags), and `new` of such a function makes an ordinary object.
-// IR+ field "count" number flags (20[4-9]\d|2[1-9]\d\d|3\d\d\d|40\d\d) 
-// IR+ field "step" number flags (20[4-9]\d|2[1-9]\d\d|3\d\d\d|40\d\d) 
-// IR+ field "label" .* flags (20[4-9]\d|2[1-9]\d\d|3\d\d\d|40\d\d) 
+// A function with a typed `this` that is stored as a member, or that stores nothing first, is no constructor of that type: the fields of the type stay "never observed absent" (`initialization=` in the printed field), and `new` of such a function makes an ordinary object.
+// IR+ ^layout L\d+ .*\{name="count" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+// IR+ ^layout L\d+ .*\{name="step" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+// IR+ ^layout L\d+ .*\{name="label" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
 // VALIDATED compiles
 interface Counter { count: number; step: number; label: string }
 function Base(this: any) {}

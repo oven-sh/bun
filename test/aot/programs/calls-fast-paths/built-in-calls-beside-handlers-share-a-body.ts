@@ -1,18 +1,19 @@
 // A call of a built-in method in a function that has a `try` goes through the body it shares with equal calls elsewhere, wherever it stands: inside the `try`, in the handler, in `finally`, or outside of them. In a loop it stays in line, and so does the call that makes what a `for..of` goes over, which is compiled together with its loop.
-// IR= 0 insideTry CallBuiltin v[0-9]+ String.trim#
-// IR= 0 inHandler CallBuiltin v[0-9]+ String.trim#
-// IR= 0 inFinally CallBuiltin v[0-9]+ String.trim#
-// IR= 0 besideTry CallBuiltin v[0-9]+ String.trim#
-// IR= 1 inLoop CallBuiltin v[0-9]+ String.trim#
-// IR= 0 keysOrName CallBuiltin Object.keys#
-// IR= 0 keysOrNothing CallBuiltin Object.keys#
-// IR= 0 countKeys CallBuiltin Object.keys#
-// IR= 0 countKeysOrNone CallBuiltin Object.keys#
-// IR= 1 overKeys CallBuiltin Object.keys#
-// IR= 1 isPlainNumber CallBuiltin Number.isNaN#
-// IR= 1 isPlainNumber CallBuiltin Number.isFinite#
-// IR= 1 isWholeNumber CallBuiltin Number.isNaN#
-// IR= 1 isWholeNumber CallBuiltin Number.isInteger#
+// IR-UNTIL OutlineColdOperations
+// IR= 0 insideTry CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+// IR= 0 inHandler CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+// IR= 0 inFinally CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+// IR= 0 besideTry CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+// IR= 1 inLoop CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+// IR= 0 keysOrName CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 0 keysOrNothing CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 0 countKeys CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 0 countKeysOrNone CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 1 overKeys CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 1 isPlainNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsNaN/
+// IR= 1 isPlainNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsFinite/
+// IR= 1 isWholeNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsNaN/
+// IR= 1 isWholeNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsInteger/
 function isPlainNumber(value: any): boolean {
   try {
     measure(String(value));

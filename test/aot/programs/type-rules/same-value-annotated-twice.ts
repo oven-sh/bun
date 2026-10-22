@@ -1,4 +1,4 @@
-// One value enters two places annotated with the same type. The second check may be dropped only where the first one has already passed on every path.
+// One value enters two places annotated with the same type. The second test may be dropped only where the first one has already passed on every path. The test asks for an object; a field of another kind throws where it is read, a missing field reads undefined.
 type Point = { x: number; y: number };
 type Named = { name: string };
 

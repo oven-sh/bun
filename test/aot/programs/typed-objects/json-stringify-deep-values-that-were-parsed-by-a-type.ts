@@ -1,4 +1,5 @@
 // Deep values that JSON.parse<T> made are written, validated, cloned and compared with what plain objects give.
+import { validate } from "bun:bundle";
 type Tree = { kids: Tree[] };
 type Chain = { next: Chain | null; name: string };
 type Deep = Deep[];
@@ -12,10 +13,10 @@ function say(run: () => unknown): string {
   }
 }
 const roads: [string, (text: string) => unknown, (value: unknown) => unknown, (levels: number) => string][] = [
-  ["Tree", text => JSON.parse<Tree>(text), value => Bun.validate<Tree>(value), levels => '{"kids":['.repeat(levels) + "]}".repeat(levels)],
-  ["Tree with undeclared keys", text => JSON.parse<Tree>(text), value => Bun.validate<Tree>(value), levels => '{"u":1,"kids":['.repeat(levels) + '],"v":"w"}'.repeat(levels)],
-  ["Chain", text => JSON.parse<Chain>(text), value => Bun.validate<Chain>(value), levels => '{"next":'.repeat(levels) + "null" + ',"name":"n"}'.repeat(levels)],
-  ["Deep", text => JSON.parse<Deep>(text), value => Bun.validate<Deep>(value), levels => "[".repeat(levels) + "]".repeat(levels)],
+  ["Tree", text => JSON.parse<Tree>(text), value => validate<Tree>(value), levels => '{"kids":['.repeat(levels) + "]}".repeat(levels)],
+  ["Tree with undeclared keys", text => JSON.parse<Tree>(text), value => validate<Tree>(value), levels => '{"u":1,"kids":['.repeat(levels) + '],"v":"w"}'.repeat(levels)],
+  ["Chain", text => JSON.parse<Chain>(text), value => validate<Chain>(value), levels => '{"next":'.repeat(levels) + "null" + ',"name":"n"}'.repeat(levels)],
+  ["Deep", text => JSON.parse<Deep>(text), value => validate<Deep>(value), levels => "[".repeat(levels) + "]".repeat(levels)],
 ];
 for (const [label, parse, validate, text] of roads) {
   for (const levels of [10, 47, 48, 49, 50, 100, 1000]) {

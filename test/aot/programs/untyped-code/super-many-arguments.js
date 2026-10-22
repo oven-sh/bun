@@ -59,14 +59,14 @@ class OverArray extends Array {
 }
 const holder = { made: [OverFunction, OverClass, OverDerived, OverArray] };
 const said = new Set();
-const before = count("language-operation:SuperConstruct");
+const before = count("operationAOTSuperConstruct");
 for (let turn = 0; turn < 500; turn++) {
   for (const callee of holder.made.slice(0, 3)) {
     said.add(new callee(1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "k").show());
     said.add(new callee(1, 2, 3, 4, 5).show());
   }
 }
-const inRunTime = count("language-operation:SuperConstruct") - before;
+const inRunTime = count("operationAOTSuperConstruct") - before;
 console.log([...said].join("\n"));
 console.log(inRunTime === 0 ? "the run time called no parent" : "the run time called a parent " + inRunTime + " times");
 console.log(new holder.made[3](1, 2, 3, 4, 5, 6, 7, 8, 9, 0).show());

@@ -1,4 +1,4 @@
-// An object reaches a part of a union that its own type is not assignable to, by an `in` test on an added property or by a type guard that lies. Compiled code refuses it there with a TypeError; plain Bun goes on with the wrong method.
+// An object reaches a part of a union that its own type is not assignable to, by an `in` test on an added property or by a type guard that lies. The narrowing tests nothing. The method that really runs tests its parameters on entry and throws a TypeError; plain Bun goes on with the wrong method.
 class Meters<Unit extends string> {
   kind = "meters";
   constructor(public amount: number, public unit: Unit) {}

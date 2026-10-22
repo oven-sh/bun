@@ -150,7 +150,8 @@ struct Parser<'a, 'tool> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    /// `./bunfig.toml`, which comes with the project: not the user's own file, not `--config`.
+    /// True for `./bunfig.toml`, which comes with the project. False for the user's own file and
+    /// for `--config`.
     is_project_file: bool,
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
@@ -236,54 +237,6 @@ impl<'a> Parser<'a, '_> {
                     expr.data.tag_name()
                 ),
             );
-        }
-        Ok(())
-    }
-
-    fn string_list(&mut self, list: &Expr) -> crate::Result<Vec<Box<[u8]>>> {
-        self.expect(list, ExprTag::EArray)?;
-        let array = list.data.e_array().expect("infallible: variant checked");
-        let items = array.items.slice();
-        let mut strings = Vec::with_capacity(items.len());
-        for item in items {
-            self.expect_string(item)?;
-            strings.push(estring_to_owned(item.data.e_string().expect("infallible: variant checked").get(), self.bump));
-        }
-        Ok(strings)
-    }
-
-    fn load_aot_rules(&mut self, table: &Expr, files: &[Box<[u8]>]) -> crate::Result<()> {
-        for key in [&b"allow"[..], b"warn", b"deny"] {
-            let Some(list) = table.get(key) else { continue };
-            for rule in self.string_list(&list)? {
-                let setting = [b"aot.".as_slice(), key, b"=", &rule[..]].concat();
-                match files {
-                    [] => self.ctx.bundler_options.aot_rules.push(setting.into_boxed_slice()),
-                    _ => self.ctx.bundler_options.aot_rules.extend(files.iter().map(|pattern| [&setting[..], b":", &pattern[..]].concat().into_boxed_slice())),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn load_aot(&mut self, aot: &Expr) -> crate::Result<()> {
-        self.expect(aot, ExprTag::EObject)?;
-        self.load_aot_rules(aot, &[])?;
-        if let Some(baseline) = aot.get(b"baseline") {
-            self.expect_string(&baseline)?;
-            let path = estring_to_owned(baseline.data.e_string().expect("infallible: variant checked").get(), self.bump);
-            self.ctx.bundler_options.aot_rules.push([b"aot.baseline=".as_slice(), &path[..]].concat().into_boxed_slice());
-        }
-        let Some(overrides) = aot.get(b"overrides") else { return Ok(()) };
-        self.expect(&overrides, ExprTag::EArray)?;
-        let array = overrides.data.e_array().expect("infallible: variant checked");
-        for table in array.items.slice() {
-            self.expect(table, ExprTag::EObject)?;
-            let Some(files) = table.get(b"files") else {
-                return self.add_error(table.loc, b"Expected \"files\", a list of patterns");
-            };
-            let files = self.string_list(&files)?;
-            self.load_aot_rules(table, &files)?;
         }
         Ok(())
     }
@@ -951,14 +904,9 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
-        if matches!(cmd, CommandTag::BuildCommand | CommandTag::CheckCommand)
-            && let Some(aot) = json.get(b"aot")
-        {
-            self.load_aot(&aot)?;
-        }
-
         if let Some(_bun) = json.get(b"bundle") {
             if cmd == CommandTag::BuildCommand
+                || cmd == CommandTag::CompileCommand
                 || cmd == CommandTag::RunCommand
                 || cmd == CommandTag::AutoCommand
             {
@@ -974,7 +922,7 @@ impl<'a> Parser<'a, '_> {
                 }
             }
 
-            if cmd == CommandTag::BuildCommand {
+            if matches!(cmd, CommandTag::BuildCommand | CommandTag::CompileCommand) {
                 if let Some(expr2) = _bun.get(b"logLevel") {
                     self.load_log_level(&expr2)?;
                 }
@@ -1402,7 +1350,7 @@ impl<'a> Parser<'a, '_> {
     ) -> crate::Result<()> {
         let cafile = install_obj.get(b"cafile");
         let ca = install_obj.get(b"ca");
-        // `ca` + `cafile` are one setting: a file that sets either replaces both.
+        // `ca` and `cafile` are one setting, so a file that sets either one replaces both.
         if cafile.is_some() || ca.is_some() {
             install.cafile = None;
             install.ca = None;

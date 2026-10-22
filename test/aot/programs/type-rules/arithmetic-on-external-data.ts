@@ -1,4 +1,4 @@
-// External data (here, the result of JSON.parse) may not match its declared type, and the compiler must not assert that it does:
+// The result of JSON.parse is cast to a type that it does not match and kept in a variable without an annotation:
 // every operator has to produce what ECMAScript says for the actual values.
 // string + anything is a string, and number - * / anything is a number, so a variable holding such a result keeps its inferred type. number + anything may be a string.
 const data = JSON.parse('{"t":"abc","u":"d","n":5,"b":true,"z":null,"o":{"x":1},"l":["x","y"],"d":{"k":"v"}}') as { t: number; u: number; n: number; b: number; z: number; o: number; l: number[]; d: Record<string, number> };

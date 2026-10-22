@@ -1,6 +1,4 @@
 // A server whose static route makes a Response before the first routed request: the request of a route is not a Response, though both are handed to `new Response(x.body, x)`.
-// IR+ CallBuiltin NewResponseFromResponse
-// IR= 1 copy CallBuiltin NewResponseFromResponse
 const echo = (request: Request) => new Response(request.body, request);
 const copy = () => {
   const first = new Response("copied", { status: 201, headers: { "x-a": "1" } });

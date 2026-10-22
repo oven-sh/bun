@@ -30,7 +30,7 @@
 "use strict";
 module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
   function createFiber(tag: RR.WorkTag, pendingProps: RR.Fiber["pendingProps"], key: string | null, mode: RR.TypeOfMode): RR.Fiber {
-    return new (FiberNode as unknown as RR.FiberConstructor)(tag, pendingProps, key, mode);
+    return new FiberNode(tag, pendingProps, key, mode);
   }
   function noop(): void {}
   function formatProdErrorMessage(code: number, ...args: unknown[]): string; function formatProdErrorMessage(code: number): string {
@@ -10259,7 +10259,7 @@ module.exports = function ($$$config: RR.HostConfig): RR.Reconciler {
     onRecoverableError: RR.OnRecoverableError,
     onDefaultTransitionIndicator: RR.OnDefaultTransitionIndicator
   ): RR.FiberRoot { /*$*/var containerInfo$asRoot: RR.FiberRoot, tag$asMode: RR.TypeOfMode, tag$asCache: RR.Cache, isStrictMode$asFiber: RR.Fiber;/*$*/
-    containerInfo$asRoot = new (FiberRootNode as unknown as RR.FiberRootConstructor)(
+    containerInfo$asRoot = new FiberRootNode(
       containerInfo,
       tag,
       hydrate,

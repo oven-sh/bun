@@ -1,8 +1,8 @@
 // `nativeKeys = overArg(Object.keys, Object)`: the closure is small and is copied into whoever calls it: there what it captured is read out of the closure, and what is predicted of the parameters of its function is predicted of those reads too.
-// IR= 1 keysOf IsBuiltinFunction v[0-9]+ Object$
-// IR= 1 keysOf IsBuiltinFunction v[0-9]+ Object.keys
-// IR= 1 prototypeOf IsBuiltinFunction v[0-9]+ Object$
-// IR= 1 prototypeOf IsBuiltinFunction v[0-9]+ Object.getPrototypeOf
+// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(ObjectKeys\)
+// IR= 1 prototypeOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+// IR= 1 prototypeOf TypeTest v[0-9]+ testedType=builtin\(ObjectGetPrototypeOf\)
 var root = (typeof globalThis == "object" && globalThis && globalThis.Object === Object && globalThis) || Function("return this")();
 function make(context) {
   var Object = context.Object;

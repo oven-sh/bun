@@ -32,7 +32,7 @@ for (const [name, run] of Object.entries(tries)) {
   "client/sub/app.js": `console.log("for the browser", window.location)`,
 };
 
-describe.skipIf(isWindows).each(unsupported ? [[]] : [[], ["--aot"]])("files embedded with --asset %s", (...flags) => {
+describe.skipIf(isWindows || unsupported).each([["--aot"]])("files embedded with --asset %s", (...flags) => {
   test("are opened, streamed and found by realpath", async () => {
     using dir = tempDir("compile-asset-streams", files);
     await using build = Bun.spawn({ cmd: [bunExe(), "build", "--compile", ...flags, "./main.mjs", "--asset", "./client", "--outfile", "built"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });

@@ -1,6 +1,8 @@
 // Untyped code changes objects that have a layout (adds, deletes, hides, freezes, gives them toJSON, other prototypes, cycles),
-// and code that does not know their type writes them as JSON. --aot refuses some of the changes; what is written must be exact.
-// ENV JSC_useAOTOperationCounters=1
+// and code that does not know their type writes them as JSON. Every change succeeds as in plain Bun, and what is written must be exact.
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: undefined | (() => string);
+const writersFailed = () => (typeof aotRuntimeCounters === "function" ? Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]) : 0);
 import { deeds } from "./deeds.js";
 declare const aotOperationCount: undefined | ((name: string) => number);
 const count = (name: string) => (typeof aotOperationCount === "function" ? aotOperationCount(name) : 0);
@@ -9,9 +11,9 @@ const writers: Record<string, (value: unknown) => string> = {
 };
 let coverage = "";
 function write(value: unknown): string {
-  const entered = count("operationAOTTypedJSONAppendValue"), finished = count("operationAOTTypedJSONFinish");
+  const entered = count("operationAOTJSONAppendValue"), finished = (count("operationAOTJSONWriterFinish") - writersFailed());
   const text = writers["write"]!(value);
-  coverage += count("operationAOTTypedJSONFinish") > finished ? "W" : count("operationAOTTypedJSONAppendValue") > entered ? "f" : "-";
+  coverage += (count("operationAOTJSONWriterFinish") - writersFailed()) > finished ? "W" : count("operationAOTJSONAppendValue") > entered ? "f" : "-";
   return text;
 }
 interface Row { id: number; text: string; on: boolean; ratio: number; next: Row | null; list: number[]; maybe?: string }

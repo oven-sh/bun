@@ -1,5 +1,5 @@
 // Stores onto instances of typed classes whose prototypes refuse them or take them over: read-only properties, setters, getters alone, frozen, sealed and closed prototypes;
-// by name, by key, by Object.assign, Reflect.set, spread and definition; from strict and from sloppy code; before and after the prototype changes.
+// by name, by key, by Object.assign, Reflect.set, spread and definition; from strict and from sloppy code; before and after the prototype changes. Two rows differ from plain Bun: a read through `as { free: number }` that an inherited getter answers with a text throws a TypeError.
 import * as sloppy from "./sloppy.cjs";
 
 const lines: string[] = [];
@@ -13,7 +13,7 @@ function say(label: string, work: () => unknown) {
   try {
     text = show(work());
   } catch (error) {
-    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+    text = "throws " + (error as Error).constructor.name;
   }
   lines.push(label + ": " + text);
 }

@@ -92,18 +92,19 @@ impl ServerEntryPoint {
                 &mut v,
                 "// @bun\n\
                  import * as start from \"{}\";\n\
+                 var entryNamespace = start;\n\
                  function isServerConfig(def) {{\n\
                  \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
                  }}\n\
-                 if (typeof start.then === 'function') {{\n\
-                 \x20  start.then((entryNamespace) => {{\n\
+                 if (typeof entryNamespace?.then === 'function') {{\n\
+                 \x20  entryNamespace = entryNamespace.then((entryNamespace) => {{\n\
                  \x20     if (isServerConfig(entryNamespace?.default))  {{\n\
                  \x20       const server = Bun.serve(entryNamespace.default);\n\
                  \x20       console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                  \x20     }}\n\
                  \x20  }}, reportError);\n\
-                 }} else if (start.default && isServerConfig(start.default)) {{\n\
-                 \x20  const server = Bun.serve(start.default);\n\
+                 }} else if (isServerConfig(entryNamespace?.default)) {{\n\
+                 \x20  const server = Bun.serve(entryNamespace.default);\n\
                  \x20  console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
                  }}\n",
                 strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),

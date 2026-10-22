@@ -585,17 +585,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let unique_key_prefix: &[u8] = &c.unique_key_prefix;
         let paths = &unique_key_to_path;
         for chunk in chunks.iter_mut() {
-            let builtin_modules = builtin_modules_of_compiled_entry_point(c, chunk);
             let crate::chunk::Content::Javascript(js) = &mut chunk.content else {
                 continue;
             };
             let Some(mi) = js.module_info.as_mut() else {
                 continue;
             };
-            for specifier in builtin_modules {
-                let specifier = mi.str(specifier);
-                mi.request_module(specifier, analyze_transpiled_module::FetchParameters::None);
-            }
 
             // In place, so the per-build placeholder does not survive as an extra string.
             mi.rewrite_strings(move |s| {
@@ -636,7 +631,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     path: &path[..],
                     info: mi,
                     table_ids,
-                    is_entry_point: chunk.entry_point.is_entry_point(),
                 });
                 chunk_indices.push(chunk_index as u32);
             }
@@ -674,37 +668,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    // For the compiled program: the paths of the files it refers to, which are known by now. The list of those files is taken apart below.
-    let mut replaced_strings: Vec<u8> = Vec::new();
-    {
-        let graph = c.parse_graph();
-        let keys = graph.input_files.items_unique_key_for_additional_file();
-        let additional_files = graph.input_files.items_additional_files();
-        let sources = graph.input_files.items_source();
-        for ((key, files), source) in keys.iter().zip(additional_files).zip(sources) {
-            let Some(file) = files.last().filter(|_| !key.is_empty()) else { continue };
-            let path = &graph.additional_output_files.as_slice()[crate::chunk::additional_output_file_index(file)].dest_path;
-            let path = match c.options.preserve_source_paths {
-                true => source.path.text.to_vec(),
-                false => cheap_prefix_normalizer(c.options.public_path, path).concat(),
-            };
-            for bytes in [&key[..], &path[..]] {
-                replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-                replaced_strings.extend_from_slice(bytes);
-            }
-        }
-        for index in 0..graph.html_imports.server_source_indices.len() as u32 {
-            let key = [&c.unique_key_prefix[..], format!("H{index:08}").as_bytes()].concat();
-            let manifest = format!("{}", crate::html_import_manifest::HTMLImportManifest { index, graph, chunks: &*chunks, linker_graph: &c.graph }).into_bytes();
-            for bytes in [&key[..], &manifest[..]] {
-                replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
-                replaced_strings.extend_from_slice(bytes);
-            }
-        }
-    }
-    if let Some(engine) = c.facts.as_mut().and_then(|facts| facts.engine.as_mut()) {
-        engine.replace_strings(&replaced_strings);
-    }
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
@@ -893,7 +856,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // Don't write to disk if compile mode is enabled - we need buffer values for compilation
     let is_compile = bundler.transpiler.options.compile_mode.is_executable();
-    if root_path.len() > 0 && !is_compile && bundler.transpiler.options.write_sound_files.is_none() {
+    if root_path.len() > 0 && !is_compile {
         write_output_files_to_disk(
             c,
             root_path,
@@ -1056,11 +1019,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         .output_source_map
                         .finalize(&code_result.shifts)
                         .expect("Failed to allocate memory for external source map");
-                    let tokens = c.facts.as_ref().and_then(|facts| facts.tokens.as_deref());
-                    let output_source_map = match tokens.filter(|_| chunk.entry_point.is_entry_point()) {
-                        Some(tokens) => with_aot_tokens(&output_source_map, tokens),
-                        None => output_source_map,
-                    };
                     let mut source_map_final_rel_path: Vec<u8> =
                         Vec::with_capacity(chunk.final_rel_path.len() + b".map".len());
                     source_map_final_rel_path.extend_from_slice(&chunk.final_rel_path);
@@ -1416,38 +1374,19 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     // The internal modules the executable will carry bytecode for, as its builtins section has them.
     let target_builtins = c.options.target_builtins.clone();
     let internal_modules = (c.options.generate_internal_module_bytecode
-        && c.options.compile_mode.is_executable()
-        && !c.options.aot)
-        .then(|| builtins_of(target_builtins.as_deref()))
-        .flatten()
-        .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
+        && c.options.compile_mode.is_executable())
+    .then(|| builtins_of(target_builtins.as_deref()))
+    .flatten()
+    .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
     let mut linked_bytecode: Option<LinkedBytecode> = None;
     if let Some(order) = &bytecode_order {
         let table = external_string_table
             .as_ref()
             .and_then(|table| table.get())
             .expect("an order file is only loaded for --compile --bytecode");
-        let encoder =
-            crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(
-                table,
-                order,
-                c.options.aot,
-            );
+        let encoder = crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle::new(table, order);
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
-        // An entry function of the compiled program takes the place of the code of each of its entry points, which are empty:
-        // `empty_compiled_entry_points`.
-        let typed_modules: Vec<u32> = (c.facts.iter().filter(|facts| facts.typed.is_some()))
-            .flat_map(|facts| facts.entry_points.iter())
-            .filter_map(|path| {
-                let sources = c.parse_graph().input_files.items_source();
-                linked_bytecode_chunks.iter().position(|&(chunk_index, _, _)| {
-                    let chunk = &chunks[chunk_index];
-                    chunk.is_entry_point() && *sources[chunk.entry_point.source_index() as usize].path.text == **path
-                })
-            })
-            .map(|position| position as u32)
-            .collect();
         let is_esm = c.options.output_format == options::Format::Esm;
         // What `IntermediateOutput::code` wrote where a text imports a chunk.
         let mut chunk_paths: Vec<Vec<u8>> = chunks
@@ -1490,21 +1429,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let mut linked = LinkedBytecode {
             encoder,
             output_files: Vec::with_capacity(linked_bytecode_chunks.len()),
-            graph_modules: Vec::with_capacity(linked_bytecode_chunks.len()),
             internal_names,
             names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
-        let engine = c.facts.as_mut().and_then(|facts| facts.engine.take());
-        if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
-            let is_set = match engine {
-                Some(engine) => engine.finish().is_some_and(|prepared| linked.encoder.set_prepared_typed_program(prepared, &typed_modules)),
-                None => linked.encoder.set_typed_program(typed, &typed_modules, &replaced_strings),
-            };
-            if !is_set {
-                add_aot_build_errors(c, linked.encoder.take_build_errors());
-                return Err(crate::Error::BuildFailed);
-            }
-        }
         for ((chunk_index, bytecode_index, source_provider_url), names) in
             linked_bytecode_chunks.iter().zip(&names)
         {
@@ -1524,14 +1451,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 names.as_ref(),
             ) {
                 linked.output_files.push(*bytecode_index);
-                linked.graph_modules.push(
-                    prelinked_graph
-                        .as_ref()
-                        .and_then(|(_, chunk_indices)| {
-                            chunk_indices.binary_search(&(*chunk_index as u32)).ok()
-                        })
-                        .map_or(u32::MAX, |module| module as u32),
-                );
                 if names.is_none() {
                     // JavaScriptCore compiled what the parser here does not take: nothing of the chunk can be listed
                     // in an order file, or placed by one.
@@ -1591,9 +1510,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         );
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
-    let mut aot_image: Vec<u8> = Vec::new();
-    let mut has_aot_image = false;
-    let mut has_program_data = false;
     if let Some(mut linked) = linked_bytecode {
         if let Some((path, names_out)) = &linked.names_out {
             let path = bun_core::ZBox::from_bytes(path);
@@ -1606,20 +1522,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             }
         }
         let encoded = linked.output_files;
-        let finished = match &prelinked_graph {
-            Some((graph, _)) => linked.encoder.finish_linked(
-                graph,
-                module_info_strings.slots(),
-                &linked.graph_modules,
-            ),
-            None => linked.encoder.finish(),
-        };
-        let aot_build_errors = linked.encoder.take_build_errors();
-        if !aot_build_errors.is_empty() {
-            add_aot_build_errors(c, aot_build_errors);
-            return Err(crate::Error::BuildFailed);
-        }
-        match finished {
+        match linked.encoder.finish() {
             Some(crate::bytecode_order::LinkedPayload {
                 payload,
                 entry_offsets,
@@ -1627,9 +1530,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 named_hot_functions,
                 placed_hot_functions,
                 functions_without_name,
-                has_aot_image: has_image,
             }) => {
-                has_aot_image = has_image;
                 if functions_without_name != 0 {
                     c.log_mut().add_warning_fmt(
                         None,
@@ -1760,13 +1661,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .map_or(&[][..], |order| &order.hot_strings),
         );
         debug!("Bytecode external string table: {} bytes", bytes.len());
-        if has_aot_image {
-            let maps = SourceMapsByEntryOffset::of(&result);
-            let find =
-                |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column);
-            aot_image = crate::bundle_v2::dispatch::build_program_data(&bytes, &find);
-            has_program_data = !aot_image.is_empty();
-        }
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),
             input_path: Box::default(),
@@ -1783,144 +1677,8 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             ..Default::default()
         }));
     }
-    if c.options.aot && !has_program_data {
-        add_aot_build_errors(c, Vec::new());
-        return Err(crate::Error::BuildFailed);
-    }
-    if !aot_image.is_empty() {
-        debug!("AOT image: {} bytes", aot_image.len());
-        let bytes = aot_image.into_boxed_slice();
-        result.push(options::OutputFile::init(options::OutputFileInit {
-            output_path: b".aot-image".to_vec().into_boxed_slice(),
-            input_path: Box::default(),
-            input_loader: Loader::File,
-            hash: None,
-            output_kind: options::OutputKind::AotImage,
-            loader: Loader::File,
-            size: Some(bytes.len()),
-            display_size: bytes.len() as u32,
-            data: options::OutputFileData::Buffer { data: bytes },
-            side: None,
-            entry_point_index: None,
-            is_executable: false,
-            ..Default::default()
-        }));
-        if let Some(bytes) = runtime_use(c) {
-            result.push(options::OutputFile::init(options::OutputFileInit {
-                output_path: b".runtime-use".to_vec().into_boxed_slice(),
-                input_path: Box::default(),
-                input_loader: Loader::File,
-                hash: None,
-                output_kind: options::OutputKind::RuntimeUse,
-                loader: Loader::File,
-                size: Some(bytes.len()),
-                display_size: bytes.len() as u32,
-                data: options::OutputFileData::Buffer { data: bytes },
-                side: None,
-                entry_point_index: None,
-                is_executable: false,
-                ..Default::default()
-            }));
-        }
-    }
     debug_assert_no_placeholder_left(c, &result);
     Ok(result)
-}
-
-fn import_resolved_at_run_time(c: &LinkerContext) -> Option<&'static [u8]> {
-    let import_records = c.graph.ast.items_import_records();
-    let records = c.graph.reachable_files.iter().filter_map(|source_index| import_records.get(source_index.get() as usize));
-    records.flat_map(|records| records.as_slice()).find_map(|record| {
-        let specifier: &'static [u8] = record.path.text;
-        let loads_code = matches!(record.kind, bun_ast::ImportKind::Stmt | bun_ast::ImportKind::Require | bun_ast::ImportKind::Dynamic);
-        let is_builtin = record.tag != bun_ast::ImportRecordTag::None
-            || strings::has_prefix(specifier, b"node:")
-            || strings::has_prefix(specifier, b"bun:")
-            || bun_resolve_builtins::HardcodedModule::Alias::get(specifier, crate::options::Target::Bun, Default::default()).is_some();
-        let is_left = loads_code
-            && !record.source_index.is_valid()
-            && !specifier.is_empty()
-            && (!record.path.is_disabled || record.flags.contains(bun_ast::ImportRecordFlags::WAS_UNRESOLVED))
-            && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
-            && !is_builtin;
-        is_left.then_some(specifier)
-    })
-}
-
-fn runtime_use(c: &LinkerContext) -> Option<Box<[u8]>> {
-    let facts = c.facts.as_ref()?.runtime_use.as_deref()?;
-    let loaders = c.parse_graph().input_files.items_loader();
-    let opened_by: Option<[&[u8]; 2]> = if loaders.contains(&Loader::Napi) {
-        Some([&b"a native addon"[..], &b""[..]])
-    } else if loaders.contains(&Loader::SqliteEmbedded) {
-        Some([&b"a database that is embedded"[..], &b""[..]])
-    } else if loaders.contains(&Loader::Html) && !strings::split(facts, b"\n").any(|fact| fact == b"loader html") {
-        Some([&b"a page that is not imported by the name of a page"[..], &b""[..]])
-    } else {
-        import_resolved_at_run_time(c).map(|specifier| [&b"an import that is resolved at run time: "[..], specifier])
-    };
-    let mut text = match opened_by {
-        Some(why) => bun_ast::type_tags::open_world(facts, &why.concat()),
-        None => facts.to_vec(),
-    };
-    if text.last().is_some_and(|&last| last != b'\n') {
-        text.push(b'\n');
-    }
-    let mut loaders: Vec<&'static str> = loaders.iter().map(|&loader| loader.into()).collect();
-    loaders.sort_unstable();
-    loaders.dedup();
-    for loader in loaders {
-        text.extend_from_slice(b"loader ");
-        text.extend_from_slice(loader.as_bytes());
-        text.push(b'\n');
-    }
-    Some(text.into_boxed_slice())
-}
-
-fn builtin_modules_of_compiled_entry_point<'a>(c: &'a LinkerContext, chunk: &Chunk) -> &'a [Box<[u8]>] {
-    let Some(facts) = c.facts.as_ref().filter(|facts| facts.typed.is_some() && chunk.is_entry_point()) else {
-        return &[];
-    };
-    let path = c.parse_graph().input_files.items_source()[chunk.entry_point.source_index() as usize].path.text;
-    let entry_point = facts.entry_points.iter().position(|compiled| **compiled == *path);
-    entry_point.and_then(|entry_point| facts.builtin_modules_of_entry_points.get(entry_point)).map_or(&[], Vec::as_slice)
-}
-
-fn with_aot_tokens(source_map: &[u8], tokens: &[u8]) -> Box<[u8]> {
-    let end = strings::last_index_of_char(source_map, b'}').unwrap_or(source_map.len());
-    let body = source_map[..end].trim_ascii_end();
-    [body, b",\n  \"x_bun_aot\": ", tokens, b"\n", &source_map[end..]].concat().into_boxed_slice()
-}
-
-fn add_aot_build_errors(c: &mut LinkerContext, errors: Vec<crate::bytecode_order::AotBuildError>) {
-    if errors.is_empty() {
-        c.log_mut().add_error(
-            None,
-            bun_ast::Loc::EMPTY,
-            b"--aot: internal error: the program could not be compiled ahead of time",
-        );
-        return;
-    }
-    for error in errors {
-        let mut text = b"--aot: ".to_vec();
-        text.extend_from_slice(&error.message);
-        let location = (!error.path.is_empty()).then(|| bun_ast::Location {
-            file: std::borrow::Cow::Owned(error.path),
-            line: if error.line == 0 { -1 } else { error.line as i32 },
-            column: if error.line == 0 { -1 } else { error.column as i32 },
-            ..Default::default()
-        });
-        let log = c.log_mut();
-        log.errors += 1;
-        log.add_msg(bun_ast::Msg {
-            kind: bun_ast::Kind::Err,
-            data: bun_ast::Data {
-                text: std::borrow::Cow::Owned(text),
-                location,
-            },
-            ..Default::default()
-        });
-    }
 }
 
 /// Debug check: no in-memory output may still contain the per-build `unique_key` placeholder prefix.
@@ -1944,7 +1702,6 @@ fn debug_assert_no_placeholder_left(c: &LinkerContext, files: &[options::OutputF
 struct LinkedBytecode {
     encoder: crate::bundle_v2::dispatch::BytecodeLinkEncoderHandle,
     output_files: Vec<u32>,
-    graph_modules: Vec<u32>,
     /// What the code of the internal modules that will join the link is called, in their order.
     internal_names: Vec<Option<crate::bytecode_order::CodeNames>>,
     /// `BUN_BYTECODE_ORDER_NAMES_OUT`, and what is written there.
@@ -2202,64 +1959,3 @@ fn chunk_load_order(
 use crate::EntryPoint;
 use crate::options::SourceMapOption;
 use crate::output_file::{BakeExtra, BakeRouteKind};
-
-struct SourceMapsByEntryOffset {
-    maps: bun_collections::HashMap<u32, (Box<[u8]>, Vec<Box<[u8]>>)>,
-}
-
-impl SourceMapsByEntryOffset {
-    fn of(output_files: &[options::OutputFile]) -> Self {
-        let mut maps = bun_collections::HashMap::new();
-        for file in output_files {
-            if file.source_map_index == u32::MAX || file.bytecode_index == u32::MAX {
-                continue;
-            }
-            let (Some(map), Some(bytecode)) = (
-                output_files.get(file.source_map_index as usize),
-                output_files.get(file.bytecode_index as usize),
-            ) else {
-                continue;
-            };
-            if let Some(parsed) = Self::parse(map.value.as_slice()) {
-                maps.insert(bytecode.bytecode_entry_offset, parsed);
-            }
-        }
-        Self { maps }
-    }
-
-    fn parse(json_source: &[u8]) -> Option<(Box<[u8]>, Vec<Box<[u8]>>)> {
-        let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
-        let mut log = bun_ast::Log::init();
-        let _reset_guard = bun_ast::StoreResetGuard::new();
-        let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log).ok()?;
-        let json = parsed.root;
-        let mappings = json.get(b"mappings")?;
-        let vlq: &[u8] = mappings.as_utf8_string_literal()?;
-        let bun_ast::ExprData::EArrayJSON(sources) = json.get(b"sources")?.data else {
-            return None;
-        };
-        let mut names: Vec<Box<[u8]>> = Vec::new();
-        for item in sources.get().items() {
-            names.push(Box::from(item.as_str()?));
-        }
-        let blob = bun_sourcemap::InternalSourceMap::from_vlq(vlq, 0).ok()?;
-        Some((blob, names))
-    }
-
-    fn find(&self, entry_offset: u32, line: u32, column: u32) -> Option<(*const [u8], u32, u32)> {
-        let (blob, names) = self.maps.get(&entry_offset)?;
-        let map = bun_sourcemap::InternalSourceMap {
-            data: blob.as_ptr(),
-        };
-        let mapping = map.find(
-            bun_core::Ordinal::from_one_based(i32::try_from(line).ok()?),
-            bun_core::Ordinal::from_one_based(i32::try_from(column).ok()?),
-        )?;
-        let name = names.get(usize::try_from(mapping.source_index).ok()?)?;
-        Some((
-            core::ptr::from_ref::<[u8]>(name),
-            u32::try_from(mapping.original.lines.one_based()).ok()?,
-            u32::try_from(mapping.original.columns.one_based()).ok()?,
-        ))
-    }
-}

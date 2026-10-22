@@ -2951,7 +2951,6 @@ pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Resul
 // ───────────────────────────────────────────────────────────────────────────
 
 pub mod ast_memory_allocator;
-pub mod audited;
 pub mod b;
 pub mod base;
 pub mod binding;
@@ -2968,7 +2967,6 @@ pub mod op;
 pub mod s;
 pub mod scope;
 pub mod server_component_boundary;
-pub mod type_tags;
 pub mod stmt;
 pub mod symbol;
 pub mod ts;

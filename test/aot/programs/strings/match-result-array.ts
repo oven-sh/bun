@@ -1,3 +1,4 @@
+// The array that `exec` and `match` return: elements, `index`, `input`, `groups`, own property names, holes and later growth, and the legacy `RegExp.$1` properties after each search, at typed and untyped sites and across collections.
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
 const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
 
@@ -89,12 +90,12 @@ for (let i = 0; i < 60000; i++) {
 collect();
 console.log(sum, kept.length, kept.map(match => match!.join(":")).join(" ").length, describe(kept[7]), legacy());
 
-const before = count("operationAOTTypedRegExpExecFound");
+const before = count("operationAOTRegExpExec") + count("operationAOTRegExpMatchLiteral");
 let found = 0;
 for (let i = 0; i < 4000; i++) if (execs(date, "2026-10-15")) found++;
-console.log(found, count("operationAOTTypedRegExpExecFound") - before < 400 ? "few entries" : "MANY ENTRIES");
+console.log(found, count("operationAOTRegExpExec") + count("operationAOTRegExpMatchLiteral") - before < 400 ? "few entries" : "MANY ENTRIES");
 const wide = /^(\d{4})\u5e74(\d{1,2})\u6708(.)/;
-const names = ["operationAOTTypedRegExpExecFound", "operationAOTTypedRegExpExec", "operationAOTTypedStringMatchRegExp"];
+const names = ["operationAOTRegExpExec", "operationAOTStringMatchRegExp", "operationAOTRegExpMatchLiteral"];
 const entries = () => names.reduce((sum, name) => sum + count(name), 0);
 const beforeWide = entries();
 let length = 0;

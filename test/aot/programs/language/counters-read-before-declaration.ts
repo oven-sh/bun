@@ -1,6 +1,7 @@
-// Counters of closures that functions declared above them can read before `var count = 0` has run: `undefined`, then NaN, then integers; used as keys.
+// Counters of closures that functions declared above them can read before `var count = 0` has run: `undefined`, then NaN, then integers; used as keys. `keyed` casts its counter, a number, to `string`: where types are tested the cast throws a TypeError, and with types erased the number is the key.
 declare const console: { log(...values: unknown[]): void };
 function show(value: unknown): string { return typeof value === "number" && Object.is(value, -0) ? "-0" : String(value); }
+function attempt(run: () => unknown): string { try { return show(run()); } catch (error) { return (error as Error).constructor.name; } }
 function makeStack() {
     const api = { push, pop, top, find, size, at, put, jump, double, half, shrink, keyed };
     early.push(show(api.top()), show(api.size()), show(api.find("a")), show(api.at()), show(api.keyed()));
@@ -28,12 +29,12 @@ const stack = makeStack();
 console.log(early.join(" | "));
 console.log(stack.push("a"), stack.push("b"), stack.push("c"), show(stack.top()), stack.find("a"), stack.find("c"), stack.find("z"), stack.size());
 console.log(show(stack.pop()), show(stack.pop()), show(stack.top()), stack.size(), show(stack.pop()), show(stack.pop()), stack.size(), show(stack.top()), stack.find("a"), stack.push("d"), stack.size());
-console.log(show(stack.at()), stack.jump(1), show(stack.at()), stack.jump(-2), show(stack.at()), show(stack.keyed()), stack.jump(1), show(stack.at()));
+console.log(show(stack.at()), stack.jump(1), show(stack.at()), stack.jump(-2), show(stack.at()), attempt(() => stack.keyed()), stack.jump(1), show(stack.at()));
 stack.jump(5); stack.put("far"); console.log(show(stack.at()), stack.jump(-5), show(stack.at()));
 console.log(show(stack.half()), show(stack.half()), show(stack.half()));
 stack.jump(1);
-let doubled = 0; for (let i = 0; i < 1100; i++) { doubled = stack.double(); if (i === 52 || i === 62 || i === 63 || i === 69 || i === 1022 || i === 1023) console.log(i, show(doubled), show(stack.at()), show(stack.keyed())); }
-console.log(show(stack.shrink()), show(stack.at()), show(stack.keyed()), show(stack.jump(1)), show(stack.at()));
+let doubled = 0; for (let i = 0; i < 1100; i++) { doubled = stack.double(); if (i === 52 || i === 62 || i === 63 || i === 69 || i === 1022 || i === 1023) console.log(i, show(doubled), show(stack.at()), attempt(() => stack.keyed())); }
+console.log(show(stack.shrink()), show(stack.at()), attempt(() => stack.keyed()), show(stack.jump(1)), show(stack.at()));
 function makeEarly() {
     const bump = () => { seen++; return seen; };
     const read = () => list[seen];

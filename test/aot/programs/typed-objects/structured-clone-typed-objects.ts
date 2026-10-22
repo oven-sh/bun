@@ -1,6 +1,18 @@
+// structuredClone and postMessage of typed objects: object literals, class instances, class prototypes, and what their fields hold. A copy is a plain object with the enumerable own properties that plain Bun copies, and what plain Bun cannot clone throws the same DataCloneError.
 interface Flat { id: number; name: string; ok: boolean; none: null; missing: undefined; opt?: string }
 interface Deep { id: number; inner: Flat; list: Flat[]; at?: Date }
 class P { #hidden = 1; constructor(public x: number, public y: string) {} get sum() { return this.x + this.#hidden; } method() { return 1; } }
+class Untouched { constructor(public v: number) {} method() { return this.v; } get twice() { return this.v * 2; } }
+class OfInstance { method() { return 1; } }
+class Base { inherited() { return 1; } }
+class Derived extends Base { own() { return 2; } }
+class Extended { method() { return 1; } }
+class Repeated { method() { return 1; } }
+class Posted { method() { return 1; } }
+class Whole { method() { return 1; } }
+class InField { method() { return 1; } }
+class WithMethod { method() { return 1; } }
+function* numbers() { yield 1; }
 function hide(value: unknown): any { return value; }
 let count = 0;
 function show(name: string, make: () => unknown) {
@@ -34,4 +46,15 @@ show("an extra accessor", () => { const x = flat(1); Object.defineProperty(hide(
 show("frozen, sealed", () => [structuredClone(Object.freeze(flat(1))), structuredClone(Object.seal(flat(2)))].map(facts));
 show("another prototype, a null prototype", () => { const a = flat(1), b = flat(2); Object.setPrototypeOf(a, JSON.parse('{"inherited":1}')); Object.setPrototypeOf(b, null); return [structuredClone(a), structuredClone(b)].map(facts); });
 show("empty", () => facts(structuredClone({} as { o?: number })));
-show("through a MessageChannel's serializer", () => { const { port1, port2 } = new MessageChannel(); port1.postMessage(flat(1)); port1.postMessage([flat(2), new P(1, "p")]); port1.close(); port2.close(); return "posted"; });
+show("a class's prototype that nothing has listed or written", () => facts(structuredClone(Untouched.prototype)));
+show("the class afterwards", () => { const u = new Untouched(2); return [u.method(), u.twice, Object.getOwnPropertyNames(Untouched.prototype), Object.getPrototypeOf(u) === Untouched.prototype]; });
+show("the same prototype again", () => facts(structuredClone(Untouched.prototype)));
+show("the prototype of an instance, in a field", () => structuredClone({ p: Object.getPrototypeOf(new OfInstance()) }));
+show("a derived class's prototype", () => facts(structuredClone(Derived.prototype)));
+show("a class's prototype with an added property", () => { hide(Extended.prototype).extra = "e"; return facts(structuredClone(Extended.prototype)); });
+show("an array with one class's prototype twice", () => { const c = structuredClone([Repeated.prototype, Repeated.prototype]); return [c, c[0] === c[1]]; });
+show("a class", () => structuredClone(Whole));
+show("a class in a field", () => structuredClone({ c: InField, v: 1 }));
+show("a method of a class's prototype", () => structuredClone(WithMethod.prototype.method));
+show("a generator", () => structuredClone(numbers()));
+show("through a MessageChannel's serializer", () => { const { port1, port2 } = new MessageChannel(); port1.postMessage(flat(1)); port1.postMessage([flat(2), new P(1, "p")]); port1.postMessage(Posted.prototype); port1.close(); port2.close(); return "posted"; });

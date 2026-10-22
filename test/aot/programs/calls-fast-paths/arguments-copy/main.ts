@@ -1,6 +1,6 @@
 // `arguments[i]` with a key of unknown type, and `slice.call(arguments)`, need no `arguments` object.
-// IR- CreateArguments
-// IR+ GetMyArgumentByVal
+// IR- Create\w+Arguments
+// IR+ ^ .*GetMyArgumentByVal
 // @ts-ignore
 import * as m from "./untyped.js";
 declare const console: any;

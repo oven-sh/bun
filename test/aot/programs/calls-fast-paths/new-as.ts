@@ -1,9 +1,7 @@
-// `new C() as T` and `new F(..) as T`: the object is allocated as a `T` from the start.
-// IR- Coerce
-// IR- = Construct v
-// IR+ : TransientSym\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
-// IR+ : TransientLinks\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
-// IR- : (Sym|Links)\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
+// `new C() as T` and `new F(..) as T`: the constructor is known, so the object is allocated in place with the layout of its constructor, and the cast adds no call.
+// IR- ^ .*= Construct v
+// IR+ ^layout (L[0-9]+) .*name="Sym" [\s\S]*: =?\1 = (NewObject|CreateThis) 
+// IR+ ^layout (L[0-9]+) .*name="Links" [\s\S]*: =?\1 = (NewObject|CreateThis) 
 declare const console: any;
 interface Links { _brand: any }
 interface TransientLinks extends Links { check: number; target: Sym | undefined }

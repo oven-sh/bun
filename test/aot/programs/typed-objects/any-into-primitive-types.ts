@@ -1,4 +1,4 @@
-// A value of type `any` reaches a variable, assignment, return, argument, field or `catch` variable declared `number`, `string` or `boolean`.
+// A value of type `any` reaches a variable, assignment, return, argument, field, array element or `catch` variable declared `number`, `string` or `boolean`.
 /* expected
 a1 TypeError
 a2 5
@@ -32,9 +32,10 @@ f2 l3
 f3 TypeError
 f4 TypeError
 f5 x
-g1 2
-g2 2
-g3 TypeError
+g1 TypeError
+g2 1
+g3 undefined
+g3t undefined
 g4 1,6
 h1 s
 h2 TypeError

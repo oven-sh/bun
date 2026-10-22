@@ -1,1 +1,0 @@
-error: TS100014: This always fails under --aot: `Object.defineProperty(Object.prototype, ..)` throws: built-in prototypes are frozen.

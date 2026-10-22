@@ -6,6 +6,7 @@ const show = value => {
   if (typeof value === "symbol") return String(value);
   if (typeof value === "bigint") return value + "n";
   if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (value instanceof TypeError) return value.name;
   if (value instanceof Error) return value.name + ": " + value.message;
   if (value instanceof Map) return "Map " + show([...value]);
   if (value instanceof Set) return "Set " + show([...value]);

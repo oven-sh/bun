@@ -1,5 +1,6 @@
 #include "BunPlugin.h"
 #include "ModuleLoader.h"
+#include "BunCompiledModules.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -45,36 +46,6 @@ static bool isValidNamespaceString(String& namespaceString)
         namespaceRegex = new JSC::Yarr::RegularExpression("^([/@a-zA-Z0-9_\\-]+)$"_s);
     }
     return namespaceRegex->match(namespaceString) > -1;
-}
-
-extern "C" const uint8_t* Bun__standaloneCompiledProgramSources(size_t*);
-
-static bool isCompiledProgramSource(const String& path)
-{
-    size_t length = 0;
-    const uint8_t* data = Bun__standaloneCompiledProgramSources(&length);
-    std::span<const uint8_t> sortedLines { data, length };
-    auto utf8 = path.utf8();
-    std::span<const uint8_t> key = byteCast<uint8_t>(utf8.span());
-    size_t low = 0;
-    size_t high = sortedLines.size();
-    while (low < high) {
-        size_t start = low + (high - low) / 2;
-        while (start > low && sortedLines[start - 1] != '\n')
-            --start;
-        size_t end = start;
-        while (end < sortedLines.size() && sortedLines[end] != '\n')
-            ++end;
-        auto line = sortedLines.subspan(start, end - start);
-        int order = memcmp(line.data(), key.data(), std::min(line.size(), key.size()));
-        if (!order && line.size() == key.size())
-            return true;
-        if (order < 0 || (!order && line.size() < key.size()))
-            low = std::min(end + 1, sortedLines.size());
-        else
-            high = start;
-    }
-    return false;
 }
 
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
@@ -124,19 +95,11 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     }
 
     if (namespaceString.isEmpty() || namespaceString == "file"_s) {
-        size_t length = 0;
-        const uint8_t* paths = Bun__standaloneCompiledProgramSources(&length);
-        std::span<const uint8_t> left { paths, length };
-        while (!left.empty()) {
-            size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
-            String path = String::fromUTF8(left.first(end));
-            left = left.subspan(std::min(end + 1, left.size()));
-            auto matchResult = filter->regExp()->match(globalObject, path, 0);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (matchResult) {
-                throwException(globalObject, scope, createError(globalObject, makeString("--aot does not support a plugin that loads \""_s, path, "\", which was compiled without it"_s)));
-                return {};
-            }
+        String compiled = Bun::firstCompiledModuleMatching(globalObject, filter->regExp());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!compiled.isNull()) {
+            throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't load \""_s, compiled, "\" because it was already compiled into this executable"_s)));
+            return {};
         }
     }
 
@@ -144,8 +107,6 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
 
     return JSValue::encode(callframe->thisValue());
 }
-
-extern "C" bool Bun__standaloneModuleIsCompiled(const Latin1Character*, size_t);
 
 static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
 {
@@ -188,12 +149,9 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
         return {};
     }
 
-    if (moduleId.containsOnlyLatin1()) {
-        CString narrowed = moduleId.latin1();
-        if (Bun__standaloneModuleIsCompiled(reinterpret_cast<const Latin1Character*>(narrowed.data()), narrowed.length())) {
-            throwException(globalObject, scope, createTypeError(globalObject, "module() cannot replace a module that was compiled ahead of time"_s));
-            return {};
-        }
+    if (Bun::isCompiledModule(moduleId)) {
+        throwException(globalObject, scope, createTypeError(globalObject, "module() cannot replace a module that was compiled ahead of time"_s));
+        return {};
     }
 
     Zig::GlobalObject* global = defaultGlobalObject(globalObject);
@@ -267,9 +225,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
         return {};
     }
 
-    size_t compiledSourcesLength = 0;
-    Bun__standaloneCompiledProgramSources(&compiledSourcesLength);
-    if (compiledSourcesLength && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+    if (Bun::hasCompiledModules() && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
         JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
         RETURN_IF_EXCEPTION(scope, {});
         if (main.isString()) {
@@ -278,7 +234,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
             auto matchResult = filter->regExp()->match(globalObject, path, 0);
             RETURN_IF_EXCEPTION(scope, {});
             if (matchResult) {
-                throwException(globalObject, scope, createError(globalObject, makeString("--aot does not support a plugin that resolves the entry point \""_s, path, "\", which was compiled without it"_s)));
+                throwException(globalObject, scope, createError(globalObject, makeString("A runtime plugin can't resolve the entry point \""_s, path, "\" because it was already compiled into this executable"_s)));
                 return {};
             }
         }
@@ -602,6 +558,8 @@ static void findLoadedESModule(Zig::GlobalObject* globalObject, JSC::JSString* s
         bool linked = true;
         if (auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mod))
             linked = cyclic->status() >= JSC::CyclicModuleRecord::Status::Linked;
+        if (JSC::AOT::isCompiledModuleRecord(mod))
+            linked = false;
         if (linked) {
             loaded.esmNamespace = mod->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, );
@@ -673,8 +631,6 @@ static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, const L
         moduleObject->hasEvaluated = true;
     }
 }
-
-extern "C" bool Bun__standaloneModuleIsCompiled(const Latin1Character*, size_t);
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -767,21 +723,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
     resolveSpecifier();
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (specifier.is8Bit() && Bun__standaloneModuleIsCompiled(specifier.span8().data(), specifier.length())) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, "mock(module, fn) cannot replace a module that was compiled ahead of time"_s));
+    if (Bun::isCompiledModule(specifier)) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
         return {};
     }
-
-    bool isCompiledWithProgram = isCompiledProgramSource(specifier);
 
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
-
-    if (isCompiledWithProgram) {
-        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
-        return {};
-    }
 
     LoadedModule loaded = findLoadedModule(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});
@@ -1240,5 +1189,11 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * global
 
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(RuntimeTranspiler, jsFunctionBunPlugin);
+    if (JSC::JSValue error = Bun::errorIfUnseenCodeIsRefused(globalObject, "Bun.plugin"_s)) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+        JSC::throwException(globalObject, scope, error);
+        return {};
+    }
     return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }

@@ -1,13 +1,13 @@
 // A template of eight or more parts that stands in a loop and whose one use stores it into an array is built flat in the buffer; any other template stays a rope.
-// IR= 1 pushed CallBuiltin StringAppendBegin
-// IR= 1 byIndex CallBuiltin StringAppendBegin
-// IR= 0 pushedOnce CallBuiltin StringAppendBegin
-// IR= 0 returned CallBuiltin StringAppendBegin
-// IR= 0 concatenatedAgain CallBuiltin StringAppendBegin
-// IR= 0 usedTwice CallBuiltin StringAppendBegin
-// IR= 0 fewParts CallBuiltin StringAppendBegin
-// IR= 0 longConstantText CallBuiltin StringAppendBegin
-// IR= 0 inAField CallBuiltin StringAppendBegin
+// IR= 1 pushed  = StringBuilderBegin
+// IR= 1 byIndex  = StringBuilderBegin
+// IR= 0 pushedOnce  = StringBuilderBegin
+// IR= 0 returned  = StringBuilderBegin
+// IR= 0 concatenatedAgain  = StringBuilderBegin
+// IR= 0 usedTwice  = StringBuilderBegin
+// IR= 0 fewParts  = StringBuilderBegin
+// IR= 0 longConstantText  = StringBuilderBegin
+// IR= 0 inAField  = StringBuilderBegin
 interface Row { id: number; name: string; price: number }
 interface Line { text: string; length: number }
 const rows: Row[] = [

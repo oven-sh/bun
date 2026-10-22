@@ -4,6 +4,7 @@ import { pkg, type Case } from "./run-packages";
 export const cases: Case[] = [
   {
     name: "commonjs-emitted-by-typescript",
+    differs: "TypeScript leaves out an `import name = a.b` that nothing uses, and so does --aot: the getter is not read. Plain Bun reads it.",
     files: {
       ...pkg("kit", {
         "index.js": `"use strict";
@@ -284,6 +285,7 @@ console.log(triple(2), turn, parts.turn);
   },
   {
     name: "commonjs-file",
+    differs: "A type error stops the build: TS7016, the .cjs file has no declarations.",
     files: {
       "plain.cjs": `exports.tools = { add(n) { return n + 1; }, limit: 3 };
 exports.name = "plain";

@@ -1,7 +1,7 @@
 // The first test of a function is inlined at its hot call sites also where it reads a property through a type that admits objects from
 // outside: an object of the program takes the inlined test, any other object goes to the function itself, which starts over. A getter of
 // such an object runs once a call, and undefined and null throw what they throw.
-// IR+ HasShapeOf
+// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
 declare const console: { log(...values: unknown[]): void };
 const JSON = { parse(text: string): any { const parsed = globalThis.JSON.parse(text); for (let o = parsed; o; o = o.cached) if (!("cached" in o)) o.cached = undefined; return parsed; } };
 const log: string[] = [];

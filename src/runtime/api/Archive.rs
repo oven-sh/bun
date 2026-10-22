@@ -66,7 +66,6 @@ impl Archive {
     }
 
     /// Pretty-print for console.log
-    #[inline(never)]
     pub(crate) fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
         formatter: &mut F,
@@ -550,7 +549,7 @@ fn parse_pattern_arg(
     }
 
     // Array of strings
-    if arg.js_type().is_array() {
+    if arg.js_type() == jsc::JSType::Array {
         let len = arg.get_length(global)?;
         // Empty array = no filter
         if len == 0 {

@@ -1,4 +1,4 @@
-// Something untyped that enters a type opens the classes within it, also where the type is a place that takes anything: a Promise of a class. What yields it is a function that the program knows by a declaration alone.
+// A plain object that has the members of a class arrives inside a Promise, alone and in an array, from a function that the program knows by a declaration alone and that stands in for a method or a field. It is read through the class type as in plain Bun.
 import "./setup.js";
 declare const functionWithoutCode: (kind: string) => (...args: any[]) => any;
 class ByMethod { field: string = "made" }

@@ -5,7 +5,7 @@ function makeTyped(i: number): Point { return { x: i, y: i + 1, name: "p" }; }
 function makeMarked(i: number): Point { const made: Point = { x: i, y: i + 1, name: "p" }; (made as unknown as Record<string, number>).mark = i; return made; }
 const deleteOther: (p: any) => any = function (p: any): any { return delete p.other; };
 const deleteByKey: (p: any, k: any) => any = function (p: any, k: any): any { return delete p[k]; };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteByValAndCache") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteById") + aotOperationCount("operationAOTDeleteByVal") : 0;
 const other: string = JSON.parse('"other"');
 const secret = Symbol("secret");
 for (const [kind, make] of [["typed", makeTyped], ["marked", makeMarked]] as const) {

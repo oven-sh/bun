@@ -1,3 +1,4 @@
+// `Object.assign(this, given)` stores whatever it is given, as in plain Bun. A field that holds a primitive of another kind afterwards throws a TypeError at its next typed read; any object passes for a field of a class type.
 class Tree {
   depth: number;
   constructor(depth: number) {
@@ -32,7 +33,7 @@ const misfits: [string, any][] = [
 ];
 for (const [name, given] of misfits) {
   say(name, () => {
-    const holder = new Holder();
+    const holder: Holder = new Holder();
     for (let i = 0; i < 3; i++) holder.takeAny({ held: new Tree(i), name: "n" });
     try {
       holder.takeAny(given);

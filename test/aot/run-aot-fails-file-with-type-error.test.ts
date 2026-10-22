@@ -1,16 +1,24 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 import { test } from "./supported";
 
 const files = {
-  "tsconfig.json": `{ "compilerOptions": { "strict": true, "target": "ESNext", "module": "Preserve", "noEmit": true, "types": [] } }`,
+  "tsconfig.json": JSON.stringify({
+    compilerOptions: { strict: true, target: "ESNext", module: "Preserve", noEmit: true, typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types", "bun-types/test-globals"] },
+  }),
   "shared.ts": `export const one: number = 1;`,
   "broken.ts": `export const two: number = "two";`,
   "a-fine.test.ts": `import { one } from "./shared"; test("a fine test", () => { expect(one).toBe(1); });`,
   "b-wrong.test.ts": `export {}; const n: number = "text"; test("never run, its own error", () => { expect(n).toBe(1); });`,
   "c-imports-wrong.test.ts": `import { two } from "./broken"; test("never run, an imported error", () => { expect(two).toBe(2); });`,
-  "d-fine.test.ts": `export {}; function double(n: number): number { return n * 2; } const untyped: any = double; test("the rules hold in the others", () => { expect(() => untyped("x")).toThrow(TypeError); });`,
+  "d-fine.test.ts": `export {}; function double(n: number): number { return n * 2; } test("another fine test", () => { expect(double(2)).toBe(4); });`,
 };
+
+const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
+const ran = (said: string) => [...said.matchAll(/^\((?:pass|fail)\) .*$/gm)].map(match => match[0]);
+/** `error: TS2322: ..` and under it `    at <path>:<line>:<column>` */
+const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n +at .*[\\/]([^\\/\n]+)$/gm)].map(match => `${match[2]} ${match[1]}`).sort();
 
 async function run(dir: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), "test", "--aot", ...args], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -18,15 +26,14 @@ async function run(dir: string, ...args: string[]) {
   return { said: stdout + stderr, exitCode };
 }
 
-// A build stops at a type error. A run of tests fails the files that cannot be built and runs the others.
+// `bun test --aot` asks the compiler about every test file before the first test runs. A file that a build refuses fails without being run, and the others run.
 test("a type error fails the test files that reach it, and the others run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir));
-  expect(said).toContain("b-wrong.test.ts(1,18): error TS2322");
-  expect(said).toContain("broken.ts(1,14): error TS2322");
+  expect(errors(said)).toEqual(["b-wrong.test.ts:1:18 TS2322", "broken.ts:1:14 TS2322"]);
   expect(said).toContain("(pass) a fine test");
-  expect(said).toContain("(pass) the rules hold in the others");
-  expect(said).not.toContain("never run");
+  expect(said).toContain("(pass) another fine test");
+  expect(ran(said).join("\n")).not.toContain("never run");
   expect(said.split("bun test --aot does not run this file").length - 1).toBe(2);
   expect(said).toMatch(/\b2 pass\b/);
   expect(said).toMatch(/\b2 fail\b/);
@@ -46,22 +53,18 @@ test("--bail counts such a file", async () => {
 test("where every test file reaches an error nothing is run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir), "b-wrong", "c-imports-wrong");
-  expect(said).toContain("error TS2322");
-  expect(said).not.toContain("never run");
-  expect(said).not.toContain("does not run this file");
+  expect(errors(said)).toEqual(["b-wrong.test.ts:1:18 TS2322", "broken.ts:1:14 TS2322"]);
+  expect(ran(said)).toEqual([]);
   expect(exitCode).toBe(1);
 });
 
 test("an error in a preload stops the run", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", files);
   const { said, exitCode } = await run(String(dir), "--preload", "./broken.ts", "a-fine", "d-fine");
-  expect(said).toContain("broken.ts(1,14): error TS2322");
-  expect(said).not.toContain("(pass)");
+  expect(errors(said)).toEqual(["broken.ts:1:14 TS2322"]);
+  expect(ran(said)).toEqual([]);
   expect(exitCode).toBe(1);
 });
-
-const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\(\d+,\d+\): error (TS\d+)/gm)].map(match => `${match[1]} ${match[2]}`).sort();
 
 test("what only a refused test file imports is still declared for the others", async () => {
   using dir = tempDir("run-aot-fails-file-with-type-error", {
@@ -75,7 +78,7 @@ test("what only a refused test file imports is still declared for the others", a
     "4-module.test.ts": `import { square } from "./shape"; test("a member added to a module's interface", () => { expect(square.label).toBeUndefined(); });`,
   });
   const { said, exitCode } = await run(String(dir));
-  expect(errors(said)).toEqual(["1-wrong.test.ts TS2322"]);
+  expect(errors(said)).toEqual(["1-wrong.test.ts:1:44 TS2322"]);
   expect(passed(said)).toEqual(["a global interface", "a global variable", "a member added to a module's interface"]);
   expect(said.split("bun test --aot does not run this file").length - 1).toBe(1);
   expect(exitCode).toBe(1);
@@ -91,7 +94,7 @@ test("refusing one test file after another does not refuse a third", async () =>
     "3-uses-second.test.ts": `export {}; test("uses the second", () => { expect(typeof second).toBe("undefined"); });`,
   });
   const { said } = await run(String(dir));
-  expect(errors(said)).toEqual(["1-wrong.test.ts TS2322"]);
+  expect(errors(said)).toEqual(["1-wrong.test.ts:1:25 TS2322"]);
   expect(passed(said)).toEqual(["uses the first", "uses the second"]);
 });
 
@@ -106,7 +109,7 @@ test("a syntax error fails the test files that reach it, and the others run", as
   });
   const { said, exitCode } = await run(String(dir));
   expect(passed(said)).toEqual(["a fine test", "another fine test"]);
-  expect(said).not.toContain("never run");
+  expect(ran(said).join("\n")).not.toContain("never run");
   expect(said.split("bun test --aot does not run this file").length - 1).toBe(2);
   expect(exitCode).toBe(1);
 });

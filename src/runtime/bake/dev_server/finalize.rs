@@ -779,6 +779,28 @@ pub(super) fn finalize_bundle(
         }
     }
 
+    // The browser bundle of a route of a `clientPages` router holds its page and layouts, so an
+    // edit to them makes the cached bundle stale: the next page load must not hydrate with it.
+    {
+        let mut stale = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+        for request in &dev.incremental_result.framework_routes_affected {
+            let route = dev.router.route_ptr(request.route_index());
+            if !dev.router.type_ptr_const(route.r#type).client_pages {
+                continue;
+            }
+            if let Some(id) = route.bundle {
+                stale.set(id.get() as usize);
+            }
+            if request.should_recurse_when_visiting() {
+                mark_all_route_children(&dev.router, &mut [&mut stale], request.route_index());
+            }
+        }
+        let mut it = stale.iterator::<true, true>();
+        while let Some(i) = it.next() {
+            dev.route_bundles[i].invalidate_client_bundle(&mut dev.source_maps);
+        }
+    }
+
     // Softly affected HTML routes only need the bundle invalidated.
     if !dev.incremental_result.html_routes_soft_affected.is_empty() {
         for index in &dev.incremental_result.html_routes_soft_affected {

@@ -1,0 +1,7 @@
+filled in by the parser: true
+{"name":"a"} -> ["http://LOCALHOST:8081/a", "localhost", 8080, false, "number", ["host", "name", "port", "secure"], true, true]
+{"name":"b","port":1} -> ["http://LOCALHOST:2/b", "localhost", 1, false, "number", ["host", "name", "port", "secure"], true, true]
+{"host":"h","name":"c"} -> ["http://H:8081/c", "h", 8080, false, "number", ["host", "name", "port", "secure"], true, true]
+{"name":"d","secure":true} -> ["https://LOCALHOST:8081/d", "localhost", 8080, true, "number", ["host", "name", "port", "secure"], true, true]
+{"port":0,"host":"","secure":false,"name":"e"} -> ["http://:1/e", "", 0, false, "number", ["host", "name", "port", "secure"], true, true]
+{"name":"f","port":-0} -> ["http://LOCALHOST:1/f", "localhost", -0, false, "number", ["host", "name", "port", "secure"], true, true]

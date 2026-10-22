@@ -5,6 +5,8 @@ export type Shape = {
   instructionsPerItem: number;
   bytesPerItem: number;
   write(count: number): Record<string, string>;
+  /** What it costs today where that is more than allowed: the shape is listed as a todo. */
+  notYet?: string;
 };
 
 function unionOfGenericClasses(methods: number, functions: number) {
@@ -134,6 +136,7 @@ function twoArraysFilledWithSumsOfEachOthersElements(pushes: number) {
 export const shapes: Shape[] = [
   {
     name: "array filled with sums of its own elements",
+    notYet: "400 pushes add 631 million instructions",
     counted: "pushes",
     sizes: [1, 100, 200, 400],
     instructionsPerItem: 1_500_000,

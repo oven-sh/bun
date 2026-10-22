@@ -1,4 +1,4 @@
-// An array element that is out of bounds or missing throws where it enters a variable, parameter or result of type `number` or `boolean`.
+// An array element that is out of bounds or missing is undefined, also where it enters a variable, parameter or result of type `number` or `boolean`. An inherited element or accessor is read as in plain Bun.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -8,7 +8,6 @@ interface Pt { x: number; y: number }
 const ints: number[] = [1, 2, 3]
 const doubles: number[] = [1.5, 2.5]
 const flags: boolean[] = [true]
-// An element that is out of bounds or missing does not enter a place for a number or a boolean.
 attempt("variable with a type, integers", () => { const n: number = ints[5]; return n })
 attempt("variable with a type, doubles", () => { const d: number = doubles[5]; return d })
 attempt("variable with a type, booleans", () => { const b: boolean = flags[5]; return b })

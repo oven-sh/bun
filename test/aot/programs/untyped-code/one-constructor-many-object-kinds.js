@@ -15,11 +15,11 @@ for (let i = 0; i < 12; i++) {
   kinds.push(Kind);
 }
 const said = new Set();
-const before = count("operationAOTTypedTryPutProperties:as-remembered");
+const before = count("operationAOTTryPutProperties");
 for (let turn = 0; turn < 2000; turn++) {
   for (const Kind of kinds) said.add(new Kind(10).show());
 }
-const inRunTime = count("operationAOTTypedTryPutProperties:as-remembered") - before;
+const inRunTime = count("operationAOTTryPutProperties") - before;
 console.log([...said].join("\n"));
 console.log(inRunTime <= 200 ? "the run time stored for at most 200 of them" : "the run time stored for " + inRunTime + " of them");
 

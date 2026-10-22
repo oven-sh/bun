@@ -15,14 +15,20 @@ export default [
     proto: {
       on: {
         fn: "on",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 2,
       },
       onDocument: {
         fn: "onDocument",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 1,
       },
       transform: {
         fn: "transform",
+        returns: "string | object",
+        checkedAtRuntime: true,
         length: 1,
       },
     },
@@ -40,29 +46,43 @@ export default [
     proto: {
       before: {
         fn: "before",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       after: {
         fn: "after",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       replace: {
         fn: "replace",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       remove: {
         fn: "remove",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       removed: {
         getter: "removed",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
       lastInTextNode: {
         getter: "lastInTextNode",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
         cache: true,
       },
       text: {
         getter: "getText",
+        type: "string | undefined",
+        checkedAtRuntime: true,
       },
     },
   }),
@@ -79,22 +99,32 @@ export default [
     proto: {
       name: {
         getter: "name",
+        type: "string | null | undefined",
+        checkedAtRuntime: true,
         cache: true,
       },
       systemId: {
         getter: "systemId",
+        type: "string | null | undefined",
+        checkedAtRuntime: true,
         cache: true,
       },
       publicId: {
         getter: "publicId",
+        type: "string | null | undefined",
+        checkedAtRuntime: true,
         cache: true,
       },
       remove: {
         fn: "remove",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       removed: {
         getter: "removed",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
     },
   }),
@@ -111,6 +141,8 @@ export default [
     proto: {
       append: {
         fn: "append",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
     },
@@ -128,25 +160,37 @@ export default [
     proto: {
       before: {
         fn: "before",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
       after: {
         fn: "after",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
       replace: {
         fn: "replace",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
       remove: {
         fn: "remove",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 0,
       },
       removed: {
         getter: "removed",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
       text: {
         getter: "getText",
+        type: "string | null",
+        checkedAtRuntime: true,
         setter: "setText",
       },
     },
@@ -164,18 +208,26 @@ export default [
     proto: {
       before: {
         fn: "before",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
       after: {
         fn: "after",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
       remove: {
         fn: "remove",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       name: {
         getter: "getName",
+        type: "string | undefined",
+        checkedAtRuntime: true,
         setter: "setName",
       },
     },
@@ -191,13 +243,20 @@ export default [
     noConstructor: true,
     klass: {},
     proto: {
+      // html_rewriter.rs AttributeIterator::next, get_this: neither keeps the receiver.
       next: {
         fn: "next",
+        returns: "object",
+        checkedAtRuntime: true,
         length: 0,
+        uses: { this: [] },
       },
       "@@iterator": {
         fn: "getThis",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 0,
+        uses: { this: [] },
       },
     },
   }),
@@ -214,80 +273,118 @@ export default [
     proto: {
       getAttribute: {
         fn: "getAttribute",
+        returns: "string | null",
+        checkedAtRuntime: true,
         length: 1,
       },
 
       hasAttribute: {
         fn: "hasAttribute",
+        returns: "boolean",
+        checkedAtRuntime: true,
         length: 1,
       },
 
       setAttribute: {
         fn: "setAttribute",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 2,
       },
       removeAttribute: {
         fn: "removeAttribute",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
 
       before: {
         fn: "before",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       after: {
         fn: "after",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       replace: {
         fn: "replace",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       prepend: {
         fn: "prepend",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       append: {
         fn: "append",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       setInnerContent: {
         fn: "setInnerContent",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
 
       remove: {
         fn: "remove",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       removeAndKeepContent: {
         fn: "removeAndKeepContent",
+        returns: "this | undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       onEndTag: {
         fn: "onEndTag",
+        returns: "this | null",
+        checkedAtRuntime: true,
         length: 1,
       },
 
       tagName: {
         getter: "getTagName",
+        type: "string | undefined",
+        checkedAtRuntime: true,
         setter: "setTagName",
       },
       removed: {
         getter: "getRemoved",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
       selfClosing: {
         getter: "getSelfClosing",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
       canHaveContent: {
         getter: "getCanHaveContent",
+        type: "boolean | undefined",
+        checkedAtRuntime: true,
       },
       namespaceURI: {
         getter: "getNamespaceURI",
+        type: "string | undefined",
+        checkedAtRuntime: true,
         cache: true,
       },
       attributes: {
         getter: "getAttributes",
+        type: "AttributeIterator | undefined",
+        checkedAtRuntime: true,
       },
     },
   }),

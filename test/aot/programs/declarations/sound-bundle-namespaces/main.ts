@@ -1,4 +1,4 @@
-// A bundle written by `bun build --dts` from namespaces that hold both types and code: each is a variable that a function fills, beside a namespace of its types alone.
+// A bundle of namespaces that hold both types and code: each is a variable that a function fills, beside a namespace of its types alone.
 import { explain, far, util, type Loose } from "./bundle";
 
 const loose: Loose = { x: 3 };

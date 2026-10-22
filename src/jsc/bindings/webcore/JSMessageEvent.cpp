@@ -339,7 +339,7 @@ JSObject* JSMessageEvent::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSMessageEvent>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSMessageEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSMessageEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSMessageEventDOMConstructor, DOMConstructorID::MessageEvent>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

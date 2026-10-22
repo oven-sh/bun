@@ -53,7 +53,7 @@ class ProtoGetter extends Array { constructor() { super(1, 2); } }
 const target = new Proxy(ProtoGetter, { get(t, k, r) { if (k === "prototype") lines.push("prototype is asked"); return Reflect.get(t, k, r); } });
 lines.push(show(Reflect.construct(ProtoGetter, [], target)));
 for (let i = 0; i < 300; i++) { new Rows(); new Rows([i, i]); new Pair(i, i); new Later(r => r(i), i); new Keys(); new Whole(i, i, i); }
-const names = ["language-operation:SuperConstruct", "operationAOTTypedConstructSuper"];
+const names = ["operationAOTSuperConstruct", "operationAOTSuperConstructList"];
 const asked = () => names.reduce((sum, name) => sum + count(name), 0);
 const before = asked();
 let check = 0;

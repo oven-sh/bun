@@ -82,6 +82,10 @@ test.skipIf(!hasRunner).each(suites)(
     const inAnotherOrder = (text: string) =>
       Number(/\n(\d+) cases have their messages in another order/.exec(text)?.[1]);
     expect(inAnotherOrder(stdout)).toBeLessThanOrEqual(inAnotherOrder(expected));
+    // --fix must not hold back an upstream fix in more cases than expected. Each one is held back because it changes
+    // the program's behavior.
+    const holdingBack = (text: string) => Number(/\n(\d+) cases have a fix that --fix holds back/.exec(text)?.[1] ?? 0);
+    expect(holdingBack(stdout)).toBeLessThanOrEqual(holdingBack(expected));
     expect(exitCode).toBe(0);
   },
   10 * 60_000,

@@ -4,7 +4,10 @@
 // For the actual parsing, see replacements.ts
 
 import path, { basename, sep } from "path";
+import { textOfNativeBinding, type Guard, type Guards } from "./builtins/guards";
+import type { NativeCallKind } from "./builtins/vocabulary";
 import { readdirRecursiveWithExclusionsAndExtensionsSync } from "./helpers";
+import { guardedBuiltinCall, guardedCall, recordedPointer, removableFeatures } from "./removable-entry-points";
 
 //
 interface NativeCall {
@@ -13,6 +16,9 @@ interface NativeCall {
   filename: string;
   symbol: string;
   is_wrapped: boolean;
+  written_kind: NativeCallKind;
+  written_file: string;
+  written_symbol: string;
 }
 
 interface WrapperCall {
@@ -23,6 +29,9 @@ interface WrapperCall {
   display_name: string;
   call_length: number;
   filename: string;
+  written_kind: NativeCallKind;
+  written_file: string;
+  written_symbol: string;
 }
 
 type NativeCallType = "rust" | "cpp" | "bind";
@@ -44,19 +53,21 @@ const sourceFiles = readdirRecursiveWithExclusionsAndExtensionsSync(
 // and the Rust crate path (rustTarget). Adding a new $rust() call site
 // requires adding its entry below.
 const rustIdentifierPaths: Record<string, string> = {
-  "bun.rs": "bun.rs",
+  "bake/config/plugins.rs": "runtime/bake/config/plugins.rs",
+  "checker_queries_testing.rs": "runtime/checker_queries_testing.rs",
   "ipc.rs": "runtime/ipc_host.rs",
   "Counters.rs": "jsc/Counters.rs",
   "FrameworkRouter.rs": "runtime/bake/router/js.rs",
   "JSBundler.rs": "runtime/api/JSBundler.rs",
-  "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
   "SemverObject.rs": "semver_jsc/SemverObject.rs",
   "Stat.rs": "runtime/node/Stat.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
+  "code_resolver_testing.rs": "runtime/code_resolver_testing.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
+  "declared_types_testing.rs": "runtime/api/declared_types_testing.rs",
   "BytecodeOrderRecorder.rs": "jsc/BytecodeOrderRecorder.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
@@ -67,19 +78,15 @@ const rustIdentifierPaths: Record<string, string> = {
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
-  "jest.rs": "runtime/test_runner/jest.rs",
-  "jsc_hooks.rs": "runtime/jsc_hooks.rs",
   "memory_pressure.rs": "runtime/node/memory_pressure.rs",
   "mysql.rs": "sql_jsc/mysql.rs",
   "napi_body.rs": "runtime/napi/napi_body.rs",
-  "node_assert_binding.rs": "runtime/node/node_assert_binding.rs",
   "node_cluster_binding.rs": "runtime/node/node_cluster_binding.rs",
   "node_crypto_binding.rs": "runtime/node/node_crypto_binding.rs",
   "node_fs_binding.rs": "runtime/node/node_fs_binding.rs",
   "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
   "node_quic_binding.rs": "runtime/node/node_quic_binding.rs",
-  "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
   "npm.rs": "install/npm.rs",
   "pack_command.rs": "runtime/cli/pack_command.rs",
@@ -87,7 +94,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "patch.rs": "patch/patch.rs",
   "postgres.rs": "sql_jsc/postgres.rs",
   "runtime/dns_jsc/dns.rs": "runtime/dns_jsc/dns.rs",
-  "runtime/node/types.rs": "runtime/node/types.rs",
   "runtime/socket/socket.rs": "runtime/socket/socket.rs",
   "runtime/timer/Timer.rs": "runtime/timer/Timer.rs",
   "runtime/webcore/ByteStream.rs": "runtime/webcore/ByteStream.rs",
@@ -97,8 +103,8 @@ const rustIdentifierPaths: Record<string, string> = {
   "sourcemap/InternalSourceMap.rs": "sourcemap/InternalSourceMap.rs",
   "string/immutable/unicode.rs": "bun_core/string/immutable/unicode.rs",
   "subprocess.rs": "runtime/api/bun/subprocess.rs",
+  "trim_testing.rs": "runtime/api/trim_testing.rs",
   "sys.rs": "sys/sys.rs",
-  "udp_socket.rs": "runtime/socket/udp_socket.rs",
   "upgrade_command.rs": "runtime/cli/upgrade_command.rs",
   "virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs",
 };
@@ -134,6 +140,17 @@ function resolveNativeFileId(call_type: NativeCallType, filename: string) {
   return filename;
 }
 
+function nativeCallKind(call_type: NativeCallType, is_wrapped: boolean): NativeCallKind {
+  switch (call_type) {
+    case "bind":
+      return "Bindgen";
+    case "rust":
+      return is_wrapped ? "NewRustFunction" : "Rust";
+    case "cpp":
+      return is_wrapped ? "NewCppFunction" : "Cpp";
+  }
+}
+
 export function registerNativeCall(
   call_type: NativeCallType,
   filename: string,
@@ -141,6 +158,7 @@ export function registerNativeCall(
   create_fn_len: null | number,
 ) {
   const resolved_filename = resolveNativeFileId(call_type, filename);
+  const written_kind = nativeCallKind(call_type, create_fn_len != null);
 
   const maybe_wrapped_symbol = create_fn_len != null ? "js2native_wrap_" + symbol.replace(/[^A-Za-z]/g, "_") : symbol;
 
@@ -161,6 +179,9 @@ export function registerNativeCall(
     filename: resolved_filename,
     symbol: maybe_wrapped_symbol,
     is_wrapped: create_fn_len != null,
+    written_kind,
+    written_file: filename,
+    written_symbol: symbol,
   });
   if (create_fn_len != null) {
     wrapperCalls.push({
@@ -171,9 +192,61 @@ export function registerNativeCall(
       display_name: callBaseName(symbol),
       call_length: create_fn_len,
       filename: resolved_filename,
+      written_kind,
+      written_file: filename,
+      written_symbol: symbol,
     });
   }
   return id;
+}
+
+export interface NativeCallRecord {
+  id: number;
+  type: "rust" | "cpp" | "bind";
+  file: string;
+  symbol: string;
+  isWrapped: boolean;
+}
+
+export function nativeCallList(): NativeCallRecord[] {
+  return nativeCalls.map(call => ({
+    id: call.id,
+    type: call.type,
+    file: (path.isAbsolute(call.filename) ? path.relative(srcDir, call.filename) : call.filename).replaceAll(sep, "/"),
+    symbol: call.symbol,
+    isWrapped: call.is_wrapped,
+  }));
+}
+
+export interface CreatedFunctionRecord {
+  kind: NativeCallKind;
+  file: string;
+  symbol: string;
+  /** The native code of the function, as GeneratedJS2Native.h names it. */
+  hostFunction: string;
+  /** Declares it. null: it is a C function that Rust exports. */
+  header: string | null;
+  length: number;
+}
+
+export function createdFunctionList(): CreatedFunctionRecord[] {
+  return wrapperCalls.map(call => ({
+    kind: call.written_kind,
+    file: call.written_file,
+    symbol: call.written_symbol,
+    hostFunction: symbol({ type: call.type, symbol: call.symbol_target, filename: call.filename }),
+    header: call.type === "cpp" ? call.filename.replace(/.cpp$/, ".h").replaceAll(sep, "/") : null,
+    length: call.call_length,
+  }));
+}
+
+export function nativeCallListStamp(): string {
+  const lines = nativeCallList()
+    .map(call => `${call.id} ${call.type} ${call.file} ${call.symbol} ${call.isWrapped}\n`)
+    .join("");
+  let hash = 2166136261;
+  for (const byte of Buffer.from(lines)) hash = Math.imul(hash ^ byte, 16777619) >>> 0;
+  return hash.toString(16).padStart(8, "0");
 }
 
 function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
@@ -193,7 +266,34 @@ function normalizeSymbolPathPrefix(input: string) {
   return input.replaceAll(".rs", "_rs_").replace(/[^A-Za-z]/g, "_");
 }
 
-export function getJS2NativeCPP() {
+function bindgenSymbol(call: Pick<NativeCall, "filename" | "symbol">) {
+  return `js2native_bindgen_${basename(call.filename.replace(/\.bind\.ts$/, ""))}_${call.symbol}`;
+}
+
+function nativePointer(guard: Guard | null, native_symbol: string) {
+  return guard
+    ? recordedPointer(removableFeatures(), guard.feature, "Throw", native_symbol, guard.builtin)
+    : native_symbol;
+}
+
+function callNative(guard: Guard | null, native_symbol: string) {
+  if (!guard) return `${native_symbol}(global)`;
+  return guard.builtin === undefined
+    ? guardedCall(removableFeatures(), guard.feature, "Throw", native_symbol, ["global"])
+    : guardedBuiltinCall(removableFeatures(), guard.feature, native_symbol, guard.builtin, ["global"]);
+}
+
+function nativeCallExpression(call: NativeCall, guard: Guard | null) {
+  if (call.type === "bind") return `JSC::JSValue::decode(${callNative(guard, bindgenSymbol(call))})`;
+  if (!guard || call.is_wrapped) return `${symbol(call)}(global)`;
+  if (call.type === "rust") return `JSC::JSValue::decode(${callNative(guard, `${symbol(call)}_workaround`)})`;
+  return callNative(guard, symbol(call));
+}
+
+export function getJS2NativeCPP(guards: Guards) {
+  const guardOf = (call: Pick<NativeCall, "written_kind" | "written_file" | "written_symbol">) =>
+    guards.ofPath(textOfNativeBinding(call.written_kind, call.written_file, call.written_symbol));
+
   const files = [
     ...new Set(nativeCalls.filter(x => x.filename.endsWith(".cpp")).map(x => x.filename.replace(/.cpp$/, ".h"))),
   ];
@@ -215,6 +315,7 @@ export function getJS2NativeCPP() {
 
   const wrapperCallStrings = wrapperCalls.map(x => {
     if (x.wrap_kind === "new-function") {
+      const target = symbol({ type: x.type, symbol: x.symbol_target, filename: x.filename });
       return [
         (x.type === "rust" &&
           externs.push(
@@ -226,12 +327,7 @@ export function getJS2NativeCPP() {
           ),
         "") || "",
         `static JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${symbol({
-          type: x.type,
-          symbol: x.symbol_target,
-
-          filename: x.filename,
-        })});`,
+        `  return js2nativeNewFunction(globalObject, ${x.call_length}, ${JSON.stringify(x.display_name)}_s, ${nativePointer(guardOf(x), target)});`,
         `}`,
       ].join("\n");
     }
@@ -255,27 +351,18 @@ export function getJS2NativeCPP() {
     ...wrapperCallStrings,
     ...nativeCalls
       .filter(x => x.type === "bind")
-      .map(
-        x =>
-          `extern "C" SYSV_ABI JSC::EncodedJSValue js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(Zig::GlobalObject*);`,
-      ),
+      .map(x => `extern "C" SYSV_ABI JSC::EncodedJSValue ${bindgenSymbol(x)}(Zig::GlobalObject*);`),
     `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
     `static ALWAYS_INLINE JSC::JSValue callJS2Native(int32_t index, Zig::GlobalObject* global) {`,
     ` switch(index) {`,
-    ...nativeCalls.map(
-      x =>
-        `    case ${x.id}: return ${
-          x.type === "bind"
-            ? `JSC::JSValue::decode(js2native_bindgen_${basename(x.filename.replace(/\.bind\.ts$/, ""))}_${x.symbol}(global))`
-            : `${symbol(x)}(global)`
-        };`,
-    ),
+    ...nativeCalls.map(x => `    case ${x.id}: return ${nativeCallExpression(x, guardOf(x))};`),
     `    default:`,
     `      __builtin_unreachable();`,
     `  }`,
     `}`,
     `#define JS2NATIVE_COUNT ${nativeCalls.length}`,
     "}",
+    `extern "C" const uint8_t Bun__js2nativeList_${nativeCallListStamp()} = 0;`,
   ].join("\n");
 }
 
@@ -298,7 +385,6 @@ export function getJS2NativeRust() {
   // `#[unsafe(export_name = "JS2Rust__…")]`) — skip emitting a thunk for these
   // so the linker doesn't see two definitions.
   const handExported = new Set<string>([
-    "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_getRuntimeDefaultResultOrderOption",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__Resolver_newResolver",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_seedCacheForTesting",
     "JS2Rust___src_runtime_dns_jsc_dns_rs__internal_isLocalhostNameForTesting",
@@ -314,8 +400,7 @@ export function getJS2NativeRust() {
       .replace(/[.\-]/g, "_")
       .toLowerCase();
 
-  // `src/runtime/node/node_util_binding.rs` + `parseEnv`
-  //   → `crate::node::node_util_binding::parse_env`
+  // `src/runtime/node/util/parse_args.rs` + `parseArgs` → `crate::node::util::parse_args::parse_args`
   // `src/ini/ini.rs` + `IniTestingAPIs.parse` (outside bun_runtime)
   //   → `crate::dispatch::js2native::ini_ini_testing_apis_parse` (single
   //   landing pad; still a compile error if missing).

@@ -1,0 +1,1 @@
+console.log(typeof globalThis.process, typeof globalThis.Bun, typeof globalThis.fetch, typeof globalThis.structuredClone, typeof globalThis.navigator, typeof globalThis.WebSocket, typeof globalThis.window, typeof globalThis.document, typeof globalThis.Deno, typeof globalThis.require, typeof globalThis.module, typeof globalThis.gc, typeof globalThis.$vm, typeof globalThis.Loader);

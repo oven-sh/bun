@@ -1,0 +1,54 @@
+typesite w0 module=m1 position=11 kind=Parameter text="number"
+typesite w1 module=m0
+expectedresult x0 type=object layouts=[L0, L1] site=w0 validation=[{shape=Object{layout=L0 members=[{key="x" node=1 field=1 isOptional=true}, {key="y"}] undeclared=Validated undeclaredValue=2} type=object rules=[Message{text="bad"}] text="T"}, {shape=Primitive{primitive=Number} type=number rules=[Integer, Minimum{bound=1}, Maximum{bound=9}, ExclusiveMinimum{bound=0.5}, ExclusiveMaximum{bound=9.5}, MultipleOf{divisor=2}, DefaultNumber{value=3}]}, {shape=Primitive{} type=string rules=[MinimumLength{length=1}, MaximumLength{length=8}, Pattern{source="^a"}, Format{format=Uuid}, Template{head="id-" parts=[{placeholder=Number text="-"}, {text="!"}]}, DefaultString{value="d"}]}, {shape=BooleanLiteral{value=true} type=true rules=[DefaultBoolean{value=true}]}, {shape=NumberLiteral{value=4} type=4}, {shape=StringLiteral{value="s"} type="s"}, {shape=Array{element=1} type=Array<number>}, {shape=Tuple{elements=[1, 2]} type=Array}, {shape=Dictionary{value=1} type=object}, {shape=Union{arms=[10, 11]} type=undefined|null rules=[DefaultNull]}, {shape=Undefined type=undefined}, {shape=Null type=null}, {shape=Never type=never}, {shape=AnyObject type=object}, {type=anything}]
+expectedresult x1 type=anything
+layout L0 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=anything}}]
+layout L1 kind=Instance name="Base" module=m0 position=3 constructor=f1 fields=[{key="a" declared={type=i32 site=w0 flags=[IsInt32Promise]} flags=[IsRequired, IsImmutable]}, {key="m" declared={type=function} flags=[IsMethod]}]
+layout L2 kind=Instance name="Derived" module=m0 position=21 base=L1 constructor=f2 fields=[{key="m" declared={type=function} flags=[IsMethod] originLayout=L1 originField=1}, {computedKey=1 declared={type=L0 flags=[IsExpected]}}, {key=#"p"@L2 declared={type=anything} flags=[IsPrivate]}, {key=#"brand"@L2 declared={type=anything} flags=[IsPrivate, IsBrand, IsHidden]}] staticFields=[{key="s" variable=g1}, {computedKey=2 variable=g2}] supertypes=[L0, L1] computedKeyCount=3 flags=[HasHeritage]
+layout L3 kind=Container name="E" module=m0 position=40 fields=[{key=@"internal" declared={type=anything}}, {key=@@iterator declared={type=anything}}, {key=symbol("d")@m0:7 declared={type=anything}}, {key=symbol@m1:9 declared={type=anything}}]
+layout L4 kind=Environment module=m0 position=50 fields=[{declared={type=anything|absent}}, {declared={type=number} flags=[IsImmutable]}]
+layout L5 kind=Instance name="Legacy" module=m0 position=60 constructor=f3 flags=[IsConstructorFunction]
+variable g0 name="a" module=m0 declared={type=number} initialization=Undefined
+variable g1 name="s" module=m0 declared={type=anything} owner=L2
+variable g2 module=m0 declared={type=anything} owner=L2
+variable g3 name="Legacy" module=m0 declared={type=function} initialization=Function function=f3 flags=[IsImmutable]
+variable g4 name="every" module=m0 declared={type=undefined|null|true|int[-5, 9]|symbol|bigint|function|absent|"a"|"b"|L0|L1|builtin(Math)|Array<number>|Map<string, L0> flags=[IsExpected]}
+variable g5 module=m8 declared={type=anything}
+variable g6 name="exports" module=m1 declared={type=anything} initialization=Undefined
+module m0 path="/app/main.ts" displayPath="main.ts" flags=[HasTopLevelAwait] body=f0 requests=[{target=m8 phase=Defer}, {target=m5 isDynamicStarExport=true completes=true}] exports=[{name="a" variable=g0}, {name="b" kind=Namespace module=m8 phase=Defer}, {name="c" kind=Indirect module=m5 importName="d" isFromStarExport=true}] requiredNames=[{module=m8 name="x"}] positions={lineStarts=[0, 12, 30] columnAdjustments=[{offset=14 line=1 column=2}]} functionText="function f() {}\x0a"
+module m1 path="/app/lib.cjs" displayPath="lib.cjs" kind=CommonJs flags=[KeepsError] requireResult=ModuleExports body=f4 exportsVariable=g6 requests=[{target=m2 kind=Require}]
+module m2 path="/app/data.json" displayPath="data.json" kind=Data requireResult=DefaultExport data=d0
+module m3 path="bun:sqlite" displayPath="bun:sqlite" kind=RuntimeSource exportRule=RuntimeModule runtimeModule=BunSqlite body=f5
+module m4 path="bun:ffi" displayPath="bun:ffi" kind=Runtime flags=[IsLoadedByImportOnly] exportRule=RuntimeModule runtimeModule=BunFfi
+module m5 path="/app/plain.js" displayPath="plain.js" kind=External referrer=m0
+module m6 path="/app/native.node" displayPath="native.node" kind=External exportRule=CommonJsIgnoringAnnotation externalKind=HostValue referrer=m0
+module m7 path="internal:library" displayPath="internal:library" kind=RuntimeSource flags=[IsLibrary] exportRule=RuntimeModule
+module m8 path="#8" displayPath="lib.cjs" exportRule=CommonJs body=f9 requests=[{target=m1 kind=Require completes=true}] syntheticExports=[{name="default" variable=g5 isKnownMember=true}, {name="x"}]
+modulefailure q0 importer=m1 specifier="./missing"
+evalscope e0 mode=Sloppy flags=[IsInFunction, IsInArrowFunction, IsInFieldInitializer, IsInDerivedConstructor, AllowsSuperProperty, AllowsSuperCall, AllowsNewTarget] bindings=[{name="x" kind=Constant depth=1 layout=L4 field=1 operand=0}, {name="a" variable=g0}, {kind=This operand=1}, {name="#m" kind=PrivateAccessor depth=2 layout=L2 field=2 operand=2 function=3 setter=4}]
+evalscope e1
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    v1 = IteratorOpen v0
+    Jump -> next b1(v1)
+  b1(v2: iteratorstate):
+    Return
+}
+function f1 name="Base" module=m0 position=3 text={start=3 end=20} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number site=w0}] results=[{type=object}]
+function f2 name="Derived" module=m0 position=21 text={start=21 end=39} kind=DerivedConstructor flags=[HasNewTarget] thisType={type=anything} results=[{type=object}]
+function f3 name="Legacy" module=m0 position=60 text={start=60 end=90} flags=[IsSloppy, HasThis, HasHiddenRest] thisType={type=L5 flags=[IsExpected]} results=[{type=anything}]
+function f4 module=m1 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}]
+function f5 module=m3 kind=Module thisType={type=anything} results=[{type=anything}]
+function f6 name="g" module=m0 position=95 flags=[IsGenerator, HasRestParameter, HasThis, TakesCallee, HasArgumentCount, IsHiddenInStackTraces] length=2 captures=[{type=env L4}, {type=classtoken}] thisType={type=anything} parameters=[{type=anything}, {type=Array}] results=[{type=anything}, {type=boolean}]
+function f7 name="apply" module=m7 position=8 kind=Method role=Library flags=[HasThis] length=2 enclosingRuntimeFunction=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] relations={subjects=[{fate=[IsCalled]}, {index=1 fate=[HasMembersRead, IsConvertedToPrimitive]}, {kind=ReadFrom index=3 source=1 key="x" fate=[IsReturned, IsIncomplete] results=1}] stores=[{source=4294967295 target=1 key="y" isOnEveryPath=true}, {source=2 target=1 creationOperand=1 isBeforeTargetLeaves=true}] handed=[{source=1 call=4 argument=2}] operands=[{source=1 user=2 position=1}] resultsFullyListed=1}
+function f8 name="model" module=m7 role=Model thisType={type=anything} parameters=[{type=never}, {type=undefined}, {type=null}, {type=boolean}, {type=false}, {type=int}, {type=i32}, {type=7}, {type=bigint}, {type=symbol}, {type="lit"}, {type=function}, {type=Promise<string>}, {type=Set}] results=[{type=anything}]
+function f9 module=m1 kind=Module thisType={type=anything} results=[{type=anything}]
+data d0 root=Object{layout=L0 members=[{key="x" value=Number{value=1.5}}, {key="y" value=Array{contents=anything elements=[Undefined, Null, Hole, Boolean{value=true}, Boolean{}, Number{}, String{value="s"}, BigInt{digits="9"}, Array{contents=number}, Object{layout=L0 members=[{key="x"}]}]}}]} module=m2
+data d1
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe}, {exportName="apply" builtin=ReflectApply parameter=1}, {exportName="fetch"}]
+entry module=m2
+runtimefunction id=1 function=f7
+runtimefunction id=4 function=f7 visibility=PrivateRecursive
+runtimefunction id=5 function=f8 visibility=Private
+webassemblymodule module=m6 bytes="\x00asm\x01\x00\x00\x00"

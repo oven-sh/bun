@@ -139,6 +139,14 @@ mod _impl {
             }
 
             let mode = bun_zlib::NodeMode::from_int(mode_int as u8);
+            let feature = if mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+                bun_removable_features::Feature::BrotliEncoder
+            } else {
+                bun_removable_features::Feature::BrotliDecoder
+            };
+            if bun_removable_features::is_removed(feature) {
+                return Err(crate::removed_feature::throw_for_removed_feature(global_this, feature));
+            }
             let stream = Context {
                 mode,
                 ..Default::default()
@@ -276,20 +284,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
-            let mut err = if self.stream.get().mode == bun_zlib::NodeMode::BROTLI_ENCODE {
-                self.stream.with_mut(|s| s.free_state_and_dictionary());
-                let create_encoder = core::hint::black_box(
-                    NativeBrotli__createEncoder
-                        as extern "C" fn(&JSGlobalObject, &CallFrame, &mut *mut c_void) -> JSValue,
-                );
-                let mut state = ptr::null_mut();
-                bun_jsc::from_js_host_call(global_this, || {
-                    create_encoder(global_this, callframe, &mut state)
-                })?;
-                self.stream.with_mut(|s| s.adopt_state(state, dictionary))
-            } else {
-                self.stream.with_mut(|s| s.init(dictionary))
-            };
+            let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -338,46 +333,8 @@ mod _impl {
         }
     }
 
-    #[inline(always)]
-    fn create_encoder() -> *mut c_void {
-        let alloc = bun_brotli::BrotliAllocator::alloc;
-        let free = bun_brotli::BrotliAllocator::free;
-        // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-        unsafe { c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut()) }
-            .cast::<c_void>()
-    }
-
-    #[unsafe(no_mangle)]
-    #[inline(never)]
-    pub(crate) extern "C" fn NativeBrotli__createEncoder(
-        _global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-        state: &mut *mut c_void,
-    ) -> JSValue {
-        *state = create_encoder();
-        JSValue::UNDEFINED
-    }
-
     impl Context {
         pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
-            self.free_state_and_dictionary();
-            let state = match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => create_encoder(),
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
-                    // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
-                    unsafe {
-                        c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
-                    }
-                    .cast::<c_void>()
-                }
-                _ => unreachable!(),
-            };
-            self.adopt_state(state, dictionary)
-        }
-
-        fn free_state_and_dictionary(&mut self) {
             // Mirrors node's Init(): free the previous instance and dictionary
             // before building new ones. `init` is JS-reachable twice on one
             // handle, and ResetStream() lands here with no dictionary.
@@ -385,18 +342,43 @@ mod _impl {
                 self.deinit_state();
             }
             self.deinit_dictionary();
-        }
-
-        fn adopt_state(&mut self, state: *mut c_void, dictionary: Option<&[u8]>) -> Error {
-            if state.is_null() {
-                return Error::init(
-                    c"Could not initialize Brotli instance".as_ptr(),
-                    -1,
-                    c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
-                );
+            match self.mode {
+                bun_zlib::NodeMode::BROTLI_ENCODE => {
+                    let alloc = bun_brotli::BrotliAllocator::alloc;
+                    let free = bun_brotli::BrotliAllocator::free;
+                    // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
+                    let state = unsafe {
+                        c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
+                    };
+                    if state.is_null() {
+                        return Error::init(
+                            c"Could not initialize Brotli instance".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        );
+                    }
+                    self.state = NonNull::new(state.cast::<c_void>());
+                    self.attach_dictionary(dictionary)
+                }
+                bun_zlib::NodeMode::BROTLI_DECODE => {
+                    let alloc = bun_brotli::BrotliAllocator::alloc;
+                    let free = bun_brotli::BrotliAllocator::free;
+                    // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
+                    let state = unsafe {
+                        c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
+                    };
+                    if state.is_null() {
+                        return Error::init(
+                            c"Could not initialize Brotli instance".as_ptr(),
+                            -1,
+                            c"ERR_ZLIB_INITIALIZATION_FAILED".as_ptr(),
+                        );
+                    }
+                    self.state = NonNull::new(state.cast::<c_void>());
+                    self.attach_dictionary(dictionary)
+                }
+                _ => unreachable!(),
             }
-            self.state = NonNull::new(state);
-            self.attach_dictionary(dictionary)
         }
 
         /// Copies `dictionary` into `self.dictionary` and attaches it to the

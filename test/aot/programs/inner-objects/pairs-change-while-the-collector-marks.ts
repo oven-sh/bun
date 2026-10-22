@@ -1,0 +1,65 @@
+// A large heap of pairs, so that marking takes long, and a program that never stops changing them: values stored into the inner objects, inner objects wanted for themselves, replaced by new ones, exchanged and taken away.
+import { edenGC, fullGC } from "bun:jsc";
+
+type Leaf = (number | Leaf | null)[];
+type Inner = { count: number; leaf: Leaf | null; text: string | null };
+type Outer = { inner: Inner | null; tag: number };
+
+function fill(into: Outer[], rows: number, columns: number): void {
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const i = row * columns + column;
+      into.push({ inner: { count: i, leaf: null, text: null }, tag: i });
+    }
+  }
+}
+
+let seed = 12345;
+function random(limit: number): number {
+  seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+  return seed % limit;
+}
+
+const held: Inner[] = [];
+function hold(outer: Outer): void { if (outer.inner) held.push(outer.inner); }
+function exchange(x: Outer, y: Outer): void { const kept = x.inner; x.inner = y.inner; y.inner = kept; }
+
+function storeLeaf(outer: Outer, step: number): void {
+  const inner = outer.inner;
+  if (inner) { inner.leaf = [step, inner.leaf && step % 4 ? inner.leaf : null]; inner.count = step; }
+}
+function storeText(outer: Outer, step: number): void {
+  if (outer.inner) outer.inner.text = "text" + step;
+}
+function renew(outer: Outer, step: number): void {
+  outer.inner = { count: -step, leaf: [-step, null], text: null };
+}
+function depth(leaf: Leaf | null): number { let n = 0; while (leaf && n < 1000) { n++; leaf = leaf[1] as Leaf | null; } return n; }
+
+const outers: Outer[] = [];
+fill(outers, 200, 200);
+const n = outers.length;
+let sum = 0;
+for (let step = 1; step <= 300000; step++) {
+  const outer = outers[random(n)];
+  switch (random(16)) {
+  case 0: case 1: case 2: case 3: case 4: case 5: storeLeaf(outer, step); break;
+  case 6: case 7: case 8: storeText(outer, step); break;
+  case 9: case 10: renew(outer, step); break;
+  case 11: if (step % 64 === 0) hold(outer); break;
+  case 12: if (step % 16 === 0) exchange(outer, outers[random(n)]); break;
+  case 13: if (step % 128 === 0) outer.inner = null; break;
+  default: if (outer.inner) sum = (sum + outer.inner.count + depth(outer.inner.leaf) + (outer.inner.text ? outer.inner.text.length : 0)) | 0;
+  }
+  if (held.length > 500) held.length = 100;
+  if (step % 75000 === 0) edenGC();
+}
+fullGC();
+let check = 0, none = 0;
+for (const outer of outers) {
+  const inner = outer.inner;
+  if (!inner) { none++; continue; }
+  check = (check * 31 + inner.count + depth(inner.leaf) * 7 + (inner.leaf ? (inner.leaf[0] as number) : 1) + (inner.text ? inner.text.length + Number(inner.text.slice(4)) : 3)) | 0;
+}
+for (const inner of held) check = (check * 31 + inner.count + depth(inner.leaf)) | 0;
+console.log(sum, check, none, held.length);

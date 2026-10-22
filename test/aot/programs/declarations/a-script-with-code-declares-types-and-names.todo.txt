@@ -1,0 +1,1 @@
+A script that has code is a module in a build, and what it declares beside that code is its own too: TS2304 for `Settings`, TS2552 for `installed`, where tsc and `bun check` pass and plain Bun prints "2 5".

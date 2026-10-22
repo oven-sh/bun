@@ -4,15 +4,11 @@
 import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { canTrim } from "../bundler/compile-trim-features";
 import { slot } from "./run-programs";
 import { test } from "./supported";
 
 export type Program = { source: string; name?: string; files?: Record<string, string>; stdin?: string; ipc?: "json" | "advanced"; greeting?: unknown; exitCode?: number; runsTextAsCode?: true; aheadOfTime?: string };
-
-using probe = tempDir("aot-built-in-functions-by-use-probe", { "hello.ts": `console.log("hello world");` });
-export const canTrim = !Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stdout: "pipe", stderr: "pipe" })
-  .stderr.toString()
-  .includes("nothing can be left out of this Bun");
 
 const normalize = (text: string) => text.replace(/\(node:\d+\)/g, "(node:PID)").replace(/\(Use `[^` ]+ --trace-warnings/g, "(Use `EXE --trace-warnings");
 
@@ -58,7 +54,7 @@ export function describePrograms(what: string, programs: Record<string, Program>
           expect({ title, exitCode: expected.exitCode, stderr: expected.stderr }).toEqual({ title, exitCode: program.exitCode ?? 0, stderr: expect.not.stringContaining("error:") });
           const compiled = program.aheadOfTime === undefined ? expected : { ...expected, stdout: program.aheadOfTime };
           expect(await run(await build(["--aot"], join(cwd, "program.exe")), cwd, program, program.runsTextAsCode ? bunEnv : { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(compiled);
-          if (canTrim) expect(await run(await build(["--aot", "--compile-trim-runtime"], join(cwd, "trimmed.exe")), cwd, program, bunEnv)).toEqual(compiled);
+          if (canTrim) expect(await run(await build(["--aot", "--trim"], join(cwd, "trimmed.exe")), cwd, program, bunEnv)).toEqual(compiled);
         });
       }, 120_000);
     }

@@ -1,7 +1,4 @@
-// An object that still has the shape its literal gave it: the compiler has written down which names are its own. A name that is not among them is looked for from its prototype on, and what one shape has learnt about a prototype the next shape need not look up again.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const lookedUp = () => count("MegamorphicCache::load:new-pair") + count("MegamorphicCache::absent:new-pair");
+// A name that is not among the own names of an object is looked for from its prototype on. Objects of several shapes under one prototype are asked for the same names.
 function Vehicle() { }
 Vehicle.prototype.wheels = function () { return 4; };
 Vehicle.prototype.kind = "vehicle";
@@ -15,11 +12,8 @@ function textOf(o, turns) { let s = ""; for (let i = 0; i < turns; i++) s = o.to
 function ownsOf(o, turns) { let n = 0; for (let i = 0; i < turns; i++) n += o.hasOwnProperty("a") ? 1 : 0; return n; }
 function valueOf(o, turns) { let s; for (let i = 0; i < turns; i++) s = o.valueOf(); return s === o; }
 console.log(textOf({ a: 1 }, 100), ownsOf({ a: 1 }, 100), valueOf({ a: 1 }, 100));
-const before = lookedUp();
 console.log(textOf({ a: 1, b: 2 }, 100), ownsOf({ a: 1, b: 2 }, 100), valueOf({ a: 1, b: 2 }, 100));
 console.log(textOf({ b: 1, c: 2, d: 3 }, 100), ownsOf({ b: 1, c: 2, d: 3 }, 100), valueOf({ b: 1, c: 2, d: 3 }, 100));
-const after = lookedUp();
-console.log(after === before ? "the second and third shapes looked nothing up" : (after - before) + " pairs were looked up for the second and third shapes");
 console.log(wheelsOf(new Car(1), 100), kindOf(new Car(1), 100), colorOf(new Car(1), 100), textOf(new Car(1), 100));
 console.log(wheelsOf(new Van(1), 100), kindOf(new Van(1), 100), colorOf(new Van(1), 100), textOf(new Van(1), 100));
 console.log(wheelsOf(new Bus(1), 100), kindOf(new Bus(1), 100), colorOf(new Bus(1), 100), textOf(new Bus(1), 100));

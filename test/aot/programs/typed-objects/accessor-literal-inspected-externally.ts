@@ -1,3 +1,4 @@
+// An object literal with a getter, known to the rest of the program through an interface, is looked at from outside: keys, descriptors, a spread, Object.assign, for..in.
 function memoizeOne<A extends object, T>(callback: (argument: A) => T): (argument: A) => T {
   const known = new Map<A, T>();
   return argument => {

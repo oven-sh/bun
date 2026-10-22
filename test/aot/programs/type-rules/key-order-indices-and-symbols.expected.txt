@@ -1,8 +1,0 @@
-1,2,10,alpha,gamma,extra,beta,@s2,@s1 | 1,2,10,alpha,gamma,extra,beta | {"1":"one","2":"two","10":"ten","alpha":1,"gamma":3,"extra":true,"beta":"b"}
-1 b 3 true
-1,2,10,alpha,extra,beta,gamma,@s1,@s2 | 1,2,10,alpha,extra,beta,gamma | {"1":"one","2":"again","10":"ten","alpha":1,"extra":true,"beta":"b","gamma":33}
-1,2,10,alpha,extra,beta,gamma | 1,2,10,alpha,extra,beta,gamma | 1,2,10,alpha,extra,beta,gamma | 1,2,10,alpha,extra,beta,gamma,@s1,@s2 | 1,2,10,alpha,extra,beta,gamma,@s1,@s2 | 1,2,10,alpha,extra,beta,gamma,@s1,@s2
-index, not writable, not enumerable: TypeError
-index, not writable: TypeError
-index, getter: TypeError
-alpha,beta | alpha,beta | {"alpha":1,"beta":"b"}

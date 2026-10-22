@@ -1,8 +1,8 @@
 // Named function expressions whose own name is only used for recursive calls.
-// IR= 0 recursion NewClosureOnce
-// IR= 0 recursion NewObjectWithShape
-// IR= 0 walk NewClosureOnce
-// IR= 0 walk NewObjectWithShape
+// IR= 0 recursion NewClosure
+// IR= 0 recursion  = NewObject 
+// IR= 0 walk NewClosure
+// IR= 0 walk  = NewObject 
 declare const console: any;
 function recursion(n: number): number { return (function fact(m: number): number { return m < 2 ? 1 : m * fact(m - 1) % 1000003; })(n); }
 interface Tree { left: Tree | null; right: Tree | null; value: number }

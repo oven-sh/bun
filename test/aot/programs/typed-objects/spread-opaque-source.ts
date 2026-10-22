@@ -1,4 +1,4 @@
-// Spread of a value whose static type also admits opaque objects: a record of the type, a record of another type, a record with an undeclared property, a frozen record, a plain object, an object with its own prototype, an array, null and undefined.
+// Spread of a value of a written record type, which any object may be: a record of the type, a record of another type, a record with an undeclared property, a frozen record, a plain object, an object with its own prototype, an array, null and undefined.
 // CALLS+ rename CloneObjectAndExtend
 // CALLS- rename TryCopyRecordAsAt
 type Shape = { name: string; sides: number; label?: string };

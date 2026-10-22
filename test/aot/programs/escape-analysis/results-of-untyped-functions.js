@@ -1,10 +1,10 @@
 // An object literal that an untyped function returns comes back in registers where the caller only reads its own fields.
-// IR= 0 readsEitherArm GetById|NewObject
-// IR= 0 readsFromBranches GetById|NewObject
-// IR= 0 readsTagged GetById|NewObject
-// IR= 0 readsThroughForwarder GetById|NewObject
+// IR= 0 readsEitherArm PropGet| = New(Plain)?Object 
+// IR= 0 readsFromBranches PropGet| = New(Plain)?Object 
+// IR= 0 readsTagged PropGet| = New(Plain)?Object 
+// IR= 0 readsThroughForwarder PropGet| = New(Plain)?Object 
 // IR= 1 readsWhatIsNotThere ResultAt
-// IR= 0 readsOne GetById|NewObject
+// IR= 0 readsOne PropGet| = New(Plain)?Object 
 let noise = 0;
 function pad(k) { for (let i = 0; i < 3; i++) noise = (noise * 31 + k + i) % 1000003; }
 function pads() { pad(1); pad(2); pad(3); pad(4); pad(5); pad(6); pad(7); pad(8); pad(9); pad(10); pad(11); pad(12); }

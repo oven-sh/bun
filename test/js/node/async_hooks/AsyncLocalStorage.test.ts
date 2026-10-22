@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";

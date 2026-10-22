@@ -1,0 +1,3 @@
+# An array literal has a contextual type only where an annotation provides one.
+inferred-array.ts:2 contextual `[1, 2]` = number[]
+inferred-array.ts:3 contextual `[3, 4]` = none

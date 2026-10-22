@@ -81,6 +81,7 @@
 #include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include "RemovableFeatures.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1

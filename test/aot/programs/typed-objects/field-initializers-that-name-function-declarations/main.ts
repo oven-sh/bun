@@ -1,7 +1,3 @@
-// IR= 0 Names istFields
-// IR= 0 OnlyExtended istFields
-// IR= 1 StillRunsCode UnlistFields
-// IR= 3 StillRunsCode ListFields
 import * as typed from "./core.ts";
 import { imported, reassign } from "./helpers.ts";
 import { HeirOfNames, HeirOfOnlyExtended } from "./untyped.js";

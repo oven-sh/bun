@@ -1,0 +1,11 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "built-ins-alone-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+const blob = Bun.file(file);
+console.log((await blob.text()).length, blob.size + 1, await blob.exists(), (await blob.stat()).size + 1, typeof blob.lastModified);
+console.log((await Bun.write(file, "longer text")) + 1, (await blob.write("ab")) + 1, (await blob.text()).length);
+console.log((await blob.delete()) === undefined, await blob.exists());
+fs.rmSync(folder, { recursive: true });

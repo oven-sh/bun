@@ -821,13 +821,6 @@ sha512_block_data_order_avx  [AVX]
 
 
 # ----------------------------------------------------------------------------
-# WTF SHA-1 (WTF/wtf/SHA1.cpp). Gate: canUseAcceleratedSHA1(): CPUID at the first block, cached in a static.
-# (1 symbol)
-# ----------------------------------------------------------------------------
-_ZN3WTFL23processBlockAcceleratedERSt5arrayIjLm5EERKS0_IhLm64EE  [SHA]
-
-
-# ----------------------------------------------------------------------------
 # BoringSSL ChaCha20.
 # (3 symbols)
 # ----------------------------------------------------------------------------

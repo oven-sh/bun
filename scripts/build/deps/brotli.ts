@@ -29,6 +29,7 @@ const SOURCES = [
 
 export const brotli: Dependency = {
   name: "brotli",
+  release: "1.2.0",
 
   source: () => ({
     kind: "github-archive",

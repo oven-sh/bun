@@ -1,3 +1,0 @@
-pieces of a wide text: 34 characters, 8 conversions of ASCII found in 16 bits
-pieces of a Latin-1 text: 38 characters, 0 conversions of ASCII found in 16 bits
-wide pieces: 8 characters, 0 conversions of ASCII found in 16 bits

@@ -65,7 +65,7 @@ for (let i = 0; i < 3000; i++) {
   holder.resetNames(made, i & 1);
   said.add(describe(made));
 }
-const learnt = count("operationAOTTypedTryPutProperties:names-that-lie-in-a-row");
+const learnt = count("operationAOTTryPutProperties");
 console.log([...said].join("\n"));
 console.log(!counts || (learnt >= 1 && learnt <= 300) ? "the stores were learnt together" : "stores to names that lie in a row were learnt " + learnt + " times");
 

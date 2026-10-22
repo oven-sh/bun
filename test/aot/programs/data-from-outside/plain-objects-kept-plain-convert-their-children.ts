@@ -1,4 +1,4 @@
-// A parsed body is cast to a record type that takes plain objects as they are, while one of its fields has a type that does not. The body stays a plain object and the object in that field is converted in place. Either everything below fits and is converted, or nothing is touched.
+// A parsed body is cast to a record type and read by typed code. The cast takes any object and changes nothing: the body and the objects below it stay the same ordinary objects, and untyped code stores whatever it likes into them afterwards. A field of the wrong kind throws where typed code reads it.
 type Customer = { id: number; name: string; tags: string[] };
 type Item = { sku: string; quantity: number };
 type Order = { customer: Customer; items: Item[]; coupon?: string };

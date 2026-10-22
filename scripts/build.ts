@@ -26,7 +26,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import {
-  inheritIslandsPlan,
   inheritOrderFile,
   orderFileContext,
   orderFileEligible,
@@ -178,14 +177,7 @@ async function main(): Promise<void> {
         env: ninjaEnv(result.cfg, result.env),
       });
 
-    const runInheritPlan = () =>
-      inheritIslandsPlan(result.cfg, orderCtx).catch(e => {
-        console.log(`~ islands: inherit failed (${(e as Error)?.message ?? e}); linking twice`);
-        return false;
-      });
-    const [inherited] = (await startGroup("Inherit symbol order file", () =>
-      Promise.all([runInherit(), runInheritPlan()]),
-    )) as [boolean, boolean];
+    const inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
 
     await startGroup("Build", () => runNinja());
 
@@ -444,7 +436,9 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   buildType: "string",
   mode: "string",
   lto: "boolean",
-  islands: "boolean",
+  trimmable: "boolean",
+  hardened: "boolean",
+  relr: "boolean",
   pgoGenerate: "string",
   pgoUse: "string",
   asan: "boolean",
@@ -463,6 +457,11 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",
+  rustCodegenUnits: "number",
+  rustIncremental: "boolean",
+  rustLto: "boolean",
+  debugInfo: "string",
+  linkerMap: "boolean",
   ci: "boolean",
   buildkite: "boolean",
   webkit: "string",
@@ -661,14 +660,20 @@ Options:
                                     from a non-Windows host)
   --<field>=<value>       Override a config field. Boolean fields take
                           on/off/true/false/yes/no/1/0.
-                          Fields: asan, lto, assertions, logs, baseline,
+                          Fields: asan, lto, hardened, relr, assertions, logs, baseline,
                                   canary, valgrind, webkit (prebuilt|local),
                                   local-deps (name=path[,name=path] — build a
                                   vendored dep from a local checkout),
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|codegen),
-                                  unifiedSources, timeTrace, os, arch, abi,
+                                  unifiedSources, timeTrace, rustCodegenUnits
+                                  (codegen units a crate), rustIncremental and
+                                  rustLto (off: the crates are linked as machine
+                                  code), for faster rebuilds,
+                                  debugInfo (full|lines|none) and linkerMap,
+                                  for faster compiles and links,
+                                  os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it

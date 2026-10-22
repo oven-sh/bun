@@ -36,7 +36,7 @@ a method that looks at this: who,x
 the same function, taken off: undefined
 odd names: no function,a-b,text,text
 a body that throws: threw RangeError
-the same module again: 1 2 2
+the same module again: threw RangeError
 one more export after it: 1 2
 exported in a branch: 1
 required by a function: required by a function

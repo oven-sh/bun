@@ -3,7 +3,7 @@
  "a-module-evaluated-again": "as the bundle",
  "a-proxy-sees-the-symbol": "all agree",
  "after-collections": "all agree",
- "an-es-module-imported-again-with-a-query": "as the bundle",
+ "an-es-module-imported-again-with-a-query": "alone: \nexit code 1: error",
  "chosen-by-a-condition": "all agree",
  "commonjs-exports": "all agree",
  "copies": "all agree",

@@ -1,1 +1,0 @@
-It throws a TypeError. The object has every member of the type, so it should be admitted as it is and the row should print what Bun prints.

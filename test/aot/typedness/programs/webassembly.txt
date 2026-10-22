@@ -1,9 +1,0 @@
-adds-two-numbers: 0 layouts, 0 given, 0 open, places 9 of 19, reads 0 of 6
-calls-from-javascript: 3 layouts, 0 given, 5 open, places 21 of 42, reads 0 of 44
-forty-memories: 0 layouts, 0 given, 1 open, places 15 of 26, reads 5 of 20
-imports-and-tables: 1 layouts, 0 given, 3 open, places 28 of 46, reads 1 of 34
-memory-loops-calls-and-traps: 0 layouts, 0 given, 1 open, places 13 of 40, reads 0 of 52
-module-compiled-at-runtime: 0 layouts, 0 given, 1 open, places 13 of 24, reads 3 of 14
-module-in-data-url: 0 layouts, 0 given, 0 open, places 8 of 16, reads 0 of 7
-module-in-file: 0 layouts, 0 given, 0 open, places 0 of 11, reads 0 of 5
-vectors: 0 layouts, 0 given, 1 open, places 12 of 23, reads 0 of 11

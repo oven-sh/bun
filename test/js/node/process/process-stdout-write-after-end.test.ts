@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";

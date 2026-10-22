@@ -1,0 +1,21 @@
+generators
+a field of a record: collected, 632
+a field of an instance: collected, 632
+an instance whose method is called after the yield: collected, 752
+a record in a record: collected, 648
+a tuple: collected, 632
+a record stored to after the yield: collected, 648
+a field that is dead at the second yield: collected, 632
+a record in every round of a loop: collected, 1264
+a record read in a finally block: collected, 632
+an untyped record: collected, 632
+a field read after the yield: collected, 632
+a record that may escape after the yield: kept, 632
+a record that escaped before the yield: kept, 632
+a record that was yielded: kept, 632
+async generators
+a field of a record: collected, 632
+a field of an instance: collected, 632
+a record in every round of a loop: collected, 1264
+a record read in a catch block: collected, 632
+a field read after the await: collected, 632

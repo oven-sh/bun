@@ -52,6 +52,6 @@ test("refuses a carrier that is not a Bun", async () => {
   const carrier = join(String(dir), "not-a-bun");
   chmodSync(carrier, 0o755);
   const built = await build(String(dir), carrier);
-  expect(built.stderr).toContain("cannot carry code compiled by this Bun");
+  expect(built.stderr).toContain("can't run code compiled by this Bun");
   expect(built.exitCode).toBe(1);
 });

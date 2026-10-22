@@ -1,5 +1,5 @@
 // `arguments.length` needs no `arguments` object.
-// IR- CreateArguments
+// IR- Create\w+Arguments
 declare const console: any;
 type L = (...args: any[]) => void;
 let n = 0;

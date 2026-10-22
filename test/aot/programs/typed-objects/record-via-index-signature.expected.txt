@@ -1,5 +1,0 @@
-store taken
-looked at text
-typeof string
-arithmetic TypeError
-held TypeError

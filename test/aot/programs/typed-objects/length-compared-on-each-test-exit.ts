@@ -1,12 +1,13 @@
-// IRT= 1 scan HasOriginalStructure
-// IRT= 1 scan : int.0,[0-9]+. = CallBuiltin v[0-9]+ DataView.byteLength
+// `byteLength` of a DataView or an ArrayBuffer compared on every turn of a loop: real ones, heirs, ones with an own property or another prototype answer as in plain Bun. `DataView` and `ArrayBuffer` name built-in classes, so an object of another class does not enter a place that is written so. The look-alikes pass their cast, but they come out of functions that are called through a table, where nobody sees the cast: the written place behind the call throws a TypeError.
+// IRT= 1 scan TypeTest v[0-9]+ testedType=\w\S*\^
+// IRT= 1 scan : int.0,[0-9]+. = CallBuiltin .* overload=DataViewPrototypeByteLength/
 // IRT= 2 scan Less
-// IRT= 1 scan "byteLength" on the slow path
-// IRT= 1 down HasOriginalStructure
+// IRT= 1 scan name="byteLength".* isFallback
+// IRT= 1 down TypeTest v[0-9]+ testedType=\w\S*\^
 // IRT= 2 down Greater
-// IRT= 0 kept HasOriginalStructure
+// IRT= 0 kept TypeTest v[0-9]+ testedType=\w\S*\^
 // IRT= 2 kept Less
-// IRT= 0 once HasOriginalStructure
+// IRT= 0 once TypeTest v[0-9]+ testedType=\w\S*\^
 let visits = 0;
 function scan(view: DataView, visit: (at: number) => void): number {
     let count = 0;

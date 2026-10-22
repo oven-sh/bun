@@ -1,0 +1,1 @@
+Two of the eight are still worded differently: `for await` over an object says "{} is not iterable" for "iterable should have an iterator symbol", and a spread whose iterator is no object says "Iterator result interface is not an object." for "undefined is not a function". The class of the error is the same.

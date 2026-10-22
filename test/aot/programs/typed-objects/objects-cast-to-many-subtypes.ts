@@ -1,4 +1,4 @@
-// Objects are made as a base type and cast to one of many subtypes afterwards. The cast gives them the subtype's fields, all absent, and leaves everything else as it was: however many kinds there are, whatever order the keys were created in, and while the collector runs.
+// Objects are made as a base type and cast to one of many subtypes afterwards. The cast changes nothing: the subtype's fields are absent until they are stored, and everything else is as it was, however many kinds there are, whatever order the keys were created in, and while the collector runs.
 interface Base { id: number; kind: number; note?: string; next?: Base }
 interface Sub0 extends Base { a0?: number; b0?: string; c0?: Base; d0?: boolean }
 interface Sub1 extends Base { a1?: number; b1?: string; c1?: Base; d1?: boolean }

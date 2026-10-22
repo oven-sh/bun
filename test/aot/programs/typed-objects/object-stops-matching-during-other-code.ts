@@ -1,6 +1,6 @@
 // As object-stops-matching-between-reads.ts, but the code that changes the object runs out of sight: in toString() and
 // valueOf(), in an accessor of another object, behind a throw, in a finally block, across an await and a yield, or it is a store to a
-// discriminant through a wider type.
+// discriminant through a wider type. The fields that are read again hold numbers throughout, so each read answers as the language says. The discriminant ends up with a string outside its literal type, and its next typed read gives that string.
 declare const console: { log(...values: unknown[]): void };
 declare const globalThis: { kept?: unknown };
 declare const JSON: { parse(s: string): any };

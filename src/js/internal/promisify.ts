@@ -24,7 +24,7 @@ interface Promisify {
   custom: typeof kCustomPromisifiedSymbol;
 }
 
-var promisify = function promisify(original) {
+var promisify = function promisify(original: (...args: any[]) => unknown) {
   validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {
@@ -34,32 +34,27 @@ var promisify = function promisify(original) {
   }
 
   const callbackArgs = original[kCustomPromisifyArgsSymbol];
-  function fn(...originalArgs) {
-    const promise = $newPromise();
+  function fn(this: unknown, ...originalArgs: unknown[]) {
+    const { promise, resolve, reject } = Promise.withResolvers();
     try {
-      $arrayPush(
-        originalArgs,
-        callbackArgs === undefined
-          ? function (err, value = undefined) {
-              if (err) {
-                $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-              } else {
-                $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, value);
-              }
+      const maybePromise = original.$apply(this, [
+        ...originalArgs,
+        function (err: unknown, ...values: unknown[]) {
+          if (err) {
+            return reject(err);
+          }
+
+          if (callbackArgs !== undefined) {
+            const result = {};
+            for (let i = 0; i < callbackArgs.length; i++) {
+              result[callbackArgs[i]] = values[i];
             }
-          : function (err, ...values) {
-              if (err) {
-                $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
-                return;
-              }
-              const result = {};
-              for (let i = 0; i < callbackArgs.length; i++) {
-                result[callbackArgs[i]] = values[i];
-              }
-              $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, result);
-            },
-      );
-      const maybePromise = original.$apply(this, originalArgs);
+            resolve(result);
+          } else {
+            resolve(values[0]);
+          }
+        },
+      ]);
 
       if ($isPromise(maybePromise)) {
         process.emitWarning(
@@ -69,7 +64,7 @@ var promisify = function promisify(original) {
         );
       }
     } catch (err) {
-      $rejectPromiseWithFirstResolvingFunctionCallCheck(promise, err);
+      reject(err);
     }
 
     return promise;

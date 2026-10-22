@@ -1,16 +1,12 @@
 // The parser that expects keys lets sixteen texts of a beginning go by. If there are two to eight kinds among them (a kind: the first two strings of a text), the beginning starts told apart: each kind has a root shape and a credit of its own, and a kind that is served badly is not carried by one that is served well. A first value that is new every time, or one of many, names no kind.
-declare const aotOperationCount: (name: string) => number;
-const names = ["jsonParsedWithLearnedShapes", "jsonBeginningToldApartByMore", "jsonBeginningSetAside"];
 function measure(label: string, count: number, make: (at: number) => string) {
-  const before = names.map(name => aotOperationCount(name));
   let wrong = 0;
   for (let at = 0; at < count; at++) {
     const text = make(at);
     const value: unknown = JSON.parse(text);
     if (JSON.stringify(value) !== text) wrong++;
   }
-  const [served, toldApart, setAside] = names.map((name, at) => aotOperationCount(name) - before[at]!);
-  console.log(label + ": " + count + " texts, " + served + " by expecting keys, told apart by more " + toldApart + " times, set aside " + setAside + " times, " + wrong + " wrong");
+  console.log(label + ": " + count + " texts, " + wrong + " wrong");
 }
 measure("two kinds in turn", 100, at => (at % 2 ? '{"sort":"red","r":' + at + ',"s":2}' : '{"sort":"blue","b":"x","at":' + at + "}"));
 measure("one kind", 100, at => '{"state":"on","n":' + at + "}");

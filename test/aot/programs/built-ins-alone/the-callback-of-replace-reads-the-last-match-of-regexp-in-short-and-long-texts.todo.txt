@@ -1,0 +1,1 @@
+RegExp.lastMatch read in the callback of replace: plain Bun's own answer changes with the length of the text (from 4,096 pairs on it is the match at hand), and the executable gives the short text's answer at every length.

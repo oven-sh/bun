@@ -1,4 +1,4 @@
-// A typed object cannot lose a required field and cannot get null or undefined in a `number` or `boolean` field, neither through its type nor by reflection.
+// A typed object can lose a required field and can get null or undefined in a `number` or `boolean` field, through a wider type, through untyped code or by reflection, as in plain Bun. undefined and null pass the typed read of such a field.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -19,8 +19,8 @@ attempt("store, by Object.assign", () => { Object.assign(r, { tail: 10, n: undef
 attempt("store, by Reflect.set", () => Reflect.set(r, "n", null))
 attempt("getter that yields undefined", () => { Object.defineProperty(r, "n", { get: () => undefined, enumerable: true, configurable: true }) })
 console.log(show(r))
-// No any and no cast: a type in which the field is optional. The object is still a Rec: the field is not
-// deleted. The slot can hold what the wider type may store, and the read through the narrower type is tested.
+// No any and no cast: a type in which the field is optional. The field is deleted and stored as in plain Bun,
+// and undefined passes the read through the narrower type.
 interface Tight { n: number; s: string; b: boolean }
 interface Looser { n?: number; s?: string | null }
 const t: Tight = { n: 1, s: "s", b: true }
@@ -33,7 +33,7 @@ attempt("the type itself, read of it", () => t.n + 1)
 console.log("n" in t, show(t))
 l.n = 4
 console.log(t.n + 1, show(t))
-// Stores from untyped code are tested against the layout's OWN field type, not against what the slot can hold.
+// Stores from untyped code succeed.
 attempt("store from untyped code, undefined for a number that is optional in a wider view", () => poke(t, "n", undefined))
 attempt("the same, null", () => poke(t, "n", null))
 attempt("the type itself, read of it", () => t.n + 1)
@@ -46,6 +46,6 @@ attempt("instance, delete", () => drop(a, "total"))
 attempt("instance, null for a number", () => poke(a, "total", null))
 attempt("a property by the name of a field on the prototype of the class", () => { (Acc.prototype as any).total = 40 })
 console.log(a.add(1), show(a))
-// A function used as a constructor through any: `this` is an ordinary object, and no Rec.
+// A function used as a constructor through any: `this` is an ordinary object, and any object passes the type Rec.
 function Old(this: Rec) { this.n = 1; this.s = "s"; this.b = true; this.tail = 9 }
 attempt("constructor function through any", () => { const o: Rec = new (Old as any)(); return o.n })

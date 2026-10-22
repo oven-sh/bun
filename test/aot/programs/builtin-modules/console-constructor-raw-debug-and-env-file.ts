@@ -33,7 +33,7 @@ try {
   console.log([process.env.FROM_THE_FILE, process.env.QUOTED, process.env.EXPORTED, process.env.MULTI, process.env.PATH === "not taken", process.env.EMPTY]);
   for (const path of [1, {}, join(folder, "missing.env")]) {
     try {
-      process.loadEnvFile(path as string);
+      process.loadEnvFile(path as any);
     } catch (error) {
       console.log((error as any).code, (error as any).syscall);
     }

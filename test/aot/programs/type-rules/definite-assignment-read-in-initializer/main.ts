@@ -1,4 +1,4 @@
-// `let size!: number` promises that the variable is assigned before it is read. --aot throws a TypeError at a read that finds it unassigned. In a function that the initializer of a top-level constant calls, the error is thrown while the module is loaded, not when the constant is first read.
+// `let size!: number` promises that the variable is assigned before it is read. Nothing tests the promise: a read that finds the variable unassigned gives `undefined`, which passes every written type.
 let loaded = false;
 try {
   const module = await import("./made");

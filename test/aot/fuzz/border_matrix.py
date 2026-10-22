@@ -23,7 +23,7 @@ def option(name, default):
 
 jobs, words, out = int(option("-j", "4")), option("--words", ""), option("--out", "")
 bun, generator, first, last = arguments[0], arguments[1], int(arguments[2]), int(arguments[3])
-ENV = {"PATH": "/usr/bin:/bin", "NO_COLOR": "1", "BUN_ENABLE_CRASH_REPORTING": "0", "DO_NOT_TRACK": "1", "HOME": os.environ.get("HOME", "/tmp"), "WTF_numberOfProcessorCores": "2", "UV_THREADPOOL_SIZE": "2", "GOMAXPROCS": "2", "BUN_JSC_numberOfAOTCompilerThreads": "2"}
+ENV = {"PATH": "/usr/bin:/bin", "NO_COLOR": "1", "BUN_ENABLE_CRASH_REPORTING": "0", "DO_NOT_TRACK": "1", "HOME": os.environ.get("HOME", "/tmp"), "WTF_numberOfProcessorCores": "2", "UV_THREADPOOL_SIZE": "2", "GOMAXPROCS": "2"}
 LABEL = re.compile(r"^(r\d+) \[([^\]]*)\] \[([^\]]*)\] ([^:]*): (.*)$")
 
 
@@ -64,7 +64,7 @@ def one(seed):
                 label = "%s [%s] [%s] %s" % (row, m.group(2), m.group(3), m.group(4))
                 said = [line for line in ours_errors.split("\n") if line.startswith(label + " ")]
                 if got is None: kind, detail = "DIED", "exit %s" % code
-                elif got.startswith("THROWS TypeError") and said and "(bun --aot" in said[0]: kind, detail = "REFUSED", said[0][len(label) + 1:].split(" (bun --aot")[0]
+                elif got.startswith("THROWS TypeError") and said and "(bun compile" in said[0]: kind, detail = "REFUSED", said[0][len(label) + 1:].split(" (bun compile")[0]
                 elif re.search(r"(poke|spoil) THROWS TypeError", got) and not re.search(r"(poke|spoil) THROWS TypeError", m.group(5)):
                     kind = "REFUSED"
                     detail = next((line[len(m.group(1)) + 16:] for line in ours_errors.split("\n") if line.startswith(m.group(1) + " refused change ")), "a change by untyped code threw")

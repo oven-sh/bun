@@ -9,6 +9,9 @@ const rustPaths = {
 function source(name) {
   return define({
     name: name + "InternalReadableStreamSource",
+    types: [
+      { path: ["$ZigGeneratedClasses", name + "InternalReadableStreamSource"], isView: false, typeArguments: [] },
+    ],
     rustPath: rustPaths[name],
     // R-2 Phase 3 opt-out: the codegen-facing wrapper `NewSource<C>` impl in
     // ReadableStream.rs still has `&mut self` host-fns (the embedded context
@@ -23,26 +26,38 @@ function source(name) {
     proto: {
       drain: {
         fn: "drainFromJS",
+        returns: "Uint8Array | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       start: {
         fn: "startFromJS",
+        returns: "number | Uint8Array | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       updateRef: {
         fn: "updateRefFromJS",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       cancel: {
         fn: "cancelFromJS",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       pull: {
         fn: "pullFromJS",
+        returns: "number | boolean | Promise | Uint8Array | undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
       isClosed: {
         getter: "getIsClosedFromJS",
+        type: "boolean",
+        pure: true,
       },
       ...(name !== "File"
         ? // Buffered versions
@@ -50,22 +65,32 @@ function source(name) {
           {
             text: {
               fn: "textFromJS",
+              returns: "Promise",
+              checkedAtRuntime: true,
               length: 0,
             },
             json: {
               fn: "jsonFromJS",
+              returns: "Promise",
+              checkedAtRuntime: true,
               length: 0,
             },
             arrayBuffer: {
               fn: "arrayBufferFromJS",
+              returns: "Promise",
+              checkedAtRuntime: true,
               length: 0,
             },
             blob: {
               fn: "blobFromJS",
+              returns: "Promise",
+              checkedAtRuntime: true,
               length: 0,
             },
             bytes: {
               fn: "bytesFromJS",
+              returns: "Promise",
+              checkedAtRuntime: true,
               length: 0,
             },
           }
@@ -74,10 +99,14 @@ function source(name) {
         ? {
             setRawMode: {
               fn: "setRawModeFromJS",
+              returns: "object | undefined",
+              checkedAtRuntime: true,
               length: 1,
             },
             setFlowing: {
               fn: "setFlowingFromJS",
+              returns: "undefined",
+              checkedAtRuntime: true,
               length: 1,
             },
           }

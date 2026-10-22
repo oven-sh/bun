@@ -1,6 +1,6 @@
 // A class that the addon defines, classes of the program that extend it, typed functions that the addon calls, members of every kind read by the addon, finalizers.
 import type { Addon } from "./counter";
-const addon: Addon = require(process.env.ADDON!);
+const loaded = { exports: {} as Addon }; process.dlopen(loaded, process.env.ADDON!); const addon: Addon = loaded.exports;
 class Named extends addon.Counter { label: string; hits = 0; constructor(label: string, start: number) { super(start); this.label = label; } bump() { this.hits++; return this.label + this.increment(2); } }
 class Twice extends Named { override bump() { return super.bump() + super.bump(); } }
 interface Kinds { when: Date; bytes: Buffer; big: bigint; text: string; whole: number; half: number; handle: unknown; none: null; missing?: string }
@@ -8,10 +8,10 @@ function kinds(): Kinds { return { when: new Date(5), bytes: Buffer.from([7, 8])
 function plusOne(n: number): number { return n + 1; } function shout(s: string): string { return s.toUpperCase(); }
 interface Result { id: number; name: string }
 let at = 0;
-function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f(), (_, x) => (typeof x === "bigint" ? x + "n" : typeof x === "symbol" ? String(x) : x)); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
+function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f(), (_, x) => (typeof x === "bigint" ? x + "n" : typeof x === "symbol" ? String(x) : x)); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
 // A row that stores what the declared type does not allow: one call; what the call said | what the object looks like afterwards | what an object that nobody touched looks like.
 function typeRow<T>(label: string, make: () => T, change: (o: T) => unknown, look: (o: T) => unknown) {
-  at++; const o = make(); const told = (f: () => unknown) => { try { return JSON.stringify(f()); } catch (e) { return JSON.stringify("threw " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
+  at++; const o = make(); const told = (f: () => unknown) => { try { return JSON.stringify(f()); } catch (e) { return JSON.stringify("threw " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
   console.log(String(at).padStart(3) + " TYPE " + label + ": " + told(() => change(o)) + " | after: " + told(() => look(o)) + " | untouched: " + told(() => look(make())));
 }
 row("the addon's class", () => { const c = new addon.Counter(5); return [c.increment(), c.increment(3), c.value, (c.value = 1), c.value, addon.unwrap(c), c instanceof addon.Counter, addon.instanceOf(c, addon.Counter), addon.names(c), addon.typeOf(c)]; });

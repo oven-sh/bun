@@ -8,8 +8,6 @@ path = "lib.rs"
 
 [dependencies]
 bun_sema.workspace = true
-bun_builtin_syntax.workspace = true
-bun_resolve_builtins.workspace = true
 bun_sema_parser.workspace = true
 bun_core.workspace = true
 bun_ast.workspace = true
@@ -18,6 +16,9 @@ bun_paths.workspace = true
 bstr.workspace = true
 bun_threading.workspace = true
 bun_sys.workspace = true
+
+[dev-dependencies]
+bun_sema_standalone = { path = "../standalone" }
 
 [lints]
 workspace = true

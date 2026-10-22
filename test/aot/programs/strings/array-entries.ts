@@ -1,15 +1,15 @@
 // `for (const [i, x] of array.entries())` allocates no iterator and no pairs unless the program can observe them.
-// CALLS+ typed operationAOTTypedNewArrayEntries
-// CALLS- untyped operationAOTTypedNewArrayEntries
-// CALLS+ ofArraysOnly operationAOTTypedNewArrayEntries
-// CALLS+ indexOnly operationAOTTypedNewArrayEntries
-// CALLS+ elementOnly operationAOTTypedNewArrayEntries
-// CALLS+ nestedPattern operationAOTTypedNewArrayEntries
-// CALLS- whole operationAOTTypedNewArrayEntries
-// CALLS- kept operationAOTTypedNewArrayEntries
-// CALLS- held operationAOTTypedNewArrayEntries
-// CALLS- withRest operationAOTTypedNewArrayEntries
-// CALLS- spread operationAOTTypedNewArrayEntries
+// CALLS+ typed operationAOTNewArrayIterator
+// CALLS- untyped operationAOTNewArrayIterator
+// CALLS+ ofArraysOnly operationAOTNewArrayIterator
+// CALLS+ indexOnly operationAOTNewArrayIterator
+// CALLS+ elementOnly operationAOTNewArrayIterator
+// CALLS+ nestedPattern operationAOTNewArrayIterator
+// CALLS- whole operationAOTNewArrayIterator
+// CALLS- kept operationAOTNewArrayIterator
+// CALLS- held operationAOTNewArrayIterator
+// CALLS- withRest operationAOTNewArrayIterator
+// CALLS+ spread operationAOTNewArrayIterator
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

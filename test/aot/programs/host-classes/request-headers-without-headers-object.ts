@@ -1,6 +1,4 @@
-// `request.headers.get(name)` on a Request is compiled to one native call that does not make the Headers object. Every request, and everything a program can do to a request or to its headers, gives what plain Bun gives.
-// IR+ CallBuiltin GetRequestOrResponseHeader
-// IR= 1 readsOfAnything CallBuiltin GetRequestOrResponseHeader
+// `request.headers.get(name)` and `request.headers.has(name)` on every kind of request, before and after everything a program can do to a request or to its headers: each gives what plain Bun gives.
 import { connect } from "node:net";
 import type { BunRequest } from "bun";
 

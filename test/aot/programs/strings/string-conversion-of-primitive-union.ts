@@ -5,7 +5,7 @@ function withBigInt(x: string | number | bigint): string[] { return ["" + x, x +
 function withBoolean(x: string | boolean): string[] { return ["" + x, x + "", `${x}`, String(x)]; }
 function withNil(x: string | number | null | undefined): string[] { return ["" + x, x + "", `${x}`, String(x)]; }
 function all(x: string | number | bigint | boolean | null | undefined): string[] { return ["" + x, x + "", `${x}`, String(x)]; }
-function withSymbol(x: string | symbol): string { try { return `${x as string}`; } catch (e: any) { return e.name + ": " + e.message; } }
+function withSymbol(x: string | symbol): string { try { return `${x as any}`; } catch (e: any) { return e.name + ": " + e.message; } }
 function anything(x: any): string[] { return ["" + x, x + "", `${x}`, String(x)]; }
 function narrowed(x: unknown): string { return ("string" === typeof x && "" !== x) || "number" === typeof x || "bigint" === typeof x ? "" + x : "no"; }
 function same(x: string | number): boolean { const made = "" + x; return typeof x === "string" ? made === x : made === String(x); }

@@ -1,6 +1,6 @@
-// Holes, stored lengths, distant indexes, properties, other kinds, parsed data and changes during iteration.
+// Holes, stored lengths, distant indexes, properties, parsed data and changes during iteration are as in plain Bun. A string stored through `any` into a `number[]` throws a TypeError where typed code reads that element.
 declare const console: { log(...values: unknown[]): void };
-function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
 function hide(v: unknown): any { return v }
 function parse(t: string): any { return JSON.parse(t) }
 type Item = { n: number };

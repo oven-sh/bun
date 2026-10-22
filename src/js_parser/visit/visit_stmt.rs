@@ -1566,18 +1566,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::Throw,
     ) -> Result<(), Error> {
-        if p.options.bun_builtin_syntax
-            && let Some(value) = p.builtin_throw_call(&data.value)
-        {
-            let mut call = p.s(
-                S::SExpr {
-                    value,
-                    ..Default::default()
-                },
-                stmt.loc,
-            );
-            return p.visit_and_append_stmt(stmts, &mut call);
-        }
         p.visit_expr(&mut data.value);
         stmts.push(*stmt);
         Ok(())

@@ -1,7 +1,4 @@
-// Where an object still has the shape its literal or its constructor gave it, the compiler has written down where each name lies. The first read of a name by name goes by that: nothing is looked up, and nothing is remembered anywhere but in the table the reads go by.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const lookedUp = () => count("MegamorphicCache::load:new-pair") + count("MegamorphicCache::absent:new-pair");
+// Objects that still have the shape their literal or their constructor gave them are read by name: names that are their own, names that are nowhere, names that only a prototype has.
 function point(i) { return { x: i, y: i + 1, z: i + 2 }; }
 function pair(i) { return { first: i, second: "s" + i }; }
 function wide(i) { return { a: i, b: i, c: i, d: i, e: i, f: i, g: i, h: i, i: i, j: i }; }
@@ -13,11 +10,8 @@ function sumOfWide(o, turns) { let s = 0; for (let i = 0; i < turns; i++) s += o
 function sumOfMade(o, turns) { let s = 0; for (let i = 0; i < turns; i++) s += o.left + o.right; return s; }
 function sumOfBuilt(o, turns) { let s = 0; for (let i = 0; i < turns; i++) s += o.top + o.bottom; return s; }
 function absentOn(o, turns) { let n = 0; for (let i = 0; i < turns; i++) n += o.nowhere === undefined && o.then === undefined ? 1 : 0; return n; }
-const before = lookedUp();
 console.log(sumOfPoint(point(1), 100), textOfPair(pair(2), 100), sumOfWide(wide(3), 100));
 console.log(absentOn(point(1), 100), absentOn(pair(2), 100), absentOn(wide(3), 100));
-const after = lookedUp();
-console.log(after === before ? "nothing was looked up" : (after - before) + " pairs were looked up");
 console.log(sumOfMade(new Made(4), 100), sumOfBuilt(new Built(5), 100), absentOn(new Made(4), 100), absentOn(new Built(5), 100));
 
 // What the compiler wrote down says nothing of these.

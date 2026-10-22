@@ -1,4 +1,4 @@
-// Two arms of a union differ only some levels below. A value that satisfies the second arm is taken, however deep the difference lies, by JSON.parse<T>. (Nothing here validates or casts: a type that is only parsed is made of typed objects alone, so a wrong choice of the arm shows as a refusal.)
+// Two arms of a union differ only some levels below. A value that satisfies the second arm is taken, however deep the difference lies, by JSON.parse<T>. (Nothing here validates or casts; the program beside this one does.)
 type D1 = { a: { v: 1 }; n: number } | { a: { v: "s" }; n: number };
 type D2 = { a: { b: { v: 1 } }; n: number } | { a: { b: { v: "s" } }; n: number };
 type D3 = { a: { b: { c: { v: 1 } } }; n: number } | { a: { b: { c: { v: "s" } } }; n: number };

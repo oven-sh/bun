@@ -1,7 +1,7 @@
 // The first use of a lazily created built-in class does not invalidate cached property lookups that have nothing to do with it.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const misses = () => count("operationAOTGetByNameAndCache") + count("operationAOTPutByNameAndCache");
+const misses = () => count("operationAOTGetByIdAndCache") + count("operationAOTPutByIdAndCache");
 const kinds = [];
 for (let k = 0; k < 40; k++) {
   function Kind(value) {

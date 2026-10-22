@@ -1,6 +1,0 @@
-a pattern: collected, 632
-the pair: collected, 632
-entries(): collected, 632
-string keys: collected, 632
-a set: collected, 632
-a value read after the await: kept, 632

@@ -1,0 +1,1 @@
+console.log(typeof process.title, typeof process.pid, typeof process.ppid, typeof process.platform, typeof process.arch, process.version.startsWith("v"), typeof process.execPath, typeof process.argv0, typeof process.debugPort, process.exitCode === undefined);

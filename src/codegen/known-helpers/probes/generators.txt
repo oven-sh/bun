@@ -1,0 +1,5 @@
+export function* probeCount(probeLimit) {
+  for (let probeIndex = 0; probeIndex < probeLimit; probeIndex++) yield probeIndex;
+  yield* probeCount(1);
+  return probeLimit;
+}

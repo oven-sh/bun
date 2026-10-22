@@ -17,17 +17,20 @@
 
 #include "NativeModuleImpl.h"
 #include "BunBuiltinNames.h"
+#include "BunCompiledModules.h"
+#include "ErrorCode.h"
 #include "JSBuffer.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ParserError.h>
-#include <JavaScriptCore/AOTFunction.h>
+#include <JavaScriptCore/AOTHost.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
 extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, const uint8_t** bytes, size_t* size, uint32_t* entryOffset);
+extern "C" JSC::EncodedJSValue Bun__createModuleNotCompiledInError(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString* specifier);
 
 namespace Bun {
 
@@ -60,9 +63,15 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObje
     return JSValue::encode(jsNumber(s_internalModulesFromBytecode.load(std::memory_order_relaxed)));
 }
 
-static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
+// The debugger's module is no part of the program, so Options::crashIfInterpreterIsUsed() must not report it. The debugger never starts with Options::disallowNonStaticCode().
+static JSC::SourceProvenance internalModuleProvenance(uint32_t id)
 {
-    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, JSC::SourceProvenance::Static);
+    return id == InternalModuleRegistry::Field::InternalDebugger ? JSC::SourceProvenance::GeneratedAtRuntime : JSC::SourceProvenance::Static;
+}
+
+static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString, JSC::SourceProvenance provenance)
+{
+    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, provenance);
 }
 
 static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)
@@ -105,18 +114,24 @@ static String internalModuleSource(uint32_t id)
 }
 #endif
 
+static void throwModuleTextRemovedError(JSC::JSGlobalObject*, uint32_t id);
+
 static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     const auto& m = internalModuleRecord(id);
+    if (!m.codeLength) [[unlikely]] {
+        throwModuleTextRemovedError(globalObject, id);
+        RELEASE_AND_RETURN(throwScope, {});
+    }
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
-    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength));
+    SourceCode source = makeInternalModuleSource(internalModuleSource(id), moduleName, internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
     maybeAddCodeCoverage(vm, source);
 
+    UnlinkedFunctionExecutable* executable = nullptr;
     const uint8_t* cachedBytes = nullptr;
     size_t cachedSize = 0;
     uint32_t cachedEntryOffset = 0;
-    UnlinkedFunctionExecutable* executable = nullptr;
     if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
         executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
         if (executable)
@@ -151,40 +166,62 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
     return result;
 }
 
-extern "C" bool Bun__throwIfRemovedByTrimming(JSC::JSGlobalObject*, const char* module, size_t length);
-extern "C" bool Bun__loadsModulesAtRunTime();
-extern "C" void Bun__throwThatModuleWasNotCompiledIn(JSC::JSGlobalObject*, const char* module, size_t length);
-
-bool isPublicModuleThatCannotBeMade(JSC::JSGlobalObject* globalObject, uint32_t id)
+static const char* publicModuleName(uint32_t id)
 {
-    if (id >= bun_internal_modules_header.moduleCount || Bun__loadsModulesAtRunTime()) [[likely]]
-        return false;
-#if ENABLE(AOT)
-    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id))
-        return false;
-#endif
-    const auto& record = internalModuleRecord(id);
-    return !std::string_view(bun_internal_modules_data + record.nameOffset, record.nameLength).starts_with("internal:");
+    const char* name = InternalModuleRegistryConstants::publicModuleNames;
+    for (uint32_t before = id; before--;)
+        name += strlen(name) + 1;
+    return name;
+}
+
+static void throwRemovedModuleError(JSC::JSGlobalObject* globalObject, JSC::RemovableFeature feature, uint32_t id, Bun::ErrorCode code = Bun::ErrorCode::ERR_MODULE_NOT_FOUND)
+{
+    const char* name = publicModuleName(id);
+    if (*name)
+        Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(feature), name, strlen(name), code);
+    else
+        Bun__throwForRemovedFeature(globalObject, static_cast<uint16_t>(feature));
+}
+
+static void throwModuleNotCompiledError(JSC::JSGlobalObject* globalObject, uint32_t id, Bun::ErrorCode code)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    const char* name = publicModuleName(id);
+    auto message = WTF::makeString("Cannot load '"_s, WTF::String::fromUTF8(*name ? name : "(internal)"), "': it isn't in this executable. Import it by name somewhere in your program to keep it."_s, Bun::adviceToKeepFunctionSource());
+    JSC::throwException(globalObject, scope, Bun::createError(globalObject, code, JSC::withAOTErrorNote(message)));
+}
+
+// `--trim` leaves the record of a module whose text it removed without text (src/trim/apply.rs).
+static void throwModuleTextRemovedError(JSC::JSGlobalObject* globalObject, uint32_t id)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    const char* name = publicModuleName(id);
+    WTF::String specifier = WTF::String::fromUTF8(*name ? name : "(internal)");
+    BunString specifierString = Bun::toString(specifier);
+    JSC::throwException(globalObject, scope, JSC::JSValue::decode(Bun__createModuleNotCompiledInError(globalObject, Bun::ErrorCode::ERR_MODULE_NOT_FOUND, &specifierString)));
 }
 
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {
-    const char* name = InternalModuleRegistryConstants::namesOfPublicModules;
-    for (uint32_t before = id; before--;)
-        name += strlen(name) + 1;
-    if (Bun__throwIfRemovedByTrimming(globalObject, name, strlen(name))) [[unlikely]]
+    if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
+        throwRemovedModuleError(globalObject, *feature, id);
         return {};
+    }
 #if ENABLE(AOT)
-    if (JSC::AOT::Typed::hasBuiltinModule(globalObject, id)) {
+    if (JSC::AOT::hasBuiltinModule(globalObject, id)) {
         Bun::ModuleGraphContextScope realmContext(*defaultGlobalObject(globalObject)->scriptExecutionContext());
-        return JSC::AOT::Typed::evaluateBuiltinModule(globalObject, id);
+        return JSC::AOT::evaluateBuiltinModule(globalObject, id);
+    }
+    if (JSC::AOT::refusesLibraryText()) [[unlikely]] {
+        throwModuleNotCompiledError(globalObject, id, Bun::ErrorCode::ERR_MODULE_NOT_FOUND);
+        return {};
     }
 #endif
-    if (isPublicModuleThatCannotBeMade(globalObject, id)) [[unlikely]] {
-        Bun__throwThatModuleWasNotCompiledIn(globalObject, name, strlen(name));
+    if (JSC::isFeatureRemoved(Bun::Feature::RuntimeTranspiler)) [[unlikely]] {
+        throwRemovedModuleError(globalObject, Bun::Feature::RuntimeTranspiler, id);
         return {};
     }
-    return generateInternalModuleFromText(globalObject, vm, id);
+    return JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, generateInternalModuleFromText>(globalObject, vm, id);
 }
 
 // Accepts both generator signatures (BUN_FOREACH_ESM_NATIVE_MODULE and BUN_FOREACH_LAZY_ESM_NATIVE_MODULE);
@@ -263,8 +300,46 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
         value = createInternalModuleById(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
+        JSC::AOT::hostDidLoadBuiltinModule(globalObject, id, value);
     }
     return value;
+}
+
+JSValue DeclaredModuleLoad::requireField(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)
+{
+    return globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), field);
+}
+
+// The build compiles the module for a program that uses the built-in, whether or not the program can import the module by name.
+JSValue DeclaredModuleLoad::requireOnBehalfOf(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ASCIILiteral builtin)
+{
+    uint32_t id = field;
+    if (id < InternalModuleRegistryConstants::moduleCount && JSC::AOT::refusesLibraryText() && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+        JSC::AOT::throwBuiltinNotCompiled(globalObject, builtin);
+        return {};
+    }
+    return requireField(globalObject, field);
+}
+
+JSValue DeclaredModuleLoad::requireNamedAtRunTime(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field, ErrorCode ifNotInExecutable)
+{
+    uint32_t id = field;
+    if (id < InternalModuleRegistryConstants::moduleCount) {
+        if (auto feature = InternalModuleRegistryConstants::moduleFeatures[id]; feature && JSC::isFeatureRemoved(*feature)) [[unlikely]] {
+            throwRemovedModuleError(globalObject, *feature, id, ifNotInExecutable);
+            return {};
+        }
+        if (JSC::AOT::refusesLibraryText() && !JSC::AOT::hasBuiltinModule(globalObject, id)) [[unlikely]] {
+            throwModuleNotCompiledError(globalObject, id, ifNotInExecutable);
+            return {};
+        }
+    }
+    return requireField(globalObject, field);
+}
+
+JSValue DeclaredModuleLoad::requireForCommandLine(Zig::GlobalObject* globalObject, InternalModuleRegistry::Field field)
+{
+    return requireField(globalObject, field);
 }
 
 #include "InternalModuleRegistry+createInternalModuleById.h"
@@ -309,9 +384,11 @@ static UnlinkedFunctionExecutable* generateInternalModuleCode(JSC::VM& vm, const
 static bool encodeInternalModule(const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const uint8_t** bytes, size_t* size, JSC::CachedBytecode** handle, JSC::EncoderStringTable* externalStrings)
 {
     using namespace Bun;
+    if (text.isEmpty())
+        return false;
     JSC::VM& vm = Zig::vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
-    SourceCode source = makeInternalModuleSource(text, moduleName, url);
+    SourceCode source = makeInternalModuleSource(text, moduleName, url, JSC::SourceProvenance::Static);
     UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
     if (!executable)
         return false;
@@ -350,9 +427,11 @@ extern "C" bool Bun__generateInternalModuleBytecodeFromSource(const Latin1Charac
 static bool addInternalModuleToLink(JSC::BytecodeLinkEncoder* encoder, const String& text, const String& moduleName, const String& url, uint32_t sourceStamp, uint32_t depth, const JSC::BytecodeOrderNames& names)
 {
     using namespace Bun;
+    if (text.isEmpty())
+        return false;
     JSC::VM& vm = Zig::vmOfBytecodeLinkEncoder(*encoder);
     JSC::JSLockHolder locker(vm);
-    SourceCode source = makeInternalModuleSource(text, moduleName, url);
+    SourceCode source = makeInternalModuleSource(text, moduleName, url, JSC::SourceProvenance::Static);
     UnlinkedFunctionExecutable* executable = generateInternalModuleCode(vm, source, moduleName, depth);
     if (!executable)
         return false;
@@ -383,7 +462,9 @@ static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
     if (id >= bun_internal_modules_header.moduleCount)
         return std::nullopt;
     const auto& m = internalModuleRecord(id);
-    return makeInternalModuleSource(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength));
+    if (!m.codeLength)
+        return std::nullopt;
+    return makeInternalModuleSource(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
 }
 
 extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)

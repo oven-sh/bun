@@ -1,0 +1,12 @@
+// One name of node:events is imported and used; another, getEventListeners, is found through a module of the program that exports all of it again under a name that is put together at run time, and is used too.
+import { once } from "node:events";
+import * as whole from "./all.js";
+const seen = [];
+console.log("the name that is imported:", String(typeof once));
+const key = ["getEvent", "Listeners"].join("");
+const F = whole[key];
+try {
+  console.log("the other member:", String(F(new EventTarget(), "x").length));
+} catch (error) {
+  console.log("the other member threw " + error.constructor.name + ": " + error.message);
+}

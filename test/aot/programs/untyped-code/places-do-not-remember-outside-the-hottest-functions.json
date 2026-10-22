@@ -1,5 +1,3 @@
 {
-  "buildEnv": {
-    "BUN_JSC_aotHotByTextForTesting": "4"
-  }
+  "build": ["--aot-heat=nothing-is-hottest"]
 }

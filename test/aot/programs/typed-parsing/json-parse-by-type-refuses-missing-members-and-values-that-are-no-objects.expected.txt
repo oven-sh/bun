@@ -1,0 +1,23 @@
+whole: documented value, got value {"id": 1, "name": "n", "anything": 0, "maybe": 2}
+without id: documented TypeError, got TypeError
+without name: documented TypeError, got TypeError
+without the member of type unknown: documented TypeError, got TypeError
+without the member that may be undefined: documented TypeError, got TypeError
+empty: documented TypeError, got TypeError
+only undeclared members: documented TypeError, got TypeError
+the members one level too deep: documented TypeError, got TypeError
+the members in __proto__: documented TypeError, got TypeError
+some of the members in __proto__: documented TypeError, got TypeError
+null for the optional member: documented TypeError, got TypeError
+null for the member that may be undefined: documented TypeError, got TypeError
+null for the member of type unknown: documented value, got value {"id": 1, "name": "n", "anything": null, "maybe": 2}
+instead of the object: null: documented TypeError, got TypeError
+instead of the object: 1: documented TypeError, got TypeError
+instead of the object: "text": documented TypeError, got TypeError
+instead of the object: true: documented TypeError, got TypeError
+instead of the object: []: documented TypeError, got TypeError
+instead of the object: [{"id":1,"name":"n","anything":0,"maybe":2}]: documented TypeError, got TypeError
+instead of the object: "{\"id\":1,\"name\":\"n\",\"anything\":0,\"maybe\":2}": documented TypeError, got TypeError
+members named like inherited ones: documented value, got value {"toString": "s", "constructor": 1}
+members named like inherited ones are missing: documented TypeError, got TypeError
+one of them is missing: documented TypeError, got TypeError

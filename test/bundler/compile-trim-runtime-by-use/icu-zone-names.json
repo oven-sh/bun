@@ -1,1 +1,1 @@
-{ "features": ["date_formatting"] }
+{ "features": ["IntlDateTimeFormat"] }

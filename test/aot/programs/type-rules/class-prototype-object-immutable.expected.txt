@@ -1,9 +1,0 @@
-property added: TypeError
-read-only property defined: TypeError
-accessor defined: TypeError
-method replaced: TypeError
-method deleted: TypeError
-its prototype changed: TypeError
-line 16: TypeError
-true true
-stored/undefined/true/true own/undefined/true/true undefined/undefined/true/true [] m constructor,method false

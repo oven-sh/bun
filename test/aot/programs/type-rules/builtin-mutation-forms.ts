@@ -1,6 +1,6 @@
-// Methods of built-in prototypes and globals are replaced, added, wrapped and restored.
+// Methods of built-in prototypes and globals are replaced, added, wrapped and restored. A member of a locked prototype or of Math cannot be replaced, a store of the value it holds changes nothing and succeeds, Array.prototype takes no index, and Object.prototype takes nothing. A method added to Array.prototype, and what is not fixed (JSON.stringify, the bindings Promise and parseInt, the members of Error), changes as in plain Bun.
 declare const console: { log(...values: unknown[]): void };
-function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
 function hide(v: unknown): any { return v }
 function parse(t: string): any { return JSON.parse(t) }
 row("a method of Array.prototype replaced", () => { const was = Array.prototype.includes; try { hide(Array.prototype).includes = function () { return "mine" }; return String(hide([1]).includes(1)) + " " + String([1].includes(1)) } finally { hide(Array.prototype).includes = was } });

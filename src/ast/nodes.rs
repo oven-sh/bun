@@ -1179,7 +1179,6 @@ pub enum StrictModeKind {
     ImplicitStrictModeExport,
     ImplicitStrictModeTopLevelAwait,
     ImplicitStrictModeClass,
-    ImplicitStrictModeBuiltin,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]

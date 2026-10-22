@@ -1,0 +1,27 @@
+let calls = 0;
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const probe = {
+  count: 0,
+  get [Symbol.toStringTag]() {
+    calls++;
+    this.count++;
+    console.log("Symbol.toStringTag", this === probe);
+    return undefined;
+  },
+};
+const holder = [probe, item, "two"];
+const result = holder.toSorted();
+console.log(Array.isArray(result), result.length, typeof result[0], Object.keys(result[0]).join());
+console.log(typeof result[0].count, result[0].count + 1, result[1].double());
+console.log(typeof result[2], result[2].length, result[2], Array.isArray(holder), holder.length);
+console.log(typeof holder[0], Object.keys(holder[0]).join(), typeof holder[0].count, holder[0].count + 1, holder[1].double());
+console.log(typeof holder[2], holder[2].length, holder[2]);
+console.log(calls, probe.count);

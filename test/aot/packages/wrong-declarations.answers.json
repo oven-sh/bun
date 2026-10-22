@@ -2,138 +2,16 @@
   "commonjs.E.ts": {
     "errors": "error: TS2678: Type 'E.B' is not comparable to type 'E.A'.\n"
   },
-  "commonjs.assert_string.ts": {
-    "output": "length THROWS TypeError [--aot: expected string, got number 5]\n+ THROWS TypeError [--aot: expected string, got number 5]\ntypeof THROWS TypeError [--aot: expected string, got number 5]\nupper THROWS TypeError [--aot: expected string, got number 5]\n"
-  },
-  "commonjs.const_enum.ts": {
-    "output": "A 10\nB 21\n"
-  },
-  "commonjs.each.ts": {
-    "output": "x [\"10\",null,3]\ntypeof [6,9,6]\narity [2,0,3]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
-  },
-  "commonjs.ident.ts": {
-    "output": "number THROWS TypeError [--aot: expected number, got string \"11\"]\nstring 1\nobject undefined\nisArray true\n"
-  },
-  "commonjs.is_string.ts": {
-    "output": "guard THROWS TypeError [--aot: expected string, got number 5]\nupper THROWS TypeError [--aot: expected string, got number 5]\n+ THROWS TypeError [--aot: expected string, got number 5]\nunion THROWS TypeError [--aot: expected object | string, got number 5]\n"
-  },
-  "commonjs.keeps.ts": {
-    "output": "before [2,2]\nexit code 1\nTypeError: Cannot assign to 'n' of { n, list }: expected number, got string \"poked\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "commonjs.not_there.ts": "compiled",
-  "commonjs.not_there_fn.ts": "compiled",
-  "commonjs.ns_lits.ts": {
-    "output": "x THROWS TypeError [--aot: expected number, got string]\n"
-  },
-  "commonjs.num_is_string.ts": {
-    "output": "+ THROWS TypeError [--aot: expected number, got string]\n* 10\ntypeof \"string\"\n=== false\n< true\ntpl \"5\"\n|0 5\nmax 5\nf THROWS TypeError [--aot: expected number, got string \"5\"]\narr THROWS TypeError [--aot: expected number | undefined, got string \"5\"]\nexit code 1\nTypeError: expected number, got string \"5\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "commonjs.over.ts": {
-    "output": "string \"1!\"\nnumber THROWS TypeError [--aot: expected number, got string]\nlen undefined\nn null\n"
-  },
-  "commonjs.ret_arr_strings.ts": {
-    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap [\"11\",\"21\"]\nreduce \"012\"\nfor of \"012\"\nsort [\"1\",\"2\"]\nincludes false\njoin \"1,2\"\nmax 2\n"
-  },
-  "commonjs.ret_fn_wrong.ts": {
-    "output": "call THROWS TypeError [--aot: expected number, got string]\nmap [\"1!\",\"2!\"]\ntypeof \"string\"\n"
-  },
-  "commonjs.ret_iter.ts": {
-    "output": "of \"001\"\nspread [\"0\",\"1\"]\nfrom THROWS TypeError [--aot: expected number | undefined, got string \"0\"]\ndestructured [\"0\",\"1\"]\n"
-  },
-  "commonjs.ret_num.ts": {
-    "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'number' and always gets string.\n"
-  },
-  "commonjs.ret_obj_wrong.ts": {
-    "output": "a \"11\"\nb \"2!\"\nb.length undefined\njson \"{\\\"a\\\":\\\"1\\\",\\\"b\\\":2}\"\nn 2\nf THROWS TypeError [--aot: expected number, got string \"1\"]\n"
-  },
-  "commonjs.ret_promise_thenable.ts": {
-    "output": "await THROWS TypeError [--aot: expected number, got string]\ninstanceof false\ncatch THROWS TypeError\n"
-  },
-  "commonjs.ret_promise_wrong.ts": {
-    "output": "await THROWS TypeError [--aot: expected number, got string]\nthen 10\ntypeof \"string\"\n"
-  },
-  "commonjs.ret_record.ts": {
-    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues [\"11\"]\n"
-  },
-  "commonjs.str_is_number.ts": {
-    "output": "+ THROWS TypeError [--aot: expected string, got number 8]\nlength undefined\ntypeof \"number\"\n=== false\ntpl \"7!\"\nupper THROWS TypeError\nswitch \"default\"\nkey 1\n"
-  },
-  "commonjs.takes_arr.ts": {
-    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number | undefined, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "commonjs.takes_obj.ts": {
-    "output": "exit code 1\nTypeError: Cannot assign to 'a' of { a, b }: expected number, got string \"written by the package\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
   "esm.E.ts": {
     "errors": "error: TS2678: Type 'E.B' is not comparable to type 'E.A'.\n"
   },
-  "esm.assert_string.ts": {
-    "output": "length THROWS TypeError [--aot: expected string, got number 5]\n+ THROWS TypeError [--aot: expected string, got number 5]\ntypeof THROWS TypeError [--aot: expected string, got number 5]\nupper THROWS TypeError [--aot: expected string, got number 5]\n"
-  },
-  "esm.big_is_number.ts": {
-    "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'bigint' and always gets number | string.\n"
-  },
   "esm.const_enum.ts": {
-    "output": "A 10\nB 21\n"
-  },
-  "esm.each.ts": {
-    "output": "x [\"10\",null,3]\ntypeof [6,9,6]\narity [2,0,3]\nnamed THROWS TypeError [--aot: expected number | undefined, got string \"1\"]\ndirect 4\n"
-  },
-  "esm.ident.ts": {
-    "output": "number THROWS TypeError [--aot: expected number, got string \"11\"]\nstring 1\nobject undefined\nisArray true\n"
-  },
-  "esm.is_string.ts": {
-    "output": "guard THROWS TypeError [--aot: expected string, got number 5]\nupper THROWS TypeError [--aot: expected string, got number 5]\n+ THROWS TypeError [--aot: expected string, got number 5]\nunion THROWS TypeError [--aot: expected object | string, got number 5]\n"
-  },
-  "esm.keeps.ts": {
-    "output": "before [2,2]\nexit code 1\nTypeError: Cannot assign to 'n' of { n, list }: expected number, got string \"poked\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"CE\"\n"
   },
   "esm.not_there.ts": {
-    "errors": "error: <folder>/esm.not_there.ts:7: --aot does not support an import of a name that the module does not export\n"
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"not_there\"\n"
   },
   "esm.not_there_fn.ts": {
-    "errors": "error: <folder>/esm.not_there_fn.ts:7: --aot does not support an import of a name that the module does not export\n"
-  },
-  "esm.ns_lits.ts": {
-    "output": "x THROWS TypeError [--aot: expected number, got string]\n"
-  },
-  "esm.num_is_string.ts": {
-    "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'number' and always gets string.\nerror: TS100013: This always throws a TypeError under --aot: argument 1 of `f` expects 'number' and always gets \"5\".\nerror: TS100013: This always throws a TypeError under --aot: `v` expects 'number' and always gets \"5\".\n"
-  },
-  "esm.over.ts": {
-    "output": "string \"1!\"\nnumber THROWS TypeError [--aot: expected number, got string]\nlen undefined\nn null\n"
-  },
-  "esm.ret_arr_strings.ts": {
-    "output": "0 THROWS TypeError [--aot: expected number, got string]\nmap [\"11\",\"21\"]\nreduce \"012\"\nfor of \"012\"\nsort [\"1\",\"2\"]\nincludes false\njoin \"1,2\"\nmax 2\n"
-  },
-  "esm.ret_fn_wrong.ts": {
-    "output": "call THROWS TypeError [--aot: expected number, got string]\nmap [\"1!\",\"2!\"]\ntypeof \"string\"\n"
-  },
-  "esm.ret_iter.ts": {
-    "output": "of \"001\"\nspread [\"0\",\"1\"]\nfrom THROWS TypeError [--aot: expected number | undefined, got string \"0\"]\ndestructured [\"0\",\"1\"]\n"
-  },
-  "esm.ret_num.ts": {
-    "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'number' and always gets string.\n"
-  },
-  "esm.ret_obj_wrong.ts": {
-    "output": "a \"11\"\nb \"2!\"\nb.length undefined\njson \"{\\\"a\\\":\\\"1\\\",\\\"b\\\":2}\"\nn 2\nf THROWS TypeError [--aot: expected number, got string \"1\"]\n"
-  },
-  "esm.ret_promise_thenable.ts": {
-    "output": "await THROWS TypeError [--aot: expected number, got string]\ninstanceof false\ncatch THROWS TypeError\n"
-  },
-  "esm.ret_promise_wrong.ts": {
-    "output": "await THROWS TypeError [--aot: expected number, got string]\nthen 10\ntypeof \"string\"\n"
-  },
-  "esm.ret_record.ts": {
-    "output": "a THROWS TypeError [--aot: expected number, got string]\ninherited 9\nkeys [\"a\"]\nin a\nin inherited\nnone undefined\nvalues [\"11\"]\n"
-  },
-  "esm.str_is_number.ts": {
-    "errors": "error: TS100013: This always throws a TypeError under --aot: the type of the expression expects 'string' and always gets number.\n"
-  },
-  "esm.takes_arr.ts": {
-    "output": "len 7\n3 \"pushed\"\njson \"[1,2,3,\\\"pushed\\\",null,1,null]\"\nsum THROWS TypeError [--aot: expected number | undefined, got string \"pushed\"]\nexit code 1\nTypeError: expected number | undefined, got string \"pushed\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "esm.takes_obj.ts": {
-    "output": "exit code 1\nTypeError: Cannot assign to 'a' of { a, b }: expected number, got string \"written by the package\" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
+    "errors": "error: TS100200: No matching export in \"node_modules/lie_e/index.js\" for import \"not_there_fn\"\n"
   }
 }

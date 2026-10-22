@@ -1,4 +1,4 @@
-// The right-hand side of a compound assignment turns the target field into an accessor: this throws after the old value was read and before anything is stored.
+// The right-hand side of a compound assignment turns the target field into an accessor: the old value was read before that, and the sum goes to the new setter.
 interface Acc { n: number; s: string }
 function show(o: object): string { return Object.keys(o).join() + " " + JSON.stringify(o) }
 const g3: Acc = { n: 1, s: "s" }

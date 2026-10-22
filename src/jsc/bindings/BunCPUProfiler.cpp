@@ -141,6 +141,26 @@ static WTF::String formatLocation(const WTF::String& url, int lineNumber)
     return path;
 }
 
+// Absolute file path → `file://` URL. Chrome DevTools expects `callFrame.url`
+// to be a proper URL; leaving the raw path breaks source-view resolution.
+static void normalizeURL(WTF::String& u)
+{
+    if (u.isEmpty())
+        return;
+    bool isAbsolutePath = false;
+    if (u[0] == '/') {
+        isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[1] == ':') {
+        char firstChar = u[0];
+        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+            isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+        isAbsolutePath = true;
+    }
+    if (isAbsolutePath)
+        u = WTF::URL::fileURLWithFileSystemPath(u).string();
+}
+
 // Helper to format time in human-readable form
 static WTF::String formatTime(double microseconds)
 {
@@ -393,31 +413,6 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         scriptId = static_cast<int>(provider->asID());
                     }
 
-                    // Absolute file path → `file://` URL. Chrome DevTools
-                    // expects `callFrame.url` to be a proper URL; leaving
-                    // the raw path breaks source-view resolution. We run
-                    // this AFTER the sourcemap callbacks below because the
-                    // callback (see FormatStackTraceForJS.cpp) unconditionally
-                    // rewrites its out-param back to the raw provider URL when
-                    // no sourcemap is found, which would undo an earlier
-                    // normalization. See #29240.
-                    auto normalizeURL = [](WTF::String& u) {
-                        if (u.isEmpty())
-                            return;
-                        bool isAbsolutePath = false;
-                        if (u[0] == '/') {
-                            isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[1] == ':') {
-                            char firstChar = u[0];
-                            if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
-                                isAbsolutePath = true;
-                        } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
-                            isAbsolutePath = true;
-                        }
-                        if (isAbsolutePath)
-                            u = WTF::URL::fileURLWithFileSystemPath(u).string();
-                    };
-
                     // Function definition location. JSC returns these 1-based;
                     // Node/Deno/Chrome DevTools emit them 0-based in the JSON.
                     // The definition (not the sample position) is remapped
@@ -449,7 +444,11 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                     }
 
                     // Normalize `url` to a `file://` URL now that any
-                    // sourcemap rewriting is done.
+                    // sourcemap rewriting is done. The callback (see
+                    // FormatStackTraceForJS.cpp) unconditionally rewrites its
+                    // out-param back to the raw provider URL when no sourcemap
+                    // is found, which would undo an earlier normalization.
+                    // See #29240.
                     normalizeURL(url);
 
                     if (frame.hasExpressionInfo()) {
@@ -485,10 +484,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         if (sourceMappedLineColumn.line > 0 && sampleURL == url)
                             sampleLine = static_cast<int>(sourceMappedLineColumn.line);
                     }
-                } else if (frame.isCompiled()) {
+                } else if (frame.isCompiledFrame()) {
                     url = frame.url();
-                    if (!url.isEmpty() && url[0] == '/')
-                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    normalizeURL(url);
                     scriptId = static_cast<int>(std::get<1>(frame.sourceProviderAndID()));
                     int definitionLine = frame.functionStartLine();
                     unsigned definitionColumn = frame.functionStartColumn();
@@ -693,10 +691,9 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
                         }
                         lineNumber = static_cast<int>(sourceMappedLineColumn.line);
                     }
-                } else if (frame.isCompiled()) {
+                } else if (frame.isCompiledFrame()) {
                     url = frame.url();
-                    if (!url.isEmpty() && url[0] == '/')
-                        url = WTF::URL::fileURLWithFileSystemPath(url).string();
+                    normalizeURL(url);
                     lineNumber = frame.hasExpressionInfo() ? static_cast<int>(frame.semanticLocation.lineColumn.line) : frame.functionStartLine();
                 }
 

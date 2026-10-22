@@ -1,4 +1,4 @@
-// An element read from an array whose elements are not in plain storage (a template object: it is frozen) is returned as it is when it fits the declared type. The program counts the elements that are returned so.
+// An element read from an array whose elements are not in plain storage (a template object: it is frozen) is returned as it is when it fits the declared type. The program counts how often the run time is asked whether a value fits.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
 interface Point {
@@ -20,5 +20,5 @@ const seen: unknown[] = [];
 for (let i = 0; i < 5; i++) seen.push(frozen[i]);
 const points = Object.freeze(JSON.parse('[{"x":1,"y":2}]')) as readonly Point[];
 const sum = points[0]!.x + points[0]!.y;
-const returned = counted ? counted("an element that fits is not coerced") : null;
-console.log(total, JSON.stringify(seen), sum, returned === null || returned >= 6000);
+const asked = counted ? counted("operationAOTEnforceType") : null;
+console.log(total, JSON.stringify(seen), sum, asked === null || asked < 100);

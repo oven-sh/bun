@@ -11,8 +11,8 @@ try { nums[0] += hide("x"); console.log("element: no error") } catch (e) { conso
 try { const n: number = nums[0]; console.log("read of the element: no error", n) } catch (e) { console.log("read of the element:", e instanceof TypeError ? "TypeError" : "other " + e) }
 r.n += hide(2); total += hide(2); r.s += hide("b"); r.e += hide("x")
 console.log("right", r.n, total, r.s, r.e)
-// Declared number | string: that is the place, and the store fits. To the checker (tsc too) the variable is still narrowed to `number` by its initializer
-// after `+= any`, so the read, whose type is `number`, asserts (Flow).
+// Declared number | string: the store fits. To the checker (tsc too) the variable is still narrowed to `number` by its initializer
+// after `+= any`. That narrowing is a prediction, so the read tests nothing.
 let wide: number | string = 1
 try { wide += hide("s"); console.log("store to number | string: no error") } catch (e) { console.log("store to number | string:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(wide); console.log("read narrowed to number: no error") } catch (e) { console.log("read narrowed to number:", e instanceof TypeError ? "TypeError" : "other " + e) }

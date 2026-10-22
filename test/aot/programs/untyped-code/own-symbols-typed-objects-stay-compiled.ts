@@ -30,7 +30,7 @@ console.log([x, plain(), withSymbol, i, [1], "ab", 5, x, () => 1].map(o => say(t
 console.log([null, undefined].map(o => { try { return say(through(o)); } catch (e) { return (e as Error).name; } }).join());
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const other = new Base(3);
-const before = counted("operationAOTTypedOwnPropertyKeys");
+const before = counted("operationAOTOwnPropertyKeys");
 let total = 0;
 for (let k = 0; k < 1000; k++) total += through(x).length + byType(x).length + through(other).length + ofInstance(other).length;
-console.log(total, counted("operationAOTTypedOwnPropertyKeys") - before);
+console.log(total, counted("operationAOTOwnPropertyKeys") - before);

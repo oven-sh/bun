@@ -1,7 +1,7 @@
 // A member keyed by a constant that holds Symbol.for("key") is a field of the layout; every other way to the same symbol reaches the same field.
-// IR+ field "[^"]*r:test.tag" undefined.null.string
-// IR= 0 read GetByVal
-// IR= 1 read : undefined.null.string = GetById .*r:test.tag"
+// IR+ ^layout L[0-9]+ .*\{name=RegisteredSymbol "[^"]*test.tag" declared=undefined.null.string
+// IR= 0 read ElemGet
+// IR= 1 read : undefined.null.string = PropGet v[0-9]+ name=RegisteredSymbol "[^"]*test.tag"
 import { readHere, readLoosely, type TaggedHere } from "./other";
 const kTag = Symbol.for("test.tag");
 const kCount = Symbol.for("test.count");
@@ -27,7 +27,7 @@ console.log(read(tagged), read(new Holder()), inFunction(tagged), Symbol.keyFor(
 tagged[kCount] = 5;
 console.log(inFunction(tagged), Reflect.ownKeys(tagged).map(String).join(), Object.getOwnPropertySymbols(tagged)[0] === Symbol.for("test.tag"));
 console.log(readLoosely(tagged), readLoosely(new Holder()), readLoosely({ [Symbol.for("test.tag")]: "plain" }));
-const here: TaggedHere = { n: 2, [Symbol.for("test.tag") as never]: "b" } as unknown as TaggedHere;
+const here: TaggedHere = { n: 2, [Symbol.for("test.tag") as any]: "b" } as unknown as TaggedHere;
 console.log(readHere(here), readHere(tagged as unknown as TaggedHere), read(here as unknown as Tagged));
 (tagged as any)[Symbol.for("test.tag")] = "stored";
 console.log(read(tagged), delete tagged[kCount], kCount in tagged, JSON.stringify(tagged), JSON.stringify({ ...tagged }), ({ ...tagged })[kTag]);

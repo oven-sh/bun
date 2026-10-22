@@ -1,2 +1,0 @@
-(made by typed code): 3.5
-made read-only by the untyped holder: THROWS TypeError: Cannot redefine property 'n' of Item: declared properties stay writable, enumerable and configurable data properties (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)

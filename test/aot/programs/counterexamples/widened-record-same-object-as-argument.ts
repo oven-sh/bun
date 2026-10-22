@@ -1,3 +1,4 @@
+// An object made as one record type gets the members of a larger one through `any` and is passed as that type. It has every member, so it is taken as it is: the same object, and a store through the parameter is seen through the first reference.
 function row(name: string, run: () => unknown): void {
   try {
     console.log(name + ": " + String(run()));

@@ -170,7 +170,7 @@ it("bun.lockb and bun.lockb --hash read only the lockfile", async () => {
 });
 
 // `git diff` with `textconv = bun` hands over a copy of the blob as `<tmp>/<random>_bun.lockb`.
-it("prints the file it is given, whatever its name and whatever lies next to it", async () => {
+it("prints the file it's given, regardless of its name and of the files next to it", async () => {
   const [v2, other] = await Promise.all(
     ["bun.lockb.v2", "unnamed-folder-dependency.lockb"].map(name =>
       file(join(import.meta.dir, "fixtures", name)).bytes(),
@@ -925,7 +925,7 @@ describe.concurrent("--frozen-lockfile after a migration, with a root postinstal
   };
 
   describe.each(Object.keys(foreign))("%s", name => {
-    it("bun pm migrate records what an install that migrates records", async () => {
+    it("bun pm migrate records the same things as an install that migrates", async () => {
       const results = [];
       for (const args of [
         ["pm", "migrate"],
@@ -980,7 +980,7 @@ describe.concurrent.each(["isolated", "hoisted"] as const)(
   "bun.lockb drops a version that only a peer held once the peer moves (%s)",
   linker => {
     it.each([
-      // one-dep's no-deps@1.0.1 goes to the top of the tree, and it is in the range of the peer.
+      // one-dep's no-deps@1.0.1 is placed at the top of the tree, and it's in the peer's range.
       ["down to the version at the top of the tree", {}, { "one-dep": "1.0.0" }, "no-deps@1.1.0"],
       ["up to the highest version in its range", { "no-deps": "1.0.1" }, { top: "npm:no-deps@1.1.0" }, "no-deps@1.0.1"],
     ])("%s", async (_, before, after, dropped) => {
@@ -1213,7 +1213,7 @@ const binShapeRows = [
 ];
 
 it("bun pm migrate stores every byte of each bin in bun.lockb", async () => {
-  // Nothing is fetched: no package has a dependency.
+  // Nothing is fetched, because no package has a dependency.
   const files = {
     "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
     "pnpm-lock.yaml": `lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n${binShapeImporters}`,

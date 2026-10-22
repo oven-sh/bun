@@ -1,3 +1,4 @@
+// The texts of parsed-misfits-reach-typed-functions-in-seven-ways, cast to an unrelated type first and to the type they are read as afterwards. Each cast lets any object pass as it is and throws for a number, a string or a boolean. A missing field reads undefined, and a field of another kind throws at its first typed read.
 interface Point { x: number; y: number }
 interface Row { id: number; name: string; at: Point; next: Row | null }
 interface Other { id: number }

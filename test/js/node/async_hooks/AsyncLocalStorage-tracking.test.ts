@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Glob } from "bun";
 import { describe, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isBroken, isLinux, nodeExe } from "harness";

@@ -11,6 +11,7 @@ const byImport = async () => { try { return JSON.stringify(await import("./throw
 export const cases: Case[] = [
   {
     name: "throws-twice",
+    differs: "A CommonJS module of the executable runs at most once: where it threw, the next `require()` throws the same error again and does not run it anew.",
     files: {
       "throws-twice.cjs": `globalThis.evaluations = (globalThis.evaluations || 0) + 1;
 exports.before = "before " + globalThis.evaluations;

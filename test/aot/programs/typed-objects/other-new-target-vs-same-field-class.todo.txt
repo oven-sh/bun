@@ -1,1 +1,0 @@
-Reflect.construct() throws "TypeError: Cannot construct Probed with a different new.target": Probed fits the closed class Point, so its objects may not give up their layout. Without Point it is served.

@@ -1,6 +1,0 @@
-a
-complete: x
-partial: THROWN: expected Session, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-  property 'type' is missing in untyped object but required in Session
-new enum value: z
-one member more: w

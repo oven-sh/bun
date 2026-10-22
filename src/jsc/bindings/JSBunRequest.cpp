@@ -1,6 +1,5 @@
 #include "root.h"
 
-#include <JavaScriptCore/AOTFunction.h>
 #include <JavaScriptCore/JSCell.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSObject.h>
@@ -293,12 +292,7 @@ Structure* createJSBunRequestStructure(JSC::VM& vm, Zig::GlobalObject* globalObj
 {
     auto prototypeStructure = JSBunRequestPrototype::createStructure(vm, globalObject, globalObject->JSRequestPrototype());
     auto* prototype = JSBunRequestPrototype::create(vm, globalObject, prototypeStructure);
-    globalObject->lockHostClassPrototype(prototype);
-    auto* structure = JSBunRequest::createStructure(vm, globalObject, prototype);
-#if ENABLE(AOT)
-    JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::bunRequestHostClass, structure);
-#endif
-    return structure;
+    return JSBunRequest::createStructure(vm, globalObject, prototype);
 }
 
 extern "C" EncodedJSValue Bun__getParamsIfBunRequest(JSC::EncodedJSValue thisValue)

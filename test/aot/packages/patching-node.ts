@@ -117,7 +117,7 @@ exports.ok = r;
     "other.js": `globalThis.__n = (globalThis.__n || 0) + 1;
 exports.n = globalThis.__n;
 `,
-  }),
+  }, { differs }),
   ...inBothModes("buffer-static", "pn_buffer_static", {
     "index.js": `var orig = Buffer.from; var n = 0;
 Buffer.from = function () { n++; return orig.apply(Buffer, arguments); };
@@ -128,7 +128,7 @@ exports.ok = [n, b.length];
     "other.js": `globalThis.__n = (globalThis.__n || 0) + 1;
 exports.n = globalThis.__n;
 `,
-  }),
+  }, { differs }),
   ...inBothModes("stream-prototype", "pn_stream_prototype", {
     "index.js": `var S = require("stream");
 var orig = S.Readable.prototype.pipe; var n = 0;
@@ -199,7 +199,7 @@ exports.ok = [r, seen];
     "other.js": `globalThis.__n = (globalThis.__n || 0) + 1;
 exports.n = globalThis.__n;
 `,
-  }),
+  }, { differs: "A name that is made at run time brings nothing into the executable: `require(name)` of a built-in module that no file names throws." }),
   ...inBothModes("module-extensions", "pn_module_extensions", {
     "index.js": `var r = [];
 try { require.extensions[".mine"] = function (m, f) { m.exports = "loaded by my extension"; }; r.push(typeof require.extensions[".mine"]); delete require.extensions[".mine"]; } catch (e) { r.push(e.name); }

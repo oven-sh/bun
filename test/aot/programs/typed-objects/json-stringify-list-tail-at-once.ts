@@ -1,3 +1,5 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 interface Item { id: number; title?: string; price?: number }
 interface Page { total: number; rows: Item[] }
@@ -17,12 +19,12 @@ function sum(text: string): number {
     return value;
 }
 function measure(label: string, run: () => string): void {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
-    const values = aotOperationCount("operationAOTTypedJSONAppendValue");
-    const rests = aotOperationCount("operationAOTTypedJSONAppendElementsFrom");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const values = aotOperationCount("operationAOTJSONAppendValue");
+    const rests = aotOperationCount("operationAOTJSONAppendElements");
     let text = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)) + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTTypedJSONAppendValue") - values) + " values and " + (aotOperationCount("operationAOTTypedJSONAppendElementsFrom") - rests) + " rests of lists handed to the runtime");
+    console.log(label + ": " + (text.length < 150 ? text : text.length + " characters, " + sum(text)) + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - values) + " values and " + (aotOperationCount("operationAOTJSONAppendElements") - rests) + " rests of lists handed to the runtime");
 }
 function list(count: number, make: (i: number) => Item): Item[] {
     const made: Item[] = [];

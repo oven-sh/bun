@@ -1,6 +1,6 @@
 // Object.assign(target, source ..) where the target is there already, or a second source follows the first: every property is stored, which asks the target and what it inherits from: setters run, what cannot be written refuses, `__proto__` changes the prototype. Where none of that is in the way the properties of a source of one shape go into a target of one shape by a plan that is made once.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const byPlan = () => counted ? counted("operationAOTTypedObjectAssignFrom:copied") : 0;
+const byPlan = () => counted ? counted("operationAOTObjectAssignFrom") : 0;
 const lines = [];
 const mark = Symbol("mark"), other = Symbol("other");
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? String(d.value) : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");

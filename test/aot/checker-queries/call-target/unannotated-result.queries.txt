@@ -1,0 +1,3 @@
+# A result the checker inferred is unwritten.
+unannotated-result.ts:3 call result `f(1)` = unwritten checked number
+unannotated-result.ts:3 call signature `f(1)` = (number checked number) this unwritten checked any returns unwritten checked number

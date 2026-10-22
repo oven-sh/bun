@@ -1,8 +1,0 @@
-a record as a class: TypeError while it was loaded
-a list as a class: TypeError while it was loaded
-a function as a class or null: TypeError while it was loaded
-a record as a class with a private field: TypeError while it was loaded
-a list as an error: TypeError while it was loaded
-a getter as a field that holds a function: object
-a string read as a number: TypeError while it was loaded
-a number read as an object: TypeError while it was loaded

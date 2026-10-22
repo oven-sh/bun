@@ -4,14 +4,14 @@
 {"id":70,"author":{"nick":"a","editor":null},"tags":["x","y"],"note":"n","added":1} 70 a x+y R n -
 2 a x+y R [object Object] -
 3 a x+y R undefined -
-TypeError: expected Post, got untyped object
-TypeError: expected Post, got untyped object
-TypeError: expected Post, got untyped object
-TypeError: expected Post, got untyped object
-TypeError: expected Post, got untyped object
-TypeError: Cannot read properties of null (reading 'nick')
+TypeError: expected string[], got string "no array"
+TypeError: expected Function, got string "no function"
+TypeError: expected Author, got string "no author"
+7 undefined x+y R 0 -
+8 undefined x+y R 0 -
+TypeError: null is not an object
 10.5 a x+y R 0 -
-TypeError: expected Post, got untyped object
+TypeError: expected number, got string "11"
 12 a x+y r 0 -
 13 a s R  -
 14 a x+y R Symbol(Symbol.iterator) -

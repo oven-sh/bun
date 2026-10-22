@@ -1,4 +1,4 @@
-// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The data lacks the member. No cast names the record type, so nothing throws, as in plain Bun. The program must behave as in plain Bun.
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The data lacks the member: it reads undefined, which passes every written type. The program must behave as in plain Bun.
 type Part = { id?: number; name?: string; more?: unknown }
 type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
 class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }

@@ -168,7 +168,7 @@ declare namespace FZ {
     ): void;
   }
   type ErrorHandler = (error: Thrown, errorInfo: ThrownInfo) => any; // the user's, or defaultErrorHandler. The result: a digest; what is no string | null | undefined is dropped
-  // PostponeHandler (Request.onPostpone: the user's, or noop) stands in fz-shapes-05.d.ts: piece 5's agent wrote it there: ONE declaration
+  // PostponeHandler (Request.onPostpone: the user's, or noop) stands in fz-shapes-05.d.ts: ONE declaration
   type ErrorDigest = string | null | undefined; // logRecoverableError's result
 
   // -------------------------------------------------------------------------------------------------------------------

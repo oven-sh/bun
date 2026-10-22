@@ -32,7 +32,7 @@ j2 string
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }
-const parse = JSON.parse as (text: string) => number
+const parse: (text: string) => number = JSON.parse
 attempt("a1", () => parse("5") + 1)
 attempt("a2", () => parse('"5"') + 1)
 attempt("a3", () => parse("[5]") + 1)
@@ -57,11 +57,11 @@ attempt("f1", () => wrong.size() + 1)
 attempt("f2", () => right.size() + 1)
 attempt("f3", () => { const apis: Api[] = [right, wrong]; let s = 0; for (const a of apis) s += a.size(); return s })
 attempt("f4", () => (wrong as any).size())
-// An ordinary object (a literal checked against `any` is one) is copied into the type by the cast. Its function is called as the type says.
+// An ordinary object (a literal checked against `any` is one) passes the cast as it is. Its function is called as the type says.
 const plainWrong: any = { size: () => "big" }, plainRight: any = { size: () => 3 }
 attempt("f5", () => (plainWrong as Api).size() + 1)
 attempt("f6", () => (plainRight as Api).size() + 1)
-// An object of the program that was created as another type: it has the target type if its own type is assignable to it; otherwise the cast lets it through unchanged.
+// An object of the program that was created as another type passes the cast as it is.
 attempt("f7", () => typeof ({ size: () => "big" } as unknown as Api))
 attempt("f8", () => ({ size: () => 3 } as unknown as Api).size() + 1)
 // A function value that travels through a field of function type.

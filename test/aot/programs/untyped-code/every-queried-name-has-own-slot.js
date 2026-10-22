@@ -502,7 +502,7 @@ function read9(o) {
 const readers = [read0, read1, read2, read3, read4, read5, read6, read7, read8, read9];
 const readAll = o => { let s = 0; for (const read of readers) s = Math.imul(s, 31) + read(o) | 0; return s; };
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTGetByNameAndCache");
+const visits = () => count("operationAOTGetByIdAndCache");
 class Parent {
   get a7() { return 7; } get a2055() { return 2055; } get a4103() { return 4103; }
   a11() { return 11; } a2059() { return 2059; }

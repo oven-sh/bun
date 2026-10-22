@@ -1,8 +1,8 @@
 {
- "nils_flag_bare": "alone: null in it loop: TypeError\nnull in it within: TypeError\nnull in it of: TypeError\nnull in it at: TypeError",
+ "nils_flag_bare": "all agree",
  "nils_flag_both": "all agree",
  "nils_flag_null": "all agree",
- "nils_flag_undef": "alone: null in it loop: TypeError\nnull in it within: TypeError\nnull in it of: TypeError\nnull in it at: TypeError",
+ "nils_flag_undef": "all agree",
  "nils_rec_bare": "all agree",
  "nils_rec_both": "all agree",
  "nils_rec_null": "all agree",

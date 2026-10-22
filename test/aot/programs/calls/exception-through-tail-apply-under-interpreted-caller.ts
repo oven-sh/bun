@@ -1,7 +1,8 @@
 // Interpreted code (new Function) calls a compiled function, which tail-calls `f.apply(thisArg, list)` with a list that is not a
 // plain array, and `f` is interpreted code that throws. The call goes through C++ and a nested VM entry. Unwinding to that
 // entry must not restore the registers saved by the adapter frame on the far side of it.
-function row(name: string, run: () => unknown) { try { console.log(name + ": " + String(run())); } catch (e) { console.log(name + ": caught " + String(e)); } }
+// The text of the language's own TypeError is left out: only the program's own begin with "thrown".
+function row(name: string, run: () => unknown) { let line: string; try { line = name + ": " + String(run()); } catch (e) { line = name + ": caught " + String(e); } console.log(line.replace(/TypeError: (?!thrown ).*/, "TypeError")); }
 const throwsError = new Function("a", "throw new TypeError('thrown ' + a);");
 const throwsNumber = new Function("a", "throw 1;");
 const readsNull = new Function("a", "return null.x;");

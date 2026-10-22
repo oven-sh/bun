@@ -28,7 +28,7 @@
 #include "IDLTypes.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMGlobalObject.h"
-#include <JavaScriptCore/AOTFunction.h>
+#include <JavaScriptCore/AOTPropertyWalk.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
@@ -195,17 +195,20 @@ private:
             return result;
         }
 
-        if (object->type() == JSC::ObjectType) {
+#if ENABLE(AOT)
+        if (JSC::AOT::PropertyWalk::isCompiledObject(object)) {
             Vector<JSC::Identifier, 8> identifiers;
             JSC::MarkedArgumentBuffer fieldValues;
-            bool hasOnlyPrimitives = true;
-            bool isCompiledObject = JSC::AOT::Typed::forEachCompiledObjectOwnProperty(object, [&](UniquedStringImpl& name, JSC::JSValue fieldValue) {
-                identifiers.append(JSC::Identifier::fromUid(vm, &name));
-                fieldValues.appendWithCrashOnOverflow(fieldValue);
-                hasOnlyPrimitives &= !fieldValue.isObject();
-                return true;
+            auto walkResult = JSC::AOT::PropertyWalk::forEachOwnProperty(vm, object, JSC::AOT::PropertyWalk::Filter::StringsAndSymbols, [&](const JSC::AOT::PropertyWalk::OwnProperty& property) -> WTF::IterationStatus {
+                if (property.attributes & JSC::PropertyAttribute::DontEnum)
+                    return WTF::IterationStatus::Continue;
+                if (property.value.isObject())
+                    return WTF::IterationStatus::Done;
+                identifiers.append(JSC::Identifier::fromUid(vm, property.name));
+                fieldValues.appendWithCrashOnOverflow(property.value);
+                return WTF::IterationStatus::Continue;
             });
-            if (isCompiledObject && hasOnlyPrimitives) {
+            if (walkResult == JSC::AOT::PropertyWalk::Result::Completed) {
                 for (size_t i = 0; i < identifiers.size(); ++i) {
                     auto typedKey = Detail::IdentifierConverter<K>::convert(lexicalGlobalObject, identifiers[i]);
                     RETURN_IF_EXCEPTION(scope, {});
@@ -225,6 +228,7 @@ private:
                 return result;
             }
         }
+#endif
 
         // 4. Let keys be ? O.[[OwnPropertyKeys]]().
         JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);

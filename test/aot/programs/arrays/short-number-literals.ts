@@ -1,9 +1,9 @@
 // An array literal of up to four numbers is made by one call. A NaN among them makes the same array as anywhere else, and what is pushed, read and listed afterwards is what plain arrays give.
-// CALLS+ one ArrayLiteralWithDouble1
-// CALLS+ two ArrayLiteralWithDouble2
-// CALLS+ three ArrayLiteralWithDouble3
-// CALLS+ four ArrayLiteralWithDouble4
-// CALLS- three NewArrayWithDouble
+// CALLS+ one ArrayLiteralWithDouble\.n1
+// CALLS+ two ArrayLiteralWithDouble\.n2
+// CALLS+ three ArrayLiteralWithDouble\.n3
+// CALLS+ four ArrayLiteralWithDouble\.n4
+// CALLS- three NewArrayWithLength
 // SIZE< three 60
 function one(a: number): number[] { return [a]; }
 function two(a: number, b: number): number[] { return [a, b]; }

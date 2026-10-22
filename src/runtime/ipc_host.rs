@@ -484,6 +484,11 @@ pub(crate) fn get_ipc_instance(
     if let Some(inst) = CHANNEL.get() {
         return Some(inst.as_ptr());
     }
+    if bun_removable_features::is_removed(bun_removable_features::Feature::Ipc)
+        && bun_removable_features::is_removed(bun_removable_features::Feature::Spawn)
+    {
+        return None;
+    }
     let pending = vm.pending_ipc.take()?;
     let fd = pending.fd;
     let mode = if pending.advanced {

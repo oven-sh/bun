@@ -1,4 +1,4 @@
-// Local values of a union of string literals that come together from several paths: only printed, only tested, both, made from strings, in loops and around handlers.
+// Local values of a union of string literals that come together from several paths: only printed, only tested, both, made from strings, in loops and around handlers. A string that is made at run time passes a cast to the union whether or not it is one of its members.
 type Mode = "read" | "write" | "append" | "";
 interface File { mode: Mode; name: string }
 const log: string[] = [];
@@ -75,11 +75,14 @@ function bySwitch(n: number): string {
     }
     return `[${mode}]`;
 }
+function attempt(run: () => string | number): string | number {
+    try { return run(); } catch (error) { return (error as Error).constructor.name; }
+}
 const counts: Record<string, number> = {};
 const out: (string | number | boolean)[] = [];
 for (const a of [true, false]) for (const b of [true, false]) out.push(onlyPrinted(a, b), usedAsKey(a, counts), onlyTested(a, b), twoJoined(a, b));
 for (let n = 0; n < 4; n++) out.push(testedAndPrinted(n), aroundHandlers(n), nullable(n), bySwitch(n), inLoop(n * 3));
-for (const text of ["read", "wri" + "te", "", "other", "append".slice(0, 6), "xread".slice(1)]) out.push(fromString(text), fromStringOrConstant(text), JSON.stringify(intoField(text, false)), intoField(text, true).mode);
+for (const text of ["read", "wri" + "te", "", "other", "append".slice(0, 6), "xread".slice(1)]) out.push(attempt(() => fromString(text)), attempt(() => fromStringOrConstant(text)), attempt(() => JSON.stringify(intoField(text, false))), intoField(text, true).mode);
 out.push(fromStringOrConstant(undefined), JSON.stringify(counts));
 console.log(out.join(" | "));
 console.log(log.join(" | "));

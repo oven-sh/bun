@@ -357,7 +357,7 @@ describe("?raw", () => {
       await using question_raw = tempDir("import-attributes", {
         [filename]: code,
       });
-      expect(await fn(String(question_raw), null, filename + "?raw")).toEqual({ default: code });
+      expect(await fn(question_raw, null, filename + "?raw")).toEqual({ default: code });
     });
   }
 });

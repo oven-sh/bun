@@ -1,4 +1,4 @@
-// Every syntactic position a call can be in: the stack trace taken inside the callee shows whether the caller gave up its frame, as in plain Bun.
+// Every syntactic position a call can be in: the stack trace taken inside the callee shows whether the caller gave up its frame, as in plain Bun. A cast is no call and no test: `return probe() as unknown as number` is a tail call like `return probe()`.
 declare const console: any;
 let seen: string = "";
 function frames(): string { return String(new Error("x").stack).split("\n").filter(l => /t_[a-zA-Z0-9_]+/.test(l)).map(l => /(t_[a-zA-Z0-9_]+)/.exec(l)![1]).join(" "); }
@@ -6,7 +6,7 @@ function framesOf(e: any): string { return String(e.stack).split("\n").filter((l
 function probe(): string { seen = frames(); return seen; }
 function probeObject(): any { seen = frames(); return { seen }; }
 function other(): string { return "other"; }
-function row(name: string, f: () => any) { seen = "-"; try { f(); } catch (e: any) { seen = "threw " + e; } console.log(name + ": [" + seen + "]"); }
+function row(name: string, f: () => any) { seen = "-"; try { f(); } catch (e: any) { seen = "threw " + e.constructor.name; } console.log(name + ": [" + seen + "]"); }
 const yes: boolean = Date.now() > 0, no: boolean = !yes;
 const nil: any = yes ? undefined : "x";
 function t_return(): string { return probe(); }
@@ -320,6 +320,21 @@ row("class_called", () => { try { t_class_called(Klass); } catch (e: any) { seen
 const o8 = { get m(): any { throw new Error("getter"); } };
 function t_getter_throws(o: any): any { return o.m(); }
 row("getter_throws", () => { try { t_getter_throws(o8); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });
+function t_getter_throws_typed(o: any): number { return o.m(); }
+row("getter_throws_typed", () => { try { t_getter_throws_typed(o8); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });
+const o9 = { get m(): any { probe(); return other; } };
+function t_getter_probes_typed(o: any): string { return o.m(); }
+row("getter_probes_typed", () => { const s: any = t_getter_probes_typed(o9); return s; });
+const nextThrows = { [Symbol.iterator]() { return { next(): any { throw new Error("next"); } }; } };
+function t_spread_next_throws(f: any, xs: any): any { return f(...xs); }
+row("spread_next_throws", () => { try { t_spread_next_throws(other, nextThrows); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });
+function t_spread_next_throws_typed(f: any, xs: any): string { return f(...xs); }
+row("spread_next_throws_typed", () => { try { t_spread_next_throws_typed(other, nextThrows); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });
+const nextProbes = { [Symbol.iterator]() { return { next(): any { probe(); return { done: true }; } }; } };
+function t_spread_next_probes_typed(f: any, xs: any): string { return f(...xs); }
+row("spread_next_probes_typed", () => { const s: any = t_spread_next_probes_typed(other, nextProbes); return s; });
+function t_spread_callee_probes_typed(f: any, xs: any): string { return f(...xs); }
+row("spread_callee_probes_typed", () => { const s: any = t_spread_callee_probes_typed(probe, [] as any[]); return s; });
 function t_thrower(): any { throw new Error("thrown"); }
 function t_callee_throws(): any { return t_thrower(); }
 row("callee_throws", () => { try { t_callee_throws(); } catch (e: any) { seen = e.constructor.name + " " + framesOf(e); } });

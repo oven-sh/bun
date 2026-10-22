@@ -45,6 +45,6 @@ test.concurrent.each([
 test.concurrent.each([
   ["a value", `EventEmitter.prototype.noDeprecation = true;`, "done\n"],
   ["an accessor", `Object.defineProperty(EventEmitter.prototype, "noDeprecation", { get() { console.log("asked", this === process); return true; } });`, "asked true\nasked true\ndone\n"],
-])("a compiled program does not look for noDeprecation on what process inherits from: %s", async (_, text, plainly) => {
-  expect(await plainlyAndCompiled(text)).toEqual({ plainly, compiled: warned, exitCodes: [0, 0] });
+])("a compiled program finds noDeprecation on what process inherits from, as Bun does: %s", async (_, text, stdout) => {
+  expect(await plainlyAndCompiled(text)).toEqual({ plainly: stdout, compiled: stdout, exitCodes: [0, 0] });
 }, 240_000);

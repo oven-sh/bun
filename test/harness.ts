@@ -77,6 +77,9 @@ function detectASAN(): boolean {
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
+  // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child
+  // process gets depends on the other variables.
+  ...(isWindows && { Path: undefined, PATH: process.env.PATH }),
   // Strip ad-hoc JSC debug options that may be set on CI agents — they leak
   // a "WARNING: failed to parse" line to stderr that breaks snapshot tests.
   JSC_useJIT: undefined,
@@ -163,23 +166,34 @@ export function bunExe() {
  * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
  * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
  * not expose, so the listener is a raw libc socket.
+ *
+ * On macOS the listener is bound to lo0. With SYN cookies on (net.inet.tcp.syncookie),
+ * XNU answers the SYN for a full accept queue and resets the connection when its ACK
+ * arrives, except for a listener bound to a loopback interface, which gets no SYN cookies.
  */
 export const blackholePortSource = `
 const net = require("node:net");
 const { dlopen, ptr } = require("bun:ffi");
 const darwin = process.platform === "darwin";
 const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-  socket:      { args: ["int", "int", "int"],  returns: "int" },
-  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-  listen:      { args: ["int", "int"],         returns: "int" },
-  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+  socket:         { args: ["int", "int", "int"],               returns: "int" },
+  if_nametoindex: { args: ["ptr"],                             returns: "u32" },
+  setsockopt:     { args: ["int", "int", "int", "ptr", "int"], returns: "int" },
+  bind:           { args: ["int", "ptr", "int"],               returns: "int" },
+  listen:         { args: ["int", "int"],                      returns: "int" },
+  getsockname:    { args: ["int", "ptr", "ptr"],               returns: "int" },
 });
-const AF_INET = 2, SOCK_STREAM = 1;
+const AF_INET = 2, SOCK_STREAM = 1, IPPROTO_IP = 0, IP_BOUND_IF = 25;
 const addr = new Uint8Array(16);
 if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
 addr.set([127, 0, 0, 1], 4);
 const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+if (fd < 0) throw new Error("socket failed");
+if (darwin) {
+  const lo0 = new Uint32Array([libc.symbols.if_nametoindex(ptr(Buffer.from("lo0\\0")))]);
+  if (lo0[0] === 0 || libc.symbols.setsockopt(fd, IPPROTO_IP, IP_BOUND_IF, ptr(lo0), 4) !== 0) throw new Error("IP_BOUND_IF failed");
+}
+if (libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
 const len = new Uint32Array([16]);
 if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
 const port = (addr[2] << 8) | addr[3];
@@ -1636,21 +1650,24 @@ export function joinP(...paths: string[]) {
  * we need to do case-insensitive stuff within our Bun.spawn implementation
  *
  * Windows has case-insensitive environment variables, so sometimes an
- * object like { Path: "...", PATH: "..." } will be passed. Bun lets
- * the first one win, but we really want the LAST one to win.
+ * object like { Path: "...", PATH: "..." } will be passed. Which one a
+ * child gets depends on the other variables, but we really want the LAST
+ * one to win.
  *
  * This is mostly needed if you want to override env vars, such like:
  *   env: {
- *     ...bunEnv,
+ *     ...env,
  *     PATH: "my path override here",
  *   }
  * becomes
  *   env: mergeWindowEnvs([
- *     bunEnv,
+ *     env,
  *     {
  *       PATH: "my path override here",
  *     },
  *   ])
+ *
+ * bunEnv spells PATH that way on every platform and does not need it for that.
  */
 export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
   const keys: Record<string, string | undefined> = {};

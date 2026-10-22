@@ -49,11 +49,11 @@ for (const pattern of patterns) console.log(attempt("/users/12", pattern), conve
 const receivers = [12345, true, { match(pattern) { return "my own match " + pattern; } }, ["a1"], new String("boxed 12"), null, undefined, 12n, { match: 7 }];
 for (const receiver of receivers) console.log(attempt(receiver, /\d+/));
 
-const before = count("operationAOTTypedStringMatchRegExp");
+const before = count("operationAOTStringMatchRegExp");
 let total = 0;
 for (let turn = 0; turn < 3000; turn++) {
   const found = match(paths[turn % 4], route);
   if (found) total += found.length;
   total += match("a1b22c333", global).length;
 }
-console.log(total, !counts || count("operationAOTTypedStringMatchRegExp") - before >= 3000 ? "the stub is asked" : "THE STUB IS NOT ASKED");
+console.log(total, !counts || count("operationAOTStringMatchRegExp") - before >= 3000 ? "the stub is asked" : "THE STUB IS NOT ASKED");

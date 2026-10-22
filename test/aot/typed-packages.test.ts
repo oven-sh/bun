@@ -1,12 +1,14 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { appendFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, told, unsupported } from "./run-programs";
+import { openTypesFlags } from "./open-types";
 
 const host = join(import.meta.dir, "typed-packages", "react-reconciler-host");
-const typedVersion = join(import.meta.dir, "..", "..", "packages", "bun-sound", "react-reconciler", "0.33.0", "lay");
+const typedVersion = join(host, "typed-bundle");
 const typedFile = "node_modules/react-reconciler/cjs/react-reconciler.production.ts";
+const typedModulePath = (isWindows ? "B:/~BUN/root/" : "/$bunfs/root/") + typedFile;
 const flags = ["--define", `process.env.NODE_ENV="production"`, "--outfile", "app"];
 
 describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
@@ -24,12 +26,14 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     return folder;
   }
 
-  function compiledOf(map: string, file: string) {
+  function compiledOf(map: string, modulePath: string) {
     const found = { typed: { bytes: 0, names: new Set<string>() }, untyped: { bytes: 0, names: new Set<string>() } };
     for (const line of readFileSync(map, "utf8").split("\n")) {
       const fields = line.split("\t");
-      if (fields[0] !== "F" || fields[10] !== file || fields[8] === "module") continue;
-      const kind = fields[8].includes("untyped") ? found.untyped : found.typed;
+      // A function as it is written is "typed" or "untyped", its general entry "generic-typed" or "generic-untyped". What the compiler makes of one (a result worker, a construct body ..) says neither.
+      const [, word] = /^(?:generic-)?(typed|untyped)$/.exec(fields[8] ?? "") ?? [];
+      if (fields[0] !== "F" || fields[10] !== modulePath || word === undefined) continue;
+      const kind = word === "untyped" ? found.untyped : found.typed;
       kind.bytes += Number(fields[3]);
       kind.names.add(fields[7]);
     }
@@ -54,7 +58,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     "commitHookEffectListUnmount",
   ];
   function expectTyped(map: string) {
-    const { typed, untyped } = compiledOf(map, typedFile);
+    const { typed, untyped } = compiledOf(map, typedModulePath);
     expect(typed.bytes).toBeGreaterThan(200_000);
     expect(untyped.bytes).toBeLessThan(typed.bytes / 50);
     expect(hot.filter(name => !typed.names.has(name) || untyped.names.has(name))).toEqual([]);
@@ -66,7 +70,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
       const map = join(folder, "app.map");
       const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
       built(build);
-      expect(build.stdout + build.stderr).not.toContain("compiled untyped");
+      expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
       expectTyped(map);
       const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
       expect(compiled.signal).toBeNull();
@@ -77,7 +81,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     }), 600_000);
 
   const typesInstalled: Record<string, (folder: string) => object> = {
-    "a bun-types that lacks int32": folder => {
+    "a bun-types without int32": folder => {
       const types = join(folder, "node_modules", "@types", "bun");
       mkdirSync(types, { recursive: true });
       writeFileSync(join(types, "package.json"), JSON.stringify({ name: "@types/bun", version: "1.0.0", types: "index.d.ts" }));
@@ -86,8 +90,8 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
     },
     "the bun-types of this repository": () => ({ typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"] }),
   };
-  for (const [world, install] of Object.entries(typesInstalled))
-    test(`the typed react-reconciler is compiled typed with ${world}`, () =>
+  for (const [installedTypes, install] of Object.entries(typesInstalled))
+    test(`the typed react-reconciler is compiled typed with ${installedTypes}`, () =>
       slot(async () => {
         expect(readFileSync(join(typedVersion, "cjs", "react-reconciler.production.ts"), "utf8")).toContain(`type int32 = import("bun").int32;`);
         const folder = project("aot-typed-reconciler-types");
@@ -97,7 +101,7 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
         const map = join(folder, "app.map");
         const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
         built(build);
-        expect(build.stdout + build.stderr).not.toContain("compiled untyped");
+        expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
         expectTyped(map);
       }), 600_000);
 
@@ -106,22 +110,26 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
       const folder = project("aot-typed-reconciler-look-alikes");
       const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "with-look-alikes.ts"], folder, bunEnv);
       built(build);
-      expect(build.stdout + build.stderr).not.toContain("compiled untyped");
+      expect(build.stdout + build.stderr).not.toMatch(/compiled (untyped|without (its |their )?types)/);
       const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
       expect(compiled.signal).toBeNull();
       expect(told(compiled)).toEqual(told(await spawned([bunExe(), "run", "with-look-alikes.ts"], folder, bunEnv)));
     }), 600_000);
 
-  // TODO(aot): since `any` held to a record opens it for records of other layouts, all but StackCursor are open: a fifth more instructions an update.
-  test.failing("the records that an update walks admit no object from outside, whatever the program is given", () =>
+  // TODO: the records are open as soon as the look-alikes are in the program.
+  test.todo("the records that an update walks stay closed in a program with look-alikes", () =>
     slot(async () => {
       const folder = project("aot-typed-reconciler-records");
-      const build = await spawned([bunExe(), "build", "--compile", "--aot", "--aot-explain=foreign", ...flags, "with-look-alikes.ts"], folder, bunEnv);
+      const build = await spawned([bunExe(), "build", "--compile", "--aot", ...openTypesFlags, ...flags, "with-look-alikes.ts"], folder, bunEnv);
       built(build);
-      const open = (build.stdout + build.stderr).split("\n").flatMap(line => /^aot: foreign: ([A-Za-z]+):/.exec(line)?.[1] ?? []);
-      expect(open).toContain("ConcurrentQueue");
-      const walked = ["Fiber", "FiberRoot", "Hook", "HookQueue", "Effect", "FunctionComponentUpdateQueue", "Update", "UpdateQueue", "SharedQueue", "ContextDependency", "StackCursor"];
-      expect(walked.filter(name => open.includes(name))).toEqual([]);
+      const said = build.stdout + build.stderr;
+      // `aot: unknown-code: read-from-shared-object at main.ts:1:2, 1 access, types 'Hook', why written-by-runtime-code`
+      const explained = /^aot: (?:unknown-code|unproven-type): [a-z-]+ at .+?:\d+:\d+, [\d,]+ access(?:es)?, types ('.+?'(?:, '.+?')*)/gm;
+      const open = new Set([...said.matchAll(explained)].flatMap(([, names]) => names.split(", ").map(name => name.slice(1, -1))));
+      // The data from outside is explained, which shows that the report is read.
+      expect(said).toMatch(/^aot: unproven-type: unexpected-shape at with-look-alikes\.ts:/m);
+      const walked = ["FiberNode", "FiberRootNode", "Hook", "HookQueue", "Effect", "FunctionComponentUpdateQueue", "Update", "UpdateQueue", "SharedQueue", "ContextDependency", "StackCursor"];
+      expect(walked.filter(name => open.has(name))).toEqual([]);
     }), 600_000);
 
   test("a package of TypeScript files that has no typed version falls back to untyped, says why, and the compile line counts it", () =>
@@ -132,10 +140,10 @@ describe.skipIf(!!unsupported)("compile/aot/typed-packages", () => {
       const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts"], folder, { ...bunEnv, BUN_JSC_aotMapFilePath: map });
       built(build);
       const said = build.stdout + build.stderr;
-      expect(said).toContain("TS100009: 'react-reconciler' has 1 type error,");
+      expect(said).toContain("TS100009: 'react-reconciler' has 1 type error (");
       expect(said).toContain("TS2322: Type 'string' is not assignable to type 'number'.");
-      expect(said).toMatch(/compile +app(\.exe)? +1 compiled untyped/);
-      const { typed, untyped } = compiledOf(map, typedFile);
+      expect(said).toMatch(/compile +app(\.exe)? +1 file compiled without types/);
+      const { typed, untyped } = compiledOf(map, typedModulePath);
       expect(untyped.bytes).toBeGreaterThan(typed.bytes * 50);
       const compiled = await spawned([join(folder, "app")], folder, { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
       expect(compiled.signal).toBeNull();

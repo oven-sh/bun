@@ -7,7 +7,7 @@
 // In a debug build, the import is always allowed.
 // It is disallowed in release builds unless run in Bun's CI.
 
-const fmtBinding = $bindgen("fmt_jsc.bind.ts", "fmtString");
+const fmtBinding: (code: string, formatter: string) => string = $bindgen("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
@@ -51,7 +51,7 @@ export const highwayStringsForTesting: (
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
-  statement: import("bun:sqlite").Statement,
+  statement: InstanceType<$BunModules["bun:sqlite"]["Statement"]>,
   transform: ((name: string) => string) | null | undefined,
 ) => statement.native.$setColumnNameTransform(transform);
 
@@ -97,6 +97,12 @@ export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "
   kind: "module" | "script" | "builtin" | "internal",
   chunkPaths?: string,
 ) => string | null | undefined;
+
+/** What the checker's queries answer for every node of every compiled file that `entryPoint` (an absolute path) reaches, and every diagnostic with its class and effect. `threads` 0 or absent: one per core. */
+export const describeCheckerQueries = $newRustFunction("checker_queries_testing.rs", "describeCheckerQueries", 2) as (
+  entryPoint: string,
+  threads?: number,
+) => string;
 
 export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
 export const escapeRegExpForPackageNameMatching = $newRustFunction(
@@ -255,6 +261,8 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   utf8Optional: $bindgen("bindgen_test.bind.ts", "utf8Optional"),
   utf8Owned: $bindgen("bindgen_test.bind.ts", "utf8Owned"),
   stringEcho: $bindgen("bindgen_test.bind.ts", "stringEcho"),
+  stringLength: $bindgen("bindgen_test.bind.ts", "stringLength"),
+  expectedByNode: $bindgen("bindgen_test.bind.ts", "expectedByNode"),
   nextColor: $bindgen("bindgen_test.bind.ts", "nextColor"),
   optionsEcho: $bindgen("bindgen_test.bind.ts", "optionsEcho"),
   describeValue: $bindgen("bindgen_test.bind.ts", "describeValue"),
@@ -267,6 +275,9 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   words: $bindgen("bindgen_test.bind.ts", "words"),
   sumBytes: $bindgen("bindgen_test.bind.ts", "sumBytes"),
   sumBytesThenText: $bindgen("bindgen_test.bind.ts", "sumBytesThenText"),
+  sumBytesIfAny: $bindgen("bindgen_test.bind.ts", "sumBytesIfAny"),
+  fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
+  stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
@@ -275,6 +286,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
+  bytesOfRefusingStringObject: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingStringObject"),
   bytesOfBufferOrBlob: $bindgen("bindgen_test.bind.ts", "bytesOfBufferOrBlob"),
   bytesOfRefusingUndefined: $bindgen("bindgen_test.bind.ts", "bytesOfRefusingUndefined"),
   bytesOfThen: $bindgen("bindgen_test.bind.ts", "bytesOfThen"),
@@ -295,6 +307,12 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
+  portOf: $bindgen("class_ref_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("class_ref_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("class_ref_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("class_ref_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("class_ref_test.bind.ts", "isAddress"),
+  portPlus: $bindgen("class_ref_test.bind.ts", "portPlus"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -313,9 +331,12 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
+  "node_util_binding.bind.ts",
+  "normalizeEncoding",
+);
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
-function nodeNormalizeEncoding(enc) {
+function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
@@ -326,14 +347,14 @@ function nodeNormalizeEncoding(enc) {
 }
 
 // Verbatim from node lib/internal/util.js (countBinaryOnes/getCIDR).
-function countBinaryOnes(n) {
+function countBinaryOnes(n: number) {
   // Count the number of bits set in parallel, which is faster than looping
   n = n - ((n >>> 1) & 0x55555555);
   n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
   return (((n + (n >>> 4)) & 0xf0f0f0f) * 0x1010101) >>> 24;
 }
 
-function getCIDR(address, netmask, family) {
+function getCIDR(address: string, netmask: string, family: string) {
   let ones = 0;
   let split = ".";
   let range = 10;
@@ -403,10 +424,10 @@ function nodeIsError(e) {
 // node's internal WeakReference: a WeakRef that pins the target strongly
 // while its refcount is above zero.
 class WeakReference {
-  #ref;
-  #strong = null;
+  #ref: WeakRef<object>;
+  #strong: object | null | undefined = null;
   #refCount = 0;
-  constructor(object) {
+  constructor(object: object) {
     this.#ref = new WeakRef(object);
   }
   get() {
@@ -449,7 +470,16 @@ function makeCodedError(Base: ErrorConstructor, code: string, message: string) {
   return err;
 }
 
-function nodeGetValidStdio(stdio, sync?) {
+interface ValidStdioEntry {
+  type?: string;
+  fd?: number;
+  handle?: { close(): void };
+  ipc?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+}
+
+function nodeGetValidStdio(stdio, sync?: boolean) {
   const { isArrayBufferView } = require("node:util/types");
   let ipc;
   let ipcFd;
@@ -460,12 +490,12 @@ function nodeGetValidStdio(stdio, sync?) {
     throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  while (stdio.length < 3) stdio.push(undefined);
+  while (stdio.length < 3) (stdio as unknown[]).push(undefined);
 
-  stdio = stdio.reduce(function reduceStdioEntry(acc, stdio, i) {
+  stdio = (stdio as any[]).reduce(function reduceStdioEntry(acc: ValidStdioEntry[], stdio, i: number) {
     function cleanup() {
       for (let i = 0; i < acc.length; i++) {
-        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();
+        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle!.close();
       }
     }
 
@@ -474,7 +504,7 @@ function nodeGetValidStdio(stdio, sync?) {
     if (stdio === "ignore") {
       acc.push({ type: "ignore" });
     } else if (stdio === "pipe" || stdio === "overlapped" || (typeof stdio === "number" && stdio < 0)) {
-      const a: Record<string, unknown> = {
+      const a: ValidStdioEntry = {
         type: stdio === "overlapped" ? "overlapped" : "pipe",
         readable: i === 0,
         writable: i !== 0,
@@ -533,6 +563,7 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  "internal/primordials": require("internal/primordials"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),
@@ -615,14 +646,14 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
-  monotonicNowMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.monotonicNowMs", 0),
+  monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
 // the internal/dgram UDP wrap does not expose — it binds on create).
 export const dgramInternals = {
-  newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
-  closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
+  newRawSocketFd: $bindgen("udp_socket.bind.ts", "dgramNewSocketFd"),
+  closeRawFd: $bindgen("udp_socket.bind.ts", "dgramCloseFd"),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -747,10 +778,66 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const aotTypedBuiltinMismatches: () => string[] = $newCppFunction(
+/** In a build with AddressSanitizer: reads a string of WTF's that was freed, which the sanitizer has to report. Elsewhere: nothing. */
+export const readFreedStringUnderASAN: () => number | undefined = $newCppFunction(
   "InternalForTesting.cpp",
-  "jsFunction_aotTypedBuiltinMismatches",
+  "jsFunction_readFreedStringUnderASAN",
   0,
+);
+
+/** Where the compiler's table of built-ins and this realm disagree, one message each. Empty: they agree, or this Bun has no compiler. */
+export const aotBuiltinMismatches: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinMismatches",
+  0,
+);
+/** The compiler's table of built-ins as plain objects. */
+export const aotBuiltinEntries: () => import("../codegen/builtins/dump.ts").TableDump = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinEntries",
+  0,
+);
+/** What this realm holds for the entry with that `id` of the compiler's table: its object, or the getter or setter of an accessor. */
+export const aotBuiltinValue: (id: number, part: "object" | "getter" | "setter") => unknown = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinValue",
+  2,
+);
+/** The native functions that Bun's own modules call under a private name of the global object. A key is the name, then what it is called with. */
+export const privateGlobalFunctions: Record<string, (...operands: any[]) => unknown> = {
+  toClass: (fn, name, base) => $toClass(fn, name, base),
+  "inherits ArrayBuffer": value => $inheritsArrayBuffer(value),
+  // It takes the kinds of the name and of the expected types on trust.
+  "makeErrorWithCode ERR_INVALID_ARG_TYPE": actual => $ERR_INVALID_ARG_TYPE("name", ["string", "number"], actual),
+  "makeErrorWithCode ERR_INVALID_ARG_VALUE": (name, value, reason) => $ERR_INVALID_ARG_VALUE(name, value, reason),
+  "makeErrorWithCode ERR_OUT_OF_RANGE": (name, range, received) => $ERR_OUT_OF_RANGE(name, range, received),
+  "makeErrorWithCode ERR_MISSING_ARGS": (first, second, third) => $ERR_MISSING_ARGS(first, second, third),
+  "makeErrorWithCode ERR_INVALID_RETURN_VALUE": (expected, name, value) =>
+    $ERR_INVALID_RETURN_VALUE(expected, name, value),
+  "makeErrorWithCode ERR_INVALID_STATE": message => $ERR_INVALID_STATE(message),
+  "makeErrorWithCode ERR_INVALID_URL": (input, base) => $ERR_INVALID_URL(input, base),
+  "makeErrorWithCode ERR_INVALID_THIS": expected => $ERR_INVALID_THIS(expected),
+  "makeErrorWithCode ERR_UNKNOWN_ENCODING": encoding => $ERR_UNKNOWN_ENCODING(encoding),
+  "makeErrorWithCode ERR_TLS_CERT_ALTNAME_INVALID": (reason, host, cert) =>
+    $ERR_TLS_CERT_ALTNAME_INVALID(reason, host, cert),
+  makeAbortError: (message, options) => $makeAbortError(message, options),
+  peekPromiseStatus: promise => $peekPromiseStatus(promise),
+  peekPromiseSettledValue: promise => $peekPromiseSettledValue(promise),
+  pokePromiseAsHandled: promise => $pokePromiseAsHandled(promise),
+  webStreamClosedPromise: stream => $webStreamClosedPromise(stream),
+  webStreamControllerError: (stream, error) => $webStreamControllerError(stream, error),
+};
+/** The entries of this Bun's `builtin-uses.json`: every built-in of this platform that uses a removable feature. */
+export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_builtinFeatureUses",
+  0,
+);
+/** The engine's `NameClass` of a property name, by the enumerator's name. */
+export const aotNameClass: (text: string) => string | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotNameClass",
+  1,
 );
 
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
@@ -960,3 +1047,172 @@ export const internalModuleBytecode: {
   (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
+
+/**
+ * An answer: an absolute native path | `builtin:node:fs` | `external` | `erased` | `computed` (unknown) |
+ * `computed: <answer>, <answer>` | `not found` (bunRun) | `not found (PackagePathNotExported)` (compile: the member of
+ * `CodeFailure`).
+ */
+export type CodeResolutionSite = {
+  importer: string;
+  specifier: string;
+  kind: "import" | "require";
+  bunRun: string;
+  compile: string;
+};
+
+/** All paths are absolute native paths. */
+export type CodeGraphFile = {
+  path: string;
+  role: "Checked" | "Inferred" | "TypesOnly";
+  isLibrary: boolean;
+  isCompiled: boolean;
+  isInTypesProgram: boolean;
+  typeEdges: string[];
+  codeEdges: string[];
+  // The rest is read from `CompiledModule`. Without one: 0, null, [], [], null, null.
+  loader: number;
+  moduleFormat: "Esm" | "CommonJs" | null;
+  sites: {
+    specifier: string | null;
+    prefix?: string;
+    suffix?: string;
+    kind: "import" | "require";
+    answer: string;
+    externalKind: "UncompiledCode" | "HostValue" | null;
+  }[];
+  impliedAnswers: string[];
+  typedSourcePath: string | null;
+  erasureMismatch: string | null;
+};
+
+export type CodeGraph = {
+  files: CodeGraphFile[];
+  entryPoints: string[];
+  compiledFiles: string[];
+  hostModules: string[];
+  unresolvedEntryPoints: { index: number; failure: string }[];
+  /** `TS2307: ..` */
+  diagnostics: string[];
+};
+
+const compareCodeResolutionNative = $newRustFunction("code_resolver_testing.rs", "compareCodeResolution", 4) as (
+  root: string,
+  conditions: string,
+  preserveSymlinks: boolean | undefined,
+  listsEverySite: boolean,
+) => string;
+
+/**
+ * Resolves every constant specifier of every source file under `root`, as `import` and as `require`, with the resolver
+ * of `bun compile` and with the resolver of `bun run`.
+ */
+export const compareCodeResolution = (
+  root: string,
+  options: { conditions?: string[]; preserveSymlinks?: boolean; listsEverySite?: boolean } = {},
+): { sites: number; differences: CodeResolutionSite[]; everySite?: CodeResolutionSite[] } =>
+  JSON.parse(
+    compareCodeResolutionNative(
+      root,
+      (options.conditions ?? []).join("\n"),
+      options.preserveSymlinks,
+      !!options.listsEverySite,
+    ),
+  );
+
+const describeCodeGraphNative = $newRustFunction("code_resolver_testing.rs", "describeCodeGraph", 6) as (
+  entryPoints: string,
+  conditions: string,
+  threads: number,
+  defines: string,
+  features: string,
+  workingDirectory: string,
+) => string;
+
+/** The files and the two graphs that `bun compile` loads for `entryPoints`, before anything is checked. */
+export const describeCodeGraph = (
+  entryPoints: string[],
+  options: {
+    conditions?: string[];
+    threads?: number;
+    defines?: Record<string, string | boolean>;
+    features?: string[];
+    workingDirectory?: string;
+  } = {},
+): CodeGraph =>
+  JSON.parse(
+    describeCodeGraphNative(
+      entryPoints.join("\n"),
+      (options.conditions ?? []).join("\n"),
+      options.threads ?? 0,
+      Object.entries(options.defines ?? {})
+        .map(([name, value]) => `${name}=${value}`)
+        .join("\n"),
+      (options.features ?? []).join("\n"),
+      options.workingDirectory ?? "",
+    ),
+  );
+
+const resolveComputedSpecifierNative = $newRustFunction("code_resolver_testing.rs", "resolveComputedSpecifier", 4) as (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require",
+) => string;
+
+/**
+ * The modules that a specifier starting with `prefix` and ending with `suffix` can name in the file `importer` (an
+ * absolute native path), by the resolver of `bun compile`: absolute native paths and `builtin:node:fs`, in the
+ * resolver's order. `all`: unknown, and `cause` is the member of `ComputedUnknown`.
+ */
+export const resolveComputedSpecifier = (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require" = "import",
+): { kind: "computed"; candidates: string[] } | { kind: "all"; cause: string } =>
+  JSON.parse(resolveComputedSpecifierNative(importer, prefix, suffix, kind));
+
+/** A native class whose members answer the value they are handed, whatever type they declare: src/runtime/api/DeclaredTypesForTesting.classes.ts. */
+export const DeclaredTypesForTesting: new () => Record<string, (value?: unknown) => unknown> & {
+  readonly heldString: unknown;
+  readonly firstHeldString: unknown;
+} = $newRustFunction("declared_types_testing.rs", "getClass", 0)();
+
+const trimExecutableNative = $newRustFunction("trim_testing.rs", "trimExecutable", 3) as (
+  path: string,
+  out: string,
+  featureNames: string,
+) => string;
+/** Removes `featureNames` (as written in src/trim/features/*.def: "Sqlite") from the executable at `path` and writes the result to `out`. Throws what `bun build --compile --trim` would print. */
+export const trimExecutable = (
+  path: string,
+  out: string,
+  featureNames: string[],
+): { removed: string[]; removedBytes: number; fileBytesSaved: number; uncutReason: string | null } =>
+  JSON.parse(trimExecutableNative(path, out, featureNames.join("\n")));
+
+const measureTrimProfileNative = $newRustFunction("trim_testing.rs", "measureTrimProfile", 2) as (
+  path: string,
+  usedFeatureNames: string,
+) => string;
+/** What `bun build --compile --trim` would remove from the executable at `path` for a program that uses `usedFeatureNames` and no other feature. Writes nothing. */
+export const measureTrimProfile = (
+  path: string,
+  usedFeatureNames: string[],
+): { removedBytes: number; fileBytesSaved: number; uncutReason: string | undefined } => {
+  const summary = JSON.parse(measureTrimProfileNative(path, usedFeatureNames.join("\n")));
+  return {
+    removedBytes: summary.removedBytes,
+    fileBytesSaved: summary.fileBytesSaved,
+    uncutReason: summary.uncutReason ?? undefined,
+  };
+};
+
+const readTrimTableNative = $newRustFunction("trim_testing.rs", "readTrimTable", 1) as (path: string) => string;
+/** The trim table of the executable at `path`, as `decodeTable` of scripts/build/trim/table.ts returns it. Throws on a file without one. */
+export const readTrimTable = (path: string): import("../../scripts/build/trim/table").TrimTable => {
+  const table = JSON.parse(readTrimTableNative(path));
+  table.featuresHash = BigInt(table.featuresHash);
+  return table;
+};

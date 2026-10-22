@@ -1,0 +1,6 @@
+a member of the arm that is not taken true false {"a":1,"b":{"c":2}}
+a member that the tagged arm leaves unknown false {"k":"a","p":{"x":1}}
+an element true false [{"x":1}]
+only its own members true k,p
+a member of the other tagged arm true false {"k":"a","p":{"x":1},"q":{"x":"text"}}
+after stores into the copies [{"a":1,"b":{"c":3}},{"k":"a","p":{"x":4}},[{"x":5}],{"k":"a","p":{"x":1},"q":{"x":6}}]

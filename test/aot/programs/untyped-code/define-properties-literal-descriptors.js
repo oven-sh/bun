@@ -73,7 +73,7 @@ function made() { const o = Object.defineProperties({}, { a: { value: 1, writabl
 function Plain() { Object.defineProperties(this, { a: { value: 1, writable: true }, b: { value: 2, enumerable: true }, c: { value: 3 } }); this.d = 4; }
 lines.push(show(new Rows([1, 2])), Object.keys(new Rows(["x"])).join(), show(new Hidden()), show(new Later()), show(new Plain()), JSON.stringify(new Plain()));
 for (let i = 0; i < 300; i++) { new Rows(); new Hidden(); new Later(); new Plain(); made(); }
-const names = ["operationAOTTypedDefineOwnPropertyAtSite", "operationAOTTypedDefineOwnProperty"];
+const names = ["operationAOTDefineOwnProperty"];
 const asked = () => names.reduce((sum, name) => sum + count(name), 0);
 function apart(o) { return Object.defineProperties(o, { p: { value: 1 }, q: { value: 2 } }); }
 const untilNow = asked();

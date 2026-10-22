@@ -1,9 +1,9 @@
-// A parameter of a function handed straight to the host, or to untyped code, that is annotated with a primitive type or a built-in type: `req.on("data", (chunk: string) => { body += chunk })`, where a Buffer arrives. The annotation says what is expected of what is given: the value stays what it is.
+// A parameter of a function handed straight to the host, or to untyped code, that is annotated with a primitive type or a built-in type: `req.on("data", (chunk: string) => { body += chunk })`, where a Buffer arrives. The parameter is tested on entry, whoever calls: a value of another kind throws a TypeError, undefined and null pass, and any object passes `Error`.
 declare const hostEmitter: { on(name: string, listener: (...args: any[]) => void): void; once: (name: string, listener: (value: any, more?: any) => void) => void };
 const given: Record<string, unknown> = { bytes: { toString() { return "bytes"; }, length: 5 }, seven: 7, text: "text", yes: true, nothing: null, none: undefined };
 (globalThis as any).hostEmitter = { on(name: string, f: Function) { f(given[name]); }, once(name: string, f: Function) { f(given[name], given[name]); } };
 const untyped: any = (globalThis as any).hostEmitter;
-const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).constructor.name; } console.log(name + ": " + JSON.stringify(r)); };
 const kind = (v: unknown) => typeof v + " " + String(v);
 for (const name of ["bytes", "seven", "text", "yes", "nothing", "none"]) {
   row("the host, string, " + name, () => { let body = ""; hostEmitter.on(name, (chunk: string) => { body += chunk; }); return body; });

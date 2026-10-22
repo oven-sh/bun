@@ -1,10 +1,10 @@
 // Objects that the addon creates with napi_create_object(), wrapped, tagged and referenced by the addon while typed code uses them under a declared type.
-const raw: any = require(process.env.ADDON!);
+const loaded: { exports: any } = { exports: {} }; process.dlopen(loaded, process.env.ADDON!); const raw: any = loaded.exports;
 interface Row { id: number; name: string; list: number[] }
 function row1(): Row { return { id: 9, name: "made by the program", list: [] }; }
 function nameOf(r: Row) { return r.name + r.id + r.list.length; } function rename(r: Row, to: string) { r.name = to; r.id++; }
 let at = 0;
-function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f()); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
+function row(label: string, f: () => unknown) { at++; let said: string; try { said = JSON.stringify(f()); } catch (e) { said = "THROWN " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
 row("the program's own", () => nameOf(row1()));
 row("what it is", () => { const r = raw.makeRow(); return [raw.typeOf(r), raw.kinds(r), Object.getPrototypeOf(r) === Object.prototype, Object.prototype.toString.call(r), r.constructor === Object, Bun.inspect(r), Bun.deepEquals(r, { id: 1, name: "n", list: [1, 2] }, true), require("util").isDeepStrictEqual(r, { id: 1, name: "n", list: [1, 2] })]; });
 row("wrap | unwrap | removeWrap", () => { const r = raw.makeRow(); return [raw.wrap(r, 42), raw.unwrap(r), raw.names(r), Object.keys(r), Reflect.ownKeys(r).length, JSON.stringify(r), raw.allNames(r, 1, 0, 0), raw.wrap(r, 43), raw.removeWrap(r), raw.unwrap(r), raw.wrap(r, 44), raw.unwrap(r), Object.keys(r)]; });
@@ -19,7 +19,7 @@ row("used as a Row, then wrapped", () => { const typed: Row = raw.makeRow(); ret
 {
   const before = raw.finalizedSoFar();
   let said: string;
-  try { for (let i = 0; i < 2000; i++) { const typed: Row = raw.makeRow(); raw.wrap(typed, i); nameOf(typed); } Bun.gc(true); await new Promise(resolve => setTimeout(resolve, 20)); Bun.gc(true); await new Promise(resolve => setTimeout(resolve, 20)); said = String(raw.finalizedSoFar() - before > 0); } catch (e) { said = "THROWN " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); }
+  try { for (let i = 0; i < 2000; i++) { const typed: Row = raw.makeRow(); raw.wrap(typed, i); nameOf(typed); } Bun.gc(true); await new Promise(resolve => setTimeout(resolve, 20)); Bun.gc(true); await new Promise(resolve => setTimeout(resolve, 20)); said = String(raw.finalizedSoFar() - before > 0); } catch (e) { said = "THROWN " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); }
   console.log("    finalizers of what the addon made run: " + said);
 }
 export {};

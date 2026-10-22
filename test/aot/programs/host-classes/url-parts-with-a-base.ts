@@ -113,10 +113,10 @@ say("an input that is a part of another", () => partsOf("GET /users/7?a=1&b=2 HT
 const plain = "/a/b?a=1&b=2";
 const root = "http://example.com";
 const order: string[] = [];
-say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as unknown as string, root).pathname);
-say("a base that is not a string", () => new URL(plain, { toString: () => (order.push("base"), root) } as unknown as string).pathname);
-say("neither is a string", () => new URL({ toString: () => (order.push("text"), plain) } as unknown as string, { toString: () => (order.push("base"), root) } as unknown as string).search);
-say("a name that is not a string", () => new URL(plain, root).searchParams.get({ toString: () => (order.push("name"), "b") } as unknown as string));
+say("an input that is not a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, root).pathname);
+say("a base that is not a string", () => new URL(plain, { toString: () => (order.push("base"), root) } as any).pathname);
+say("neither is a string", () => new URL({ toString: () => (order.push("text"), plain) } as any, { toString: () => (order.push("base"), root) } as any).search);
+say("a name that is not a string", () => new URL(plain, root).searchParams.get({ toString: () => (order.push("name"), "b") } as any));
 say("the order of conversions", () => order);
 say("a base that is a URL", () => partsOfAnything(plain, new URL("http://example.com/x")));
 say("a base that is undefined", () => [pathnameOfAnything("http://example.com/a", undefined), partsOfAnything("http://example.com/a?a=1", undefined), (() => { try { return pathnameOfAnything(plain, undefined); } catch (error) { return (error as Error).constructor.name; } })()]);

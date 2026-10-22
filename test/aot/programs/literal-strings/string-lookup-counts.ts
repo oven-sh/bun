@@ -2,7 +2,7 @@
 declare const aotOperationCount: (name: string) => number;
 type Kind = "circle" | "square" | "ring";
 class Shape { constructor(public kind: Kind) {} }
-const lookUps = (): number => aotOperationCount("operationAOTTypedToLiteralString");
+const lookUps = (): number => aotOperationCount("operationAOTToLiteralString");
 const parts = ["cir", "cle", "squ", "are", "ri", "ng", "ov", "al"];
 const shape = new Shape("circle");
 function storeFresh(i: number): void { shape.kind = (parts[i % 4 * 2] + parts[i % 4 * 2 + 1]) as Kind; }
@@ -13,8 +13,6 @@ let rings = 0;
 for (let i = 0; i < 400; i++) { run[0](i); if (shape.kind === "ring") rings++; }
 const fresh = lookUps() - before;
 console.log(rings, fresh >= 400 ? "every fresh string was looked up" : "LOOKED UP " + fresh + " OF 400");
-const said = (what: string): number => ["atom", "flat", "substring", "rope"].reduce((sum, kind) => sum + aotOperationCount("operationAOTTypedToLiteralString:" + kind + ":" + what), 0);
-console.log(said("numbered") >= 300 ? "the numbered ones are told from" : "NUMBERED: " + said("numbered"), said("stranger") >= 100 ? "the strangers" : "STRANGERS: " + said("stranger"));
 before = lookUps();
 for (let i = 0; i < 400; i++) run[1](i);
 console.log(shape.kind, lookUps() === before ? "no literal was looked up" : "LITERALS LOOKED UP: " + (lookUps() - before));

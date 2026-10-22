@@ -1,6 +1,4 @@
 // A piece of a page that is Latin-1 and holds a character beyond ASCII is written as UTF-8 eight characters at a time. Every place of such a character in a word, runs of them, and pieces of every short length give the bytes that a flattened string gives.
-// IR= 1 page takes unshared string = CallBuiltin NewResponse#
-// IR= 0 shared takes unshared string
 const filler = "0123456789abcdef".repeat(20);
 function page(first: string, second: string, third: string): Response {
   return new Response(`<a>${first}</a><b>${second}</b><c>${third}</c>${filler}`, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });

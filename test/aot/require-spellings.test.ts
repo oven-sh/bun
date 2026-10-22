@@ -1,6 +1,7 @@
 // The ways to write a `require` of a file of the program. For each: is the file compiled into the executable? The sources are moved away before
-// the executable runs, so a file that is not in it cannot be found. `bun build --compile` and `bun build --compile --aot` must agree, and the
-// executable built with --aot is run with BUN_JSC_crashIfInterpreterIsUsed=1, which crashes it if any of its code is interpreted.
+// the executable runs, so a file that is not in it cannot be found. `bun build --compile --aot` sees every spelling `bun build --compile` sees,
+// and a few more: there its executable prints what `bun run` prints. The executable built with --aot is run with
+// BUN_JSC_crashIfInterpreterIsUsed=1, which crashes it if any of its code is interpreted.
 import { describe, expect, test } from "bun:test";
 import { renameSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
@@ -24,19 +25,25 @@ const inTheExecutable: [string, string][] = [
   [`import("./data/one.cjs").then(m => console.log(m.default.n));`, "1"],
   [`console.log(require("./data/one").n);`, "1"],
   [`console.log(require("./data/../data/one.cjs").n);`, "1"],
+];
+
+const inTheCompiledExecutableOnly: [string, string][] = [
+  [`const name = "one"; console.log(require("./data/" + name + ".cjs").n);`, "1"],
+  ["const name = \"two\"; console.log(require(`./data/${name}.cjs`).n);", "2"],
+  [`const name = process.argv.length > 99 ? "one" : "two"; console.log(require("./data/" + name + ".cjs").n);`, "2"],
+  [`console.log(require("./data/one.cjs", "extra").n);`, "1"],
+  [`console.log(import.meta.require("./data/one.cjs").n);`, "1"],
+  [`const r = require; console.log(r("./data/one.cjs").n);`, "1"],
+  [`console.log(require.call(null, "./data/one.cjs").n);`, "1"],
+  [`console.log(require.apply(null, ["./data/one.cjs"]).n);`, "1"],
   [`console.log(require(__dirname + "/data/one.cjs").n);`, "1"],
   ["console.log(require(`${__dirname}/data/two.cjs`).n);", "2"],
+  [`console.log(require(require("node:path").join(__dirname, "data", "one.cjs")).n);`, "1"],
+  [`console.log(require("./data/" + ["o", "n", "e"].sort(() => 0).join("") + ".cjs").n);`, "1"],
 ];
 
 const leftToTheRunTime: string[] = [
-  `const r = require; console.log(r("./data/one.cjs").n);`,
-  `console.log(require.call(null, "./data/one.cjs").n);`,
-  `console.log(require.apply(null, ["./data/one.cjs"]).n);`,
-  `const name = "one"; console.log(require("./data/" + name + ".cjs").n);`,
-  "const name = \"two\"; console.log(require(`./data/${name}.cjs`).n);",
-  `console.log(require("./data/one.cjs", "extra").n);`,
-  `console.log(require(require("node:path").join(__dirname, "data", "one.cjs")).n);`,
-  `console.log(import.meta.require("./data/one.cjs").n);`,
+  `console.log(require(Buffer.from("2e2f646174612f6f6e652e636a73", "hex").toString()).n);`,
 ];
 
 async function answers(row: string) {
@@ -57,5 +64,6 @@ async function answers(row: string) {
 describe.concurrent("compile/aot/spellings of require", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
   for (const [row, prints] of inTheExecutable) test(row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: prints, aot: prints })), 600_000);
+  for (const [row, prints] of inTheCompiledExecutableOnly) test("seen by --aot: " + row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: "exit code 1", aot: prints })), 600_000);
   for (const row of leftToTheRunTime) test("not seen: " + row, () => slot(async () => expect(await answers(row)).toEqual({ bundle: "exit code 1", aot: "exit code 1" })), 600_000);
 });

@@ -227,9 +227,15 @@ fn parse_param_rest(line: &[u8]) -> Param {
         };
         let after = &line[len + 1..];
         let takes_many_optional = after.starts_with(b"?...");
-        let takes_many = after.starts_with(b"...");
-        let takes_one_optional = after.starts_with(b"?");
-        let help_start = len + 1 + 3 * ((takes_many || takes_many_optional) as usize) + (takes_one_optional as usize);
+        let takes_many = !takes_many_optional && after.starts_with(b"...");
+        let takes_one_optional = !takes_many_optional && after.starts_with(b"?");
+        let help_start = len
+            + 1
+            + if takes_many_optional {
+                4
+            } else {
+                3 * (takes_many as usize) + (takes_one_optional as usize)
+            };
         return Param {
             takes_value: if takes_many_optional {
                 Values::ManyOptional

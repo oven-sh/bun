@@ -1,3 +1,0 @@
-TypeError expected number, got string "s" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-TypeError expected number | undefined, got string "s" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
-TypeError expected boolean, got number 5 (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)

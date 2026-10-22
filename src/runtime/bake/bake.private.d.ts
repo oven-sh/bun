@@ -22,6 +22,11 @@ interface Config {
   /** If available, this is the Id of `react-refresh/runtime` */
   refresh?: Id;
   /**
+   * For a router whose pages also run in the browser: the page and the layouts (inner-most first)
+   * of the route this bundle is for.
+   */
+  route?: { page: Id | null; layouts: Id[] };
+  /**
    * A list of "roots" that the client is aware of. This includes
    * the framework entry point, as well as every client component.
    */
@@ -154,5 +159,4 @@ declare module "bun:wrap" {
   export const __callDispose: unique symbol;
   export const __MEMO_CACHE_SENTINEL: unique symbol;
   export const __EARLY_RETURN_SENTINEL: unique symbol;
-  export const __validate: unique symbol;
 }

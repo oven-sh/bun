@@ -2,10 +2,11 @@
 
 declare const console: any; declare const globalThis: any;
 const said: string[] = [];
-function block(name: string, body: () => unknown) { try { said.push(name + ": " + body()); } catch (error) { said.push(name + ": THROWS " + (error as any)?.constructor?.name + " " + (error as any)?.message); } }
-function attempt(body: () => unknown): string { try { return String(body()); } catch (error) { return "THROWS " + (error as any)?.constructor?.name + " " + (error as any)?.message; } }
+function describeError(error: any): string { return error instanceof TypeError ? "TypeError" : error?.constructor?.name + " " + error?.message; }
+function block(name: string, body: () => unknown) { try { said.push(name + ": " + body()); } catch (error) { said.push(name + ": THROWS " + describeError(error)); } }
+function attempt(body: () => unknown): string { try { return String(body()); } catch (error) { return "THROWS " + describeError(error); } }
 function m0(o: any): unknown { const r = o.m(); return r; }
-function m0InTry(o: any): unknown { try { const r = o.m(); return r; } catch (error) { return "caught at the site: " + (error as Error).message; } }
+function m0InTry(o: any): unknown { try { const r = o.m(); return r; } catch (error) { return "caught at the site: " + describeError(error); } }
 function twice(o: any): unknown { const a = o.m(); const b = o.n(); return a + "|" + b; }
 class C { v = 1; m() { return "C.m " + this.v; } n() { return "C.n"; } }
 class D extends C { override m() { return "D.m " + this.v; } }

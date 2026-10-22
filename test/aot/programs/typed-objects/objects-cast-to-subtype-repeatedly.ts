@@ -1,4 +1,4 @@
-// An object made as a base type and cast to a subtype afterwards gets the subtype's optional fields, whichever order its own fields were created in, however often the same cast has run before, and whether or not it holds extra properties.
+// An object made as a base type and cast to a subtype afterwards stays the same object and takes stores to the subtype's optional fields, whichever order its own fields were created in, however often the same cast has run before, and whether or not it holds extra properties.
 interface Base { id: number; flags: number; label?: string; owner?: Base }
 interface Wide extends Base { extra?: string; more?: number; list?: number[] }
 interface Wider extends Wide { last?: boolean }

@@ -5,9 +5,10 @@ import type { SQLStatementDescription, TransactionCommands } from "./shared";
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray } = require("internal/sql/shared");
-const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool");
+// The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool") as typeof import("./pool").default;
 const {
-  stateOf,
+  symbols: { _results, _handle },
 } = require("internal/sql/query");
 const { MySQLError } = require("internal/sql/errors");
 
@@ -23,7 +24,7 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
   result.count = count || affected_rows || 0;
   result.lastInsertRowid = last_insert_rowid;
   result.affectedRows = affected_rows || 0;
-  SQLResultArray.describe(result, stateOf(query).handle, statement);
+  SQLResultArray.describe(result, query[_handle], statement);
   addResult(query, result);
 
   // until the server clears SERVER_MORE_RESULTS_EXISTS
@@ -31,11 +32,11 @@ initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_inser
     // The native side swaps the pending value out for js_undefined before
     // invoking this callback; re-prime so the follow-up result set lands in
     // a fresh array.
-    stateOf(query).handle.setPendingValue(new SQLResultArray());
+    query[_handle].setPendingValue(new SQLResultArray());
     return;
   }
 
-  query.resolve(stateOf(query).results);
+  query.resolve(query[_results]);
 }, onRejectQuery);
 
 interface MySQLDotZig {

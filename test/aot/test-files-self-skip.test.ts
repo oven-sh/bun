@@ -24,38 +24,43 @@ const files = [...testFiles("")].filter(file => file.startsWith("aot/") || usesT
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
-  "aot/doors-on-names-of-properties.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",
   "aot/mocked-barrels.test.ts",
-  "aot/mocked-reassigned-bindings.test.ts",
   "aot/mocked-classes-enums-constants.test.ts",
+  "aot/mocked-reassigned-bindings.test.ts",
   "aot/mocked-commonjs-modules.test.ts",
   "aot/mocked-json-modules.test.ts",
   "aot/mocked-numbers.test.ts",
-  "aot/mocks-with-test-runner-lookalikes.test.ts",
   "aot/mocks-named-by-tests.test.ts",
+  "aot/mocks-with-test-runner-lookalikes.test.ts",
   "aot/spies-on-builtin-prototypes.test.ts",
   "aot/spies-on-builtins.test.ts",
   "aot/static-tls-size.test.ts",
   "aot/abort-is-reported.test.ts",
+  "aot/a-prototype-object-is-no-instance.test.ts",
   "aot/backend/memory.test.ts",
+  "aot/builtins/differential.test.ts",
+  "aot/builtins/native-contract.test.ts",
+  "aot/builtins/native-contract/noticed-changes.test.ts",
+  "aot/names-read-from-a-loaded-barrel.test.ts",
+  "aot/plain-english.test.ts",
+  "aot/removable-statements.test.ts",
   "aot/servers/layers.test.ts",
   "aot/generated-code.test.ts",
-  "aot/host-classes-match-bun-types.test.ts",
   "aot/perf/front-end.test.ts",
   "aot/perf/idioms.test.ts",
   "aot/plain-bun.test.ts",
-  "aot/run-aot-jit.test.ts",
+  "aot/plain-bun-is-unchanged.test.ts",
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
-  "aot/validation-by-types/recorded-issues.test.ts",
-  "bundler/bun-build-dts.test.ts",
+  "aot/every-program-folder-has-a-runner.test.ts",
   "cli/aot-compile-executable-path.test.ts",
-  "cli/aot-environment.test.ts",
   "cli/aot-unknown-flags.test.ts",
+  "cli/compile/compile-library.test.ts",
   "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
+  "internal/builtins-manifest.test.ts",
   "js/bun/jsc/sealed-global-object-error-message.test.ts",
 ];
 
@@ -63,7 +68,7 @@ function asks(path: string, depth = 0): boolean {
   const text = readFileSync(path, "utf8");
   if (/\bunsupported\b/.test(text)) return true;
   if (depth === 2) return false;
-  return [...text.matchAll(/^import .* from "(\.[^"]+)";$/gm)].some(([, specifier]) => {
+  return [...text.matchAll(/^(?:import .*|\}) from "(\.[^"]+)";$/gm)].some(([, specifier]) => {
     const imported = join(dirname(path), specifier) + ".ts";
     return existsSync(imported) && asks(imported, depth + 1);
   });

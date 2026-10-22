@@ -1,10 +1,10 @@
 // An object that is one of several literals, chosen by a condition, and is only read is never made.
-// IR= 0 eitherLiteral GetById|NewObject
-// IR= 0 oneOfThree GetById|NewObject
-// IR= 0 literalOrCall GetById|NewObject
-// IR= 0 nested GetById|NewObject
-// IR= 0 setAfterwards GetById|NewObject
-// IR= 0 carried GetById|NewObject
+// IR= 0 eitherLiteral PropGet| = New(Plain)?Object 
+// IR= 0 oneOfThree PropGet| = New(Plain)?Object 
+// IR= 0 literalOrCall PropGet| = New(Plain)?Object 
+// IR= 0 nested PropGet| = New(Plain)?Object 
+// IR= 0 setAfterwards PropGet| = New(Plain)?Object 
+// IR= 0 carried PropGet| = New(Plain)?Object 
 type P = { x: number; y: number };
 let noise = 0;
 let guard = 0;

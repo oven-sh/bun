@@ -1,21 +1,27 @@
-// @ts-check
 "use strict";
 
 const { aggregateTwoErrors } = require("internal/errors");
-const { kIsDestroyed, isDestroyed, isFinished, isServerRequest } = require("internal/streams/utils");
-const { isReadableState, isWritableState, flagsOf, addFlags } =
-  require("internal/streams/state") as typeof import("internal/streams/state").default;
-type ReadableState = import("internal/streams/state").ReadableState;
-type WritableState = import("internal/streams/state").WritableState;
+const streamUtils = require("internal/streams/utils");
+const { isDestroyed, isFinished, isServerRequest } = streamUtils;
+const kIsDestroyed: typeof streamUtils.kIsDestroyed = streamUtils.kIsDestroyed;
+const streamState = require("internal/streams/state");
+const { isReadableState, isWritableState, flagsOf, addFlags } = streamState;
+const kState: typeof streamState.kState = streamState.kState;
+const kErroredValue: typeof streamState.kErroredValue = streamState.kErroredValue;
+type ReadableState = $Node.ReadableState;
+type WritableState = $Node.WritableState;
 
-const kErrorEmitted = 1 << 1;
-const kAutoDestroy = 1 << 2;
-const kEmitClose = 1 << 3;
-const kDestroyed = 1 << 4;
-const kClosed = 1 << 5;
-const kCloseEmitted = 1 << 6;
-const kErrored = 1 << 7;
-const kConstructed = 1 << 8;
+// The bits of [kState] that mean the same in a ReadableState and in a WritableState.
+const enum Flag {
+  ErrorEmitted = 1 << 1,
+  AutoDestroy = 1 << 2,
+  EmitClose = 1 << 3,
+  Destroyed = 1 << 4,
+  Closed = 1 << 5,
+  CloseEmitted = 1 << 6,
+  Errored = 1 << 7,
+  Constructed = 1 << 8,
+}
 
 const { nextTick: originalNextTick, enqueueTick1 } = require("internal/process/next_tick_queue");
 const ProcessNextTick = process.nextTick;
@@ -23,31 +29,68 @@ const ProcessNextTick = process.nextTick;
 const kDestroy = Symbol("kDestroy");
 const kConstruct = Symbol("kConstruct");
 
-function checkError(err, w: WritableState | undefined, r: ReadableState | undefined): void {
+declare global {
+  namespace $Node {
+    type ErrorCallback = (error?: Error | null) => void;
+
+    interface StreamOptions extends EventEmitterOptions {
+      highWaterMark?: number | null;
+      objectMode?: boolean;
+      emitClose?: boolean;
+      autoDestroy?: boolean;
+      defaultEncoding?: string | null;
+      signal?: AbortSignal;
+      destroy?(this: StreamWithState, error: Error | null, callback: ErrorCallback): void;
+      construct?(this: StreamWithState, callback: ErrorCallback): void;
+    }
+
+    /** What `Readable`, `Writable` and `Duplex` share. A stream has one of the two states or both. */
+    interface StreamWithState extends Stream {
+      _readableState?: ReadableState;
+      _writableState?: WritableState;
+      /** `undefined` on a stream that does not have that side. */
+      readable?: boolean;
+      writable?: boolean;
+      allowHalfOpen?: boolean;
+      destroy(error?: Error | null, callback?: ErrorCallback): this;
+      _destroy(error: Error | null, callback: ErrorCallback): void;
+      _undestroy(): void;
+      _construct?(callback: ErrorCallback): void;
+      get destroyed(): boolean;
+      set destroyed(value: boolean);
+      get closed(): boolean;
+      get errored(): Error | null;
+      [Symbol.asyncDispose](): Promise<void>;
+    }
+  }
+}
+
+function checkError(err: Error | null | undefined, w: WritableState | undefined, r: ReadableState | undefined): void {
   if (err) {
+    "unlikely";
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
     err.stack; // eslint-disable-line no-unused-expressions
 
-    if (w && (w.flags & kErrored) === 0) {
-      w.erroredValue = err;
-      w.flags |= kErrored;
+    if (w && (w[kState] & Flag.Errored) === 0) {
+      w[kErroredValue] = err;
+      w[kState] |= Flag.Errored;
     }
-    if (r && (r.flags & kErrored) === 0) {
-      r.erroredValue = err;
-      r.flags |= kErrored;
+    if (r && (r[kState] & Flag.Errored) === 0) {
+      r[kErroredValue] = err;
+      r[kState] |= Flag.Errored;
     }
   }
 }
 
 // Backwards compat. cb() is undocumented and unused in core but
 // unfortunately might be used by modules.
-function destroy(err, cb) {
+const destroy = function destroy(this: $Node.StreamWithState, err?: Error | null, cb?: $Node.ErrorCallback) {
   const r: ReadableState | undefined = this._readableState;
   const w: WritableState | undefined = this._writableState;
   // With duplex streams we use the writable side for state.
   const s = (w || r)!;
 
-  if ((w && (w.flags & kDestroyed) !== 0) || (r && (r.flags & kDestroyed) !== 0)) {
+  if ((w && (w[kState] & Flag.Destroyed) !== 0) || (r && (r[kState] & Flag.Destroyed) !== 0)) {
     if (typeof cb === "function") {
       cb();
     }
@@ -60,28 +103,31 @@ function destroy(err, cb) {
   checkError(err, w, r);
 
   if (w) {
-    w.flags |= kDestroyed;
+    w[kState] |= Flag.Destroyed;
   }
   if (r) {
-    r.flags |= kDestroyed;
+    r[kState] |= Flag.Destroyed;
   }
 
   // If still constructing then defer calling _destroy.
-  if ((s.flags & kConstructed) === 0) {
-    this.once(kDestroy, function (er) {
-      _destroy(this, aggregateTwoErrors(er, err), cb);
+  if ((s[kState] & Flag.Constructed) === 0) {
+    "unlikely";
+    this.once(kDestroy, function (this: $Node.StreamWithState, er: Error | null | undefined) {
+      _destroy(this, aggregateTwoErrors(er!, err!), cb);
     });
   } else {
     _destroy(this, err, cb);
   }
 
   return this;
-}
+};
 
-function _destroy(self, err, cb) {
+streamState.internals.destroyMethods = { destroy };
+
+function _destroy(self: $Node.StreamWithState, err: Error | null | undefined, cb: $Node.ErrorCallback | undefined) {
   let called = false;
 
-  function onDestroy(err) {
+  function onDestroy(err?: Error | null) {
     if (called) {
       return;
     }
@@ -93,10 +139,10 @@ function _destroy(self, err, cb) {
     checkError(err, w, r);
 
     if (w) {
-      w.flags |= kClosed;
+      w[kState] |= Flag.Closed;
     }
     if (r) {
-      r.flags |= kClosed;
+      r[kState] |= Flag.Closed;
     }
 
     if (typeof cb === "function") {
@@ -104,75 +150,79 @@ function _destroy(self, err, cb) {
     }
 
     if (err) {
+      "unlikely";
       ProcessNextTick(emitErrorCloseNT, self, err);
     } else {
       if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseNT, self);
-      else ProcessNextTick(emitCloseNT, self);
+      else {
+        "unlikely";
+        ProcessNextTick(emitCloseNT, self);
+      }
     }
   }
   try {
     self._destroy(err || null, onDestroy);
   } catch (err) {
-    onDestroy(err);
+    onDestroy(err as Error);
   }
 }
 
-function emitErrorCloseNT(self, err) {
+function emitErrorCloseNT(self: $Node.StreamWithState, err: Error) {
   emitErrorNT(self, err);
   emitCloseNT(self);
 }
 
-function emitCloseNT(self) {
+function emitCloseNT(self: $Node.StreamWithState) {
   const r: ReadableState | undefined = self._readableState;
   const w: WritableState | undefined = self._writableState;
 
   if (w) {
-    w.flags |= kCloseEmitted;
+    w[kState] |= Flag.CloseEmitted;
   }
   if (r) {
-    r.flags |= kCloseEmitted;
+    r[kState] |= Flag.CloseEmitted;
   }
 
-  if ((w && (w.flags & kEmitClose) !== 0) || (r && (r.flags & kEmitClose) !== 0)) {
+  if ((w && (w[kState] & Flag.EmitClose) !== 0) || (r && (r[kState] & Flag.EmitClose) !== 0)) {
     self.emit("close");
   }
 }
 
-function emitErrorNT(self, err) {
+function emitErrorNT(self: $Node.AnyStream, err: Error) {
   const r = self._readableState;
   const w = self._writableState;
 
   if ((r === undefined || isReadableState(r)) && (w === undefined || isWritableState(w))) {
-    if ((w && (w.flags & kErrorEmitted) !== 0) || (r && (r.flags & kErrorEmitted) !== 0)) {
+    if ((w && (w[kState] & Flag.ErrorEmitted) !== 0) || (r && (r[kState] & Flag.ErrorEmitted) !== 0)) {
       return;
     }
 
     if (w) {
-      w.flags |= kErrorEmitted;
+      w[kState] |= Flag.ErrorEmitted;
     }
     if (r) {
-      r.flags |= kErrorEmitted;
+      r[kState] |= Flag.ErrorEmitted;
     }
 
     self.emit("error", err);
     return;
   }
 
-  if ((w && (flagsOf(w) & kErrorEmitted) !== 0) || (r && (flagsOf(r) & kErrorEmitted) !== 0)) {
+  if ((w && (flagsOf(w) & Flag.ErrorEmitted) !== 0) || (r && (flagsOf(r) & Flag.ErrorEmitted) !== 0)) {
     return;
   }
 
   if (w) {
-    addFlags(w, kErrorEmitted);
+    addFlags(w, Flag.ErrorEmitted);
   }
   if (r) {
-    addFlags(r, kErrorEmitted);
+    addFlags(r, Flag.ErrorEmitted);
   }
 
   self.emit("error", err);
 }
 
-function undestroy() {
+function undestroy(this: $Node.StreamWithState) {
   const r: ReadableState | undefined = this._readableState;
   const w: WritableState | undefined = this._writableState;
 
@@ -203,7 +253,7 @@ function undestroy() {
   }
 }
 
-function errorOrDestroy(stream, err, sync?) {
+function errorOrDestroy(stream: $Node.AnyStream, err: Error | null | undefined, sync?: boolean) {
   // We have tests that rely on errors being emitted
   // in the same tick, so changing this is semver major.
   // For now when you opt-in to autoDestroy we allow
@@ -214,12 +264,12 @@ function errorOrDestroy(stream, err, sync?) {
   const w = stream._writableState;
 
   if ((r === undefined || isReadableState(r)) && (w === undefined || isWritableState(w))) {
-    if ((w && (w.flags & kDestroyed) !== 0) || (r && (r.flags & kDestroyed) !== 0)) {
+    if ((w && (w[kState] & Flag.Destroyed) !== 0) || (r && (r[kState] & Flag.Destroyed) !== 0)) {
       return;
     }
 
-    if ((r && (r.flags & kAutoDestroy) !== 0) || (w && (w.flags & kAutoDestroy) !== 0)) {
-      stream.destroy(err);
+    if ((r && (r[kState] & Flag.AutoDestroy) !== 0) || (w && (w[kState] & Flag.AutoDestroy) !== 0)) {
+      stream.destroy!(err);
     } else if (err) {
       checkError(err, w, r);
       if (sync) {
@@ -232,22 +282,22 @@ function errorOrDestroy(stream, err, sync?) {
   }
 
   if (
-    (w && (flagsOf(w) ? (flagsOf(w) & kDestroyed) !== 0 : w.destroyed)) ||
-    (r && (flagsOf(r) ? (flagsOf(r) & kDestroyed) !== 0 : r.destroyed))
+    (w && (flagsOf(w) ? (flagsOf(w) & Flag.Destroyed) !== 0 : w.destroyed)) ||
+    (r && (flagsOf(r) ? (flagsOf(r) & Flag.Destroyed) !== 0 : r.destroyed))
   ) {
     return;
   }
 
-  if ((r && (flagsOf(r) & kAutoDestroy) !== 0) || (w && (flagsOf(w) & kAutoDestroy) !== 0)) {
-    stream.destroy(err);
+  if ((r && (flagsOf(r) & Flag.AutoDestroy) !== 0) || (w && (flagsOf(w) & Flag.AutoDestroy) !== 0)) {
+    stream.destroy!(err);
   } else if (err) {
     // Avoid V8 leak, https://github.com/nodejs/node/pull/34103#issuecomment-652002364
     err.stack; // eslint-disable-line no-unused-expressions
 
-    if (w && (flagsOf(w) & kErrored) === 0) {
+    if (w && (flagsOf(w) & Flag.Errored) === 0) {
       w.errored = err;
     }
-    if (r && (flagsOf(r) & kErrored) === 0) {
+    if (r && (flagsOf(r) & Flag.Errored) === 0) {
       r.errored = err;
     }
     if (sync) {
@@ -258,7 +308,7 @@ function errorOrDestroy(stream, err, sync?) {
   }
 }
 
-function construct(stream, cb) {
+function construct(stream: $Node.StreamWithState, cb: () => void) {
   if (typeof stream._construct !== "function") {
     return;
   }
@@ -267,10 +317,10 @@ function construct(stream, cb) {
   const w: WritableState | undefined = stream._writableState;
 
   if (r) {
-    r.flags &= ~kConstructed;
+    r[kState] &= ~Flag.Constructed;
   }
   if (w) {
-    w.flags &= ~kConstructed;
+    w[kState] &= ~Flag.Constructed;
   }
 
   stream.once(kConstruct, cb);
@@ -283,10 +333,10 @@ function construct(stream, cb) {
   ProcessNextTick(constructNT, stream);
 }
 
-function constructNT(stream) {
+function constructNT(stream: $Node.StreamWithState) {
   let called = false;
 
-  function onConstruct(err) {
+  function onConstruct(err?: Error | null) {
     if (called) {
       errorOrDestroy(stream, err ?? $ERR_MULTIPLE_CALLBACK());
       return;
@@ -298,13 +348,13 @@ function constructNT(stream) {
     const s = (w || r)!;
 
     if (r) {
-      r.flags |= kConstructed;
+      r[kState] |= Flag.Constructed;
     }
     if (w) {
-      w.flags |= kConstructed;
+      w[kState] |= Flag.Constructed;
     }
 
-    if ((s.flags & kDestroyed) !== 0) {
+    if ((s[kState] & Flag.Destroyed) !== 0) {
       stream.emit(kDestroy, err);
     } else if (err) {
       errorOrDestroy(stream, err, true);
@@ -314,7 +364,7 @@ function constructNT(stream) {
   }
 
   try {
-    stream._construct(err => {
+    stream._construct!(err => {
       ProcessNextTick(onConstruct, err);
     });
   } catch (err) {
@@ -322,21 +372,21 @@ function constructNT(stream) {
   }
 }
 
-function isRequest(stream) {
+function isRequest(stream: $Node.AnyStream | null | undefined) {
   return stream?.setHeader && typeof stream.abort === "function";
 }
 
-function emitCloseLegacy(stream) {
+function emitCloseLegacy(stream: $Node.EventEmitter) {
   stream.emit("close");
 }
 
-function emitErrorCloseLegacy(stream, err) {
+function emitErrorCloseLegacy(stream: $Node.EventEmitter, err: Error) {
   stream.emit("error", err);
   ProcessNextTick(emitCloseLegacy, stream);
 }
 
 // Normalize destroy for legacy.
-function destroyer(stream, err) {
+function destroyer(stream: $Node.AnyStream | null | undefined, err?: Error | null) {
   if (!stream || isDestroyed(stream)) {
     return;
   }
@@ -348,13 +398,13 @@ function destroyer(stream, err) {
   // TODO: Remove isRequest branches.
   if (isServerRequest(stream)) {
     stream.socket = null;
-    stream.destroy(err);
+    stream.destroy!(err);
   } else if (isRequest(stream)) {
-    stream.abort();
+    stream.abort!();
   } else {
     const req = stream.req;
     if (isRequest(req)) {
-      req.abort();
+      req!.abort!();
     } else if (typeof stream.destroy === "function") {
       stream.destroy(err);
     } else if (typeof stream.close === "function") {

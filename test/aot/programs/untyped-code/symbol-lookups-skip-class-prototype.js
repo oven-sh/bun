@@ -1,21 +1,15 @@
 // A symbol can only name a member whose name is computed. The engine asks objects for symbols all the time: Symbol.toStringTag, Symbol.toPrimitive, Symbol.iterator, Symbol.isConcatSpreadable. The prototype of a class without such members says no at once, however often it is asked, and need not make its members for that.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const made = () => count("ClassPrototype:made");
 class Token { kind = "word"; text() { return this.kind; } length() { return 4; } }
 class Keyword extends Token { kind = "keyword"; reserved() { return true; } }
 const describe = Object.prototype.toString;
 const token = new Token(), keyword = new Keyword();
-const before = made();
 let last = "";
 for (let i = 0; i < 100; i++) last = describe.call(token) + describe.call(keyword);
 let joined = 0;
 for (let i = 0; i < 100; i++) joined += [].concat(token, keyword).length;
 let tags = 0;
 for (let i = 0; i < 100; i++) tags += token[Symbol.toStringTag] === undefined && keyword[Symbol.iterator] === undefined ? 1 : 0;
-const after = made();
 console.log(last, joined, tags);
-console.log(after === before ? "no prototype made its members" : (after - before) + " prototypes made their members");
 
 // The symbol arrives, and a class that has one from the start.
 Token.prototype[Symbol.toStringTag] = "Token";

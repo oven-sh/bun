@@ -1,4 +1,4 @@
-// A variable declared `number` or `boolean` without an initializer holds `undefined` until something is stored: a read yields it, and it is refused where it enters a place declared `number` or `boolean`.
+// A variable declared `number` or `boolean` without an initializer holds `undefined` until something is stored: a read yields it, and it passes where it enters a place declared `number` or `boolean`.
 function kind(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v }
 function double(n: number): number { return n * 2 }
 function orTen(n: number = 10): number { return n }
@@ -13,7 +13,7 @@ function closures(which: number): string {
 }
 for (let which = 0; which < 7; which++) try { closures(which); console.log("closure " + which + ": no error") } catch (e) { console.log("closure " + which + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 
-// `let x!: T` asserts, whatever the option says: a read while nothing has been stored throws, as `x!` does. ECMAScript: undefined, NaN, 10, none.
+// `let x!: T` tests nothing, as `x!` does: a read while nothing has been stored yields undefined.
 let moduleCount!: number
 try { console.log(moduleCount); console.log("let x!: no error") } catch (e) { console.log("let x!:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(moduleCount + 1); console.log("let x!, added to: no error") } catch (e) { console.log("let x!, added to:", e instanceof TypeError ? "TypeError" : "other " + e) }

@@ -1,9 +1,8 @@
 // A field of an object from elsewhere is written and then read back by name: the read returns the stored value without a load.
-// IR= 0 setLinks GetById v[0-9]+ "links"
-// IR= 1 next GetField
-// IR= 0 bumpModule GetModuleVariable
-// IR= 0 acrossBlocks GetById v[0-9]+ "flags"
-// IR= 1 onOneWay GetById v[0-9]+ "flags"
+// IR= 0 setLinks PropGet v[0-9]+ name="links"
+// IR= 1 next GetEnvironmentField
+// IR= 0 acrossBlocks PropGet v[0-9]+ name="flags"
+// IR= 1 onOneWay PropGet v[0-9]+ name="flags"
 declare const console: any;
 interface Links { checkFlags: number }
 interface Sym { flags: number; links: Links | undefined }

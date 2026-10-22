@@ -1,7 +1,7 @@
 // One short string appended to an open buffer is copied by compiled code. Every length from 0 to 18 is appended, and among the pieces are undefined, null, numbers, booleans, strings of 16 bits, ropes and slices.
-// IR= 1 byCharacter CallBuiltin StringAppendBegin
-// IR= 1 byPiece CallBuiltin StringAppendBegin
-// IR= 1 byString CallBuiltin StringAppendBegin
+// IR= 1 byCharacter  = StringBuilderBegin
+// IR= 1 byPiece  = StringBuilderBegin
+// IR= 1 byString  = StringBuilderBegin
 type Piece = string | undefined | null | number | boolean;
 function byCharacter(text: string, count: number): string {
   let out = "";

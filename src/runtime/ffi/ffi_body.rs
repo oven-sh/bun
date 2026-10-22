@@ -1001,6 +1001,16 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
+        if bun_jsc::compiled_program::is_write_execute_memory_denied() {
+            return Err(global_this
+                .err(
+                    ErrorCode::FFI_CC_DISABLED,
+                    format_args!(
+                        "Cannot compile C code because this process can't create executable memory (PR_SET_MDWE). An executable built with bun compile turns that on when it starts."
+                    ),
+                )
+                .throw());
+        }
         let arguments = callframe.arguments();
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
@@ -1471,11 +1481,12 @@ impl FFI {
             match bun_sys::DynLib::open(name) {
                 Ok(d) => break 'brk d,
                 Err(_) => {
-                    let backup_name = Fs::FileSystem::instance().abs(&[name]);
                     // if that fails, try resolving the filepath relative to the current working directory
-                    match bun_sys::DynLib::open(backup_name) {
-                        Ok(d) => break 'brk d,
-                        Err(_) => {
+                    let mut backup_buf = bun_paths::path_buffer_pool::get();
+                    let backup_name = Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..]);
+                    match backup_name.map(bun_sys::DynLib::open) {
+                        Some(Ok(d)) => break 'brk d,
+                        Some(Err(_)) | None => {
                             // Then, if that fails, report an error with the library name and system error
                             let dlerror_msg = get_dl_error();
 
@@ -2591,6 +2602,12 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 #[inline]
 pub(crate) fn bun__ffi__cc(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     FFI::bun_ffi_cc(global, callframe)
+}
+
+/// `$newRustFunction("ffi.rs", "closeCallback", 1)`: what `JSCallback.prototype.close` calls.
+#[inline]
+pub(crate) fn close_callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    FFI::close_jsc_callback(global, callframe.argument(0))
 }
 
 fn make_napi_env_if_needed<'a>(

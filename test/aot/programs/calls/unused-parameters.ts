@@ -1,4 +1,4 @@
-// Arguments for unused parameters are not type-checked, and direct callers do not pass them. Output must match plain Bun.
+// A parameter with a written type is tested on entry whether or not the body uses it: functions, arrow functions, methods, static methods, setters, generators and async functions, each called through `any` with every kind of value. undefined and null pass every type.
 type Point = { x: number; y: number };
 function none(a: number, p: Point, s: string): number {
   return 7;
@@ -73,4 +73,10 @@ for (const misfit of misfits) {
 let sum = 0;
 for (let i = 0; i < 100; i++) sum += none(i + 0.5, point, "s") + first(i, point, "s") + middle(i > 50, i, [], 1) + arrow(point, i) + Shape.of("square", i) + last(i / 3, point, "s").length;
 console.log(sum);
-for (const misfit of misfits) console.log("later", show(misfit), await table[names.find(name => name === "later")!](misfit, 2));
+for (const misfit of misfits) {
+  try {
+    console.log("later", show(misfit), await table[names.find(name => name === "later")!](misfit, 2));
+  } catch (error) {
+    console.log("later", show(misfit), "rejects", (error as Error).constructor.name);
+  }
+}

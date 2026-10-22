@@ -121,7 +121,7 @@ async function judge(folder: string, source: string): Promise<string> {
   if (built.timedOut) return "the build hangs";
   const interpreted = await run([bunExe(), "run", "./" + entryPoint], folder, 20_000);
   if (!existsSync(join(folder, "compiled"))) {
-    const refusal = /error: [^\n]*--aot does not support ([^\n]*)/.exec(said);
+    const refusal = /error: [^\n]*bun compile does not support ([^\n]*)/.exec(said);
     if (refusal) return interpreted.exitCode === 0 ? "unsupported: " + refusal[1].slice(0, 60) : "skipped";
     if (/error: internal/.test(said)) return "internal compiler error";
     return "skipped";

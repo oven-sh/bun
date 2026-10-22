@@ -1,6 +1,6 @@
 // One symbol imported under two names is one field; two symbols with one description are two fields.
-// IR= 0 readAlias GetByVal
-// IR= 1 readAlias : number = GetById .*:shared"
+// IR= 0 readAlias ElemGet
+// IR= 1 readAlias : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*shared"
 import * as all from "./symbols";
 import { kShared, kSecond, type Tagged } from "./symbols";
 import { readAlias, Holder } from "./user";

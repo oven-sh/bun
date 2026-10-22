@@ -101,7 +101,6 @@ pub struct BundledAst<'arena> {
 
     // const_values: ConstValuesMap,
     pub(crate) ts_enums: bun_ast::ast_result::TsEnumsMap,
-    pub(crate) jsx_pragmas: Option<bun_alloc::AstBox<bun_ast::ast_result::JsxPragmas>>,
 
     pub(crate) flags: Flags,
 }
@@ -137,7 +136,6 @@ bun_collections::multi_array_columns! {
         redirect_import_record_index: u32,
         target: bun_ast::Target,
         ts_enums: bun_ast::ast_result::TsEnumsMap,
-        jsx_pragmas: Option<bun_alloc::AstBox<bun_ast::ast_result::JsxPragmas>>,
         flags: Flags,
     }
 }
@@ -159,8 +157,6 @@ bitflags::bitflags! {
         const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
-        const ES_MODULE_BY_ITS_OWN_SYNTAX = 1 << 10;
-        const VALIDATES_BY_TYPE = 1 << 11;
         // _padding: u6 fills the rest
     }
 }
@@ -200,7 +196,6 @@ impl<'arena> BundledAst<'arena> {
             redirect_import_record_index: u32::MAX,
             target: bun_ast::Target::Browser,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
-            jsx_pragmas: None,
             flags: Flags::empty(),
         }
     }
@@ -253,7 +248,6 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: self.const_values,
             ts_enums: self.ts_enums,
-            jsx_pragmas: self.jsx_pragmas,
 
             uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
             uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
@@ -303,8 +297,6 @@ impl<'arena> BundledAst<'arena> {
             ast.directive.is_some_and(|d| d == b"use strict"),
         );
         flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
-        flags.set(Flags::ES_MODULE_BY_ITS_OWN_SYNTAX, ast.has_esm_syntax);
-        flags.set(Flags::VALIDATES_BY_TYPE, !ast.runtime_imports.__validate.is_empty());
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,
@@ -351,7 +343,6 @@ impl<'arena> BundledAst<'arena> {
 
             // const_values: ast.const_values,
             ts_enums: ast.ts_enums,
-            jsx_pragmas: ast.jsx_pragmas,
 
             flags,
         }

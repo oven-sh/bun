@@ -1,7 +1,7 @@
 // A CommonJS module requires ES modules: members, patterns and constants that hold a module read what the module declares; a `var` that holds one is `undefined` until it is stored to; sloppy code stores to a module in vain.
-// IR= 0 held GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 pattern GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 memberOfTheCall GetById|GetByVal|DefineField| = Call v|CallMethod
+// IR= 0 held PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 pattern PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 memberOfTheCall PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
 const attempt = run => {
   try {
     return run();

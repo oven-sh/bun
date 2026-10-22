@@ -22,7 +22,7 @@ test.skipIf(!python)("measure/layers.py charges every sample to the layer that o
       [5, "server-aot", "<bun_sql_jsc::postgres::data_cell::Putter>::put"],
       [5, "server-aot", "Bun::jsFunctionBunEscapeHTML"],
       [10, "server-aot", "JSC::JSRopeString::resolveRope"],
-      [5, "server-aot", "operationAOTTypedJSONAppendString"],
+      [5, "server-aot", "operationAOTJSONAppendString"],
       [5, "server-aot", "llint_predecoded_get_by_id_inline"],
       [5, "server-aot", "icu_75::SimpleDateFormat::subFormat"],
       [5, "server-aot", "JSC::MarkedBlock::Handle::sweep"],

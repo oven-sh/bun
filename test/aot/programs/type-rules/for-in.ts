@@ -16,7 +16,7 @@ const inst = new Derived2()
 rule("enumerable addition to the prototype of a class", () => { (Base2.prototype as any).patched = true; return "stored" })
 rule("another prototype for the prototype of a class", () => Object.setPrototypeOf(Base2.prototype, { polluted: 1 }) === Base2.prototype)
 console.log(keysOf(inst))
-// Silent: indices, then fields, then the other strings.
+// Key order: indices, then strings in the order in which they were created.
 const dressed: Rec = { a: 1, d: 2 }
 const anyDressed: any = dressed
 anyDressed.x = 1; anyDressed[5] = 1; dressed.b = "late"; anyDressed[Symbol("s")] = 1; anyDressed[0] = 1

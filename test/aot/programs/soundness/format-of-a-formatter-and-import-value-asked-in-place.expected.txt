@@ -1,0 +1,34 @@
+NumberFormat.format is true false false false false
+NumberFormat.format, again and read back: true true true
+NumberFormat.format, its own members: true true true 1 false
+NumberFormat.format(1234.5) is true false false false 1,234.5 7
+NumberFormat.format of number is a string: true 0
+NumberFormat.format of number is a string: true -0
+NumberFormat.format of number is a string: true NaN
+NumberFormat.format of bigint is a string: true 12
+NumberFormat.format of string is a string: true 7
+NumberFormat.format of undefined is a string: true NaN
+NumberFormat.format of object is a string: true 0
+NumberFormat.format of boolean is a string: true 1
+NumberFormat.format of object is a string: true 3
+mapped: true false 1
+mapped: true false 2,000
+a symbol: true true
+DateTimeFormat.format is true false false true true 1
+DateTimeFormat.format(0) is true false false 1/1/1970
+DateTimeFormat.format(a Date) is true 1/2/1970
+DateTimeFormat.format() is true true
+not a time: true false
+the getter is true false
+on an object that is no formatter: true
+on the prototype object: true
+the getter is true false
+on an object that is no formatter: true
+on the prototype object: true
+ShadowRealm is true false
+importValue answers true true false false true true
+rejected with true true true
+a missing export answers true
+a missing export: true true
+a number for the name: true
+a function: TypeError

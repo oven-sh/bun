@@ -232,7 +232,6 @@ CPP_DECL bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 CPP_DECL bool JSC__JSValue__isUInt32AsAnyInt(JSC::EncodedJSValue JSValue0);
 CPP_DECL bool JSC__JSValue__jestDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2, bool arg3);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__jestCopyAlongPropertyMatchers(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool JSC__JSValue__jestStrictDeepEquals(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt64(int64_t arg0);
@@ -405,17 +404,6 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObj
 
 #ifdef __cplusplus
 
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__basename(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__dirname(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__extname(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__format(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__isAbsolute(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__join(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__normalize(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__parse(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__relative(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__resolve(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
-extern "C" JSC::EncodedJSValue SYSV_ABI Bun__Path__toNamespacedPath(JSC::JSGlobalObject* arg0, bool arg1, JSC::EncodedJSValue* arg2, uint16_t arg3);
 
 #endif
 

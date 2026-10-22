@@ -1,0 +1,26 @@
+let calls = 0;
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const subject = performance;
+class Special extends Array {
+  count = 0;
+  get [Symbol.toPrimitive]() {
+    calls++;
+    this.count++;
+    console.log("Symbol.toPrimitive");
+    return undefined;
+  }
+}
+const special = new Special(1.5, item, "two");
+console.log("made");
+const result = subject.getEntriesByName(special, 2.5);
+console.log(Array.isArray(result), result.length, Array.isArray(special), special.length, typeof special[0]);
+console.log(special[1].double(), typeof special[2], typeof special.count);
+console.log(calls, special.count);

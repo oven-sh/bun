@@ -1,0 +1,42 @@
+[
+ [
+  "null === (newChild as RR.ReactElement).key! ? newIdx : (newChild as RR.ReactElement).key\n",
+  "null === (newChild as RR.ReactElement).key ? newIdx : (newChild as RR.ReactElement).key!\n"
+ ],
+ [
+  "(Component as RR.ClassComponent[\"defaultProps\"])[propName$57]",
+  "(Component as RR.ClassComponent[\"defaultProps\"])![propName$57]"
+ ],
+ [
+  "      renderLanes\n    );\n    key = checkDidRenderIdHook();",
+  "      renderLanes\n    );\n    key = checkDidRenderIdHook() as any;"
+ ],
+ [
+  "(timeoutHandle as RR.FiberRoot[\"cancelPendingCommit\"])()",
+  "(timeoutHandle as RR.FiberRoot[\"cancelPendingCommit\"])!()"
+ ],
+ [
+  "switch ((type as RR.ElementTypeGiven).$$typeof!) {",
+  "switch ((type as RR.TypeObjectGiven).$$typeof) {"
+ ],
+ [
+  "null !== (callback as RR.UpdateCallback | null | undefined) ? (callback as RR.UpdateCallback | null | undefined) : null;\n    enqueueUpdate(containerInfo, hydrationCallbacks, tag);",
+  "null !== (callback as RR.UpdateCallback | null | undefined) ? (callback as RR.UpdateCallback) : null;\n    enqueueUpdate(containerInfo, hydrationCallbacks, tag);"
+ ],
+ [
+  "i++) (0, listeners[i])();",
+  "i++) (0, (listeners as any)[i])();"
+ ],
+ [
+  "i++) (0, listeners[i])(result);",
+  "i++) (0, (listeners as any)[i])(result);"
+ ],
+ [
+  "(0, listeners[(error as number)])(void 0);",
+  "(0, (listeners as any)[(error as number)])(void 0);"
+ ],
+ [
+  "(0, (actionNode as RR.ActionStateQueueNode[\"listeners\"])[i])();",
+  "(0, (actionNode as any)[i])();"
+ ]
+]

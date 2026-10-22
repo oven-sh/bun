@@ -1,0 +1,5 @@
+# Code that folding removed has no types and reports no type errors. Live code beside it does.
+removed-branch.ts:4 type `a` = gave up: UnreachedNode
+absent: removed-branch.ts:3 diagnostic TS2322 = Semantic StopsBuild
+
+removed-branch.ts:6 diagnostic TS2322 = Semantic StopsBuild

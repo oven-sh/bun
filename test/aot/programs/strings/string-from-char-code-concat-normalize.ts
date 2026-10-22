@@ -8,8 +8,9 @@
 // CALLS- fromCharCodeInteger CallHostFunction|CallValue
 // CALLS- fromCharCodeByte CallHostFunction|CallValue|CharToString|FromC
 // CALLS- concatKnown CallHostFunction|CallValue
-// CALLS+ concatKnown operationAOTTypedConcat
-// CALLS+ stringOfAnything CallHostFunction
+// CALLS+ concatKnown operationAOTConcat
+// CALLS- stringOfAnything CallHostFunction|CallValue
+// CALLS+ stringOfAnything operationAOTStringOfAnyValue
 // CALLS+ fromCharCode3 CallHostFunction
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
@@ -56,7 +57,7 @@ export function concat1(s: string, a: string): string { return s.concat(a); }
 export function concat2(s: string, a: string, b: string): string { return s.concat(a, b); }
 export function concat3(s: string, a: string, b: string, c: string): string { return s.concat(a, b, c); }
 export function concatKnown(s: string, a: string, b: string): string { const x = `${s}`, y = `${a}`, z = `${b}`; return x.concat(y).concat(z, y); }
-export function concatNumber(s: string, a: number): string { return s.concat(a as unknown as string); }
+export function concatNumber(s: string, a: number): string { return s.concat(a as any); }
 export function concatOfAnything(s: any, a: any, b: any): unknown { return s.concat(a, b); }
 export function normalize0(s: string): string { return s.normalize(); }
 export function normalize1(s: string, form: string): string { return s.normalize(form); }

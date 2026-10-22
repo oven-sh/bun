@@ -1,0 +1,8 @@
+export function probeUse(probeOpen) {
+  using probeResource = probeOpen();
+  return probeResource.probeValue;
+}
+export async function probeUseAsync(probeOpen) {
+  await using probeResource = probeOpen();
+  return probeResource.probeValue;
+}

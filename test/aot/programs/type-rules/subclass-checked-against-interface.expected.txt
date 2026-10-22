@@ -1,6 +1,0 @@
-heir of an object of the type: no error 80
-then: typed code reads it: no error 82
-then: a store makes an own property: no error 81,80,port,83
-then: the parent changes: no error 90
-then: an ill-typed own property shadows: TypeError
-heir of a frozen literal: no error 4

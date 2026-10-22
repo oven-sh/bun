@@ -1,0 +1,8 @@
+1 levels: shared as parsed: true, shared in the copy: false, depth 2
+2 levels: shared as parsed: true, shared in the copy: false, depth 3
+10 levels: shared as parsed: true, shared in the copy: false, depth 11
+16 levels: shared as parsed: true, shared in the copy: false, depth 17
+20 levels: shared as parsed: true, shared in the copy: false, depth 21
+21 levels: SyntaxError: YAML Parse error: Excessive aliasing
+30 levels: SyntaxError: YAML Parse error: Excessive aliasing
+1000 levels: SyntaxError: YAML Parse error: Excessive aliasing

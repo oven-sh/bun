@@ -1,14 +1,16 @@
 // A formatter made with a constant locale and constant options holds a pattern computed at build time, whatever becomes of it: it may be
 // passed on, captured, kept in a field, or have its `format` taken off. ICU is set up for it only when something needs ICU, and then it
 // answers as any other formatter. Every result is compared with a formatter whose options are not constants.
-// IR= 1 makeFormatter CallBuiltin NewConstantFormatter
-// IR= 0 makeFormatter NewObject
-// IR= 0 makeFormatter GetGlobal
-// IR= 0 makeFormatter Construct
-// IR= 1 makeWithOptionsThatEscape Construct
-// IR= 1 makeSubclassInstance Construct
-// IR= 1 makeWithSharedOptions CallBuiltin NewConstantFormatter
-// IR= 1 makeWithOptionsThatAreChanged Construct
+// IR= 1 makeFormatter  = NewFormatterWithPattern 
+// IR= 0 makeFormatter  = New(Plain)?Object 
+// IR= 0 makeFormatter  = FreeGet 
+// IR= 0 makeFormatter Construct|overload=IntlDateTimeFormat/
+// IR= 0 makeWithOptionsThatEscape NewFormatterWithPattern
+// IR= 1 makeWithOptionsThatEscape  = Construct |overload=IntlDateTimeFormat/
+// IR= 0 makeSubclassInstance NewFormatterWithPattern
+// IR= 1 makeWithSharedOptions  = NewFormatterWithPattern 
+// IR= 0 makeWithOptionsThatAreChanged NewFormatterWithPattern
+// IR= 1 makeWithOptionsThatAreChanged  = Construct |overload=IntlDateTimeFormat/
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }

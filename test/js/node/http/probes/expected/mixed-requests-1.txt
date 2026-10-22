@@ -1,0 +1,1137 @@
+seed 1, connection 0
+    POST "/unread/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/long-header/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/empty" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/empty" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read-in-two-parts/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read-in-two-parts/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 1
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/listeners" 1.0 headers 2 4 shouldKeepAlive false complete false
+    res finish
+    res close
+    req close
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 2
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/chunked/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 3
+    POST "/trailers/status-204" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/chunked/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/close/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 4
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    checkContinue
+    POST "/expect/end" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    GET "/pipelined/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 5
+    POST "/trailers/end" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/status-204" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: close\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+    response: "closed"
+seed 1, connection 6
+    GET "/upgrade/stream" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/empty" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/close/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: close\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 7
+    GET "/pipelined/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    DELETE "/delete/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 8
+    POST "/unread/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/close/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 9
+    POST "/unread/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/microtask" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/trailers/microtask" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/end" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 10
+    POST "/read/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/upgrade/listeners" 1.1 headers 3 6 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    DELETE "/delete/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/empty" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/stream" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nabc"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 11
+    POST "/unread/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/status-304" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: close\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified"] req[complete destroyed readableEnded _dumped]
+    response: "closed"
+seed 1, connection 12
+    HEAD "/head/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/upgrade/tick" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/end" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 13
+    POST "/chunked/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/two-immediates" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    checkContinue
+    POST "/expect/seven-headers" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/microtask" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/trailers/seven-headers" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 14
+    checkContinue
+    POST "/expect/empty" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/empty" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 15
+    POST "/unread/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 16
+    HEAD "/head/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 17
+    GET "/long-header/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/chunked/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 18
+    POST "/trailers/empty" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/long-header/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/long-header/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/two-immediates" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 19
+    checkContinue
+    POST "/expect/tick" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 20
+    POST "/unread/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/query/tick?q=1&q=1&q=1&q=1&q=1&q=1&q=1&" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 21
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/close/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 22
+    checkContinue
+    POST "/expect/microtask" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/chunked/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 23
+    POST "/unread/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/query/microtask?q=1&q=1&q=1&q=1&q=1&q=1" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/listeners" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 24
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 25
+    POST "/chunked/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/chunked/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    DELETE "/delete/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 26
+    GET "/get/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/end" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 27
+    POST "/trailers/seven-headers" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 28
+    POST "/unread/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/empty" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/long-header/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/upgrade/microtask" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 29
+    POST "/read/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/upgrade/seven-headers" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/write-head-write-end" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 30
+    POST "/unread/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/long-header/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 31
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/tick" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    HEAD "/head/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 32
+    POST "/trailers/seven-headers" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/status-304" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/long-header/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/stream" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/long-header/seven-headers" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    checkContinue
+    POST "/expect/empty" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 33
+    GET "/get/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/listeners" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/pipelined/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/unread/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/status-304" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/tick" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+seed 1, connection 34
+    POST "/trailers/status-304" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/upgrade/end" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/close/listeners" 1.1 headers 2 4 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 35
+    POST "/unread/write-head-write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/empty" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/tick" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read-in-two-parts/write-end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 6 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    HEAD "/head/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/close/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 36
+    GET "/long-header/microtask" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/trailers/tick" 1.1 headers 3 6 shouldKeepAlive true complete false
+    body 3 trailers Object{x-t:"1"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    POST "/read/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 37
+    POST "/unread/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    checkContinue
+    POST "/expect/two-immediates" 1.1 headers 3 6 shouldKeepAlive true complete false
+    response: "HTTP/1.1 100 Continue\r\n\r\n"
+    body 3 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/stream" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/write-head-write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ncontent-length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage="OK" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/http10/write-end" 1.0 headers 2 4 shouldKeepAlive false complete false
+    response: "closed after HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined] req[complete destroyed readableEnded _dumped]
+seed 1, connection 38
+    GET "/get/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/seven-headers" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nx-h0: 0\r\nx-h1: 1\r\nx-h2: 2\r\nx-h4: 4\r\nx-h5: 5\r\nx-h6: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/chunked/stream" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/pipelined/status-204" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/listeners" 1.1 headers 1 2 shouldKeepAlive true complete false
+    res finish
+    res close
+    req close
+    GET "/pipelined/write-end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    HEAD "/head/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+seed 1, connection 39
+    POST "/unread/end" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    DELETE "/delete/two-immediates" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/pipelined/microtask" 1.1 headers 1 2 shouldKeepAlive true complete false
+    GET "/pipelined/end" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    GET "/get/two-immediates" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/unread/status-204" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 204 No Content\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=204 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    DELETE "/delete/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded _dumped]
+    POST "/read/status-304" 1.1 headers 2 4 shouldKeepAlive true complete false
+    body 5 trailers Object{}
+    response: "HTTP/1.1 304 Not Modified\r\netag: x\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=304 statusMessage="Not Modified" shouldKeepAlive] req[complete destroyed readableEnded]
+    GET "/get/tick" 1.1 headers 1 2 shouldKeepAlive true complete false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response: res[finished headersSent writableEnded writableFinished destroyed closed statusCode=200 statusMessage=undefined shouldKeepAlive] req[complete destroyed readableEnded _dumped]

@@ -1,0 +1,18 @@
+# Where the value goes on, the uses of the expression or the variable that holds it count.
+flows.js:3 parameter `o` = { a?: any; }
+flows.js:5 parameter `o` = { a?: any; }
+flows.js:7 parameter `o` = { a?: any; }
+flows.js:10 parameter `c` = any
+flows.js:10 parameter `o` = { a?: any; }
+flows.js:12 parameter `o` = { a?: any; }
+flows.js:14 parameter `o` = { a?: any; }
+flows.js:16 parameter `o` = { a?: any; }
+flows.js:18 parameter `o` = any
+flows.js:20 parameter `opts` = { depth?: any; }
+flows.js:22 predicted `n` = number
+flows.js:24 parameter `o` = { a?: number; b: Function; }
+flows.js:26 parameter `o` = { a?: any; b?: any; }
+flows.js:28 parameter `o` = { done?: any; }
+flows.js:30 parameter `o` = any
+flows.js:32 parameter `o` = any
+flows.js:34 parameter `o` = any

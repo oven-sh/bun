@@ -1,13 +1,15 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 interface Post { id: number; createdAt: Date; updatedAt: Date | null; deletedAt?: Date }
 interface Log { name: string; at: Date[] }
 class Stamp extends Date { }
 class Loud extends Date { toJSON(): string { return "loud"; } }
 function measure(label: string, run: () => string): void {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
     let text = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + text + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code");
+    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
 }
 function post(createdAt: Date, updatedAt: Date | null): Post {
     return { id: 1, createdAt, updatedAt };

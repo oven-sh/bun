@@ -1,4 +1,4 @@
-// A member of an imported enum is the constant that the bundler inlines, whatever is stored on the object.
+// A member of an imported enum is read from the object, as in plain Bun: only the flow analysis may prove it constant.
 declare const console: { log(...a: unknown[]): void };
 import { E } from "./a";
 const o: any = E;

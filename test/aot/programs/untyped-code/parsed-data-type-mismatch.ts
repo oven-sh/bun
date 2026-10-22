@@ -1,10 +1,10 @@
-// Data that `JSON.parse` read from a file is cast to a type although some entries do not match the type.
+// Data that `JSON.parse` read from a file is cast to a type although some entries do not match the type. The cast takes any object, and reads through a dictionary or a variable without an annotation give what is there. A value of the wrong kind throws a TypeError where it enters an annotated variable, a primitive of the wrong kind also under a cast, and where a function reads it from a field of its annotated parameter.
 type P = { tools: string[]; n?: number }
 type Q = { count: number; name: string }
 type G = { projects?: Record<string, P>; counters?: Record<string, Q>; version: number }
 const DEFAULT: P = { tools: [], n: 0 }
 const text = JSON.stringify({ version: 2, projects: { good: { tools: ["a", "b"], n: 1 }, lacks: { n: 5 }, nothing: null, word: "corrupted", wrong: { tools: "one,two" }, more: { tools: ["c"], extra: true }, list: [1, 2], digit: 7 }, counters: { good: { count: 1, name: "x" }, lacks: { name: "y" }, wrong: { count: "3", name: 4 } } })
-const row = (what: string, f: () => unknown) => { let said: string; try { said = String(f()) } catch (e) { said = "THROWS " + (e as Error).message.split("\n")[0] } console.log(what + ": " + said) }
+const row = (what: string, f: () => unknown) => { let said: string; try { said = String(f()) } catch (e) { said = "THROWS " + (e as Error).constructor.name } console.log(what + ": " + said) }
 const parse = () => JSON.parse(text) as G
 const use = (p: P) => (Array.isArray(p.tools) ? p.tools.join("+") : typeof p.tools) + "/" + (p.n ?? "-")
 const keys = ["good", "lacks", "nothing", "word", "wrong", "more", "list", "digit", "absent"]
@@ -54,7 +54,7 @@ for (const key of ["object", "array", "swapped", "nil", "honest"]) {
   row("a lying boolean, " + key, () => { const x = liars[key]; return [x.on ? "truthy" : "falsy", String(!x.on), String(x.on === true), String(x.on && 1), typeof x.on].join("|") })
   row("a lying field cast to its kind, " + key, () => { const r = liars[key] as Record<string, unknown>; const name = r.name as string, size = r.size as number; return [String(name + "?"), String(size + 1), typeof name, typeof size].join("|") })
 }
-// A WRITTEN TYPE THAT IS EVERYBODY's: the place is predicted, not the type.
+// AN ANNOTATED VARIABLE tests what enters it, also when its type is as common as `string[]` or `number`.
 for (const key of ["good", "lacks", "wrong"]) row("a common type written, " + key, () => { const x = parse().projects![key]; const t: string[] = x.tools; const n: number | undefined = x.n; return typeof t + " " + (Array.isArray(t) ? t.length : String(t)) + " " + typeof n })
 for (const key of ["good", "lacks", "wrong"]) row("a number written, " + key, () => { const q = parse().counters![key]; const c: number = q.count; const name: string = q.name; return typeof c + " " + typeof name + " " + (typeof c === "number" ? c * 2 : "no number") })
 row("round trip", () => { const g = parse(); return JSON.stringify(g) === text })

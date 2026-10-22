@@ -282,9 +282,10 @@ const usualRequests: Omit<Case, "tag">[] = [
   { kind: "number.toLocaleString", options: { maximumFractionDigits: 1 } },
   { kind: "number.toLocaleString", options: { style: "currency", currency: "USD" } },
 ];
-const localesInATypicalProgram = 9;
+// One build plans at most 256 formatters (the limit MaxConstantFormatterRequests).
+const localesInATypicalProgram = 8;
 export const numberOfTypicalPrograms = Math.ceil(commonLocales.length / localesInATypicalProgram);
-export const typicalFormattersWithoutAPattern = [0, 0, 0, 0, 3];
+export const typicalFormattersWithoutAPattern = [0, 0, 0, 0, 0, 3];
 
 export function generateTypicalProgram(part: number): string {
   const list: Case[] = [];

@@ -365,6 +365,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.preserve_symlinks.unwrap_or(false) {
         argv.push(lit(b"--preserve-symlinks\0"));
     }
+    if crate::cli::run_compiled::is_checked() {
+        argv.push(lit(b"--aot-checked=-\0"));
+    }
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));
     }
@@ -430,7 +433,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
 
 /// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`
 /// has no `From<Loader> for &str` impl upstream.
-pub(crate) fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
+fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
     use bun_options_types::schema::api::Loader as L;
     match l {
         L::jsx => "jsx",

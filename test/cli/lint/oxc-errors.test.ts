@@ -5503,90 +5503,6 @@ const tables: [title: string, config: object | undefined, rows: Row[]][] = [
           "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, test, expect` from `vitest` package instead of using globals. | 56+8 Add this global vitest import | 78+4 Add this global vitest import | 96+6 Add this global vitest import",
         ],
       ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, describe, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { expect, test, describe } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, expect } from "bun:test";\ndescribe("a", () => { expect(1).toBe(1); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect` from `vitest` package instead of using globals. | 45+43 Add this global vitest import | 67+9 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, expect } from "bun:test";\ntest("b", () => { expect(1).toBe(1); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, test` from `vitest` package instead of using globals. | 59+9 Add this global vitest import | 41+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => {}); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, test` from `vitest` package instead of using globals. | 43+45 Add this global vitest import | 65+19 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { it, vi, expect, beforeEach } from "bun:test";\nit("a", () => {}); expect(1); vi(); beforeEach(() => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `beforeEach, vi, expect, it` from `vitest` package instead of using globals. | 91+20 Add this global vitest import | 74+9 Add this global vitest import | 55+17 Add this global vitest import | 85+4 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, describe, test` from `vitest` package instead of using globals. | 83+6 Add this global vitest import | 43+57 Add this global vitest import | 65+31 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); test("c", () => {}); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `test, describe, expect` from `vitest` package instead of using globals. | 51+86 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import | 114+19 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); expect(2).toBe(2); }); });',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+84 Add this global vitest import | 91+9 Add this global vitest import | 110+9 Add this global vitest import | 73+58 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { describe, test, expect } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1).toBe(1); }); }); describe("d", () => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `describe, expect, test` from `vitest` package instead of using globals. | 51+65 Add this global vitest import | 118+23 Add this global vitest import | 91+9 Add this global vitest import | 73+39 Add this global vitest import",
-        ],
-      ],
-      [
-        "test.js",
-        'import { test, expect } from "bun:test";\ntest("b", () => { expect(1).toBe(1); }); test("c", () => {});',
-        [
-          "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions | Import global functions `expect, test` from `vitest` package instead of using globals. | 59+9 Add this global vitest import | 41+39 Add this global vitest import | 82+19 Add this global vitest import",
-        ],
-      ],
     ],
   ],
   [
@@ -6062,6 +5978,84 @@ describe.concurrent("bun lint with .oxlintrc.json", () => {
 
   test.each(tables)("%s", async (_, config, table) => {
     await expectErrors(table, config);
+  });
+
+  // oxlint 1.87 also reports a name that's imported from another package, and its fix imports the name a second time.
+  describe("vitest/prefer-importing-vitest-globals only reports globals", () => {
+    const config = {
+      categories: { correctness: "off" },
+      plugins: ["vitest"],
+      rules: { "vitest/prefer-importing-vitest-globals": "error" },
+    };
+    const body = 'test("b", () => { expect(1).toBe(1); });';
+    const reported = (names: string, ...labels: string[]) =>
+      [
+        "vitest(prefer-importing-vitest-globals) | Do not use Vitest global functions",
+        `Import global functions \`${names}\` from \`vitest\` package instead of using globals.`,
+        ...labels.map(it => `${it} Add this global vitest import`),
+      ].join(" | ");
+
+    test("a name the file imports or declares isn't reported", async () => {
+      await expectErrors(
+        [
+          ["test.js test.ts", `import { expect, test } from "bun:test";\n${body}`, []],
+          ["test.js test.ts", `import { expect, test } from "@playwright/test";\n${body}`, []],
+          ["test.js test.ts", `import { expect, test } from "./harness";\n${body}`, []],
+          ["test.js test.ts", `import test, { expect } from "./harness";\n${body}`, []],
+          ["test.js", `const { expect, test } = require("./harness");\n${body}`, []],
+          ["test.js", `const test = (name, run) => run();\nconst expect = require("node:assert");\n${body}`, []],
+          ["test.js", `function test(name, run) { run(); }\nfunction expect() { return { toBe() {} }; }\n${body}`, []],
+          ["test.js", `export function suite(test, expect) { ${body} }`, []],
+        ],
+        config,
+      );
+    });
+
+    test("in a file with both, only the globals are reported", async () => {
+      await expectErrors(
+        [
+          ["test.js test.ts", `import { test } from "@playwright/test";\n${body}`, [reported("expect", "59+6")]],
+          ["test.js", `const test = (name, run) => run();\n${body}`, [reported("expect", "53+6")]],
+          [
+            "test.js",
+            'import { describe, test } from "bun:test";\ndescribe("a", () => { test("b", () => { expect(1); }); });',
+            [reported("expect", "83+6")],
+          ],
+        ],
+        config,
+      );
+    });
+
+    test("--fix only imports the globals", async () => {
+      const files = {
+        "bound.test.ts": `import { expect, test } from "./harness";\n${body}\n`,
+        "mixed.test.ts": `import { test } from "@playwright/test";\n${body}\n`,
+        "globals.test.ts": `${body}\n`,
+        "added.test.ts": `import { test } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
+      };
+      using dir = tempDir("bun-lint-oxc-errors", { ".oxlintrc.json": JSON.stringify(config), ...files });
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--fix", "-f", "json"],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const fixed = await Promise.all(
+        Object.keys(files).map(async name => [name, await Bun.file(`${dir}/${name}`).text()]),
+      );
+      expect(Object.fromEntries(fixed)).toEqual({
+        "bound.test.ts": files["bound.test.ts"],
+        "mixed.test.ts": `import { expect } from 'vitest';\n${files["mixed.test.ts"]}`,
+        "globals.test.ts": `import { expect, test } from 'vitest';\n${body}\n`,
+        "added.test.ts": `import { test, expect } from "vitest";\nimport { vi } from "./harness";\nvi();\n${body}\n`,
+      });
+      expect(JSON.parse(stdout).diagnostics).toEqual([]);
+      expect(stderr).toBe("Fixed 3 problems in 3 files\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   // As oxlint 1.87 prints them: it makes an offset of the line and the column, and a line and a column of that.

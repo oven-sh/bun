@@ -1,19 +1,17 @@
-//! The remaining checks of operators, assertions, templates and `yield`: 1186 1355 1360, 2412 2462
-//! 2566 2701 2731 2737, 2778 2779, 2796, 2860 2861, 7057, and 2364 for `=`.
+//! The remaining checks of operators, assertions, templates and `yield`: 1186 1355 1360, 2462 2566 2731 2737, 2779,
+//! 2860 2861, 7057, and 2364 for `=`.
 //!
-//! Follows `checkAssignmentOperator` for `=`, the pattern grammar part of
-//! `checkDestructuringAssignment`, `checkAssertion`, `checkSatisfiesExpression`,
-//! `checkTemplateExpression`, `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and
-//! `checkYieldExpression` of TypeScript 7.0.2's checker.go, and
-//! `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` of its grammarchecks.go.
+//! Mirrors `checkAssignmentOperator` for `=`, `checkAssertion`, `checkSatisfiesExpression`, `checkTemplateExpression`,
+//! `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and `checkYieldExpression` in TypeScript 7.0.2's
+//! checker.go, and `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` in its grammarchecks.go.
 
 use super::*;
 use crate::bind::Parent;
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_, '_> {
-    /// `check_plain_assignment` for every `a = b`.
-    pub(super) fn check_x_operators(&mut self, file: FileId) {
+    /// Runs `check_plain_assignment` for every `a = b`.
+    pub(super) fn check_plain_assignments(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
             return;
@@ -39,16 +37,17 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkGrammarBigIntLiteral`: 2737. A bigint literal type is not an expression here.
+    /// `checkGrammarBigIntLiteral`: 2737. A bigint literal type isn't an expression here.
     pub(super) fn check_grammar_big_int_literal(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
-        if language_version(self, file) < ScriptTarget::ES2020 && !hir.is_ambient(hir.node(e)) {
+        if language_version(self) < ScriptTarget::ES2020 && !hir.is_ambient(hir.node(e)) {
             self.error_at((file, hir[e].pos, 0), 2737, &[]);
         }
     }
 }
 
-/// `checkGrammarBindingElement`, for an element with `...`: 2462, 2566, 1186. The parser reports the trailing comma (1013).
+/// `checkGrammarBindingElement`, for an element with `...`: 2462, 2566, 1186. The parser reports the trailing comma
+/// (1013).
 pub(super) fn check_grammar_rest_element(
     c: &mut Checker<'_, '_>,
     file: FileId,
@@ -58,28 +57,28 @@ pub(super) fn check_grammar_rest_element(
     default: ExprId,
 ) {
     if !is_last {
-        c.error(file, name, 2462, &[]);
+        c.early_error_on_node(file, name, 2462, &[]);
     } else if has_property_name {
-        c.error(file, name, 2566, &[]);
+        c.early_error_on_node(file, name, 2566, &[]);
     } else if default.is_some()
         && let Some(start) = start_of_equals_before(c, file, default)
     {
-        c.error_at((file, start, 0), 1186, &[]);
+        c.early_error_at((file, start, 0), 1186, &[]);
     }
 }
 
 // ───────────────────────────── source text ─────────────────────────────
 
-/// `GetEmitScriptTarget`: defaults to the latest standard.
-pub(super) fn language_version(c: &Checker<'_, '_>, file: FileId) -> ScriptTarget {
-    match c.check_options(file).target {
+/// `GetEmitScriptTarget`: defaults to the latest standard. A build writes nothing for an older engine.
+pub(super) fn language_version(c: &Checker<'_, '_>) -> ScriptTarget {
+    match c.p.files.options.target {
+        _ if c.p.files.is_compile_build() => ScriptTarget::ESNext,
         ScriptTarget::None => ScriptTarget::ES2025,
         reported => reported,
     }
 }
 
-/// The end of `GetErrorRangeForNode` of `e` as it appears in the source. 0 if no caller will read
-/// it.
+/// The end of `GetErrorRangeForNode` of `e` as it appears in the source. 0 if no caller will read it.
 fn error_end(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> u32 {
     c.error_end_of(file, e)
 }
@@ -125,7 +124,10 @@ pub(super) fn start_of_dots_before(
 /// `isLiteralExpressionOfObject`
 pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
     let is_literal = match hir[e].kind {
-        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Regex | ExprKind::Class(_) => true,
+        ExprKind::Object(_)
+        | ExprKind::Array(_)
+        | ExprKind::Regex { .. }
+        | ExprKind::Class(_) => true,
         ExprKind::Fn(f) => hir[f].kind == FnKind::Expr,
         _ => false,
     };
@@ -134,9 +136,8 @@ pub(super) fn is_literal_expression_of_object(hir: &File, e: ExprId) -> bool {
 
 // ───────────────────────────── assignment targets ─────────────────────────────
 
-/// `checkReferenceExpression`: which of the two codes is reported for `e`, if it is not a
-/// reference.
-pub(super) fn why_no_reference(
+/// `checkReferenceExpression`: which of the two codes is reported for `e`, if it isn't a reference.
+pub(super) fn invalid_reference_code(
     hir: &File,
     e: ExprId,
     invalid: u32,
@@ -168,8 +169,6 @@ fn check_plain_assignment(c: &mut Checker<'_, '_>, file: FileId, target: ExprId)
     }
 }
 
-// ───────────────────────────── unary operators ─────────────────────────────
-
 // ───────────────────────────── assertions ─────────────────────────────
 
 /// `checkSatisfiesExpressionWorker`, once it has `exprType`, which is `source`.
@@ -189,7 +188,7 @@ pub(super) fn check_satisfies(
     c.check_type_assignable_to_and_optionally_elaborate(
         source,
         target,
-        Some(c.place_of_token(file, at)),
+        Some(c.span_of_token(file, at)),
         Some((file, expr)),
         false,
         Some(1360),
@@ -203,14 +202,13 @@ pub(super) fn check_satisfies(
 pub(super) fn check_template_spans(c: &mut Checker<'_, '_>, file: FileId, spans: IdList<ExprId>) {
     for span in c.hir(file).ids(spans) {
         let ty = c.type_of_expr(file, span);
-        if c.maybe_type_of_kind_considering_base_constraint(ty, Checker::is_symbol_like) {
+        if c.maybe_type_of_kind_considering_base_constraint(ty, tf::ES_SYMBOL_LIKE) {
             c.error(file, c.hir(file).child(span), 2731, &[]);
         }
     }
 }
 
-/// `resolveTaggedTemplateExpression`, the paths that do not reach `resolveCall`. `check_calls`
-/// reports their errors.
+/// `resolveTaggedTemplateExpression`, the paths that don't reach `resolveCall`. `check_calls` reports their errors.
 pub(super) fn check_tagged_template(c: &mut Checker<'_, '_>, file: FileId, call: CallId) {
     let data = c.hir(file)[call];
     let tag = c.type_of_expr(file, data.callee);
@@ -225,8 +223,8 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_, '_>, file: FileId, call:
 
 // ───────────────────────────── `instanceof` and `in` ─────────────────────────────
 
-/// `checkInstanceOfExpression` for `e`, which is `left instanceof right`: 2358 2861, and 2359 2860
-/// from `resolveInstanceofExpression`. Only there are the members of the type of `right` asked for.
+/// `checkInstanceOfExpression` for `e`, which is `left instanceof right`: 2358 2861, and 2359 2860 from
+/// `resolveInstanceofExpression`, the only place that requests the members of the type of `right`.
 pub(super) fn check_instance_of_expression(
     c: &mut Checker<'_, '_>,
     file: FileId,
@@ -253,8 +251,8 @@ pub(super) fn check_instance_of_expression(
 /// `hasEmptyObjectIntersection`
 pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId) -> bool {
     for &part in c.parts(ty) {
-        // The `{}` that remains of `unknown`, as opposed to one that is declared or that represents
-        // instances of unknown shape.
+        // The `{}` that remains of `unknown`, as opposed to one that's declared or that represents instances of unknown
+        // shape.
         if part == TypeId::UNKNOWN_EMPTY_OBJECT {
             return true;
         }
@@ -274,7 +272,7 @@ pub(super) fn has_empty_object_intersection(c: &mut Checker<'_, '_>, ty: TypeId)
 /// `expressionResultIsUnused`
 fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
     loop {
-        match bound.expr_parent[e.idx()] {
+        match bound.parent_of_expr(e) {
             Parent::Stmt(s) if s.is_some() => {
                 return match hir[s].kind {
                     StmtKind::Expr(_) => true,
@@ -301,10 +299,9 @@ fn is_result_unused(hir: &File, bound: &Bound, mut e: ExprId) -> bool {
     }
 }
 
-/// The end of `checkYieldExpression`: 7057, nothing specifies the type `yield` evaluates to, and
-/// that type matters.
+/// The end of `checkYieldExpression`: 7057. Nothing specifies the type `yield` evaluates to, and that type matters.
 pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprId) {
-    if !c.check_options(file).no_implicit_any {
+    if !c.module_options(file).no_implicit_any {
         return;
     }
     let (hir, bound) = (c.hir(file), c.bound(file));
@@ -326,9 +323,8 @@ pub(super) fn check_yield_result(c: &mut Checker<'_, '_>, file: FileId, e: ExprI
     if is_result_unused(hir, bound, e) {
         return;
     }
-    // `getContextualTypeForArgumentAtIndex`: the argument of `import()` has the contextual type
-    // string.
-    if matches!(bound.expr_parent[e.idx()], Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
+    // `getContextualTypeForArgumentAtIndex`: the argument of `import()` has the contextual type string.
+    if matches!(bound.parent_of_expr(e), Parent::Expr(p) if matches!(hir[p].kind, ExprKind::ImportCall { .. }))
     {
         return;
     }

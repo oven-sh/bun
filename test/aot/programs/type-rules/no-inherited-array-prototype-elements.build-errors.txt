@@ -1,1 +1,0 @@
-error: TS100014: This always fails under --aot: `Array.prototype[1]` is assigned: built-in prototypes are frozen.

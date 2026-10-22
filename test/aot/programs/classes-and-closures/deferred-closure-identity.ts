@@ -1,0 +1,19 @@
+// Class fields that hold an arrow function over `this` or over nothing. The compiler may put off creating such a closure until the field is first read as a value. However it is first read, each object has one closure per field: identical to itself, bound to the object it was written on, and still there after a copy, a freeze, a collection or the loss of the object's layout. Each case has a class of its own, so that no case changes how another is compiled.
+const collect: () => void = (globalThis as any).gc ?? (() => (globalThis as any).Bun.gc(true));
+function attempt(f: () => unknown): string { try { return String(f()); } catch (e) { return (e as Error).name; } }
+class Same { n = 1; f = () => this.n; g = () => 7; } { const a = new Same(), b = new Same(); console.log("same", a.f === a.f, a.g === a.g, a.f === b.f, a.g === b.g, a.f(), b.g(), a.f.name, a.g.name, a.f.length, typeof a.f); }
+class Copied { n = 1; f = () => this.n; } { const o = new Copied(), spread = { ...o }, assigned = Object.assign({}, o); o.n = 2; console.log("copied", spread.f === o.f, assigned.f === o.f, spread.f(), assigned.f(), spread.n, Object.keys(spread).join()); }
+class ReadByName { n = 3; f = () => this.n; } { const o = new ReadByName(), untyped: any = o, first = untyped.f; console.log("by name", first === o.f, first === untyped.f, first()); }
+class ReadByKey { n = 4; f = () => this.n; } { const o = new ReadByKey(), key = ["f"].join(""), first = (o as any)[key]; console.log("by key", first === o.f, first(), Object.values(o)[1] === o.f, Object.entries(o)[1][1] === o.f, Object.getOwnPropertyDescriptor(o, "f")!.value === o.f); }
+class Listed { n = 5; f = () => this.n; } { const o = new Listed(), names: string[] = []; for (const name in o) names.push(name); console.log("listed", names.join(), Object.keys(o).join(), "f" in o, Object.hasOwn(o, "f"), JSON.stringify(o), o.f()); }
+class Frozen { n = 6; f = () => this.n; } { const o = Object.freeze(new Frozen()); console.log("frozen", o.f === o.f, o.f(), Object.isFrozen(o), attempt(() => { (o as any).f = null; }), typeof o.f); }
+class Redefined { n = 7; f = () => this.n; } { const o = new Redefined(); Object.defineProperty(o, "n", { get: () => 70 }); console.log("redefined", o.f === o.f, o.f(), Object.keys(o).join()); }
+class Deleted { n = 8; f = () => this.n; } { const o = new Deleted(); delete (o as any).n; console.log("deleted", o.f === o.f, String(o.f()), Object.keys(o).join()); }
+class OnlyCalled { n = 9; f = () => this.n * 2; } { const o = new OnlyCalled(); o.n = 10; console.log("only called", o.f(), new OnlyCalled().f()); }
+class Tagged { n = 1; f = () => this.n; } { const o = new Tagged(); (o.f as any).tag = "t"; console.log("tagged", (o.f as any).tag, String((new Tagged().f as any).tag)); }
+class Replaced { n = 1; f = () => this.n; } { const o = new Replaced(), before = o.f, other = () => -1; o.f = other; console.log("replaced", o.f === other, o.f === before, before(), o.f(), new Replaced().f()); }
+class Base { n = 1; f = () => this.n; } class Derived extends Base { m = 2; g = () => this.n + this.m; h = this.f; } { const o = new Derived(); console.log("derived", o.h === o.f, o.g === o.g, o.g(), o.h(), Object.keys(o).join()); }
+class Collected { n = 0; f = () => this.n; }
+{ const survivors: Collected[] = []; for (let i = 0; i < 20000; i++) { const o = new Collected(); o.n = i; if (i % 1000 === 0) survivors.push(o); } collect(); let passed = 0; for (const o of survivors) if (o.f === o.f && o.f() === o.n) passed++; for (const o of survivors) (o.f as any).tag = o.n; collect(); for (const o of survivors) if ((o.f as any).tag === o.n && o.f() === o.n) passed++; console.log("collected", passed, survivors.length); }
+class TakenOut { n = 1; f = () => this.n; g = () => 7; } { const { f } = new TakenOut(), list = [new TakenOut().f, new TakenOut().g]; console.log("taken out", f(), list[0]() + list[1](), list[0] === list[1]); }
+export {};

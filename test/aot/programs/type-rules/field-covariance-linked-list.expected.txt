@@ -1,6 +1,0 @@
-20,10,0
-stores through the narrower type: no error
-true
-a link that holds a TwoWay: no error
-a link that holds a ListItem, read as TwoWay: TypeError
-20,10,0 {"value":0,"next":null}

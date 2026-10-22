@@ -1,7 +1,7 @@
 // `rows.map(row => ({ ...mentionOf(row), body: row.body }))` over rows of sql<Row[]>, where Hit[] is expected: the literal is copied as a Hit. It was born with an anonymous layout of its own and converted at the first place that wants a Hit.
-// IR+ ~undefined\|null\|Hit\.\d+ (frame \d+ )?= CallBuiltin CloneObjectWith
-// IR+ ~undefined\|null\|Marked\.\d+ (frame \d+ )?= CallBuiltin CloneObjectWith
-// IR+ ~undefined\|null\|Numbered\.\d+ (frame \d+ )?= CallBuiltin CloneObjectAfter
+// IR+ ^layout (L\d+) .*name="Hit" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
+// IR+ ^layout (L\d+) .*name="Marked" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
+// IR+ ^layout (L\d+) .*name="Numbered" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
 import { SQL } from "bun";
 
 type State = "open" | "closed";

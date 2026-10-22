@@ -1,0 +1,32 @@
+Tree, 10 levels: same, same, same, same, same
+Tree, 47 levels: same, same, same, same, same
+Tree, 48 levels: same, same, same, same, same
+Tree, 49 levels: same, same, same, same, same
+Tree, 50 levels: same, same, same, same, same
+Tree, 100 levels: same, same, same, same, same
+Tree, 1000 levels: same, same, same, same, same
+Tree, written near the end of the stack: 0 answers are neither the text nor a RangeError, some texts
+Tree with undeclared keys, 10 levels: same, same, same, same, same
+Tree with undeclared keys, 47 levels: same, same, same, same, same
+Tree with undeclared keys, 48 levels: same, same, same, same, same
+Tree with undeclared keys, 49 levels: same, same, same, same, same
+Tree with undeclared keys, 50 levels: same, same, same, same, same
+Tree with undeclared keys, 100 levels: same, same, same, same, same
+Tree with undeclared keys, 1000 levels: same, same, same, same, same
+Tree with undeclared keys, written near the end of the stack: 0 answers are neither the text nor a RangeError, some texts
+Chain, 10 levels: same, same, same, same, same
+Chain, 47 levels: same, same, same, same, same
+Chain, 48 levels: same, same, same, same, same
+Chain, 49 levels: same, same, same, same, same
+Chain, 50 levels: same, same, same, same, same
+Chain, 100 levels: same, same, same, same, same
+Chain, 1000 levels: same, same, same, same, same
+Chain, written near the end of the stack: 0 answers are neither the text nor a RangeError, some texts
+Deep, 10 levels: same, same, same, same, same
+Deep, 47 levels: same, same, same, same, same
+Deep, 48 levels: same, same, same, same, same
+Deep, 49 levels: same, same, same, same, same
+Deep, 50 levels: same, same, same, same, same
+Deep, 100 levels: same, same, same, same, same
+Deep, 1000 levels: same, same, same, same, same
+Deep, written near the end of the stack: 0 answers are neither the text nor a RangeError, some texts

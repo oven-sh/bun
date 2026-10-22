@@ -1,14 +1,14 @@
-a property of undefined: THROWS TypeError: Cannot read properties of undefined (reading 'v')
-a property of undefined, typed: THROWS TypeError: Cannot read properties of undefined (reading 'v')
-a property of null: THROWS TypeError: Cannot read properties of null (reading 'x')
-a store to undefined: THROWS TypeError: Cannot set properties of undefined (setting 'x')
-a call of what is no function: THROWS TypeError: f is not a function, it is number 1
-a call of what is not there: THROWS TypeError: g is not a function, it is undefined
+a property of undefined: THROWS TypeError: undefined is not an object (evaluating 'undefined.v')
+a property of undefined, typed: THROWS TypeError: undefined is not an object (evaluating 'undefined.v')
+a property of null: THROWS TypeError: null is not an object (evaluating 'null.x')
+a store to undefined: THROWS TypeError: undefined is not an object (evaluating 'undefined.x')
+a call of what is no function: THROWS TypeError: f is not a function. (In 'f()', 'f' is 1)
+a call of what is not there: THROWS TypeError: g is not a function. (In 'g()', 'g' is undefined)
 new of what is no constructor: THROWS TypeError: function is not a constructor
 a variable in its dead zone: THROWS ReferenceError: Cannot access 'late' before initialization.
 a constant stored to: 1
 what is not iterable: THROWS TypeError: number is not iterable
-a pattern on undefined: THROWS TypeError: Cannot destructure a value that is undefined or null
+a pattern on undefined: THROWS TypeError: Cannot destructure property 'a' from null or undefined value
 in of what is no object: THROWS TypeError: 5 is not an Object.
 instanceof of what is no function: THROWS TypeError: Right hand side of instanceof is not an object
 BigInt mixed with a number: THROWS TypeError: Invalid mix of BigInt and other type in addition.

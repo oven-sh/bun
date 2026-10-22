@@ -5,11 +5,21 @@
  */
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
+import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { jscPrograms, webkit } from "../../scripts/build/deps/webkit.ts";
-import { Ninja } from "../../scripts/build/ninja.ts";
+import {
+  jscPrograms,
+  webkit,
+  webkitAotFile,
+  webkitEngineSources,
+  webkitTestAotPath,
+  type WebKitAotFile,
+} from "../../scripts/build/deps/webkit.ts";
+import { BuildError } from "../../scripts/build/error.ts";
+import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
 import {
@@ -18,6 +28,7 @@ import {
   type Dependency,
   type DepName,
   type DirectBuild,
+  type GenStep,
   type ResolvedDep,
 } from "../../scripts/build/source.ts";
 
@@ -108,6 +119,30 @@ describe("which builds compile WebKit", () => {
       resolveConfig({ os: "darwin", arch: "aarch64", webkit: "local", macosSdk: "/fake/sdk" }, mockToolchain()),
     ).toThrow(/Cross-compiling for macOS requires the prebuilt WebKit/);
   });
+
+  test("WebKit's AoT files are at the same path in the tarball and in the checkout", () => {
+    const names: WebKitAotFile[] = ["AOTSchema.def", "schema-generated", "builtins-generated", "tests"];
+    const under = (aot: string) => [
+      join(aot, "ir", "AOTSchema.def"),
+      join(aot, "ir", "generated"),
+      join(aot, "builtins", "generated"),
+      join(aot, "tests"),
+    ];
+
+    const prebuilt = linux({});
+    const source = webkit.source(prebuilt);
+    if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
+    const dest = source.destDir!;
+    expect(names.map(name => webkitAotFile(prebuilt, name))).toEqual(under(join(dest, "Source", "JavaScriptCore", "aot")));
+    expect(webkitTestAotPath(prebuilt)).toBe(join(dest, "bin", "testaot"));
+    // Nothing is written into the tarball.
+    expect(webkitEngineSources(prebuilt)).toMatchObject({ javaScriptCore: undefined, schemaOutputs: [], builtinTableOutputs: [] });
+
+    const local = linux({ localDeps: `WebKit=${join("/elsewhere", "WebKit")}` });
+    const jsc = join(resolve("/elsewhere", "WebKit"), "Source", "JavaScriptCore");
+    expect(names.map(name => webkitAotFile(local, name))).toEqual(under(join(jsc, "aot")));
+    expect(webkitTestAotPath(local)).toBe(join(local.buildDir, "testaot"));
+  });
 });
 
 /** WebKit's bundler, reduced to its contract: writes bundles under <derived>/unified-sources, prints a cmake list. */
@@ -179,7 +214,8 @@ const checkout = {
     set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS \${JavaScriptCore_DERIVED_SOURCES_DIR}/Bytecodes.h runtime/JSObject.h)
     set(JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS \${JAVASCRIPTCORE_DIR}/inspector/scripts/generate.py)
     set(JavaScriptCore_INSPECTOR_DOMAINS \${JAVASCRIPTCORE_DIR}/inspector/protocol/Runtime.json)
-    WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()`,
+    WEBKIT_INCLUDE_CONFIG_FILES_IF_EXISTS()
+    include(aot/AOT.cmake)`,
   "Source/JavaScriptCore/PlatformJSCOnly.cmake": `
     if (USE_INSPECTOR_SOCKET_SERVER)
         include(inspector/remote/Socket.cmake)
@@ -196,17 +232,61 @@ const checkout = {
   "Source/JavaScriptCore/ucd/UnicodeData.txt": "",
   "Source/JavaScriptCore/Scripts/generate-js-builtins.py": "",
   "Source/JavaScriptCore/Scripts/wkbuiltins/wkbuiltins.py": "",
+  "Source/JavaScriptCore/aot/AOT.cmake": `
+    set(JavaScriptCore_AOT_SCHEMA_INPUTS aot/ir/AOTSchema.def)
+    set(JavaScriptCore_AOT_SCHEMA_GENERATED_HEADERS aot/ir/generated/AOTWire.h)
+    set(JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES aot/ir/generated/AOTSchemaEnumNames.cpp)
+    set(JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS aot/builtins/array.builtins.ts)
+    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_HEADERS aot/builtins/generated/AOTBuiltinIDs.h)
+    set(JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES aot/builtins/generated/AOTBuiltinTableBuiltins.cpp)
+    list(APPEND JavaScriptCore_UNIFIED_SOURCE_LIST_FILES "aot/Sources.txt")
+    list(APPEND JavaScriptCore_SOURCES \${JavaScriptCore_AOT_SCHEMA_GENERATED_SOURCES} \${JavaScriptCore_AOT_BUILTIN_TABLE_GENERATED_SOURCES})
+    list(APPEND JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
+        "\${JAVASCRIPTCORE_DIR}/aot/builtins/generated"
+        "\${JAVASCRIPTCORE_DIR}/aot/ir"
+        "\${JAVASCRIPTCORE_DIR}/aot/ir/generated"
+    )
+    set(JavaScriptCore_AOT_EXPORTED_HEADERS)
+    set(JavaScriptCore_AOT_TEST_SOURCES aot/tests/testaot.cpp)
+    set(JavaScriptCore_AOT_PROGRAM_SOURCES aot/runtime/AOTNoFeatureRemoved.cpp)
+    set(JavaScriptCore_AOT_SHELL_SOURCES aot/tests/AOTShell.cpp)
+    function(AOT_CHECK_SOURCE_LISTS)
+        if (NO SUCH OPERATOR)
+        endif ()
+    endfunction()
+    AOT_CHECK_SOURCE_LISTS()`,
+  "Source/JavaScriptCore/aot/Sources.txt": `aot/ir/AOTValue.cpp @no-unify\n`,
+  "Source/JavaScriptCore/aot/ir/AOTSchema.def": "",
+  "Source/JavaScriptCore/aot/ir/AOTValue.cpp": "",
+  "Source/JavaScriptCore/aot/runtime/AOTNoFeatureRemoved.cpp": "",
+  "Source/JavaScriptCore/aot/tests/AOTShell.cpp": "",
+  "Source/JavaScriptCore/aot/tests/testaot.cpp": "",
+  "Source/JavaScriptCore/b3/testb3_1.cpp": "",
+  "Source/JavaScriptCore/b3/testb3_bun_loops.cpp": "",
+  "Source/JavaScriptCore/b3/testb3_bun_values.h": "",
 };
+
+/** The checkout with files of JavaScriptCore added, replaced or (undefined) removed. */
+function checkoutWith(changes: Record<string, string | undefined>): Record<string, string> {
+  const files: Record<string, string> = { ...checkout };
+  for (const [path, text] of Object.entries(changes)) {
+    if (text === undefined) delete files[`Source/JavaScriptCore/${path}`];
+    else files[`Source/JavaScriptCore/${path}`] = text;
+  }
+  return files;
+}
 
 const python = isWindows ? "python" : "python3";
 
 describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
-  /** webkit.build() for a target, with every path under the checkout, the build dir or vendor/ spelled relative to it. */
-  function describeBuild(partial: PartialConfig) {
-    using dir = tempDir("build-local-webkit", checkout);
+  /**
+   * A target whose WebKit is these files. `short` spells a path under the checkout, the build dir, vendor/ or the
+   * repository relative to it.
+   */
+  function checkOut(partial: PartialConfig, files: Record<string, string>) {
+    const dir = tempDir("build-local-webkit", files);
     const root = String(dir);
     const cfg = linux({ localDeps: `WebKit=${root}`, buildDir: join(root, "build"), ...partial });
-    const spec = webkit.build(cfg) as DirectBuild;
     const short = (written: string) => {
       const p = isWindows ? written.replaceAll("/", "\\") : written;
       for (const [name, base] of [
@@ -215,11 +295,20 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         ["WTF", join(root, "Source", "WTF")],
         ["bmalloc", join(root, "Source", "bmalloc")],
         ["vendor", cfg.vendorDir],
+        ["bun", cfg.cwd],
       ] as const) {
         if (p.startsWith(base)) return `${name}/${relative(base, p).replaceAll("\\", "/")}`;
       }
       return written;
     };
+    return { cfg, short, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  /** webkit.build() for a target. */
+  function describeBuild(partial: PartialConfig, files: Record<string, string> = checkout) {
+    using local = checkOut(partial, files);
+    const { cfg, short } = local;
+    const spec = webkit.build(cfg) as DirectBuild;
     const group = (name: string) => {
       const g = spec.groups!.find(g => g.name === name)!;
       return {
@@ -227,7 +316,22 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         includes: g.includes!.map(short),
       };
     };
-    return { cfg, spec, short, group };
+    const step = (desc: string) => {
+      const s = spec.steps!.find((s): s is GenStep => s.kind !== "exe" && s.desc === desc)!;
+      return { outputs: s.outputs.map(short), cmd: s.cmd.map(short), inputs: s.inputs.map(short), cwd: short(s.cwd) };
+    };
+    return { cfg, spec, short, group, step };
+  }
+
+  /** What webkit.build() fails with. */
+  function configureError(files: Record<string, string>): { message: string; hint: string | undefined } {
+    try {
+      describeBuild({}, files);
+    } catch (error) {
+      if (error instanceof BuildError) return { message: error.message, hint: error.hint };
+      throw error;
+    }
+    throw new Error("webkit.build() did not fail");
   }
 
   test("each library compiles what its CMake lists name for the target", () => {
@@ -253,14 +357,21 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
       "JSC/jit/Alone.cpp",
       // A bare name that is not in the tree is a generated source.
       "B/JavaScriptCore/DerivedSources/Generated.cpp",
+      "JSC/aot/ir/AOTValue.cpp",
       "B/JavaScriptCore/DerivedSources/JSCBuiltins.cpp",
       "JSC/inspector/remote/socket/posix/RemoteInspectorSocketPOSIX.cpp",
+      // What Bun's generators write into the checkout.
+      "JSC/aot/ir/generated/AOTSchemaEnumNames.cpp",
+      "JSC/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp",
       "JSC/llint/LowLevelInterpreter.cpp",
     ]);
     expect(group("JavaScriptCore").includes).toEqual([
       "B/JavaScriptCore/Headers",
       "JSC/runtime",
       "B/JavaScriptCore/DerivedSources",
+      "JSC/aot/builtins/generated",
+      "JSC/aot/ir",
+      "JSC/aot/ir/generated",
       "WTF/",
       "B/bmalloc/Headers",
       "B/bmalloc/Headers/bmalloc",
@@ -317,8 +428,145 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "JSC/Sources.txt",
         "JSC/inspector/remote/SourcesSocket.txt",
         "JSC/ucd",
+        "JSC/aot/AOT.cmake",
+        "JSC/aot/Sources.txt",
+        "JSC/aot",
+        "JSC/aot/ir",
+        "JSC/b3",
       ]),
     );
+  });
+
+  test("what Bun's generators read and write in the checkout comes from its lists", () => {
+    using local = checkOut({}, checkout);
+    const { cfg, short } = local;
+    const engine = webkitEngineSources(cfg);
+    expect(short(engine.javaScriptCore!)).toBe("JSC/");
+    expect(engine.schemaInputs.map(short)).toEqual(["JSC/aot/ir/AOTSchema.def"]);
+    expect(engine.schemaOutputs.map(short)).toEqual([
+      "JSC/aot/ir/generated/AOTWire.h",
+      "JSC/aot/ir/generated/AOTSchemaEnumNames.cpp",
+      "JSC/aot/ir/generated/AOTSchemaFiles.cmake",
+      "JSC/aot/ir/generated/AOTSchemaInputs.sha256",
+    ]);
+    expect(engine.builtinTableInputs.map(short)).toEqual(
+      expect.arrayContaining(["JSC/aot/builtins/array.builtins.ts", "JSC/builtins/MapPrototype.js", "JSC/CMakeLists.txt"]),
+    );
+    expect(engine.builtinTableOutputs.map(short)).toEqual(
+      expect.arrayContaining([
+        "JSC/aot/builtins/generated/AOTBuiltinIDs.h",
+        "JSC/aot/builtins/generated/AOTBuiltinTableBuiltins.cpp",
+        "JSC/aot/builtins/generated/AOTBuiltinEngineDeclarations.json",
+      ]),
+    );
+  });
+
+  test("a checkout without the AoT compiler says so", () => {
+    expect(configureError(checkoutWith({ "aot/AOT.cmake": undefined }))).toEqual({
+      message: "this WebKit checkout has no aot/AOT.cmake",
+      hint: "Bun needs a checkout whose JavaScriptCore has the AoT compiler: update $BUN_WEBKIT_PATH or vendor/WebKit",
+    });
+  });
+
+  describe("the lists of aot/ are those of the tree as it is", () => {
+    const hint = "bun scripts/build/aot-source-lists.ts writes the lists of aot/ for the tree as it is";
+    const cases: Array<[name: string, changes: Record<string, string | undefined>, message: string]> = [
+      ["a file in no list", { "aot/flow/AOTFlowGraph.cpp": "" }, "aot/flow/AOTFlowGraph.cpp: not in aot/Sources.txt"],
+      [
+        "a test's file in no list",
+        { "aot/tests/AOTMoreTests.cpp": "" },
+        "aot/tests/AOTMoreTests.cpp: not in JavaScriptCore_AOT_TEST_SOURCES",
+      ],
+      [
+        "a listed file that does not exist",
+        { "aot/tests/AOTShell.cpp": undefined },
+        "aot/tests/AOTShell.cpp: listed, and there is no such file",
+      ],
+      [
+        "a path in a list where it does not belong",
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/tests/testaot.cpp @no-unify\n" },
+        "aot/tests/testaot.cpp: in aot/Sources.txt, and does not belong there",
+      ],
+      [
+        "a line without @no-unify",
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp\n" },
+        "aot/Sources.txt: a line is a path, a space and @no-unify",
+      ],
+      [
+        "lines out of order",
+        { "aot/ir/AOTType.cpp": "", "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTType.cpp @no-unify\n" },
+        "aot/Sources.txt: not in ascending order",
+      ],
+      [
+        "a line twice",
+        { "aot/Sources.txt": "aot/ir/AOTValue.cpp @no-unify\naot/ir/AOTValue.cpp @no-unify\n" },
+        "aot/Sources.txt: an entry is listed more than once",
+      ],
+      [
+        "a folder of headers that is no include directory",
+        { "aot/flow/AOTFlowGraph.h": "" },
+        "aot/flow: not in JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES",
+      ],
+    ];
+    test.each(cases)("%s", (_name, changes, message) => {
+      expect(configureError(checkoutWith(changes))).toEqual({ message, hint });
+    });
+
+    test("every problem is reported, one per line, sorted", () => {
+      const files = checkoutWith({
+        "aot/flow/AOTFlowGraph.cpp": "",
+        "aot/analysis/AOTCFG.cpp": "",
+        "aot/ir/AOTValue.cpp": undefined,
+      });
+      expect(configureError(files).message.split("\n")).toEqual([
+        "aot/analysis/AOTCFG.cpp: not in aot/Sources.txt",
+        "aot/flow/AOTFlowGraph.cpp: not in aot/Sources.txt",
+        "aot/ir/AOTValue.cpp: in aot/Sources.txt, and does not belong there",
+      ]);
+    });
+  });
+
+  test("the programs beside a local build", () => {
+    using local = checkOut({}, checkout);
+    const { cfg, short } = local;
+    const programs = jscPrograms(cfg);
+    expect(programs.map(p => [p.name, p.sources.map(short)])).toEqual([
+      [
+        "jsc",
+        [
+          "JSC/jsc.cpp",
+          "JSC/tools/JSDollarVMShell.cpp",
+          "B/programs/jsc/AOTShell.cpp",
+          "B/programs/jsc/AOTNoFeatureRemoved.cpp",
+        ],
+      ],
+      ["testFFI", ["JSC/ffi/tests/testFFI.cpp", "B/programs/testFFI/AOTNoFeatureRemoved.cpp"]],
+      // Every b3/testb3_*.cpp.
+      ["testb3", ["JSC/b3/testb3_1.cpp", "JSC/b3/testb3_bun_loops.cpp", "B/programs/testb3/AOTNoFeatureRemoved.cpp"]],
+      ["testair", ["JSC/b3/air/testair.cpp", "B/programs/testair/AOTNoFeatureRemoved.cpp"]],
+      ["testmasm", ["JSC/assembler/testmasm.cpp", "B/programs/testmasm/AOTNoFeatureRemoved.cpp"]],
+      [
+        "testRegExp",
+        ["JSC/testRegExp.cpp", "B/programs/testRegExp/AOTNoFeatureRemoved.cpp"],
+      ],
+      // Its own sources define what AOTNoFeatureRemoved.cpp defines for the others.
+      ["testaot", ["JSC/aot/tests/testaot.cpp"]],
+    ]);
+
+    // A source of several programs is a stub in each that forwards to it.
+    const forwarded = programs
+      .flatMap(p => p.sources)
+      .filter(source => short(source).startsWith("B/"))
+      .map(stub => readFileSync(stub, "utf8").replace(/^#include "(.*)"\n$/, (_, path) => short(path)));
+    expect([...new Set(forwarded)]).toEqual(["JSC/aot/tests/AOTShell.cpp", "JSC/aot/runtime/AOTNoFeatureRemoved.cpp"]);
+
+    // So bun.ts can compile each program's sources with that program's flags: no object has two edges.
+    const n = new Ninja({ buildDir: cfg.buildDir });
+    registerAllRules(n, cfg);
+    for (const program of programs) {
+      expect(program.cxxflags).toContain(`-DBUILDING_${program.name}`);
+      for (const source of program.sources) cxx(n, cfg, source, { flags: program.cxxflags });
+    }
   });
 });
 
@@ -403,5 +651,40 @@ describe("DirectBuild groups and steps", () => {
     expect(edge("obj/vendor/zstd/a.cpp.o").vars).toContain("-DLIB -std=c++23");
     expect(edge("obj/vendor/zstd/b.c.o").vars).toStartWith("cflags = -x c++ ");
     expect(edge("lib").line).toBe("build lib: phony obj/vendor/zstd/a.cpp.o obj/vendor/zstd/b.c.o");
+  });
+});
+
+describe("Provides.files", () => {
+  function graph() {
+    const dir = tempDir("build-provides-files", {});
+    const cfg = linux({ buildDir: join(String(dir), "build") });
+    const n = new Ninja({ buildDir: cfg.buildDir });
+    registerAllRules(n, cfg);
+    return { cfg, n, [Symbol.dispose]: () => dir[Symbol.dispose]() };
+  }
+
+  test("are outputs of the prebuilt's fetch, and no compile waits for them", () => {
+    using g = graph();
+    const resolved = resolveDep(g.n, g.cfg, webkit, new Map<DepName, ResolvedDep>())!;
+    const fetch = readManifest(g.n.toString()).edges.find(edge => edge.rule === "dep_fetch_prebuilt")!;
+    expect(fetch.implicitOutputs).toContain(webkitAotFile(g.cfg, "AOTSchema.def"));
+    expect(fetch.implicitOutputs).toContain(
+      join(webkitAotFile(g.cfg, "builtins-generated"), "AOTBuiltinEngineDeclarations.json"),
+    );
+    expect(resolved.libs.length).toBeGreaterThan(0);
+    expect(resolved.outputs).toEqual(resolved.libs);
+  });
+
+  test("are only for a prebuilt source", () => {
+    using g = graph();
+    const dep: Dependency = {
+      name: "zstd",
+      source: () => ({ kind: "github-archive", repo: "x/y", commit: "0" }),
+      build: () => ({ kind: "direct", sources: [] }),
+      provides: () => ({ libs: [], includes: [], files: ["COPYING"] }),
+    };
+    expect(() => resolveDep(g.n, g.cfg, dep, new Map<DepName, ResolvedDep>())).toThrow(
+      "zstd: Provides.files is for a prebuilt source",
+    );
   });
 });

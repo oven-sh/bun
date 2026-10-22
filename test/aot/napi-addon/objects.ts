@@ -1,6 +1,6 @@
 // Every call of addon.c on typed objects: a record, a record with every member, a class instance, an instance of a subclass. The addon itself is `any`.
 // One line per call. A line that begins with TYPE stores what the declared type does not allow: --aot may refuse that, with an error.
-const addon: any = require(process.env.ADDON!);
+const loaded: { exports: any } = { exports: {} }; process.dlopen(loaded, process.env.ADDON!); const addon: any = loaded.exports;
 const hidden = Symbol("hidden");
 interface Below { x: number; deep: { y: string } }
 interface Options { width: number; fast: boolean; name?: string; data: Uint8Array; list: number[]; below: Below; on(n: number): number; [hidden]?: number }
@@ -17,10 +17,10 @@ function show(v: unknown): string {
 }
 function list(v: unknown): string { return Array.isArray(v) ? "[" + v.map(show).join(", ") + "]" : show(v); }
 let at = 0;
-function row(label: string, f: () => unknown) { at++; let said: string; try { said = list(f()); } catch (e) { said = "THROWN TO JAVASCRIPT " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, ""); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
+function row(label: string, f: () => unknown) { at++; let said: string; try { said = list(f()); } catch (e) { said = "THROWN TO JAVASCRIPT " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, ""); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
 // A row that stores what the declared type does not allow: one call; what the call said | what the object looks like afterwards | what an object that nobody touched looks like.
 function typeRow<T>(label: string, make: () => T, change: (o: T) => unknown, look: (o: T) => unknown) {
-  at++; const o = make(); const told = (f: () => unknown) => { try { return show(f()); } catch (e) { return show("threw " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
+  at++; const o = make(); const told = (f: () => unknown) => { try { return show(f()); } catch (e) { return show("threw " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
   console.log(String(at).padStart(3) + " TYPE " + label + ": " + told(() => change(o)) + " | after: " + told(() => look(o)) + " | untouched: " + told(() => look(make())));
 }
 const OWN = 1, WITH_PROTOTYPES = 0, ALL = 0, WRITABLE = 1, ENUMERABLE = 2, CONFIGURABLE = 4, SKIP_STRINGS = 8, SKIP_SYMBOLS = 16, KEEP = 0, TO_STRINGS = 1;

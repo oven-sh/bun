@@ -3,7 +3,9 @@
 use super::*;
 
 /// DevServer is stored on the heap, storing its allocator.
+#[inline(never)]
 pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+    bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
     // relaxed `fetch_add(1)` is equivalent in practice.
@@ -499,6 +501,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                     .collect(),
                 style: fsr.style,
                 allow_layouts: fsr.allow_layouts,
+                client_pages: fsr.client_pages,
                 server_file: to_opaque_file_id::<{ bake::Side::Server }>(server_file),
                 client_file: if let Some(client) = &fsr.entry_client {
                     Some(to_opaque_file_id::<{ bake::Side::Client }>(
@@ -828,6 +831,8 @@ impl DevServer {
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
+        // The server has its routes now; the scan of the pages ran before it had them.
+        self.report_pages_hidden_by_server_routes();
         let app = server.app.unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 

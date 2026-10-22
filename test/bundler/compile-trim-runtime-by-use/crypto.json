@@ -1,1 +1,1 @@
-{ "features": ["csrf", "password", "hashers", "cryptohasher", "webcrypto", "nodecrypto"] }
+{ "features": ["Csrf", "Password", "Hashers", "CryptoHasher", "WebCrypto", "NodeCrypto"] }

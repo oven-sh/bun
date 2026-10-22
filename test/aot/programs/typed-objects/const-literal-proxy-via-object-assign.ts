@@ -1,4 +1,4 @@
-// A Proxy of an object of a type is of that type, by whatever door it enters a field: here by Object.assign. One form a program: another form in the same program may open the types to it.
+// A Proxy of an object of a type is of that type, by whatever door it enters a field: here by Object.assign.
 type Sub = { k: number };
 type State = { n: number; sub: Sub };
 const holder: { s: State } = { s: { n: 1, sub: { k: 1 } } };

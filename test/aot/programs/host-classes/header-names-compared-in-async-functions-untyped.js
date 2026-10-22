@@ -1,8 +1,4 @@
-// The comparison of a header name with the constants that calls pass, inside async functions and try blocks; a generator keeps its calls as written.
-// IR= 14 putLater StrictEq v\d+, v\d+$
-// IR= 12 putFirst StrictEq v\d+, v\d+$
-// IR= 7 putInTry StrictEq v\d+, v\d+$
-// IR= 0 putInSteps CallBuiltin CallHeadersMethod
+// Methods of `response.headers` whose header name is a parameter, inside async functions, a generator and a try block. The calls pass well-known names, other names, an invalid name and values that are not strings.
 async function putLater(response, name, value) {
   await null;
   response.headers.set(name, value);

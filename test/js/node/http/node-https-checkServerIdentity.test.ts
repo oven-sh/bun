@@ -1,4 +1,3 @@
-// @ts-nocheck
 // https.request() checks the peer certificate against the hostname the way
 // tls.checkServerIdentity() does in Node. agent1's certificate is CN=agent1
 // with no subjectAltName, signed by ca1. Every request below trusts ca1, so

@@ -9,9 +9,9 @@
 // CALLS+ sliceFromNullable CallHostFunction
 // CALLS- arraySliceToMaybe CallHostFunction
 // CALLS+ sliceToNullable CallHostFunction
-// CALLS+ arrayIndexOfFrom ArrayIndexOfFrom
-// CALLS+ arrayIncludesFrom ArrayIncludesFrom
-// CALLS+ arrayIndexOfFromMaybe ArrayIndexOfFrom
+// CALLS+ arrayIndexOfFrom ArraySearch\.IndexOfFrom
+// CALLS+ arrayIncludesFrom ArraySearch\.IncludesFrom
+// CALLS+ arrayIndexOfFromMaybe ArraySearch\.IndexOfFrom
 export function sliceToMaybe(s: string, a: number, b: number | undefined): string { return s.slice(a, b); }
 export function sliceOfInteger(s: string, a: number, b: number): string { return s.slice(a, b === -1 ? undefined : b); }
 export function substringToMaybe(s: string, a: number, b: number | undefined): string { return s.substring(a, b); }

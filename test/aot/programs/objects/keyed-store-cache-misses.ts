@@ -1,7 +1,7 @@
 // object[key] = value where the pair of shape and key is new each time: every kind of key against every kind of receiver, what refuses a store, and what a store must not disturb.
 "use strict";
 function store(object: any, key: any, value: any): string { try { object[key] = value; return "stored"; } catch (error) { return (error as Error).constructor.name; } }
-// Of the type of what is there, so that a field of a typed object takes it.
+// Of the type of what is there, so that no written type becomes false.
 function fitting(object: any, key: any): any { let now: any; try { now = object[key]; } catch {} return typeof now === "string" ? "v" : typeof now === "function" || (typeof now === "object" && now) ? now : 7; }
 function cut(text: string): string { return ("<" + text + ">").slice(1, -1); }
 function joined(text: string): string { return text.length < 2 ? text : text.slice(0, 1) + text.slice(1); }

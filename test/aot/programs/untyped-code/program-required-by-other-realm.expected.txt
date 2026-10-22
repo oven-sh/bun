@@ -1,1 +1,1 @@
-TypeError: SyntaxError: The module .. was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm, node:vm) (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+TypeError: SyntaxError: The module .. was compiled ahead of time and can't be imported inside a ShadowRealm (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)

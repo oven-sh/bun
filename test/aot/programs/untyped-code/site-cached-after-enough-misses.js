@@ -1,6 +1,7 @@
-// A site that reads by name is served from what all sites share until it has missed often enough to be worth teaching.
+// Four hundred sites read the same five names. The lookups of the first five sites are cached where all sites find them, so a site that has never run, a site that runs seldom and a site that runs often all stay out of the run time.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
+const entries = () => count("operationAOTGetById") + count("operationAOTGetByIdAndCache");
 function Animal(name) { this.name = name; }
 Animal.prototype.speak = function () { return this.name + " speaks"; };
 Animal.prototype.legs = 4;
@@ -94,27 +95,24 @@ function read78(o) { return o.name + "|" + o.speak() + "|" + o.missing + "|" + o
 function read79(o) { return o.name + "|" + o.speak() + "|" + o.missing + "|" + o.loud + "|" + o.legs; }
 const all = [read0, read1, read2, read3, read4, read5, read6, read7, read8, read9, read10, read11, read12, read13, read14, read15, read16, read17, read18, read19, read20, read21, read22, read23, read24, read25, read26, read27, read28, read29, read30, read31, read32, read33, read34, read35, read36, read37, read38, read39, read40, read41, read42, read43, read44, read45, read46, read47, read48, read49, read50, read51, read52, read53, read54, read55, read56, read57, read58, read59, read60, read61, read62, read63, read64, read65, read66, read67, read68, read69, read70, read71, read72, read73, read74, read75, read76, read77, read78, read79];
 const seen = new Set();
-// The first function teaches what all share.
+// The first function looks up each name on each kind of object.
 for (let i = 0; i < 8; i++) for (const o of [dog, cat, plain]) seen.add(read0(o));
-const before = count("operationAOTGetById");
-// Each of the others runs seven times on one kind of object: too seldom to repay a lesson.
+const before = entries();
+// Each of the others runs seven times on one kind of object.
 for (let turn = 0; turn < 7; turn++) for (const read of all) seen.add(read(dog));
-const times = count("operationAOTGetById") - before;
-console.log([...seen].join(" ; "));
-console.log(times < 100 ? "the operation was entered under 100 times" : "the operation was entered " + times + " times");
-// A second kind of object now and then: served without giving the site several slots.
+// A second kind of object now and then.
 for (const read of all) seen.add(read(cat));
-// A site that runs often is taught, and then the stub alone serves it.
-const lessons = () => count("SlotWatchpoint:installed") + count("operationAOTGetByNameAndCache");
-const watchedBefore = lessons() - count("operationAOTGetByNameAndCache");
+const times = entries() - before;
+console.log([...seen].join(" ; "));
+console.log(times < 100 ? "the run time was entered under 100 times" : "the run time was entered " + times + " times");
+// A site that runs often, on one kind of object and then on three in turn.
+const atRest = entries();
 let length = 0;
 for (let i = 0; i < 20000; i++) length += read7(dog).length;
-const taught = lessons() - watchedBefore;
-const atRest = count("operationAOTGetById") + count("plainly:answered");
 for (let i = 0; i < 20000; i++) length += read7(dog).length + read7(cat).length + read7(plain).length;
-const later = count("operationAOTGetById") + count("plainly:answered") - atRest;
-console.log(length, typeof aotOperationCount !== "function" || taught > 0 ? "the busy site was taught" : "THE BUSY SITE WAS NEVER TAUGHT", later < 60 ? "and is served without the run time" : "and the run time was entered " + later + " times");
-// What was learned the cheap way ends when it should.
+const later = entries() - atRest;
+console.log(length, later < 60 ? "the busy site is served without the run time" : "the run time was entered " + later + " times");
+// What was cached ends when it should.
 Dog.prototype.legs = 3;
 Animal.prototype.missing = "found";
 Object.defineProperty(dog, "name", { get() { return "REX"; }, configurable: true });

@@ -299,14 +299,21 @@ async fn export_products(State(db): State<Arc<Database>>) -> Response {
     ([(CONTENT_TYPE, "text/csv")], Body::from_stream(chunks)).into_response()
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let one_thread = std::env::var("SERVER_THREADS").is_ok_and(|threads| threads == "1");
+    let mut runtime = if one_thread { tokio::runtime::Builder::new_current_thread() } else { tokio::runtime::Builder::new_multi_thread() };
+    runtime.enable_all().build().unwrap().block_on(serve());
+}
+
+async fn serve() {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let app = Router::new()
         .route("/text", get(text))
         .route("/json", get(catalog))
         .route("/users/{user_id}/posts/{post_id}", get(post_page))
         .route("/shops/{shop}/orders", post(orders))
+        .route("/shops/{shop}/checked-orders", post(orders))
+        .route("/shops/{shop}/typed-orders", post(orders))
         .route("/async/{id}", get(summarize))
         .route("/stream", get(export_products))
         .with_state(Arc::new(Database::seed()));

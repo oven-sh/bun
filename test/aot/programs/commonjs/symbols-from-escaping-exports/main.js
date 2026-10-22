@@ -1,12 +1,12 @@
 // A CommonJS module that only makes values exports them in a literal, and the module that gathers the package hands that object out at its end. What the package's modules took out of the object at their top level, ahead of that, is what the literal was made with: symbols among it are names for as long as the module that took them out has not failed: that is tested where they are used, and a module that failed and was evaluated again goes by key. What is taken out later, or by a module that may be evaluated by another road, is not.
-// IR= 2 write GetById .*mini\.stream
-// IR= 1 info GetById .*mini\.write
-// IR= 1 mini PutById .*mini\.stream
-// IR= 1 readLate GetByVal
-// IR= 1 readByAnotherRoad GetByVal
-// IR= 1 readOfStoredTo GetByVal
-// IR= 1 readUnderAHandler GetByVal
-// IR= 1 readInACycle GetByVal
+// IR= 2 write PropGet v[0-9]+ name=UniqueSymbol "[^"]*mini\.stream"
+// IR= 1 info PropGet v[0-9]+ name=UniqueSymbol "[^"]*mini\.write"
+// IR= 1 mini PropSet v[0-9]+, v[0-9]+ name=UniqueSymbol "[^"]*mini\.stream"
+// IR= 1 readLate ElemGet
+// IR= 1 readByAnotherRoad ElemGet
+// IR= 1 readOfStoredTo ElemGet
+// IR= 1 readUnderAHandler ElemGet
+// IR= 1 readInACycle ElemGet
 "use strict";
 const lines = [];
 function show(what, value) { lines.push(what + ": " + String(value)); }

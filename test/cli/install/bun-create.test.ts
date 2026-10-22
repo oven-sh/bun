@@ -341,8 +341,6 @@ const gitIdentity = {
 /** `bun create ...args` in `cwd`; local templates are looked up in `<cwd>/bun-create`. */
 async function create(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}) {
   const merged = { ...env, BUN_CREATE_DIR: join(cwd, "bun-create"), ...extraEnv };
-  // Windows spells the inherited variable `Path`.
-  if (extraEnv.PATH !== undefined && "Path" in merged) delete merged.Path;
   await using proc = spawn({
     cmd: [bunExe(), "create", ...args],
     cwd,

@@ -1,4 +1,4 @@
-// IR+ CallBuiltin JSONOpen
+// IR+ ^ .* = JSONSourceOpen v
 const namedInCode = ["x", "y", "label", "children", "text", "value", "t"];
 console.log(namedInCode.length);
 interface Point {

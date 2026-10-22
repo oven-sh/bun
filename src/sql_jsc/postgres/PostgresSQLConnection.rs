@@ -41,7 +41,6 @@ use crate::shared::connection_ctor_args::ConnectionCtorArgs;
 use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection};
 use crate::shared::server_identity;
 use crate::shared::start_tls::{start_tls, verifies_certificate};
-use crate::shared::row_decoder::RowDecoder;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::Status;
@@ -1277,21 +1276,19 @@ impl PostgresSQLConnection {
     }
 
     /// Also while a request that user code has seen rejected can still change it.
-    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(
-            self.is_in_transaction()
-                || self
-                    .current()
-                    .is_some_and(|head| head.flags.get().discard_response),
-        )
+    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> bool {
+        self.is_in_transaction()
+            || self
+                .current()
+                .is_some_and(|head| head.flags.get().discard_response)
     }
 
     /// Of the login that is under way or was refused.
-    pub fn get_sasl(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(matches!(
+    pub fn get_sasl(&self, _: &JSGlobalObject) -> bool {
+        matches!(
             self.authentication_state.get(),
             AuthenticationState::Sasl(_) | AuthenticationState::SaslVerified { .. }
-        ))
+        )
     }
 
     fn close(&self) {
@@ -2122,10 +2119,6 @@ impl PostgresSQLConnection {
                         return Ok(());
                     }
                 };
-
-                if row_type != 0 && request_flags.result_mode == SQLQueryResultMode::Objects {
-                    RowDecoder::convert_last_row(self.global(), row_type, result);
-                }
 
                 if pending_value.is_empty() {
                     postgres_sql_query::js::pending_value_set_cached(

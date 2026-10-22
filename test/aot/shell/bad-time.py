@@ -1,24 +1,25 @@
 #!/usr/bin/env python3
 """Runs the programs in ../programs with quick.py and asks the `jsc` shell, at the end of each, whether its realm "is having a bad time".
 
-JavaScriptCore's name for a state that a realm enters once and never leaves: a store at an index may have to ask a prototype chain, so
-every array of the program, alive or still to be made, is given storage that nothing reads or writes in place. A program brings it on
-itself with an accessor or a read-only property at an index of an object that others inherit from, or with a Proxy under such an
-object. The answers stay right, so no other test sees it: this one is for a program that is brought there by the engine's own doing.
+That is JavaScriptCore's name for a state that a realm enters once and never leaves: an indexed store may have to consult the prototype
+chain, so every array of the program, existing or future, uses SlowPutArrayStorage, which has no inline fast path. A program causes it
+with an accessor or a read-only property at an index of an object that others inherit from, or with a Proxy in the prototype chain of such
+an object. The output stays correct, so no other test notices. This test finds a program that gets there because of the engine.
 
-    JSC=<jsc> SEMA=<bun-sema> PLAIN=<any bun> python3 test/aot/shell/bad-time.py [-j <jobs>] [--part <i>/<n>] <program>... | all
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> PLAIN=<any bun> python3 test/aot/shell/bad-time.py [-j <jobs>] [--part <i>/<n>] <program>... | all
 
-    --part <i>/<n>  of `all`: every n-th program, from the i-th on. ../bad-time/*.test.ts deal the programs out so
-    the rest        as for quick.py, whose top says how to build the tools
+    --part <i>/<n>  with `all`: every n-th program, starting at the i-th. ../bad-time/*.test.ts split the programs this way
+    the rest        as for quick.py. toolchain.py's docstring says how to build the tools
 
-Prints one line per program that ends in that state and is not in bad-time-known.txt, the list of those that mean it, and one per
-program of the list that does not end in it; exits with 1 if there is any of the first. A program that does not reach its end is not asked.
+Prints one line per program that ends in that state and is not in bad-time-known.txt, which lists the programs that cause it on purpose,
+and one per listed program that does not end in it. Exits with 1 if there is a line of the first kind. A program that does not reach its
+end is not asked.
 """
 import os, stat, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import quick
+import quick, toolchain
 
 WRAPPER = '''#!/usr/bin/env python3
 import os, signal, subprocess, sys
@@ -26,7 +27,8 @@ jsc, answers, arguments = %r, %r, sys.argv[1:]
 image = next((argument[len("--aotImagePath="):] for argument in arguments if argument.startswith("--aotImagePath=")), None)
 if image is None:
     os.execv(jsc, [jsc, *arguments])
-run = subprocess.run([jsc, "--useDollarVM=1", *arguments, "-e", 'print("@bad time: " + $vm.isHavingABadTime(globalThis))'], stdout=subprocess.PIPE)
+arguments = [argument + '.then(() => print("@bad time: " + $vm.isHavingABadTime(globalThis)))' if argument.startswith("runCompiledEntryPoint(") else argument for argument in arguments]
+run = subprocess.run([jsc, "--useDollarVM=1", *arguments], stdout=subprocess.PIPE)
 lines = run.stdout.split(b"\\n")
 for answer in (b"true", b"false"):
     if b"@bad time: " + answer in lines:
@@ -48,13 +50,16 @@ if __name__ == "__main__":
         part, parts = map(int, arguments[at + 1].split("/"))
         del arguments[at:at + 2]
         arguments[arguments.index("all"):] = quick.all_programs()[part - 1::parts]
-    if not arguments or "JSC" not in os.environ:
+    if not arguments:
         sys.exit(__doc__)
+    jsc = toolchain.tool("JSC")
+    for name in ("TESTAOT", "FRONT_END", "PLAIN"):
+        toolchain.tool(name)
     known = {line.split()[0] for line in open(HERE + "/bad-time-known.txt") if line.strip() and not line.startswith("#")}
     with tempfile.TemporaryDirectory(prefix="aot-bad-time") as folder:
         wrapper, answers = folder + "/jsc", folder + "/answers.txt"
         open(answers, "w").close()
-        open(wrapper, "w").write(WRAPPER % (os.environ["JSC"], answers))
+        open(wrapper, "w").write(WRAPPER % (jsc, answers))
         os.chmod(wrapper, os.stat(wrapper).st_mode | stat.S_IXUSR)
         subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env={**os.environ, "JSC": wrapper, "WORK": folder + "/work"}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         asked = dict(line.rsplit(" ", 1) for line in open(answers).read().split("\n") if line)

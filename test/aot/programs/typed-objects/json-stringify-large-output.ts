@@ -1,8 +1,8 @@
 // After one large JSON.stringify output, the next large output allocates its buffer once instead of doubling it from 4 KB.
-// ENV JSC_useAOTOperationCounters=1
+// ENV JSC_aotCountsPath=/dev/null
 declare const aotOperationCount: undefined | ((name: string) => number);
 const isCounted = typeof aotOperationCount === "function";
-const bufferGrowths = () => (typeof aotOperationCount === "function" ? aotOperationCount("growJSONBuffer") : 0);
+const bufferGrowths = () => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONWriterReserve") : 0);
 
 type Message = { role: string; content: string };
 const sentence = "the quick brown fox jumps over the lazy dog. ";

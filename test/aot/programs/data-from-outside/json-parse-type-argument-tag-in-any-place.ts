@@ -1,5 +1,5 @@
 // The member that tells the arms of a union apart may stand anywhere in the text. One dispatch finds the arm; an arm without a constant tag takes what no tagged arm takes.
-// IR+ JSONFindMember
+// IR+ ^ .*JSONFindMember
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Common { type: string; id: number }
 interface Opened extends Common { type: "opened"; by: string }
@@ -77,7 +77,7 @@ const texts = [
 for (const text of texts) console.log(JSON.stringify(text), "|", describe(() => JSON.parse<Entry>(text)), "|", describe(() => JSON.parse<EntryOrOther>(text)), "|", describe(() => JSON.parse<EntryOrNothing>(text)));
 
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const readAgain = () => (counted ? counted("operationAOTTypedJSONDecodeSource") : 0);
+const readAgain = () => (counted ? counted("operationAOTJSONSourceAbandon") : 0);
 const before = readAgain();
 let sum = 0;
 for (const text of ['{"id":1,"by":"a","type":"opened"}', '{"id":2,"o":1,"type":"moved","from":1,"to":2}', '{"id":3,"type":"other"}', '{"type":"closed","id":4}']) sum += (JSON.parse<EntryOrOther>(text) as Common).id;

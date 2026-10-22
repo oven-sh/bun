@@ -1,1 +1,0 @@
-A bug: plain Bun throws in none of the eight cases; under --aot two throw: TypeError: Cannot delete property 'label' of Counter: only optional properties can be deleted. The cases on `count` pass only because the first case deletes it where the compiler sees it.

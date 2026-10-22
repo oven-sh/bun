@@ -1,10 +1,4 @@
 // A program may pass many header names: over four, the length of the name picks the few constants it can be; up to 64 are taken, with more nothing is compared.
-// IR= 12 put StrictEq v\d+, v\d+$
-// IR= 1 put TypeOfIs
-// IR= 1 put String.length
-// IR= 1 put = Integer 527$
-// IR= 1 put = Integer 767$
-// IR= 0 flood StrictEq
 class Context {
   constructor(response) {
     this.response = response;

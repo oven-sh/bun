@@ -1,4 +1,0 @@
-usesThis(): TypeError
-withProps(): TypeError
-K.s(): TypeError
-another this: no error

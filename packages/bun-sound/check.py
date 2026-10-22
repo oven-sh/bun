@@ -1,175 +1,822 @@
 #!/usr/bin/env python3
-"""check.py <node_modules> [<out folder>] [--only=<part of a package's name>] [--elements=shared|plain]: THE STATIC GATES OF THE TYPED TEXTS OF UNTYPED PACKAGES, IN ONE COMMAND, FROM ONE FOLDER, WITH NO ABSOLUTE PATH. NO PACKAGE CODE IS RUN.
-WHAT IS HERE: packages/<name>@<version>[.<bundle>]/typed.cts: npm's production bundle WITH TYPES ADDED AND NOTHING ELSE CHANGED, and its shapes (*.d.ts) beside it. npm's own files are not here: they are read from the <node_modules> you name, and must be the very bytes the text was typed on.
-IT WANTS, BY THE ENVIRONMENT: SEMA=<the AoT front end: `$SEMA cli <file> --noEmit --all`> · BUN=<any Bun, to print a text without its types; `bun` unless said> · BUN_SEMA_TS_LIB=<TypeScript's lib folder>.
-THE GATES, FOR EACH PACKAGE THAT <node_modules> HOLDS AT THAT VERSION:
-  1. md5     npm's file is the one the text was typed on
-  2. errors  the type checker finds nothing in typed.cts
-  3. verify  markers' contents, `$given` and `$as<Role>` stripped and both texts printed by Bun: THE TYPED TEXT IS npm's PROGRAM, line for line
-  4. splits  tools/splits1.py: every split of a reused variable into roles is the bundle's own program (verify cannot see a wrong split)
-  5. form    the CommonJS text becomes an ES module with its shapes appended (tools/module_form8.py); for the reconciler: what other code makes becomes `any` (tools/given2.py) and an element is the jsx-runtime's own, or given (--elements=plain); react-dom's bundles STAY CommonJS AT npm's OWN PATH, behind npm's own entry (sound.json's format 2; <out>/sound/react-dom): the typed text with the form's shapes behind it: what the compiler proves of a CommonJS module (an export that nobody reads is dropped) goes for them
-  6. laid    a copy of the packages is made in <out>/node_modules, the formed texts are laid in it, and EACH LAID FILE IS CHECKED WHERE IT LIES, --strict, AS A BUILD CHECKS IT (--aot: one program: there the compiler itself declares `import("bun").int32`, whatever bun-types is installed): 0 errors (an error on one of the form's appended `import * as x$module` lines is passed over and said)
-  7. counts  variants, written unions of two or more shapes, `any`, casts, `!`: against the numbers below: a text that drifts says so
- 10. lax     every laid file has 0 errors under `noImplicitAny: false`, `strictNullChecks: false` and `strict: false` too: a host's two options reach a package
-  9. same    (in the repository's form only) lay/ is byte for byte what src/ gives today; sound.json's sha256 are the installed files'
-WHAT IT LEAVES: <out>/laid/<package>/..: the files to lay, and <out>/node_modules: a tree that `bun build --compile --aot` can take. EXIT 1 IF ANY GATE FAILS.
-WHAT IT DOES NOT SAY: that the types are TRUE. That is what run.sh (the wide trees against plain Bun, with the audit build) walks, and it walks only what it walks."""
-import hashlib, os, re, shutil, subprocess, sys
-H = os.path.dirname(os.path.abspath(__file__)); T = H + '/tools'
-args = [a for a in sys.argv[1:] if not a.startswith('--')]; opts = dict((a[2:].split('=', 1) + [''])[:2] for a in sys.argv[1:] if a.startswith('--'))
-if not args: sys.exit(__doc__)
-N = os.path.abspath(args[0]); OUT = os.path.abspath(args[1]) if len(args) > 1 else os.path.abspath('ship.out'); ELEMENTS = opts.get('elements', 'plain')  # plain is what is published: no package imports another's types
-SEMA = os.environ.get('SEMA') or sys.exit('check.py: SEMA=<the front end> is wanted'); BUN = os.environ.get('BUN', 'bun'); ENV = dict(os.environ, NO_COLOR='1')
-LIVE = 'FiberConstructor,FiberRootConstructor,ConcurrentUpdate,ConcurrentQueue,StoreInstance'
-SERVER = 'export { version, renderToReadableStream, renderToPipeableStream, resumeToPipeableStream, resume, renderToString, renderToStaticMarkup }; export default { version, renderToReadableStream, renderToPipeableStream, resumeToPipeableStream, resume, renderToString, renderToStaticMarkup };'
-P = [  # folder · npm's file · its md5 · where the formed text is laid · the entries that are rewritten · what is due (variants, unions of two shapes written on a variable)
-    dict(name='react-reconciler@0.33.0', npm='react-reconciler/cjs/react-reconciler.production.js', md5='1ce09a736d5c21646595d20964d9b01d', lay='react-reconciler/cjs/react-reconciler.production.ts', space='RR',
-         entries={'react-reconciler/index.js': 'export { default } from "./cjs/react-reconciler.production.ts";'}, form='reconciler', due=dict(variants=539)),
-    dict(name='react-dom@19.3.1.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='18d04fee389023d0b4c6844de16c5317', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=196)),
-    dict(name='react-dom@19.3.1.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='4896a582e13f60a195b4a97bfed10db7', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=181)),
-    dict(name='react-dom@19.3.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='e6c2b1151664227396c16e5217ae9e4b', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=196)),
-    dict(name='react-dom@19.3.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='2b8f4172ffbe52177acfc592892704c5', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=181)),
-    dict(name='react@19.2.0', npm='react/cjs/react.production.js', md5='e255db46a1de0ffd84470b0ae50bdc7b', lay='react/cjs/react.production.ts', space='RE', entries={'react/index.js': 'export * from "./cjs/react.production.ts"; export { default } from "./cjs/react.production.ts";'}, form='plain', due=dict(variants=7), held='HELD: typed react bears laid-out elements and refs that cross into untyped components: it is checked here and NOT laid unless --only=react@ names it'),
-    # ONE TEXT FOR A FAMILY OF VERSIONS: react-dom 19.2.1 .. 19.2.8 differ in nothing but their own version's string (three lines of the Bun bundle, one of the legacy): the text is kept for 19.2.8 and `token` is replaced by the installed version
-    dict(name='react-dom@19.2.8.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.2.1': '899478566fc3da3aa4febc9e8cd470ff', '19.2.3': '26778be71aa576db8858056167bfeefb', '19.2.4': '6aea6e2987ad1079f7f023976b45553f', '19.2.5': 'bbde81e7a3208802f5ba1207c39912bf', '19.2.6': '9a61014a48420a727dae50f458681d23', '19.2.7': '1430fcfed07c0463f48ec5f11164b895', '19.2.8': '5ab8078026a6d607cd47bd188d978a41'}, token='19.2.8', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='react-dom@19.2.8.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.2.1': '5b1afbdf24b5347d741fc55060471ac6', '19.2.3': '3abd283ea5ff4290fa6bf34f7d352523', '19.2.4': 'b18b197d5388d62ce3622a8b28ca9257', '19.2.5': '2dfa68fa80b2c2ce0b9b71ab7152fceb', '19.2.6': '5f5c98f1a88893281b720d66f2ebbd5b', '19.2.7': '175b25156ea2b9e44bcae7699d3fa877', '19.2.8': 'fd192878320c40558820151cdad247f1'}, token='19.2.8', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='react-dom@19.1.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.1.0': 'd1621ecc41503b9f1f50bd0f6adbfcc5'}, token='19.1.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='react-dom@19.1.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.1.0': 'b7f2174298ea478f8839c7f0a0fddf7c'}, token='19.1.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='react-dom@19.0.0.server.bun', npm='react-dom/cjs/react-dom-server.bun.production.js', md5='', versions={'19.0.0': '77386dba2c969d674d387beed1e5cb91'}, token='19.0.0', lay='react-dom/cjs/react-dom-server.bun.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='react-dom@19.0.0.server-legacy.browser', npm='react-dom/cjs/react-dom-server-legacy.browser.production.js', md5='', versions={'19.0.0': 'ec9baf4e855b4f79f82865ba0e0767c2'}, token='19.0.0', lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts', space='FZ', entries={}, form='placed', due=dict(variants=None)),
-    dict(name='fuse.js@7.0.0', npm='fuse.js/dist/fuse.mjs', md5='8acfaae5c1dd70a090f5b75a3f8ad467', lay='fuse.js/dist/fuse.sound.ts', space='FU', entries={'fuse.js/dist/fuse.mjs': 'export { default } from "./fuse.sound.ts";'}, form='esm', text='typed.mts', due=dict(variants=0), changed='// CHANGED: this is dist/fuse.mjs of fuse.js 7.0.0 with TypeScript types added. No code was changed. See NOTICE.'),
-    dict(name='seroval@1.6.9', npm='seroval/dist/index.js', md5='ccbd09502b548d78881f2353cf209c2b', lay='seroval/dist/index.sound.ts', space='SV', entries={'seroval/dist/index.js': 'export * from "./index.sound.ts";'}, form='esm', text='typed.mts', due=dict(variants=0)),
+"""usage: check.py <node_modules> [<out folder>] [--only=<part of a package's name>] [--elements=shared|plain]
+
+The static checks of the typed versions in this folder. Runs no package code.
+
+A typed version is npm's production file with types added and nothing else changed: <name>/<version>/src/typed.cts or
+typed.mts, with the declarations of its object types (*.d.ts) beside it. npm's own files are not in this folder. They are read
+from <node_modules>, and must be byte for byte the files that the types were written for.
+
+Environment:
+  SEMA             the type checker's command-line tool: `$SEMA cli <file> --noEmit --all`
+  BUN              any Bun, used to print a file without its types. Default: bun
+  BUN_SEMA_TS_LIB  TypeScript's lib folder
+
+The gates, for each package that <node_modules> has at that version:
+  md5      npm's file is the one that the types were written for.
+  errors   The type checker reports nothing in the typed file.
+  verify   Without the text between /*$*/ markers and without the suffixes `$given` and `$as<Role>`, the typed file prints as
+           npm's file does, line for line. Bun prints both.
+  splits   tools/splits1.py: a variable that was split into roles follows the data flow of npm's file. `verify` cannot see a
+           wrong split.
+  counts   The number of role variables is the expected one. Also prints the number of `any`, casts and `!`.
+  fields   tools/declare_fields.py: a class field that the typed file adds is `declare`d.
+  form     The CommonJS file becomes an ES module with its declarations appended (tools/module_form8.py). For
+           react-reconciler, the types of objects that other code creates become `any` (tools/given2.py), and a React element
+           has the type that the typed jsx-runtime declares (--elements=shared) or is `any` (--elements=plain). react-dom's
+           bundles stay CommonJS at npm's own path (format 2 of sound.json, written to <out>/sound/react-dom): the typed file,
+           followed by the declarations of the ES module form. So the compiler still drops an export of theirs that nothing
+           reads.
+  clean    tools/clean_lay.py removes the notes from the generated file.
+  changed  (Apache-2.0 packages) The generated file says on its first line that it was changed.
+  entry    tools/cjs_entry.py rewrites the entry point to load the generated file.
+  laid     The packages are copied to <out>/node_modules, and the generated files are written into the copy. Each has no error
+           when it is checked there, under --strict and as a build checks it (--aot: the compiler declares
+           `import("bun").int32` itself, whatever bun-types is installed). An error on one of the appended
+           `import * as x$module` lines is ignored and counted in the output.
+  lax      Each generated file also has no error under `noImplicitAny: false`, `strictNullChecks: false` and `strict: false`.
+           Those options of the user's tsconfig.json apply to a package too, and one error compiles it untyped.
+  same     lay/ in the repository is byte for byte what src/ generates, and the sha256 sums in sound.json are those of the
+           installed files.
+
+Writes <out>/laid/<package>/ (the generated files), <out>/sound/<package>/ (what a project has as .sound/<package>/) and
+<out>/node_modules, which `bun build --compile --aot` can build against. Exits with 1 if a gate fails.
+
+It does not check that the types are true. run.py does, for the code that its test trees run."""
+import hashlib, json, os, re, shutil, subprocess, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+TOOLS = HERE + '/tools'
+arguments = [argument for argument in sys.argv[1:] if not argument.startswith('--')]
+options = dict((argument[2:].split('=', 1) + [''])[:2] for argument in sys.argv[1:] if argument.startswith('--'))
+if not arguments:
+    sys.exit(__doc__)
+INSTALLED = os.path.abspath(arguments[0])
+OUT = os.path.abspath(arguments[1]) if len(arguments) > 1 else os.path.abspath('ship.out')
+# `plain` is what is published: no package imports another package's types.
+ELEMENTS = options.get('elements', 'plain')
+SEMA = os.environ.get('SEMA') or sys.exit('check.py: set SEMA=<the type checker>')
+BUN = os.environ.get('BUN', 'bun')
+ENV = dict(os.environ, NO_COLOR='1')
+# Interfaces that tools/given2.py leaves as they are (--live).
+EXEMPT_INTERFACES = 'FiberConstructor,FiberRootConstructor,ConcurrentUpdate,ConcurrentQueue,StoreInstance'
+
+# name      the folder of the typed file
+# npm, md5  npm's file and its md5
+# lay       where the generated file goes
+# space     the namespace of its declarations
+# entries   the entry points that are rewritten
+# form      how the file under lay/ is generated from the one under src/
+# expected  the expected number of role variables, if it is pinned
+# versions  for a typed file that serves several versions: the md5 of npm's file in each
+# token     the version string in that typed file
+# text      the name of the typed file, if it is not typed.cts
+# changed   the notice that goes on the first line of the generated file
+# skipped   why the generated file is not written to <out>/node_modules
+PACKAGES = [
+    dict(
+        name='react-reconciler@0.33.0',
+        npm='react-reconciler/cjs/react-reconciler.production.js',
+        md5='1ce09a736d5c21646595d20964d9b01d',
+        lay='react-reconciler/cjs/react-reconciler.production.ts',
+        space='RR',
+        entries={'react-reconciler/index.js': 'export { default } from "./cjs/react-reconciler.production.ts";'},
+        form='reconciler',
+        expected=dict(variants=539),
+    ),
+    dict(
+        name='react-dom@19.3.1.server.bun',
+        npm='react-dom/cjs/react-dom-server.bun.production.js',
+        md5='18d04fee389023d0b4c6844de16c5317',
+        lay='react-dom/cjs/react-dom-server.bun.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=196),
+    ),
+    dict(
+        name='react-dom@19.3.1.server-legacy.browser',
+        npm='react-dom/cjs/react-dom-server-legacy.browser.production.js',
+        md5='4896a582e13f60a195b4a97bfed10db7',
+        lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=181),
+    ),
+    dict(
+        name='react-dom@19.3.0.server.bun',
+        npm='react-dom/cjs/react-dom-server.bun.production.js',
+        md5='e6c2b1151664227396c16e5217ae9e4b',
+        lay='react-dom/cjs/react-dom-server.bun.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=196),
+    ),
+    dict(
+        name='react-dom@19.3.0.server-legacy.browser',
+        npm='react-dom/cjs/react-dom-server-legacy.browser.production.js',
+        md5='2b8f4172ffbe52177acfc592892704c5',
+        lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=181),
+    ),
+    dict(
+        name='react@19.2.0',
+        npm='react/cjs/react.production.js',
+        md5='e255db46a1de0ffd84470b0ae50bdc7b',
+        lay='react/cjs/react.production.ts',
+        space='RE',
+        entries={
+            'react/index.js': 'export * from "./cjs/react.production.ts"; export { default } from "./cjs/react.production.ts";',
+        },
+        form='plain',
+        expected=dict(variants=7),
+        skipped=(
+            'skipped: typed react creates elements and refs that have layouts, and they reach untyped components. '
+            'It is checked here, and it is written to node_modules only if --only=react@ names it'
+        ),
+    ),
+    # One typed file serves react-dom 19.2.1 to 19.2.8, which differ only in their version string (three lines of the Bun
+    # bundle, one of the legacy bundle). It is the file for 19.2.8, and `token` is replaced by the installed version.
+    dict(
+        name='react-dom@19.2.8.server.bun',
+        npm='react-dom/cjs/react-dom-server.bun.production.js',
+        md5='',
+        versions={
+            '19.2.1': '899478566fc3da3aa4febc9e8cd470ff',
+            '19.2.3': '26778be71aa576db8858056167bfeefb',
+            '19.2.4': '6aea6e2987ad1079f7f023976b45553f',
+            '19.2.5': 'bbde81e7a3208802f5ba1207c39912bf',
+            '19.2.6': '9a61014a48420a727dae50f458681d23',
+            '19.2.7': '1430fcfed07c0463f48ec5f11164b895',
+            '19.2.8': '5ab8078026a6d607cd47bd188d978a41',
+        },
+        token='19.2.8',
+        lay='react-dom/cjs/react-dom-server.bun.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='react-dom@19.2.8.server-legacy.browser',
+        npm='react-dom/cjs/react-dom-server-legacy.browser.production.js',
+        md5='',
+        versions={
+            '19.2.1': '5b1afbdf24b5347d741fc55060471ac6',
+            '19.2.3': '3abd283ea5ff4290fa6bf34f7d352523',
+            '19.2.4': 'b18b197d5388d62ce3622a8b28ca9257',
+            '19.2.5': '2dfa68fa80b2c2ce0b9b71ab7152fceb',
+            '19.2.6': '5f5c98f1a88893281b720d66f2ebbd5b',
+            '19.2.7': '175b25156ea2b9e44bcae7699d3fa877',
+            '19.2.8': 'fd192878320c40558820151cdad247f1',
+        },
+        token='19.2.8',
+        lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='react-dom@19.1.0.server.bun',
+        npm='react-dom/cjs/react-dom-server.bun.production.js',
+        md5='',
+        versions={'19.1.0': 'd1621ecc41503b9f1f50bd0f6adbfcc5'},
+        token='19.1.0',
+        lay='react-dom/cjs/react-dom-server.bun.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='react-dom@19.1.0.server-legacy.browser',
+        npm='react-dom/cjs/react-dom-server-legacy.browser.production.js',
+        md5='',
+        versions={'19.1.0': 'b7f2174298ea478f8839c7f0a0fddf7c'},
+        token='19.1.0',
+        lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='react-dom@19.0.0.server.bun',
+        npm='react-dom/cjs/react-dom-server.bun.production.js',
+        md5='',
+        versions={'19.0.0': '77386dba2c969d674d387beed1e5cb91'},
+        token='19.0.0',
+        lay='react-dom/cjs/react-dom-server.bun.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='react-dom@19.0.0.server-legacy.browser',
+        npm='react-dom/cjs/react-dom-server-legacy.browser.production.js',
+        md5='',
+        versions={'19.0.0': 'ec9baf4e855b4f79f82865ba0e0767c2'},
+        token='19.0.0',
+        lay='react-dom/cjs/react-dom-server-legacy.browser.production.ts',
+        space='FZ',
+        entries={},
+        form='placed',
+        expected=dict(variants=None),
+    ),
+    dict(
+        name='fuse.js@7.0.0',
+        npm='fuse.js/dist/fuse.mjs',
+        md5='8acfaae5c1dd70a090f5b75a3f8ad467',
+        lay='fuse.js/dist/fuse.sound.ts',
+        space='FU',
+        entries={'fuse.js/dist/fuse.mjs': 'export { default } from "./fuse.sound.ts";'},
+        form='esm',
+        text='typed.mts',
+        expected=dict(variants=0),
+        changed='// CHANGED: this is dist/fuse.mjs of fuse.js 7.0.0 with TypeScript types added. No code was changed. See NOTICE.',
+    ),
+    dict(
+        name='seroval@1.6.9',
+        npm='seroval/dist/index.js',
+        md5='ccbd09502b548d78881f2353cf209c2b',
+        lay='seroval/dist/index.sound.ts',
+        space='SV',
+        entries={'seroval/dist/index.js': 'export * from "./index.sound.ts";'},
+        form='esm',
+        text='typed.mts',
+        expected=dict(variants=0),
+    ),
 ]
-# A PACKAGE OF MANY ES MODULES, OF WHICH THE HOT ONES ARE TYPED: each <file>.mjs has its text <file>.sound.mts (the package is "type": "commonjs": a .ts there would be CommonJS); <file>.mjs becomes `export * from "./<base>.sound.mts";`; an import of one typed file by another is pointed at the .sound.mts, so that the checker sees the types and not the authors' .d.mts
-MANY = [dict(name='@anthropic-ai/sdk', version='0.112.1', folder='@anthropic-ai__sdk@0.112.1', src='@anthropic-ai/sdk/0.112.1/src', lib='esnext,dom', files={'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742', 'internal/decoders/line': '53d0301e5b811061c98d9d5c091cb39c', 'core/streaming': 'c443e04b269bb5631095ca00166dfd6c'}),
-        dict(name='@anthropic-ai/sdk', version='0.128.0', folder='@anthropic-ai__sdk@0.128.0', src='@anthropic-ai/sdk/0.128.0/src', lib='esnext,dom', files={'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742', 'internal/decoders/line': 'e483a999dd6a0136d95069e196e5ae1b', 'core/streaming': '952256aac92d3a6beebc6eaa7c2700f3'})]
-SRC = {'react-reconciler@0.33.0': 'react-reconciler/0.33.0/src', 'react-dom@19.3.1.server.bun': 'react-dom/19.3.1/src/server.bun', 'react-dom@19.3.1.server-legacy.browser': 'react-dom/19.3.1/src/server-legacy.browser', 'react-dom@19.3.0.server.bun': 'react-dom/19.3.0/src/server.bun', 'react-dom@19.3.0.server-legacy.browser': 'react-dom/19.3.0/src/server-legacy.browser', 'react-dom@19.2.8.server.bun': 'react-dom/19.2.8/src/server.bun', 'react-dom@19.2.8.server-legacy.browser': 'react-dom/19.2.8/src/server-legacy.browser', 'react-dom@19.1.0.server.bun': 'react-dom/19.1.0/src/server.bun', 'react-dom@19.1.0.server-legacy.browser': 'react-dom/19.1.0/src/server-legacy.browser', 'react-dom@19.0.0.server.bun': 'react-dom/19.0.0/src/server.bun', 'react-dom@19.0.0.server-legacy.browser': 'react-dom/19.0.0/src/server-legacy.browser', 'react@19.2.0': 'react/19.2.0/src', 'seroval@1.6.9': 'seroval/1.6.9/src', 'fuse.js@7.0.0': 'fuse.js/7.0.0/src'}  # where the sources lie in the repository's form (packages/bun-sound/<name>/<version>/src); in the unit's folder: packages/<name@version>
-SMALL = {  # the reconciler's small neighbour in react, for --elements=shared: typed whole, a page
-    'react-jsx-runtime.ts': ('react/cjs/react-jsx-runtime.production.js', 'c172c62d2a67eb3c684b85f92e08631a', 'react/cjs/react-jsx-runtime.production.ts', 'react/jsx-runtime.js', 'export * from "./cjs/react-jsx-runtime.production.ts"; export { default } from "./cjs/react-jsx-runtime.production.ts";'),
+
+# A package of many ES modules, of which the hot ones are typed. <file>.mjs has the typed file <file>.sound.mts (the package is
+# "type": "commonjs", so a .ts file there would be CommonJS) and becomes `export * from "./<base>.sound.mts";`. An import of one
+# typed file by another is rewritten to the .sound.mts file, so that the checker sees its types and not the package's .d.mts.
+MODULE_PACKAGES = [
+    dict(
+        name='@anthropic-ai/sdk',
+        version='0.112.1',
+        folder='@anthropic-ai__sdk@0.112.1',
+        src='@anthropic-ai/sdk/0.112.1/src',
+        lib='esnext,dom',
+        files={
+            'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742',
+            'internal/decoders/line': '53d0301e5b811061c98d9d5c091cb39c',
+            'core/streaming': 'c443e04b269bb5631095ca00166dfd6c',
+        },
+    ),
+    dict(
+        name='@anthropic-ai/sdk',
+        version='0.128.0',
+        folder='@anthropic-ai__sdk@0.128.0',
+        src='@anthropic-ai/sdk/0.128.0/src',
+        lib='esnext,dom',
+        files={
+            'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742',
+            'internal/decoders/line': 'e483a999dd6a0136d95069e196e5ae1b',
+            'core/streaming': '952256aac92d3a6beebc6eaa7c2700f3',
+        },
+    ),
+]
+
+# The sources of each package in the repository. A folder packages/<name>@<version> beside this file takes precedence.
+SOURCE_FOLDERS = {
+    'react-reconciler@0.33.0': 'react-reconciler/0.33.0/src',
+    'react-dom@19.3.1.server.bun': 'react-dom/19.3.1/src/server.bun',
+    'react-dom@19.3.1.server-legacy.browser': 'react-dom/19.3.1/src/server-legacy.browser',
+    'react-dom@19.3.0.server.bun': 'react-dom/19.3.0/src/server.bun',
+    'react-dom@19.3.0.server-legacy.browser': 'react-dom/19.3.0/src/server-legacy.browser',
+    'react-dom@19.2.8.server.bun': 'react-dom/19.2.8/src/server.bun',
+    'react-dom@19.2.8.server-legacy.browser': 'react-dom/19.2.8/src/server-legacy.browser',
+    'react-dom@19.1.0.server.bun': 'react-dom/19.1.0/src/server.bun',
+    'react-dom@19.1.0.server-legacy.browser': 'react-dom/19.1.0/src/server-legacy.browser',
+    'react-dom@19.0.0.server.bun': 'react-dom/19.0.0/src/server.bun',
+    'react-dom@19.0.0.server-legacy.browser': 'react-dom/19.0.0/src/server-legacy.browser',
+    'react@19.2.0': 'react/19.2.0/src',
+    'seroval@1.6.9': 'seroval/1.6.9/src',
+    'fuse.js@7.0.0': 'fuse.js/7.0.0/src',
 }
-# TYPED WHERE IT LIES (sound.json's format 2): a small CommonJS file keeps its path and its `exports.name = ..`: the entry, and how an importer finds a name, stay npm's own. The text is kept once, as a .cts file. It is NOT laid into <out>/node_modules, where a .js file would be read as JavaScript: <out>/sound/<package>/ is what a project keeps as .sound/<package>/, and run.py gives it to the typed rooms
-PLACED = {'react': [dict(text='react/19.2.0/src/react-compiler-runtime.cts', npm='cjs/react-compiler-runtime.production.js', md5='0813f4fe514266e7865d2f2553e11c76')]}
-md5 = lambda p: hashlib.md5(open(p, 'rb').read()).hexdigest()
-plain = lambda s: re.sub(r'\x1b\[[0-9;]*m', '', s)
-def run(cmd, cwd=None): r = subprocess.run(cmd, cwd=cwd, env=ENV, capture_output=True, text=True); return r.returncode, plain(r.stdout + r.stderr)
-def strip(t): t = re.sub(r'/\*\$\*/.*?/\*\$\*/', '', t, flags=re.S); t = re.sub(r'\b([A-Za-z_$][\w$]*?)\$given\b', r'\1', t); return re.sub(r'\b([A-Za-z_$][\w$]*?)\$as[A-Z]\w*\b', r'\1', t)
-def printed(path, cwd): r = subprocess.run([BUN, 'build', '--no-bundle', '--target=bun', path], cwd=cwd, capture_output=True, text=True); return [l for l in r.stdout.split('\n') if l.strip()]
-bad = 0; laid = []; bundles = {}
-def say(ok, package, gate, text):
-    global bad
-    if not ok: bad += 1
-    print('%-4s %-42s %-7s %s' % ('ok' if ok else 'FAIL', package, gate, text))
-if os.path.exists(OUT): sys.exit('check.py: %s stands already: name another folder (nothing is ever removed here)' % OUT)
-os.makedirs(OUT + '/work'); os.makedirs(OUT + '/laid')
-for d in ('react', 'react-dom', 'react-reconciler', 'scheduler', 'seroval', 'fuse.js', '@anthropic-ai/sdk', '@types', 'csstype', 'undici-types'):
-    if os.path.isdir(N + '/' + d): shutil.copytree(N + '/' + d, OUT + '/node_modules/' + d, symlinks=True)
-for p in P:
-    n = p['name']
-    if opts.get('only') and opts['only'] not in n: continue
-    src = os.environ['SHIP_PACKAGES'] + '/' + n if os.environ.get('SHIP_PACKAGES') else H + '/packages/' + n if os.path.isdir(H + '/packages/' + n) else H + '/' + SRC[n]; npm = N + '/' + p['npm']; TX = p.get('text', 'typed.cts'); EXT = ('mjs', 'mts') if p['form'] == 'esm' else ('cjs', 'cts')  # SHIP_PACKAGES: sabotage.py's copies
-    if not os.path.exists(src + '/' + TX): continue  # a text that is held back is not in the repository's form
-    if not os.path.exists(npm): print('--   %-42s         not in this node_modules' % n); continue
-    if p.get('versions'): p['md5'] = next((h for h in p['versions'].values() if h == md5(npm)), 'none of this family'); VERSION = next((v for v, h in p['versions'].items() if h == md5(npm)), None)
-    if p.get('versions') and VERSION is None: continue
-    if md5(npm) != p['md5']: print('--   %-42s md5     %s is %s: the text was typed on %s: another version: tools/carry_over.py carries the types over; then every gate again' % (n, p['npm'], md5(npm)[:8], p['md5'][:8])); continue
-    say(True, n, 'md5', p['md5'][:8] + (' (%s of the family)' % VERSION if p.get('versions') else '')); W = OUT + '/work/' + n; shutil.copytree(src, W)
-    if p.get('versions') and VERSION != p['token']: x = open(W + '/' + TX).read(); open(W + '/' + TX, 'w').write(x.replace('"' + p['token'] + '"', '"' + VERSION + '"').replace('react-dom:  ' + p['token'], 'react-dom:  ' + VERSION))
-    c, t = run([SEMA, 'cli', TX, '--noEmit', '--all'], W); say('No type errors' in t, n, 'errors', 'none' if 'No type errors' in t else (re.search(r'Found [\d,]+ errors?', t) or ['NO VERDICT'])[0])
-    os.makedirs(W + '/verify'); shutil.copy(npm, W + '/verify/a.' + EXT[0]); open(W + '/verify/b.' + EXT[1], 'w').write(strip(open(W + '/' + TX).read())); a, b = printed('a.' + EXT[0], W + '/verify'), printed('b.' + EXT[1], W + '/verify')
-    say(bool(b) and a == b, n, 'verify', 'the typed text is npm\'s program (%d printed lines)' % len(a) if b and a == b else 'DIFFERS at printed line %d' % (next((i for i in range(min(len(a), len(b))) if a[i] != b[i]), min(len(a), len(b))) + 1))
-    if p['form'] == 'esm': c, t = 0, 'splits1: no variable has a second role in this text (not minified): 0 variants\nsplits1: nothing to prove: 0 captured' if not re.search(r'\$as[A-Z]|\$given\b', open(W + '/' + TX).read()) else 'splits1: A DEVICE STANDS IN A TEXT THAT IS SAID TO HAVE NONE\nsplits1: FAIL'
-    else: c, t = run([sys.executable, '-I', T + '/splits1.py', W + '/typed.cts', W + '/splits', SEMA])
-    last = t.strip().split('\n')[-1]; first = t.strip().split('\n')[0]; say(c == 0 and '0 captured' in last, n, 'splits', first.replace('splits1: ', '') + ' · ' + last.replace('splits1: ', ''))
-    v = re.search(r'(\d+) variants', first); say(bool(v) and p['due']['variants'] in (None, int(v.group(1))), n, 'counts', 'variants %s (due %s) · as any %d · : any %d · as unknown as %d · other casts %d · ! %d' % ((v.group(1) if v else '?', p['due']['variants']) + (lambda x: (len(re.findall(r'\bas any\b', x)), len(re.findall(r':\s*any\b', x)), len(re.findall(r'as unknown as', x)), len(re.findall(r'\bas (?!any\b|unknown\b)[A-Z]', x)), len(re.findall(r'[\w)\]]!(?=[.\[(,;) ])', x))))(open(W + '/' + TX).read())))
-    c6, t6 = run([sys.executable, '-I', T + '/declare_fields.py', W + '/' + TX, '--check']); say(not c6, n, 'fields', t6.strip().replace('declare_fields: ', ''))
-    L = OUT + '/laid/' + n; os.makedirs(L); formed = L + '/' + os.path.basename(p['lay'])
-    if p['form'] == 'reconciler':
-        c1, t1 = run([sys.executable, '-I', T + '/module_form8.py', W + '/typed.cts', W + '/formed.ts', '--opaque=index'])
-        c2, t2 = run([sys.executable, '-I', T + '/given2.py', W + '/formed.ts', W + '/given.ts', '--mode=any', '--doors=any', '--live=' + LIVE + ('' if ELEMENTS == 'plain' else ',ReactElement')])
-        if ELEMENTS == 'plain': shutil.copy(W + '/given.ts', formed); c3, t3 = 0, 'elements are given (plain)'
-        else: c3, t3 = run([sys.executable, '-I', T + '/share_elements1.py', W + '/given.ts', formed, '--react=../../react'])
-        say(not (c1 or c2 or c3) and 'yes' in t1, n, 'form', t1.strip()[-60:] + ' · ' + t2.strip()[:70] + ' · ' + t3.strip()[:70])
-    elif p['form'] == 'esm': c1, t1 = run([sys.executable, '-I', T + '/form_esm1.py', W + '/' + TX, formed]); say(not c1 and 'yes' in t1, n, 'form', t1.strip()[-110:])
+
+# For --elements=shared: react's jsx-runtime, a small file that is typed as a whole.
+SMALL_FILES = {
+    'react-jsx-runtime.ts': (
+        'react/cjs/react-jsx-runtime.production.js',
+        'c172c62d2a67eb3c684b85f92e08631a',
+        'react/cjs/react-jsx-runtime.production.ts',
+        'react/jsx-runtime.js',
+        'export * from "./cjs/react-jsx-runtime.production.ts"; export { default } from "./cjs/react-jsx-runtime.production.ts";',
+    ),
+}
+
+# Format 2 of sound.json: a small CommonJS file keeps its path and its `exports.name = ..`, so the entry point, and the way an
+# importer finds a name, stay npm's own. The typed file is a .cts file under src/. It is not written to <out>/node_modules,
+# where a .js file would be read as JavaScript, but to <out>/sound/<package>/. run.py copies that folder into the typed
+# projects.
+PLACED = {
+    'react': [
+        dict(
+            text='react/19.2.0/src/react-compiler-runtime.cts',
+            npm='cjs/react-compiler-runtime.production.js',
+            md5='0813f4fe514266e7865d2f2553e11c76',
+        ),
+    ],
+}
+
+md5_of = lambda path: hashlib.md5(open(path, 'rb').read()).hexdigest()
+without_colors = lambda text: re.sub(r'\x1b\[[0-9;]*m', '', text)
+
+
+def run(command, cwd=None):
+    result = subprocess.run(command, cwd=cwd, env=ENV, capture_output=True, text=True)
+    return result.returncode, without_colors(result.stdout + result.stderr)
+
+
+def erase_markers(text):
+    text = re.sub(r'/\*\$\*/.*?/\*\$\*/', '', text, flags=re.S)
+    text = re.sub(r'\b([A-Za-z_$][\w$]*?)\$given\b', r'\1', text)
+    return re.sub(r'\b([A-Za-z_$][\w$]*?)\$as[A-Z]\w*\b', r'\1', text)
+
+
+def printed_lines(path, cwd):
+    result = subprocess.run([BUN, 'build', '--no-bundle', '--target=bun', path], cwd=cwd, capture_output=True, text=True)
+    return [line for line in result.stdout.split('\n') if line.strip()]
+
+
+failures = 0
+generated_files = []
+placed_bundles = {}
+
+
+def report(passed, package, gate, message):
+    global failures
+    if not passed:
+        failures += 1
+    print('%-4s %-42s %-7s %s' % ('ok' if passed else 'FAIL', package, gate, message))
+
+
+if os.path.exists(OUT):
+    sys.exit('check.py: %s exists. Name another folder: check.py removes nothing' % OUT)
+os.makedirs(OUT + '/work')
+os.makedirs(OUT + '/laid')
+for folder in (
+    'react', 'react-dom', 'react-reconciler', 'scheduler', 'seroval', 'fuse.js', '@anthropic-ai/sdk', '@types', 'csstype',
+    'undici-types',
+):
+    if os.path.isdir(INSTALLED + '/' + folder):
+        shutil.copytree(INSTALLED + '/' + folder, OUT + '/node_modules/' + folder, symlinks=True)
+
+for package in PACKAGES:
+    name = package['name']
+    if options.get('only') and options['only'] not in name:
+        continue
+    # SHIP_PACKAGES: the copies that sabotage.py changes.
+    source = (
+        os.environ['SHIP_PACKAGES'] + '/' + name if os.environ.get('SHIP_PACKAGES')
+        else HERE + '/packages/' + name if os.path.isdir(HERE + '/packages/' + name)
+        else HERE + '/' + SOURCE_FOLDERS[name]
+    )
+    installed_file = INSTALLED + '/' + package['npm']
+    typed_file = package.get('text', 'typed.cts')
+    extensions = ('mjs', 'mts') if package['form'] == 'esm' else ('cjs', 'cts')
+    # A typed file that is not published is not in the repository.
+    if not os.path.exists(source + '/' + typed_file):
+        continue
+    if not os.path.exists(installed_file):
+        print('--   %-42s         not in this node_modules' % name)
+        continue
+    if package.get('versions'):
+        package['md5'] = next(
+            (digest for digest in package['versions'].values() if digest == md5_of(installed_file)), 'not a known version',
+        )
+        installed_version = next(
+            (version for version, digest in package['versions'].items() if digest == md5_of(installed_file)), None,
+        )
+    if package.get('versions') and installed_version is None:
+        continue
+    if md5_of(installed_file) != package['md5']:
+        print(
+            '--   %-42s md5     %s is %s, and the types were written for %s. This is another version: move the types over with '
+            'tools/carry_over.py, then run every gate again' % (
+                name, package['npm'], md5_of(installed_file)[:8], package['md5'][:8],
+            )
+        )
+        continue
+    report(True, name, 'md5', package['md5'][:8] + (' (version %s)' % installed_version if package.get('versions') else ''))
+    work = OUT + '/work/' + name
+    shutil.copytree(source, work)
+    if package.get('versions') and installed_version != package['token']:
+        text = open(work + '/' + typed_file).read()
+        open(work + '/' + typed_file, 'w').write(
+            text.replace('"' + package['token'] + '"', '"' + installed_version + '"')
+            .replace('react-dom:  ' + package['token'], 'react-dom:  ' + installed_version)
+        )
+    code, output = run([SEMA, 'cli', typed_file, '--noEmit', '--all'], work)
+    report(
+        'No type errors' in output, name, 'errors',
+        'none' if 'No type errors' in output else (re.search(r'Found [\d,]+ errors?', output) or ['no result'])[0],
+    )
+    os.makedirs(work + '/verify')
+    shutil.copy(installed_file, work + '/verify/a.' + extensions[0])
+    open(work + '/verify/b.' + extensions[1], 'w').write(erase_markers(open(work + '/' + typed_file).read()))
+    expected_lines, actual_lines = (
+        printed_lines('a.' + extensions[0], work + '/verify'), printed_lines('b.' + extensions[1], work + '/verify'),
+    )
+    report(
+        bool(actual_lines) and expected_lines == actual_lines, name, 'verify',
+        "prints as npm's file does (%d lines)" % len(expected_lines) if actual_lines and expected_lines == actual_lines
+        else 'differs at printed line %d' % (
+            next(
+                (
+                    index for index in range(min(len(expected_lines), len(actual_lines)))
+                    if expected_lines[index] != actual_lines[index]
+                ),
+                min(len(expected_lines), len(actual_lines)),
+            ) + 1
+        ),
+    )
+    if package['form'] == 'esm':
+        code, output = 0, (
+            'splits1: the file is not minified, so no variable has a second role: 0 variants\n'
+            'splits1: nothing to prove: 0 captured'
+            if not re.search(r'\$as[A-Z]|\$given\b', open(work + '/' + typed_file).read())
+            else 'splits1: the file has a `$as<Role>` or `$given` suffix, and it should have none\nsplits1: FAIL'
+        )
     else:
-        c1, t1 = run([sys.executable, '-I', T + '/module_form8.py', W + '/typed.cts', formed]); say(not c1 and 'yes' in t1, n, 'form', t1.strip()[-110:])
-    shutil.move(formed, W + '/formed.with.notes.ts'); c4, t4 = run([sys.executable, '-I', T + '/clean_lay.py', W + '/formed.with.notes.ts', formed]); say(not c4, n, 'clean', t4.strip()[-90:])
-    if p.get('held') and not (opts.get('only') and opts['only'] in n): print('--   %-42s laid    %s' % (n, p['held'])); continue
-    if p['form'] == 'placed':
-        x = re.sub(r'^/// <reference[^\n]*\n', '', open(W + '/' + TX).read().replace('/*$*/', ''), flags=re.M).rstrip('\n') + '\n'; y = open(formed).read(); y = y[y.index('\nnamespace ' + p['space'] + ' {') + 1:]
-        pkg, rel = p['npm'].split('/', 1); os.makedirs(os.path.dirname(OUT + '/sound/' + pkg + '/lay/' + rel), exist_ok=True); open(W + '/placed.cts', 'w').write(x + y)
-        open(OUT + '/sound/' + pkg + '/lay/' + rel, 'w').write(x + re.sub(r'^declare var (require|exports)\b[^\n]*\n', '', y, flags=re.M)); bundles.setdefault(pkg, {})[rel] = hashlib.sha256(open(npm, 'rb').read()).hexdigest(); laid.append((n, W + '/placed.cts')); continue
-    if p.get('changed'):  # Apache-2.0 4(b): "You must cause any modified files to carry prominent notices stating that You changed the files": on the first line, which is blank (a reference stood there): no line moves
-        x = open(formed).read(); say(x.startswith('\n'), n, 'changed', 'the file says on its first line that it was changed'); open(formed, 'w').write(p['changed'] + x)
-    shutil.copy(formed, OUT + '/node_modules/' + p['lay']); laid.append((n, p['lay']))
-    for f, text in p['entries'].items():
-        if p['form'] == 'esm': open(OUT + '/node_modules/' + f, 'w').write(text + '\n'); continue  # the package is ES modules already
-        c5, t5 = run([sys.executable, '-I', T + '/cjs_entry.py', N + '/' + f, OUT + '/node_modules/' + f, os.path.basename(p['lay'])[:-3]]); tail = [l[2:] for l in open(formed).read().split('\n') if re.match(r'//(module\.exports\.default = module\.exports;|Object\.defineProperty\(module\.exports, "__esModule")', l)]
-        if tail: open(OUT + '/node_modules/' + f, 'a').write('\n'.join(tail) + '\n')  # what the bundle's own last lines do to module.exports, and the form had to leave out of an ES module, is done here, to the same function
-        say(not c5, n, 'entry', '%s: %s%s' % (f, t5.strip()[-90:], ' · + the bundle\'s %d lines on module.exports' % len(tail) if tail else ''))
-    if p['form'] == 'reconciler':
-        for f, (js, h, ts, entry, text) in SMALL.items():
-            if f == 'react-jsx-runtime.ts' and ELEMENTS == 'plain': continue
-            ok = os.path.exists(N + '/' + js) and md5(N + '/' + js) == h; say(ok, n, 'md5', '%s %s' % (js, h[:8]))
-            if ok:
-                os.makedirs(W + '/small.' + f); shutil.copy(N + '/' + js, W + '/small.' + f + '/a.cjs'); small = src + '/small/' + f if os.path.exists(src + '/small/' + f) else H + '/react/19.2.0/src/' + f; shutil.copy(small, L + '/' + f); shutil.copy(small, OUT + '/node_modules/' + ts); c5, t5 = run([sys.executable, '-I', T + '/cjs_entry.py', N + '/' + entry, OUT + '/node_modules/' + entry, os.path.basename(ts)[:-3]]); say(not c5, n, 'entry', '%s: %s' % (entry, t5.strip()[-90:])); laid.append((n, ts))
-for p in MANY:
-    n = p['name'] + '@' + p['version']; src = os.environ['SHIP_PACKAGES'] + '/' + p['folder'] if os.environ.get('SHIP_PACKAGES') else H + '/packages/' + p['folder'] if os.path.isdir(H + '/packages/' + p['folder']) else H + '/' + p['src']; I = N + '/' + p['name']; Z = OUT + '/node_modules/' + p['name']
-    if (opts.get('only') and opts['only'] not in n) or not os.path.isdir(src): continue
-    if not os.path.isdir(I): print('--   %-42s         not in this node_modules' % n); continue
-    off = [f for f, h in p['files'].items() if not os.path.exists(I + '/' + f + '.mjs') or md5(I + '/' + f + '.mjs') != h]
-    if off: print('--   %-42s md5     %s.mjs is not the file the text was typed on: another version' % (n, off[0])); continue
-    say(True, n, 'md5', '%d files' % len(p['files'])); W = OUT + '/work/' + p['folder']; os.makedirs(W + '/verify')
-    for k, f in enumerate(sorted(p['files'])):
-        x = open(src + '/' + f + '.sound.mts').read(); shutil.copy(I + '/' + f + '.mjs', W + '/verify/a%d.mjs' % k); open(W + '/verify/b%d.mts' % k, 'w').write(strip(x)); a, b = printed('a%d.mjs' % k, W + '/verify'), printed('b%d.mts' % k, W + '/verify')
-        say(bool(b) and a == b, n, 'verify', '%s: %s' % (f, 'the typed text is npm\'s program (%d printed lines)' % len(a) if b and a == b else 'DIFFERS'))
-        c6, t6 = run([sys.executable, '-I', T + '/declare_fields.py', src + '/' + f + '.sound.mts', '--check']); say(not c6, n, 'fields', f + ': ' + t6.strip().replace('declare_fields: ', ''))
-        y = x.replace('/*$*/', ''); turned = 0
-        for g in p['files']:
-            rel = os.path.relpath(g, os.path.dirname(f)); rel = rel if rel.startswith('.') else './' + rel
-            turned += y.count('from "%s.mjs"' % rel); y = y.replace('from "%s.mjs"' % rel, 'from "%s.sound.mts"' % rel)
-        open(Z + '/' + f + '.sound.mts', 'w').write(y); open(Z + '/' + f + '.mjs', 'w').write('export * from "./%s.sound.mts";\n' % os.path.basename(f)); say(True, n, 'form', '%s: %d imports turned to typed neighbours' % (f, turned)); laid.append((n, p['name'] + '/' + f + '.sound.mts'))
-import json
-def seal(pkg, version, lay):
-    Z = OUT + '/sound/' + pkg; D = H + '/' + pkg + '/' + version; json.dump({'sound': 2, 'name': pkg, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []}, open(Z + '/sound.json', 'w'), indent=2); open(Z + '/sound.json', 'a').write('\n')
-    if not os.path.exists(D + '/sound.json'): return
-    kept = sorted(os.path.relpath(os.path.join(d, f), D + '/lay') for d, _, fs in os.walk(D + '/lay') for f in fs)
-    wrong = [f for f in kept if f not in lay or open(D + '/lay/' + f, 'rb').read() != open(Z + '/lay/' + f, 'rb').read()] + [f for f in lay if kept and f not in kept] + (['sound.json'] if open(D + '/sound.json').read() != open(Z + '/sound.json').read() else []) + (['lay.sums'] if open(D + '/lay.sums').read() != ''.join('%s  %s\n' % (hashlib.sha256(open(Z + '/lay/' + f, 'rb').read()).hexdigest(), f) for f in sorted(lay)) else [])
-    say(not wrong, pkg + '@' + version, 'same', '%s, lay.sums and sound.json are what the text gives (%d files)' % ('lay/' if kept else 'no lay/ is kept for a version of a family', len(lay)) if not wrong else 'DIFFERS: ' + ' '.join(wrong))
-for pkg, rows in PLACED.items():
-    if (opts.get('only') and opts['only'] not in pkg) or not os.path.isdir(N + '/' + pkg): continue
-    version = json.load(open(N + '/' + pkg + '/package.json'))['version']; n = pkg + '@' + version; W = OUT + '/work/' + pkg + '.placed'; Z = OUT + '/sound/' + pkg; os.makedirs(W + '/verify'); lay = {}
-    open(W + '/commonjs.d.ts', 'w').write('declare var exports: any;\ndeclare var module: any;\ndeclare function require(name: string): any;\n')
-    for k, row in enumerate(rows):
-        npm = N + '/' + pkg + '/' + row['npm']
-        if not os.path.exists(npm) or md5(npm) != row['md5']: print('--   %-42s md5     %s is not the file the text was typed on' % (n, row['npm'])); continue
-        say(True, n, 'md5', '%s %s' % (row['npm'], row['md5'][:8])); x = open(H + '/' + row['text']).read(); f = os.path.basename(row['text']); open(W + '/' + f, 'w').write('/// <reference path="./commonjs.d.ts" />\n' + x)
-        c, t = run([SEMA, 'cli', f, '--noEmit', '--all'], W); say('No type errors' in t, n, 'errors', '%s: %s' % (f, 'none' if 'No type errors' in t else (re.search(r'Found [\d,]+ errors?', t) or ['NO VERDICT'])[0]))
-        shutil.copy(npm, W + '/verify/a%d.cjs' % k); open(W + '/verify/b%d.cts' % k, 'w').write(strip(x)); a, b = printed('a%d.cjs' % k, W + '/verify'), printed('b%d.cts' % k, W + '/verify')
-        say(bool(b) and a == b, n, 'verify', '%s: %s' % (f, 'the typed text is npm\'s program (%d printed lines)' % len(a) if b and a == b else 'DIFFERS'))
-        os.makedirs(os.path.dirname(Z + '/lay/' + row['npm']), exist_ok=True); open(Z + '/lay/' + row['npm'], 'w').write(x.replace('/*$*/', '')); lay[row['npm']] = hashlib.sha256(open(npm, 'rb').read()).hexdigest()
-    if lay: seal(pkg, version, lay)
-for pkg, lay in bundles.items(): seal(pkg, json.load(open(N + '/' + pkg + '/package.json'))['version'], dict(sorted(lay.items())))
-LIB = {p['name'] + '@' + p['version']: p['lib'] for p in MANY}; ONE = ['--aot', '--aot-out=' + os.devnull]
-for n, f in laid:
-    path = os.path.join(OUT + '/node_modules', f); c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all', '--strict'] + ONE + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); X = open(path, errors='replace').read().split('\n')
-    if not re.search(r'No type errors|Found [\d,]+ error', t): say(False, n, 'laid', f + ': NO VERDICT'); continue
-    E = [(m.group(1), m.group(2), int(m.group(3))) for m in re.finditer(r'^error: (TS\d+):.*?\n\s+at (\S+?):(\d+)', t, re.S | re.M)]; total = len(re.findall(r'^error: ', t, re.M))
-    over = [e for e in E if e[0] == 'TS7016' and n in LIB or e[1].endswith(os.path.basename(f)) and re.fullmatch(r'import \* as [\w$]+\$module from "[^"]+";', X[e[2] - 1].strip())]  # a module of the package that ships no declarations (tslib.mjs) is `any`
-    say(total == len(over), n, 'laid', '%s: %d errors%s' % (f, total - len(over), ' (+ %d on appended imports, passed over: %s)' % (len(over), ' '.join(sorted({e[0] for e in over}))) if over else ''))
-# 10. lax: A HOST THAT IS NOT STRICT: noImplicitAny and strictNullChecks reach a package: one error and it is compiled untyped: every laid file is clean under the three lax sets too
-for n, f in laid:
-    path = os.path.join(OUT + '/node_modules', f); counts = []
-    for name, fl in (('noImplicitAny false', ['--strict', '--noImplicitAny=false']), ('strictNullChecks false', ['--strict', '--strictNullChecks=false']), ('strict false', ['--strict=false'])):
-        c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all'] + fl + ONE + (['--lib', LIB[n]] if n in LIB else []), os.path.dirname(path)); counts.append((name, len([m for m in re.findall(r'^error: (TS\d+)', t, re.M) if m not in ('TS7016', 'TS2591', 'TS2307')]) if re.search(r'No type errors|Found [\d,]+ error', t) else -1))
-    say(not any(k for _, k in counts), n, 'lax', '%s: %s' % (os.path.basename(f), ' · '.join('%s %d' % x for x in counts)))
-# 9. same: IN THE REPOSITORY's FORM: what src/ gives today IS what lay/ holds, byte for byte, and sound.json's sums are the installed files'
-for pkg in sorted({'/'.join(f.split('/')[:2 if f.startswith('@') else 1]) for _, f in laid if not f.startswith('/')}):
-    for v in sorted(os.listdir(H + '/' + pkg)) if os.path.isdir(H + '/' + pkg) else []:
-        D = H + '/' + pkg + '/' + v
-        if not os.path.exists(D + '/sound.json') or json.load(open(N + '/' + pkg + '/package.json'))['version'] != v: continue
-        S = json.load(open(D + '/sound.json')); sha = lambda q: hashlib.sha256(open(q, 'rb').read()).hexdigest()
-        sums = dict(reversed(l.split('  ', 1)) for l in open(D + '/lay.sums').read().split('\n') if l) if os.path.exists(D + '/lay.sums') else None  # a version of a family keeps no lay/ in the tree (it is made at publish time from the family's src/): its lay.sums pins what must come out
-        wrong = [f for f in S['lay'] if not os.path.exists(OUT + '/node_modules/' + pkg + '/' + f) or (sha(OUT + '/node_modules/' + pkg + '/' + f) != sums.get(f) if sums is not None else open(D + '/lay/' + f, 'rb').read() != open(OUT + '/node_modules/' + pkg + '/' + f, 'rb').read())]
-        wrong += [f for f, h in list(S['lay'].items()) + list(S['basis'].items()) if (h == 'new') == os.path.exists(N + '/' + pkg + '/' + f) or h != 'new' and sha(N + '/' + pkg + '/' + f) != h]
-        say(not wrong, pkg + '@' + v, 'same', ('lay.sums' if sums is not None else 'lay/') + ' is what src/ gives (%d files); the sums are the installed files\' (%d)' % (len(S['lay']), len(S['lay']) + len(S['basis'])) if not wrong else 'DIFFERS: ' + ' '.join(wrong[:4]))
-print('check.py: %s · elements %s · the tree to build on: %s/node_modules' % ('EVERY GATE PASSES' if not bad else '%d GATES FAIL' % bad, ELEMENTS, OUT)); sys.exit(1 if bad else 0)
+        code, output = run([sys.executable, '-I', TOOLS + '/splits1.py', work + '/typed.cts', work + '/splits', SEMA])
+    last_line = output.strip().split('\n')[-1]
+    first_line = output.strip().split('\n')[0]
+    report(
+        code == 0 and '0 captured' in last_line, name, 'splits',
+        first_line.replace('splits1: ', '') + ' · ' + last_line.replace('splits1: ', ''),
+    )
+    variants = re.search(r'(\d+) variants', first_line)
+    report(
+        bool(variants) and package['expected']['variants'] in (None, int(variants.group(1))), name, 'counts',
+        'variants %s (expected %s) · as any %d · : any %d · as unknown as %d · other casts %d · ! %d' % (
+            (variants.group(1) if variants else '?', package['expected']['variants'])
+            + (lambda text: (
+                len(re.findall(r'\bas any\b', text)),
+                len(re.findall(r':\s*any\b', text)),
+                len(re.findall(r'as unknown as', text)),
+                len(re.findall(r'\bas (?!any\b|unknown\b)[A-Z]', text)),
+                len(re.findall(r'[\w)\]]!(?=[.\[(,;) ])', text)),
+            ))(open(work + '/' + typed_file).read())
+        ),
+    )
+    fields_code, fields_output = run([sys.executable, '-I', TOOLS + '/declare_fields.py', work + '/' + typed_file, '--check'])
+    report(not fields_code, name, 'fields', fields_output.strip().replace('declare_fields: ', ''))
+    laid_folder = OUT + '/laid/' + name
+    os.makedirs(laid_folder)
+    generated = laid_folder + '/' + os.path.basename(package['lay'])
+    if package['form'] == 'reconciler':
+        form_code, form_output = run([
+            sys.executable, '-I', TOOLS + '/module_form8.py', work + '/typed.cts', work + '/formed.ts', '--opaque=index',
+        ])
+        any_code, any_output = run([
+            sys.executable, '-I', TOOLS + '/given2.py', work + '/formed.ts', work + '/given.ts', '--mode=any', '--doors=any',
+            '--live=' + EXEMPT_INTERFACES + ('' if ELEMENTS == 'plain' else ',ReactElement'),
+        ])
+        if ELEMENTS == 'plain':
+            shutil.copy(work + '/given.ts', generated)
+            elements_code, elements_output = 0, 'elements are `any` (plain)'
+        else:
+            elements_code, elements_output = run([
+                sys.executable, '-I', TOOLS + '/share_elements1.py', work + '/given.ts', generated, '--react=../../react',
+            ])
+        report(
+            not (form_code or any_code or elements_code) and 'yes' in form_output, name, 'form',
+            form_output.strip()[-60:] + ' · ' + any_output.strip()[:70] + ' · ' + elements_output.strip()[:70],
+        )
+    elif package['form'] == 'esm':
+        form_code, form_output = run([sys.executable, '-I', TOOLS + '/form_esm1.py', work + '/' + typed_file, generated])
+        report(not form_code and 'yes' in form_output, name, 'form', form_output.strip()[-110:])
+    else:
+        form_code, form_output = run([sys.executable, '-I', TOOLS + '/module_form8.py', work + '/typed.cts', generated])
+        report(not form_code and 'yes' in form_output, name, 'form', form_output.strip()[-110:])
+    shutil.move(generated, work + '/formed.with.notes.ts')
+    clean_code, clean_output = run([sys.executable, '-I', TOOLS + '/clean_lay.py', work + '/formed.with.notes.ts', generated])
+    report(not clean_code, name, 'clean', clean_output.strip()[-90:])
+    if package.get('skipped') and not (options.get('only') and options['only'] in name):
+        print('--   %-42s laid    %s' % (name, package['skipped']))
+        continue
+    if package['form'] == 'placed':
+        text = re.sub(
+            r'^/// <reference[^\n]*\n', '', open(work + '/' + typed_file).read().replace('/*$*/', ''), flags=re.M,
+        ).rstrip('\n') + '\n'
+        declarations = open(generated).read()
+        declarations = declarations[declarations.index('\nnamespace ' + package['space'] + ' {') + 1:]
+        package_name, path = package['npm'].split('/', 1)
+        os.makedirs(os.path.dirname(OUT + '/sound/' + package_name + '/lay/' + path), exist_ok=True)
+        open(work + '/placed.cts', 'w').write(text + declarations)
+        open(OUT + '/sound/' + package_name + '/lay/' + path, 'w').write(
+            text + re.sub(r'^declare var (require|exports)\b[^\n]*\n', '', declarations, flags=re.M)
+        )
+        placed_bundles.setdefault(package_name, {})[path] = hashlib.sha256(open(installed_file, 'rb').read()).hexdigest()
+        generated_files.append((name, work + '/placed.cts'))
+        continue
+    # Apache-2.0 4(b) asks for a prominent notice in a changed file. It goes on the first line, which is blank (a
+    # /// <reference> was there), so no line moves.
+    if package.get('changed'):
+        text = open(generated).read()
+        report(text.startswith('\n'), name, 'changed', 'the file says on its first line that it was changed')
+        open(generated, 'w').write(package['changed'] + text)
+    shutil.copy(generated, OUT + '/node_modules/' + package['lay'])
+    generated_files.append((name, package['lay']))
+    for file, entry_text in package['entries'].items():
+        if package['form'] == 'esm':
+            open(OUT + '/node_modules/' + file, 'w').write(entry_text + '\n')
+            continue
+        entry_code, entry_output = run([
+            sys.executable, '-I', TOOLS + '/cjs_entry.py', INSTALLED + '/' + file, OUT + '/node_modules/' + file,
+            os.path.basename(package['lay'])[:-3],
+        ])
+        exports_lines = [
+            line[2:] for line in open(generated).read().split('\n')
+            if re.match(
+                r'//(module\.exports\.default = module\.exports;|Object\.defineProperty\(module\.exports, "__esModule")', line,
+            )
+        ]
+        # The bundle's last lines change module.exports. An ES module cannot, so the entry point does it.
+        if exports_lines:
+            open(OUT + '/node_modules/' + file, 'a').write('\n'.join(exports_lines) + '\n')
+        report(not entry_code, name, 'entry', '%s: %s%s' % (
+            file, entry_output.strip()[-90:],
+            " · plus the bundle's %d lines that change module.exports" % len(exports_lines) if exports_lines else '',
+        ))
+    if package['form'] == 'reconciler':
+        for file, (installed_path, digest, generated_path, entry, entry_text) in SMALL_FILES.items():
+            if file == 'react-jsx-runtime.ts' and ELEMENTS == 'plain':
+                continue
+            is_expected = (
+                os.path.exists(INSTALLED + '/' + installed_path) and md5_of(INSTALLED + '/' + installed_path) == digest
+            )
+            report(is_expected, name, 'md5', '%s %s' % (installed_path, digest[:8]))
+            if is_expected:
+                os.makedirs(work + '/small.' + file)
+                shutil.copy(INSTALLED + '/' + installed_path, work + '/small.' + file + '/a.cjs')
+                small_file = (
+                    source + '/small/' + file if os.path.exists(source + '/small/' + file)
+                    else HERE + '/react/19.2.0/src/' + file
+                )
+                shutil.copy(small_file, laid_folder + '/' + file)
+                shutil.copy(small_file, OUT + '/node_modules/' + generated_path)
+                entry_code, entry_output = run([
+                    sys.executable, '-I', TOOLS + '/cjs_entry.py', INSTALLED + '/' + entry, OUT + '/node_modules/' + entry,
+                    os.path.basename(generated_path)[:-3],
+                ])
+                report(not entry_code, name, 'entry', '%s: %s' % (entry, entry_output.strip()[-90:]))
+                generated_files.append((name, generated_path))
+
+for package in MODULE_PACKAGES:
+    name = package['name'] + '@' + package['version']
+    source = (
+        os.environ['SHIP_PACKAGES'] + '/' + package['folder'] if os.environ.get('SHIP_PACKAGES')
+        else HERE + '/packages/' + package['folder'] if os.path.isdir(HERE + '/packages/' + package['folder'])
+        else HERE + '/' + package['src']
+    )
+    installed_folder = INSTALLED + '/' + package['name']
+    copied_folder = OUT + '/node_modules/' + package['name']
+    if (options.get('only') and options['only'] not in name) or not os.path.isdir(source):
+        continue
+    if not os.path.isdir(installed_folder):
+        print('--   %-42s         not in this node_modules' % name)
+        continue
+    different = [
+        file for file, digest in package['files'].items()
+        if not os.path.exists(installed_folder + '/' + file + '.mjs')
+        or md5_of(installed_folder + '/' + file + '.mjs') != digest
+    ]
+    if different:
+        print('--   %-42s md5     %s.mjs is not the file that the types were written for: this is another version' % (
+            name, different[0],
+        ))
+        continue
+    report(True, name, 'md5', '%d files' % len(package['files']))
+    work = OUT + '/work/' + package['folder']
+    os.makedirs(work + '/verify')
+    for number, file in enumerate(sorted(package['files'])):
+        text = open(source + '/' + file + '.sound.mts').read()
+        shutil.copy(installed_folder + '/' + file + '.mjs', work + '/verify/a%d.mjs' % number)
+        open(work + '/verify/b%d.mts' % number, 'w').write(erase_markers(text))
+        expected_lines, actual_lines = (
+            printed_lines('a%d.mjs' % number, work + '/verify'), printed_lines('b%d.mts' % number, work + '/verify'),
+        )
+        report(bool(actual_lines) and expected_lines == actual_lines, name, 'verify', '%s: %s' % (
+            file,
+            "prints as npm's file does (%d lines)" % len(expected_lines) if actual_lines and expected_lines == actual_lines
+            else 'differs',
+        ))
+        fields_code, fields_output = run([
+            sys.executable, '-I', TOOLS + '/declare_fields.py', source + '/' + file + '.sound.mts', '--check',
+        ])
+        report(not fields_code, name, 'fields', file + ': ' + fields_output.strip().replace('declare_fields: ', ''))
+        generated_text = text.replace('/*$*/', '')
+        rewritten = 0
+        for other_file in package['files']:
+            path = os.path.relpath(other_file, os.path.dirname(file))
+            path = path if path.startswith('.') else './' + path
+            rewritten += generated_text.count('from "%s.mjs"' % path)
+            generated_text = generated_text.replace('from "%s.mjs"' % path, 'from "%s.sound.mts"' % path)
+        open(copied_folder + '/' + file + '.sound.mts', 'w').write(generated_text)
+        open(copied_folder + '/' + file + '.mjs', 'w').write('export * from "./%s.sound.mts";\n' % os.path.basename(file))
+        report(True, name, 'form', '%s: %d imports rewritten to typed files' % (file, rewritten))
+        generated_files.append((name, package['name'] + '/' + file + '.sound.mts'))
+
+
+def write_manifest(package_name, version, lay):
+    written = OUT + '/sound/' + package_name
+    committed = HERE + '/' + package_name + '/' + version
+    json.dump(
+        {'sound': 2, 'name': package_name, 'version': version, 'when': {}, 'basis': {}, 'lay': lay, 'needs': []},
+        open(written + '/sound.json', 'w'), indent=2,
+    )
+    open(written + '/sound.json', 'a').write('\n')
+    if not os.path.exists(committed + '/sound.json'):
+        return
+    if any('one-name' in folders for _, folders, _ in os.walk(committed + '/src')):
+        print('--   %-42s same    one_name.py makes lay/ from the same src/, and has its own gates' % (package_name + '@' + version))
+        return
+    committed_files = sorted(
+        os.path.relpath(os.path.join(folder, file), committed + '/lay')
+        for folder, _, files in os.walk(committed + '/lay') for file in files
+    )
+    different = (
+        [
+            file for file in committed_files
+            if file not in lay or open(committed + '/lay/' + file, 'rb').read() != open(written + '/lay/' + file, 'rb').read()
+        ]
+        + [file for file in lay if committed_files and file not in committed_files]
+        + (['sound.json'] if open(committed + '/sound.json').read() != open(written + '/sound.json').read() else [])
+        + (
+            ['lay.sums']
+            if open(committed + '/lay.sums').read() != ''.join(
+                '%s  %s\n' % (hashlib.sha256(open(written + '/lay/' + file, 'rb').read()).hexdigest(), file)
+                for file in sorted(lay)
+            )
+            else []
+        )
+    )
+    report(
+        not different, package_name + '@' + version, 'same',
+        '%slay.sums and sound.json are what src/ generates (%d files)' % ('lay/, ' if committed_files else '', len(lay))
+        if not different else 'differs: ' + ' '.join(different),
+    )
+
+
+for package_name, placed_files in PLACED.items():
+    if (options.get('only') and options['only'] not in package_name) or not os.path.isdir(INSTALLED + '/' + package_name):
+        continue
+    version = json.load(open(INSTALLED + '/' + package_name + '/package.json'))['version']
+    name = package_name + '@' + version
+    work = OUT + '/work/' + package_name + '.placed'
+    written = OUT + '/sound/' + package_name
+    os.makedirs(work + '/verify')
+    lay = {}
+    open(work + '/commonjs.d.ts', 'w').write(
+        'declare var exports: any;\ndeclare var module: any;\ndeclare function require(name: string): any;\n'
+    )
+    for number, placed_file in enumerate(placed_files):
+        installed_file = INSTALLED + '/' + package_name + '/' + placed_file['npm']
+        if not os.path.exists(installed_file) or md5_of(installed_file) != placed_file['md5']:
+            print('--   %-42s md5     %s is not the file that the types were written for' % (name, placed_file['npm']))
+            continue
+        report(True, name, 'md5', '%s %s' % (placed_file['npm'], placed_file['md5'][:8]))
+        text = open(HERE + '/' + placed_file['text']).read()
+        file = os.path.basename(placed_file['text'])
+        open(work + '/' + file, 'w').write('/// <reference path="./commonjs.d.ts" />\n' + text)
+        code, output = run([SEMA, 'cli', file, '--noEmit', '--all'], work)
+        report('No type errors' in output, name, 'errors', '%s: %s' % (
+            file, 'none' if 'No type errors' in output else (re.search(r'Found [\d,]+ errors?', output) or ['no result'])[0],
+        ))
+        shutil.copy(installed_file, work + '/verify/a%d.cjs' % number)
+        open(work + '/verify/b%d.cts' % number, 'w').write(erase_markers(text))
+        expected_lines, actual_lines = (
+            printed_lines('a%d.cjs' % number, work + '/verify'), printed_lines('b%d.cts' % number, work + '/verify'),
+        )
+        report(bool(actual_lines) and expected_lines == actual_lines, name, 'verify', '%s: %s' % (
+            file,
+            "prints as npm's file does (%d lines)" % len(expected_lines) if actual_lines and expected_lines == actual_lines
+            else 'differs',
+        ))
+        os.makedirs(os.path.dirname(written + '/lay/' + placed_file['npm']), exist_ok=True)
+        open(written + '/lay/' + placed_file['npm'], 'w').write(text.replace('/*$*/', ''))
+        lay[placed_file['npm']] = hashlib.sha256(open(installed_file, 'rb').read()).hexdigest()
+    if lay:
+        write_manifest(package_name, version, lay)
+for package_name, lay in placed_bundles.items():
+    write_manifest(
+        package_name, json.load(open(INSTALLED + '/' + package_name + '/package.json'))['version'], dict(sorted(lay.items())),
+    )
+
+LIBRARIES = {package['name'] + '@' + package['version']: package['lib'] for package in MODULE_PACKAGES}
+BUILD_FLAGS = ['--aot', '--aot-out=' + os.devnull]
+for name, file in generated_files:
+    path = os.path.join(OUT + '/node_modules', file)
+    code, output = run(
+        [SEMA, 'cli', os.path.basename(file), '--noEmit', '--all', '--strict'] + BUILD_FLAGS
+        + (['--lib', LIBRARIES[name]] if name in LIBRARIES else []),
+        os.path.dirname(path),
+    )
+    lines = open(path, errors='replace').read().split('\n')
+    if not re.search(r'No type errors|Found [\d,]+ error', output):
+        report(False, name, 'laid', file + ': no result')
+        continue
+    errors = [
+        (match.group(1), match.group(2), int(match.group(3)))
+        for match in re.finditer(r'^error: (TS\d+):.*?\n\s+at (\S+?):(\d+)', output, re.S | re.M)
+    ]
+    total = len(re.findall(r'^error: ', output, re.M))
+    # A module of the package that ships no declarations (tslib.mjs) is `any`.
+    ignored = [
+        error for error in errors
+        if error[0] == 'TS7016' and name in LIBRARIES
+        or error[1].endswith(os.path.basename(file))
+        and re.fullmatch(r'import \* as [\w$]+\$module from "[^"]+";', lines[error[2] - 1].strip())
+    ]
+    report(total == len(ignored), name, 'laid', '%s: %d errors%s' % (
+        file, total - len(ignored),
+        ' (plus %d on appended imports, ignored: %s)' % (len(ignored), ' '.join(sorted({error[0] for error in ignored})))
+        if ignored else '',
+    ))
+
+for name, file in generated_files:
+    path = os.path.join(OUT + '/node_modules', file)
+    counts = []
+    for label, flags in (
+        ('noImplicitAny false', ['--strict', '--noImplicitAny=false']),
+        ('strictNullChecks false', ['--strict', '--strictNullChecks=false']),
+        ('strict false', ['--strict=false']),
+    ):
+        code, output = run(
+            [SEMA, 'cli', os.path.basename(file), '--noEmit', '--all'] + flags + BUILD_FLAGS
+            + (['--lib', LIBRARIES[name]] if name in LIBRARIES else []),
+            os.path.dirname(path),
+        )
+        counts.append((
+            label,
+            len([
+                number for number in re.findall(r'^error: (TS\d+)', output, re.M)
+                if number not in ('TS7016', 'TS2591', 'TS2307')
+            ])
+            if re.search(r'No type errors|Found [\d,]+ error', output) else -1,
+        ))
+    report(not any(count for _, count in counts), name, 'lax', '%s: %s' % (
+        os.path.basename(file), ' · '.join('%s %d' % pair for pair in counts),
+    ))
+
+for package_name in sorted({
+    '/'.join(file.split('/')[:2 if file.startswith('@') else 1]) for _, file in generated_files if not file.startswith('/')
+}):
+    for version in sorted(os.listdir(HERE + '/' + package_name)) if os.path.isdir(HERE + '/' + package_name) else []:
+        committed = HERE + '/' + package_name + '/' + version
+        if (
+            not os.path.exists(committed + '/sound.json')
+            or json.load(open(INSTALLED + '/' + package_name + '/package.json'))['version'] != version
+        ):
+            continue
+        manifest = json.load(open(committed + '/sound.json'))
+        if manifest['sound'] == 2:
+            print('--   %-42s same    lay/ is in format 2: one_name.py makes it from the same src/, and has its own gates' % (
+                package_name + '@' + version,
+            ))
+            continue
+        sha256_of = lambda path: hashlib.sha256(open(path, 'rb').read()).hexdigest()
+        # A version that shares another version's typed file has no lay/ in the repository. publish.py generates it, and
+        # lay.sums pins the result.
+        sums = (
+            dict(reversed(line.split('  ', 1)) for line in open(committed + '/lay.sums').read().split('\n') if line)
+            if os.path.exists(committed + '/lay.sums') else None
+        )
+        different = [
+            file for file in manifest['lay']
+            if not os.path.exists(OUT + '/node_modules/' + package_name + '/' + file)
+            or (
+                sha256_of(OUT + '/node_modules/' + package_name + '/' + file) != sums.get(file) if sums is not None
+                else open(committed + '/lay/' + file, 'rb').read()
+                != open(OUT + '/node_modules/' + package_name + '/' + file, 'rb').read()
+            )
+        ]
+        different += [
+            file for file, digest in list(manifest['lay'].items()) + list(manifest['basis'].items())
+            if (digest == 'new') == os.path.exists(INSTALLED + '/' + package_name + '/' + file)
+            or digest != 'new' and sha256_of(INSTALLED + '/' + package_name + '/' + file) != digest
+        ]
+        report(
+            not different, package_name + '@' + version, 'same',
+            ('lay.sums' if sums is not None else 'lay/')
+            + ' is what src/ generates (%d files), and the sha256 sums are those of the installed files (%d)' % (
+                len(manifest['lay']), len(manifest['lay']) + len(manifest['basis']),
+            )
+            if not different else 'differs: ' + ' '.join(different[:4]),
+        )
+
+print('check.py: %s · elements %s · build against %s/node_modules' % (
+    'every gate passed' if not failures else '%d gates failed' % failures, ELEMENTS, OUT,
+))
+sys.exit(1 if failures else 0)

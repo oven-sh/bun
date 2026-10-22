@@ -49,6 +49,9 @@ macro_rules! node {
     }};
 }
 
+#[cfg(test)]
+mod tests;
+
 struct Dump<'a, 's> {
     file: &'a File<'s>,
     atoms: &'a dyn Intern,
@@ -66,9 +69,10 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         kind,
         has_module_syntax,
         is_js,
+        is_typed_version,
         is_flow: _,
         check_directive,
-        is_module_by_decree,
+        is_forced_module,
         has_errors,
         ran_out_of_stack: _,
         decorators,
@@ -82,6 +86,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         text: _,
         unclosed_literals: _,
         modifiers_of_params: _,
+        modifiers_of_stmts: _,
         modifiers_of_props: _,
         body,
         references,
@@ -96,7 +101,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         specifier_uses,
         deferred_import_calls,
         import_call_type_args: _,
-        folded_specifiers: _,
         import_attributes,
         specifier_expressions,
         exports_from_expressions: _,
@@ -149,6 +153,16 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
+        far_names: _,
+        tagged_templates: _,
+        expr_flags: _,
+        template_parts: _,
+        template_part_starts: _,
+        jsx_attribute_texts,
+        export_star_attributes: _,
+        bigint_names,
+        is_strict,
+        is_strict_by_syntax,
     } = file;
     let mut d = Dump {
         file,
@@ -164,7 +178,14 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         d,
         0,
         "is_js",
-        "{is_js} {check_directive:?} {is_module_by_decree}"
+        "{is_js} {check_directive:?} {is_forced_module}"
+    );
+    put!(d, 0, "is_typed_version", "{is_typed_version}");
+    put!(
+        d,
+        0,
+        "is_strict",
+        "{is_strict} is_strict_by_syntax={is_strict_by_syntax}"
     );
     put!(d, 0, "has_errors", "{has_errors}");
     put!(d, 0, "source_len", "{source_len}");
@@ -183,6 +204,13 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         "with_bodies[{}]: {with_bodies:?}",
         with_bodies.len()
     );
+    for &(value, text) in jsx_attribute_texts {
+        let pos = file.exprs.get(value.idx()).map_or(u32::MAX, |expr| expr.pos);
+        put!(d, 0, "", "jsx_attribute_text pos={pos} {}", d.q(text));
+    }
+    for &(pos, name) in bigint_names {
+        put!(d, 0, "", "bigint_name pos={pos} {}", d.q(name));
+    }
     // Only in files with syntax errors.
     if !after_skipped.is_empty() {
         put!(
@@ -254,10 +282,11 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         start,
         end,
         code,
+        class,
         ..
     } in sorted
     {
-        put!(d, 1, "", "{kind:?} {start}..{end} {code}");
+        put!(d, 1, "", "{kind:?} {start}..{end} {code} {class:?}");
     }
 
     let JsxPragmas {
@@ -506,6 +535,21 @@ impl Dump<'_, '_> {
         out
     }
 
+    fn parts(&self, template: ExprId) -> String {
+        let parts = self.file.template_parts(template);
+        if parts.is_empty() {
+            return String::new();
+        }
+        let parts: Vec<String> = parts
+            .iter()
+            .map(|part| {
+                let cooked = self.q(part.cooked.unwrap_or(Atom::NONE));
+                format!("({cooked}, {})", self.q(part.raw))
+            })
+            .collect();
+        format!(" parts=[{}]", parts.join(", "))
+    }
+
     /// `A.B.C`, with the position of each name.
     fn entity_name(&self, names: Span<NameId>) -> String {
         if names.range().end > self.file.names.len() {
@@ -564,7 +608,12 @@ impl Dump<'_, '_> {
 
     fn expr(&mut self, depth: usize, label: &str, id: ExprId) {
         let Expr { kind, pos, end } = node!(self, depth, label, exprs, id);
-        let head = format!("Expr {} pos={pos} end={end}", expr_kind_name(kind));
+        let mut head = format!("Expr {} pos={pos} end={end}", expr_kind_name(kind));
+        let flags = self.file.expr_flags(id);
+        if !flags.is_empty() {
+            head += &format!(" flags={flags:?}");
+        }
+        let parts = self.parts(id);
         let d = depth + 1;
         match kind {
             ExprKind::Missing
@@ -573,19 +622,36 @@ impl Dump<'_, '_> {
             | ExprKind::Null
             | ExprKind::True
             | ExprKind::False
-            | ExprKind::Regex
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => self.line(depth, label, &head),
+            ExprKind::Regex {
+                pattern,
+                flags: regex_flags,
+            } => put!(
+                self,
+                depth,
+                label,
+                "{head} pattern={} regex_flags={}",
+                self.q(pattern),
+                self.q(regex_flags)
+            ),
             ExprKind::Ident(name)
             | ExprKind::PrivateIdentifier(name)
             | ExprKind::String(name)
-            | ExprKind::BigInt(name) => {
-                put!(self, depth, label, "{head} {}", self.q(name))
+            | ExprKind::BigInt(name)
+            | ExprKind::JsxText(name) => {
+                put!(self, depth, label, "{head} {}{parts}", self.q(name))
             }
             ExprKind::Number(index) => put!(self, depth, label, "{head} {}", self.number(index)),
             ExprKind::Template { exprs } => {
                 let texts = self.file.template_texts(exprs);
-                put!(self, depth, label, "{head} texts={}", self.names(texts));
+                put!(
+                    self,
+                    depth,
+                    label,
+                    "{head} texts={}{parts}",
+                    self.names(texts)
+                );
                 self.list(d, "exprs", exprs, Self::expr);
             }
             ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
@@ -609,11 +675,9 @@ impl Dump<'_, '_> {
                 self.class(d, "class", class);
             }
             ExprKind::Dot {
-                obj,
-                name,
-                name_pos,
-                chain,
+                obj, name, chain, ..
             } => {
+                let name_pos = self.file.name_pos(id);
                 put!(
                     self,
                     depth,
@@ -642,7 +706,8 @@ impl Dump<'_, '_> {
                 self.expr(d, "target", target);
                 self.expr(d, "value", value);
             }
-            ExprKind::Cond { test, yes, no } => {
+            ExprKind::Cond { test, branches } => {
+                let Branches { yes, no } = self.file.branches(branches);
                 self.line(depth, label, &head);
                 self.expr(d, "test", test);
                 self.expr(d, "yes", yes);
@@ -662,6 +727,7 @@ impl Dump<'_, '_> {
                 self.list(d, "args", args, Self::expr);
             }
             ExprKind::Instantiation { expr, type_args } => {
+                let type_args = self.file.list_at(type_args);
                 self.line(depth, label, &head);
                 self.expr(d, "expr", expr);
                 self.list(d, "type_args", type_args, Self::ty);
@@ -689,13 +755,14 @@ impl Dump<'_, '_> {
             type_args,
             close_pos,
             chain,
-            template,
+            is_pure,
         } = node!(self, depth, label, calls, id);
+        let (type_args, template) = (self.file.list_at(type_args), self.file.template_of(id));
         put!(
             self,
             depth,
             label,
-            "Call close_pos={close_pos} chain={chain:?}"
+            "Call close_pos={close_pos} chain={chain:?} is_pure={is_pure}"
         );
         let d = depth + 1;
         self.expr(d, "callee", callee);
@@ -862,12 +929,8 @@ impl Dump<'_, '_> {
     }
 
     fn stmt(&mut self, depth: usize, label: &str, id: StmtId) {
-        let Stmt {
-            kind,
-            start,
-            loc,
-            modifiers,
-        } = node!(self, depth, label, stmts, id);
+        let Stmt { kind, start, loc } = node!(self, depth, label, stmts, id);
+        let modifiers = self.file.stmt_modifiers(id);
         let mut head = format!(
             "Stmt {} start={start} loc={}..{}",
             stmt_kind_name(kind),
@@ -1018,7 +1081,17 @@ impl Dump<'_, '_> {
                     "{head} spec={} alias={} type_only={type_only} mode={mode:?} star_pos={star_pos} alias_pos={alias_pos}",
                     self.q(spec),
                     self.q(alias)
-                )
+                );
+                self.expr(d, "attributes", self.file.statement_import_attributes(id));
+            }
+            StmtKind::With { object, body } => {
+                self.line(depth, label, &head);
+                self.expr(d, "object", object);
+                self.stmt(d, "body", body);
+            }
+            StmtKind::Directive { expr, raw } => {
+                put!(self, depth, label, "{head} raw={}", self.q(raw));
+                self.expr(d, "expr", expr);
             }
         }
     }
@@ -1049,12 +1122,15 @@ impl Dump<'_, '_> {
             body,
             anchor,
             start,
+            text_start,
+            is_strict,
+            is_strict_by_syntax,
         } = node!(self, depth, label, fns, id);
         put!(
             self,
             depth,
             label,
-            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} start={start}",
+            "Func kind={kind:?} flags={flags:?} name={} name_pos={name_pos} anchor={anchor} start={start} text_start={text_start} is_strict={is_strict} is_strict_by_syntax={is_strict_by_syntax}",
             self.q(name)
         );
         let d = depth + 1;
@@ -1167,11 +1243,11 @@ impl Dump<'_, '_> {
             other_implements,
             members,
             start,
-            body_pos,
+            text_start,
             modifiers,
         } = node!(self, depth, label, classes, id);
         let mut head = format!(
-            "Class name={} name_pos={name_pos} flags={flags:?} start={start} body_pos={body_pos}",
+            "Class name={} name_pos={name_pos} flags={flags:?} start={start} text_start={text_start}",
             self.q(name)
         );
         for modifier in self.file.modifier_list(modifiers) {
@@ -1315,6 +1391,7 @@ impl Dump<'_, '_> {
             is_deferred,
             mode,
             stmt: _,
+            attributes,
         } = node!(self, depth, label, imports, id);
         put!(
             self,
@@ -1332,6 +1409,7 @@ impl Dump<'_, '_> {
             "end={clause_end} is_deferred={is_deferred}"
         );
         self.span(depth + 1, "named", named, Self::import_spec);
+        self.expr(depth + 1, "attributes", attributes);
     }
 
     fn import_spec(&mut self, depth: usize, label: &str, id: ImportSpecId) {
@@ -1388,6 +1466,7 @@ impl Dump<'_, '_> {
             type_only,
             mode,
             stmt: _,
+            attributes,
         } = node!(self, depth, label, exports, id);
         put!(
             self,
@@ -1397,6 +1476,7 @@ impl Dump<'_, '_> {
             self.q(spec)
         );
         self.span(depth + 1, "items", items, Self::export_spec);
+        self.expr(depth + 1, "attributes", attributes);
     }
 
     fn export_spec(&mut self, depth: usize, label: &str, id: ExportSpecId) {
@@ -1623,7 +1703,7 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
         ExprKind::Number(_) => "Number",
         ExprKind::String(_) => "String",
         ExprKind::BigInt(_) => "BigInt",
-        ExprKind::Regex => "Regex",
+        ExprKind::Regex { .. } => "Regex",
         ExprKind::Template { .. } => "Template",
         ExprKind::TaggedTemplate(_) => "TaggedTemplate",
         ExprKind::Array(_) => "Array",
@@ -1649,6 +1729,7 @@ fn expr_kind_name(kind: ExprKind) -> &'static str {
         ExprKind::ImportCall { .. } => "ImportCall",
         ExprKind::ImportMeta => "ImportMeta",
         ExprKind::NewTarget(_) => "NewTarget",
+        ExprKind::JsxText(_) => "JsxText",
     }
 }
 
@@ -1685,6 +1766,8 @@ fn stmt_kind_name(kind: StmtKind) -> &'static str {
         StmtKind::ExportDefault(_) => "ExportDefault",
         StmtKind::ExportAssign(_) => "ExportAssign",
         StmtKind::ExportAsNamespace(_) => "ExportAsNamespace",
+        StmtKind::With { .. } => "With",
+        StmtKind::Directive { .. } => "Directive",
     }
 }
 

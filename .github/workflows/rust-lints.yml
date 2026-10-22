@@ -12,6 +12,9 @@ on:
       - "src/**/*.classes.ts"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
+      - "src/trim/features/**"
+      - "test/aot/ir/**"
+      - "test/internal/aot-schema/**"
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
@@ -124,10 +127,10 @@ jobs:
         working-directory: vendor/lolhtml
         run: cargo test
 
-  exe-islands:
-    name: exe_islands cargo test
+  aot-rust-tests:
+    name: AoT cargo test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -140,12 +143,35 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
-          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+          ninja-targets: codegen WebKit clone-zstd clone-lolhtml clone-rust-argon2
+
+      - name: Locate the engine's files
+        run: bun scripts/build/aot-paths.ts >> "$GITHUB_ENV"
+
+      - name: The checked-in schema is the engine's
+        run: bun src/codegen/aot-schema/index.ts --schema "$AOT_SCHEMA" --rust-out src/aot/ir/generated --check
+
+      - name: Schema generator tests
+        # Buildkite runs them too, on machines without the engine's schema,
+        # where the tests that read it skip themselves.
+        run: bun test test/internal/aot-schema/
 
       - name: cargo test
+        # ir_tests.rs skips the engine's half of every test when TESTAOT is
+        # unset. Here a WebKit tarball without testaot has to fail the job.
         env:
           BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
-        run: cargo test -p bun_exe_islands
+        run: |
+          test -x "$TESTAOT"
+          cargo test -p bun_aot -p bun_aot_standalone -p bun_builtin_sources -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler
+
+      - name: bun-aot links, and testaot reads what it writes
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+        run: |
+          cargo build -p bun_aot_standalone
+          target/debug/bun-aot compile test/aot/ir/commands/lower-entry-functions.ts --no-builtin-modules --aot-out="$RUNNER_TEMP/program.bin"
+          "$TESTAOT" print --wire "$RUNNER_TEMP/program.bin" > /dev/null
 
   mordant:
     name: mordant

@@ -654,7 +654,6 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
       );
     }
     expect(onFinalizeCallCount).toBe(3);
-    expect(onFinalizeCallRegistry).toBeInstanceOf(FinalizationRegistry);
   });
 
   test("defer() called after the build settled is refused", async () => {

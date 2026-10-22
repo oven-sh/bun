@@ -1,11 +1,11 @@
-// What is read through a declared getter of a native class need not be of the declared type, nor need the receiver be an object: an own property or a plain object may hold anything, a primitive has no such property, and plain Bun carries on.
+// What is read through a declared getter of a native class need not be of the declared type: an own property or a plain object may hold anything, and nothing tests it, because a declaration file declares the member. The receiver is tested: any object, undefined and null pass for `Request`, and a primitive throws a TypeError at the cast.
 const lines: string[] = [];
 function say(label: string, work: () => unknown) {
   let text: string;
   try {
     text = String(work());
   } catch (error) {
-    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+    text = "throws " + (error as Error).constructor.name;
   }
   lines.push(label + ": " + text);
 }

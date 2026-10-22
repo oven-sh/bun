@@ -1,6 +1,0 @@
-const-in-tdz: 0 layouts, 0 given, 1 open, places 27 of 53, reads 5 of 14
-lazy-constants: 11 layouts, 0 given, 1 open, places 93 of 103, reads 45 of 60
-module-variables-read-around-init: 0 layouts, 0 given, 0 open, places 33 of 50, reads 6 of 9
-tdz-reads: 2 layouts, 0 given, 1 open, places 7 of 20, reads 1 of 13
-tdz-through-function-call: 15 layouts, 0 given, 8 open, places 123 of 314, reads 24 of 32
-ts-namespace-stores-allowed: 1 layouts, 0 given, 0 open, places 6 of 14, reads 8 of 13

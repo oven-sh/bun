@@ -26,5 +26,5 @@ try { console.log(moved.describe(), moved instanceof Cube, moved instanceof Shap
 // The chain higher up: between the two classes.
 try { Object.setPrototypeOf(Cube.prototype, { area() { return 1000 } }); console.log("the prototype of the prototype of a class: no error") } catch (e) { console.log("the prototype of the prototype of a class:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(Reflect.setPrototypeOf(Cube.prototype, null)); console.log("by Reflect: no error") } catch (e) { console.log("by Reflect:", e instanceof TypeError ? "TypeError" : "other " + e) }
-try { Object.setPrototypeOf(Cube, Function.prototype); console.log("the prototype of the class object (e-classes L5): no error") } catch (e) { console.log("the prototype of the class object (e-classes L5):", e instanceof TypeError ? "TypeError" : "other " + e) }
+try { Object.setPrototypeOf(Cube, Function.prototype); console.log("the prototype of the class object: no error") } catch (e) { console.log("the prototype of the class object:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(cube.describe(), cube instanceof Shape2) } catch (e) { console.log("line 31:", e instanceof TypeError ? "TypeError" : "other " + e) }

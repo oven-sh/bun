@@ -1,6 +1,6 @@
 // A mixin whose accessor has a name computed at run time may, by its type, extend any class. It extends only classes that reach it as values. A class that is never used as a value keeps its `declare` fields in its layout.
-// IR+ ^  field "fiberNumber"
-// IR+ ^  field "fiberLabel"
+// IR+ ^layout L[0-9]+ .*\{name="fiberNumber" declared=
+// IR+ ^layout L[0-9]+ .*\{name="fiberLabel" declared=
 function withAccessor<T extends new (...args: any[]) => any>(Base: T, name: string) {
   return class extends Base {
     get [name]() { return "from the mixin"; }

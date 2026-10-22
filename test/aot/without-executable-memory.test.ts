@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isHardened } from "./hardened";
 import { unsupported, withoutCoreDump } from "./run-programs";
 import { bunEnv, bunExe, isAndroid, isLinux, isMacOS, isWindows, libcPathForDlopen, tempDir } from "harness";
 import { readdirSync } from "node:fs";
@@ -127,7 +128,7 @@ describe.skipIf(!isSupported || refusedNowhere)("an executable needs no permissi
   test("the control: what asks for executable memory gets it, and is refused it there", async () => {
     using dir = tempDir("aot-without-executable-memory", { "refuses.ts": refuses });
     const executable = await build(control, String(dir));
-    expect(await run([executable])).toEqual({ stdout: "granted\n", stderr: "", exitCode: 0, signalCode: null });
+    expect(await run([executable])).toEqual({ stdout: isHardened ? "refused\n" : "granted\n", stderr: "", exitCode: 0, signalCode: null });
     expect(await whereItIsRefused(executable, String(dir), "refuse")).toEqual({ stdout: "refused\n", stderr: "", exitCode: 0, signalCode: null });
     if (hasLinuxKernel) expect(await whereItIsRefused(executable, String(dir))).toMatchObject({ stdout: "", signalCode: "SIGSYS" });
   }, 120_000);

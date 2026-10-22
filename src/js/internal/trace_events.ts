@@ -425,8 +425,11 @@ function installTimerInstrumentation() {
   globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
 }
 
+/** Whatever function is wrapped so that its calls leave events: the arguments are passed on as they come. */
+type Wrapped = (...args: any[]) => unknown;
+
 function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInterval: boolean): T {
-  function wrapped(callback, delay, ...args) {
+  function wrapped(callback: Wrapped, delay: unknown, ...args: unknown[]) {
     let span: { id: number; open: boolean } | null = null;
     if (typeof callback === "function" && isCategoryGroupEnabled(kAsyncHooksCat)) {
       const asyncId = nextAsyncId++;
@@ -437,7 +440,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
       });
       const inner = callback;
       const capturedSpan = span;
-      callback = function (...callbackArgs) {
+      callback = function (this: unknown, ...callbackArgs: unknown[]) {
         try {
           return inner.$apply(this, callbackArgs);
         } finally {
@@ -466,7 +469,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
   return wrapped as T;
 }
 
-function wrapClearFunction(original) {
+function wrapClearFunction(original: (timer: unknown) => void) {
   function wrapped(timer) {
     if (typeof timer === "object" && timer !== null) {
       const span = timer[kTimerSpan];
@@ -595,8 +598,8 @@ function installFsInstrumentation() {
   }
 }
 
-function wrapFsSyncMethod(original, names: string[]) {
-  return function (...args) {
+function wrapFsSyncMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("B", kFsSyncCat, "fs.sync." + names[i]);
     try {
@@ -611,13 +614,13 @@ function emitFsAsyncEnd(names: string[]) {
   for (let i = names.length - 1; i >= 0; i--) emitEvent("e", kFsAsyncCat, names[i]);
 }
 
-function wrapFsAsyncMethod(original, names: string[]) {
-  return function (...args) {
+function wrapFsAsyncMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
-    let result;
+    let result: { then?(onFulfilled: (value: unknown) => unknown, onRejected: (error: unknown) => unknown): unknown };
     try {
-      result = original.$apply(this, args);
+      result = original.$apply(this, args) as typeof result;
     } catch (err) {
       // Balance the 'b' events when the binding throws synchronously
       // (e.g. argument validation), mirroring wrapFsSyncMethod's finally.
@@ -644,8 +647,8 @@ function wrapFsAsyncMethod(original, names: string[]) {
 }
 
 // The callback arm of the binding (`xCb(callback, ...args)`): the span ends when the operation calls back.
-function wrapFsCallbackMethod(original, names: string[]) {
-  return function (callback, ...args) {
+function wrapFsCallbackMethod(original: Wrapped, names: string[]) {
+  return function (this: unknown, callback: Wrapped, ...args: unknown[]) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, arguments);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
     try {
@@ -777,15 +780,15 @@ function installThreadpoolInstrumentation() {
   }
 }
 
-function wrapThreadpoolMethod(original, traceName: string) {
-  return function (...args) {
-    const callback = args[args.length - 1];
+function wrapThreadpoolMethod(original: Wrapped, traceName: string) {
+  return function (this: unknown, ...args: unknown[]) {
+    const callback = args[args.length - 1] as Wrapped;
     if (typeof callback !== "function") return original.$apply(this, args);
     const asyncEnabled = isCategoryGroupEnabled(kThreadpoolAsyncCat);
     const syncEnabled = isCategoryGroupEnabled(kThreadpoolSyncCat);
     if (!asyncEnabled && !syncEnabled) return original.$apply(this, args);
     if (asyncEnabled) emitEvent("b", kThreadpoolAsyncCat, traceName);
-    args[args.length - 1] = function (...callbackArgs) {
+    args[args.length - 1] = function (this: unknown, ...callbackArgs: unknown[]) {
       if (syncEnabled) {
         emitEvent("b", kThreadpoolSyncCat, traceName);
         emitEvent("e", kThreadpoolSyncCat, traceName);

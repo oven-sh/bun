@@ -1,2 +1,0 @@
-error: TS100017: 'as boolean' is applied to a value that is always number: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.
-error: TS100017: 'as string' is applied to a value that is always number: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.

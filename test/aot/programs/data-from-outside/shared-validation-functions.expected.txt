@@ -1,6 +1,6 @@
 3 2 box
 3 2 box
-TypeError: size.height: Invalid input: expected number, received undefined | TypeError: size.height: Invalid input: expected number, received undefined | TypeError: size.height: Invalid input: expected number, received undefined
-TypeError: size.height: Invalid input: expected number, received string | TypeError: size.height: Invalid input: expected number, received string | TypeError: size.height: Invalid input: expected number, received string
+TypeError: size.height: expected number, received undefined | TypeError: size.height: expected number, received undefined | TypeError: size.height: expected number, received undefined
+TypeError: size.height: expected number, received string (and 1 more) | TypeError: size.height: expected number, received string (and 1 more) | TypeError: size.height: expected number, received string (and 1 more)
 SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF | SyntaxError: JSON Parse error: Unexpected EOF
-TypeError: Invalid input: expected object, received null | TypeError: Invalid input: expected object, received null | TypeError: Invalid input: expected object, received null
+TypeError: expected object, received null | TypeError: expected object, received null | TypeError: expected object, received null

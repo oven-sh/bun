@@ -1,4 +1,4 @@
-// Typed functions are called through `any` with an argument missing, and a method is called with a `this` that is not an instance of its class.
+// Typed functions are called through `any` with an argument missing, and a method is called with a `this` that is not an instance of its class: undefined passes every written type and `this` of a method is not tested, so nothing throws.
 class K { v = 1; constructor(public w = 2) {} m(a?: number, b?: number) { return [this?.v, a, b].join() } static s(x: number) { return x + 1 } }
 function usesThis(this: unknown, a: number) { return typeof this + a }
 function withProps(a: number) { return a * 2 }

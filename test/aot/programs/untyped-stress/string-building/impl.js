@@ -10,6 +10,15 @@ function thrownBy(f, ...args) {
     }
     return "nothing";
 }
+let read = [];
+function thrownByReading(f, ...args) {
+    try {
+        read.push(f(...args));
+    } catch (error) {
+        return error.constructor.name;
+    }
+    return "nothing";
+}
 
 function templateOfInt32(n) { let i = n | 0; return `<${i}>`; }
 function templateOfNumber(n) { let x = +n; return `<${x}>`; }
@@ -95,6 +104,13 @@ for (let piece of pieces)
 check(long.length, 2 ** 31 - 2, "the length of a long rope");
 check(stringPlusInt32(long, 1).length, 2 ** 31 - 1, "the longest string");
 check(int32PlusString(1, long).length, 2 ** 31 - 1, "the longest string");
-check(thrownBy(stringPlusInt32, long, 10), "RangeError", "a string that would be too long");
-check(thrownBy(int32PlusString, 10, long), "RangeError", "a string that would be too long");
+// A text that would be too long throws a RangeError where somebody reads it, as under `bun run`.
+check(thrownByReading(stringPlusInt32, long, 10), "RangeError", "a string that would be too long and is read");
+check(thrownByReading(int32PlusString, 10, long), "RangeError", "a string that would be too long and is read");
+check(read.length, 0, "the texts that were made");
+for (let text of read)
+    console.log(text.length);
+// Where nobody reads it a compiled program need not make it, and then nothing is thrown: the language names no such limit, and an error for lack of room is nothing a program may count on.
+check(["RangeError", "nothing"].includes(thrownBy(stringPlusInt32, long, 10)), true, "a string that would be too long and that nobody reads");
+check(["RangeError", "nothing"].includes(thrownBy(int32PlusString, 10, long)), true, "a string that would be too long and that nobody reads");
 console.log("passed");

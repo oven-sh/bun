@@ -753,9 +753,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 b"A return statement cannot be used here",
             );
         }
-        if p.fn_or_arrow_data_parse.is_top_level {
-            p.deoptimize_commonjs_named_exports();
-        }
         p.lexer.next()?;
         let mut value: Option<Expr> = None;
         if p.lexer.token != T::TSemicolon
@@ -970,12 +967,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 p.lexer.unexpected()?;
                 Err(crate::Error::SyntaxError)
-            }
-
-            T::TDefault if p.options.bun_builtin_syntax => {
-                p.esm_export_keyword = previous_export_keyword;
-                p.lexer.next()?;
-                p.parse_builtin_module_value(loc)
             }
 
             T::TDefault => {

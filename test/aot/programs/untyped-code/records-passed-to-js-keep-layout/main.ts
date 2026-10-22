@@ -1,9 +1,9 @@
 // A typed file hands its records to functions that it imports from a JavaScript file of the same program. The records stay laid out by their types, and typed code reads their fields in place. The JavaScript reads and stores by name,
 // and whatever it does to a record (a property more, one less, an accessor, another prototype, freezing it, an object of its own making stored into a field) is seen by typed code as it is under plain Bun.
-// IR= 1 total : number = GetById v[0-9]+ "value"
-// IR= 2 total : undefined\|null\|Tree\.[0-9]+ = GetById v[0-9]+ "(left|right)"
-// IR= 2 half : number = GetById v[0-9]+ "(count|total)"
-// IR+ NewObjectWithShape
+// IR= 1 total : number = PropGet v[0-9]+ name="value"(?!.* isFallback)
+// IR= 2 total : undefined\|null\|=?L[0-9]+!? = PropGet v[0-9]+ name="(left|right)"(?!.* isFallback)
+// IR= 2 half : number = PropGet v[0-9]+ name="(count|total)"(?!.* isFallback)
+// IR+ : =?L[0-9]+ = NewObject 
 import { held, hold, same, identity, graftKept, changeKept, extendKept, graftTyped, swap, setInMap, addToSet, pushInto, replaceAt, sortByX, mapToSums, keysOf, copyOf, assignTo, entriesOf, resolveLater, thenMake, callWith, callMethod, View, setOptional, clearOptional, setUnion, nest, weakly, describeType, destructure, viaArguments, viaApply, increment, big, negativeZero, notANumber, walk, scale, remove, extend, accessor, freeze, reparent } from "./library.js";
 interface Point { x: number; y: number }
 interface Tree { value: number; left: Tree | undefined; right: Tree | undefined }

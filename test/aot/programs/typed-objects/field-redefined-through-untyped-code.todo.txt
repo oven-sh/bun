@@ -1,1 +1,0 @@
-A bug: plain Bun throws in none of the ten cases; under --aot nine throw: TypeError: Cannot redefine property 'count' of Counter: declared properties stay writable, enumerable and configurable data properties.

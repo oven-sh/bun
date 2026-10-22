@@ -218,7 +218,7 @@ JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, const SubspaceForIn
             break;
         }
         // What `ISO_SUBSPACE_INIT(heap, ..., T)` stringified to inside the old template: the token `T`.
-        space = serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, heap, *cellType, init.cellSize, init.numberOfLowerTierPreciseCells, nullptr, init.usesLowerTierWithAOT).release();
+        space = serverSlot = makeUnique<JSC::IsoSubspace>("T"_s, heap, *cellType, init.cellSize, init.numberOfLowerTierPreciseCells).release();
 
         if (init.hasOutputConstraints)
             heapData.outputConstraintSpaces().append(space);

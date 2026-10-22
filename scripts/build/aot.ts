@@ -1,0 +1,392 @@
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
+import { crateOf, debugFlag, shJoin, typesOnlyFlag, type Ctx } from "./codegen.ts";
+import type { CodegenFields, Config } from "./config.ts";
+import { assert } from "./error.ts";
+import type { Ninja } from "./ninja.ts";
+import { quote } from "./shell.ts";
+import { streamPath } from "./stream.ts";
+import type { ObjectFormat } from "./trim/types.ts";
+
+export interface EngineSources {
+  /** `Source/JavaScriptCore` of the checkout this graph compiles. Undefined when it links a prebuilt WebKit. */
+  javaScriptCore: string | undefined;
+  schema: string;
+  schemaInputs: string[];
+  schemaGeneratedDirectory: string;
+  schemaOutputs: string[];
+  schemaUsers: string[];
+  builtinsGeneratedDirectory: string;
+  builtinTableInputs: string[];
+  builtinTableOutputs: string[];
+  requiresVerifiedOverloads: boolean;
+}
+
+export type BuiltinTableTarget = "Darwin" | "Linux" | "Windows" | "FreeBSD" | "Android";
+
+export function builtinTableTarget(cfg: Pick<CodegenFields, "os" | "abi">): BuiltinTableTarget {
+  if (cfg.abi === "android") return "Android";
+  switch (cfg.os) {
+    case "darwin":
+      return "Darwin";
+    case "windows":
+      return "Windows";
+    case "freebsd":
+      return "FreeBSD";
+    case "linux":
+      return "Linux";
+  }
+}
+
+type CodegenDirectory = Pick<CodegenFields, "codegenDir">;
+
+export function removableFeaturesJson(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "removable-features.json");
+}
+
+export function builtinUsesJson(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "builtin-uses.json");
+}
+
+export function builtinTableRust(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "aot_builtin_table.rs");
+}
+
+export function engineFunctionsJson(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "aot_engine_functions.json");
+}
+
+export function schemaRustDirectory(cfg: Pick<CodegenFields, "cwd">): string {
+  return resolve(cfg.cwd, "src", "aot", "ir", "generated");
+}
+
+/** Every file of that folder: the schema's generator writes all of them and nothing else is there. */
+export function schemaRustFiles(cfg: Pick<CodegenFields, "cwd">): string[] {
+  const directory = schemaRustDirectory(cfg);
+  return readdirSync(directory)
+    .sort()
+    .map(name => resolve(directory, name));
+}
+
+export function schemaUseCheckStamp(cfg: CodegenDirectory): string {
+  return resolve(cfg.codegenDir, "aot-schema-names-are-used.stamp");
+}
+
+export function trimDirectory(cfg: Pick<CodegenFields, "cwd">): string {
+  return resolve(cfg.cwd, "scripts", "build", "trim");
+}
+
+export function trimScript(cfg: Pick<CodegenFields, "cwd">, name: string): string {
+  return resolve(trimDirectory(cfg), name);
+}
+
+export function registerAotRules(n: Ninja, cfg: Config): void {
+  const q = (path: string) => quote(path, cfg.host.os === "windows");
+  n.rule("aot_check", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --stamp=$out --cwd=$cwd ${q(cfg.bun)} $args`,
+    description: "check $desc",
+  });
+}
+
+function builtinsTableScript(cfg: Pick<CodegenFields, "cwd">, name: string): string {
+  return resolve(cfg.cwd, "src", "codegen", "builtins", name);
+}
+
+/** The generators import the scripts with or without an engine. */
+export function guardInputs({ cfg, engine }: Pick<Ctx, "cfg" | "engine">): string[] {
+  return [
+    removableFeaturesJson(cfg),
+    resolve(cfg.cwd, "src", "codegen", "removable-entry-points.ts"),
+    builtinsTableScript(cfg, "guards.ts"),
+    builtinsTableScript(cfg, "paths.ts"),
+    builtinsTableScript(cfg, "declarations.ts"),
+    builtinsTableScript(cfg, "vocabulary.ts"),
+    trimScript(cfg, "builtin-uses.ts"),
+    trimScript(cfg, "features.ts"),
+    trimScript(cfg, "types.ts"),
+    resolve(cfg.cwd, "scripts", "build", "error.ts"),
+    ...(engine === undefined ? [] : [builtinUsesJson(cfg)]),
+  ];
+}
+
+/** `guardInputs` and what else src/codegen/create-hash-table.ts imports. */
+export function hashTableInputs(ctx: Pick<Ctx, "cfg" | "engine">): string[] {
+  return [...guardInputs(ctx), builtinsTableScript(ctx.cfg, "collect-static-tables.ts")];
+}
+
+/** None in a graph without an engine: nothing compiles the C++ it generates. */
+export function builtinUsesArguments({ cfg, engine }: Pick<Ctx, "cfg" | "engine">): string[] {
+  return engine === undefined ? [] : [`--builtin-uses=${builtinUsesJson(cfg)}`];
+}
+
+export function emitRemovableFeatures({ n, cfg, sources, o, dirStamp }: Ctx): void {
+  const script = resolve(cfg.cwd, "src", "codegen", "generate-removable-features.ts");
+  const rust = resolve(cfg.codegenDir, "removable_features.rs");
+  const header = resolve(cfg.codegenDir, "BunRemovableFeatures.h");
+  const outputs = [rust, header, removableFeaturesJson(cfg)];
+
+  n.build({
+    outputs,
+    rule: "codegen_bun",
+    inputs: [
+      script,
+      trimScript(cfg, "features.ts"),
+      trimScript(cfg, "types.ts"),
+      resolve(cfg.cwd, "scripts", "build", "error.ts"),
+      resolve(cfg.cwd, "src", "codegen", "helpers.ts"),
+      ...sources.removableFeatures,
+    ],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "removable features",
+      args: shJoin(cfg, ["run", script, cfg.cwd, cfg.codegenDir]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.rustInputs.push(rust);
+  o.cppHeaders.push(header);
+}
+
+export function emitAotSchema({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+  assert(engine !== undefined, "emitAotSchema needs an engine");
+  const script = resolve(cfg.cwd, "src", "codegen", "aot-schema", "index.ts");
+  const inputs = [script, ...sources.aotSchemaCodegen.filter(path => path !== script), ...engine.schemaInputs];
+  const rust = schemaRustFiles(cfg);
+  const common = ["run", script, "--schema", engine.schema, "--rust-out", schemaRustDirectory(cfg)];
+
+  if (engine.javaScriptCore === undefined) {
+    const stamp = resolve(cfg.codegenDir, "aot-schema-is-current.stamp");
+    n.build({
+      outputs: [stamp],
+      rule: "aot_check",
+      inputs: [...inputs, ...rust],
+      orderOnlyInputs: [dirStamp],
+      vars: { cwd: cfg.cwd, desc: "src/aot/ir/generated", args: shJoin(cfg, [...common, "--check"]) },
+    });
+    o.all.push(stamp);
+    o.rustInputs.push(stamp);
+    return;
+  }
+
+  const outputs = [...engine.schemaOutputs, ...rust];
+  n.build({
+    outputs,
+    rule: "codegen_bun",
+    inputs,
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "AOTSchema.def",
+      args: shJoin(cfg, [...common, "--engine-out", engine.schemaGeneratedDirectory]),
+    },
+  });
+  o.all.push(...outputs);
+  o.rustInputs.push(...rust);
+  o.cppHeaders.push(...rust.filter(path => path.endsWith(".h")));
+}
+
+export function emitAotSchemaUseCheck({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+  assert(engine !== undefined, "emitAotSchemaUseCheck needs an engine");
+  if (engine.javaScriptCore === undefined || !cfg.ci) return;
+  const script = resolve(cfg.cwd, "src", "codegen", "aot-schema", "index.ts");
+  const stamp = schemaUseCheckStamp(cfg);
+  const usersOutsideAot = [
+    resolve(engine.javaScriptCore, "b3", "B3Limits.h"),
+    resolve(engine.javaScriptCore, "ffi", "JSFFICallback.cpp"),
+    resolve(engine.javaScriptCore, "runtime", "AbstractModuleRecord.cpp"),
+    resolve(cfg.cwd, "src", "bundler", "aot", "data_values.rs"),
+    resolve(cfg.cwd, "src", "runtime", "cli", "compile_command", "reports.rs"),
+  ];
+  n.build({
+    outputs: [stamp],
+    rule: "aot_check",
+    inputs: [
+      script,
+      ...sources.aotSchemaCodegen.filter(path => path !== script),
+      ...engine.schemaInputs,
+      ...engine.schemaUsers,
+      ...usersOutsideAot,
+      ...sources.aotRust,
+    ],
+    orderOnlyInputs: [dirStamp, ...engine.schemaOutputs],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "uses of AOTSchema.def",
+      args: shJoin(cfg, [
+        "run",
+        script,
+        "--schema",
+        engine.schema,
+        "--check-uses",
+        resolve(engine.javaScriptCore, "aot"),
+        "--check-uses",
+        resolve(cfg.cwd, "src", "aot"),
+        ...usersOutsideAot.flatMap(path => ["--check-uses", path]),
+      ]),
+    },
+  });
+  o.all.push(stamp);
+}
+
+export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+  assert(engine !== undefined, "emitBuiltinsTable needs an engine");
+  const script = resolve(cfg.cwd, "src", "codegen", "builtins", "index.ts");
+  const bindings = resolve(cfg.cwd, "src", "jsc", "bindings");
+  const rust = [
+    resolve(cfg.codegenDir, "aot_builtin_ids.rs"),
+    builtinTableRust(cfg),
+    resolve(cfg.codegenDir, "aot_builtin_syntax.rs"),
+  ];
+  const cpp = resolve(cfg.codegenDir, "BunAOTHostBindings.cpp");
+  const data = [
+    builtinUsesJson(cfg),
+    resolve(cfg.codegenDir, "aot_builtin_table.json"),
+    resolve(cfg.codegenDir, "aot_builtin_undescribed_results.txt"),
+    engineFunctionsJson(cfg),
+  ];
+  const outputs = [...rust, cpp, ...data, ...engine.builtinTableOutputs];
+
+  n.build({
+    outputs,
+    rule: "codegen_bun",
+    inputs: [
+      script,
+      ...sources.builtinsTableCodegen.filter(path => path !== script),
+      ...sources.aotSchemaCodegen,
+      ...sources.bindgen,
+      ...sources.zigGeneratedClasses,
+      ...sources.js,
+      ...sources.jsCodegen,
+      ...sources.aotPrelude,
+      ...sources.nativeModuleLoadSites,
+      ...sources.nativeCallSites,
+      ...sources.removableFeatures,
+      resolve(bindings, "ZigGlobalObject.lut.txt"),
+      resolve(bindings, "JSBufferAccessors.def"),
+      resolve(bindings, "ErrorCode.ts"),
+      resolve(bindings, "js_classes.ts"),
+      resolve(cfg.cwd, "src", "js", "builtins", "BunBuiltinNames.h"),
+      resolve(cfg.cwd, "src", "resolve_builtins", "HardcodedModule.rs"),
+      trimScript(cfg, "types.ts"),
+      trimScript(cfg, "features.ts"),
+      trimScript(cfg, "builtin-uses.ts"),
+      resolve(cfg.cwd, "scripts", "build", "cmake.ts"),
+      resolve(cfg.cwd, "scripts", "build", "error.ts"),
+      resolve(cfg.cwd, "scripts", "glob-sources.ts"),
+      ...engine.schemaInputs,
+      ...engine.builtinTableInputs,
+    ],
+    implicitInputs: [o.rootInstall],
+    orderOnlyInputs: [dirStamp],
+    // Not on the schema's step: build.ninja depends on its AOTSchemaFiles.cmake, so ninja would run the check before it starts the build.
+    validations: engine.javaScriptCore === undefined || !cfg.ci ? [] : [schemaUseCheckStamp(cfg)],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "the table of built-ins",
+      args: shJoin(cfg, [
+        "run",
+        script,
+        `--codegen-path=${cfg.codegenDir}`,
+        `--target=${builtinTableTarget(cfg)}`,
+        `--sources=${sources.bindgen.map(src => `${crateOf(src)}=${src}`).join(",")}`,
+        engine.javaScriptCore === undefined
+          ? `--prebuilt-generated=${engine.builtinsGeneratedDirectory}`
+          : `--javascriptcore=${engine.javaScriptCore}`,
+        typesOnlyFlag(cfg, sources),
+        ...(engine.requiresVerifiedOverloads ? ["--require-verified"] : []),
+      ]),
+    },
+  });
+
+  o.all.push(...outputs);
+  o.rustInputs.push(...rust);
+  o.cppSources.push(cpp);
+}
+
+export function emitBuiltinSources({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
+  assert(engine !== undefined, "emitBuiltinSources needs an engine");
+  const script = resolve(cfg.cwd, "src", "codegen", "builtins-manifest.ts");
+  const bindings = resolve(cfg.cwd, "src", "jsc", "bindings");
+  const manifest = resolve(cfg.codegenDir, "builtins.manifest");
+  const archive = resolve(cfg.codegenDir, "builtin_sources.bin");
+
+  n.build({
+    outputs: [manifest, archive],
+    rule: "codegen_bun",
+    inputs: [
+      script,
+      ...sources.js,
+      ...sources.jsCodegen,
+      engineFunctionsJson(cfg),
+      resolve(bindings, "ErrorCode.ts"),
+      resolve(bindings, "js_classes.ts"),
+      resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h"),
+      resolve(cfg.cwd, "src", "js", "tsconfig.json"),
+      resolve(cfg.cwd, "tsconfig.base.json"),
+      resolve(cfg.cwd, "src", "runtime.bun.js"),
+      resolve(cfg.cwd, "src", "runtime.js"),
+    ],
+    orderOnlyInputs: [dirStamp],
+    vars: {
+      cwd: cfg.cwd,
+      desc: "builtin_sources.bin",
+      args: shJoin(cfg, [
+        "run",
+        script,
+        debugFlag(cfg),
+        manifest,
+        archive,
+        `--engine-functions=${engineFunctionsJson(cfg)}`,
+      ]),
+    },
+  });
+
+  o.all.push(manifest, archive);
+  o.builtinSourcesArchive = archive;
+}
+
+/** ninja breaks scheduling ties by emission order. */
+export function emitAotCodegen(ctx: Ctx): void {
+  emitRemovableFeatures(ctx);
+  if (ctx.engine === undefined) return;
+  emitAotSchema(ctx);
+  emitAotSchemaUseCheck(ctx);
+  emitBuiltinsTable(ctx);
+  emitBuiltinSources(ctx);
+}
+
+export function executableFormat(cfg: Pick<Config, "darwin" | "windows">): ObjectFormat {
+  return cfg.darwin ? "macho" : cfg.windows ? "coff" : "elf";
+}
+
+export function cutProfilesStamp(cfg: Config, exeName: string): string | undefined {
+  return cfg.canRunOnHost && cfg.trimmable ? resolve(cfg.buildDir, `${exeName}.cut-profiles-passed`) : undefined;
+}
+
+export interface CutProfileCheck {
+  exe: string;
+  exeName: string;
+  strippedExe: string | undefined;
+  warnOnly: boolean;
+}
+
+export function emitCutProfileCheck(n: Ninja, cfg: Config, check: CutProfileCheck): string[] {
+  const stamp = cutProfilesStamp(cfg, check.exeName);
+  if (stamp === undefined) return [];
+  const q = (path: string) => quote(path, cfg.host.os === "windows");
+  const script = trimScript(cfg, "profiles.ts");
+  n.rule("cut_profiles", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --label=${check.exeName} --elapsed --stamp=$out ${cfg.jsRuntime} ${q(script)}${check.warnOnly ? " --warn-only" : ""} $in ${q(removableFeaturesJson(cfg))} ${executableFormat(cfg)}`,
+    description: `check ${check.exeName} trims by as much as its table says`,
+  });
+  n.build({
+    outputs: [stamp],
+    rule: "cut_profiles",
+    inputs: [check.exe],
+    implicitInputs: [script, trimScript(cfg, "profile-runner.ts"), trimScript(cfg, "types.ts"), removableFeaturesJson(cfg)],
+    ...(check.strippedExe !== undefined ? { orderOnlyInputs: [check.strippedExe] } : {}),
+  });
+  return [stamp];
+}

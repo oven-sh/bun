@@ -1,6 +1,6 @@
 // Object.getOwnPropertyDescriptor on objects of classes and record types, whose fields are not stored as ordinary values: the parts read from a descriptor that is never made are what the descriptor object holds.
-// CALLS- describe operationAOTTypedGetOwnPropertyDescriptor\b
-// CALLS+ describeByObject operationAOTTypedGetOwnPropertyDescriptor\b
+// CALLS- describe operationAOTGetOwnPropertyDescriptor\b
+// CALLS+ describeByObject operationAOTGetOwnPropertyDescriptor\b
 class Base {
   id: number;
   parent: Base | undefined = undefined;

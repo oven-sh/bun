@@ -15,18 +15,6 @@ export function low(str: string) {
   return str[0].toLowerCase() + str.slice(1);
 }
 
-let neverInlinedPatterns: RegExp[] | undefined;
-
-export function isNeverInlined(symbol: string) {
-  neverInlinedPatterns ??= fs
-    .readFileSync(path.join(import.meta.dirname, "..", "..", "scripts", "build", "islands.doors"), "utf8")
-    .split("\n")
-    .map(line => line.trim().split(/\s+/))
-    .filter(words => words[0] === "noinline")
-    .map(words => new RegExp(words.slice(1).join(" ")));
-  return neverInlinedPatterns.some(pattern => pattern.test(symbol));
-}
-
 /** Every file under `root`, sorted by name in each directory. */
 export function readdirRecursive(root: string): string[] {
   // The order of readdirSync() depends on the runtime and the file system:

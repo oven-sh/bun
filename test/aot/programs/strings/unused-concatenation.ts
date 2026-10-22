@@ -22,7 +22,7 @@ export function keepsObject(i: number, o: object): number {
   return p.x;
 }
 export function keepsSymbol(i: number, key: string | symbol): number {
-  const p: Point = { x: i, label: `${key as string}` };
+  const p: Point = { x: i, label: `${key as any}` };
   return p.x;
 }
 const log: string[] = [];

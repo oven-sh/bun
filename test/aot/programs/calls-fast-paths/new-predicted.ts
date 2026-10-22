@@ -1,7 +1,7 @@
 // `var S = allocator.getSym(); new S(..) as T`: the constructor is the result of a call, so it can only be predicted.
-// IR+ IsClosureOf
-// IR+ : TransientSym\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
-// IR+ ConstructWith
+// IR+ ^ .*IsClosureOf
+// IR+ : =?L[0-9]+ = (NewObject|CreateThis) 
+// IR+  = Construct v[0-9]+ \(.*\).* isFallback
 declare const console: any;
 interface Sym { flags: number; name: string; parent: Sym | undefined }
 interface TransientSym extends Sym { links: number }

@@ -6,6 +6,7 @@ any {"id":"one"}
 unknown {"id":"one"}
 parameter "theirs {\"id\":\"one\"}"
 variable "mine {\"id\":\"one\"}"
+parameter, an object {"theirs":"{\"id\":\"one\"}"}
 value {"id":"one"}
 globalThis {"id":"one"}
 own object {"id":"one"}

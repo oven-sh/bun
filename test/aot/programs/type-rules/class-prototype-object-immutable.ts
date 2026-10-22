@@ -1,4 +1,4 @@
-// Any change to the prototype object of a user-defined class throws: adding, redefining, replacing or deleting members, and changing its prototype.
+// The prototype object of a class of the program is never locked: members are added, redefined, replaced and deleted, and its prototype is changed, as in plain JavaScript. One row differs from plain Bun: `Reflect.set(proto, "tag", 1)` runs a setter whose parameter is written `string`, and a parameter is tested on entry, whoever calls.
 function refused(label: string, f: () => unknown) { try { f(); console.log(label + ": no error") } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
 class C { label = "x"; tag?: string; n?: number; method() { return "m" } }
 function read(c: C): string { return String(c.tag) + "/" + String(c.n) + "/" + ("tag" in c) + "/" + Object.hasOwn(c, "tag") }
@@ -12,7 +12,7 @@ try { refused("accessor defined", () => Object.defineProperty(proto, "tag", { ge
 try { refused("method replaced", () => { proto.method = () => "other" }) } catch (e) { console.log("line 12:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { refused("method deleted", () => { delete proto.method }) } catch (e) { console.log("line 13:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { refused("its prototype changed", () => Object.setPrototypeOf(proto, { n: 7 })) } catch (e) { console.log("line 14:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// By Reflect: false, as for any object that is not extensible and whose properties are not configurable.
+// By Reflect: the answers of plain JavaScript.
 try { console.log(Reflect.set(proto, "tag", 1), Reflect.defineProperty(proto, "tag", { value: 1 }), Reflect.deleteProperty(proto, "method"), Reflect.setPrototypeOf(proto, null)) } catch (e) { console.log("line 16:", e instanceof TypeError ? "TypeError" : "other " + e) }
 // Deleting an absent property is not an error, as in ECMAScript.
 try { console.log(delete proto.tag, delete proto.n) } catch (e) { console.log("line 18:", e instanceof TypeError ? "TypeError" : "other " + e) }

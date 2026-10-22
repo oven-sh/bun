@@ -281,17 +281,6 @@ impl<C: CompletionStruct> BundleThread<C> {
         let transpiler = completion.create_and_configure_transpiler(bump)?;
 
         transpiler.resolver.generation = generation;
-        static IS_AOT_BUILD: core::sync::atomic::AtomicUsize =
-            core::sync::atomic::AtomicUsize::new(0);
-        let compiles_ahead_of_time = transpiler.options.aot;
-        if compiles_ahead_of_time
-            && IS_AOT_BUILD.fetch_add(1, core::sync::atomic::Ordering::AcqRel) == 0
-        {
-            bun_alloc::mimalloc::mi_option_set_default(
-                bun_alloc::mimalloc::Option::hand_out_last_freed,
-                1,
-            );
-        }
 
         // Construction + run delegated — see
         // `init_and_run` doc. Reborrow `transpiler` through a raw ptr so
@@ -305,14 +294,6 @@ impl<C: CompletionStruct> BundleThread<C> {
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
-        if compiles_ahead_of_time
-            && IS_AOT_BUILD.fetch_sub(1, core::sync::atomic::Ordering::AcqRel) == 1
-        {
-            bun_alloc::mimalloc::mi_option_set_default(
-                bun_alloc::mimalloc::Option::hand_out_last_freed,
-                0,
-            );
-        }
 
         // Straight-line teardown: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error

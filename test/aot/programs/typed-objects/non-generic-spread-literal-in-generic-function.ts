@@ -1,8 +1,8 @@
 // Only a spread of a value of a generic type leaves a literal an ordinary object. In the same generic function a literal without a spread, and one that spreads a record, are made with a layout.
-// IR- = NewObject$
-// IR- CopyDataProperties
-// IR- CloneObject#
-// IR+ CloneObjectWith#
+// IR- ^ .*= NewPlainObject
+// IR- ^ .*CopyDataProperties
+// IR- ^ .* = CloneObject 
+// IR+ ^ .* = CloneAs 
 interface R { a: number; b: string }
 const kept: { g: number }[] = [];
 function id<U>(u: U): U { return u }

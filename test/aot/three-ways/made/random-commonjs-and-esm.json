@@ -27,6 +27,6 @@
  "seed-026": "all agree",
  "seed-027": "it fails in plain Bun",
  "seed-028": "it fails in plain Bun",
- "seed-029": "as bun run",
+ "seed-029": "alone: main: direct m1: !TypeError !TypeError !TypeError !TypeError\nmain: m5: undefined 127 object !TypeError !TypeError\nmain: m5 again: !TypeError !TypeError 72\nmain: handed: []\nand 1 lines more",
  "seed-030": "all agree"
 }

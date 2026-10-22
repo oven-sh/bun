@@ -1,1 +1,0 @@
-error: TS100017: 'as number' is applied to a value that is always "5": under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.

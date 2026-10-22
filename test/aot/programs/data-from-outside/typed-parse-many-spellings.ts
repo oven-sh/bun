@@ -1,6 +1,6 @@
 // JSON.parse<T>(text) gives what JSON.parse(text) followed by a validation gives, however the text is spelled.
-// IR+ JSONStartsWith
-// IR+ JSONNumberAt
+// IR+ ^ .*JSONStartsWith
+// IR+ ^ .*JSONParseNumber
 // VALIDATED compiles
 import type { Schema } from "bun";
 

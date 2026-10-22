@@ -1,0 +1,11 @@
+JSON.parse<User>, text that fits: 7
+JSON.parse<User>, text that does not fit: TypeError
+as User, the cast: object
+as User, a field that fits: Ada
+as User, the field that does not fit: seven
+an annotated variable, a field that fits: Ada
+the same field read through any: seven
+User[], each element by itself: 1,two,3
+as User, a number: 5
+a body, a field that fits: Ada
+a body, the field that does not fit: seven

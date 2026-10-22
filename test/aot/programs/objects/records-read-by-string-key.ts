@@ -1,6 +1,6 @@
 // Records read by keys whose type is string: what is in the object, what is beside it, what is inherited, and what is nowhere, before and after it arrives.
 type Table = Record<string, number | string | undefined>;
-function read(table: Table, key: string): number | string | undefined { return table[key]; }
+function read(table: Table, key: string): unknown { return table[key]; }
 const lines: string[] = [];
 const small: Table = { a: 1, b: "two" };
 const large: Table = {};

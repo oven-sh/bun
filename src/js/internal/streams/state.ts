@@ -1,28 +1,42 @@
-// @ts-check
 "use strict";
 
-const { validateInteger } = require("internal/validators") as typeof import("internal/validators").default;
+const { validateInteger } = require("internal/validators");
+const { StringDecoder } = require("node:string_decoder");
 
 const NumberIsInteger = Number.isInteger;
 const MathFloor = Math.floor;
+const ObjectDefineProperties = Object.defineProperties;
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const ArrayPrototypeSlice = Array.prototype.slice;
 type Key = string; // do we need to allow symbols?
+type int32 = import("bun").int32;
 
-const enum StateFlags {
-  None = 0,
+const kState = Symbol("kState");
+const kOnConstructed = Symbol("kOnConstructed");
+const kErroredValue = Symbol("kErroredValue");
+const kDefaultEncodingValue = Symbol("kDefaultEncodingValue");
+const kDecoderValue = Symbol("kDecoderValue");
+const kEncodingValue = Symbol("kEncodingValue");
+const kOnFinishedValue = Symbol("kOnFinishedValue");
+const kWriteCbValue = Symbol("kWriteCbValue");
+const kAfterWriteTickInfoValue = Symbol("kAfterWriteTickInfoValue");
+const kBufferedValue = Symbol("kBufferedValue");
+
+// The flags are const enums, here and in the modules that test them: each use is a number in the bundled module.
+// As constants they were variables that every function captured, and made the modules a tenth slower to load.
+
+// The bits of [kState] that mean the same in a ReadableState and in a WritableState.
+const enum Flag {
+  ObjectMode = 1 << 0,
+  ErrorEmitted = 1 << 1,
+  AutoDestroy = 1 << 2,
+  EmitClose = 1 << 3,
+  Destroyed = 1 << 4,
+  Closed = 1 << 5,
+  CloseEmitted = 1 << 6,
+  Errored = 1 << 7,
+  Constructed = 1 << 8,
 }
-
-const kObjectMode = 1 << 0;
-const kErrorEmitted = 1 << 1;
-const kAutoDestroy = 1 << 2;
-const kEmitClose = 1 << 3;
-const kDestroyed = 1 << 4;
-const kClosed = 1 << 5;
-const kCloseEmitted = 1 << 6;
-const kErrored = 1 << 7;
-const kConstructed = 1 << 8;
 
 // TODO (fix): For some reason Windows CI fails with bigger hwm.
 let defaultHighWaterMarkBytes = process.platform === "win32" ? 16 * 1024 : 64 * 1024;
@@ -59,20 +73,7 @@ function getHighWaterMark(state, options, duplexKey: Key, isDuplex: boolean): nu
   return getDefaultHighWaterMark(state.objectMode);
 }
 
-function highWaterMarkOf(objectMode: boolean, options, duplexKey: Key, isDuplex: boolean): number {
-  const hwm = highWaterMarkFrom(options, isDuplex, duplexKey);
-  if (hwm != null) {
-    if (!NumberIsInteger(hwm) || (hwm as number) < 0) {
-      const name = isDuplex ? `options.${duplexKey}` : "options.highWaterMark";
-      throw $ERR_INVALID_ARG_VALUE(name, hwm);
-    }
-    return MathFloor(hwm as number);
-  }
-
-  return objectMode ? defaultHighWaterMarkObjectMode : defaultHighWaterMarkBytes;
-}
-
-type WriteCallback = (error?: any) => void;
+type WriteCallback = $Node.ErrorCallback;
 
 interface BufferedWrite {
   chunk: any;
@@ -83,766 +84,786 @@ interface BufferedWrite {
 interface AfterWriteTickInfo {
   count: number;
   cb: WriteCallback;
-  stream: any;
+  stream: $Node.Writable;
   state: WritableState;
 }
 
 // What readable.ts, writable.ts and transform.ts hand to each other without a require cycle.
-class Internals {
-  pushToReadable: ((stream: any, state: ReadableState, chunk: any, encoding: any) => boolean) | undefined = undefined;
-  pushingMethod: Function | undefined = undefined;
-  bindOnwrite: ((stream: any, state: WritableState) => WriteCallback) | undefined = undefined;
-  onReadableConstructed: ((stream: any, state: ReadableState) => void) | undefined = undefined;
-  onWritableConstructed: ((stream: any, state: WritableState) => void) | undefined = undefined;
-  writeToWritable: ((stream: any, state: WritableState, chunk: any, encoding: any, cb: any) => any) | undefined = undefined;
-  writingMethod: Function | undefined = undefined;
-  constructReadable: ((stream: any, highWaterMark: unknown) => void) | undefined = undefined;
-  resumeOnNextTick: ((stream: any, state: ReadableState) => void) | undefined = undefined;
-  endOnNextTick: ((state: ReadableState, stream: any) => void) | undefined = undefined;
+interface Internals {
+  pushToReadable:
+    | ((stream: $Node.Readable, state: ReadableState, chunk: unknown, encoding: string | undefined) => boolean)
+    | undefined;
+  pushingMethod: $Node.Readable["push"] | undefined;
+  readableMethods:
+    | {
+        read: $Node.Readable["read"];
+        push: $Node.Readable["push"];
+        resume: $Node.Readable["resume"];
+        removeAllListeners: $Node.Readable["removeAllListeners"];
+      }
+    | undefined;
+  destroyMethods:
+    | {
+        destroy: (
+          this: $Node.StreamWithState,
+          error?: Error | null,
+          callback?: $Node.ErrorCallback,
+        ) => $Node.StreamWithState;
+      }
+    | undefined;
+  onwrite: ((stream: $Node.Writable, er?: Error | null) => void) | undefined;
+  /** `true`, `false`, or the error of a write after the end. */
+  writeToWritable:
+    | ((
+        stream: $Node.Writable,
+        state: WritableState,
+        chunk: unknown,
+        encoding: string | null | undefined,
+        cb: WriteCallback | null | undefined,
+      ) => boolean | Error)
+    | undefined;
+  writingMethod: $Node.Writable["write"] | undefined;
+  constructReadable: ((stream: $Node.Readable, highWaterMark: unknown) => void) | undefined;
+  resumeOnNextTick: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  endOnNextTick: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
+  preallocatedEvents: (() => $Node.Events) | undefined;
+  writableAccessors: Record<WritableAccessorName, PropertyDescriptor> | undefined;
+  resumeRequestBody: ((stream: $Node.Readable, state: ReadableState) => boolean) | undefined;
+  finishReadOfNothing: ((state: ReadableState) => void) | undefined;
+  finishResume: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  readMoreLater: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  readMoreOnNextTick: ((stream: $Node.Readable, state: ReadableState) => void) | undefined;
+  emitReadableNow: ((stream: $Node.Readable) => void) | undefined;
+  finishEnd: ((state: ReadableState, stream: $Node.Readable) => void) | undefined;
+  onRequestBodyData:
+    | ((this: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) => void)
+    | undefined;
+  takeRequestCloseTick: ((request: $Node.IncomingMessage) => boolean) | undefined;
+  destroyEndedRequest: ((state: ReadableState, stream: $Node.Readable) => boolean) | undefined;
 }
 
-const internals = new Internals();
+type WritableAccessorName =
+  | "writable"
+  | "writableHighWaterMark"
+  | "writableObjectMode"
+  | "writableBuffer"
+  | "writableLength"
+  | "writableFinished"
+  | "writableCorked"
+  | "writableEnded"
+  | "writableNeedDrain";
 
-let StringDecoder;
+const internals: Internals = {
+  pushToReadable: undefined,
+  pushingMethod: undefined,
+  readableMethods: undefined,
+  destroyMethods: undefined,
+  onwrite: undefined,
+  writeToWritable: undefined,
+  writingMethod: undefined,
+  constructReadable: undefined,
+  resumeOnNextTick: undefined,
+  endOnNextTick: undefined,
+  preallocatedEvents: undefined,
+  writableAccessors: undefined,
+  resumeRequestBody: undefined,
+  finishReadOfNothing: undefined,
+  finishResume: undefined,
+  readMoreLater: undefined,
+  readMoreOnNextTick: undefined,
+  emitReadableNow: undefined,
+  finishEnd: undefined,
+  onRequestBodyData: undefined,
+  takeRequestCloseTick: undefined,
+  destroyEndedRequest: undefined,
+};
 
-const kReadableEnded = 1 << 9;
-const kEndEmitted = 1 << 10;
-const kReading = 1 << 11;
-const kReadableSync = 1 << 12;
-const kNeedReadable = 1 << 13;
-const kEmittedReadable = 1 << 14;
-const kReadableListening = 1 << 15;
-const kResumeScheduled = 1 << 16;
-const kMultiAwaitDrain = 1 << 17;
-const kReadingMore = 1 << 18;
-const kDataEmitted = 1 << 19;
-const kReadableDefaultUTF8Encoding = 1 << 20;
-const kDecoder = 1 << 21;
-const kEncoding = 1 << 22;
-const kHasFlowing = 1 << 23;
-const kFlowing = 1 << 24;
-const kHasPaused = 1 << 25;
-const kPaused = 1 << 26;
-const kHasReadable = 1 << 28;
-const kReadable = 1 << 29;
+// TODO(benjamingr) it is likely slower to do it this way than with free functions
+function makeBitMapDescriptor(bit: number) {
+  return {
+    enumerable: false,
+    get(this: ReadableState | WritableState) {
+      return (this[kState] & bit) !== 0;
+    },
+    set(this: ReadableState | WritableState, value) {
+      if (value) this[kState] |= bit;
+      else this[kState] &= ~bit;
+    },
+  };
+}
 
-class ReadableState {
-  // The point at which it stops calling _read() to fill the buffer
-  // Note: 0 is a valid value, means "don't call _read preemptively ever"
+// The other bits of a ReadableState.
+const enum ReadableFlag {
+  Ended = 1 << 9,
+  EndEmitted = 1 << 10,
+  Reading = 1 << 11,
+  Sync = 1 << 12,
+  NeedReadable = 1 << 13,
+  EmittedReadable = 1 << 14,
+  ReadableListening = 1 << 15,
+  ResumeScheduled = 1 << 16,
+  MultiAwaitDrain = 1 << 17,
+  ReadingMore = 1 << 18,
+  DataEmitted = 1 << 19,
+  DefaultUTF8Encoding = 1 << 20,
+  Decoder = 1 << 21,
+  Encoding = 1 << 22,
+  HasFlowing = 1 << 23,
+  Flowing = 1 << 24,
+  HasPaused = 1 << 25,
+  Paused = 1 << 26,
+}
+
+interface ReadableState {
+  [kState]: int32;
   highWaterMark: number;
   buffer: any[];
   bufferIndex: number;
   length: number;
-  pipes: any[];
-  // Ref the piped dest which we need a drain event on it
-  // type: null | Writable | Set<Writable>.
-  awaitDrainWriters: any;
-  erroredValue: any;
-  defaultEncodingValue: any;
-  decoderValue: any;
-  encodingValue: any;
-  // Bit map field to store ReadableState more efficiently with 1 bit per field
-  // instead of a V8 slot per field.
-  flags: StateFlags;
+  pipes: $Node.AnyStream[];
+  awaitDrainWriters: $Node.AnyStream | Set<$Node.AnyStream> | null;
+  /** `false`: the readable side of a Duplex that was disabled upon construction, or through the deprecated setter. */
+  readable?: boolean;
+  [kErroredValue]?: any;
+  [kDefaultEncodingValue]?: any;
+  [kDecoderValue]?: import("node:string_decoder").StringDecoder;
+  [kEncodingValue]?: any;
+  [kOnConstructed](stream: $Node.Readable): void;
+  get objectMode(): boolean;
+  set objectMode(value: unknown);
+  get ended(): boolean;
+  set ended(value: unknown);
+  get endEmitted(): boolean;
+  set endEmitted(value: unknown);
+  get reading(): boolean;
+  set reading(value: unknown);
+  get constructed(): boolean;
+  set constructed(value: unknown);
+  get sync(): boolean;
+  set sync(value: unknown);
+  get needReadable(): boolean;
+  set needReadable(value: unknown);
+  get emittedReadable(): boolean;
+  set emittedReadable(value: unknown);
+  get readableListening(): boolean;
+  set readableListening(value: unknown);
+  get resumeScheduled(): boolean;
+  set resumeScheduled(value: unknown);
+  get errorEmitted(): boolean;
+  set errorEmitted(value: unknown);
+  get emitClose(): boolean;
+  set emitClose(value: unknown);
+  get autoDestroy(): boolean;
+  set autoDestroy(value: unknown);
+  get destroyed(): boolean;
+  set destroyed(value: unknown);
+  get closed(): boolean;
+  set closed(value: unknown);
+  get closeEmitted(): boolean;
+  set closeEmitted(value: unknown);
+  get multiAwaitDrain(): boolean;
+  set multiAwaitDrain(value: unknown);
+  get readingMore(): boolean;
+  set readingMore(value: unknown);
+  get dataEmitted(): boolean;
+  set dataEmitted(value: unknown);
+  get errored(): any;
+  set errored(value: unknown);
+  get defaultEncoding(): any;
+  set defaultEncoding(value: unknown);
+  get decoder(): import("node:string_decoder").StringDecoder | null;
+  set decoder(value: import("node:string_decoder").StringDecoder | null);
+  get encoding(): any;
+  set encoding(value: unknown);
+  get flowing(): boolean | null;
+  set flowing(value: unknown);
+  get pipesCount(): number;
+  get paused(): boolean;
+  set paused(value: unknown);
+}
 
-  constructor(options?, stream?, isDuplex?) {
-    let state = kEmitClose | kAutoDestroy | kConstructed | kReadableSync;
+const kUnreadBytes = Symbol("kUnreadBytes");
 
-    // Object stream flag. Used to make read(n) ignore n and to
-    // make all the buffer merging and length checks go away.
-    if (options?.objectMode) state |= kObjectMode;
-
-    if (isDuplex && options?.readableObjectMode) state |= kObjectMode;
-
-    const highWaterMark = options
-      ? highWaterMarkOf((state & kObjectMode) !== 0, options, "readableHighWaterMark", !!isDuplex)
-      : defaultHighWaterMarkBytes;
-
-    // Should close be emitted on destroy. Defaults to true.
-    if (options && options.emitClose === false) state &= ~kEmitClose;
-
-    // Should .destroy() be called after 'end' (and potentially 'finish').
-    if (options && options.autoDestroy === false) state &= ~kAutoDestroy;
-
-    // Crypto is kind of old and crusty.  Historically, its default string
-    // encoding is 'binary' so we have to make this configurable.
-    // Everything else in the universe uses 'utf8', though.
-    const defaultEncoding = options?.defaultEncoding;
-    const isDefaultUTF8 = defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8";
-    if (isDefaultUTF8) {
-      state |= kReadableDefaultUTF8Encoding;
-    } else if (!Buffer.isEncoding(defaultEncoding)) {
-      throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
-    }
-
-    let decoder = null;
-    let encoding = null;
-    if (options?.encoding) {
-      StringDecoder ??= require("node:string_decoder").StringDecoder;
-      decoder = new StringDecoder(options.encoding);
-      state |= kDecoder;
-      encoding = options.encoding;
-      if (encoding) state |= kEncoding;
-      else encoding = null;
-    }
-
-    this.highWaterMark = highWaterMark;
+function ReadableState(this: ReadableState, options?, stream?, isDuplex?) {
+  if (options === kUnreadBytes) {
+    this[kState] =
+      Flag.EmitClose | Flag.AutoDestroy | Flag.Constructed | ReadableFlag.Sync | ReadableFlag.DefaultUTF8Encoding | ReadableFlag.ReadingMore;
+    this.highWaterMark = stream;
     this.buffer = [];
     this.bufferIndex = 0;
     this.length = 0;
     this.pipes = [];
     this.awaitDrainWriters = null;
-    this.erroredValue = null;
-    this.defaultEncodingValue = isDefaultUTF8 ? null : defaultEncoding;
-    this.decoderValue = decoder;
-    this.encodingValue = encoding;
-    this.flags = state;
+    return;
+  }
+  // Bit map field to store ReadableState more efficiently with 1 bit per field
+  // instead of a V8 slot per field.
+  this[kState] = Flag.EmitClose | Flag.AutoDestroy | Flag.Constructed | ReadableFlag.Sync;
+
+  // Object stream flag. Used to make read(n) ignore n and to
+  // make all the buffer merging and length checks go away.
+  if (options?.objectMode) this[kState] |= Flag.ObjectMode;
+
+  if (isDuplex && options?.readableObjectMode) this[kState] |= Flag.ObjectMode;
+
+  // The point at which it stops calling _read() to fill the buffer
+  // Note: 0 is a valid value, means "don't call _read preemptively ever"
+  this.highWaterMark = options
+    ? getHighWaterMark(this, options, "readableHighWaterMark", isDuplex)
+    : getDefaultHighWaterMark(false);
+
+  this.buffer = [];
+  this.bufferIndex = 0;
+  this.length = 0;
+  this.pipes = [];
+
+  // Should close be emitted on destroy. Defaults to true.
+  if (options && options.emitClose === false) this[kState] &= ~Flag.EmitClose;
+
+  // Should .destroy() be called after 'end' (and potentially 'finish').
+  if (options && options.autoDestroy === false) this[kState] &= ~Flag.AutoDestroy;
+
+  // Crypto is kind of old and crusty.  Historically, its default string
+  // encoding is 'binary' so we have to make this configurable.
+  // Everything else in the universe uses 'utf8', though.
+  const defaultEncoding = options?.defaultEncoding;
+  if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
+    this[kState] |= ReadableFlag.DefaultUTF8Encoding;
+  } else if (Buffer.isEncoding(defaultEncoding)) {
+    this.defaultEncoding = defaultEncoding;
+  } else {
+    throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
 
-  get objectMode(): boolean {
-    return (this.flags & kObjectMode) !== 0;
-  }
-  set objectMode(value: unknown) {
-    if (value) this.flags |= kObjectMode;
-    else this.flags &= ~kObjectMode;
-  }
+  // Ref the piped dest which we need a drain event on it
+  // type: null | Writable | Set<Writable>.
+  this.awaitDrainWriters = null;
 
-  get ended(): boolean {
-    return (this.flags & kReadableEnded) !== 0;
+  if (options?.encoding) {
+    this.decoder = new StringDecoder(options.encoding);
+    this.encoding = options.encoding;
   }
-  set ended(value: unknown) {
-    if (value) this.flags |= kReadableEnded;
-    else this.flags &= ~kReadableEnded;
-  }
-
-  get endEmitted(): boolean {
-    return (this.flags & kEndEmitted) !== 0;
-  }
-  set endEmitted(value: unknown) {
-    if (value) this.flags |= kEndEmitted;
-    else this.flags &= ~kEndEmitted;
-  }
-
-  get reading(): boolean {
-    return (this.flags & kReading) !== 0;
-  }
-  set reading(value: unknown) {
-    if (value) this.flags |= kReading;
-    else this.flags &= ~kReading;
-  }
-
+}
+ReadableState.prototype = {};
+ObjectDefineProperties(ReadableState.prototype, {
+  constructor: { __proto__: null, value: ReadableState, writable: true, configurable: true },
+  objectMode: makeBitMapDescriptor(Flag.ObjectMode),
+  ended: makeBitMapDescriptor(ReadableFlag.Ended),
+  endEmitted: makeBitMapDescriptor(ReadableFlag.EndEmitted),
+  reading: makeBitMapDescriptor(ReadableFlag.Reading),
   // Stream is still being constructed and cannot be
   // destroyed until construction finished or failed.
   // Async construction is opt in, therefore we start as
   // constructed.
-  get constructed(): boolean {
-    return (this.flags & kConstructed) !== 0;
-  }
-  set constructed(value: unknown) {
-    if (value) this.flags |= kConstructed;
-    else this.flags &= ~kConstructed;
-  }
-
+  constructed: makeBitMapDescriptor(Flag.Constructed),
   // A flag to be able to tell if the event 'readable'/'data' is emitted
   // immediately, or on a later tick.  We set this to true at first, because
   // any actions that shouldn't happen until "later" should generally also
   // not happen before the first read call.
-  get sync(): boolean {
-    return (this.flags & kReadableSync) !== 0;
-  }
-  set sync(value: unknown) {
-    if (value) this.flags |= kReadableSync;
-    else this.flags &= ~kReadableSync;
-  }
-
+  sync: makeBitMapDescriptor(ReadableFlag.Sync),
   // Whenever we return null, then we set a flag to say
   // that we're awaiting a 'readable' event emission.
-  get needReadable(): boolean {
-    return (this.flags & kNeedReadable) !== 0;
-  }
-  set needReadable(value: unknown) {
-    if (value) this.flags |= kNeedReadable;
-    else this.flags &= ~kNeedReadable;
-  }
-
-  get emittedReadable(): boolean {
-    return (this.flags & kEmittedReadable) !== 0;
-  }
-  set emittedReadable(value: unknown) {
-    if (value) this.flags |= kEmittedReadable;
-    else this.flags &= ~kEmittedReadable;
-  }
-
-  get readableListening(): boolean {
-    return (this.flags & kReadableListening) !== 0;
-  }
-  set readableListening(value: unknown) {
-    if (value) this.flags |= kReadableListening;
-    else this.flags &= ~kReadableListening;
-  }
-
-  get resumeScheduled(): boolean {
-    return (this.flags & kResumeScheduled) !== 0;
-  }
-  set resumeScheduled(value: unknown) {
-    if (value) this.flags |= kResumeScheduled;
-    else this.flags &= ~kResumeScheduled;
-  }
-
+  needReadable: makeBitMapDescriptor(ReadableFlag.NeedReadable),
+  emittedReadable: makeBitMapDescriptor(ReadableFlag.EmittedReadable),
+  readableListening: makeBitMapDescriptor(ReadableFlag.ReadableListening),
+  resumeScheduled: makeBitMapDescriptor(ReadableFlag.ResumeScheduled),
   // True if the error was already emitted and should not be thrown again.
-  get errorEmitted(): boolean {
-    return (this.flags & kErrorEmitted) !== 0;
-  }
-  set errorEmitted(value: unknown) {
-    if (value) this.flags |= kErrorEmitted;
-    else this.flags &= ~kErrorEmitted;
-  }
-
-  get emitClose(): boolean {
-    return (this.flags & kEmitClose) !== 0;
-  }
-  set emitClose(value: unknown) {
-    if (value) this.flags |= kEmitClose;
-    else this.flags &= ~kEmitClose;
-  }
-
-  get autoDestroy(): boolean {
-    return (this.flags & kAutoDestroy) !== 0;
-  }
-  set autoDestroy(value: unknown) {
-    if (value) this.flags |= kAutoDestroy;
-    else this.flags &= ~kAutoDestroy;
-  }
-
+  errorEmitted: makeBitMapDescriptor(Flag.ErrorEmitted),
+  emitClose: makeBitMapDescriptor(Flag.EmitClose),
+  autoDestroy: makeBitMapDescriptor(Flag.AutoDestroy),
   // Has it been destroyed.
-  get destroyed(): boolean {
-    return (this.flags & kDestroyed) !== 0;
-  }
-  set destroyed(value: unknown) {
-    if (value) this.flags |= kDestroyed;
-    else this.flags &= ~kDestroyed;
-  }
-
+  destroyed: makeBitMapDescriptor(Flag.Destroyed),
   // Indicates whether the stream has finished destroying.
-  get closed(): boolean {
-    return (this.flags & kClosed) !== 0;
-  }
-  set closed(value: unknown) {
-    if (value) this.flags |= kClosed;
-    else this.flags &= ~kClosed;
-  }
-
+  closed: makeBitMapDescriptor(Flag.Closed),
   // True if close has been emitted or would have been emitted
   // depending on emitClose.
-  get closeEmitted(): boolean {
-    return (this.flags & kCloseEmitted) !== 0;
-  }
-  set closeEmitted(value: unknown) {
-    if (value) this.flags |= kCloseEmitted;
-    else this.flags &= ~kCloseEmitted;
-  }
-
-  get multiAwaitDrain(): boolean {
-    return (this.flags & kMultiAwaitDrain) !== 0;
-  }
-  set multiAwaitDrain(value: unknown) {
-    if (value) this.flags |= kMultiAwaitDrain;
-    else this.flags &= ~kMultiAwaitDrain;
-  }
-
+  closeEmitted: makeBitMapDescriptor(Flag.CloseEmitted),
+  multiAwaitDrain: makeBitMapDescriptor(ReadableFlag.MultiAwaitDrain),
   // If true, a maybeReadMore has been scheduled.
-  get readingMore(): boolean {
-    return (this.flags & kReadingMore) !== 0;
-  }
-  set readingMore(value: unknown) {
-    if (value) this.flags |= kReadingMore;
-    else this.flags &= ~kReadingMore;
-  }
-
-  get dataEmitted(): boolean {
-    return (this.flags & kDataEmitted) !== 0;
-  }
-  set dataEmitted(value: unknown) {
-    if (value) this.flags |= kDataEmitted;
-    else this.flags &= ~kDataEmitted;
-  }
+  readingMore: makeBitMapDescriptor(ReadableFlag.ReadingMore),
+  dataEmitted: makeBitMapDescriptor(ReadableFlag.DataEmitted),
 
   // Indicates whether the stream has errored. When true no further
   // _read calls, 'data' or 'readable' events should occur. This is needed
   // since when autoDestroy is disabled we need a way to tell whether the
   // stream has failed.
-  get errored(): any {
-    return (this.flags & kErrored) !== 0 ? this.erroredValue : null;
-  }
-  set errored(value: unknown) {
-    if (value) {
-      this.erroredValue = value;
-      this.flags |= kErrored;
-    } else {
-      this.flags &= ~kErrored;
-    }
-  }
+  errored: {
+    __proto__: null,
+    enumerable: false,
+    get(this: ReadableState) {
+      return (this[kState] & Flag.Errored) !== 0 ? this[kErroredValue] : null;
+    },
+    set(this: ReadableState, value) {
+      if (value) {
+        this[kErroredValue] = value;
+        this[kState] |= Flag.Errored;
+      } else {
+        this[kState] &= ~Flag.Errored;
+      }
+    },
+  },
 
-  get defaultEncoding(): any {
-    return (this.flags & kReadableDefaultUTF8Encoding) !== 0 ? "utf8" : this.defaultEncodingValue;
-  }
-  set defaultEncoding(value: unknown) {
-    if (value === "utf8" || value === "utf-8") {
-      this.flags |= kReadableDefaultUTF8Encoding;
-    } else {
-      this.flags &= ~kReadableDefaultUTF8Encoding;
-      this.defaultEncodingValue = value;
-    }
-  }
+  defaultEncoding: {
+    __proto__: null,
+    enumerable: false,
+    get(this: ReadableState) {
+      return (this[kState] & ReadableFlag.DefaultUTF8Encoding) !== 0 ? "utf8" : this[kDefaultEncodingValue];
+    },
+    set(this: ReadableState, value) {
+      if (value === "utf8" || value === "utf-8") {
+        this[kState] |= ReadableFlag.DefaultUTF8Encoding;
+      } else {
+        this[kState] &= ~ReadableFlag.DefaultUTF8Encoding;
+        this[kDefaultEncodingValue] = value;
+      }
+    },
+  },
 
-  get decoder(): any {
-    return (this.flags & kDecoder) !== 0 ? this.decoderValue : null;
-  }
-  set decoder(value: unknown) {
-    if (value) {
-      this.decoderValue = value;
-      this.flags |= kDecoder;
-    } else {
-      this.flags &= ~kDecoder;
-    }
-  }
+  decoder: {
+    __proto__: null,
+    enumerable: false,
+    get(this: ReadableState) {
+      return (this[kState] & ReadableFlag.Decoder) !== 0 ? this[kDecoderValue] : null;
+    },
+    set(this: ReadableState, value) {
+      if (value) {
+        this[kDecoderValue] = value;
+        this[kState] |= ReadableFlag.Decoder;
+      } else {
+        this[kState] &= ~ReadableFlag.Decoder;
+      }
+    },
+  },
 
-  get encoding(): any {
-    return (this.flags & kEncoding) !== 0 ? this.encodingValue : null;
-  }
-  set encoding(value: unknown) {
-    if (value) {
-      this.encodingValue = value;
-      this.flags |= kEncoding;
-    } else {
-      this.flags &= ~kEncoding;
-    }
-  }
+  encoding: {
+    __proto__: null,
+    enumerable: false,
+    get(this: ReadableState) {
+      return (this[kState] & ReadableFlag.Encoding) !== 0 ? this[kEncodingValue] : null;
+    },
+    set(this: ReadableState, value) {
+      if (value) {
+        this[kEncodingValue] = value;
+        this[kState] |= ReadableFlag.Encoding;
+      } else {
+        this[kState] &= ~ReadableFlag.Encoding;
+      }
+    },
+  },
 
-  get flowing(): boolean | null {
-    return (this.flags & kHasFlowing) !== 0 ? (this.flags & kFlowing) !== 0 : null;
-  }
-  set flowing(value: unknown) {
-    if (value == null) {
-      this.flags &= ~(kHasFlowing | kFlowing);
-    } else if (value) {
-      this.flags |= kHasFlowing | kFlowing;
-    } else {
-      this.flags |= kHasFlowing;
-      this.flags &= ~kFlowing;
-    }
-  }
+  flowing: {
+    __proto__: null,
+    enumerable: false,
+    get(this: ReadableState) {
+      return (this[kState] & ReadableFlag.HasFlowing) !== 0 ? (this[kState] & ReadableFlag.Flowing) !== 0 : null;
+    },
+    set(this: ReadableState, value) {
+      if (value == null) {
+        this[kState] &= ~(ReadableFlag.HasFlowing | ReadableFlag.Flowing);
+      } else if (value) {
+        this[kState] |= ReadableFlag.HasFlowing | ReadableFlag.Flowing;
+      } else {
+        this[kState] |= ReadableFlag.HasFlowing;
+        this[kState] &= ~ReadableFlag.Flowing;
+      }
+    },
+  },
+});
 
+ObjectDefineProperties(ReadableState.prototype, {
   // Legacy getter for `pipesCount`.
-  get pipesCount(): number {
-    return this.pipes.length;
-  }
+  pipesCount: {
+    __proto__: null,
+    get(this: ReadableState) {
+      return this.pipes.length;
+    },
+  },
 
   // Legacy property for `paused`.
-  get paused(): boolean {
-    return (this.flags & kPaused) !== 0;
-  }
-  set paused(value: unknown) {
-    this.flags |= kHasPaused;
-    if (value) {
-      this.flags |= kPaused;
-    } else {
-      this.flags &= ~kPaused;
-    }
-  }
+  paused: {
+    __proto__: null,
+    get(this: ReadableState) {
+      return (this[kState] & ReadableFlag.Paused) !== 0;
+    },
+    set(this: ReadableState, value) {
+      this[kState] |= ReadableFlag.HasPaused;
+      if (value) {
+        this[kState] |= ReadableFlag.Paused;
+      } else {
+        this[kState] &= ~ReadableFlag.Paused;
+      }
+    },
+  },
+});
 
-  // false: the readable side of a Duplex that was disabled upon construction, or through the deprecated setter.
-  get readable(): boolean | undefined {
-    return (this.flags & kHasReadable) !== 0 ? (this.flags & kReadable) !== 0 : undefined;
-  }
-  set readable(value: unknown) {
-    if (value == null) {
-      this.flags &= ~(kHasReadable | kReadable);
-    } else if (value) {
-      this.flags |= kHasReadable | kReadable;
-    } else {
-      this.flags |= kHasReadable;
-      this.flags &= ~kReadable;
-    }
-  }
+// The other bits of a WritableState.
+const enum WritableFlag {
+  Sync = 1 << 9,
+  FinalCalled = 1 << 10,
+  NeedDrain = 1 << 11,
+  Ending = 1 << 12,
+  Finished = 1 << 13,
+  DecodeStrings = 1 << 14,
+  Writing = 1 << 15,
+  BufferProcessing = 1 << 16,
+  Prefinished = 1 << 17,
+  AllBuffers = 1 << 18,
+  AllNoop = 1 << 19,
+  HasWritable = 1 << 21,
+  Writable = 1 << 22,
+  DefaultUTF8Encoding = 1 << 24,
+  WriteCb = 1 << 25,
+  AfterWriteTickInfo = 1 << 27,
+  Buffered = 1 << 29,
+  Ended = 1 << 30,
 }
-
-const kWritableSync = 1 << 9;
-const kFinalCalled = 1 << 10;
-const kNeedDrain = 1 << 11;
-const kEnding = 1 << 12;
-const kFinished = 1 << 13;
-const kDecodeStrings = 1 << 14;
-const kWriting = 1 << 15;
-const kBufferProcessing = 1 << 16;
-const kPrefinished = 1 << 17;
-const kAllBuffers = 1 << 18;
-const kAllNoop = 1 << 19;
-const kHasWritable = 1 << 21;
-const kWritable = 1 << 22;
-const kWritableDefaultUTF8Encoding = 1 << 24;
-const kWriteCb = 1 << 25;
-const kAfterWriteTickInfo = 1 << 27;
-const kBuffered = 1 << 29;
-const kWritableEnded = 1 << 30;
 
 function nop() {}
 
-class WritableState {
-  // The point at which write() starts returning false
-  // Note: 0 is a valid value, means that we always return false if
-  // the entire buffer is not flushed immediately on write().
+interface WritableState {
+  [kState]: int32;
   highWaterMark: number;
-  // Not an actual buffer we keep track of, but a measurement
-  // of how much we're waiting to get pushed to some underlying
-  // socket or file.
   length: number;
-  // When true all writes will be buffered until .uncork() call.
   corked: number;
-  // The callback that's passed to _write(chunk, cb).
   onwrite: WriteCallback;
-  // The amount that is being written when _write is called.
   writelen: number;
   bufferedIndex: number;
-  // Number of pending user-supplied write callbacks
-  // this must be 0 before 'finish' can be emitted.
-  // Optional: it can be deleted, to look like a stream of an old implementation (test-stream-finished.js).
+  /** It can be deleted, to look like a stream of an old implementation (test-stream-finished.js). */
   pendingcb?: number;
-  bufferedValue: (BufferedWrite | null)[] | null;
-  defaultEncodingValue: any;
-  erroredValue: any;
-  onFinishedValue: WriteCallback[] | null;
-  writeCbValue: WriteCallback | null;
-  afterWriteTickInfoValue: AfterWriteTickInfo | null;
-  // Bit map field to store WritableState more efficiently with 1 bit per field
-  // instead of a V8 slot per field.
-  flags: StateFlags;
+  [kDefaultEncodingValue]?: any;
+  [kBufferedValue]: (BufferedWrite | null)[] | null;
+  [kErroredValue]?: any;
+  [kOnFinishedValue]?: WriteCallback[] | null;
+  [kWriteCbValue]?: WriteCallback | null;
+  [kAfterWriteTickInfoValue]?: AfterWriteTickInfo | null;
+  [kOnConstructed](stream: $Node.Writable): void;
+  getBuffer(): (BufferedWrite | null)[];
+  get objectMode(): boolean;
+  set objectMode(value: unknown);
+  get finalCalled(): boolean;
+  set finalCalled(value: unknown);
+  get needDrain(): boolean;
+  set needDrain(value: unknown);
+  get ending(): boolean;
+  set ending(value: unknown);
+  get ended(): boolean;
+  set ended(value: unknown);
+  get finished(): boolean;
+  set finished(value: unknown);
+  get destroyed(): boolean;
+  set destroyed(value: unknown);
+  get decodeStrings(): boolean;
+  set decodeStrings(value: unknown);
+  get writing(): boolean;
+  set writing(value: unknown);
+  get sync(): boolean;
+  set sync(value: unknown);
+  get bufferProcessing(): boolean;
+  set bufferProcessing(value: unknown);
+  get constructed(): boolean;
+  set constructed(value: unknown);
+  get prefinished(): boolean;
+  set prefinished(value: unknown);
+  get errorEmitted(): boolean;
+  set errorEmitted(value: unknown);
+  get emitClose(): boolean;
+  set emitClose(value: unknown);
+  get autoDestroy(): boolean;
+  set autoDestroy(value: unknown);
+  get closed(): boolean;
+  set closed(value: unknown);
+  get closeEmitted(): boolean;
+  set closeEmitted(value: unknown);
+  get allBuffers(): boolean;
+  set allBuffers(value: unknown);
+  get allNoop(): boolean;
+  set allNoop(value: unknown);
+  get errored(): any;
+  set errored(value: unknown);
+  get writable(): boolean | undefined;
+  set writable(value: unknown);
+  get defaultEncoding(): any;
+  set defaultEncoding(value: unknown);
+  get writecb(): any;
+  set writecb(value: any);
+  get afterWriteTickInfo(): any;
+  set afterWriteTickInfo(value: any);
+  get buffered(): any;
+  set buffered(value: any);
+  get bufferedRequestCount(): number;
+}
 
-  constructor(options?, stream?, isDuplex?) {
-    let state = kWritableSync | kConstructed | kEmitClose | kAutoDestroy | kAllBuffers | kAllNoop;
-
-    if (options?.objectMode) state |= kObjectMode;
-
-    if (isDuplex && options?.writableObjectMode) state |= kObjectMode;
-
-    const highWaterMark = options
-      ? highWaterMarkOf((state & kObjectMode) !== 0, options, "writableHighWaterMark", !!isDuplex)
-      : defaultHighWaterMarkBytes;
-
-    if (!options || options.decodeStrings !== false) state |= kDecodeStrings;
-
-    // Should close be emitted on destroy. Defaults to true.
-    if (options && options.emitClose === false) state &= ~kEmitClose;
-
-    // Should .destroy() be called after 'end' (and potentially 'finish').
-    if (options && options.autoDestroy === false) state &= ~kAutoDestroy;
-
-    // Crypto is kind of old and crusty.  Historically, its default string
-    // encoding is 'binary' so we have to make this configurable.
-    // Everything else in the universe uses 'utf8', though.
-    const defaultEncoding = options ? options.defaultEncoding : null;
-    const isDefaultUTF8 = defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8";
-    if (isDefaultUTF8) {
-      state |= kWritableDefaultUTF8Encoding;
-    } else if (!Buffer.isEncoding(defaultEncoding)) {
-      throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
-    }
-
-    this.highWaterMark = highWaterMark;
-    this.length = 0;
-    this.corked = 0;
-    this.writelen = 0;
-    this.bufferedIndex = 0;
-    this.pendingcb = 0;
-    this.bufferedValue = null;
-    this.defaultEncodingValue = isDefaultUTF8 ? null : defaultEncoding;
-    this.erroredValue = null;
-    this.onFinishedValue = null;
-    this.writeCbValue = null;
-    this.afterWriteTickInfoValue = null;
-    this.flags = state;
-    this.onwrite = internals.bindOnwrite!(stream, this);
-  }
-
+WritableState.prototype = {} as { getBuffer?(this: WritableState): (BufferedWrite | null)[] };
+ObjectDefineProperties(WritableState.prototype, {
+  constructor: { __proto__: null, value: WritableState, writable: true, configurable: true },
   // Object stream flag to indicate whether or not this stream
   // contains buffers or objects.
-  get objectMode(): boolean {
-    return (this.flags & kObjectMode) !== 0;
-  }
-  set objectMode(value: unknown) {
-    if (value) this.flags |= kObjectMode;
-    else this.flags &= ~kObjectMode;
-  }
+  objectMode: makeBitMapDescriptor(Flag.ObjectMode),
 
   // if _final has been called.
-  get finalCalled(): boolean {
-    return (this.flags & kFinalCalled) !== 0;
-  }
-  set finalCalled(value: unknown) {
-    if (value) this.flags |= kFinalCalled;
-    else this.flags &= ~kFinalCalled;
-  }
+  finalCalled: makeBitMapDescriptor(WritableFlag.FinalCalled),
 
   // drain event flag.
-  get needDrain(): boolean {
-    return (this.flags & kNeedDrain) !== 0;
-  }
-  set needDrain(value: unknown) {
-    if (value) this.flags |= kNeedDrain;
-    else this.flags &= ~kNeedDrain;
-  }
+  needDrain: makeBitMapDescriptor(WritableFlag.NeedDrain),
 
   // At the start of calling end()
-  get ending(): boolean {
-    return (this.flags & kEnding) !== 0;
-  }
-  set ending(value: unknown) {
-    if (value) this.flags |= kEnding;
-    else this.flags &= ~kEnding;
-  }
+  ending: makeBitMapDescriptor(WritableFlag.Ending),
 
   // When end() has been called, and returned.
-  get ended(): boolean {
-    return (this.flags & kWritableEnded) !== 0;
-  }
-  set ended(value: unknown) {
-    if (value) this.flags |= kWritableEnded;
-    else this.flags &= ~kWritableEnded;
-  }
+  ended: makeBitMapDescriptor(WritableFlag.Ended),
 
   // When 'finish' is emitted.
-  get finished(): boolean {
-    return (this.flags & kFinished) !== 0;
-  }
-  set finished(value: unknown) {
-    if (value) this.flags |= kFinished;
-    else this.flags &= ~kFinished;
-  }
+  finished: makeBitMapDescriptor(WritableFlag.Finished),
 
   // Has it been destroyed.
-  get destroyed(): boolean {
-    return (this.flags & kDestroyed) !== 0;
-  }
-  set destroyed(value: unknown) {
-    if (value) this.flags |= kDestroyed;
-    else this.flags &= ~kDestroyed;
-  }
+  destroyed: makeBitMapDescriptor(Flag.Destroyed),
 
   // Should we decode strings into buffers before passing to _write?
   // this is here so that some node-core streams can optimize string
   // handling at a lower level.
-  get decodeStrings(): boolean {
-    return (this.flags & kDecodeStrings) !== 0;
-  }
-  set decodeStrings(value: unknown) {
-    if (value) this.flags |= kDecodeStrings;
-    else this.flags &= ~kDecodeStrings;
-  }
+  decodeStrings: makeBitMapDescriptor(WritableFlag.DecodeStrings),
 
   // A flag to see when we're in the middle of a write.
-  get writing(): boolean {
-    return (this.flags & kWriting) !== 0;
-  }
-  set writing(value: unknown) {
-    if (value) this.flags |= kWriting;
-    else this.flags &= ~kWriting;
-  }
+  writing: makeBitMapDescriptor(WritableFlag.Writing),
 
   // A flag to be able to tell if the onwrite cb is called immediately,
   // or on a later tick.  We set this to true at first, because any
   // actions that shouldn't happen until "later" should generally also
   // not happen before the first write call.
-  get sync(): boolean {
-    return (this.flags & kWritableSync) !== 0;
-  }
-  set sync(value: unknown) {
-    if (value) this.flags |= kWritableSync;
-    else this.flags &= ~kWritableSync;
-  }
+  sync: makeBitMapDescriptor(WritableFlag.Sync),
 
   // A flag to know if we're processing previously buffered items, which
   // may call the _write() callback in the same tick, so that we don't
   // end up in an overlapped onwrite situation.
-  get bufferProcessing(): boolean {
-    return (this.flags & kBufferProcessing) !== 0;
-  }
-  set bufferProcessing(value: unknown) {
-    if (value) this.flags |= kBufferProcessing;
-    else this.flags &= ~kBufferProcessing;
-  }
+  bufferProcessing: makeBitMapDescriptor(WritableFlag.BufferProcessing),
 
   // Stream is still being constructed and cannot be
   // destroyed until construction finished or failed.
   // Async construction is opt in, therefore we start as
   // constructed.
-  get constructed(): boolean {
-    return (this.flags & kConstructed) !== 0;
-  }
-  set constructed(value: unknown) {
-    if (value) this.flags |= kConstructed;
-    else this.flags &= ~kConstructed;
-  }
+  constructed: makeBitMapDescriptor(Flag.Constructed),
 
   // Emit prefinish if the only thing we're waiting for is _write cbs
   // This is relevant for synchronous Transform streams.
-  get prefinished(): boolean {
-    return (this.flags & kPrefinished) !== 0;
-  }
-  set prefinished(value: unknown) {
-    if (value) this.flags |= kPrefinished;
-    else this.flags &= ~kPrefinished;
-  }
+  prefinished: makeBitMapDescriptor(WritableFlag.Prefinished),
 
   // True if the error was already emitted and should not be thrown again.
-  get errorEmitted(): boolean {
-    return (this.flags & kErrorEmitted) !== 0;
-  }
-  set errorEmitted(value: unknown) {
-    if (value) this.flags |= kErrorEmitted;
-    else this.flags &= ~kErrorEmitted;
-  }
+  errorEmitted: makeBitMapDescriptor(Flag.ErrorEmitted),
 
   // Should close be emitted on destroy. Defaults to true.
-  get emitClose(): boolean {
-    return (this.flags & kEmitClose) !== 0;
-  }
-  set emitClose(value: unknown) {
-    if (value) this.flags |= kEmitClose;
-    else this.flags &= ~kEmitClose;
-  }
+  emitClose: makeBitMapDescriptor(Flag.EmitClose),
 
   // Should .destroy() be called after 'finish' (and potentially 'end').
-  get autoDestroy(): boolean {
-    return (this.flags & kAutoDestroy) !== 0;
-  }
-  set autoDestroy(value: unknown) {
-    if (value) this.flags |= kAutoDestroy;
-    else this.flags &= ~kAutoDestroy;
-  }
+  autoDestroy: makeBitMapDescriptor(Flag.AutoDestroy),
 
   // Indicates whether the stream has finished destroying.
-  get closed(): boolean {
-    return (this.flags & kClosed) !== 0;
-  }
-  set closed(value: unknown) {
-    if (value) this.flags |= kClosed;
-    else this.flags &= ~kClosed;
-  }
+  closed: makeBitMapDescriptor(Flag.Closed),
 
   // True if close has been emitted or would have been emitted
   // depending on emitClose.
-  get closeEmitted(): boolean {
-    return (this.flags & kCloseEmitted) !== 0;
-  }
-  set closeEmitted(value: unknown) {
-    if (value) this.flags |= kCloseEmitted;
-    else this.flags &= ~kCloseEmitted;
-  }
+  closeEmitted: makeBitMapDescriptor(Flag.CloseEmitted),
 
-  get allBuffers(): boolean {
-    return (this.flags & kAllBuffers) !== 0;
-  }
-  set allBuffers(value: unknown) {
-    if (value) this.flags |= kAllBuffers;
-    else this.flags &= ~kAllBuffers;
-  }
-
-  get allNoop(): boolean {
-    return (this.flags & kAllNoop) !== 0;
-  }
-  set allNoop(value: unknown) {
-    if (value) this.flags |= kAllNoop;
-    else this.flags &= ~kAllNoop;
-  }
+  allBuffers: makeBitMapDescriptor(WritableFlag.AllBuffers),
+  allNoop: makeBitMapDescriptor(WritableFlag.AllNoop),
 
   // Indicates whether the stream has errored. When true all write() calls
   // should return false. This is needed since when autoDestroy
   // is disabled we need a way to tell whether the stream has failed.
   // This is/should be a cold path.
-  get errored(): any {
-    return (this.flags & kErrored) !== 0 ? this.erroredValue : null;
-  }
-  set errored(value: unknown) {
-    if (value) {
-      this.erroredValue = value;
-      this.flags |= kErrored;
-    } else {
-      this.flags &= ~kErrored;
-    }
-  }
+  errored: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & Flag.Errored) !== 0 ? this[kErroredValue] : null;
+    },
+    set(this: WritableState, value) {
+      if (value) {
+        this[kErroredValue] = value;
+        this[kState] |= Flag.Errored;
+      } else {
+        this[kState] &= ~Flag.Errored;
+      }
+    },
+  },
 
-  get writable(): boolean | undefined {
-    return (this.flags & kHasWritable) !== 0 ? (this.flags & kWritable) !== 0 : undefined;
-  }
-  set writable(value: unknown) {
-    if (value == null) {
-      this.flags &= ~(kHasWritable | kWritable);
-    } else if (value) {
-      this.flags |= kHasWritable | kWritable;
-    } else {
-      this.flags |= kHasWritable;
-      this.flags &= ~kWritable;
-    }
-  }
+  writable: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & WritableFlag.HasWritable) !== 0 ? (this[kState] & WritableFlag.Writable) !== 0 : undefined;
+    },
+    set(this: WritableState, value) {
+      if (value == null) {
+        this[kState] &= ~(WritableFlag.HasWritable | WritableFlag.Writable);
+      } else if (value) {
+        this[kState] |= WritableFlag.HasWritable | WritableFlag.Writable;
+      } else {
+        this[kState] |= WritableFlag.HasWritable;
+        this[kState] &= ~WritableFlag.Writable;
+      }
+    },
+  },
 
-  get defaultEncoding(): any {
-    return (this.flags & kWritableDefaultUTF8Encoding) !== 0 ? "utf8" : this.defaultEncodingValue;
-  }
-  set defaultEncoding(value: unknown) {
-    if (value === "utf8" || value === "utf-8") {
-      this.flags |= kWritableDefaultUTF8Encoding;
-    } else {
-      this.flags &= ~kWritableDefaultUTF8Encoding;
-      this.defaultEncodingValue = value;
-    }
-  }
+  defaultEncoding: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & WritableFlag.DefaultUTF8Encoding) !== 0 ? "utf8" : this[kDefaultEncodingValue];
+    },
+    set(this: WritableState, value) {
+      if (value === "utf8" || value === "utf-8") {
+        this[kState] |= WritableFlag.DefaultUTF8Encoding;
+      } else {
+        this[kState] &= ~WritableFlag.DefaultUTF8Encoding;
+        this[kDefaultEncodingValue] = value;
+      }
+    },
+  },
 
   // The callback that the user supplies to write(chunk, encoding, cb).
-  get writecb(): any {
-    return (this.flags & kWriteCb) !== 0 ? this.writeCbValue : nop;
-  }
-  set writecb(value: any) {
-    this.writeCbValue = value;
-    if (value) {
-      this.flags |= kWriteCb;
-    } else {
-      this.flags &= ~kWriteCb;
-    }
-  }
+  writecb: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & WritableFlag.WriteCb) !== 0 ? this[kWriteCbValue] : nop;
+    },
+    set(this: WritableState, value) {
+      this[kWriteCbValue] = value;
+      if (value) {
+        this[kState] |= WritableFlag.WriteCb;
+      } else {
+        this[kState] &= ~WritableFlag.WriteCb;
+      }
+    },
+  },
 
   // Storage for data passed to the afterWrite() callback in case of
   // synchronous _write() completion.
-  get afterWriteTickInfo(): any {
-    return (this.flags & kAfterWriteTickInfo) !== 0 ? this.afterWriteTickInfoValue : null;
-  }
-  set afterWriteTickInfo(value: any) {
-    this.afterWriteTickInfoValue = value;
-    if (value) {
-      this.flags |= kAfterWriteTickInfo;
-    } else {
-      this.flags &= ~kAfterWriteTickInfo;
-    }
+  afterWriteTickInfo: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & WritableFlag.AfterWriteTickInfo) !== 0 ? this[kAfterWriteTickInfoValue] : null;
+    },
+    set(this: WritableState, value) {
+      this[kAfterWriteTickInfoValue] = value;
+      if (value) {
+        this[kState] |= WritableFlag.AfterWriteTickInfo;
+      } else {
+        this[kState] &= ~WritableFlag.AfterWriteTickInfo;
+      }
+    },
+  },
+
+  buffered: {
+    __proto__: null,
+    enumerable: false,
+    get(this: WritableState) {
+      return (this[kState] & WritableFlag.Buffered) !== 0 ? this[kBufferedValue] : [];
+    },
+    set(this: WritableState, value) {
+      this[kBufferedValue] = value;
+      if (value) {
+        this[kState] |= WritableFlag.Buffered;
+      } else {
+        this[kState] &= ~WritableFlag.Buffered;
+      }
+    },
+  },
+});
+
+function WritableState(this: WritableState, options?, stream?, isDuplex?) {
+  // Bit map field to store WritableState more efficiently with 1 bit per field
+  // instead of a V8 slot per field.
+  this[kState] = WritableFlag.Sync | Flag.Constructed | Flag.EmitClose | Flag.AutoDestroy;
+
+  if (options?.objectMode) this[kState] |= Flag.ObjectMode;
+
+  if (isDuplex && options?.writableObjectMode) this[kState] |= Flag.ObjectMode;
+
+  // The point at which write() starts returning false
+  // Note: 0 is a valid value, means that we always return false if
+  // the entire buffer is not flushed immediately on write().
+  this.highWaterMark = options
+    ? getHighWaterMark(this, options, "writableHighWaterMark", isDuplex)
+    : getDefaultHighWaterMark(false);
+
+  if (!options || options.decodeStrings !== false) this[kState] |= WritableFlag.DecodeStrings;
+
+  // Should close be emitted on destroy. Defaults to true.
+  if (options && options.emitClose === false) this[kState] &= ~Flag.EmitClose;
+
+  // Should .destroy() be called after 'end' (and potentially 'finish').
+  if (options && options.autoDestroy === false) this[kState] &= ~Flag.AutoDestroy;
+
+  // Crypto is kind of old and crusty.  Historically, its default string
+  // encoding is 'binary' so we have to make this configurable.
+  // Everything else in the universe uses 'utf8', though.
+  const defaultEncoding = options ? options.defaultEncoding : null;
+  if (defaultEncoding == null || defaultEncoding === "utf8" || defaultEncoding === "utf-8") {
+    this[kState] |= WritableFlag.DefaultUTF8Encoding;
+  } else if (Buffer.isEncoding(defaultEncoding)) {
+    this[kState] &= ~WritableFlag.DefaultUTF8Encoding;
+    this[kDefaultEncodingValue] = defaultEncoding;
+  } else {
+    throw $ERR_UNKNOWN_ENCODING(defaultEncoding);
   }
 
-  get buffered(): any {
-    return (this.flags & kBuffered) !== 0 ? this.bufferedValue : [];
-  }
-  set buffered(value: any) {
-    this.bufferedValue = value;
-    if (value) {
-      this.flags |= kBuffered;
-    } else {
-      this.flags &= ~kBuffered;
-    }
-  }
+  // Not an actual buffer we keep track of, but a measurement
+  // of how much we're waiting to get pushed to some underlying
+  // socket or file.
+  this.length = 0;
 
-  getBuffer() {
-    return (this.flags & kBuffered) === 0 ? [] : ArrayPrototypeSlice.$call(this.bufferedValue, this.bufferedIndex);
-  }
+  // When true all writes will be buffered until .uncork() call.
+  this.corked = 0;
 
-  get bufferedRequestCount(): number {
-    return (this.flags & kBuffered) === 0 ? 0 : this.bufferedValue!.length - this.bufferedIndex;
-  }
+  // The callback that's passed to _write(chunk, cb).
+  this.onwrite = internals.onwrite!.bind(undefined, stream);
+
+  // The amount that is being written when _write is called.
+  this.writelen = 0;
+
+  // What resetBuffer(this) does. The constructor creates every property itself, so that all states have the same shape.
+  this[kBufferedValue] = null;
+  this.bufferedIndex = 0;
+  this[kState] |= WritableFlag.AllBuffers | WritableFlag.AllNoop;
+  this[kState] &= ~WritableFlag.Buffered;
+
+  // Number of pending user-supplied write callbacks
+  // this must be 0 before 'finish' can be emitted.
+  this.pendingcb = 0;
+}
+
+function resetBuffer(state: WritableState): void {
+  state[kBufferedValue] = null;
+  state.bufferedIndex = 0;
+  state[kState] |= WritableFlag.AllBuffers | WritableFlag.AllNoop;
+  state[kState] &= ~WritableFlag.Buffered;
+}
+
+WritableState.prototype.getBuffer = function getBuffer(this: WritableState) {
+  return (this[kState] & WritableFlag.Buffered) === 0
+    ? []
+    : ArrayPrototypeSlice.$call(this.buffered, this.bufferedIndex);
+};
+
+ObjectDefineProperty(WritableState.prototype, "bufferedRequestCount", {
+  __proto__: null,
+  get(this: WritableState) {
+    return (this[kState] & WritableFlag.Buffered) === 0 ? 0 : this[kBufferedValue]!.length - this.bufferedIndex;
+  },
+});
+
+interface ReadableStateConstructor {
+  new (options?, stream?, isDuplex?): ReadableState;
+  (this: ReadableState, options?, stream?, isDuplex?): void;
+  prototype: any;
+}
+
+interface WritableStateConstructor {
+  new (options?, stream?, isDuplex?): WritableState;
+  (this: WritableState, options?, stream?, isDuplex?): void;
+  prototype: any;
 }
 
 function isReadableState(value: unknown): value is ReadableState {
@@ -853,29 +874,20 @@ function isWritableState(value: unknown): value is WritableState {
   return value instanceof WritableState;
 }
 
-// A state object that another implementation of streams has made (readable-stream, a mock) keeps what is noted about it under a symbol.
-const kState = Symbol("kState");
-
 function flagsOf(state) {
-  return state instanceof ReadableState || state instanceof WritableState ? state.flags : state[kState];
+  return state[kState];
 }
 
 function addFlags(state, flags: number): void {
-  if (state instanceof ReadableState || state instanceof WritableState) state.flags |= flags;
-  else state[kState] |= flags;
+  state[kState] |= flags;
 }
 
 function removeFlags(state, flags: number): void {
-  if (state instanceof ReadableState || state instanceof WritableState) state.flags &= ~flags;
-  else state[kState] &= ~flags;
-}
-
-function createReadableState(options, stream, isDuplex: boolean): ReadableState {
-  return new ReadableState(options, stream, isDuplex);
+  state[kState] &= ~flags;
 }
 
 function createByteReadableState(highWaterMark: unknown): ReadableState {
-  const state = new ReadableState(undefined, undefined, false);
+  const state: ReadableState = new ReadableState(undefined, undefined, false);
   if (highWaterMark != null) {
     if (typeof highWaterMark !== "number" || !NumberIsInteger(highWaterMark) || highWaterMark < 0) {
       throw $ERR_INVALID_ARG_VALUE("options.highWaterMark", highWaterMark);
@@ -885,30 +897,24 @@ function createByteReadableState(highWaterMark: unknown): ReadableState {
   return state;
 }
 
+function createUnreadByteState(highWaterMark: number): ReadableState {
+  return new ReadableState(kUnreadBytes, highWaterMark, false);
+}
+
 function advanceFlags(state: ReadableState, from: number, to: number): boolean {
-  if (state.flags !== from || state.length !== 0) return false;
-  state.flags = to | 0;
+  if (state[kState] !== from || state.length !== 0) return false;
+  state[kState] = to | 0;
   return true;
 }
 
-function createWritableState(options, stream, isDuplex: boolean): WritableState {
-  return new WritableState(options, stream, isDuplex);
-}
-
-// Accessors that cannot be redefined and methods that are enumerable, as when they were defined one by one.
-function restoreAttributes(prototype: object) {
-  const names = ObjectGetOwnPropertyNames(prototype);
-  for (let i = 0; i < names.length; i++) {
-    const name = names[i];
-    if (name !== "constructor" && name !== "getBuffer") ObjectDefineProperty(prototype, name, { configurable: false });
+declare global {
+  namespace $Node {
+    type ReadableState = import("internal/streams/state").ReadableState;
+    type WritableState = import("internal/streams/state").WritableState;
+    /** What a program may have put where a state belongs: the state of another implementation of streams, or its own object. */
+    type ForeignState = Record<string, unknown>;
   }
 }
-function makeEnumerable(prototype: object, name: string) {
-  ObjectDefineProperty(prototype, name, { enumerable: true });
-}
-restoreAttributes(ReadableState.prototype);
-restoreAttributes(WritableState.prototype);
-if (!IS_BUN_AOT) makeEnumerable(WritableState.prototype, "getBuffer");
 
 export type { ReadableState, WritableState, BufferedWrite, AfterWriteTickInfo, WriteCallback };
 
@@ -916,11 +922,11 @@ export default {
   getHighWaterMark,
   getDefaultHighWaterMark,
   setDefaultHighWaterMark,
-  ReadableState,
-  WritableState,
-  createReadableState,
+  ReadableState: ReadableState as unknown as ReadableStateConstructor,
+  WritableState: WritableState as unknown as WritableStateConstructor,
+  resetBuffer,
   createByteReadableState,
-  createWritableState,
+  createUnreadByteState,
   isReadableState,
   isWritableState,
   flagsOf,
@@ -929,4 +935,14 @@ export default {
   advanceFlags,
   internals,
   nop,
-};
+  kState,
+  kOnConstructed,
+  kErroredValue,
+  kDefaultEncodingValue,
+  kDecoderValue,
+  kEncodingValue,
+  kOnFinishedValue,
+  kWriteCbValue,
+  kAfterWriteTickInfoValue,
+  kBufferedValue,
+} as const;

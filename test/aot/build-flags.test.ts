@@ -1,5 +1,5 @@
 // The flags of `bun build` that change what the program does. Each program is built with `--compile` and with `--compile --aot` under the same
-// flags, and both executables print what is written here. A flag that --aot does not honor stops the build and says so.
+// flags, and both executables print what is written here. A flag that --aot does not support stops the build with an error.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
@@ -112,7 +112,7 @@ console.log(evaluated, tools.keep("kept"));`,
   "--banner and --footer that are comments": { flags: ["--banner=// a banner", "--footer=/* a footer */"], files: { "main.ts": `console.log("ran");` }, prints: "ran\n" },
 };
 
-const refused: Record<string, string[]> = {
+const rejected: Record<string, string[]> = {
   "--banner with code": ["--banner=globalThis.fromBanner = 1;"],
   "--footer with code": ["--footer=globalThis.fromFooter = 1;"],
 };
@@ -153,9 +153,9 @@ describe.concurrent("compile/aot/flags of bun build", () => {
       }),
     600_000,
   );
-  for (const [what, flags] of Object.entries(refused)) {
-    test("refused in words: " + what, async () => {
-      using dir = tempDir("aot-build-flags-refused", { "main.ts": `console.log("ran");` });
+  for (const [what, flags] of Object.entries(rejected)) {
+    test("stops the build with an error: " + what, async () => {
+      using dir = tempDir("aot-build-flags-rejected", { "main.ts": `console.log("ran");` });
       const built = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, "main.ts", "--outfile", join(String(dir), "program")], String(dir), bunEnv);
       expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.stringContaining(`--aot does not support ${what}`), exitCode: 1 });
     }, 60_000);

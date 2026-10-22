@@ -1,1 +1,0 @@
-{ "build": ["--minify"], "reference": "compiled" }

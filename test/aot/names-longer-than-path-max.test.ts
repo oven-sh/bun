@@ -32,8 +32,10 @@ test.each([[["--compile-in-place"]], [[]]])("a relative name of 100,000 letters 
   expect(await run(app, ["../built.exe"])).toEqual(plain);
 }, 120_000);
 
-test("nor under bun run --aot", async () => {
+test.each(["--aot", "--debug-aot"])("nor under bun run %s", async flag => {
   using dir = tempDir("aot-names-longer-than-a-path", files);
   const app = join(String(dir), "app");
-  expect(await run(app, [bunExe(), "run", "--aot", "./main.ts"])).toEqual(await run(app, [bunExe(), "run", "./main.ts"]));
+  const { stderr, ...compiled } = await run(app, [bunExe(), "run", flag, "./main.ts"]);
+  // The build warns on stderr that the paths are no constants.
+  expect({ ...compiled, stderr: stderr.split("\n").filter(line => line.startsWith("error")).join("\n") }).toEqual(await run(app, [bunExe(), "run", "./main.ts"]));
 }, 120_000);

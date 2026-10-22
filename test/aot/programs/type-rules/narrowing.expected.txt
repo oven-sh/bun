@@ -1,9 +1,0 @@
-guard, a string as a number: TypeError
-guard, a boolean as a number: TypeError
-guard, an object as a number: TypeError
-assertion function, a number as a string, length: TypeError
-assertion function, a number as a string, +: TypeError
-generic cast: TypeError
-generic cast to a variable: TypeError
-generic element: TypeError
-plain data with a field of another kind: TypeError

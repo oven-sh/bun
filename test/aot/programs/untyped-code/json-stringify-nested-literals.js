@@ -1,9 +1,10 @@
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())[1]);
 function measure(label, run) {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
-    const handedOver = aotOperationCount("operationAOTTypedJSONAppendValue");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const handedOver = aotOperationCount("operationAOTJSONAppendValue");
     let text = "";
     for (let i = 0; i < 100; i++) text = run(i);
-    console.log(label + ": " + text + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTTypedJSONAppendValue") - handedOver) + " values handed to the runtime");
+    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - handedOver) + " values handed to the runtime");
 }
 let held;
 function hold(value) { held = value; return value; }

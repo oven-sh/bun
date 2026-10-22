@@ -1,4 +1,4 @@
-// Null and undefined are rejected where `number` or `boolean` is declared, also when they arrive through `any` or `unknown`.
+// Null and undefined pass the check of every declared type and stay what they are: a variable, cast, field, element, parameter or result declared `number`, `boolean` or `string` holds them as in plain Bun.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }
@@ -20,7 +20,7 @@ attempt("field, null as number", () => { rec.n = hide(null) })
 attempt("field, null as boolean", () => { rec.b = hide(null) })
 console.log(show(rec))
 attempt("field of a literal, undefined as number", () => { const made: Rec = { n: hide(undefined), s: hide(null), b: true }; return show(made) })
-// The elements of an array are not guaranteed: the store is accepted, the read is tested. By itself an element read is `T | undefined`, and undefined in arithmetic is NaN.
+// The elements of an array: the read is checked, and null and undefined pass that check too. In arithmetic undefined is NaN and null is 0.
 const nums: number[] = [1.5, 2.5]
 attempt("element, store of undefined", () => { nums[1] = hide(undefined) })
 attempt("element, store of null", () => { nums[2] = hide(null) })

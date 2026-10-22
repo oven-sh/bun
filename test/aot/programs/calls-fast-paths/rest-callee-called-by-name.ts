@@ -1,5 +1,5 @@
 // A large method with a rest parameter that only reads its rest arguments: no array is allocated for the call.
-// IR+ CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
+// IR+ CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
 declare const console: any;
 function pad(n: number): number { let s = 0; for (let i = 0; i < n; i++) { s += i * 3; s ^= i << 2; s += s % 7; s -= i & 5; s += (s >> 3) + (i | 9); s ^= s * 31; s += i % 11; s -= s & 255; s += i * i; s ^= s >>> 5; s += (i + 1) * 13; s -= s % 17; s ^= i * 7; s += s & 63; s -= i >> 1; s += s % 29; s ^= i + 19; s += (s | 3) - i; s -= s % 5; s ^= s << 1; } return s; }
 class Emitter { count = 0; emit(type: string, ...r: unknown[]): boolean { if (type === "never") this.count += pad(r.length); switch (r.length) { case 0: this.count++; break; case 1: if (r[0] !== undefined) this.count += 2; break; default: if (r[1] !== undefined) this.count += r.length; }

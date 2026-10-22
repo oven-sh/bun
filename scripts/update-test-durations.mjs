@@ -149,8 +149,9 @@ async function findSourceBuilds(want) {
 
 async function collect(build, stepKey, into) {
   const allJobs = (await (await api(`builds/${build}`)).json()).jobs;
-  // Only a build that ran all of test/aot has this step; the others run a tenth of it (AotTests in .buildkite/ci.ts).
-  const ranAllOfAot = allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
+  // Only a build that ran all of test/aot has the asan lane's step; the others run a tenth of it, and Windows arm64
+  // always does (getAotTests in .buildkite/ci.ts).
+  const ranAllOfAot = stepKey !== lanes["windows-aarch64"] && allJobs.some(j => j.step_key === aotStepOf(lanes.asan));
   const jobs = allJobs.filter(
     j =>
       (j.step_key === stepKey || (ranAllOfAot && j.step_key === aotStepOf(stepKey))) &&

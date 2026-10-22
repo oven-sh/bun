@@ -27,7 +27,7 @@ function describe(object) {
 }
 
 const said = new Set();
-const before = count("createThis:remembered");
+const before = count("operationAOTCreateThis");
 for (let i = 0; i < 2000; i++) {
   said.add(String(Object.getPrototypeOf(Reflect.construct(Params, [])) === Params.prototype));
   said.add(describe(Reflect.construct(Point, [1, 2])));
@@ -39,9 +39,9 @@ for (let i = 0; i < 2000; i++) {
   said.add(describe(Reflect.construct(Heir, [4, 5])));
   said.add(describe(Reflect.construct(Point, [6, 7], Heir)));
 }
-const remembered = count("createThis:remembered") - before;
+const asked = count("operationAOTCreateThis") - before;
 console.log([...said].join("\n"));
-console.log(!counts || remembered >= 5000 ? "what `this` is made of was remembered as a rule" : "what `this` is made of was remembered " + remembered + " times");
+console.log(!counts || asked <= 13000 ? "what `this` is made of was remembered as a rule" : "the run time was asked what `this` is made of " + asked + " times");
 
 // A `prototype` that is replaced is what the next object inherits from, whoever constructs.
 const first = Point.prototype;
@@ -64,10 +64,10 @@ const watched = new Proxy(Point, { get(target, key, receiver) { log.push("get " 
 for (let i = 0; i < 3; i++) describe(Reflect.construct(Point, [1, 2], watched));
 console.log(log.join());
 function WithGetter() {}
-let asked = 0;
-const target = Object.defineProperty(function () {}.bind(), "prototype", { get() { asked++; return Other.prototype; } });
+let reads = 0;
+const target = Object.defineProperty(function () {}.bind(), "prototype", { get() { reads++; return Other.prototype; } });
 for (let i = 0; i < 3; i++) said.add(describe(Reflect.construct(WithGetter, [], target)));
-console.log(asked, describe(Reflect.construct(WithGetter, [], target)));
+console.log(reads, describe(Reflect.construct(WithGetter, [], target)));
 
 // Other ways in.
 console.log(describe(Array.from.call(Point, [1, 2, 3])));

@@ -3,10 +3,13 @@
 #include "Bindgen/IDLConvertNumbers.h"
 #include "Bindgen/IDLTypes.h"
 #include "JSDOMConvert.h"
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/CallFrameInlines.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/StringObject.h>
+#include <optional>
 #include <utility>
 
 namespace Bun {
@@ -42,8 +45,13 @@ template<> struct IDLHumanReadableName<Bindgen::IDLStrictUTF8String> : BaseIDLHu
     static constexpr auto humanReadableName = std::to_array("string");
 };
 template<> struct IDLHumanReadableName<Bindgen::IDLLooseUTF8String> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
-template<> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource> : BaseIDLHumanReadableName {
+template<> struct IDLHumanReadableName<Bindgen::IDLRawString> : IDLHumanReadableName<Bindgen::IDLStrictUTF8String> {};
+template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSource<allowShared>> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("ArrayBuffer or ArrayBufferView");
+};
+
+template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = name;
 };
 
 namespace Bindgen {
@@ -57,6 +65,108 @@ void throwNotUnsharedBufferSource(JSC::JSGlobalObject& globalObject, JSC::ThrowS
 {
     ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView that is not shared"_s);
 }
+
+// What `ToString` gives for a `String` object, which runs its `toString`. Any other value as it is.
+ALWAYS_INLINE JSC::JSValue stringOfStringObject(JSC::JSGlobalObject& globalObject, JSC::JSValue value)
+{
+    if (value.inherits<JSC::StringObject>()) [[unlikely]]
+        return value.toString(&globalObject);
+    return value;
+}
+
+// An argument of a function whose body is C++ (`cppSymbol`). The frame of the caller holds it for the whole call, and the body borrows
+// nothing from it that would outlive the value in its own hands, so nothing is kept alive here and the call of the body is the last thing done.
+class ArgumentInFrame {
+public:
+    ALWAYS_INLINE ArgumentInFrame(JSC::JSValue value)
+        : m_value(value)
+    {
+    }
+
+    ALWAYS_INLINE JSC::JSValue value() const { return m_value; }
+
+private:
+    JSC::JSValue m_value;
+};
+
+// What an inline C++ body (`cppInlineBody`) is handed by the generated host function: `at(n)` reads the argument from the frame of the
+// caller where the body asks for it, and answers undefined for one that is left out.
+class ArgumentsInFrame {
+public:
+    ALWAYS_INLINE explicit ArgumentsInFrame(JSC::CallFrame& callFrame)
+        : m_callFrame(callFrame)
+    {
+    }
+
+    ALWAYS_INLINE JSC::JSValue at(unsigned index) const { return m_callFrame.argument(index); }
+
+private:
+    JSC::CallFrame& m_callFrame;
+};
+
+// The same from the entry point for compiled code, which passes the arguments in registers and the empty value for one that it leaves out.
+template<unsigned count>
+class ArgumentsInRegisters {
+public:
+    template<typename... Values>
+    ALWAYS_INLINE ArgumentsInRegisters(Values... values)
+        : m_values { values... }
+    {
+        static_assert(sizeof...(Values) == count);
+    }
+
+    ALWAYS_INLINE JSC::JSValue at(unsigned index) const
+    {
+        JSC::JSValue value = JSC::JSValue::decode(m_values[index]);
+        return value ? value : JSC::jsUndefined();
+    }
+
+private:
+    JSC::EncodedJSValue m_values[count];
+};
+
+// `b.rest`: the arguments of a call from `first` on. They stay in the frame of the caller unless one is converted.
+class RestArguments {
+    WTF_FORBID_HEAP_ALLOCATION;
+    WTF_MAKE_NONCOPYABLE(RestArguments);
+
+public:
+    ALWAYS_INLINE RestArguments(JSC::CallFrame& callFrame, unsigned first)
+        : m_values(std::bit_cast<const JSC::EncodedJSValue*>(callFrame.addressOfArgumentsStart()) + first)
+        , m_size(callFrame.argumentCount() > first ? callFrame.argumentCount() - first : 0)
+    {
+        static_assert(sizeof(JSC::JSValue) == sizeof(JSC::EncodedJSValue));
+    }
+
+    const JSC::EncodedJSValue* data() const { return m_values; }
+    size_t size() const { return m_size; }
+    JSC::JSValue at(size_t index) const { return JSC::JSValue::decode(m_values[index]); }
+
+    // As stringOfStringObject, in order.
+    ALWAYS_INLINE void convertStringObjects(JSC::JSGlobalObject& globalObject)
+    {
+        for (size_t index = 0; index < m_size; ++index) {
+            if (at(index).inherits<JSC::StringObject>()) [[unlikely]]
+                return convertStringObjectsSlow(globalObject);
+        }
+    }
+
+private:
+    NEVER_INLINE void convertStringObjectsSlow(JSC::JSGlobalObject& globalObject)
+    {
+        auto scope = DECLARE_THROW_SCOPE(JSC::getVM(&globalObject));
+        auto& converted = m_converted.emplace();
+        for (size_t index = 0; index < m_size; ++index) {
+            converted.append(stringOfStringObject(globalObject, at(index)));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        m_values = converted.data();
+    }
+
+    const JSC::EncodedJSValue* m_values;
+    const size_t m_size;
+    std::optional<JSC::MarkedArgumentBuffer> m_converted;
+};
 
 // std::nullopt for anything else, a shared buffer included. A detached or out-of-bounds view is empty.
 inline std::optional<std::span<const uint8_t>> unsharedBufferSourceSpan(JSC::VM& vm, JSC::JSValue value)
@@ -110,7 +220,7 @@ private:
         if constexpr (options.toStringOtherwise)
             isRefused = (options.refuseUndefined && value.isUndefined()) || (options.refuseNull && value.isNull());
         else
-            isRefused = !options.fromString || !value.inherits<JSC::StringObject>();
+            isRefused = !options.fromString || options.refuseStringObject || !value.inherits<JSC::StringObject>();
         if (isRefused) {
             ctx.throwTypeMustBe(globalObject, scope, expected);
             return;
@@ -146,11 +256,33 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLStrictStringOrStringObject
     }
 };
 
-template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource> {
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawString> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawString> {
+    static constexpr bool conversionHasSideEffects = false;
+
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSString*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (value.isString()) [[likely]]
+            return JSC::asString(value);
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotString(globalObject, scope);
+    }
+};
+
+template<bool allowShared>
+struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource<allowShared>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawBufferSource<allowShared>> {
     template<Bun::IDLConversionContext Ctx>
     static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx&)
     {
-        if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
+        if constexpr (allowShared) {
+            if (!value.inherits<JSC::JSArrayBufferView>() && !value.inherits<JSC::JSArrayBuffer>())
+                return std::nullopt;
+        } else if (!Bun::Bindgen::unsharedBufferSourceSpan(JSC::getVM(&globalObject), value))
             return std::nullopt;
         return value;
     }
@@ -158,7 +290,10 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawBufferSource> : Bun::De
     template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
-        Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
+        if constexpr (allowShared)
+            ctx.throwTypeMustBe(globalObject, scope, "an ArrayBuffer or ArrayBufferView"_s);
+        else
+            Bun::Bindgen::throwNotUnsharedBufferSource(globalObject, scope, ctx);
     }
 };
 
@@ -176,6 +311,25 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::Default
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, JSClass::info()->className));
+    }
+};
+
+template<typename JSClass, auto name>
+struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (auto* object = dynamicDowncast<JSClass>(value)) {
+            if (void* wrapped = object->wrapped())
+                return wrapped;
+        }
+        return std::nullopt;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwTypeMustBe(globalObject, scope, WTF::makeString("an instance of "_s, Bun::idlHumanReadableName<Bun::Bindgen::IDLWrappedInterface<JSClass, name>>()));
     }
 };
 
@@ -261,7 +415,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLArray<IDL>> : Bun::DefaultTryConverte
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (value.isCell() && value.asCell()->classInfo() == JSC::JSArray::info())
+        if (JSC::isJSArray(value))
             return Bun::convertIDL<typename Bun::Bindgen::IDLArray<IDL>::Base>(globalObject, value, ctx);
         return std::nullopt;
     }

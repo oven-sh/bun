@@ -1,1 +1,0 @@
-Plain Bun prints "any to an annotated variable: string:121"; --aot prints "any to an annotated variable: THROWS expected number | undefined, got string "12"".

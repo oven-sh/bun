@@ -57,7 +57,7 @@ check(repeat(() => home.read()), "exported", "a read from super");
 Object.defineProperty(grandparent, "value", { value: "shadowed" });
 check(home.read(), "shadowed", "a read from super, after an object further up got the property");
 
-const builtinsAreFixed = Object.isFrozen(Array.prototype);
+const builtinsAreFixed = !Object.isExtensible(Object.prototype);
 function readFromNumber(x) { return x.value; }
 function readLengthOfNumber(x) { return x.length; }
 function readFromBoolean(x) { return x.value; }

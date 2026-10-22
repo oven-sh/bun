@@ -23,7 +23,7 @@ class Lab extends Kelvin {
 function fahrenheits(t, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += t.fahrenheit; return sum; }
 function labels(t, turns) { let text = ""; for (let i = 0; i < turns; i++) text = t.label; return text; }
 function onlys(t, turns) { let seen; for (let i = 0; i < turns; i++) seen = t.only; return seen; }
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 const receivers = [new Temperature(), new Kelvin(), new Lab()];
 let most = 0;
 const results = [];

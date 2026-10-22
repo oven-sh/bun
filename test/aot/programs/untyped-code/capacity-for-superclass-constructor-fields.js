@@ -57,9 +57,9 @@ function describe(object) {
 const said = new Set();
 const counts = typeof aotOperationCount === "function";
 for (let i = 0; i < 3000; i++) said.add(describe(new Injected("r")));
-const found = count("createThis:places-found-along-the-prototype-chain");
+const grown = count("operationAOTEnsureExtensionGranules");
 console.log([...said].join("\n"));
-console.log(!counts || found >= 20 ? "the object had room for what the constructors above give it" : "room for " + found + " more was found along the prototype chain");
+console.log(!counts || grown <= 300 ? "the object had room for what the constructors above give it" : "the storage of " + grown + " objects had to grow");
 
 // Nothing of the program runs while room is made: no getter of `constructor`, no trap of a Proxy.
 const log = [];

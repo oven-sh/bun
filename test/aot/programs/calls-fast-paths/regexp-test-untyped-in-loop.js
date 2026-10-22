@@ -1,6 +1,6 @@
-// `pattern.test(value)` and `pattern.exec(value)` in a loop, where nothing says that the value is a string: the stub that tests the receiver and the argument is called there too, not the engine's function.
-// IR= 1 countPlain Call .* speculated method 8
-// IR= 1 firstWords Call .* speculated method 7
+// `pattern.test(value)` and `pattern.exec(value)` in a loop, where nothing says that the value is a string: the receiver is tested and the built-in is called in place there too, not by name.
+// IR= 1 countPlain CallBuiltin v[0-9]+ \(v[0-9]+\) overload=RegExpPrototypeTest/
+// IR= 1 firstWords CallBuiltin v[0-9]+ \(v[0-9]+\) overload=RegExpPrototypeExec/
 var isPlain = /^\w*$/, word = /\w+/;
 function countPlain(values) {
   var count = 0;

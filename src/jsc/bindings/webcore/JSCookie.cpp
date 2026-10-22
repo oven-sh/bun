@@ -1,4 +1,5 @@
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSCookie.h"
 
 #include "DOMClientIsoSubspaces.h"
@@ -287,6 +288,7 @@ using JSCookieDOMConstructor = JSDOMConstructor<JSCookie>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Cookie, JSCookieDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSCookieDOMConstructor>(callFrame->jsCallee());
@@ -452,7 +454,7 @@ JSObject* JSCookie::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSCookie>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCookie::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCookie::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCookieDOMConstructor, DOMConstructorID::Cookie>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -904,12 +906,12 @@ void JSCookie::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_expires);
 }
 
-NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Cookie>&& impl)
 {
     return createWrapper<Cookie>(globalObject, WTF::move(impl));
 }
 
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie& impl)
+JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Cookie& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }

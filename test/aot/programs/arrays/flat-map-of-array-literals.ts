@@ -1,11 +1,11 @@
 // `list.flatMap(x => [..])`: where the callback cannot be observed and every result is an array literal written in it, the literals are never made: their elements go straight into the result, or are only counted.
 // IR= 0 howManyParts NewArray
-// IR= 1 bothEnds NewArrayWith
-// IR= 1 bothEnds = NewArray \(
-// IR= 1 afterOtherLinks NewArrayWith
-// IR= 1 afterOtherLinks = NewArray \(
-// IR= 1 withWhatItCaptures NewArrayWith
-// IR= 1 withWhatItCaptures = NewArray \(
+// IR= 1 bothEnds NewArray(Like|WithCapacity)
+// IR= 1 bothEnds = NewArray - \(
+// IR= 1 afterOtherLinks NewArray(Like|WithCapacity)
+// IR= 1 afterOtherLinks = NewArray - \(
+// IR= 1 withWhatItCaptures NewArray(Like|WithCapacity)
+// IR= 1 withWhatItCaptures = NewArray - \(
 // IR= 0 nothingEver NewArray
 interface Parcel {
   weight: number;

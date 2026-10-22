@@ -1,11 +1,11 @@
 // String concatenations with numbers among their operands, and their use as property keys.
-// CALLS- pairKey operationAOTTypedConcatenateWithIntegers
-// CALLS- templateKey operationAOTTypedConcatenateWithIntegers
-// CALLS- idAndAlias operationAOTTypedConcatenateWithIntegers
-// CALLS- three operationAOTTypedConcatenateWithIntegers
-// CALLS- named operationAOTTypedConcatenateWithIntegers
-// CALLS- stringsOnly operationAOTTypedConcatenateWithIntegers
-// CALLS- handled operationAOTTypedConcatenateWithIntegers
+// CALLS- pairKey operationAOTConcatenate
+// CALLS- templateKey operationAOTConcatenate
+// CALLS- idAndAlias operationAOTConcatenate
+// CALLS- three operationAOTConcatenate
+// CALLS- named operationAOTConcatenate
+// CALLS- stringsOnly operationAOTConcatenate
+// CALLS- handled operationAOTConcatenate
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

@@ -1,5 +1,5 @@
-// Every value stored into an `int32` here is one by proof, so the program builds, no store is tested when it runs, and it prints what plain Bun prints.
-// IR- Cast v\d+ As integer
+// Every value stored into an `int32` or cast to one here is one by proof, so the program builds, no store is tested when it runs, and it prints what plain Bun prints. A cast converts nothing.
+// IR- : (i32|int\S*) = Claim v\d+(?!.* isProven)
 // VALIDATED compiles
 import type { int32 } from "bun";
 
@@ -31,6 +31,7 @@ interface Point {
   x: int32;
   y?: int32;
 }
+type Lane = int32;
 
 function add(a: int32, b: int32): int32 { return (a + b) | 0; }
 function times(a: int32, b: int32): int32 { return Math.imul(a, b); }
@@ -44,6 +45,7 @@ function right(a: number, n: number): int32 { return a >> n; }
 function high(a: number): int32 { return a >>> 1; }
 function zeros(a: number): int32 { return Math.clz32(a); }
 function element(i: int32): int32 { return bytes[i] | 0; }
+function elementOrNothing(i: int32): int32 { return bytes[i]; }
 function code(i: int32): int32 { return text.charCodeAt(i) | 0; }
 function length(s: string): int32 { return s.length; }
 function find(s: string): int32 { return s.indexOf("t"); }
@@ -57,6 +59,10 @@ function least(a: int32, b: int32): int32 { return Math.min(a, b); }
 function same(a: int32): int32 { const b: int32 = a; let c: int32 = b; c = a; return c; }
 function next(a: int32): int32 { return a < 100 ? a + 1 : a; }
 function optional(p: Point): int32 { return p.y ?? 0; }
+function maybe(p: Point): int32 { return p.y as number; }
+function cast(a: number): int32 { return (a | 0) as int32; }
+function castSum(a: int32, b: int32): Lane { return ((a + b) | 0) as Lane; }
+function castSame(a: int32): number { return a as int32; }
 function opposite(a: int32): int32 { const low = a & 255; return low !== 0 ? -low : 0; }
 function previous(a: int32): int32 { return a !== -2147483648 ? a - 1 : a; }
 function upTo(from: int32, to: int32): int32 { let last: int32 = 0; for (let i: int32 = from; i < to; i++) last = i; return last; }
@@ -69,6 +75,9 @@ function counter(): { next(): int32 } {
   return holder;
 }
 const addSix = add.bind(null, 6, given[0] | 0);
+let late: int32;
+const read = (): int32 => late;
+const seven = 7 as int32;
 interface Token { kind: int32 }
 interface TokenConstructor { new (kind: int32): Token }
 function Token(this: Token, kind: int32): void { this.kind = kind; }
@@ -94,4 +103,7 @@ for (const n of given) {
 }
 console.log(kept, cursor.line, cursor.column, cursor.start, cursor.twice, Cursor.made, new Cursor().start, point.x, point.y, copy.x, copy.y, optional(point), optional({ x: 1 }));
 console.log(counter().next(), addSix(), new (Token as unknown as TokenConstructor)(given[0] | 0).kind);
-console.log(element(1), element(9), code(1), code(99), length(text), find(text), color(true), upTo(2, 5), upTo(2147483644, 2147483647), downTo(5, 2), downTo(-2147483645, -2147483648), scan(text));
+console.log(element(1), element(9), elementOrNothing(1), elementOrNothing(9), code(1), code(99), length(text), find(text), color(true), upTo(2, 5), upTo(2147483644, 2147483647), downTo(5, 2), downTo(-2147483645, -2147483648), scan(text));
+console.log(maybe(point), maybe({ x: 1 }), cast(given[1]), cast(given[2]), castSum(2147483647, 1), castSame(5), seven, read());
+late = 1;
+console.log(read());

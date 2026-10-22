@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it differs from plain Bun on purpose, and no expected output is stored for it"
-}

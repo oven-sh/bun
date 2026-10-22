@@ -1,0 +1,53 @@
+JSON.parse<Point> of {"x":1,"y":2}: value {"x":1,"y":2}
+through a function, {"x":1,"y":2}: value 3
+with a reviver, {"x":1,"y":2}: value {"x":2,"y":3}
+Point[] of {"x":1,"y":2}: value [{"x":1,"y":2},{"x":1,"y":2}]
+JSON.parse<Point> of {"y":2,"x":1,"z":3}: value {"y":2,"x":1,"z":3}
+through a function, {"y":2,"x":1,"z":3}: value 3
+with a reviver, {"y":2,"x":1,"z":3}: value {"y":3,"x":2,"z":4}
+Point[] of {"y":2,"x":1,"z":3}: value [{"y":2,"x":1,"z":3},{"y":2,"x":1,"z":3}]
+JSON.parse<Point> of {"x":"s","y":2}: TypeError at ["x"]
+through a function, {"x":"s","y":2}: TypeError at ["x"]
+with a reviver, {"x":"s","y":2}: TypeError at ["x"]
+Point[] of {"x":"s","y":2}: TypeError at [0,"x"],[1,"x"]
+JSON.parse<Point> of {"x":1}: TypeError at ["y"]
+through a function, {"x":1}: TypeError at ["y"]
+with a reviver, {"x":1}: TypeError at ["y"]
+Point[] of {"x":1}: TypeError at [0,"y"],[1,"y"]
+JSON.parse<Point> of [1,2]: TypeError at []
+through a function, [1,2]: TypeError at []
+with a reviver, [1,2]: TypeError at []
+Point[] of [1,2]: TypeError at [0],[1]
+JSON.parse<Point> of null: TypeError at []
+through a function, null: TypeError at []
+with a reviver, null: TypeError at []
+Point[] of null: TypeError at [0],[1]
+JSON.parse<Point> of {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
+through a function, {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
+with a reviver, {"x":{"x":1},"y":[2]}: TypeError at ["x"],["y"]
+Point[] of {"x":{"x":1},"y":[2]}: TypeError at [0,"x"],[0,"y"],[1,"x"],[1,"y"]
+JSON.parse<Point> of {"x":1,"y":: SyntaxError
+through a function, {"x":1,"y":: SyntaxError
+with a reviver, {"x":1,"y":: SyntaxError
+Point[] of {"x":1,"y":: SyntaxError
+validate<Point> of {"x":1,"y":2}: value {"x":1,"y":2}
+validate<Point> of {"x":"s","y":2}: TypeError at ["x"]
+validate<Point> of {"x":1}: TypeError at ["y"]
+validate<Point> of [1,2]: TypeError at []
+validate<Point> of null: TypeError at []
+validate<Point> of undefined: TypeError at []
+validate<Point> of 5: TypeError at []
+validate<Point> of {"x":1,"y":2,"more":[1]}: value {"x":1,"y":2,"more":[1]}
+JSON.parse<Shape> of {"kind":"circle","radius":1}: value {"kind":"circle","radius":1}
+validate<Shape> of {"kind":"circle","radius":1}: value {"kind":"circle","radius":1}
+JSON.parse<Shape> of {"kind":"circle","radius":"1"}: TypeError at ["radius"]
+validate<Shape> of {"kind":"circle","radius":"1"}: TypeError at ["radius"]
+JSON.parse<Shape> of {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}: value {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}
+validate<Shape> of {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}: value {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":1}]}
+JSON.parse<Shape> of {"kind":"box","corners":[{"x":0,"y":0}]}: TypeError at ["corners"]
+validate<Shape> of {"kind":"box","corners":[{"x":0,"y":0}]}: TypeError at ["corners"]
+JSON.parse<Shape> of {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":null}],"label":"l"}: TypeError at ["corners",1,"y"]
+validate<Shape> of {"kind":"box","corners":[{"x":0,"y":0},{"x":1,"y":null}],"label":"l"}: TypeError at ["corners",1,"y"]
+JSON.parse<Shape> of {"kind":"line"}: TypeError at ["kind"]
+validate<Shape> of {"kind":"line"}: TypeError at ["kind"]
+string

@@ -224,7 +224,7 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
       // supports regular files).
       symlinkSync("file.txt", join(targetDir, "link.txt"));
 
-      const out = await runUnderSeccomp(helperBin, EPERM, c.snippet(c.target(String(targetDir))));
+      const out = await runUnderSeccomp(helperBin, EPERM, c.snippet(c.target(targetDir)));
       if (out == null) {
         console.warn(`SKIP fs.${c.name} seccomp: seccomp not permitted in this environment`);
         return;

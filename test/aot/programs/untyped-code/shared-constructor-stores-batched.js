@@ -13,10 +13,10 @@ for (let i = 0; i < 24; i++) {
 const show = o => Object.keys(o).join() + ":" + o.events + o.count + o.limit + o.name + o.state;
 const round = () => { const seen = new Set(); for (const C of classes) seen.add(show(new C("n"))); return seen.size + " " + [...seen][5]; };
 for (let i = 0; i < 40; i++) round();
-const before = count("operationAOTTypedTryPutProperties");
+const before = count("operationAOTTryPutProperties");
 const said = new Set();
 for (let i = 0; i < 100; i++) said.add(round());
-const times = count("operationAOTTypedTryPutProperties") - before;
+const times = count("operationAOTTryPutProperties") - before;
 console.log([...said].join(" | "), times < 200 ? "and the operation went the long way under 200 times" : "and the operation went the long way " + times + " times");
 collect();
 console.log(round());

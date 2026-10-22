@@ -1,3 +1,3 @@
 {
- "rows": "alone: A s <- true: THROWS expected string, got boolean true\nB s <- true: THROWS expected string, got boolean true\nC s <- true: string caught at 3: THROWS expected string, got boolean true\nG s <- true: number 1;THROWS expected object | number | string, got boolean true\nand 23108 lines more"
+ "rows": "all agree"
 }

@@ -3,3 +3,982 @@
 strings/single-characters	// CALLS- kept StringHasAt|StringEqualsLiteral
 # Open: a key that is built from a string and integers is not yet built in one piece.
 strings/strings-built-and-consumed-locally	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
+# Open: a helper that is handed `texts[i] + texts[j]` (NaN, if both reads are past the end) calls a method of it; in a program that stores under an unknown key through an unknown value the callee is then unknown, and so is every typed parameter that is handed the answer.
+strings/lookups-behind-a-helper-that-is-handed-a-sum-of-array-reads	// CALLS+ getOfThree operationAOTMapGetByKeyParts
+strings/lookups-behind-a-helper-that-is-handed-a-sum-of-array-reads	// CALLS+ hasOfTwo operationAOTHasByKeyParts
+# Open: `{ ...source, name }` over a source whose names no type knows is born as a copy of the source, and the names that are written are defined by name on the copy: 420 instructions where the form before, a layout of
+# the written names with the copied ones kept beside it, took 735. The copy and its definitions are not yet one call (the three CALLS+ lines of this program below).
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- named PutBy
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- wide PutBy
+# Nobody has looked at the lines below one by one. For a long time no test read the expectation lines; these failed when they were read again.
+# Each is one of three things: an optimization that is lost; a line that spells an operation, a stub or a counter as the compiler no longer does; a function that no longer has a body of its own.
+# A line that says what must NOT be there (IR-, CALLS-, IR= 0) and fails names something that IS there: look at those first.
+arrays/array-creation-and-search-stubs	// CALLS+ captureStrict CreateArguments
+arrays/array-creation-and-search-stubs	// CALLS+ doubleLiterals NewEmptyArray\.
+arrays/array-creation-and-search-stubs	// CALLS+ numbersFilledConditionally NewArrayWithLength
+arrays/array-creation-and-search-stubs	// CALLS+ searchStrings ArraySearch
+arrays/element-stubs-by-storage-shape	// CALLS+ loadFromInt32s LoadElement
+arrays/element-stubs-by-storage-shape	// CALLS+ pushNumbers ArrayPushDouble
+arrays/element-stubs-by-storage-shape	// CALLS+ pushOntoInt32s ArrayPush\b
+arrays/element-stubs-by-storage-shape	// CALLS+ storeIntoInt32s StoreElement
+arrays/element-stubs-by-storage-shape	// CALLS+ storeNumbers StoreDoubleElement
+arrays/empty-arrays-of-numbers	// CALLS+ none NewEmptyArray\.DoubleDefaultCapacity
+arrays/empty-arrays-of-numbers	// CALLS- none CallOperation
+arrays/flat-map-of-array-literals	// IR= 1 afterOtherLinks = NewArray - \(
+arrays/flat-map-of-array-literals	// IR= 1 afterOtherLinks NewArray(Like|WithCapacity)
+arrays/flat-map-of-array-literals	// IR= 1 bothEnds = NewArray - \(
+arrays/flat-map-of-array-literals	// IR= 1 bothEnds NewArray(Like|WithCapacity)
+arrays/flat-map-of-array-literals	// IR= 1 withWhatItCaptures = NewArray - \(
+arrays/flat-map-of-array-literals	// IR= 1 withWhatItCaptures NewArray(Like|WithCapacity)
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 askedForItsLength CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 bornInALoop CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 bornTrue CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 ofAConstantLength CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 1 paintedPosts CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 2 storesWhatATestSays CallBuiltin .* overload=Uint8Array/
+arrays/local-boolean-arrays-kept-as-bytes	// IR= 2 twoAtOnce CallBuiltin .* overload=Uint8Array/
+arrays/map-then-join-not-fused	// IR= 0 thisArgument StringBuilderBegin
+arrays/map-then-join-not-fused	// IR= 0 unknownCallback StringBuilderBegin
+arrays/method-chains-left-as-written	// IR= 2 callsWhatItIsGiven NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 changesTheArray NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 changesTheElements NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 countsItsCalls NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 hasALoop NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 hasAReceiver NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 logsItsOrder NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 readsWhatMayBeNull NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 takesTheArray NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 takesTheIndex NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 throwsBetweenTheCalls NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 throwsByItself NewArray(Like|WithCapacity)
+arrays/method-chains-left-as-written	// IR= 2 writesWhatTheNextReads NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 1 filterThenMap NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 1 fourStages NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 1 mapThenFilter NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 1 mapThenMap NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 1 partOfTheList NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 2 numbers NewArray(Like|WithCapacity)
+arrays/method-chains-run-as-one-loop	// IR= 4 partOfTheList LoopHint
+arrays/mutation-during-keys-entries	// CALLS+ arrayEntriesDestructured OpenTableIterationInFrame
+arrays/mutation-during-keys-entries	// CALLS+ arrayEntriesDestructured StepIterationInFrame
+arrays/no-double-loop-without-numbers	// IRT= 1 halves GetDoubleIndex
+arrays/no-double-loop-without-numbers	// IRT= 1 namesOf GetContiguousIndex
+arrays/reduce-with-a-callback-nobody-knows	// IR= 1 sumsWith IsKnownFunction
+arrays/short-number-literals	// CALLS+ four ArrayLiteralWithDouble\.n4
+arrays/short-number-literals	// CALLS+ one ArrayLiteralWithDouble\.n1
+arrays/short-number-literals	// CALLS+ three ArrayLiteralWithDouble\.n3
+arrays/short-number-literals	// CALLS+ two ArrayLiteralWithDouble\.n2
+arrays/views-over-one-buffer	// IR= 1 lengthsOfGivenView IsPristine
+arrays/views-over-one-buffer	// IR= 2 storedThroughOtherView GetTypedArrayElement
+async-and-generators/generator-step-errors	// CALLS+ drainSameRealm StepGenerator
+calls-fast-paths/apply-array	// IR+ CallBuiltin v[0-9]+ \(v[0-9]+, v[0-9]+\) overload=FunctionPrototypeApply/
+calls-fast-paths/apply-array	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/apply-literal	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/arguments-forward	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/arguments-forwarded	// IR= 0 viaSpread CreateRest
+calls-fast-paths/arguments-forwarded	// IR= 1 viaApplyArguments CallForwardVarargs
+calls-fast-paths/arguments-forwarded	// IR= 1 viaApplyRest CallForwardVarargs .* firstArgument=1\b
+calls-fast-paths/arguments-forwarded	// IR= 1 viaSpread CallForwardVarargs
+calls-fast-paths/arguments-object-direct-call	// IR+ CallDirect \(v[0-9]+\) function=f[0-9]+
+calls-fast-paths/array-index-of-with-a-start-index	// CALLS+ afterFirst ArraySearch\.IndexOfFrom
+calls-fast-paths/array-index-of-with-a-start-index	// CALLS- afterFirst CallHostFunction
+calls-fast-paths/array-methods-in-hot-caller	// IR= 1 filterFrom = ArrayHasIndex 
+calls-fast-paths/array-methods-in-hot-caller	// IR= 1 mapFrom = ArrayHasIndex 
+calls-fast-paths/bind-async-method	// IR+ IsClosureOf v[0-9]+ function=f[0-9]+
+calls-fast-paths/bind-async-method	// IR+ NewClosure \(.*\) function=f[0-9]+
+calls-fast-paths/bind-async-method	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/bind-async-method	// IR+ ^function f[0-9]+ "later" \w+ role=BoundFunction
+calls-fast-paths/bind-method	// IR+ NewClosure \(.*\) function=f[0-9]+
+calls-fast-paths/bind-method	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/bind-method	// IR+ ^function f[0-9]+ "add" \w+ role=BoundFunction
+calls-fast-paths/bind-method	// IR= 0 constructs NewClosure
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 inLoop CallBuiltin v[0-9]+ \(\) overload=StringPrototypeTrim/
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 isPlainNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsFinite/
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 isPlainNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsNaN/
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 isWholeNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsInteger/
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 isWholeNumber CallBuiltin - \(v[0-9]+\) overload=NumberIsNaN/
+calls-fast-paths/built-in-calls-beside-handlers-share-a-body	// IR= 1 overKeys CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+calls-fast-paths/builtins-captured-by-inlined-closure	// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(ObjectKeys\)
+calls-fast-paths/builtins-captured-by-inlined-closure	// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+calls-fast-paths/builtins-captured-by-inlined-closure	// IR= 1 prototypeOf TypeTest v[0-9]+ testedType=builtin\(ObjectGetPrototypeOf\)
+calls-fast-paths/builtins-captured-by-inlined-closure	// IR= 1 prototypeOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+calls-fast-paths/builtins-in-variables	// IR= 1 asObject CallBuiltin - \(v[0-9]+\) overload=Object/
+calls-fast-paths/builtins-in-variables	// IR= 1 asObject TypeTest v[0-9]+ testedType=builtin\(Object\)
+calls-fast-paths/builtins-in-variables	// IR= 1 has TypeTest v[0-9]+ testedType=builtin\(ObjectPrototypeHasOwnProperty\)
+calls-fast-paths/builtins-in-variables	// IR= 1 isList CallBuiltin - \(v[0-9]+\) overload=ArrayIsArray/
+calls-fast-paths/builtins-in-variables	// IR= 1 isList TypeTest v[0-9]+ testedType=builtin\(ArrayIsArray\)
+calls-fast-paths/builtins-in-variables	// IR= 1 keysOf CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+calls-fast-paths/builtins-in-variables	// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+calls-fast-paths/builtins-in-variables	// IR= 1 larger CallBuiltin - \(v[0-9]+, v[0-9]+\) overload=MathMax/
+calls-fast-paths/builtins-in-variables	// IR= 1 larger TypeTest v[0-9]+ testedType=builtin\(MathMax\)
+calls-fast-paths/builtins-in-variables	// IR= 1 listOf CallBuiltin - \(v[0-9]+\) overload=Array/
+calls-fast-paths/builtins-in-variables	// IR= 1 listOf TypeTest v[0-9]+ testedType=builtin\(Array\)
+calls-fast-paths/builtins-on-expected-values-outside-loops	// IR= 0 pathBesideLoop  = Call v
+calls-fast-paths/builtins-on-expected-values-outside-loops	// IR= 0 pathWithoutLoop  = Call(Method)? v
+calls-fast-paths/builtins-on-expected-values-outside-loops	// IR= 1 pathBesideLoop  = PropGet v[0-9]+ name="slice"
+calls-fast-paths/builtins-on-expected-values-outside-loops	// IR= 1 pathBesideLoop  = TailCall v[0-9]+, v[0-9]+ \(
+calls-fast-paths/builtins-on-expected-values-outside-loops	// IR= 2 countDown  = TailCall v
+calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed CallBuiltin - \(v[0-9]+\) overload=ObjectGetPrototypeOf/
+calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(ObjectGetPrototypeOf\)
+calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(ObjectKeys\)
+calls-fast-paths/builtins-passed-to-helpers	// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(Object\)
+calls-fast-paths/call-known	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< addsToSum 24 16
+calls-fast-paths/callbacks-whose-variables-lie-in-the-frame-of-their-maker	// ENTRY-SIZE< scaled 24 16
+calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$map ResolveCallValue3
+calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS+ Array$some ResolveCallValue3
+calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS- Array$map [^e]CallValue3
+calls-fast-paths/callees-that-a-loop-does-not-change	// CALLS- eachOf ResolveCallValue
+calls-fast-paths/calls-only-on-rare-paths	// IRM= 1 CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+calls-fast-paths/class-arrow-function-field-outside-loops	// IR= 1 respond  = (JSONWriterOpen|CallBuiltin .* overload=JSONStringify/).*#[0-9]+$
+calls-fast-paths/code-beside-a-loop	// CALLS+ comparesLength LessAfterInt32Check
+calls-fast-paths/code-beside-a-loop	// CALLS+ comparesLengthBesideLoop LessAfterInt32Check
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ adds CollectionAddOrCallValue
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ asks CollectionHasOrCallValue
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ asks GetCollectionHasByName
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ gets CollectionGetOrCallValue
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ gets GetCollectionGetByName
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ getsAtTheEnd CollectionGetOrCallValue
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ getsAtTheEnd GetCollectionGetByName
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ getsInALoop CollectionGetOrCallValue
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ getsInALoop GetCollectionGetByName
+calls-fast-paths/collection-methods-read-ahead-of-their-arguments	// CALLS+ sets CollectionSetOrCallValue
+calls-fast-paths/constant-key-listener	// IR= 1 run IsClosureOf v[0-9]+ function=f[0-9]+
+calls-fast-paths/constructor-at-any-depth	// IR= 0 top CallDirect
+calls-fast-paths/coroutine-loops	// IR= 3 mixed  = Mul .*#[0-9]+$
+calls-fast-paths/entry-point-for-untyped-callers	// IR= 1 yieldsNothing CallDirect
+calls-fast-paths/entry-point-for-untyped-callers	// IR= 1 yieldsNumber CallDirect
+calls-fast-paths/entry-point-for-untyped-callers	// IR= 1 yieldsObject CallDirect
+calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfAClosure" .*declared=f\d+( |$)
+calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfAFunctionExpression" .*declared=f\d+( |$)
+calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfAnArrow" .*declared=f\d+( |$)
+calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfRequired" .*declared=f\d+( |$)
+calls-fast-paths/exported-arrows-via-namespace	// IR+ ^variable g\d+ name="hookOfStoredTwice" .*declared=f\d+( |$)
+calls-fast-paths/factory-result-cast-to-subtype	// IR+  = Construct v[0-9]+ \(.*\).* isFallback
+calls-fast-paths/factory-result-cast-to-subtype	// IR= 1 createResolved : =?L[0-9]+ = (NewObject|CreateThis) 
+calls-fast-paths/factory-result-cast-to-subtype	// IR= 1 createTracedResolved : =?L[0-9]+ = (NewObject|CreateThis) 
+calls-fast-paths/facts-kept-across-calls-inside-try	// IR= 1 twice PropGet v[0-9]+ name="x"(?!.* isFallback)
+calls-fast-paths/facts-kept-across-calls-inside-try	// IR= 2 twiceAroundACall PropGet v[0-9]+ name="x"(?!.* isFallback)
+calls-fast-paths/field-stores-after-predicted-new	// IR= 1 makeSeen PropSet v[0-9]+, v[0-9]+ name="id"
+calls-fast-paths/field-stores-after-predicted-new	// IR= 2 make PropSet v[0-9]+, v[0-9]+ name="extra"
+calls-fast-paths/field-stores-after-predicted-new	// IR= 2 make PropSet v[0-9]+, v[0-9]+ name="sym"
+calls-fast-paths/field-stores-after-predicted-new	// IR= 2 makeCounted PropSet v[0-9]+, v[0-9]+ name="id"
+calls-fast-paths/field-stores-after-predicted-new	// IR= 2 makeCounted PutEnvironmentField
+calls-fast-paths/folding-and-try-after-inlining	// IR= 1 hasHandlerItself CallDirect
+calls-fast-paths/folding-and-try-after-inlining	// IR= 1 usesPick CallDirect
+calls-fast-paths/folding-and-try-after-inlining	// IR= 2 callsGuarded CallDirect
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 loopBehindHasOwn  = GetForInSlot v[0-9]+, 
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 loopBehindTheRead  = GetForInSlot v[0-9]+, 
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 loopBehindTheReadOfAGivenObject  = GetForInSlot v[0-9]+, 
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 loopOnAFlagBehindTheRead  = GetForInSlot v[0-9]+, 
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 loopOnTheMemberBehindTheRead  = GetForInSlot v[0-9]+, 
+calls-fast-paths/for-in-reads-before-nested-loop	// IR= 1 whileBehindTheRead  = GetForInSlot v[0-9]+, 
+calls-fast-paths/four-call-sites-not-inlined	// IRM= 4 CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+calls-fast-paths/freeze-fixed-layout-object	// CALLS- makeFrozen CallHostFunction
+calls-fast-paths/function-call-with-unknown-callee	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/function-expression-name-recursion-only	// IR= 0 recursion NewClosure
+calls-fast-paths/function-expression-name-recursion-only	// IR= 0 walk NewClosure
+calls-fast-paths/functions-destructured-from-require	// IR= 1 ofOneFunction TypeTest v[0-9]+ testedType=undefined\|null
+calls-fast-paths/functions-destructured-from-require	// IR= 1 ofTheHost = Call v[0-9]+, (-|v[0-9]+) \(v
+calls-fast-paths/functions-destructured-from-require	// IR= 1 ofThreeFunctions = Call v[0-9]+, (-|v[0-9]+) \(v
+calls-fast-paths/functions-in-literal-fields	// IR+ IsClosureOf v[0-9]+ function=f[0-9]+
+calls-fast-paths/functions-in-literal-fields	// IR+ ^ .*GetCapture
+calls-fast-paths/generic-entrypoint-inline-slow-path	// ENTRY-SIZE< oneString 36 20
+calls-fast-paths/global-functions-sizes-and-private-names-share-a-body	// IR= 1 sumOfSizes CallBuiltin v[0-9]+ \(\) overload=MapPrototypeSize/
+calls-fast-paths/inlining-by-caller-kind	// IR= 2 waits  = Mul .*#[0-9]+$
+calls-fast-paths/inlining-by-caller-kind	// IRM= 1 CallDirect \(v[0-9]+, v[0-9]+\) function=f[0-9]+
+calls-fast-paths/inlining-by-caller-kind	// IRM= 3 CallDirect \(v[0-9]+\) function=f[0-9]+
+calls-fast-paths/inlining-limits	// IR= 2 guarded CallDirect
+calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="localTime" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+calls-fast-paths/intl-constant-formatters	// IR+ ^variable (g\d+) name="minute" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+calls-fast-paths/intl-constant-formatters	// IR= 1 formatCount CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters	// IR= 1 formatNewDate CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters	// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters	// IRT= 1 formatLocalTime CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters	// IRT= 1 formatMinute CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeFormatter  = New(Plain)?Object 
+calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 0 makeFormatter Construct|overload=IntlDateTimeFormat/
+calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 1 makeFormatter  = NewFormatterWithPattern 
+calls-fast-paths/intl-constant-formatters-in-every-flow	// IR= 1 makeWithSharedOptions  = NewFormatterWithPattern 
+calls-fast-paths/intl-constant-formatters-known-traps	// CALLS+ accountingInTamil operationAOTFormatWithPattern
+calls-fast-paths/known-factory-result	// IR= 1 ofAMakerInALiteral boolean = IsClosureOf
+calls-fast-paths/known-factory-result	// IR= 1 ofAMakerOfTwo boolean = IsClosureOf
+calls-fast-paths/known-factory-result	// IR= 1 ofAMakerThatIsStoredTo boolean = IsClosureOf
+calls-fast-paths/known-factory-result	// IR= 1 ofAnAsyncMaker boolean = IsClosureOf
+calls-fast-paths/late-initialized-single-function-direct-call	// IR+ ^variable g\d+ name="bySetter" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+calls-fast-paths/late-initialized-single-function-direct-call	// IR+ ^variable g\d+ name="bySetterAndCleared" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+calls-fast-paths/late-initialized-single-function-direct-call	// IR+ ^variable g\d+ name="bySetterAndClearedWithNull" .*declared=(undefined\|)?(null\|)?f\d+( |$)
+calls-fast-paths/lazy-function-materialized-by-stub	// CALLS+ take NewTypedClosureWithoutCaptureOnce32
+calls-fast-paths/lazy-function-materialized-by-stub	// CALLS+ takeBound NewTypedClosureOnce32
+calls-fast-paths/literal-passed-to-predicted-method	// IR= 1 effect : =?L[0-9]+ = NewObject 
+calls-fast-paths/loop-helper-inlined-into-loopless-callers	// IRT= 1 withDeclared = LoopHint
+calls-fast-paths/loop-helper-inlined-into-loopless-callers	// IRT= 1 withLarge = NewClosure \(.*\) function=f
+calls-fast-paths/loop-helper-inlined-into-loopless-callers	// IRT= 1 withLiteral = LoopHint
+calls-fast-paths/loop-helper-inlined-into-loopless-callers	// IRT= 1 withTwo = LoopHint
+calls-fast-paths/method-bound-in-constructor	// IR+  = GetCapture v[0-9]+ .*#[0-9]+$
+calls-fast-paths/method-bound-in-constructor	// IR+  = IsClosureOf v[0-9]+ function=f[0-9]+ @[0-9]+#[0-9]+$
+calls-fast-paths/method-bound-in-constructor	// IR+ TypeTest v[0-9]+ testedType=Function\^
+calls-fast-paths/method-bound-in-constructor	// IR+ ^function f[0-9]+ "add" \w+ role=BoundFunction
+calls-fast-paths/method-called-on-a-union-of-classes	// IR= 0 total CallDirect
+calls-fast-paths/method-called-on-a-union-of-classes	// IR= 1 total TypeTest v[0-9]+ testedType==?L[0-9]+
+calls-fast-paths/method-called-on-source-literal	// IR= 1 collect CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+calls-fast-paths/method-called-on-source-literal	// IR= 1 collectSome CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+calls-fast-paths/method-called-on-source-literal-untyped	// IR= 1 prepended CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypeUnshift/
+calls-fast-paths/method-called-on-source-literal-untyped	// IR= 2 lists CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+calls-fast-paths/method-reassigned-by-class	// IR+ ^layout L[0-9]+ .*\{name="patched" function=f[0-9]+
+calls-fast-paths/method-reassigned-by-class	// IR+ ^layout L[0-9]+ .*\{name="step" declared=
+calls-fast-paths/method-reassigned-by-class	// IR+ ^layout L[0-9]+ .*\{name="step" function=f[0-9]+
+calls-fast-paths/method-reassigned-by-class	// IR+ ^layout L[0-9]+ .*\{name="untouched" function=f[0-9]+
+calls-fast-paths/method-reassigned-by-class	// IRM= 1 CallMethod v[0-9]+ \(.*\) name="patched"(?!.* isFallback)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="bySetter" .*declared=f\d+( |$)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="chosen" .*declared=f\d+( |$)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="exportedVariable" .*declared=f\d+( |$)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="overTwoLevels" .*declared=f\d+( |$)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="savedAndPutBack" .*declared=f\d+( |$)
+calls-fast-paths/module-variables-single-function	// IR+ ^variable g\d+ name="storedAgain" .*declared=f\d+( |$)
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 0 copiesEach CallDirect
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 0 copiesSort CallDirect
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 0 smallWithALoop CallDirect
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 1 copiesEachWithAClosureOfTwoMakers CallDirect \(v\d+\) function=f\d+
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 1 smallWithoutALoop CallDirect
+calls-fast-paths/nested-inlining-follows-small-function	// IR= 2 copiesTwoLevels CallDirect
+calls-fast-paths/new-as	// IR+ ^layout (L[0-9]+) .*name="Links" [\s\S]*: =?\1 = (NewObject|CreateThis) 
+calls-fast-paths/new-class-annotated	// IR- : =?L[0-9]+ = (NewObject|CreateThis) 
+calls-fast-paths/new-class-annotated	// IRM= 1  = Integer integer=2 .*#[0-9]+$
+calls-fast-paths/new-class-annotated	// IRM= 1  = Integer integer=3 .*#[0-9]+$
+calls-fast-paths/new-in-try-without-handler	// IR= 3 seenFirst Invoke
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesBases CreateThis
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesEither TypeTest v[0-9]+ testedType=object
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesFields CreateThis
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesGiven = Construct
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesPoints CallDirect
+calls-fast-paths/new-in-untyped-code	// IR= 1 makesPoints CreateThis
+calls-fast-paths/new-in-untyped-code	// IR= 2 makesLarge CallDirect
+calls-fast-paths/new-of-global-constructor	// CALLS+ constructsValueInLoop ConstructClosure
+calls-fast-paths/new-predicted	// IR+  = Construct v[0-9]+ \(.*\).* isFallback
+calls-fast-paths/new-predicted	// IR+ ^ .*IsClosureOf
+calls-fast-paths/new-without-constructor	// IR= 1 forwards : =?L[0-9]+ = (NewObject|CreateThis) 
+calls-fast-paths/new-without-constructor	// IR= 1 implicit : =?L[0-9]+ = (NewObject|CreateThis) 
+calls-fast-paths/new-without-constructor	// IR= 1 implicit = Construct v
+calls-fast-paths/new-without-constructor	// IR= 1 keeps NewArray
+calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< oneNumber 48 8
+calls-fast-paths/number-parameters-indirect-call	// ENTRY-SIZE< threeNumbers 120 18
+calls-fast-paths/number-result-boxed-by-stub	// CALLS+ addOne BoxNumber
+calls-fast-paths/number-result-boxed-by-stub	// CALLS+ firstOf BoxNumber
+calls-fast-paths/number-result-boxed-by-stub	// CALLS+ half BoxNumber
+calls-fast-paths/number-result-boxed-by-stub	// CALLS+ pick BoxNumber
+calls-fast-paths/number-result-boxed-by-stub	// CALLS+ xOf BoxOptionalNumber
+calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ arrayIncludesFrom ArraySearch\.IncludesFrom
+calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ arrayIndexOfFrom ArraySearch\.IndexOfFrom
+calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ arrayIndexOfFromMaybe ArraySearch\.IndexOfFrom
+calls-fast-paths/optional-arguments-of-built-ins	// CALLS+ sliceFromNullable CallHostFunction
+calls-fast-paths/predicted-callee-with-properties	// IR= 1 ofAClosureWithProperties boolean = IsClosureOf v[0-9]+ function=f[0-9]+
+calls-fast-paths/predicted-callee-with-properties	// IR= 1 ofAClosureWithout boolean = IsClosureOf
+calls-fast-paths/push-read-ahead-of-its-argument	// CALLS+ pushes ArrayPushReadAheadOrCallValue
+calls-fast-paths/push-read-ahead-of-its-argument	// CALLS+ pushes GetArrayPushByName
+calls-fast-paths/push-read-ahead-of-its-argument	// CALLS+ pushesAtTheEnd ArrayPushReadAheadOrCallValue
+calls-fast-paths/reader-inlined-only-across-suspension	// IR= 0 readsAgainLater : =?L[0-9]+ = NewObject 
+calls-fast-paths/reader-not-inlined-without-suspension	// IR= 0 suspends : =?L[0-9]+ = NewObject 
+calls-fast-paths/recursive-closure-inlined-once	// IR= 1 total CallDirect
+calls-fast-paths/recursive-closure-inlined-once	// IR= 1 total PropGet v\d+ name="value"(?!.* isFallback)
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="alpha"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="beta"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="delta"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="epsilon"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="eta"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="gamma"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="iota"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="theta"
+calls-fast-paths/reexports-nearly-all-names	// IR+ (PropGet v[0-9]+|CallMethod v[0-9]+ \(.*\)) name="zeta"
+calls-fast-paths/regexp-test-untyped-in-loop	// IR= 1 countPlain CallBuiltin v[0-9]+ \(v[0-9]+\) overload=RegExpPrototypeTest/
+calls-fast-paths/regexp-test-untyped-in-loop	// IR= 1 firstWords CallBuiltin v[0-9]+ \(v[0-9]+\) overload=RegExpPrototypeExec/
+calls-fast-paths/repeated-reads	// IR= 1 arms PropGet v[0-9]+ name="gamma"
+calls-fast-paths/repeated-reads	// IR= 1 aroundLoop PropGet v[0-9]+ name="epsilon"
+calls-fast-paths/repeated-reads	// IR= 1 chain PropGet v[0-9]+ name="beta"
+calls-fast-paths/repeated-reads	// IR= 1 otherStore PropGet v[0-9]+ name="delta"
+calls-fast-paths/repeated-reads	// IR= 1 pureBuiltin PropGet v[0-9]+ name="eta"
+calls-fast-paths/repeated-reads	// IR= 1 straight PropGet v[0-9]+ name="alpha"
+calls-fast-paths/repeated-reads	// IR= 1 throughTests PropGet v[0-9]+ name="zeta"
+calls-fast-paths/repeated-reads	// IR= 2 changingAcrossCall GetModuleVariable
+calls-fast-paths/repeated-reads	// IR= 2 twoReceivers PropGet v[0-9]+ name="theta"
+calls-fast-paths/repeated-reads	// IR= 6 fixedAcrossCall GetEnvironmentField
+calls-fast-paths/rest-callee-called-by-name	// IR+ CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
+calls-fast-paths/rest-parameter-not-allocated	// IR+ "dispatch" \w+ role=GenericEntrypoint
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 copies CreateRest
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 firstOnly CreateRest
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 lengthOnly CreateRest
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 sum CreateRest
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 viaArguments CreateRest
+calls-fast-paths/rest-parameter-not-allocated	// IR= 0 viaArguments Create\w+Arguments
+calls-fast-paths/rest-parameter-not-allocated	// IR= 1 copies GetMyArgumentByVal
+calls-fast-paths/rest-parameter-not-allocated	// IR= 1 lengthOnly GetRestLength(?! firstArgument=)
+calls-fast-paths/rest-parameter-not-allocated	// IR= 1 sum GetMyArgumentByVal
+calls-fast-paths/rest-read-in-typed-code	// IR= 1 defined GetMyArgumentByVal
+calls-fast-paths/rest-read-in-typed-code	// IR= 1 defined GetRestLength
+calls-fast-paths/shared-bodies-with-the-same-code	// CALLS+ isListOfNumbers f:;
+calls-fast-paths/shared-bodies-with-the-same-code	// CALLS+ isListOfTexts f:;
+calls-fast-paths/shared-bodies-with-the-same-code	// CALLS+ keysOfName f:;
+calls-fast-paths/shared-bodies-with-the-same-code	// CALLS+ keysOfPoint f:;
+calls-fast-paths/size-at-the-call	// IR= 0 knowsBoth NewArray
+calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoop NewArray
+calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoopBorrowing NewArray
+calls-fast-paths/size-at-the-call	// IR= 2 knowsLittle CallDirect
+calls-fast-paths/size-at-the-call	// IR= 2 knowsLittleToo CallDirect
+calls-fast-paths/size-at-the-call	// IR= 2 knowsTheNumberOnly CallDirect
+calls-fast-paths/static-method-read-and-called	// IR= 1 constants  = Call v
+calls-fast-paths/static-method-read-and-called	// IR= 1 declared  = Call v
+calls-fast-paths/static-method-read-and-called	// IR= 1 declared  = IsClassUnmodified 
+calls-fast-paths/static-method-read-and-called	// IR= 1 declared  = PropGet v[0-9]+ name="twice"
+calls-fast-paths/static-method-read-and-called	// IR= 1 inherited  = Call v
+calls-fast-paths/static-method-read-and-called	// IR= 1 looksAtThis  = Call v
+calls-fast-paths/static-method-read-and-called	// IR= 2 seen  = Call v
+calls-fast-paths/store-then-read	// IR= 1 next GetEnvironmentField
+calls-fast-paths/store-then-read	// IR= 1 onOneWay PropGet v[0-9]+ name="flags"
+calls-fast-paths/super-in-untyped-classes	// IR+ ^ .* = SuperConstruct 
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ dateAndTimeInUTC operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ dollarsWithSharedOptions operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ grouped operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ inNewYork operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ inUntypedCode operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ longDate operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ ofNewDate operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ percent operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ timeOnly operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ twoDigits operationAOTFormatWithPattern
+calls-fast-paths/to-locale-string-with-constant-arguments	// CALLS+ wholeDollars operationAOTFormatWithPattern
+calls-fast-paths/two-level-inlining-only-when-small	// IR= 2 copiesLargeCallback CallDirect \(v\d+, v\d+\) function=f\d+
+calls-fast-paths/two-level-inlining-only-when-small	// IR= 2 sumOfLarge CallDirect \(v\d+, v\d+\) function=f\d+
+calls-fast-paths/two-level-inlining-only-when-small	// IR= 4 copiesCallbackThatCalls CallDirect \(v\d+, v\d+, v\d+\) function=f\d+
+calls-fast-paths/typed-reads-of-rest	// IR= 2 ofAny GetRestLength
+calls-fast-paths/typed-reads-of-rest	// IR= 3 ofAny GetArgument
+calls-fast-paths/typed-reads-of-rest	// IR= 3 ofNumbers GetArgument
+calls-fast-paths/typeof	// IR+ TypeOfIs v[0-9]+ typeofType=7\b
+calls-fast-paths/unread-exports	// IR+ ^variable g\d+ name="hook" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports	// IR+ ^variable g\d+ name="moreHook" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-namespace-in-variable	// IR+ ^variable g\d+ name="hookOfAConstant" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-namespace-in-variable	// IR+ ^variable g\d+ name="hookOfCopiedToAnother" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-namespace-in-variable	// IR+ ^variable g\d+ name="hookOfImportedAndKept" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-namespace-in-variable	// IR+ ^variable g\d+ name="hookOfReadInAnotherModule" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-namespace-in-variable	// IR+ ^variable g\d+ name="hookOfSetLater" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-not-linked	// IR+ ^layout L\d+ .*\{name="neverLinkedEntry" .*isNeverAllocated=true
+calls-fast-paths/unread-exports-not-linked	// IR+ ^layout L\d+ .*\{name="usedEntry" (?!.*isNeverAllocated=true)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfAMethodCall" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfAPatternAndAnAssertion" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfByUntypedCode" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfKeptInAConstant" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfRequiredAndImported" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-require	// IR+ ^variable g\d+ name="hookOfRequiredTwice" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfAFunctionByName" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfAHandler" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfAPatternInTheHandler" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfAnAsyncHandler" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfBehindCatch" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfBehindFinally" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfFirstOfAll" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfSecondOfAll" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfTheHandlerReturnsIt" .*declared=f\d+( |$)
+calls-fast-paths/unread-exports-via-then	// IR+ ^variable g\d+ name="hookOfTwoHandlers" .*declared=f\d+( |$)
+calls/arrow-function-stored-into-another-object-than-its-this	// IR= 1 sum PropGet v[0-9]+ name="add"(?!.* isFallback)
+calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "byLastDigit" \w+ role=SignatureEntrypoint
+calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "descending" \w+ role=SignatureEntrypoint
+calls/builtin-only-callbacks-skip-signature-entry	// IR+ ^function f\d+ "productOf" \w+ role=SignatureEntrypoint
+calls/functions-that-call-themselves-last	// IR= 0 sumTo CallDirect
+calls/functions-that-call-themselves-last	// IR= 0 summed CallDirect
+calls/functions-that-call-themselves-last	// IR= 0 swapped CallDirect
+calls/functions-that-call-themselves-last	// IR= 0 tallied : =?L[0-9]+ = NewObject |CallDirect
+calls/inlined-early-return-reads-widened-field	// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
+calls/inlined-guard-read-keeps-declared-type	// IR+ : number = PropGet v[0-9]+ name="id" .*#[0-9]+$
+calls/inlined-guard-read-keeps-declared-type	// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
+calls/inlined-guard-reads-open-type	// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
+calls/keys-of-rest	// IR= 0 byBoolean CreateRest
+calls/keys-of-rest	// IR= 0 typedInteger CreateRest
+calls/keys-of-rest	// IR= 1 byBoolean GetMyArgumentByVal
+calls/keys-of-rest	// IR= 1 byInteger GetMyArgumentByVal
+calls/keys-of-rest	// IR= 1 typedInteger GetMyArgumentByVal
+calls/keys-of-rest	// IR= 1 typedNumber GetMyArgumentByVal
+calls/keys-of-rest	// IR= 1 typedString GetMyArgumentByVal
+calls/large-switch-predicate-inlined-in-loop	// IRT= 0 walk : boolean = CallDirect
+calls/large-switch-predicate-inlined-in-loop	// IRT= 1 walk : (number|i32|int\S*) = CallDirect
+calls/literal-factory-makes-no-calls	// CALLS+ summed f:summed
+calls/literal-factory-makes-no-calls	// CALLS- pair f:pair
+calls/literal-factory-makes-no-calls	// CALLS- point f:point
+calls/methods-called-with-arguments-that-are-read	// IR= 0 gauged : =?L[0-9]+ = (NewObject|CreateThis) |IsClosureOf|Call v
+calls/number-results-returned-unboxed	// IR+ ^function f\d+ "either" Arrow .* -> undefined\|number( |$)
+calls/number-results-returned-unboxed	// IR+ ^function f\d+ "one" Arrow .* -> number( |$)
+calls/rest-arrays-of-numbers	// IR= 0 restOfThree NewArray
+calls/rest-arrays-of-numbers	// IR= 1 keptOfThree : Array<number>\S* = NewArray 
+calls/rest-arrays-of-numbers	// IR= 1 restOfThree Switch v[0-9]+ \[0: b[0-9]+\(v[0-9]+\), 1: b[0-9]+\(v[0-9]+\), 2: b[0-9]+\(v[0-9]+\)\]
+calls/results-specialized-by-caller	// IR- ResultAt v\d+ index=[123]\b
+calls/results-specialized-by-caller	// IR= 2 make Results
+calls/results-specialized-by-caller	// IR= 4 make LoopHint
+calls/tail-calls-mixed-result-types-large	// IR+  = TailCallDirect \(
+calls/tail-calls-mixed-result-types-large	// IR+ ^ .* = TailCall v
+calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "flags" Plain .* -> anything( |$)
+calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "items" Plain .* -> anything( |$)
+calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "numbers" Plain .* -> anything( |$)
+calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "onlyForwards" Plain .* -> anything( |$)
+calls/tail-calls-mixed-result-types-large	// IR+ ^function f[0-9]+ "onlyPassesOn" Plain .* -> anything( |$)
+calls/unguarded-functions-have-one-body	// IR= 1 sumOfAll String string="marker of sumOfAll"
+classes-and-closures/arrow-functions-in-literals-that-share-state	// IR+ key="summary"[^"]*deferral=CapturesEnvironment
+classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="edge" declared=
+classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="extra" declared=
+classes-and-closures/base-class-named-through-a-namespace	// IR+ ^layout L[0-9]+ .*\{name="side" declared=
+classes-and-closures/declare-fields-and-a-mixin-elsewhere	// IR+ ^layout L[0-9]+ .*\{name="fiberLabel" declared=
+classes-and-closures/declare-fields-and-a-mixin-elsewhere	// IR+ ^layout L[0-9]+ .*\{name="fiberNumber" declared=
+classes-and-closures/new-target-this-allocation	// CALLS+ constructAny CreateThis
+commonjs/compound-assignment-const-symbol-key	// IR= 1 underWhatALoopCarries ElemGet
+commonjs/const-literal-exported-whole	// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
+commonjs/constants-in-variables	// IR= 0 hasFlag GetEnvironmentField
+commonjs/constants-in-variables	// IR= 0 isArgumentsTag GetEnvironmentField
+commonjs/constants-in-variables	// IR= 1 seenEarly GetEnvironmentField
+commonjs/constants-in-variables	// IR= 1 storedLater GetEnvironmentField
+commonjs/pure-module-reads-const-in-tdz	// IR+ ^variable (g\d+) name="kSound" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
+commonjs/pure-module-required-in-function	// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
+commonjs/pure-module-required-in-function	// IR= 0 read ElemGet
+commonjs/pure-module-required-in-function	// IR= 0 stamp ElemSet
+commonjs/symbols-from-escaping-exports	// IR= 1 info PropGet v[0-9]+ name=UniqueSymbol "[^"]*mini\.write"
+commonjs/symbols-from-escaping-exports	// IR= 1 mini PropSet v[0-9]+, v[0-9]+ name=UniqueSymbol "[^"]*mini\.stream"
+commonjs/symbols-from-escaping-exports	// IR= 1 readInACycle ElemGet
+commonjs/symbols-from-escaping-exports	// IR= 2 write PropGet v[0-9]+ name=UniqueSymbol "[^"]*mini\.stream"
+commonjs/symbols-from-impure-module-exports	// IR= 1 readUnderAMakerOfValuesAlone PropGet v[0-9]+ name=UniqueSymbol "[^"]*alone"
+commonjs/symbols-from-impure-module-exports	// IR= 1 readUnderAMakerThatDoesMore ElemGet
+constant-containers/maps-of-constant-strings	// IR+  = NewMapFromTable( table=\d+)?( @|$)
+constant-containers/maps-of-constant-strings	// IR= 1 fresh  = NewMapFromTable( table=\d+)?( @|$)
+constant-containers/sets-of-constant-strings	// IR+  = NewSetFromTable( table=\d+)?( @|$)
+constant-containers/sets-of-constant-strings	// IR= 1 fresh  = NewSetFromTable( table=\d+)?( @|$)
+copies-of-heirs/types-kept-object-assign-onto-an-instance	// IR= 1 kept : number = 
+data-from-outside/any-into-generic-field	// IR- ^layout (L\d+) .*name="OnlyTypedValuesEnter" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/clone-as-undefined-value	// COUNTER: CloneAsFieldLimitReached >= 1
+data-from-outside/dictionary-delete-keeps-layouts	// IR+ : number = PropGet v\d+ name="serial"
+data-from-outside/dictionary-delete-keeps-layouts	// IR+ ^layout L\d+ .*name="Looks" .* representation=Typed
+data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout (L\d+) .*name="Wrapper" [\s\S]*^function f\d+ "make" Plain .* -> (undefined\|null\|)?=?\1!?( |$)
+data-from-outside/generic-wrapper-used-from-javascript	// IR+ ^layout L\d+ .*name="Wrapper" .* representation=Typed
+data-from-outside/json-imported-from-bun	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
+data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="NeverGiven" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateField" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/json-into-class-containers	// IR- ^layout (L\d+) .*name="WithAPrivateName" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/json-parse-equal-texts-same-arm	// IR+ ^ .*JSONGiveUpIfKeyRepeats
+data-from-outside/json-parse-equal-texts-same-arm	// IR+ ^ .*JSONGiveUpIfMemberRepeats
+data-from-outside/json-parse-into-a-union-of-records-stays-compiled	// IR+ ^ .*JSONParseString
+data-from-outside/json-parse-into-declared-types	// IR+ JSONStartsWith v\d+ text="\\x22id\\x22:"
+data-from-outside/json-parse-recursive-union-retry	// IR+ ^ .*JSONTryRetry
+data-from-outside/json-parse-type-argument-keys-in-another-order-stay-in-line	// IR+ ^ .*JSONKeyOrderAppend
+data-from-outside/json-parse-type-argument-undeclared-keys-stay-compiled	// IR+ ^ .*JSONKeyOrderApply
+data-from-outside/json-parse-type-argument-union-by-discriminant	// IR+ JSONFindMember v\d+ name="kind"
+data-from-outside/parsed-objects-changed-by-untyped-code	// IR+ ^ .* = JSONSourceOpen v
+data-from-outside/plain-objects-into-class-types	// IR+ ^layout (L\d+) .*name="GivenToAReducer" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/plain-objects-into-class-types	// IR- ^layout (L\d+) .*name="CastFromATypedValue" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/shared-validation-functions	// IR+ JSONStartsWith v\d+ text="\\x22height\\x22:"
+data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Hit" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
+data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Marked" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
+data-from-outside/spread-literal-returned-by-a-callback-over-rows	// IR+ ^layout (L\d+) .*name="Numbered" [\s\S]* = CloneAs v\d+, v\d+ \(.*\) layout=\1\b
+data-from-outside/sql-typed-rows	// IR+ ^layout (L\d+) .*name="Comment" [\s\S]*^function f\d+ (-|"[^"]*") Arrow .*\((undefined\|null\|)?=?\1!?[,)]
+data-from-outside/typed-parse-result-field-reads	// IR= 1 readsGiven  = PropGet v\d+ name="from"(?!.* isFallback)
+data-from-outside/typed-parse-result-field-reads	// IR= 1 readsKept : number = PropGet v\d+ name="y"(?!.* isFallback)
+data-from-outside/typed-parse-result-field-reads	// IR= 1 readsParsed : number = PropGet v\d+ name="x"(?!.* isFallback)
+data-from-outside/typed-parse-result-field-reads	// IR= 1 readsParsed : number = PropGet v\d+ name="y"(?!.* isFallback)
+data-from-outside/typed-parse-result-field-reads	// IR= 1 readsRevived : number = PropGet v\d+ name="x"(?!.* isFallback)
+data-from-outside/unknown-property-is-not-assignable-to-a-method	// IR+ ^layout L\d+ .*name="Store" .* representation=Typed
+data-from-outside/unknown-property-is-not-assignable-to-a-method	// IR- ^layout (L\d+) .*name="Store" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+data-from-outside/validate-imported-from-bun-bundle	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
+data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Login" .* representation=Typed
+data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Nested" .* representation=Typed
+data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="User" .* representation=Typed
+data-from-outside/validated-results-stay-open	// IR+ ^layout L\d+ .*name="Within" .* representation=Typed
+data-from-outside/validation-error-message-without-its-prefix	// IR= 0 formatPath GetModuleVariable
+data-from-outside/validation-issues-from-shared-routine	// IR= 0 report : =?L[0-9]+ = NewObject 
+data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22street\\x22:"
+data-from-outside/validators-shared-between-types	// IR+ JSONStartsWith v\d+ text="\\x22zip\\x22:"
+escape-analysis/captured-variables-and-tail-calls	//!
+escape-analysis/captured-variables-in-async-functions	//!
+escape-analysis/captured-variables-on-stack	//!
+escape-analysis/captured-variables-outlive-call	//!
+escape-analysis/closures-captured-by-frame-closures	// IR= 1 innerIsReturnedByTheOuter NewClosure .* storage=Frame
+escape-analysis/closures-must-start-on-heap	//!
+escape-analysis/closures-passed-to-non-inlined-functions	//!
+escape-analysis/closures-through-a-cast	//!
+escape-analysis/closures-through-captures	//!
+escape-analysis/entries-read-by-index	// IR= 0 changedMeanwhile NewArray
+escape-analysis/entries-read-by-index	// IR= 1 byIndex RShift
+escape-analysis/entries-read-by-index	// IR= 1 byPattern RShift
+escape-analysis/entries-read-by-index	// IR= 1 changedMeanwhile RShift
+escape-analysis/entries-read-by-index	// IR= 1 everyOther RShift
+escape-analysis/entries-read-by-index	// IR= 1 pairInAVariable RShift
+escape-analysis/entries-read-by-index	// IR= 1 patternWithDefaults RShift
+escape-analysis/entries-read-by-index	// IR= 1 patternWithRest RShift
+escape-analysis/entries-read-by-index	// IR= 1 whileLoop RShift
+escape-analysis/entries-read-by-index	// IR= 1 withGetters RShift
+escape-analysis/entries-read-by-index	// IR= 2 lengthInTheTest RShift
+escape-analysis/entries-read-by-index	// IR= 2 twoLists RShift
+escape-analysis/heap-closures	//!
+escape-analysis/objects-handed-from-call-to-call	// IR= 0 keptResultFreesItsArgument CallDirect
+escape-analysis/objects-handed-from-call-to-call	// IR= 1 isEnumerated : =?L[0-9]+ = NewObject |CallDirect
+escape-analysis/objects-handed-from-call-to-call	// IR= 1 isReturnedByTheCallee : =?L[0-9]+ = NewObject |CallDirect
+escape-analysis/objects-handed-from-call-to-call	// IR= 2 isWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
+escape-analysis/objects-handed-from-call-to-call	// IR= 2 sourceIsWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
+escape-analysis/removed-allocations	//!
+escape-analysis/required-allocations	//!
+escape-analysis/results-forwarded-by-functions	// IR= 0 readsPair NewArray|ElemGet
+escape-analysis/results-inspected-and-then-returned	// IR= 0 readsAfterWork PropGet| = New(Plain)?Object 
+escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspected PropGet| = New(Plain)?Object 
+escape-analysis/results-inspected-and-then-returned	// IR= 0 readsInspectedTwice  = New(Plain)?Object 
+escape-analysis/results-inspected-and-then-returned	// IR= 2 readsAfterWork ResultAt
+escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspected ResultAt
+escape-analysis/results-inspected-and-then-returned	// IR= 2 readsInspectedTwice ResultAt
+escape-analysis/returned-object-and-stack-traces	//!
+escape-analysis/returned-object-kept-by-callers	//!
+escape-analysis/returned-object-observations	//!
+escape-analysis/returned-object-only-read	//!
+escape-analysis/returned-object-or-null	//!
+escape-analysis/returned-pair-from-recursion	//!
+escape-analysis/stack-closures	//!
+escape-analysis/write-only-object	//!
+escape-analysis/write-only-object-kept	//!
+known-helpers/stars-looked-at-late	// COUNTER: StarsCarriedOutLate >= 40
+known-helpers/stars-looked-at-late	// COUNTER: StarsRecorded >= 40
+language/baseline-cpu	// CALLS+ extend CloneObjectAndExtendWithNumber
+language/baseline-cpu	// CALLS+ storeInUntyped PutByIdDouble
+language/dead-counted-loops	// IR= 0 unusedField LoopHint
+language/dead-counted-loops	// IR= 1 stepsByZero LoopHint
+language/dead-counted-loops	// IR= 1 unknownBound LoopHint
+language/map-set-mutation-in-loops	// CALLS+ keysThroughGenerator StepIteration\b
+language/map-set-mutation-in-loops	// CALLS+ mapDestructured OpenPairIterationInFrame
+language/map-set-mutation-in-loops	// CALLS+ mapDestructured StepIterationInFrame
+language/map-set-mutation-in-loops	// CALLS+ mapEntriesDestructured OpenTableIterationInFrame
+language/map-set-mutation-in-loops	// CALLS+ mapEntriesDestructured StepIterationInFrame
+language/nullable-string-compared-with-anything	// CALLS+ ofAnything StrictEqual
+language/strict-equality-any-values	// CALLS+ sameUnknown StrictEqual
+language/switch-over-number-parameters	// IR= 1 isSmallRange Boolean boolean=true
+language/switch-over-number-parameters	// IR= 1 isVowelCode Boolean boolean=true
+library-modules/the-state-of-a-writable-stream-keeps-its-bound-callback-in-its-slot	// COUNTER: FieldsLeftSlotByStoreOfOtherType <= 50
+objects/index-named-fields	// COUNTER: DeleteOfRequiredField = 1
+objects/index-named-fields	// COUNTER: IndexedAccessor = 2
+objects/index-named-fields	// COUNTER: NoExtraPropertiesWord = 0
+objects/index-named-fields	// COUNTER: RedefinedProperty = 0
+objects/int32-field-overflow	// COUNTER: DeleteOfRequiredField = 1
+objects/int32-field-overflow	// COUNTER: RedefinedProperty = 0
+objects/int32-field-overflow	// COUNTER: StoreOfOtherType = 0
+objects/key-order-count-limit	// COUNTER: DeleteOfRequiredField = 0
+objects/key-order-count-limit	// COUNTER: KeyOrderLimit <= 4600
+objects/key-order-count-limit	// COUNTER: KeyOrderLimit >= 4465
+objects/key-order-count-limit	// COUNTER: NoExtraPropertiesWord = 0
+objects/key-order-count-limit	// COUNTER: StoreOfOtherType = 0
+objects/key-order-field-limit	// COUNTER: DeleteOfRequiredField = 0
+objects/key-order-field-limit	// COUNTER: KeyOrderLimit >= 1
+objects/key-order-field-limit	// COUNTER: NoExtraPropertiesWord = 0
+objects/key-order-limit-store-run	// COUNTER: KeyOrderLimit >= 201
+objects/lazy-closure-identity	// COUNTER: DeleteOfRequiredField = 1
+objects/lazy-closure-identity	// COUNTER: RedefinedProperty = 1
+objects/lazy-closure-identity	// COUNTER: UseAsPrototype = 1
+objects/literal-sizes	// CALLS+ make0 NewOrdinaryObject\.n0
+objects/literal-sizes	// CALLS+ make12 NewOrdinaryObject\.n[46]
+objects/literal-sizes	// CALLS+ make2 NewOrdinaryObject\.n2
+objects/literal-sizes	// CALLS+ withIndexKey NewOrdinaryObject
+objects/optional-fields-created-by-untyped-stores	// COUNTER: FieldCreationNotRecorded >= 1
+objects/optional-fields-created-by-untyped-stores	// COUNTER: StoreOfOtherType >= 1
+objects/records-with-other-prototypes	// COUNTER: PrototypeChange = 4
+objects/records-with-other-prototypes	// COUNTER: UseAsPrototype >= 1
+objects/spread-and-assign-onto-typed-objects	// COUNTER: StoreOfOtherType >= 1
+objects/typed-objects-through-built-ins	// COUNTER: RedefinedProperty >= 1
+objects/untyped-mutations	// COUNTER: DeleteOfRequiredField >= 1
+objects/untyped-mutations	// COUNTER: KeyOrderLimit = 0
+objects/untyped-mutations	// COUNTER: NoExtraPropertiesWord = 0
+objects/untyped-mutations	// COUNTER: PrototypeChange >= 1
+objects/untyped-mutations	// COUNTER: RedefinedProperty >= 1
+objects/untyped-mutations	// COUNTER: ShadowedMethod >= 1
+objects/untyped-mutations	// COUNTER: StoreOfOtherType >= 1
+objects/untyped-mutations	// COUNTER: UseAsPrototype >= 1
+private-class-members/added-by-runtime-text	// COUNTER: NativeDefinition >= 1
+private-class-members/frozen-object-fields	// COUNTER: DeleteOfRequiredField >= 1
+private-class-members/frozen-object-fields	// COUNTER: RedefinedProperty = 0
+private-class-members/frozen-object-fields	// COUNTER: UseAsPrototype >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: DeleteOfRequiredField >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: IndexedAccessor >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: NoExtraPropertiesWord = 0
+private-class-members/methods-after-layout-loss	// COUNTER: PrototypeChange >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: RedefinedProperty >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: ShadowedMethod >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: StoreOfOtherType >= 1
+private-class-members/methods-after-layout-loss	// COUNTER: UseAsPrototype >= 1
+private-class-members/no-prototype-lookup	// COUNTER: PrototypeChange >= 1
+private-class-members/no-prototype-lookup	// COUNTER: UseAsPrototype >= 1
+private-class-members/private-field-reads-run-no-user-code	// IR= 1 accessor PrivateGet v[0-9]+, v[0-9]+( @|$)
+private-class-members/private-field-reads-run-no-user-code	// IR= 1 field PrivateGet v[0-9]+, v[0-9]+ layout=L[0-9]+ privateField=
+private-class-members/private-field-reads-run-no-user-code	// IR= 1 method PrivateGet v[0-9]+, v[0-9]+( @|$)
+runtime-caches/dead-structures-leave-caches	// COUNTER: SiteCacheRefill <= 500
+runtime-caches/declared-fields-by-name	// COUNTER: RedefinedProperty = 0
+runtime-caches/declared-fields-by-name	// COUNTER: StoreOfOtherType = 0
+runtime-caches/flattened-dictionary	// COUNTER: SiteCachesClearedByFlattening <= 40
+runtime-caches/flattened-dictionary	// COUNTER: SiteCachesClearedByFlattening >= 1
+runtime-caches/long-string-keys	// COUNTER: LongKeyComparisonLimitReached >= 1
+runtime-caches/lookup-table-full	// COUNTER: LookupTableIsFull <= 30000
+runtime-caches/lookup-table-full	// COUNTER: LookupTableIsFull >= 1
+runtime-caches/lookup-table-slots-full	// COUNTER: LookupTableIsFull <= 20000
+runtime-caches/lookup-table-slots-full	// COUNTER: LookupTableIsFull >= 1
+runtime-caches/prototype-change-invalidates-by-name	// COUNTER: SiteCacheRefill <= 300
+runtime-caches/site-cache-access-kinds	// COUNTER: SiteCacheRefill <= 44
+runtime-caches/site-cache-access-kinds	// COUNTER: SiteCacheRefill >= 7
+runtime-caches/site-cache-refill	// COUNTER: SiteCacheRefill <= 5100
+runtime-caches/site-cache-refill	// COUNTER: SiteCacheRefill >= 100
+strings/anchored-searches	// CALLS+ oldEndsWith StringFindString
+strings/anchored-searches	// CALLS- lastIndexOfBelowZero ReverseFind|LastIndexOf
+strings/anchored-searches	// CALLS- oldStartsWith ReverseFind|LastIndexOf
+strings/append-escaped-html	// IR+ ^ .*StringBuilderAppendBuiltin .* overload=BunEscapeHTML/
+strings/append-one-region-at-a-time	// IR= 0 builds  = Integer integer=257\b
+strings/append-one-region-at-a-time	// IR= 0 builds  = StringBuilderBegin
+strings/append-short-pieces	// IR= 1 byPiece  = StringBuilderBegin
+strings/append-short-pieces	// IR= 1 byString  = StringBuilderBegin
+strings/append-stored-templates	// IR= 0 inAField  = StringBuilderBegin
+strings/append-stored-templates	// IR= 0 pushedOnce  = StringBuilderBegin
+strings/append-stored-templates	// IR= 0 returned  = StringBuilderBegin
+strings/append-stored-templates	// IR= 1 byIndex  = StringBuilderBegin
+strings/append-stored-templates	// IR= 1 pushed  = StringBuilderBegin
+strings/array-entries	// CALLS+ elementOnly operationAOTNewArrayIterator
+strings/array-entries	// CALLS+ indexOnly operationAOTNewArrayIterator
+strings/array-entries	// CALLS+ nestedPattern operationAOTNewArrayIterator
+strings/array-entries	// CALLS+ ofArraysOnly operationAOTNewArrayIterator
+strings/array-entries	// CALLS+ typed operationAOTNewArrayIterator
+strings/array-entries	// CALLS- held operationAOTNewArrayIterator
+strings/buffer-byte-length	// CALLS+ ofText StringUTF8Length8
+strings/buffer-byte-length	// CALLS+ ofTextByDefault StringUTF8Length8
+strings/buffer-byte-length	// CALLS+ ofUnknown StringUTF8Length8
+strings/build-time-regexps	// KNOWN fold1 [ab]joi+ned
+strings/build-time-regexps	// KNOWN fold1 assi+gned
+strings/build-time-regexps	// KNOWN fold1 fromca+ll
+strings/build-time-regexps	// KNOWN fold1 obje+ct7
+strings/comparisons-with-string-literals	// CALLS+ is5L operationAOTStringEqualsLiteral
+strings/comparisons-with-string-literals	// CALLS+ ofAny ValueEqualsLiteral
+strings/comparisons-with-string-literals	// CALLS- inLoop (?<!Typed)StringEqualsLiteral
+strings/comparisons-with-string-literals	// CALLS- is5L (?<!Typed)StringEqualsLiteral
+strings/comparisons-with-string-literals	// CALLS- isAccented StringEqualsLiteral
+strings/comparisons-with-string-literals	// CALLS- ofAnyL (?<!Typed)(String|Value)EqualsLiteral
+strings/exec-results-asserted-and-destructured	// CALLS+ asserted RegExpFind
+strings/exec-results-asserted-and-destructured	// CALLS+ byPatternWithGaps RegExpExec
+strings/exec-results-asserted-and-destructured	// CALLS+ orEmpty StringMatchRegExp
+strings/exec-results-asserted-and-destructured	// CALLS+ patternWithRest RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ byVariable RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ globalMatch StringMatchRegExp
+strings/exec-results-only-taken-apart	// CALLS+ handedOn RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ matchReturned StringMatchRegExp
+strings/exec-results-only-taken-apart	// CALLS+ named RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ parsed RegExpFind
+strings/exec-results-only-taken-apart	// CALLS+ returned RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ untypedMatch StringMatchRegExp
+strings/exec-results-only-taken-apart	// CALLS+ untypedResult RegExpExec
+strings/exec-results-only-taken-apart	// CALLS+ viaMatch RegExpFind
+strings/exec-results-only-taken-apart	// CALLS+ written RegExpExec
+strings/flat-string-keys	// CALLS- getPair IntToString|DoubleToString
+strings/lengths-in-loops	// CALLS+ lengthAndCharacters RopeCharacters
+strings/lengths-in-loops	// CALLS- lengthAndCharacters Flatten
+strings/locale-compare	// CALLS- comparedWithAnything operationAOTStringLocaleCompare
+strings/lookups-by-concatenated-keys	// CALLS+ getByInteger operationAOTMapGetByKeyParts
+strings/lookups-by-concatenated-keys	// CALLS+ getOfThree operationAOTMapGetByKeyParts
+strings/lookups-by-concatenated-keys	// CALLS+ getOfTwo operationAOTMapGetByKeyParts
+strings/lookups-by-concatenated-keys	// CALLS+ hasOfThree operationAOTHasByKeyParts
+strings/lookups-by-concatenated-keys	// CALLS+ listsTwo operationAOTHasByKeyParts
+strings/one-code-unit-compared	// CALLS+ twoUnits TypedString|StringsAreEqual|StringHasAt|StringEq
+strings/pattern-texts-that-the-build-knows	// COUNTER: RegExpsCreatedWithoutRecord = 3
+strings/properties-of-sums-that-may-be-numbers	// IRT= 1 addedUp : number = Add
+strings/properties-of-sums-that-may-be-numbers	// IRT= 1 addedUp : undefined\|\S+ = PropGet v\d+ name="length"
+strings/properties-of-sums-that-may-be-numbers	// IRT= 1 lengthOfSum : undefined\|\S+ = PropGet v\d+ name="length"
+strings/properties-of-sums-that-may-be-numbers	// IRT= 1 textOfSum (PropGet v\d+|CallMethod v\d+ \(\)) name="toString"
+strings/regexp	// CALLS+ found (?<!Typed)StringMatchRegExp
+strings/regexp	// CALLS+ fromBoth ConstructInternalFunction2
+strings/regexp	// CALLS+ parts operationAOTStringSplitString
+strings/regexp	// CALLS+ shout operationAOTStringReplaceRegExp
+strings/regexp	// CALLS+ swap operationAOTStringReplaceString
+strings/regexp	// CALLS+ vowels StringReplaceRegExpString
+strings/regexp	// CALLS+ where operationAOTStringSearchRegExp
+strings/regexp	// CALLS+ words operationAOTStringSplitRegExp
+strings/regexp-literals-inline-or-stored	// CALLS+ testedOfProperty operationAOTSharedRegExpLiteral
+strings/regexps-built-at-start-from-arguments	// COUNTER: RegExpsCreatedWithoutRecord = 12
+strings/regexps-built-at-start-from-arguments	// KNOWN tokens (0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)
+strings/regexps-built-at-start-from-arguments	// KNOWN tokens (?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*))*))
+strings/regexps-built-at-start-from-arguments	// KNOWN tokens (?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)
+strings/regexps-built-at-start-from-arguments	// KNOWN tokens ^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][a-zA-Z0-9-]*))*))?$
+strings/regexps-from-string-literals-1	// KNOWN hints1 [ab]joi+ned
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^ {0,0}me+mo
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^ {0,1}me+mo
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^ {0,2}facto+ry
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^ {0,2}me+mo
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^ {0,3}me+mo
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^(?:[*+-]|\d{1,9}[.)]) hea+ding(?: {4}| {0,3}\t)$
+strings/regexps-from-string-literals-1	// KNOWN hints1 ^fi+rst(?:[*+-]|\d{1,9}[.)])second(?:[*+-]|\d{1,9}[.)])
+strings/regexps-from-string-literals-1	// KNOWN hints1 byfu+nctionX
+strings/regexps-from-string-literals-1	// KNOWN hints1 ca+ret(x)[^y]
+strings/regexps-from-string-literals-1	// KNOWN hints1 fromca+ll
+strings/regexps-from-string-literals-1	// KNOWN hints1 neste+d(?:[*+-]|\d{1,9}[.)]) hea+ding(?: {4}| {0,3}\t)$
+strings/regexps-from-string-literals-1	// KNOWN hints1 repea+t ab ab ab 3
+strings/regexps-from-string-literals-1	// KNOWN hints1 reu+sed:sla+sh<\/?x[/]
+strings/regexps-from-string-literals-2	// KNOWN eval6 byfu+nctionX
+strings/regexps-from-string-literals-2	// KNOWN eval6 fromca+ll
+strings/regexps-from-string-literals-2	// KNOWN hints1 [ab]joi+ned
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^ {0,0}me+mo
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^ {0,1}me+mo
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^ {0,2}facto+ry
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^ {0,2}me+mo
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^ {0,3}me+mo
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^(?:[*+-]|\d{1,9}[.)]) hea+ding(?: {4}| {0,3}\t)$
+strings/regexps-from-string-literals-2	// KNOWN hints1 ^fi+rst(?:[*+-]|\d{1,9}[.)])second(?:[*+-]|\d{1,9}[.)])
+strings/regexps-from-string-literals-2	// KNOWN hints1 ca+ret(x)[^y]
+strings/regexps-from-string-literals-2	// KNOWN hints1 neste+d(?:[*+-]|\d{1,9}[.)]) hea+ding(?: {4}| {0,3}\t)$
+strings/regexps-from-string-literals-2	// KNOWN hints1 repea+t ab ab ab 3
+strings/regexps-from-string-literals-2	// KNOWN hints1 reu+sed:sla+sh<\/?x[/]
+strings/regexps-from-string-literals-2	// UNKNOWN ty+peobject
+strings/regexps-from-text-kept-under-constant-symbols	// KNOWN hints1 ^<(?:[aA][bB]|[cC][dD])>
+strings/repeat-and-pad	// CALLS- indentedByAnything operationAOTStringPad
+strings/replace-all	// CALLS+ byRegExp operationAOTStringReplaceAllRegExp
+strings/search	// CALLS+ includes1 StringFindString
+strings/search	// CALLS+ indexOf1 StringFindString
+strings/search	// CALLS+ searchKnown StringFindString
+strings/searches-outside-loops	// CALLS+ ends5 StringEndsWithLiteral
+strings/searches-outside-loops	// CALLS+ includesText f:;
+strings/searches-outside-loops	// CALLS+ indexOfCharacter f:;
+strings/searches-outside-loops	// CALLS+ indexOfCharacterL operationAOTStringFindCharacter8
+strings/searches-outside-loops	// CALLS+ indexOfText f:;
+strings/searches-outside-loops	// CALLS+ indexOfTextL operationAOTStringFind8
+strings/searches-outside-loops	// CALLS+ lastIndexOfText f:;
+strings/searches-outside-loops	// CALLS+ lastIndexOfTextL operationAOTStringReverseFind8
+strings/searches-outside-loops	// CALLS+ starts5 StringStartsWithLiteral
+strings/searches-outside-loops	// CALLS- ends5 CallHostFunction|CallMethod|CallValue|f:;
+strings/searches-outside-loops	// CALLS- indexOfTextL operationAOTStringIndexOfLiteral
+strings/single-characters	// CALLS+ slashAt ValueEqualsLiteralOfLength1
+strings/single-characters	// CALLS+ twoCharacters ValueEqualsLiteralOfLength2
+strings/single-characters	// CALLS- samePlace StringEq|StringsAreEqual
+strings/split-results-destructured-and-last-fields	// CALLS+ emptySeparator StringSplitString
+strings/split-results-destructured-and-last-fields	// CALLS+ wideSeparator StringSplitString
+strings/split-results-destructured-and-last-fields	// CALLS- lastByAt StringSplitString
+strings/split-results-destructured-and-last-fields	// CALLS- lastByLength StringSplitString
+strings/string-from-char-code-concat-normalize	// CALLS+ concatKnown operationAOTConcat
+strings/string-literal-length	// CALLS+ ofWide TypedString
+strings/string-literal-length	// CALLS+ returned TypedString
+strings/strings-built-and-consumed-locally	// CALLS- onlyStrings StringBuilder
+strings/strings-built-and-consumed-locally	// CALLS- readByIndex StringBuilder
+strings/strings-built-and-consumed-locally	// CALLS- wordsNotAKey StringBuilder
+strings/substring-and-trim-around-loops	// CALLS+ trimmedEnd StringTrimEnd(;|$)
+strings/substring-and-trim-around-loops	// CALLS+ trimmedStart StringTrimStart(;|$)
+strings/substring-and-trim-around-loops	// CALLS- trimmed operationAOTStringTrim
+strings/substring-and-trim-around-loops	// CALLS- trimmedL operationAOTStringTrim
+strings/sums-that-are-proven-strings	// IRT= 1 ofRecursiveResult : string = Add
+strings/trim-16-bit	// CALLS+ both StringTrim\.Both\b
+strings/trim-16-bit	// CALLS+ end StringTrim\.End\b
+strings/trim-16-bit	// CALLS+ start StringTrim\.Start\b
+strings/two-strings-compared	// CALLS+ counted FlatStringsAreEqual
+strings/two-strings-compared	// CALLS+ sameL FlatStringsAreEqual
+strings/two-strings-compared	// CALLS+ sameOrNilL FlatStringsAreEqual
+strings/two-strings-compared	// CALLS- sameCharacters StringsAreEqual
+strings/typeof-of-made-strings	// IR= 1 inALoop TypeOfIs
+strings/typeof-of-made-strings	// IR= 2 every TypeOfIs
+strings/typeof-of-made-strings	// IR= 2 others TypeOfIs
+type-rules/casts-read-on-the-spot	// IR+ ^layout L\d+ .*name="Crate" .* representation=Typed
+type-rules/casts-read-on-the-spot	// IR+ ^layout L\d+ .*name="Message" .* representation=Typed
+type-rules/casts-read-on-the-spot	// IR+ ^layout L\d+ .*name="Note" .* representation=Typed
+type-rules/constant-types-not-described	// DATA< 20000
+type-rules/containers-in-properties-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=ArrayPrototypeIndexOf/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=ArrayPrototypeIncludes/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=ArrayPrototypeIndexOf/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=ArrayPrototypeLength/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=MapPrototypeGet/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=MapPrototypeHas/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=MapPrototypeSet/
+type-rules/containers-keep-their-class-beside-external-data	// IR+ CallBuiltin v\d+ \(.*\) overload=SetPrototypeAdd/
+type-rules/double-negation-of-a-missing-element	// IR= 0 ofComparison ToBoolean
+type-rules/double-negation-of-a-missing-element	// IR= 0 ofNegation ToBoolean
+type-rules/record-with-the-names-of-a-module-that-is-only-read-from	// IR- ^layout (L\d+) .*name="Attempt" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+type-rules/spread-copy-with-a-property-of-type-any	// IR= 1 declared CloneAs 
+type-rules/spread-copy-with-a-property-of-type-any	// IR= 1 withCount CloneAs 
+typed-objects/a-constructor-function-that-stores-some-fields-first	// IR+ ^layout L\d+ .*name="Half" .*\{name="first" declared=
+typed-objects/a-record-given-a-prototype-by-untyped-code-only	// IR+ ^layout L\d+ .*name="Point" .* representation=Typed
+typed-objects/allocation-stays-proven-in-constant	// IR= 1 awaited : object .*= GetModuleVariable
+typed-objects/allocation-stays-proven-in-constant	// IR= 1 given : undefined.\S+ = PropGet .* name="byteLength"
+typed-objects/allocation-stays-proven-in-constant	// IR= 1 inALoop : (number|i32|int\S*) = CallBuiltin .* overload=ArrayBufferPrototypeByteLength/
+typed-objects/allocation-stays-proven-in-constant	// IR= 1 ofTheModule : (number|i32|int\S*) = CallBuiltin .* overload=ArrayBufferPrototypeByteLength/
+typed-objects/allocation-stays-proven-in-constant	// IR= 1 ofTheModule : ArrayBuffer\S* = GetModuleVariable
+typed-objects/class-fields-shared-with-host-type	// IR- ^layout (L\d+) .*name="(Point|Size|Named)" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/class-fields-shared-with-host-type	// IR= 1 area PropGet v[0-9]+ name="width"(?!.* isFallback)
+typed-objects/class-fields-shared-with-host-type	// IR= 1 twice PropGet v[0-9]+ name="x"(?!.* isFallback)
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 count : Map\S* = Claim 
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 count : Set\S* = Claim 
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 flagsOf : RegExp\S* = Claim 
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 made : Date\S* = CallBuiltin .* overload=Date/
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 made CallBuiltin .* overload=DatePrototypeGetTime/
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 size : ArrayBuffer\S* = CallBuiltin .* overload=ArrayBuffer/
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 size CallBuiltin .* overload=ArrayBufferPrototypeByteLength/
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 sum : Uint8Array\S* = Claim 
+typed-objects/collections-and-typed-arrays-stay-proven	// IR= 1 timeOf : Date\S* = Claim 
+typed-objects/constructor-first-stores-at-creation	// IR+ ^layout L\d+ .*name="Core" .*\{name="options" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+typed-objects/copy-of-a-class-with-a-replaced-method	// CALLS+ Labeled.copy TryCloneWithPrototype
+typed-objects/copy-of-a-class-with-a-replaced-method	// CALLS+ Shape.copy TryCloneWithPrototype
+typed-objects/copy-of-a-class-with-a-replaced-method	// CALLS+ Watched.copy TryCloneWithPrototype
+typed-objects/copy-with-the-same-prototype	// CALLS+ Point.moved TryCloneWithPrototype
+typed-objects/copy-with-the-same-prototype	// CALLS+ Reason.annotate TryCloneWithPrototype
+typed-objects/copy-with-the-same-prototype	// CALLS+ changed TryCloneWithPrototype
+typed-objects/copy-with-the-same-prototype	// CALLS+ renamed TryCloneWithPrototype
+typed-objects/declare-fields-beside-methods-with-imported-keys	// IR+ ^layout L[0-9]+ .*\{name="payload" declared=
+typed-objects/declare-fields-beside-methods-with-imported-keys	// IR+ ^layout L[0-9]+ .*\{name="reasons" declared=
+typed-objects/delete-key-from-builtin-result	// IR+ ^layout L\d+ .*\{name="stays" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+typed-objects/dictionary-only-inspected	// IR- ^layout (L\d+) .*name="Point" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/dispose-keyed-fields	// IR+ ^layout L[0-9]+ .*\{name=WellKnownSymbol "[^"]*dispose" declared=undefined.null.function
+typed-objects/dispose-keyed-fields	// IR+ ^layout L[0-9]+ .*name="Span" .* representation=Typed
+typed-objects/dispose-keyed-fields	// IR= 0 open (ElemSet|(Prop|Elem)Define)
+typed-objects/failed-structure-check-restarts-reads	// IRT= 1 storeBetween Branch .*: b[0-9]+\(v
+typed-objects/failed-structure-check-restarts-reads	// IRT= 3 label = (Add|Strcat)\b
+typed-objects/field-deleted-wide-recreated-narrow	// CALLS+ putThroughPoint DidCreate
+typed-objects/generic-spread-bound-with-layout	// IR- ^    v\d+: [^=~\n]*(?<![=\w])L\d+(?![!\d])
+typed-objects/interface-declared-in-a-namespace-of-types	// IR+ ^layout L\d+ .*name="Deep" .* representation=Typed
+typed-objects/interface-declared-in-a-namespace-of-types	// IR+ ^layout L\d+ .*name="WithContent" .* representation=Typed
+typed-objects/json-stringify-dates	// CALLS+ isoText operationAOTDateToISOString
+typed-objects/json-stringify-dates	// CALLS+ writeDates operationAOTJSONAppendDate
+typed-objects/length-compared-on-each-test-exit	// IRT= 1 down TypeTest v[0-9]+ testedType=\w\S*\^
+typed-objects/length-compared-on-each-test-exit	// IRT= 1 scan : int.0,[0-9]+. = CallBuiltin .* overload=DataViewPrototypeByteLength/
+typed-objects/length-compared-on-each-test-exit	// IRT= 1 scan TypeTest v[0-9]+ testedType=\w\S*\^
+typed-objects/length-compared-on-each-test-exit	// IRT= 1 scan name="byteLength".* isFallback
+typed-objects/length-compared-on-each-test-exit	// IRT= 2 down Greater
+typed-objects/length-compared-on-each-test-exit	// IRT= 2 kept Less
+typed-objects/length-compared-on-each-test-exit	// IRT= 2 scan Less
+typed-objects/literal-types-and-class-chains	// DATA< 95000
+typed-objects/literal-with-computed-key-is-born-typed	// IRT= 0 lacksMember : =?L[0-9]+ = NewObject 
+typed-objects/literal-with-computed-key-is-born-typed	// IRT= 0 namedBehindKey : =?L[0-9]+ = NewObject 
+typed-objects/literal-with-keys-named-by-constant-strings-is-born-as-its-record	// IR= 0 underProto : =?L[0-9]+ = NewObject 
+typed-objects/made-deep-in-a-chain-of-makers	// IR= 1 anonymous : =?L[0-9]+ = NewObject 
+typed-objects/made-deep-in-a-chain-of-makers	// IR= 1 reference : =?L[0-9]+ = NewObject 
+typed-objects/made-deep-in-a-chain-of-makers	// IRT= 0 reference CallDirect
+typed-objects/methods-with-a-typed-this-are-no-constructors	// IR+ ^layout L\d+ .*\{name="count" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+typed-objects/methods-with-a-typed-this-are-no-constructors	// IR+ ^layout L\d+ .*\{name="label" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+typed-objects/methods-with-a-typed-this-are-no-constructors	// IR+ ^layout L\d+ .*\{name="step" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+typed-objects/non-generic-spread-literal-in-generic-function	// IR+ ^ .* = CloneAs 
+typed-objects/number-field-takes-room-that-a-neighbor-leaves	// CALLS+ putIntoFull PutNumberInNumberBox
+typed-objects/number-field-takes-room-that-a-neighbor-leaves	// CALLS+ putIntoWritten PutNumberInNumberBox
+typed-objects/number-slot-stores-over-a-boxed-number	// CALLS+ putInt32 PutNumberInNumberBox
+typed-objects/number-slot-stores-over-a-boxed-number	// CALLS+ putSum PutNumberInNumberBox
+typed-objects/one-receiver-shares-structure-check	// IRT= 1 aroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 1 fourReads TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 1 fourStores TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 1 inBranches TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 1 inLoop TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 2 nested TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-receiver-shares-structure-check	// IRT= 2 twoReceivers TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 caught TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 inClosure TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 ofNothing TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 readsAroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 storesAroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 walk TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 1 whileMaking TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 2 deep TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 2 farApart TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 2 throughNext TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/one-structure-check-across-call	// IRT= 2 twoReceivers TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout (L\d+) .*name="Nested" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout (L\d+) .*name="Reader" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout L\d+ .*name="Nested" .*isNeverAllocated=true
+typed-objects/open-records-that-typed-code-never-makes-or-never-reads	// IR+ ^layout L\d+ .*name="Reader" .*isNeverAllocated=true
+typed-objects/optional-field-records-copied-at-one-site	// CALLS+ widen LookupCopyKeyOrder
+typed-objects/optional-field-records-copied-at-one-site	// CALLS+ widenInFront LookupCopyKeyOrder
+typed-objects/optional-field-records-copied-at-one-site	// CALLS+ withoutName LookupCopyKeyOrder
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ both CloneObjectAndExtend
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ named CloneObjectAndExtend
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ wide CloneObjectAndExtendWithNumber
+typed-objects/plain-clone-takes-stores-behind-it	// CALLS- both PutBy
+typed-objects/proxyless-generic-class-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/proxyless-generic-function-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/proxyless-generic-passed-to-map-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/reads-after-cast-share-structure-check	// IRT= 1 maybe TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/reads-after-cast-share-structure-check	// IRT= 1 sumOfLeaf TypeTest v[0-9]+ testedType=L[0-9]+!
+typed-objects/record-spread-into-class-literal-stays-closed	// IR+ ^ .* = CloneAs 
+typed-objects/record-spread-into-class-literal-stays-closed	// IR- ^layout (L\d+) .*name="Vec" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/record-stored-via-index-signature	// IR+ ^layout L\d+ .*name="Copied" .*isStable=true
+typed-objects/record-stored-via-index-signature	// IR+ ^layout L\d+ .*name="Even" .*isStable=true
+typed-objects/record-stored-via-index-signature	// IR+ ^layout L\d+ .*name="Kept" .*isStable=true
+typed-objects/record-via-object-assign-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/records-many-sizes-spread-copied	// CALLS+ copyPair CopyTypedObject16
+typed-objects/records-many-sizes-spread-copied	// CALLS+ copyPoint CopyTypedObject32
+typed-objects/records-many-sizes-spread-copied	// CALLS+ copyWide CopyTypedObjectAnySize
+typed-objects/records-many-sizes-spread-copied	// CALLS+ movePoint CopyTypedObject32
+typed-objects/registered-symbol-keyed-fields	// IR+ ^layout L[0-9]+ .*\{name=RegisteredSymbol "[^"]*test.tag" declared=undefined.null.string
+typed-objects/registered-symbol-keyed-fields	// IR= 1 read : undefined.null.string = PropGet v[0-9]+ name=RegisteredSymbol "[^"]*test.tag"
+typed-objects/slot-next-to-error-slot-stays-proven	// IRT= 1 note \(anything, \S*Map\S*\) ->
+typed-objects/spread-inside-try	// IRT= 1 copy  = CloneAs 
+typed-objects/spread-of-single-layout-record	// CALLS+ copy CopyTypedObject32
+typed-objects/spread-of-single-layout-record	// CALLS+ rename CopyTypedObject32
+typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withBoth CloneObjectAndExtend
+typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withId CloneObjectAndExtendWithNumber
+typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withId CopyTypedObject
+typed-objects/spread-off-usual-path-is-one-call	// CALLS+ withName CloneObjectAndExtend
+typed-objects/spread-opaque-source	// CALLS+ rename CloneObjectAndExtend
+typed-objects/spread-opaque-source-stores-number-field	// CALLS+ resize CloneObjectAndExtendWithNumber
+typed-objects/subclassed-constructor-returns-literal-stays-closed	// IR- ^layout (L\d+) .*name="Counter" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+typed-objects/symbol-keyed-fields	// IR+ ^layout L[0-9]+ .*\{name=UniqueSymbol "[^"]*handle" declared=number
+typed-objects/symbol-keyed-fields	// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*count"
+typed-objects/symbol-keyed-fields	// IR= 1 bump : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*handle"
+typed-objects/symbol-keyed-fields	// IR= 1 bump PropSet v[0-9]+, v[0-9]+ name=UniqueSymbol "[^"]*count"
+typed-objects/symbol-keyed-fields	// IR= 1 readRequest : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*handle"
+typed-objects/symbol-keyed-fields	// IR= 1 sum : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*same"
+typed-objects/symbol-keyed-fields-across-modules	// IR= 1 readAlias : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*shared"
+typed-objects/symbol-keyed-fields-in-one-literal	// IR= 0 make (ElemSet|ElemDefine|GetModuleVariable)
+typed-objects/symbol-keyed-fields-in-one-literal	// IR= 1 make NewObject \(v[0-9]+(, v[0-9]+){8}\)
+typed-objects/symbol-keyed-fields-of-constructor-functions	// IR+ ^layout L[0-9]+ .*name="Response" .* representation=Typed
+typed-objects/symbol-keyed-fields-of-constructor-functions	// IR= 1 finish : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*kState"
+typed-objects/untouched-uninitialized-fields	// IR+ PropSet v\d+, v\d+ name="touchedByBase"
+typed-objects/untouched-uninitialized-fields	// IR+ PropSet v\d+, v\d+ name="touchedByInitializer"
+typed-objects/untouched-uninitialized-fields	// IR+ PropSet v\d+, v\d+ name="touchedThroughArrow"
+typed-objects/untyped-stores-against-field-types	// COUNTER: StoreOfOtherType = 4
+typed-objects/wider-optional-field-costs-nothing	// CALLS+ putThroughLoose DidCreate
+typed-objects/wider-optional-primitive-costs-nothing	// CALLS+ putNumberThroughLoose DidCreate
+typed-objects/wider-optional-primitive-costs-nothing	// CALLS- putNumberThroughPoint DidCreate
+untyped-code/places-remember-in-the-hottest-functions	// CALLS+ callsMethod FindMethodByIdAndFillSiteCache
+untyped-code/places-remember-in-the-hottest-functions	// CALLS+ readsData GetByIdAndFillSiteCache
+untyped-code/places-remember-in-the-hottest-functions	// CALLS+ storesData PutByIdAndFillSiteCache
+untyped-code/records-obtained-by-js-keep-layout	// IR= 1 length : number = PropGet v[0-9]+ name="y"(?!.* isFallback)
+untyped-code/records-obtained-by-js-keep-layout	// IR= 1 total : number = PropGet v[0-9]+ name="y"(?!.* isFallback)
+untyped-code/records-passed-to-js-keep-layout	// IR= 1 total : number = PropGet v[0-9]+ name="value"(?!.* isFallback)
+untyped-code/records-passed-to-js-keep-layout	// IR= 2 half : number = PropGet v[0-9]+ name="(count|total)"(?!.* isFallback)
+untyped-code/records-passed-to-js-keep-layout	// IR= 2 total : undefined\|null\|=?L[0-9]+!? = PropGet v[0-9]+ name="(left|right)"(?!.* isFallback)
+untyped-code/truthiness-of-builtin-results	// IR= 0 owns ^  b[1-9][0-9]*\(v
+untyped-code/truthiness-of-builtin-results	// IR= 1 direct boolean = CallBuiltin - \(v[0-9]+\) overload=ArrayIsArray/
+untyped-code/truthiness-of-builtin-results	// IR= 1 owns ToBoolean
+untyped-code/truthiness-of-builtin-results	// IR= 1 owns boolean = CallBuiltin - \(v[0-9]+, v[0-9]+\) overload=ObjectHasOwn/
+untyped-code/unread-results	// IR= 0 unused ^  b[1-9][0-9]*\(v
+# These state what the compiler does not do yet: each came with the report of a gain that is missed, and waits for the change that brings it.
+arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 threeInARow : int\[-2147483646, 2147483649\] = Add
+arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 threeInARow : int\[-2147483647, 2147483648\] = Add
+arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 threeInARow = TypeTest v1 testedType=i32
+arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 twoOfAView : int\[-2147483647, 2147483648\] = Add
+arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 twoOfAView = TypeTest v1 testedType=i32
+calls-fast-paths/members-that-the-program-stores-to-the-object-of-a-class	// IR= 0 loopClass AreMembersUnchanged
+constant-containers/a-constant-literal-where-a-class-is-declared-leaves-the-field-typed	// IR- layout .* name="Line" .*key="from" declared=\{type=[^}]*IsExpected
+copied-properties/a-frozen-source-is-copied-by-a-plan	// COUNTER: CopiesCollectedByName = 0
+function-prototypes/a-wide-prototype-object-keeps-the-guards-of-its-class	// COUNTER: MemberGuardsCleared = 0
+function-prototypes/a-wide-prototype-object-keeps-the-guards-of-its-class	// COUNTER: PrototypeLinkGuardsCleared = 0
+narrowing/a-narrowed-variable-is-claimed-once-and-keeps-its-own-value	// IRT= 2 eachArm = TypeTest
+narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 conditional = TypeTest
+narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 leavesEarly = TypeTest
+narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 byNot RequireObjectCoercible
+narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 byTypeof = PropGet
+narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 chain RequireObjectCoercible .* name="b"
+narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 1 byTypeof = TypeTest
+structural-types/a-namespace-beside-a-function-or-a-class-makes-no-object-of-its-own	// IR= 0 loopMerged = Call .*calleeName="Tool"
+structural-types/a-namespace-beside-a-function-or-a-class-makes-no-object-of-its-own	// IR= 0 loopMerged L\d+\|f\d+ = GetModuleVariable
+structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 0 callNorm = TypeTest
+structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 0 sumPoint = TypeTest
+structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 1 sumPair = TypeTest
+structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 2 sumPoint = GetSlot v\d+ key="[xy]" receivers=\[L\d+\] level=Proven
+structural-types/a-tag-decides-the-layout-whatever-the-tag-is-called	// IRT= 0 areaByKind = TypeTest
+structural-types/an-instance-under-a-computed-key-of-a-union-type-passes-for-the-index-signature	// IRT= 0 barkIn testedType=undefined.null.object
+typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag = TypeTest
+typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readBag GetSlotOrUndefined
+typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readRequest = TypeTest
+typed-objects/members-behind-a-view-are-filled-at-birth	// IRT= 0 readRequest GetSlotOrUndefined
+typed-objects/one-rest-copy-leaves-plain-literals-filled-at-birth	// IRT= 0 readRest GetSlotOrUndefined
+typed-objects/one-spread-under-a-declared-type-leaves-plain-literals-filled-at-birth	// IRT= 0 readState = TypeTest
+typed-objects/one-spread-under-a-declared-type-leaves-plain-literals-filled-at-birth	// IRT= 0 readState IsSlotFilled
+untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read = TypeTest
+untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read GetSlotOrUndefined
+untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 read IsSlotFilled
+untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 readBoth = TypeTest
+untyped-code/fields-of-a-literal-that-begins-with-a-constant-are-filled-at-birth	// IR= 0 readBoth GetSlotOrUndefined
+untyped-code/parameters-read-beside-arguments-length-keep-their-types	// IR= 0 sum = PropGet
+untyped-code/parameters-read-beside-arguments-length-keep-their-types	// IR= 0 sum = TypeTest

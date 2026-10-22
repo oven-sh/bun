@@ -1,4 +1,4 @@
-// The same value is held by an annotated variable and passed as an argument: the argument of a typed function is checked as before.
+// The same parsed object is held by an annotated variable and passed as an argument: any object passes both, and the member it does not have reads undefined.
 interface Meta { sign: string[] | true; secrets?: string }
 function isSigned(meta: Meta): boolean { return !!meta.sign; }
 function attempt(name: string, f: () => unknown): void { try { console.log(name, f()); } catch (e) { console.log(name, (e as Error).name); } }

@@ -1,14 +1,13 @@
 // The result of JSON.parse<T>() is a T when the call returns, with a reviver too, so later code reads its fields directly instead of by name.
-// IR= 1 readsParsed : number = GetById v\d+ "x"
-// IR= 1 readsParsed : number = GetById v\d+ "y"
-// IR= 0 readsParsed ~number = GetById
-// IR= 0 readsParsed ~undefined\|null\|Point
-// IR= 1 readsRevived : number = GetById v\d+ "x"
-// IR= 0 readsRevived ~number = GetById
-// IR= 1 readsKept : number = GetById v\d+ "y"
-// IR= 0 readsKept ~number = GetById
-// IR= 1 readsGiven object = GetById v\d+ "from"
-// IR= 0 readsGiven GivenPoint
+// IR= 1 readsParsed : number = PropGet v\d+ name="x"(?!.* isFallback)
+// IR= 1 readsParsed : number = PropGet v\d+ name="y"(?!.* isFallback)
+// IR= 0 readsParsed ~number = PropGet(?!.* isFallback)
+// IR= 0 readsParsed ~(undefined\|null\|)?L\d+
+// IR= 1 readsRevived : number = PropGet v\d+ name="x"(?!.* isFallback)
+// IR= 0 readsRevived ~number = PropGet(?!.* isFallback)
+// IR= 1 readsKept : number = PropGet v\d+ name="y"(?!.* isFallback)
+// IR= 0 readsKept ~number = PropGet(?!.* isFallback)
+// IR= 1 readsGiven  = PropGet v\d+ name="from"(?!.* isFallback)
 // VALIDATED compiles
 interface Point { x: number; y: number }
 interface Line { from: Point; to: Point; points: Point[]; name?: string }

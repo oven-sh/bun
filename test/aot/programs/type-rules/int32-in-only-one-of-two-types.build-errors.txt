@@ -1,8 +1,0 @@
-error: TS100034: A 'Derived' is used as a 'Base', and 'at' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Derived' is used as a 'Base', and 'skip' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Cursor' is used as a 'Movable', and 'column' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Cursor' is used as a 'Movable', and 'line' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Cursor' is used as a 'Movable', and 'move' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Cursor' is used as a 'Movable', and 'width' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A '{ x: number; }' is used as a 'Point', and 'x' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.
-error: TS100034: A 'Pixel' is used as a 'Point', and 'x' is an 'int32' in only one of the two. Declare it 'int32' in both, or in neither.

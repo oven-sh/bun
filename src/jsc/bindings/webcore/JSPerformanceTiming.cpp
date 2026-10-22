@@ -181,7 +181,7 @@ JSObject* JSPerformanceTiming::prototype(VM& vm, JSDOMGlobalObject& globalObject
     return getDOMPrototype<JSPerformanceTiming>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSPerformanceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSPerformanceTiming::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceTimingDOMConstructor, DOMConstructorID::PerformanceTiming>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

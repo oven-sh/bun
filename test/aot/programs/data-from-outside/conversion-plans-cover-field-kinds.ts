@@ -1,5 +1,5 @@
 declare const aotOperationCount: (name: string) => number;
-// Plain objects are converted to record types whose fields are stored in every usual way. Values that fit are converted without the runtime after the first object of a shape; a value that does not fit leaves the object as it was.
+// Objects built member by member in untyped code are read through record types whose fields are of every usual kind. Any object passes as the record. A member of the wrong kind throws where typed code reads it, undefined, null and a missing member pass, and the object stays as it was. Objects that fit do not enter the runtime's type check once per object.
 type Leaf = { n: number; up: Leaf | null };
 type Solid = { count: number; ratio: number; flag: boolean; label: string; leaf: Leaf; list: number[] };
 type Loose = { maybeFlag?: boolean; maybeLabel: string | null; maybeLeaf: Leaf | null; act: (n: number) => number; thing: object; anything: unknown };
@@ -44,7 +44,7 @@ function attempt(made: any, show: (made: any) => string): void {
   try {
     line = show(made);
   } catch (e) {
-    line = e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(e);
+    line = e instanceof Error ? e.name : String(e);
   }
   const after = Object.values(made);
   console.log(line, Object.keys(made).join() === keys && after.length === values.length && after.every((value, i) => Object.is(value, values[i])) ? "same contents" : "CONTENTS CHANGED");
@@ -60,14 +60,14 @@ function triple(n: number): number {
 
 let text = "";
 const kept: unknown[] = [];
-const before = aotOperationCount("operationAOTTypedCoerce");
+const before = aotOperationCount("operationAOTEnforceType");
 for (let i = 0; i < 300; i++) {
   const solid = growSolid(i, i % 3 ? i + 0.5 : i, i % 2 === 0, "l" + (i % 5), leaf, list);
   const loose = growLoose(i % 2 === 0, i % 3 ? "m" : null, i % 4 ? leaf : null, i % 2 ? double : triple, i % 2 ? list : leaf, i % 5 ? i : leaf);
   kept.push(solid, loose);
   text = showSolid(solid) + " " + showLoose(loose);
 }
-const slow = aotOperationCount("operationAOTTypedCoerce") - before;
+const slow = aotOperationCount("operationAOTEnforceType") - before;
 console.log(text, slow < 30 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[0]), JSON.stringify(kept[1]), JSON.stringify(kept[598]), JSON.stringify(kept[599]));
 

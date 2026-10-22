@@ -1,5 +1,5 @@
 // Bun.escapeHTML called through a constant in the middle of a concatenation escapes straight into the buffer.
-// IR+ CallBuiltin StringAppendMayEscape
+// IR+ ^ .*StringBuilderAppendBuiltin .* overload=BunEscapeHTML/
 const escape = Bun.escapeHTML;
 const log: string[] = [];
 function show(label: string, text: string): void {
@@ -24,7 +24,7 @@ function mixed(text: string, n: number, missing: string | undefined): string {
   let html = "";
   html += escape(text.slice(1)) + `<i>${n}</i>`;
   html += escape(text) + escape(text + "&");
-  return `${html}|${escape(missing as string)}|${escape(n as unknown as string)}|${escape("a<b")}`;
+  return `${html}|${escape(missing as string)}|${escape(n as any)}|${escape("a<b")}`;
 }
 function page(items: string[]): string {
   return `<body>${list(items)}${items.length ? link(items[0]!, items[items.length - 1]!) : ""}</body>`;
@@ -59,7 +59,7 @@ show("page", page([]));
 
 const talker = { toString() { log.push("toString"); return "<t>"; }, valueOf() { log.push("valueOf"); return "<v>"; } };
 function loose(value: unknown): string {
-  return `[${escape(value as string)}]` + escape(value as string) + "!";
+  return `[${escape(value as any)}]` + escape(value as any) + "!";
 }
 show("loose", loose(talker));
 show("loose", loose(12.5));
@@ -73,7 +73,7 @@ const original = Bun.escapeHTML;
   return talker;
 };
 show("still the original", link("<", ">"));
-const replaced: (text: string) => string = Bun.escapeHTML;
+const replaced: (text: string) => any = Bun.escapeHTML;
 function other(text: string): string {
   return `(${replaced(text)})` + replaced(text + "2") + ".";
 }

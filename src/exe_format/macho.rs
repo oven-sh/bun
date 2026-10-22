@@ -2,14 +2,31 @@ use core::mem::size_of;
 
 // `std.macho` types ported locally (see macho_types.rs).
 use crate::align_up as align_size;
+use crate::image::KnownSection;
 use crate::macho_types as macho;
-use crate::macho_types::{BlobIndex, CodeDirectory, SuperBlob};
+use crate::macho_types::{BlobIndex, CodeDirectory, CommandKind, SuperBlob, command_kind};
 use crate::{read_struct, write_struct};
 
 use bun_core::env_var::feature_flag;
 
 const SEGNAME_BUN: [u8; 16] = *b"__BUN\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
 const SECTNAME: [u8; 16] = *b"__bun\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+const _: () = assert!(is_padded_name(&SEGNAME_BUN, KnownSection::Payload.names().macho_segment));
+const _: () = assert!(is_padded_name(&SECTNAME, KnownSection::Payload.names().macho_section));
+
+const fn is_padded_name(padded: &[u8; 16], name: &[u8]) -> bool {
+    if name.len() >= padded.len() {
+        return false;
+    }
+    let mut index = 0;
+    while index < name.len() {
+        if padded[index] != name[index] {
+            return false;
+        }
+        index += 1;
+    }
+    padded[name.len()] == 0
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum MachoError {
@@ -32,6 +49,8 @@ pub enum MachoError {
     /// A shifted `__LINKEDIT` load command offset no longer fits the u32 Mach-O stores.
     #[error("executable would exceed 4 GiB (Mach-O load commands store 32-bit file offsets)")]
     ExecutableTooLarge,
+    #[error("cannot move the file offsets of unknown Mach-O load command {0:#x}")]
+    UnknownLoadCommand(u32),
 }
 bun_core::oom_from_alloc!(MachoError);
 
@@ -94,149 +113,6 @@ impl MachoFile {
         }))
     }
 
-    pub fn add_symbols(&mut self, table: &[u8], image_in_payload: u64) -> Option<()> {
-        let lc_base = size_of::<macho::mach_header_64>();
-        let seg_sz = size_of::<macho::segment_command_64>();
-        let sect_sz = size_of::<macho::section_64>();
-        let mut symtab: Option<(usize, macho::symtab_command)> = None;
-        let mut dysymtab: Option<(usize, macho::dysymtab_command)> = None;
-        let mut signature: Option<(usize, macho::linkedit_data_command)> = None;
-        let mut linkedit: Option<(usize, macho::segment_command_64)> = None;
-        let mut bun: Option<(u8, u64)> = None;
-        let mut ordinal: usize = 0;
-        let mut iter = self.iterator();
-        while let Some(entry) = iter.next() {
-            let at = lc_base + entry.offset;
-            match entry.hdr.cmd {
-                macho::LC::SEGMENT_64 => {
-                    let command = entry.cast::<macho::segment_command_64>()?;
-                    let nsects = command.nsects as usize;
-                    if nsects.checked_mul(sect_sz)?.checked_add(seg_sz)? > entry.data.len() {
-                        return None;
-                    }
-                    for i in 0..nsects {
-                        ordinal += 1;
-                        let sect: macho::section_64 =
-                            read_struct(&self.data[at + seg_sz + i * sect_sz..][..sect_sz]);
-                        if command.seg_name() == b"__BUN" && sect.sect_name() == b"__bun" {
-                            bun = Some((u8::try_from(ordinal).ok()?, sect.addr));
-                        }
-                    }
-                    if command.seg_name() == SEG_LINKEDIT {
-                        linkedit = Some((at, command));
-                    }
-                }
-                macho::LC::SYMTAB => symtab = Some((at, entry.cast::<macho::symtab_command>()?)),
-                macho::LC::DYSYMTAB => dysymtab = Some((at, entry.cast::<macho::dysymtab_command>()?)),
-                macho::LC::CODE_SIGNATURE => {
-                    signature = Some((at, entry.cast::<macho::linkedit_data_command>()?));
-                }
-                _ => {}
-            }
-        }
-        let (symtab_at, mut symtab) = symtab?;
-        let (dysymtab_at, mut dysymtab) = dysymtab?;
-        let (linkedit_at, mut linkedit) = linkedit?;
-        let (bun_ordinal, bun_address) = bun?;
-
-        let length = self.data.len();
-        let symbols_at = symtab.symoff as usize;
-        let strings_at = symtab.stroff as usize;
-        let strings_end = strings_at.checked_add(symtab.strsize as usize)?;
-        let locals = dysymtab.nlocalsym as usize;
-        let indirect_at = if dysymtab.nindirectsyms == 0 {
-            strings_at
-        } else {
-            dysymtab.indirectsymoff as usize
-        };
-        let after_strings = signature.map_or(length, |(_, command)| command.dataoff as usize);
-        let matches_ld_layout = dysymtab.ilocalsym == 0
-            && dysymtab.iextdefsym == dysymtab.nlocalsym
-            && dysymtab.iundefsym as u64 == dysymtab.iextdefsym as u64 + dysymtab.nextdefsym as u64
-            && symtab.nsyms as u64 == dysymtab.iundefsym as u64 + dysymtab.nundefsym as u64
-            && dysymtab.nextrel == 0
-            && dysymtab.nlocrel == 0
-            && dysymtab.ntoc == 0
-            && dysymtab.nmodtab == 0
-            && dysymtab.nextrefsyms == 0
-            && symbols_at.checked_add(16 * symtab.nsyms as usize)? == indirect_at
-            && indirect_at.checked_add(4 * dysymtab.nindirectsyms as usize)? == strings_at
-            && strings_end <= after_strings
-            && after_strings - strings_end < 16
-            && after_strings <= length
-            && signature.is_none_or(|(_, command)| command.dataoff as u64 + command.datasize as u64 == length as u64)
-            && linkedit.fileoff.checked_add(linkedit.filesize)? == length as u64;
-        if !matches_ld_layout {
-            return None;
-        }
-
-        let word = |at: usize| -> Option<u32> {
-            Some(u32::from_le_bytes(table.get(at..at.checked_add(4)?)?.try_into().ok()?))
-        };
-        let count = word(0)?;
-        let rows_end = (count as usize).checked_mul(12)?.checked_add(16)?;
-        let rows = table.get(16..rows_end)?;
-        let names = table.get(rows_end..rows_end.checked_add(word(4)? as usize)?)?;
-        let code = bun_address
-            .checked_add(size_of::<u64>() as u64)?
-            .checked_add(image_in_payload)?
-            .checked_add(word(8)? as u64)?;
-
-        let mut tail: Vec<u8> = Vec::with_capacity(length - symbols_at + 16 * count as usize + names.len() + 16);
-        tail.extend_from_slice(&self.data[symbols_at..symbols_at + 16 * locals]);
-        for row in rows.as_chunks::<12>().0 {
-            let at = |index: usize| u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]]);
-            tail.extend_from_slice(&symtab.strsize.checked_add(at(8))?.to_le_bytes());
-            tail.extend_from_slice(&[macho::N_SECT, bun_ordinal, 0, 0]);
-            tail.extend_from_slice(&code.checked_add(at(0) as u64)?.to_le_bytes());
-        }
-        tail.extend_from_slice(&self.data[symbols_at + 16 * locals..indirect_at]);
-        let new_indirect_at = symbols_at + tail.len();
-        for index in self.data[indirect_at..strings_at].as_chunks::<4>().0 {
-            let index = u32::from_le_bytes([index[0], index[1], index[2], index[3]]);
-            let moves = index & macho::INDIRECT_SYMBOL_LOCAL_OR_ABS == 0 && index >= dysymtab.nlocalsym;
-            tail.extend_from_slice(&(if moves { index.checked_add(count)? } else { index }).to_le_bytes());
-        }
-        let new_strings_at = symbols_at + tail.len();
-        tail.extend_from_slice(&self.data[strings_at..strings_end]);
-        tail.extend_from_slice(names);
-        while !(symbols_at + tail.len()).is_multiple_of(16) {
-            tail.push(0);
-        }
-        let new_after_strings = symbols_at + tail.len();
-        tail.extend_from_slice(&self.data[after_strings..]);
-        let growth = (new_after_strings - after_strings) as u64;
-
-        symtab.nsyms = symtab.nsyms.checked_add(count)?;
-        symtab.stroff = u32::try_from(new_strings_at).ok()?;
-        symtab.strsize = u32::try_from(new_after_strings - new_strings_at).ok()?;
-        dysymtab.nlocalsym = dysymtab.nlocalsym.checked_add(count)?;
-        dysymtab.iextdefsym = dysymtab.iextdefsym.checked_add(count)?;
-        dysymtab.iundefsym = dysymtab.iundefsym.checked_add(count)?;
-        if dysymtab.nindirectsyms != 0 {
-            dysymtab.indirectsymoff = u32::try_from(new_indirect_at).ok()?;
-        }
-        let signature = match signature {
-            Some((at, mut command)) => {
-                command.dataoff = u32::try_from(new_after_strings).ok()?;
-                Some((at, command))
-            }
-            None => None,
-        };
-        linkedit.filesize += growth;
-        linkedit.vmsize = align_size(linkedit.filesize, 16 * 1024);
-
-        self.data.truncate(symbols_at);
-        self.data.extend_from_slice(&tail);
-        write_struct(&mut self.data[symtab_at..][..size_of::<macho::symtab_command>()], &symtab);
-        write_struct(&mut self.data[dysymtab_at..][..size_of::<macho::dysymtab_command>()], &dysymtab);
-        write_struct(&mut self.data[linkedit_at..][..seg_sz], &linkedit);
-        if let Some((at, command)) = signature {
-            write_struct(&mut self.data[at..][..size_of::<macho::linkedit_data_command>()], &command);
-        }
-        Some(())
-    }
-
     pub fn write_section(&mut self, data: &[u8], has_code: bool) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
@@ -258,6 +134,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
+        let names = KnownSection::Payload.names();
         let lc_base = size_of::<macho::mach_header_64>();
         let mut iter = self.iterator();
 
@@ -268,7 +145,7 @@ impl MachoFile {
                     let command = entry
                         .cast::<macho::segment_command_64>()
                         .ok_or(MachoError::InvalidObject)?;
-                    if command.seg_name() == b"__BUN" {
+                    if command.seg_name() == names.macho_segment {
                         if command.nsects > 0 {
                             let section_offset = lc_base + entry.offset;
                             let sections_base =
@@ -289,7 +166,7 @@ impl MachoFile {
                                 let sect_off = sections_base + i * sect_sz;
                                 let sect: macho::section_64 =
                                     read_struct(&self.data[sect_off..][..sect_sz]);
-                                if sect.sect_name() == b"__bun" {
+                                if sect.sect_name() == names.macho_section {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
                                     let original_vmaddr = sect.addr;
@@ -447,9 +324,7 @@ impl MachoFile {
         }
 
         if let Some(idx) = code_sign_cmd_idx {
-            if self.header.cputype == macho::CPU_TYPE_ARM64
-                && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
-            {
+            if self.should_sign() {
                 // `buildAndSign` replaces the template's signature with one built by
                 // `MachoSigner`, whose size depends only on the (possibly-shifted)
                 // `cs.dataoff` — not on the template signature's shape. Resize
@@ -549,8 +424,8 @@ impl MachoFile {
                 Ok(())
             };
 
-            match cmd.cmd {
-                macho::LC::SYMTAB => {
+            match command_kind(cmd.cmd) {
+                CommandKind::SymbolTable => {
                     require(size_of::<macho::symtab_command>())?;
                     // SAFETY: cmd_ptr points into self.data's load-command region with at least
                     // size_of::<symtab_command>() bytes (checked above); symtab_command is
@@ -563,7 +438,7 @@ impl MachoFile {
                         core::ptr::write_unaligned(cmd_ptr.cast::<macho::symtab_command>(), symtab);
                     }
                 }
-                macho::LC::DYSYMTAB => {
+                CommandKind::DynamicSymbolTable => {
                     require(size_of::<macho::dysymtab_command>())?;
                     // SAFETY: as above; dysymtab_command is #[repr(C)] POD.
                     unsafe {
@@ -585,13 +460,7 @@ impl MachoFile {
                         );
                     }
                 }
-                macho::LC::DYLD_CHAINED_FIXUPS
-                | macho::LC::CODE_SIGNATURE
-                | macho::LC::FUNCTION_STARTS
-                | macho::LC::DATA_IN_CODE
-                | macho::LC::DYLIB_CODE_SIGN_DRS
-                | macho::LC::LINKER_OPTIMIZATION_HINT
-                | macho::LC::DYLD_EXPORTS_TRIE => {
+                CommandKind::LinkeditData => {
                     require(size_of::<macho::linkedit_data_command>())?;
                     // SAFETY: as above; linkedit_data_command is #[repr(C)] POD.
                     unsafe {
@@ -612,7 +481,7 @@ impl MachoFile {
                         );
                     }
                 }
-                macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
+                CommandKind::DyldInfo => {
                     require(size_of::<macho::dyld_info_command>())?;
                     // SAFETY: as above; dyld_info_command is #[repr(C)] POD.
                     unsafe {
@@ -633,7 +502,8 @@ impl MachoFile {
                         );
                     }
                 }
-                _ => {}
+                CommandKind::Segment | CommandKind::NoFileOffsets => {}
+                CommandKind::Unknown => return Err(MachoError::UnknownLoadCommand(cmd.cmd)),
             }
         }
         Ok(())
@@ -670,11 +540,14 @@ impl MachoFile {
         Ok(())
     }
 
+    fn should_sign(&self) -> bool {
+        self.header.cputype == macho::CPU_TYPE_ARM64
+            && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
+    }
+
     // Returns the byte count written; callers writing over an existing file must truncate to it.
     pub fn build_and_sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<usize> {
-        if self.header.cputype == macho::CPU_TYPE_ARM64
-            && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
-        {
+        if self.should_sign() {
             let mut signer = MachoSigner::init(core::mem::take(&mut self.data))?;
             signer.sign(writer)
         } else {
@@ -722,7 +595,7 @@ impl Shifter {
     }
 }
 
-struct MachoSigner {
+pub(crate) struct MachoSigner {
     data: Vec<u8>,
     sig_off: usize,
     linkedit_seg: macho::segment_command_64,
@@ -816,7 +689,7 @@ impl MachoSigner {
     /// hashes). `writeSection` uses this to size `linkedit_seg.filesize` and
     /// the `LC_CODE_SIGNATURE.datasize` so the signer's output fits exactly
     /// inside __LINKEDIT.
-    fn compute_signature_size(sig_off: u64) -> usize {
+    pub(crate) fn compute_signature_size(sig_off: u64) -> usize {
         let total_pages: usize =
             usize::try_from(sig_off.div_ceil(Self::SIGNATURE_PAGE_SIZE as u64)).unwrap();
         let super_blob_header_size = size_of::<SuperBlob>();
@@ -956,7 +829,7 @@ fn align_vmsize(size: u64, page_size: u64) -> u64 {
     align_size(if size > 0x4000 { size } else { 0x4000 }, page_size)
 }
 
-const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
+pub(crate) const SEG_LINKEDIT: &[u8] = b"__LINKEDIT";
 
 const CSMAGIC_CODEDIRECTORY: u32 = 0xfade0c02;
 const CSMAGIC_EMBEDDED_SIGNATURE: u32 = 0xfade0cc0;
@@ -966,7 +839,60 @@ const CS_EXECSEG_MAIN_BINARY: u64 = 0x1;
 
 /// `bun.sha.SHA256.hash(bytes, out, null)`.
 #[inline]
-fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
+pub(crate) fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     // SAFETY: engine is null (default).
     unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::image::Architecture;
+    use crate::macho_ranges::tests::toy_macho;
+
+    const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
+    const UNKNOWN_COMMAND: u32 = 0x7f;
+    const TOY_PAYLOAD_SEGMENT_SIZE: usize = 0x4000;
+
+    fn retype_uuid_command(template: &mut [u8], cmd: u32) {
+        let header_size = size_of::<macho::mach_header_64>();
+        let header = read_macho_header(template).unwrap();
+        let commands = &template[header_size..][..header.sizeofcmds as usize];
+        let mut iterator = macho::LoadCommandIterator::new(header.ncmds, commands);
+        let mut uuid_offset = None;
+        while let Some(command) = iterator.next() {
+            if command.cmd() == macho::LC::UUID {
+                uuid_offset = Some(header_size + command.offset);
+            }
+        }
+        template[uuid_offset.unwrap()..][..size_of::<u32>()].copy_from_slice(&cmd.to_le_bytes());
+    }
+
+    fn write_payload(template: &[u8], payload_size: usize) -> Result<(), MachoError> {
+        let payload = vec![7; payload_size];
+        MachoFile::init(template, payload.len())?.write_section(&payload, false)
+    }
+
+    #[test]
+    fn growing_payload_rejects_unknown_command() {
+        for architecture in ARCHITECTURES {
+            let mut template = toy_macho(architecture);
+            assert_eq!(write_payload(&template, TOY_PAYLOAD_SEGMENT_SIZE), Ok(()));
+            retype_uuid_command(&mut template, UNKNOWN_COMMAND);
+            assert_eq!(
+                write_payload(&template, TOY_PAYLOAD_SEGMENT_SIZE),
+                Err(MachoError::UnknownLoadCommand(UNKNOWN_COMMAND))
+            );
+        }
+    }
+
+    #[test]
+    fn fitting_payload_accepts_unknown_command() {
+        let payload_size = TOY_PAYLOAD_SEGMENT_SIZE - size_of::<u64>();
+        for architecture in ARCHITECTURES {
+            let mut template = toy_macho(architecture);
+            retype_uuid_command(&mut template, UNKNOWN_COMMAND);
+            assert_eq!(write_payload(&template, payload_size), Ok(()));
+        }
+    }
 }

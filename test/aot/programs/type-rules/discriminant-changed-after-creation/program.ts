@@ -31,12 +31,12 @@ try { Reflect.set(viaReflect, "kind", "squ" + "are"); console.log("Reflect.set: 
 const changed: Shape[] = [viaWide, viaAny, viaAssign, viaUnion, viaReflect]
 console.log(changed.map(s => s.kind).join(), changed.map(keys).join(" ; "))
 
-// Every narrowing by the discriminant throws now.
+// Every narrowing by the discriminant takes the arm that the value names.
 for (const s of changed) try { describe(s); console.log("switch: no error") } catch (e) { console.log("switch:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { measure(viaWide); console.log("conditional, the other branch: no error") } catch (e) { console.log("conditional, the other branch:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { readTwice(viaWide); console.log("second if: no error") } catch (e) { console.log("second if:", e instanceof TypeError ? "TypeError" : "other " + e) }
 
-// Also when they have what a square has, as extra properties: it is the layout that is tested.
+// The same when they have what a square has, as extra properties.
 changed.forEach((s, i) => giveSquareFields(s, i + 1))
 console.log(keys(viaWide))
 try { describe(viaWide); console.log("with the fields of the arm as extra properties: no error") } catch (e) { console.log("with the fields of the arm as extra properties:", e instanceof TypeError ? "TypeError" : "other " + e) }
@@ -54,7 +54,7 @@ try { describe(back); console.log("a square called circle: no error") } catch (e
 setKind(back, "square")
 console.log(describe(back))
 
-// Foreign objects are copied into the branch whose fields they have, whatever the discriminant says.
+// Parsed objects that have the fields of the other arm: nothing is copied, and a missing field reads `undefined`.
 const circleWithFieldsOfSquare: Shape = JSON.parse('{"kind":"circle","side":3,"corner":{"y":2},"memo":"not read"}')
 const squareWithFieldsOfCircle: Shape = JSON.parse('{"kind":"square","radius":1,"centre":{"x":9},"note":"not read"}')
 try { describe(circleWithFieldsOfSquare); console.log("foreign, called circle: no error") } catch (e) { console.log("foreign, called circle:", e instanceof TypeError ? "TypeError" : "other " + e) }
@@ -62,7 +62,7 @@ try { describe(squareWithFieldsOfCircle); console.log("foreign, called square: n
 setKind(circleWithFieldsOfSquare, "square"); setKind(squareWithFieldsOfCircle, "circle")
 console.log(describe(circleWithFieldsOfSquare), describe(squareWithFieldsOfCircle))
 
-// A discriminant cannot become an accessor.
+// A discriminant becomes an accessor.
 const flipping: Shape = makeCircle(7)
 let flips = 0
 try { Object.defineProperty(flipping, "kind", { get() { return flips++ % 2 ? "square" : "circle" }, enumerable: true, configurable: true }); console.log("accessor: no error") } catch (e) { console.log("accessor:", e instanceof TypeError ? "TypeError" : "other " + e) }

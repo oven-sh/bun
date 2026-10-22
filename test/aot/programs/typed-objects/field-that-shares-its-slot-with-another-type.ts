@@ -1,4 +1,4 @@
-// `context.options.model`: two record types have a field `options` of different types, and a function that takes either reads it, so both fields may stand in one slot. What is read out of a Context is believed to be an Options, so nothing else may get in there through the common supertype.
+// `context.options.model`: two record types have a field `options` of different types, and a function that takes either reads it, so both fields may stand in one slot. Reads and stores through each type and through the common supertype answer as in plain Bun.
 interface Options { model: string; depth: number }
 interface Legend { label: string; wide: boolean }
 interface Holder { id: number; options: Options | Legend }

@@ -1,0 +1,598 @@
+seed 6, scenario 0
+    getHeaderNames [] []
+    setHeader x-N1 ["s1","s2"] ok
+    setHeaders(Map) ["x-n3","x-n2"] ok
+    removeHeader Transfer-Encoding undefined
+      after end null-prototype{x-n1:["s1","s2"],x-n3:"m1",x-n2:["m2","m3"]} ["x-n1","x-n3","x-n2"] string
+    send: end(Buffer) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-N1: s1\r\nx-N1: s2\r\nx-n3: m1\r\nx-n2: m2\r\nx-n2: m3\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    again
+seed 6, scenario 1
+    setHeader keep-alive ["a2","b"] ok
+    setHeaders(Map) ["x-n36"] ok
+    removeHeader trailer undefined
+    setHeader X-N12 "w1" ok
+    removeHeader X-N21 undefined
+    setHeader x-n24 "v7" ok
+    getHeader x-N26 undefined hasHeader false
+    getHeader X-N1 undefined hasHeader false
+    the shared array grows to 3
+    removeHeader X-N26 undefined
+    setHeader x-n22 685 ok
+    setHeader set-cookie ["a2","b"] ok
+    setHeader x-n32 true ok
+    setHeader x-N13 876 ok
+    statusCode 200
+    getHeader x-n20 undefined hasHeader false
+    appendHeader expect "v8" ok
+    setHeader x-n3 ["a4","b"] ok
+    setHeader x-n39 [] ok
+    setHeader upgrade "v3" ok
+    removeHeader X-N9 undefined
+    getHeader X-N18 undefined hasHeader false
+    setHeader trailer ["a1","b"] ok
+    getHeaders null-prototype{keep-alive:["a2","b"],x-n36:["m2","m3"],x-n12:"w1",x-n24:"v7",x-n22:685,set-cookie:["a2","b"],x-n32:true,x-n13:876,expect:"v8",x-n3:["a4","b"],x-n39:[],upgrade:"v3",trailer:["a1","b"]}
+    removeHeader x-n14 undefined
+    setHeader x-n28 "v6" ok
+    removeHeader X-N15 undefined
+    setHeader x-n15 "v5" ok
+    _headers null-prototype{keep-alive:["a2","b"],x-n36:["m2","m3"],x-n12:"w1",x-n24:"v7",x-n22:685,set-cookie:["a2","b"],x-n32:true,x-n13:876,expect:"v8",x-n3:["a4","b"],x-n39:[],upgrade:"v3",trailer:["a1","b"],x-n28:"v6",x-n15:"v5"} null-prototype{keep-alive:"keep-alive",x-n36:"x-n36",x-n12:"X-N12",x-n24:"x-n24",x-n22:"x-n22",set-cookie:"set-cookie",x-n32:"x-n32",x-n13:"x-N13",expect:"expect",x-n3:"x-n3",x-n39:"x-n39",upgrade:"upgrade",trailer:"trailer",x-n28:"x-n28",x-n15:"x-n15"}
+    getHeaderNames ["keep-alive","x-n36","x-n12","x-n24","x-n22","set-cookie","x-n32","x-n13","expect","x-n3","x-n39","upgrade","trailer","x-n28","x-n15"] ["keep-alive","x-n36","X-N12","x-n24","x-n22","set-cookie","x-n32","x-N13","expect","x-n3","x-n39","upgrade","trailer","x-n28","x-n15"]
+    setHeaders(Headers) ok
+    removeHeader x-n7 undefined
+    removeHeader X-N11 undefined
+    removeHeader X-N17 undefined
+    setHeader x-N10 "" ok
+    setHeader x-n26 "w1" ok
+    setHeader Set-Cookie "v2" ok
+    getHeaders null-prototype{keep-alive:["a2","b"],x-n36:["m2","m3"],x-n12:"w1",x-n24:"v7",x-n22:685,set-cookie:"v2",x-n32:true,x-n13:876,expect:"v8",x-n3:["a4","b"],x-n39:[],upgrade:"v3",trailer:["a1","b"],x-n28:"v6",x-n15:"v5",x-h1:"1",x-n10:"",x-n26:"w1"}
+    appendHeader x-n31 "café" ok
+    setHeader x-n8 "w2" ok
+    removeHeader x-n34 undefined
+    changed the result of getHeaders
+    the shared array grows to 4
+    setHeader upgrade "w6" ok
+    getHeader x-n38 undefined hasHeader false
+    removeHeader server undefined
+    setHeader expect "" ok
+    removeHeader Transfer-Encoding undefined
+    setHeader x-n16 "" ok
+    setHeader x-n34 "café" ok
+    removeHeader x-N5 undefined
+    setHeader x-n6 ["a8","b"] ok
+    setHeader x-n17 143 ok
+    setHeader cookie "v2" ok
+    setHeader x-n10 ["a5","b"] ok
+    setHeader www-authenticate "v2" ok
+      after end null-prototype{keep-alive:["a2","b"],x-n36:["m2","m3"],x-n12:"w1",x-n24:"v7",x-n22:685,set-cookie:"v2",x-n32:true,x-n13:876,expect:"",x-n3:["a4","b"],x-n39:[],upgrade:"w6",trailer:["a1","b"],x-n28:"v6",x-n15:"v5",x-h1:"1",x-n10:["a5","b"],x-n26:"w1",x-n31:"café",x-n8:"w2",x-n16:"",x-n34:"café",x-n6:["a8","b"],x-n17:143,cookie:"v2",www-authenticate:"v2"} ["keep-alive","x-n36","x-n12","x-n24","x-n22","set-cookie","x-n32","x-n13","expect","x-n3","x-n39","upgrade","trailer","x-n28","x-n15","x-h1","x-n10","x-n26","x-n31","x-n8","x-n16","x-n34","x-n6","x-n17","cookie","www-authenticate"] string
+    send: end(Buffer) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nkeep-alive: a2\r\nkeep-alive: b\r\nx-n36: m2\r\nx-n36: m3\r\nX-N12: w1\r\nx-n24: v7\r\nx-n22: 685\r\nSet-Cookie: v2\r\nx-n32: true\r\nx-N13: 876\r\nexpect: \r\nx-n3: a4\r\nx-n3: b\r\nupgrade: w6\r\ntrailer: a1\r\ntrailer: b\r\nx-n28: v6\r\nx-n15: v5\r\nx-h1: 1\r\nx-n10: a5\r\nx-n10: b\r\nx-n26: w1\r\nx-n31: café\r\nx-n8: w2\r\nx-n16: \r\nx-n34: café\r\nx-n6: a8\r\nx-n6: b\r\nx-n17: 143\r\ncookie: v2\r\nwww-authenticate: v2\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    again
+seed 6, scenario 2
+    setHeader Content-Length "2" ok
+    removeHeader location undefined
+    removeHeader www-authenticate undefined
+    setHeader Set-Cookie ["s1","s2"] ok
+    removeHeader X-N6 undefined
+    setHeader x-n6 [1,2] ok
+    send: end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nSet-Cookie: s1\r\nSet-Cookie: s2\r\nx-n6: 1\r\nx-n6: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    again
+seed 6, scenario 3
+    setHeader X-N11 119 ok
+    setHeader x-n5 {Buffer} ok
+      after end null-prototype{x-n11:119,x-n5:{Buffer}} ["x-n11","x-n5"] string
+    send: end(Buffer) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nX-N11: 119\r\nx-n5: bf\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+seed 6, scenario 4
+    setHeader x-n4 ["a1","b"] ok
+    setHeaders(Map) ["set-cookie","x-n1"] ok
+      headers Object{x-n4:13}
+    send: writeHead(status, message, object), write(), end() done
+    until the connection closed: "HTTP/1.1 200 Fine\r\nx-n4: 13\r\nx-n1: m2\r\nx-n1: m3\r\nset-cookie: m1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 5
+    setHeader x-n0 "v4" ok
+    setHeader x-n3 946 ok
+    setHeader x-n3 "w4" ok
+    setHeader expect "v1" ok
+    setHeader x-n1 "v1" ok
+    getHeaderNames ["x-n0","x-n3","expect","x-n1"] ["x-n0","x-n3","expect","x-n1"]
+    appendHeader x-n1 "v5" ok
+    setHeader X-N1 true ok
+    getHeaders null-prototype{x-n0:"v4",x-n3:"w4",expect:"v1",x-n1:true}
+      headers Object{location:"v2",x-n0:605}
+    send: writeHead(status, object) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n0: 605\r\nx-n3: w4\r\nexpect: v1\r\nX-N1: true\r\nlocation: v2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 6
+    getHeaders null-prototype{}
+    removeHeader x-n12 undefined
+    appendHeader x-n9 ["a2","b"] ok
+    setHeader x-n22 ["a4","b"] ok
+    appendHeader content-encoding "w6" ok
+    setHeader proxy-authenticate ["a5","b"] ok
+    removeHeader X-N37 undefined
+    setHeader x-n7 ["s1","s2"] ok
+    getHeader x-n15 undefined hasHeader false
+    getHeader content-encoding w6 hasHeader true
+      headers ["x-n22","w0","x-n26","v6","Set-Cookie","v4","x-n1","v5"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n9: a2\r\nx-n9: b\r\ncontent-encoding: w6\r\nproxy-authenticate: a5\r\nproxy-authenticate: b\r\nx-n7: s1\r\nx-n7: s2\r\nx-n22: w0\r\nx-n26: v6\r\nSet-Cookie: v4\r\nx-n1: v5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 7
+    appendHeader x-n3 ["a8","b"] ok
+    removeHeader x-N8 undefined
+    setHeader x-n11 "v0" ok
+    setHeader expect "v5" ok
+    getHeaderNames ["x-n3","x-n11","expect"] ["x-n3","x-n11","expect"]
+    setHeader x-n8 "v1" ok
+    removeHeader x-n7 undefined
+    getHeaderNames ["x-n3","x-n11","expect","x-n8"] ["x-n3","x-n11","expect","x-n8"]
+    setHeaders(Map) ["x-n2","x-N4"] ok
+      headers ["x-n0","w1","x-n5","w8","x-n7","v5"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n3: a8\r\nx-n3: b\r\nx-n11: v0\r\nexpect: v5\r\nx-n8: v1\r\nx-n2: m1\r\nx-N4: m2\r\nx-N4: m3\r\nx-n0: w1\r\nx-n5: w8\r\nx-n7: v5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 8
+    removeHeader x-n10 undefined
+    setHeader x-N5 758 ok
+    setHeader x-n0 ["x",["nested"]] ok
+    setHeader x-n5 112 ok
+    setHeader x-n11 "v1" ok
+    setHeader x-n3 ["a3","b"] ok
+    setHeader x-n5 true ok
+    setHeader vary ["s1","s2"] ok
+    setHeader x-n9 "v5" ok
+    getHeaderNames ["x-n5","x-n0","x-n11","x-n3","vary","x-n9"] ["x-n5","x-n0","x-n11","x-n3","vary","x-n9"]
+    removeHeader x-n9 undefined
+      headers Object{}
+    send: writeHead(status, object) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n5: true\r\nx-n0: x\r\nx-n0: nested\r\nx-n11: v1\r\nx-n3: a3\r\nx-n3: b\r\nvary: s1\r\nvary: s2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 9
+    setHeader X-N10 531 ok
+    getHeaders null-prototype{x-n10:531}
+    setHeader x-n6 [] ok
+    getHeader x-n8 undefined hasHeader false
+    changed the result of getHeaders
+    removeHeader X-N10 undefined
+    removeHeader x-n3 undefined
+    setHeader x-n10 "w7" ok
+    setHeader x-n4 "v8" ok
+      headers ["x-n7","1,2","x-n11","a2,b"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n10: w7\r\nx-n4: v8\r\nx-n7: 1,2\r\nx-n11: a2,b\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 10
+    removeHeader x-n2 undefined
+    getHeader www-authenticate undefined hasHeader false
+    the shared array grows to 3
+    getHeaders null-prototype{}
+      headers []
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    again
+seed 6, scenario 11
+    appendHeader x-n27 ["a8","b"] ok
+    setHeader content-encoding "" ok
+    setHeader x-n29 ["s1","s2"] ok
+    setHeaders(Map) ["x-n21","upgrade"] ok
+    setHeader x-N0 "w2" ok
+    appendHeader x-n25 1.5 ok
+    setHeader x-n3 ["a2","b"] ok
+    appendHeader host 82 ok
+    setHeader X-N34 "v3" ok
+    getHeader x-n35 undefined hasHeader false
+    setHeader X-N4 true ok
+    removeHeader x-n33 undefined
+    setHeader x-n31 "café" ok
+    the shared array grows to 3
+    getHeaderNames ["x-n27","content-encoding","x-n29","x-n21","upgrade","x-n0","x-n25","x-n3","host","x-n34","x-n4","x-n31"] ["x-n27","content-encoding","x-n29","x-n21","upgrade","x-N0","x-n25","x-n3","host","X-N34","X-N4","x-n31"]
+    getHeaders null-prototype{x-n27:["a8","b"],content-encoding:"",x-n29:["s1","s2","p13"],x-n21:"m1",upgrade:["m2","m3"],x-n0:"w2",x-n25:1.5,x-n3:["a2","b"],host:82,x-n34:"v3",x-n4:true,x-n31:"café"}
+    setHeader connection "w8" ok
+    getHeader x-n34 v3 hasHeader true
+    changed the result of getHeaders
+    removeHeader x-n35 undefined
+    setHeader x-n7 "v4" ok
+    the shared array grows to 4
+    getHeaderNames ["x-n27","content-encoding","x-n29","x-n21","upgrade","x-n0","x-n25","x-n3","host","x-n34","x-n4","x-n31","connection","x-n7"] ["x-n27","content-encoding","x-n29","x-n21","upgrade","x-N0","x-n25","x-n3","host","X-N34","X-N4","x-n31","connection","x-n7"]
+    removeHeader x-n4 undefined
+    removeHeader upgrade undefined
+    setHeader x-N15 "w5" ok
+    setHeaders(Headers) ok
+    removeHeader x-N6 undefined
+    changed the result of getHeaders
+    send: end() done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n27: a8\r\nx-n27: b\r\ncontent-encoding: \r\nx-n29: s1\r\nx-n29: s2\r\nx-n29: p13\r\nx-n29: p21\r\nx-n21: m1\r\nx-N0: w2\r\nx-n25: 1.5\r\nx-n3: a2\r\nx-n3: b\r\nhost: 82\r\nX-N34: v3\r\nx-n31: café\r\nconnection: w8\r\nx-n7: v4\r\nx-N15: w5\r\nx-h1: 1\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nDate: <date>\r\nContent-Length: 0\r\n\r\n"
+    again
+seed 6, scenario 12
+    setHeader x-N18 "v1" ok
+    removeHeader x-n2 undefined
+    getHeaderNames ["x-n18"] ["x-N18"]
+    getHeader returns the array that was set: true
+    setHeader server "v4" ok
+    getHeader Set-Cookie undefined hasHeader false
+    setHeader content-type {Buffer} ok
+    removeHeader x-n10 undefined
+    setHeader x-n38 "v4" ok
+    setHeader x-n1 "v1" ok
+    setHeader transfer-encoding "identity" ok
+    sendDate false
+    setHeader www-authenticate "v4" ok
+    appendHeader cookie "v5" ok
+    setHeader x-n6 "v8" ok
+    getHeader x-n8 undefined hasHeader false
+    changed the result of getHeaders
+    setHeader Transfer-Encoding "gzip, chunked" ok
+    setHeader x-n17 "v1" ok
+    setHeader x-N2 "v6" ok
+    removeHeader x-n35 undefined
+    setHeader expect 10 ok
+    setHeader x-n7 "v6" ok
+    getHeader cache-control undefined hasHeader false
+    setHeader x-n29 true ok
+    getHeaders null-prototype{x-n18:"v1",x-same:["id"],server:"v4",content-type:{Buffer},x-n38:"v4",x-n1:"v1",transfer-encoding:"gzip, chunked",www-authenticate:"v4",cookie:"v5",x-n6:"v8",x-n17:"v1",x-n2:"v6",expect:10,x-n7:"v6",x-n29:true}
+    setHeader x-N34 "" ok
+    setHeader x-n9 {Date} ok
+    setHeader x-n28 Object{toString:function toString} ok
+    setHeader x-n7 66 ok
+    getHeaders null-prototype{x-n18:"v1",x-same:["id"],server:"v4",content-type:{Buffer},x-n38:"v4",x-n1:"v1",transfer-encoding:"gzip, chunked",www-authenticate:"v4",cookie:"v5",x-n6:"v8",x-n17:"v1",x-n2:"v6",expect:10,x-n7:66,x-n29:true,x-n34:"",x-n9:{Date},x-n28:{Object}}
+    getHeader x-n36 undefined hasHeader false
+    getHeaderNames ["x-n18","x-same","server","content-type","x-n38","x-n1","transfer-encoding","www-authenticate","cookie","x-n6","x-n17","x-n2","expect","x-n7","x-n29","x-n34","x-n9","x-n28"] ["x-N18","x-same","server","content-type","x-n38","x-n1","Transfer-Encoding","www-authenticate","cookie","x-n6","x-n17","x-N2","expect","x-n7","x-n29","x-N34","x-n9","x-n28"]
+    statusCode 204
+    flags [false,false,false,false,false]
+    appendHeader x-N11 "v3" ok
+    getHeader returns the array that was set: true
+    appendHeader x-n22 "v2" ok
+    the shared array grows to 3
+    getHeaderNames ["x-n18","x-same","server","content-type","x-n38","x-n1","transfer-encoding","www-authenticate","cookie","x-n6","x-n17","x-n2","expect","x-n7","x-n29","x-n34","x-n9","x-n28","x-n11","x-n22"] ["x-N18","x-same","server","content-type","x-n38","x-n1","Transfer-Encoding","www-authenticate","cookie","x-n6","x-n17","x-N2","expect","x-n7","x-n29","x-N34","x-n9","x-n28","x-N11","x-n22"]
+    setHeader keep-alive "v4" ok
+    setHeader X-N12 "" ok
+    sendDate false
+    setHeader X-N36 "v2" ok
+    getHeader returns the array that was set: true
+    setHeader x-n38 "v6" ok
+    removeHeader x-n22 undefined
+    getHeaderNames ["x-n18","x-same","server","content-type","x-n38","x-n1","transfer-encoding","www-authenticate","cookie","x-n6","x-n17","x-n2","expect","x-n7","x-n29","x-n34","x-n9","x-n28","x-n11","keep-alive","x-n12","x-n36"] ["x-N18","x-same","server","content-type","x-n38","x-n1","Transfer-Encoding","www-authenticate","cookie","x-n6","x-n17","x-N2","expect","x-n7","x-n29","x-N34","x-n9","x-n28","x-N11","keep-alive","X-N12","X-N36"]
+    setHeader Date ["a1","b"] ok
+    getHeader x-n31 undefined hasHeader false
+    getHeader x-n12  hasHeader true
+    getHeaders null-prototype{x-n18:"v1",x-same:["id"],server:"v4",content-type:{Buffer},x-n38:"v6",x-n1:"v1",transfer-encoding:"gzip, chunked",www-authenticate:"v4",cookie:"v5",x-n6:"v8",x-n17:"v1",x-n2:"v6",expect:10,x-n7:66,x-n29:true,x-n34:"",x-n9:{Date},x-n28:{Object},x-n11:"v3",keep-alive:"v4",x-n12:"",x-n36:"v2",date:["a1","b"]}
+    setHeader X-N28 "w7" ok
+    getHeader x-N17 v1 hasHeader true
+    removeHeader x-n14 undefined
+    removeHeader x-n11 undefined
+      headers Object{x-n0:10}
+    send: writeHead(status, message, object), write(), end() done
+    until the connection closed: "HTTP/1.1 200 Fine\r\nx-N18: v1\r\nx-same: id\r\nserver: v4\r\ncontent-type: bf\r\nx-n38: v6\r\nx-n1: v1\r\nTransfer-Encoding: gzip, chunked\r\nwww-authenticate: v4\r\ncookie: v5\r\nx-n6: v8\r\nx-n17: v1\r\nx-N2: v6\r\nexpect: 10\r\nx-n7: 66\r\nx-n29: true\r\nx-N34: \r\nx-n9: Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)\r\nX-N28: w7\r\nkeep-alive: v4\r\nX-N12: \r\nX-N36: v2\r\nDate: <date>\r\nDate: <date>\r\nx-n0: 10\r\nConnection: keep-alive\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 13
+    setHeader x-n4 "v7" ok
+    removeHeader transfer-encoding undefined
+    setHeader X-N9 [1,2] ok
+    setHeader X-N11 "w6" ok
+    setHeader x-n2 {Date} ok
+    getHeaderNames ["x-n4","x-n9","x-n11","x-n2"] ["x-n4","X-N9","X-N11","x-n2"]
+    sendDate false
+    setHeader x-n1 "v7" ok
+    removeHeader x-n7 undefined
+    appendHeader x-n7 [] ok
+    setHeader x-n9 "v7" ok
+    appendHeader x-n0 "w4" ok
+    appendHeader server "w6" ok
+    setHeader x-n7 998 ok
+    setHeader x-N8 "v8" ok
+    appendHeader x-n1 "v1" ok
+    setHeader x-n10 "v2" ok
+    setHeader x-N4 [] ok
+    setHeader X-N7 607 ok
+    getHeader X-N11 w6 hasHeader true
+    setHeader X-N4 "w3" ok
+    the shared array grows to 3
+      headers Object{x-n10:"v1",set-cookie:"v1"}
+    send: writeHead(status, object) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nX-N4: w3\r\nx-n9: v7\r\nX-N11: w6\r\nx-n2: Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)\r\nx-n1: v7\r\nx-n1: v1\r\nX-N7: 607\r\nx-n0: w4\r\nserver: w6\r\nx-N8: v8\r\nx-n10: v1\r\nset-cookie: v1\r\nConnection: close\r\n\r\nok"
+    again
+seed 6, scenario 14
+    removeHeader x-n3 undefined
+    setHeader x-n1 "w6" ok
+    getHeader Set-Cookie undefined hasHeader false
+    setHeader X-N4 [1,2] ok
+    appendHeader set-cookie "w5" ok
+    setHeader x-n3 ["a3","b"] ok
+    setHeader x-n2 true ok
+    setHeader x-n2 "v4" ok
+      headers ["location","s1,s2","www-authenticate","v2","link","924","x-n4","v8"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n1: w6\r\nset-cookie: w5\r\nx-n3: a3\r\nx-n3: b\r\nx-n2: v4\r\nlocation: s1,s2\r\nwww-authenticate: v2\r\nlink: 924\r\nx-n4: v8\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 15
+    setHeader upgrade "v5" ok
+    removeHeader Date undefined
+    setHeader x-n35 ["s1","s2"] ok
+    setHeaders(Headers) ok
+    getHeaderNames ["upgrade","x-n35","x-h1","set-cookie"] ["upgrade","x-n35","x-h1","set-cookie"]
+    setHeader x-n4 "v3" ok
+    getHeaders null-prototype{upgrade:"v5",x-n35:["s1","s2"],x-h1:"1",set-cookie:["a=1","b=2"],x-n4:"v3"}
+    sendDate true
+    appendHeader x-n17 "v3" ok
+    setHeaders(Headers) ok
+    getHeaderNames ["upgrade","x-n35","x-h1","set-cookie","x-n4","x-n17"] ["upgrade","x-n35","x-h1","set-cookie","x-n4","x-n17"]
+    the shared array grows to 3
+    setHeader host "v7" ok
+    removeHeader x-n30 undefined
+    the shared array grows to 4
+    setHeader cache-control "v3" ok
+    setHeader X-N25 "w4" ok
+    setHeader x-n23 "v0" ok
+    setHeader x-n28 "café" ok
+    appendHeader x-n19 "v3" ok
+    getHeader x-n18 undefined hasHeader false
+    setHeader x-n38 ["a3","b"] ok
+    setHeader x-n36 260 ok
+    setHeader etag "v3" ok
+    removeHeader x-n36 undefined
+    setHeader transfer-encoding "chunked" ok
+    getHeader content-length undefined hasHeader false
+    setHeader x-n4 "v4" ok
+    setHeader x-n17 [1,2] ok
+    setHeader x-n29 "v0" ok
+    removeHeader set-cookie undefined
+    appendHeader x-n11 "" ok
+    setHeader x-n30 "v1" ok
+    setHeader x-n11 "v7" ok
+    getHeader x-n39 undefined hasHeader false
+    removeHeader trailer undefined
+    appendHeader x-n7 "" ok
+    send: end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nupgrade: v5\r\nx-n35: s1\r\nx-n35: s2\r\nx-n35: p11\r\nx-n35: p14\r\nx-h1: 1\r\nx-n4: v4\r\nx-n17: 1\r\nx-n17: 2\r\nhost: v7\r\ncache-control: v3\r\nX-N25: w4\r\nx-n23: v0\r\nx-n28: café\r\nx-n19: v3\r\nx-n38: a3\r\nx-n38: b\r\netag: v3\r\ntransfer-encoding: chunked\r\nx-n29: v0\r\nx-n11: v7\r\nx-n30: v1\r\nx-n7: \r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 16
+    setHeader Transfer-Encoding "gzip, chunked" ok
+    getHeaders null-prototype{transfer-encoding:"gzip, chunked"}
+    the shared array grows to 3
+    setHeader date "v8" ok
+    statusCode 304
+    setHeader x-n10 "v1" ok
+    setHeader x-n10 Object{toString:function toString} ok
+    setHeader host "v8" ok
+    getHeader keep-alive undefined hasHeader false
+    removeHeader expect undefined
+    setHeader Date "v5" ok
+    appendHeader content-encoding ["a3","b"] ok
+    setHeader x-n9 ["a7","b"] ok
+    getHeader returns the array that was set: true
+    getHeaderNames ["transfer-encoding","date","x-n10","host","content-encoding","x-n9","x-same"] ["Transfer-Encoding","Date","x-n10","host","content-encoding","x-n9","x-same"]
+    getHeaderNames ["transfer-encoding","date","x-n10","host","content-encoding","x-n9","x-same"] ["Transfer-Encoding","Date","x-n10","host","content-encoding","x-n9","x-same"]
+    setHeader x-n10 "v6" ok
+      headers Object{x-n7:"v2",www-authenticate:"v0",x-n11:["s1","s2","p2"]}
+    send: writeHead(status, message, object), write(), end() done
+    until the connection closed: "HTTP/1.1 200 Fine\r\nTransfer-Encoding: gzip, chunked\r\nDate: <date>\r\nx-n10: v6\r\nhost: v8\r\ncontent-encoding: a3\r\ncontent-encoding: b\r\nx-n9: a7\r\nx-n9: b\r\nx-same: id\r\nx-n7: v2\r\nwww-authenticate: v0\r\nx-n11: s1\r\nx-n11: s2\r\nx-n11: p2\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 17
+    setHeader x-n4 "v6" ok
+    removeHeader x-n4 undefined
+    setHeader x-n4 ["a0","b"] ok
+    statusCode 404
+    setHeader x-N0 ["a8","b"] ok
+    getHeaderNames ["x-n4","x-n0"] ["x-n4","x-N0"]
+      headers ["Date","658","x-n2","1.5","x-n2","v2","x-n0","v2"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 404 Not Found\r\nx-n4: a0\r\nx-n4: b\r\nDate: <date>\r\nx-n2: 1.5\r\nx-n2: v2\r\nx-n0: v2\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 18
+    getHeader x-n3 undefined hasHeader false
+    appendHeader x-n25 "v5" ok
+    removeHeader X-N32 undefined
+    removeHeader x-n4 undefined
+    setHeaders(Map) ["x-n10","x-n18"] ok
+    setHeader x-N15 ["a4","b"] ok
+    getHeader x-n4 undefined hasHeader false
+    removeHeader keep-alive undefined
+    setHeader x-n30 "café" ok
+    _headers null-prototype{x-n25:"v5",x-n10:"m1",x-n18:["m2","m3"],x-n15:["a4","b"],x-n30:"café"} null-prototype{x-n25:"x-n25",x-n10:"x-n10",x-n18:"x-n18",x-n15:"x-N15",x-n30:"x-n30"}
+    send: write(), end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n25: v5\r\nx-n10: m1\r\nx-n18: m2\r\nx-n18: m3\r\nx-N15: a4\r\nx-N15: b\r\nx-n30: café\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+seed 6, scenario 19
+    removeHeader x-n2 undefined
+    send: end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+seed 6, scenario 20
+    appendHeader x-n12 [] ok
+    setHeader x-n34 "w7" ok
+    getHeaders null-prototype{x-n12:[],x-n34:"w7"}
+    getHeader X-N24 undefined hasHeader false
+    statusCode 201
+    setHeaders(Headers) ok
+    setHeader link "w0" ok
+    appendHeader x-n19 ["s1","s2"] ok
+    removeHeader x-n16 undefined
+    setHeader connection "w8" ok
+    setHeaders(Headers) ok
+    appendHeader X-N25 "v1" ok
+    removeHeader X-N0 undefined
+    removeHeader X-N0 undefined
+    setHeader x-n35 "w2" ok
+    getHeaders null-prototype{x-n12:[],x-n34:"w7",x-h1:"1",set-cookie:["a=1","b=2"],link:"w0",x-n19:["s1","s2"],connection:"w8",x-n25:"v1",x-n35:"w2"}
+    setHeader x-n25 793 ok
+    setHeaders(Map) ["x-n13","X-N24"] ok
+    appendHeader etag 511 ok
+    setHeader x-n30 "v1" ok
+    setHeader x-n19 true ok
+    setHeader link "v4" ok
+      headers Object{}
+    send: writeHead(status, object) done
+    until the connection closed: "HTTP/1.1 201 Created\r\nx-n34: w7\r\nx-h1: 1\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nlink: v4\r\nx-n19: true\r\nconnection: w8\r\nx-n25: 793\r\nx-n35: w2\r\nx-n13: m1\r\nX-N24: m2\r\nX-N24: m3\r\netag: 511\r\nx-n30: v1\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 21
+    setHeader x-n11 "v5" ok
+      after end null-prototype{x-n11:"v5"} ["x-n11"] string
+    send: end(Buffer) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n11: v5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    again
+seed 6, scenario 22
+    setHeader x-n4 620 ok
+    setHeader x-n4 "v2" ok
+    setHeader x-n2 761 ok
+    setHeader X-N2 [1,2] ok
+    getHeader x-n3 undefined hasHeader false
+    setHeader cookie "v7" ok
+    getHeader x-n4 v2 hasHeader true
+    setHeader x-n2 1.5 ok
+    send: write(), end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n4: v2\r\nx-n2: 1.5\r\ncookie: v7\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+seed 6, scenario 23
+    setHeader content-type ["a6","b"] ok
+    setHeader x-n4 ["a4","b"] ok
+    appendHeader x-n0 "v1" ok
+    getHeaders null-prototype{content-type:["a6","b"],x-n4:["a4","b"],x-n0:"v1"}
+    setHeader connection "close" ok
+    setHeader Connection "upgrade" ok
+    getHeader X-N1 undefined hasHeader false
+      after flushHeaders ["content-type","x-n4","x-n0","connection"]
+    send: flushHeaders() done
+    until the connection closed: "HTTP/1.1 200 OK\r\ncontent-type: a6\r\ncontent-type: b\r\nx-n4: a4\r\nx-n4: b\r\nx-n0: v1\r\nConnection: upgrade\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 24
+    flags [false,false,false,true,false]
+    setHeader keep-alive ["a3","b"] ok
+      headers ["X-N3","w7","x-n6","w8"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nkeep-alive: a3\r\nkeep-alive: b\r\nX-N3: w7\r\nx-n6: w8\r\nDate: <date>\r\nConnection: keep-alive\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 25
+    setHeader x-n11 "v2" ok
+    setHeader age "v8" ok
+    send: write(), end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n11: v2\r\nage: v8\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+seed 6, scenario 26
+    setHeader content-type "w7" ok
+    removeHeader x-n0 undefined
+    removeHeader x-n3 undefined
+    removeHeader x-n1 undefined
+    removeHeader transfer-encoding undefined
+    removeHeader X-N3 undefined
+    getHeaders null-prototype{content-type:"w7"}
+      headers ["X-N1","v3"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\ncontent-type: w7\r\nX-N1: v3\r\nDate: <date>\r\nConnection: close\r\n\r\nok"
+    again
+seed 6, scenario 27
+    setHeader connection "close" ok
+    setHeader Content-Type "w4" ok
+      after writeHead null-prototype{connection:"close",content-type:"w4"} throws Error ERR_HTTP_HEADERS_SENT throws Error ERR_HTTP_HEADERS_SENT
+    send: writeHead(status) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nconnection: close\r\nContent-Type: w4\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+seed 6, scenario 28
+    getHeaderNames [] []
+    setHeader x-n9 "w2" ok
+    setHeaders(Headers) ok
+    setHeader x-n0 "w2" ok
+    setHeader x-n0 "v4" ok
+    send: end() done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n9: w2\r\nx-h1: 1\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nx-n0: v4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+seed 6, scenario 29
+    setHeader x-n3 "v7" ok
+    setHeader x-n1 ["s1","s2"] ok
+    removeHeader x-n8 undefined
+    setHeader Content-Length 99 ok
+      after end null-prototype{x-n3:"v7",x-n1:["s1","s2"],content-length:99} ["x-n3","x-n1","content-length"] string
+    send: end(Buffer) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n3: v7\r\nx-n1: s1\r\nx-n1: s2\r\nContent-Length: 99\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    again
+seed 6, scenario 30
+    setHeader connection "close" ok
+    getHeader x-n14 undefined hasHeader false
+    appendHeader Connection "upgrade" ok
+    setHeader x-n37 "v5" ok
+    sendDate true
+    appendHeader vary "v7" ok
+    setHeader location ["a4","b"] ok
+    setHeader X-N38 "v4" ok
+    setHeader x-n29 "w6" ok
+    setHeaders(Map) ["x-n26","X-N23"] ok
+    flags [false,false,false,true,false]
+    getHeader x-powered-by undefined hasHeader false
+    setHeader x-n5 [] ok
+    appendHeader x-n30 "v0" ok
+    setHeader expect "v5" ok
+    setHeader Vary Object{toString:function toString} ok
+    setHeader x-n36 Object{toString:function toString} ok
+    setHeaders(Map) ["x-n36","x-n21"] ok
+    setHeader x-n23 [] ok
+    setHeader x-n11 "v8" ok
+    setHeader date 746 ok
+    getHeaders null-prototype{connection:["close","upgrade"],x-n37:"v5",vary:{Object},location:["a4","b"],x-n38:"v4",x-n29:"w6",x-n26:"m1",x-n23:[],x-n5:[],x-n30:"v0",expect:"v5",x-n36:"m1",x-n21:["m2","m3"],x-n11:"v8",date:746}
+    setHeader x-n22 "v5" ok
+    setHeader x-n20 ["x",["nested"]] ok
+    setHeader x-n2 "v5" ok
+    getHeader x-n34 undefined hasHeader false
+    getHeader x-n2 v5 hasHeader true
+    setHeader Connection "Keep-Alive" ok
+    appendHeader x-n28 "v1" ok
+    removeHeader x-n3 undefined
+    changed the result of getHeaders
+    send: end() done
+    until the connection closed: "HTTP/1.1 200 OK\r\nConnection: Keep-Alive\r\nx-n37: v5\r\nVary: obj\r\nlocation: a4\r\nlocation: b\r\nX-N38: v4\r\nx-n29: w6\r\nx-n26: m1\r\nx-n30: v0\r\nexpect: v5\r\nx-n36: m1\r\nx-n21: m2\r\nx-n21: m3\r\nx-n11: v8\r\nDate: <date>\r\nx-n22: v5\r\nx-n20: x\r\nx-n20: nested\r\nx-n2: v5\r\nx-n28: v1\r\nContent-Length: 0\r\n\r\n"
+    again
+seed 6, scenario 31
+    getHeaders null-prototype{}
+    setHeader keep-alive "w8" ok
+    setHeader vary ["a6","b"] ok
+    changed the result of getHeaders
+    getHeader x-n4 undefined hasHeader false
+    removeHeader x-n4 undefined
+    removeHeader x-n4 undefined
+    setHeader x-n3 "v5" ok
+    send: end() done
+    until the connection closed: "HTTP/1.1 200 OK\r\nkeep-alive: w8\r\nvary: a6\r\nvary: b\r\nx-n3: v5\r\nDate: <date>\r\nConnection: keep-alive\r\nContent-Length: 0\r\n\r\n"
+    again
+seed 6, scenario 32
+    getHeader x-n33 undefined hasHeader false
+    setHeader x-n26 ["a5","b"] ok
+    setHeader x-n27 424 ok
+    removeHeader cookie undefined
+    setHeader X-N5 ["a5","b"] ok
+    statusCode 200
+      after writeHead null-prototype{x-n26:["a5","b"],x-n27:424,x-n5:["a5","b"]} throws Error ERR_HTTP_HEADERS_SENT throws Error ERR_HTTP_HEADERS_SENT
+    send: writeHead(status) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n26: a5\r\nx-n26: b\r\nx-n27: 424\r\nX-N5: a5\r\nX-N5: b\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    again
+seed 6, scenario 33
+    setHeader X-N8 "v3" ok
+    setHeader date [1,2] ok
+    appendHeader x-n5 1.5 ok
+    setHeader x-n6 [] ok
+    setHeader set-cookie [1,2] ok
+    removeHeader X-N7 undefined
+    setHeaders(Headers) ok
+    setHeader x-n6 "v2" ok
+    getHeader returns the array that was set: true
+    removeHeader x-n7 undefined
+    setHeader content-encoding "v0" ok
+    setHeader X-N2 "v6" ok
+    getHeaderNames ["x-n8","date","x-n5","x-n6","set-cookie","x-h1","x-same","content-encoding","x-n2"] ["X-N8","date","x-n5","x-n6","set-cookie","x-h1","x-same","content-encoding","X-N2"]
+    the shared array grows to 3
+    getHeaderNames ["x-n8","date","x-n5","x-n6","set-cookie","x-h1","x-same","content-encoding","x-n2"] ["X-N8","date","x-n5","x-n6","set-cookie","x-h1","x-same","content-encoding","X-N2"]
+    send: write(), end(body) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nX-N8: v3\r\nDate: <date>\r\nDate: <date>\r\nx-n5: 1.5\r\nx-n6: v2\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nx-h1: 1\r\nx-same: id\r\ncontent-encoding: v0\r\nX-N2: v6\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    again
+seed 6, scenario 34
+    setHeader x-n8 "café" ok
+    setHeader x-n4 591 ok
+    getHeaders null-prototype{x-n8:"café",x-n4:591}
+    setHeader x-n2 690 ok
+    setHeader x-n8 "v5" ok
+    setHeader host [1,2] ok
+      headers ["trailer","v3","x-powered-by","café","x-n11","80"]
+    send: writeHead(status, array) done
+    until the connection closed: "HTTP/1.1 200 OK\r\nx-n8: v5\r\nx-n4: 591\r\nx-n2: 690\r\nhost: 1\r\nhost: 2\r\ntrailer: v3\r\nx-powered-by: café\r\nx-n11: 80\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again

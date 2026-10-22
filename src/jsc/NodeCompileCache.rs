@@ -895,7 +895,6 @@ struct GenJob {
     resp: std::sync::mpsc::SyncSender<Option<Box<[u8]>>>,
 }
 
-#[inline(never)]
 fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]>> {
     use std::sync::mpsc;
     static WORKER: Mutex<Option<mpsc::Sender<GenJob>>> = Mutex::new(None);

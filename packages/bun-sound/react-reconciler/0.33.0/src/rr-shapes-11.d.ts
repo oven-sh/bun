@@ -3,9 +3,9 @@ declare namespace RR {
   /**
    * Fiber.pendingProps | memoizedProps WHERE THEY MUST STAND IN A UNION: completeWork's `newProps` (6118) starts as workInProgress.pendingProps FOR EVERY TAG and holds a
    * Cache, a SuspenseState, a Fiber, a SuspenseListRenderState afterwards. `any` | `unknown` would swallow the union (narrowing by assignment off, every later read by name).
-   * IT MUST BE TRUE OF EVERY VALUE, NOT ONLY OF AN ELEMENT'S PROPS AND A TEXT: a fragment's pendingProps are its children. PROBED ON THE COMPILER (.probe/p11/q1.ts, Bun x2116x):
+   * IT MUST BE TRUE OF EVERY VALUE, NOT ONLY OF AN ELEMENT'S PROPS AND A TEXT: a fragment's pendingProps are its children. PROBED ON THE COMPILER:
    * `var p: Props | string | Fiber | null = f.pendingProps` THROWS for <>{5}</>: "TypeError: expected object | string, got number 5" (also true, a symbol).
-   * THE OBJECT MEMBER IS Props (an index signature), NOT A WEAK OPAQUE INTERFACE { $$rr..?: never }: PROBED (q2 q3): Props is `object function` in the IR, so this union is
+   * THE OBJECT MEMBER IS Props (an index signature), NOT A WEAK OPAQUE INTERFACE { $$rr..?: never }: PROBED: Props is `object function` in the IR, so this union is
    * type #0 (everything) and the `any` enters WITHOUT A TEST; with a weak opaque interface the union is a list of classes and every `any` that enters is a `Cast As`:
    * 45 to 100 ns a time for an object (100 M entries: 4.5 to 10 s against 0.3 to 1.9 s; `any`: 0.2 to 1.5 s). Reads behind a store of a shape stay typed (faster than `any`).
    * No interface of ours is assignable to Props (an interface has no implicit index signature), so narrowing by assignment holds.

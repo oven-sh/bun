@@ -1,10 +1,10 @@
 {
- "e1_how_many_arguments": "alone: the first is wrong: THROWS TypeError\nthe second is wrong: THROWS TypeError\nboth: THROWS TypeError\none too many, the first wrong: THROWS TypeError\nand 1 lines more",
- "e2_defaults_optional_rest": "alone: default, first wrong: THROWS TypeError\ndefault, second wrong: THROWS TypeError\ndefault, second null: THROWS TypeError\noptional wrong: THROWS TypeError\nand 4 lines more",
- "e3_this_and_captures": "alone: method: THROWS TypeError\nstatic: THROWS TypeError\nthis parameter: THROWS TypeError\ncaptures are shared: THROWS TypeError\nand 1 lines more",
- "e4_beside_an_object": "alone: a made object, a wrong number: THROWS TypeError\nplain data, a wrong number: THROWS TypeError\na literal, a wrong number: THROWS TypeError\nan object that lies: THROWS TypeError",
- "e5_async_generators_constructors": "alone: generator: THROWS TypeError\nconstructor: THROWS TypeError\nconstructor, instanceof: THROWS TypeError\nderived: THROWS TypeError\nand 3 lines more",
- "e6_hosts_call": "alone: map: THROWS TypeError\nmap, many: THROWS TypeError\nsort: THROWS TypeError\nreplace: THROWS TypeError\nand 4 lines more",
- "e7_kinds_of_types": "alone: union: THROWS TypeError\nliteral: THROWS TypeError\nbigint, symbol: THROWS TypeError\nboolean: THROWS TypeError\nand 4 lines more",
- "e8_what_comes_of_it": "alone: \nexit code 1: TypeError"
+ "e1_how_many_arguments": "all agree",
+ "e2_defaults_optional_rest": "all agree",
+ "e3_this_and_captures": "all agree",
+ "e4_beside_an_object": "all agree",
+ "e5_async_generators_constructors": "all agree",
+ "e6_hosts_call": "all agree",
+ "e7_kinds_of_types": "all agree",
+ "e8_what_comes_of_it": "as bun run"
 }

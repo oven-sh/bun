@@ -1,7 +1,7 @@
 // A CommonJS module whose body only makes values runs no code but its own, so nobody gets at it while it is evaluated: it keeps its exports in variables although a function requires it, and its symbols are names.
-// IR+ ^variable \d+ "onlyReadThroughTheObject" module
-// IR= 0 stamp PutByVal
-// IR= 0 read GetByVal
+// IR+ ^variable g\d+ name="onlyReadThroughTheObject" module=
+// IR= 0 stamp ElemSet
+// IR= 0 read ElemGet
 "use strict";
 const lines = [];
 function show(what, value) { lines.push(what + ": " + String(value)); }

@@ -16,12 +16,13 @@ class Stepper extends Counter {
 function addMany(counter, turns) { for (let i = 0; i < turns; i++) counter.add(1); return counter.n; }
 function advanceMany(stepper, turns) { for (let i = 0; i < turns; i++) stepper.advance(); return stepper.n; }
 function readTwice(counter, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum += counter.twice; return sum; }
-const before = count("SlotWatchpoint:installed");
+const asked = () => count("operationAOTGetById") + count("operationAOTGetByIdAndCache");
+const before = asked();
 const counter = new Counter();
 const stepper = new Stepper();
 console.log(addMany(counter, 1000), advanceMany(stepper, 1000), addMany(stepper, 1000), readTwice(counter, 1000), readTwice(stepper, 1000));
-const installed = count("SlotWatchpoint:installed") - before;
-console.log(installed ? installed + " watchpoints were installed for methods of classes" : "no method of a class needed a watchpoint");
+const entered = asked() - before;
+console.log(entered <= 100 ? "the run time was asked for a member at most 100 times" : "the run time was asked for a member " + entered + " times");
 
 // What was learnt ends when it should.
 Counter.prototype.add = function (k) { this.n += 2 * k; return this; };

@@ -1,8 +1,8 @@
 // A field without an initializer starts as `undefined`, and so is the room for it when the object is born: nothing has to be stored, unless somebody may have stored to it first.
-// IR- PutById v\d+, v\d+ "quiet\w+"
-// IR+ PutById v\d+, v\d+ "touchedByInitializer"
-// IR+ PutById v\d+, v\d+ "touchedThroughArrow"
-// IR+ PutById v\d+, v\d+ "touchedByBase"
+// IR- PropSet v\d+, v\d+ name="quiet\w+"
+// IR+ PropSet v\d+, v\d+ name="touchedByInitializer"
+// IR+ PropSet v\d+, v\d+ name="touchedThroughArrow"
+// IR+ PropSet v\d+, v\d+ name="touchedByBase"
 const made: object[] = [];
 class Quiet {
   list: number[] = [];

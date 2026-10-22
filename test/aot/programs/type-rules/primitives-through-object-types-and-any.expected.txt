@@ -1,6 +1,0 @@
-a number as { length }: TypeError
-a boolean as { toFixed }, typeof: TypeError
-a boolean as { toFixed }, called: TypeError
-a number as an argument: no error undefined
-a string as { length }: no error 3
-a number as { toFixed }: no error 2.0

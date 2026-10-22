@@ -133,7 +133,6 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
-        const REWRITE_RELATIVE_IMPORT_EXTENSIONS = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         /// tsconfig `"useDefineForClassFields": false` was set explicitly.
@@ -215,14 +214,6 @@ impl ResultFlags {
     #[inline]
     pub(crate) fn set_use_define_for_class_fields(&mut self, v: bool) {
         self.set(Self::SET_SEMANTICS_FOR_CLASS_FIELDS, !v)
-    }
-    #[inline]
-    pub fn rewrite_relative_import_extensions(self) -> bool {
-        self.contains(Self::REWRITE_RELATIVE_IMPORT_EXTENSIONS)
-    }
-    #[inline]
-    pub(crate) fn set_rewrite_relative_import_extensions(&mut self, v: bool) {
-        self.set(Self::REWRITE_RELATIVE_IMPORT_EXTENSIONS, v)
     }
 }
 

@@ -333,20 +333,16 @@ fn __bun_macro_context_call(
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
     let caller_loc = caller.loc;
-    let audited = bun_ast::audited::current();
-    let called = inner.call(
-        import_record_path,
-        source_dir,
-        log,
-        source,
-        import_range,
-        caller,
-        function_name,
-    );
-    if audited.is_some() {
-        bun_ast::audited::set_current(audited);
-    }
-    called
+    inner
+        .call(
+            import_record_path,
+            source_dir,
+            log,
+            source,
+            import_range,
+            caller,
+            function_name,
+        )
         .map_err(|e| {
             // visit_expr only prints a fallback "macro threw exception" when
             // nothing was added to the log; record the specific cause here so

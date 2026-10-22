@@ -1,9 +1,9 @@
 declare const aotOperationCount: (name: string) => number;
 function measure(name: string, run: () => string[]) {
-  const before = aotOperationCount("operationAOTTypedStringSplitAtCharacterClass");
+  const before = aotOperationCount("operationAOTStringSplitAtCharacterClass");
   let pieces = 0;
   for (let i = 0; i < 100; i++) pieces += run().length;
-  console.log(`${name}: ${pieces} pieces, ${aotOperationCount("operationAOTTypedStringSplitAtCharacterClass") - before} calls without the matcher`);
+  console.log(`${name}: ${pieces} pieces, ${aotOperationCount("operationAOTStringSplitAtCharacterClass") - before} calls without the matcher`);
 }
 const text = ["one two  three", "four,five;six", "東京 大阪"].join(" ");
 measure("spaces", () => text.split(/\s+/));

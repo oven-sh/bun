@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "wtf/Forward.h"
 
 #if ENABLE(WEB_CRYPTO)
@@ -229,7 +230,7 @@ JSObject* JSSubtleCrypto::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSSubtleCrypto>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSSubtleCrypto::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSSubtleCrypto::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSSubtleCryptoDOMConstructor, DOMConstructorID::SubtleCrypto>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -273,6 +274,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JS
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_encrypt);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_encryptBody>(*lexicalGlobalObject, *callFrame, "encrypt");
 }
 
@@ -299,6 +301,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decryptBody(JS
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decrypt, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_decrypt);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_decryptBody>(*lexicalGlobalObject, *callFrame, "decrypt");
 }
 
@@ -325,6 +328,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_signBody(JSC::
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_sign, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_sign);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_signBody>(*lexicalGlobalObject, *callFrame, "sign");
 }
 
@@ -354,6 +358,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_verifyBody(JSC
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_verify, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_verify);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_verifyBody>(*lexicalGlobalObject, *callFrame, "verify");
 }
 
@@ -380,6 +385,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_digestBody(JSC
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_digest, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_digest);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_digestBody>(*lexicalGlobalObject, *callFrame, "digest");
 }
 
@@ -406,6 +412,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_generateKeyBod
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_generateKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_generateKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_generateKeyBody>(*lexicalGlobalObject, *callFrame, "generateKey");
 }
 
@@ -438,6 +445,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveKeyBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_deriveKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_deriveKeyBody>(*lexicalGlobalObject, *callFrame, "deriveKey");
 }
 
@@ -464,6 +472,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_deriveBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_deriveBits);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_deriveBitsBody>(*lexicalGlobalObject, *callFrame, "deriveBits");
 }
 
@@ -518,6 +527,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_importKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_importKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_importKeyBody>(*lexicalGlobalObject, *callFrame, "importKey");
 }
 
@@ -550,6 +560,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_exportKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_exportKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_exportKeyBody>(*lexicalGlobalObject, *callFrame, "exportKey");
 }
 
@@ -586,6 +597,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_wrapKeyBody(JS
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_wrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_wrapKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_wrapKeyBody>(*lexicalGlobalObject, *callFrame, "wrapKey");
 }
 
@@ -631,6 +643,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_unwrapKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_unwrapKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_unwrapKeyBody>(*lexicalGlobalObject, *callFrame, "unwrapKey");
 }
 
@@ -654,6 +667,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_getPublicKeyBo
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_getPublicKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_getPublicKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_getPublicKeyBody>(*lexicalGlobalObject, *callFrame, "getPublicKey");
 }
 
@@ -677,6 +691,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encapsulateBit
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encapsulateBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_encapsulateBits);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_encapsulateBitsBody>(*lexicalGlobalObject, *callFrame, "encapsulateBits");
 }
 
@@ -709,6 +724,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encapsulateKey
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_encapsulateKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_encapsulateKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_encapsulateKeyBody>(*lexicalGlobalObject, *callFrame, "encapsulateKey");
 }
 
@@ -735,6 +751,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decapsulateBit
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decapsulateBits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_decapsulateBits);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_decapsulateBitsBody>(*lexicalGlobalObject, *callFrame, "decapsulateBits");
 }
 
@@ -770,6 +787,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decapsulateKey
 
 JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoPrototypeFunction_decapsulateKey, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebCrypto, jsSubtleCryptoPrototypeFunction_decapsulateKey);
     return IDLOperationReturningPromise<JSSubtleCrypto>::call<jsSubtleCryptoPrototypeFunction_decapsulateKeyBody>(*lexicalGlobalObject, *callFrame, "decapsulateKey");
 }
 

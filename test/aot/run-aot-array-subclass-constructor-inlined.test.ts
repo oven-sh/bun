@@ -38,14 +38,14 @@ async function run(cwd: string, cmd: string[]) {
   return { stdout, stderr: exitCode ? stderr : "", exitCode, signal: ran.signalCode };
 }
 
-test.concurrent.each(["typed.ts", "untyped.js"])("%s answers under bun run --aot as under plain Bun", async name => {
+test.concurrent.each(["typed.ts", "untyped.js"])("%s answers under bun run --aot and --debug-aot as under plain Bun", async name => {
   using dir = tempDir("aot-array-constructor-inlined", files);
   const plain = await run(String(dir), [bunExe(), "run", name]);
   expect(plain).toEqual({ stdout: "2400000\n", stderr: "", exitCode: 0, signal: null });
-  expect(await run(String(dir), [bunExe(), "run", "--aot", name])).toEqual(plain);
+  for (const flag of ["--aot", "--debug-aot"]) expect({ flag, ...(await run(String(dir), [bunExe(), "run", flag, name])) }).toEqual({ flag, ...plain });
 }, 120_000);
 
-test("and in a test file under bun test --aot", async () => {
+test.each(["--aot", "--debug-aot"])("and in a test file under bun test %s", async flag => {
   using dir = tempDir("aot-array-constructor-inlined", files);
-  expect(await run(String(dir), [bunExe(), "test", "--aot", "./in-a.test.ts"])).toMatchObject({ stderr: "", exitCode: 0, signal: null });
+  expect(await run(String(dir), [bunExe(), "test", flag, "./in-a.test.ts"])).toMatchObject({ stderr: "", exitCode: 0, signal: null });
 }, 120_000);

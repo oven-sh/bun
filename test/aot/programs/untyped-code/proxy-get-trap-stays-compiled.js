@@ -1,16 +1,28 @@
 // `proxy.name` where the handler is a plain object that has or inherits a `get` that is a value: the trap is called straight from compiled code; every other
 // proxy is read the long way. What the trap sees and what is demanded of its answer is the same on both ways.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTGetByNameAndCache") > 0; }
-function direct() { return count("read of a proxy:the trap is called from the stub"); }
+// Only the jsc shell can count. Elsewhere the program checks the answers alone.
+const counts = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetByIdAndCache") !== null;
+const count = counts ? aotOperationCount : () => 0;
+function trapLookups() { return count("operationAOTPrepareProxyGet"); }
+function genericReads() { return count("operationAOTGetByIdAndCache"); }
+function countsNow() { return { trapLookups: trapLookups(), genericReads: genericReads() }; }
+// The stub looks up the trap at each of the 100 reads. It calls the trap it finds, and passes the read on to the generic operation if it finds none. A few reads of other objects enter that operation too.
+function countsAreAsExpected(before, expected) {
+  if (!counts) return true;
+  var passedOn = genericReads() - before.genericReads;
+  return trapLookups() - before.trapLookups === 100 && (expected === 100 ? passedOn <= 10 : passedOn >= 100);
+}
 function read(o) { return o.wanted; }
 function call(o) { return o.wanted(); }
 function measure(label, make, expected) {
-  var seen = [];
+  var seen = [], proxies = [], thrown = null, answer;
   try { read(make(seen)); } catch (error) {}
-  var before = direct(), answer;
-  for (var i = 0; i < 100; i++) { try { answer = read(make(seen)); } catch (error) { answer = "threw " + error.constructor.name; } }
-  console.log(label + ": " + String(answer) + " | the trap ran " + seen.length + " times | " + (!counted() || direct() - before === expected));
+  for (var i = 0; i < 100; i++) proxies.push(make(seen));
+  var before = countsNow();
+  for (var i = 0; i < 100; i++) { try { answer = read(proxies[i]); thrown = null; } catch (error) { thrown = error; } }
+  var asExpected = countsAreAsExpected(before, expected);
+  if (thrown) answer = "threw " + thrown.constructor.name;
+  console.log(label + ": " + String(answer) + " | the trap ran " + seen.length + " times | " + asExpected);
 }
 measure("a trap of its own", function (seen) { return new Proxy({}, { get(t, key, receiver) { seen.push(key); return typeof key + " " + key; } }); }, 100);
 measure("one proxy read again and again", (function () { var made; return function (seen) { return made ||= new Proxy({}, { get(t, key) { seen.push(key); return seen.length > 0; } }); }; })(), 100);
@@ -34,10 +46,10 @@ measure("a proxy as the handler", function (seen) { return new Proxy({ wanted: "
 measure("an array as the handler", function (seen) { var handler = []; handler.get = function (t, key) { seen.push(key); return "of an array"; }; return new Proxy({}, handler); }, 0);
 measure("revoked", function () { var made = Proxy.revocable({}, { get() { return 1; } }); made.revoke(); return made.proxy; }, 0);
 var calls = 0, callable = new Proxy({}, { get(t, key) { return function () { calls++; return this === callable; }; } });
-var before = direct(), all = true;
+var before = countsNow(), all = true;
 for (var i = 0; i < 100; i++) all = call(callable) && all;
-console.log("a method read through the trap:", calls, all, !counted() || direct() - before === 100);
+console.log("a method read through the trap:", calls, all, countsAreAsExpected(before, 100));
 var plain = { wanted: 1 };
-before = direct();
+var lookupsBefore = trapLookups();
 for (var i = 0; i < 100; i++) read(plain);
-console.log("a plain object:", direct() - before);
+console.log("a plain object:", trapLookups() - lookupsBefore);

@@ -1,4 +1,4 @@
-// Spread of a value whose static type also admits opaque objects, followed by a store to a number field. Every copy that the program makes stores that field, so it stays a plain number, and off the usual path the copy and the store are one call that takes the number unboxed.
+// Spread of a value of a written record type, which any object may be, followed by a store to a number field. Every copy that the program makes stores that field, so it stays a plain number, and off the usual path the copy and the store are one call that takes the number unboxed.
 // CALLS+ resize CloneObjectAndExtendWithNumber
 type Shape = { name: string; sides: number; label?: string };
 type Other = { extra: number[]; sides: number; name: string };

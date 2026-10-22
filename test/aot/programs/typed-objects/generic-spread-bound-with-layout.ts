@@ -1,5 +1,5 @@
 // Where the bound of the type parameter has a layout, what a generic function makes with a spread is made with one, and becomes what the call says in its own cell: it is one object, and no type is opened for it.
-// IR- ^shape .* accepts-untyped
+// IR- ^    v\d+: [^=~\n]*(?<![=\w])L\d+(?![!\d])
 interface Base { name: string }
 interface R extends Base { a: number }
 const kept: Base[] = [];

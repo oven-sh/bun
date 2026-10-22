@@ -1,4 +1,4 @@
-// Adding properties to the prototypes of built-in classes (`String.prototype`, `Map.prototype` ..) throws.
+// Adding a name to `Promise.prototype`, `Function.prototype` or `Object.prototype` throws: the first and the last are closed entirely, and `Function.prototype`, though it stays extensible, takes no name but a few that are listed. `String.prototype` and `Map.prototype` keep their members and take a name that neither they nor `Object.prototype` have.
 try { (String.prototype as any).poop = 1; console.log("String.prototype: no error") } catch (e) { console.log("String.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { (Map.prototype as any).poop = 1; console.log("Map.prototype: no error") } catch (e) { console.log("Map.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { (Promise.prototype as any).poop = 1; console.log("Promise.prototype: no error") } catch (e) { console.log("Promise.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }

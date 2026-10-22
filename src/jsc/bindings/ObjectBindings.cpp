@@ -28,9 +28,6 @@ static bool getNonIndexPropertySlotPrototypePollutionMitigation(JSC::VM& vm, JSO
             auto has = object->getOwnNonIndexPropertySlot(vm, structure, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
             if (has) return true;
-        } else if (std::optional<bool> isFound = object->type() == ObjectType ? object->getOwnPropertySlotFromCompiledObject(propertyName, slot) : std::nullopt) {
-            if (*isFound)
-                return true;
         } else {
             bool hasSlot = structure->classInfoForCells()->methodTable.getOwnPropertySlot(object, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);

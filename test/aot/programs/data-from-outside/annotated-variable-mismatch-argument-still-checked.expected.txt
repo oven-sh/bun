@@ -1,5 +1,0 @@
-made by the program: true
-variable, then argument: TypeError
-argument, then variable: TypeError
-argument alone: TypeError
-variable alone: false

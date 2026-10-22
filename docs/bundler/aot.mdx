@@ -1,6 +1,6 @@
 ---
 title: "Ahead-of-time compilation"
-description: "Compile TypeScript and JavaScript to machine code when you build, with bun compile"
+description: "Compile TypeScript and JavaScript to machine code at build time, with bun compile"
 ---
 
 import Compile from "/snippets/cli/compile.mdx";
@@ -11,20 +11,20 @@ import Compile from "/snippets/cli/compile.mdx";
 bun compile ./server.ts
 ```
 
-`bun compile` compiles your program to machine code and writes a standalone executable. Normally, Bun interprets your program when it starts. While the program runs, its just-in-time compiler (JIT) compiles the functions that run often.
+`bun compile` compiles your program to machine code and writes a standalone executable. Under `bun run`, your program starts in an interpreter, and a just-in-time compiler (JIT) compiles the hot functions while it runs.
 
-- The executable has no JIT and no bytecode. It parses nothing when it starts, and it has nothing to warm up.
-- The compiler uses your TypeScript types. An object of a declared class or interface gets a fixed layout, so reading a property is a load from a known offset.
-- JavaScript files and npm packages are compiled too. Without types, the compiled code looks properties up by name.
-- The result is one file, as with [`--compile`](/bundler/executables). It runs on a machine that doesn't have Bun or your source code.
+- Your code is machine code from the first instruction. There's nothing to parse at startup and nothing to warm up.
+- The compiler uses your TypeScript types. A class, an interface or an object type gets a fixed layout: its fields sit at fixed offsets, like a struct in Go or Rust. Where the compiler can prove which objects reach a property access, the access is one load or one store. Code that compiles this way is called **typed** in these docs.
+- Bun compiles JavaScript files and npm packages too, the same way. Where the compiler has no such proof, the compiled code looks the property up at run time, like an interpreter.
+- The result is one file, like the output of [`bun build --compile`](/bundler/executables). It runs on a machine that doesn't have Bun installed.
 
 There's no new syntax and nothing to annotate. Point `bun compile` at the entry point you already have.
 
-`bun compile` is short for `bun build --compile --aot` and takes the same flags. Other commands take `--aot` too: `bun check --aot`, `bun run --aot`, `bun test --aot`, `bun lint --aot`. That's why these pages call the feature `--aot`.
+`bun compile` is short for `bun build --compile --aot` and takes the same flags. Three other commands take `--aot`: `bun check --aot` reports what the build would report, and [`bun run --aot` and `bun test --aot`](#run-under-the-compilers-rules) check your program as the build does and then run it from its source.
 
 ## Build an executable
 
-The build type checks your program, so install Bun's type declarations first. [`bun init`](/runtime/templating/init) does that for a new project.
+The build type checks your program, so install Bun's type declarations first. [`bun init`](/runtime/templating/init) does that for a new project. [Without them](/bundler/aot-troubleshooting#buns-type-declarations-arent-installed) the program builds too, but whatever Bun provides has no types.
 
 ```bash terminal icon="terminal"
 bun add -d @types/bun
@@ -37,7 +37,7 @@ interface Todo {
   done: boolean;
 }
 
-const todos: Todo[] = [{ id: 1, title: "Try --aot", done: false }];
+const todos: Todo[] = [{ id: 1, title: "Try bun compile", done: false }];
 
 const server = Bun.serve({
   port: 3000,
@@ -72,7 +72,6 @@ console.log(`Listening on ${server.url}`);
 ```txt
  [282ms]  bundle  1 modules
  [100ms] compile  server
-aot: 100% typed
 ```
 
 Run it like any other program.
@@ -92,20 +91,37 @@ curl localhost:3000/todos/1
 ```
 
 ```txt
-{"id":1,"title":"Try --aot","done":false}
+{"id":1,"title":"Try bun compile","done":false}
 ```
 
-### The last line of the build
+### The typed percentage
 
-The line that starts with `aot:` says how much of your program the compiler could compile with your types. The percentage counts property accesses: reads, writes and method calls on objects of your own classes, interfaces and object types. An access is typed if the compiler knows the layout of the object.
+After the `compile` line, the build prints how much of your program is typed. These lines are from a larger program.
 
-What Bun and JavaScript provide, such as `req.params`, `server.url` and `console.log`, is not counted. You cannot change it.
+```txt
+Untyped code works, but runs slower. Run with --explain to see what to fix.
+Dependencies: 3.1% of property accesses are one load: 210 free, 1,320 tested, 5,244 by name (6,774)
+92.4% of property accesses are one load: 1,204 free, 61 tested, 38 by name (1,303)
+```
 
-Under 95%, a second line names the flag that says why. `bun compile --explain` lists what keeps the compiler from using your types, the most expensive cause first, with a fix for each. [Get more of your program typed](/bundler/aot-explain) shows how to work through it.
+The percentage counts property accesses: reads, writes, `in` tests and deletes. An access is typed if the compiled code does it with one load or one store at a fixed offset. Those are the `free` ones: Bun already knows the object's shape at that point, from the types or from a check earlier in the function. A `tested` access runs a test of its own first, and a `by name` access looks the property up by name. The count is taken after optimization, so it describes the machine code, not your source.
+
+| In your code                                                                                         | Counts as                                           |
+| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+| `todo.id`, `todo.done = true`                                                                        | A property access                                   |
+| `stock.add(item)`                                                                                    | A call. A method call isn't a property access       |
+| `items.length`, `items.push(item)`, `map.get(key)`, `console.log(item)`, `Math.max(a, b)`            | Nothing. Bun resolves them to built-in operations   |
+| Any other property of an object that Bun provides: `req.params.id`, `server.url`, `process.env.PORT` | A property access, and one that's looked up by name |
+
+Code in `node_modules` is counted separately, on its own `Dependencies:` line.
+
+The todo server only has a handful of property accesses, and most of them are of the last kind, so its percentage is low. That doesn't mean much for a program this small. A lookup by name only matters in hot code. There, read the property once and keep the value in a variable.
+
+Under 95%, Bun also prints the hint about `--explain`. `bun compile --explain` lists what's lowering the number, worst first, with a fix for each. [Get more of your program typed](/bundler/aot-explain) explains exactly what is counted and how to work through the list.
 
 ### Type errors stop the build
 
-`bun run` and `bun build` remove your types and never check them. `bun compile` depends on them, so a type error stops the build. Bun writes no executable and exits with code `1`.
+`bun run` and `bun build` remove your types and never check them. `bun compile` relies on them, so a type error stops the build. Bun writes no executable and exits with code `1`.
 
 ```ts wrong.ts icon="/icons/typescript.svg"
 const port: number = "3000";
@@ -134,9 +150,15 @@ wrong.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
 Found 1 error in 1 file, checked 1 file [49.21ms]
 ```
 
+Bun checks each file with the nearest `tsconfig.json`, so each package in a monorepo keeps its own compiler options. Only that file is used to resolve the imports that run: `paths` and `baseUrl` from a `tsconfig.json` further up only apply if the nearest one `extends` it. A type-only import that it can't resolve is also looked up with the entry point's `tsconfig.json`, so a build reports no missing module that `bun check` doesn't. `baseUrl` works as it does under `bun run`. Options that TypeScript 7 removed and that `bun run` never read are ignored: `target: "es5"`, `module: "amd"`, `"umd"` or `"system"`, `moduleResolution: "node"` or `"classic"`, `downlevelIteration`, and `false` for `alwaysStrict`, `esModuleInterop` or `allowSyntheticDefaultImports`. `--tsconfig-override` uses one file for everything.
+
+If the nearest `tsconfig.json` has nothing but `references`, like the one from `create vite`, Bun uses the referenced project that includes the file. Bun reads a referenced project from its source files, so you don't have to build it first.
+
+The build doesn't report errors in code that it removes, such as the `process.platform === "win32"` branch in a build for Linux.
+
 ### Compile a project
 
-Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` names. If there's no `"bin"`, it uses `"module"`, then `"main"`, then `index.ts`. The executable is named after the `"bin"` entry, or after the package without its scope.
+Without an entry point, `bun compile` reads `package.json`. It compiles the file that `"bin"` points to. If there's no `"bin"`, it uses `"module"`, then `"main"`, then `index.ts`. The executable is named after the `"bin"` entry, or after the package without its scope.
 
 ```json package.json icon="file-json"
 {
@@ -154,34 +176,37 @@ bun compile
   [72ms] compile  todo-server
 ```
 
-If `package.json` has a `"compile"` script, `bun compile` runs that script. `bun compile --no-script` is always the compiler.
+If `package.json` has a `"compile"` script, `bun compile` runs that script. `bun compile --no-script` skips the script.
 
 ### What changes when your program runs
 
-Normally, your types are gone by the time the program runs. Compiled code relies on them, so a few things differ:
+Compiled code relies on your types and on the built-in objects, and the executable has no JIT. At run time, that means:
 
-- A value that reaches a declared type through `any` is checked, and `as number` converts. [Where untyped values meet typed code](/bundler/aot-types#where-untyped-values-meet-typed-code) has every case.
-- Built-in objects such as `Array.prototype` are immutable.
-- Code that the build can't see, such as the argument of `eval`, runs in the interpreter. So does WebAssembly.
+- A value that doesn't match its declared type doesn't throw. The function falls back to its slow path. See [When a value doesn't match its type](/bundler/aot-types#when-a-value-doesnt-match-its-type).
+- Built-in objects such as `Array.prototype` are [read-only](/bundler/aot-compatibility#built-in-objects-are-read-only). Replacing `Array.prototype.push` throws a `TypeError`.
+- Code that only exists at run time, such as a string passed to `eval`, runs in the interpreter.
+- A `.wasm` file that your program imports is compiled with it. Every other [WebAssembly](/bundler/aot-compatibility#webassembly) module runs in the interpreter.
 
-[Compatibility with `--aot`](/bundler/aot-compatibility) lists the rest.
+[Compatibility](/bundler/aot-compatibility) lists the rest.
 
-### Run from source
+### Run under the compiler's rules
 
-`bun run --aot` and `bun test --aot` run your program from its source files, under the same rules as the executable. They compile nothing ahead of time, so use them to test behavior and not speed.
+`bun run --aot` and `bun test --aot` first check your program as `bun compile` does, and print what they find the same way. Then they run your program from its source files, like `bun run` and `bun test`, with [built-in objects read-only](/bundler/aot-compatibility#built-in-objects-are-read-only) as in an executable. Use them during development, so that the build has no surprises for you.
 
 ```bash terminal icon="terminal"
 bun run --aot ./server.ts
 bun test --aot
 ```
 
-See [Try your code without building an executable](/bundler/executables#try-your-code-without-building-an-executable).
+A type error ends the process with exit code `1`, just like `bun compile`. Mocks work, because the tests don't run as compiled code. `--inspect`, `--watch` and `--hot` work too. `-e` and `-p` can't be combined with `--aot`.
+
+[Run under the compiler's rules](/bundler/aot-debugging#run-under-the-compilers-rules) has the details. The rest of that page covers the guards that fail, stack traces, crash reports and profilers.
 
 ## What to expect
 
-Servers start faster and use less memory. Requests per second depend on how much of the code that handles a request has types.
+Servers start faster and use less memory. Requests per second depend on how much of the code that handles a request is typed.
 
-Eight small servers, Bun 1.4.3 against the same application built with `--aot`:
+Here are eight small servers. Each row compares the server run with Bun 1.4.3 to the same server compiled with `bun compile`.
 
 |                  | Requests per second | Peak memory (RSS) | Start to first response | CPU time per request |
 | ---------------- | ------------------: | ----------------: | ----------------------: | -------------------: |
@@ -194,38 +219,38 @@ Eight small servers, Bun 1.4.3 against the same application built with `--aot`:
 | Fastify          |              -12.6% |        82 → 53 MB |              85 → 19 ms |               +19.8% |
 | Effect           |              -16.1% |        75 → 46 MB |             111 → 34 ms |               +22.1% |
 
-One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, among them plain text, JSON, path parameters, a validated `POST`, async and streaming. These are two whole runs on two machines. Each application was built with `--aot` five times, with its machine code laid out in a different order each time, and the figure is the mean of the five. Requests per second are ±0.4 to ±0.8 points. The time to the first response is a median.
+One server process on one core of an AMD EPYC 9R14, Linux x64, 64 connections, after warm-up. Each number is the mean over the routes of the application, including plain text, JSON, path parameters, a validated `POST`, async and streaming. The whole benchmark ran twice, on two machines. Each application was compiled five times, with its machine code in a different order each time. Each number is the mean of those five builds. Requests per second are ±0.4 to ±0.8 points. The time to the first response is a median.
 
 - **Startup.** Every server answers its first request sooner. There's no source to parse and no bytecode to generate.
-- **Memory.** Peak memory is 17% to 39% lower. The process holds no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
-- **Throughput.** Five of the eight are slower today, Express, Fastify and Effect by the most. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns the types of that code by watching it run. The compiler can't, so each property access is a lookup by name.
+- **Memory.** Peak memory is 17% to 39% lower. The process has no bytecode, no JIT-compiled code and no profiling data. The machine code is part of the file, so the operating system shares it between processes.
+- **Throughput.** Five of the eight are slower today. Express, Fastify and Effect lose the most. Most of their code is untyped JavaScript from npm that runs once per request. A JIT learns which objects reach a property access by watching the code run. The compiler has to prove it at build time, and where it can't, the access is a lookup at run time.
 
 Typed code does better. Two programs written in strict TypeScript:
 
-|                                                                        | Bun 1.4.3 |  `--aot` |
+|                                                                        | Bun 1.4.3 | Compiled |
 | ---------------------------------------------------------------------- | --------: | -------: |
 | The TypeScript 6 compiler, type checking the `effect` repository: time |   14.20 s |   3.83 s |
 | Its peak memory                                                        |  2,680 MB |   928 MB |
 
-The second program is an issue tracker on `Bun.serve` and Postgres. Here it stands next to the same application written in Rust and in Go:
+The second program is an issue tracker on `Bun.serve` and Postgres. Here it is next to the same application written in Rust and in Go:
 
-|                         |   Rust |     Go | `--aot` | Bun 1.4.3 |
-| ----------------------- | -----: | -----: | ------: | --------: |
-| Requests per second     |  8,883 |  5,135 |   4,517 |     2,796 |
-| Peak memory (RSS)       |  27 MB |  43 MB |   61 MB |    100 MB |
-| Start to first response |  14 ms |  18 ms |   24 ms |     48 ms |
-| CPU time per request    | 109 µs | 190 µs |  219 µs |    355 µs |
+|                         |   Rust |     Go | Compiled | Bun 1.4.3 |
+| ----------------------- | -----: | -----: | -------: | --------: |
+| Requests per second     |  8,883 |  5,135 |    4,517 |     2,796 |
+| Peak memory (RSS)       |  27 MB |  43 MB |    61 MB |    100 MB |
+| Start to first response |  14 ms |  18 ms |    24 ms |     48 ms |
+| CPU time per request    | 109 µs | 190 µs |   219 µs |    355 µs |
 
-Each server ran alone on one core of the same kind of machine as above, one after the other: two runs with two fresh starts each. Requests per second are ±91 to ±170. The connection pool holds 64 connections for Rust and Go, 8 for `--aot` and 4 for Bun 1.4.3.
+Each server ran alone on one core of the same kind of machine as above, one after the other: two runs with two fresh starts each. Requests per second are ±91 to ±170. The connection pool has 64 connections for Rust and Go, 8 for the compiled server and 4 for Bun 1.4.3.
 
 Two things get worse:
 
-- **The executable is larger.** It holds a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) leaves out the parts of Bun that your program can't reach.
+- **The executable is larger.** It contains a copy of Bun, as with `--compile`, plus the machine code of your program and of the built-in modules it imports. The todo server at the top of this page grows by 0.4 MB. A large application grows by tens of megabytes. [`bun compile --trim`](/bundler/aot-size) removes the Bun APIs that your program doesn't use.
 - **The build takes longer.** Bun type checks the whole program and compiles every function in it.
 
 ## Compare on your application
 
-Build the same entry point both ways. `--no-aot` keeps the JavaScript in the executable, for the JIT.
+Build the same entry point both ways. With `--no-aot`, the executable contains your JavaScript and runs it with the JIT, like `bun build --compile`.
 
 ```bash terminal icon="terminal"
 bun compile --no-aot ./server.ts --outfile server-jit
@@ -239,7 +264,7 @@ For a command-line tool, compare the time of a whole run with [`hyperfine`](http
 hyperfine --warmup 10 -N './cli-jit --help' './cli-aot --help'
 ```
 
-For a server, put each executable under the same load with [`oha`](https://github.com/hatoo/oha) or [`bombardier`](https://github.com/codesenberg/bombardier). Run the load twice and keep the second result, so that the JIT has compiled the hot functions of `server-jit` by the time you measure.
+For a server, start one executable at a time and put each under the same load with [`oha`](https://github.com/hatoo/oha) or [`bombardier`](https://github.com/codesenberg/bombardier). Run the load twice and keep the second result, so that the JIT has compiled the hot functions of `server-jit` by the time you measure.
 
 ```bash terminal icon="terminal"
 oha -z 10s -c 64 --no-tui http://localhost:3000/todos
@@ -252,31 +277,28 @@ Use routes that do what your application does in production. A route that return
 ## When to stay with the JIT
 
 - **Peak requests per second matter most, and your hot code is untyped.** See Express, Fastify and Effect above.
-- **You build on one platform and deploy to another.** `--aot` makes machine code for the platform that runs the build. Run the build on the target platform, in CI or in a container.
+- **You build on one platform and deploy to another.** `bun compile` makes machine code for the platform that runs the build. Run the build on the target platform, in CI or in a container.
 
   ```txt
-  error: --aot: ahead-of-time compilation makes machine code for the platform it runs on and cannot target another. Run this build on the target platform, with that platform's Bun
-  note: bun compile --no-aot builds an executable that is not compiled ahead of time
+  error: bun compile can't cross-compile. It only builds for the platform it runs on
+  note: run this on the target platform, or pass --no-aot to bundle your code with the Bun runtime instead, like bun build --compile
   ```
 
-- **A library generates its hot code when the program runs.** zod 4, ajv, fast-json-stringify and Elysia build functions with `new Function`. The build can't see that code, so Bun interprets it for as long as the program runs. `--aot-deny=interpreted` fails the build where your program or a dependency does that.
-- **Your program spends its time in WebAssembly.** The executable has no JIT, so Bun interprets WebAssembly. A tight loop runs about 20 times slower.
-- **A dependency changes built-in objects.** `Array.prototype`, `Object.prototype`, `Promise` and the rest are immutable in a compiled program. [Packages that change built-in objects](/bundler/aot-adoption#packages-that-change-built-in-objects) lists known cases and what to use instead.
-- **You set breakpoints in the executable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints and stepping don't. See [Debugging and profiling with `--aot`](/bundler/aot-debugging).
-- **Your project has type errors that you can't fix yet.**
-- **You use [macros](/bundler/macros), or `JSCallback` from `bun:ffi`.** Neither is available.
+- **A library generates its hot code at run time.** zod 4, ajv, fast-json-stringify and Elysia build functions with `new Function`. The compiler can't see that code, so Bun interprets it. Some of them have [a mode without generated code](/bundler/aot-compatibility#code-from-strings).
+- **Your program spends its time in WebAssembly that it doesn't import.** A `.wasm` file that your program imports is compiled with it. Bun interprets every other module, such as bytes that your program downloads or decodes from a string. The executable has no JIT, so a tight loop runs about 20 times slower there. See [WebAssembly](/bundler/aot-compatibility#webassembly).
+- **A dependency changes built-in objects.** `Array.prototype`, `Object.prototype`, `Promise` and the rest are read-only in a compiled program. [Packages that change built-in objects](/bundler/aot-compatibility#packages-that-change-built-in-objects) lists known cases and what to use instead.
+- **You set breakpoints in the executable.** In an executable built with `--compile-inspector`, the inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints and stepping don't. See [The inspector](/bundler/aot-debugging#the-inspector).
+- **Your project has type errors that you can't fix or [suppress](/bundler/aot-troubleshooting#the-build-stops-at-a-type-error) yet.**
+- **You keep more than 256 `JSCallback`s from `bun:ffi` open at a time.** Their entry points are compiled into the executable, so there's a fixed number of them.
 
 ## Read next
 
-- [How `--aot` uses your types](/bundler/aot-types): what a type buys, and what happens where `any`, `as` and `JSON.parse` meet typed code.
-- [Get more of your program typed](/bundler/aot-explain): what the percentage at the end of a build counts, and how to raise it.
-- [See what the compiler did](/bundler/aot-reports): every report, run on one small program.
-- [Compatibility with `--aot`](/bundler/aot-compatibility): what works the same, what differs on purpose, what isn't available.
-- [Adopting `--aot`](/bundler/aot-adoption): find what changes in your program before you ship it.
-- [Debugging and profiling with `--aot`](/bundler/aot-debugging): stack traces, crash reports, profilers, and the rules that fail a build when code loses its types.
-- [Smaller executables](/bundler/aot-size): leave out the parts of Bun that your program can't reach.
-- [Publish a library for `bun compile`](/bundler/aot-libraries): ship a package that keeps its types.
-- [Troubleshooting `--aot`](/bundler/aot-troubleshooting): the errors you're most likely to hit first, with the cause and the fix.
-- [Every difference from an executable built without `--aot`](/bundler/executables#ahead-of-time-compilation).
+- [How `bun compile` uses your types](/bundler/aot-types): what types get you, and what happens when a value doesn't match its declared type.
+- [Get more of your program typed](/bundler/aot-explain): what the typed percentage counts, and how to raise it.
+- [Compatibility](/bundler/aot-compatibility): what works the same, what differs on purpose, what isn't available.
+- [Test and debug a compiled program](/bundler/aot-debugging): run your tests as compiled code and find the guards that fail, then stack traces, crash reports and profilers.
+- [Smaller executables](/bundler/aot-size): remove the Bun APIs that your program doesn't use.
+- [Publish a library for `bun compile`](/bundler/aot-libraries): ship a package that keeps its types, or add types to one you don't maintain.
+- [Troubleshooting](/bundler/aot-troubleshooting): the errors you're most likely to hit first, with the cause and the fix.
 
 <Compile />

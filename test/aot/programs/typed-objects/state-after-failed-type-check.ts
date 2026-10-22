@@ -1,28 +1,4 @@
 // A failed runtime type check: what the error is and what state the program is in afterwards (nothing half done, `finally` blocks run, loops continue).
-/* expected
-a1 TypeError
-a2 rhs 1
-b1 TypeError
-b2 false
-c1 true true false string true
-d1 9 2
-e1 0
-e2 1
-f1 TypeError
-f2 1
-g1 TypeError
-g2 0
-h1 TypeError
-h2 try,finally
-i1 TypeError
-i2 left
-i3 TypeError
-i4 true
-j1 inner TypeError outer 5
-k1 TypeError
-k2 1,2
-l1 2 TypeError
-*/
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }
@@ -58,11 +34,11 @@ attempt("g2", () => Counted.made)
 attempt("h1", () => { trace = []; try { trace.push("try"); const s: string = hide(1); trace.push(s) } finally { trace.push("finally") } return "end" })
 attempt("h2", () => trace.join())
 // The failing read is in the middle of an expression that has effects on both sides.
-const foreign = JSON.parse('["x"]') as number[]
+const foreign: number[] = JSON.parse('["x"]')
 let state = "before"
 attempt("i1", () => { const got = (state = "left") + foreign[0] + (state = "right"); return got })
 attempt("i2", () => state)
-// A cast that fails has copied nothing and changed nothing: neither the object nor the array it is in.
+// A cast of an array looks at no element and copies nothing. The typed read of the field that does not fit throws, and nothing is changed.
 const source = JSON.parse('[{"n":1,"s":"s"},{"n":"x","s":"s"}]')
 const first = source[0]
 attempt("i3", () => (source as R[]).length)

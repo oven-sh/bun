@@ -1,0 +1,7 @@
+# An interface that the program and a declaration file both declare. What the program alone declares is written. What the declaration file declares is not, and neither is a method whose overloads come from both.
+member-merged-with-declaration-file.ts:5 member `shared.mine` = member mine Field number checked number
+member-merged-with-declaration-file.ts:6 member `shared.theirs` = member theirs Field unwritten checked string
+member-merged-with-declaration-file.ts:7 member `shared.both` = member both Method unwritten checked { (value: string): string; (value: number): number; }
+member-merged-with-declaration-file.ts:4 has `Shared` = mine Field number checked number
+member-merged-with-declaration-file.ts:4 has `Shared` = theirs Field unwritten checked string
+absent: member-merged-with-declaration-file.ts:4 has `Shared` = mine Field unwritten checked number

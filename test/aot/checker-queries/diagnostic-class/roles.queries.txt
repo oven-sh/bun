@@ -1,0 +1,12 @@
+# A diagnostic carries its class and its effect on the build. A type error in the program's TypeScript stops the build. JavaScript reports its early errors and nothing else, even under `// @ts-check`. A declaration file reports nothing.
+roles.ts:0 role `` = Checked
+roles.ts:4 diagnostic TS2322 = Semantic StopsBuild
+
+roles-javascript.js:0 role `` = Inferred
+roles-javascript.js:3 diagnostic TS1114 = EarlyError StopsBuild
+absent: roles-javascript.js:4 diagnostic TS2322 = Semantic StopsBuild
+absent: roles-javascript.js:5 diagnostic TS2349 = Semantic StopsBuild
+
+roles-declarations.d.ts:0 role `` = TypesOnly
+absent: roles-declarations.d.ts:2 diagnostic TS2304 = DeclarationFile StopsBuild
+absent: roles-declarations.d.ts:2 diagnostic TS2304 = MissingDeclaration StopsBuild

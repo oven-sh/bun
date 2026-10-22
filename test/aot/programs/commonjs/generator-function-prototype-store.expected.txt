@@ -1,6 +1,0 @@
-a generator function: TypeError
-an async generator function: TypeError
-by a computed key: TypeError
-the object it has already: true
-by Reflect.set: false,true
-an ordinary function: 1

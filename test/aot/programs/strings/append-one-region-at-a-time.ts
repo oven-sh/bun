@@ -1,7 +1,7 @@
 // A string buffer region is never begun inside another, and an attempt that is rejected leaves no mark on the regions that stay.
-// IR= 1 abandons CallBuiltin StringAppendBegin
-// IR= 0 builds CallBuiltin StringAppendBegin
-// IR= 0 builds : int = Integer 257$
+// IR= 1 abandons  = StringBuilderBegin
+// IR= 0 builds  = StringBuilderBegin
+// IR= 0 builds  = Integer integer=257\b
 function loose(value: unknown): any { return value; }
 function check(i: number): string { if (i === 2) throw new Error("stop"); return "ok"; }
 function abandons(s: string, n: number): string {
@@ -30,7 +30,7 @@ for (let round = 0; round < 2; round++) {
   for (const which of [0, 1, 0, 1]) {
     for (let n = -1; n < 3; n++) {
       try {
-        console.log(which, n, JSON.stringify(kept[2]!(which as never, "ab" as never, n as never)));
+        console.log(which, n, JSON.stringify((kept[2] as any)(which, "ab", n)));
       } catch (error) {
         console.log(which, n, "threw", (error as Error).message);
       }

@@ -40,7 +40,8 @@ test.skipIf(isASAN || isDebug)("a large output buffer is released however the ca
     stdout: "pipe",
     stderr: "pipe",
   });
-  expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
+  const [buildStderr, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  expect({ stderr: buildExitCode ? buildStderr : "", exitCode: buildExitCode }).toEqual({ stderr: "", exitCode: 0 });
   const measure = async (mode: string) => {
     await using ran = Bun.spawn({
       cmd: [executable, mode],

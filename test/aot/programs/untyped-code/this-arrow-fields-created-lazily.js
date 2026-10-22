@@ -123,9 +123,9 @@ say("called", table.callThree(new Router(10)), table.callBackwards(new Router(10
 }
 {
   let sum = 0;
-  const before = count("operationAOTGetByNameAndCache");
+  const before = count("operationAOTGetByIdAndCache");
   for (let i = 0; i < 3000; ++i) sum += table.callThree(new Router(i)) + table.callFar(new Service(i)) + (i % 3 ? table.callBackwards(new Router(i)) : table.readOne(new Router(i))(1));
-  const asked = count("operationAOTGetByNameAndCache") - before;
+  const asked = count("operationAOTGetByIdAndCache") - before;
   say("rounds", sum);
   say(asked <= 300 ? "the reads asked the run time at most 300 times" : "the reads asked the run time " + asked + " times");
 }

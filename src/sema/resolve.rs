@@ -16,90 +16,92 @@ use smallvec::{SmallVec, smallvec};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::time::{Duration, Instant};
 
-/// The phases of loading a program, for timing. `Discover`, `Link` and `Merge` run on one thread,
-/// and `Aliases` is the time of the thread that waits for it. The others run on all threads in
-/// parallel, and the time of every thread is counted.
-#[derive(Copy, Clone, Debug)]
-pub enum Phase {
-    /// The configuration files, the directories traversed for `include`, the search for the
-    /// libraries.
-    Discover,
-    Read,
-    Parse,
-    Bind,
-    /// Resolution of the imports and the `/// <reference>`s of a file.
-    Resolve,
-    /// The files are numbered in the order they refer to each other.
-    Link,
-    Merge,
-    /// `Files::link`: the exports and the aliases of every module.
-    Aliases,
-}
+mod code;
+mod code_host;
+mod project_resolvers;
 
-impl Phase {
-    pub const ALL: [Phase; 8] = [
-        Phase::Discover,
-        Phase::Read,
-        Phase::Parse,
-        Phase::Bind,
-        Phase::Resolve,
-        Phase::Link,
-        Phase::Merge,
-        Phase::Aliases,
-    ];
-}
+pub use self::code::*;
+pub use self::code_host::*;
+pub use self::project_resolvers::ProjectResolvers;
 
-/// On drop, reports its lifetime to the host.
-pub struct Spent<'a>(&'a dyn Host, Phase, Instant);
-
-impl<'a> Spent<'a> {
-    pub fn on(host: &'a dyn Host, phase: Phase) -> Spent<'a> {
-        Spent(host, phase, Instant::now())
+/// Runs `step` on the calling thread until it returns false, while helper threads each run `work` once.
+///
+/// Polls `Host::helpers_now` before every step. When it allows more helpers than are running, the extra ones start and
+/// the calling thread keeps stepping. In a build with project references, this lets the threads of finished projects
+/// join the remaining ones. `helpers` is the number of helpers that are already running.
+pub fn run_with_current_helpers(
+    host: &dyn Host,
+    mut helpers: usize,
+    step: &mut (dyn FnMut() -> bool + Send),
+    work: &(dyn Fn() + Sync),
+) {
+    loop {
+        let allowed = host.helpers_now().unwrap_or(0);
+        if allowed <= helpers {
+            if !step() {
+                return;
+            }
+            continue;
+        }
+        let extra = allowed - helpers;
+        let caller = std::thread::current().id();
+        let pending = bun_threading::Guarded::new(Some(&mut *step));
+        host.with_helpers(extra, extra + 1, &|_| {
+            let is_caller = std::thread::current().id() == caller;
+            let step = pending.lock().take_if(|_| is_caller);
+            match step {
+                Some(step) => run_with_current_helpers(host, allowed, step, work),
+                None => work(),
+            }
+        });
+        // Helpers that find nothing to do can claim every index before the calling thread gets one. Its steps aren't
+        // finished then.
+        if pending.lock().is_none() {
+            return;
+        }
+        helpers = allowed;
     }
 }
 
-impl Drop for Spent<'_> {
-    fn drop(&mut self) {
-        self.0.spent(self.1, self.2.elapsed());
-    }
-}
-
-/// The file system, and the parser. The bundler has its own of both.
-/// What only who has made it can read.
-pub type Kept = std::sync::Arc<dyn std::any::Any + Send + Sync>;
+/// An opaque value that only its creator can read.
+pub type CachedConfig = std::sync::Arc<dyn std::any::Any + Send + Sync>;
 /// `Options::paths`
 pub type Paths = Vec<(Vec<u8>, Vec<Vec<u8>>)>;
 
+/// Changes whenever the contents of a file may have changed.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct ClassOptions {
-    pub use_define_for_class_fields: bool,
-    pub experimental_decorators: bool,
-    pub emit_decorator_metadata: bool,
+pub struct FileStamp {
+    pub device: u64,
+    pub inode: u64,
+    pub size: u64,
+    pub modified: (i64, i64),
+    pub changed: (i64, i64),
 }
 
+impl FileStamp {
+    /// For a text that can't change while the host exists.
+    pub const IMMUTABLE: FileStamp = FileStamp {
+        device: 0,
+        inode: 0,
+        size: 0,
+        modified: (0, 0),
+        changed: (0, 0),
+    };
+}
+
+/// The file system and the parser. The bundler has its own implementation of both.
 pub trait Host: Sync {
-    fn is_without_bundler(&self) -> bool {
-        false
-    }
-    fn build_constants(&self) -> Option<std::sync::Arc<crate::fold::BuildConstants>> {
-        None
-    }
-    /// One thread has spent `time` on `phase`. Only a host whose `times` is queried accumulates it.
-    fn spent(&self, _phase: Phase, _time: Duration) {}
-    /// The totals reported to `spent` so far, in the order of `Phase::ALL`.
-    fn times(&self) -> [Duration; Phase::ALL.len()] {
-        [Duration::ZERO; Phase::ALL.len()]
-    }
-    /// The contents of the file. As in `bun_ast::Source`: a host that already holds them, as the
-    /// bundler does for every file it has loaded, lends them, and nothing is read or copied.
+    /// Returns the file's contents. As in `bun_ast::Source`, a host that already holds them (the
+    /// bundler does, for every file it has loaded) lends them without reading or copying anything.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
-    /// Reads a source file of the program. A file that cannot be read is loaded as an empty file and returned by `take_unreadable`.
+    /// Reads a source file of the program. A file that can't be read is loaded as an empty file and
+    /// returned by `take_unreadable`.
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_default()
     }
-    /// Where the hosts of one request read different texts at `path`: a number for the text that this one reads.
+    /// When the hosts of one request read different texts at `path`, returns a number that
+    /// identifies the text this host reads.
     fn origin(&self, _path: &[u8]) -> usize {
         0
     }
@@ -107,12 +109,13 @@ pub trait Host: Sync {
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         Vec::new()
     }
-    fn is_non_utf8(&self, _path: &[u8]) -> bool {
-        false
+    /// `None`: the host can't tell whether `read_source` would return the same text later.
+    fn file_stamp(&self, _path: &[u8]) -> Option<FileStamp> {
+        None
     }
     fn is_file(&self, path: &[u8]) -> bool;
     fn is_dir(&self, path: &[u8]) -> bool;
-    /// With symbolic links followed.
+    /// Resolves symbolic links.
     fn realpath(&self, path: &[u8]) -> Vec<u8>;
     fn list_dir(&self, path: &[u8]) -> Vec<Vec<u8>>;
     /// `GetAccessibleEntries`: the names of the files and of the directories in `path`, each sorted.
@@ -129,79 +132,18 @@ pub trait Host: Sync {
     fn is_case_sensitive(&self) -> bool {
         true
     }
-    /// The language of a file whose name does not tell it. Such a file is a source file whatever
-    /// its name is. typescript-go's language server has the language of an open file from the
-    /// editor (`LanguageKindToScriptKind`), and loads it under `allowNonTsExtensions`. `None`:
-    /// `GetScriptKindFromFileName`.
+    /// The language of a file whose name doesn't determine it. Such a file is a source file
+    /// whatever it's called. typescript-go's language server gets an open file's language from the
+    /// editor (`LanguageKindToScriptKind`) and loads the file under `allowNonTsExtensions`. `None`:
+    /// use `GetScriptKindFromFileName`.
     fn script_kind(&self, path: &[u8]) -> Option<ScriptKind>;
-    /// `extraFileExtensions`: the extensions, each with its `.`, of which the host knows the
-    /// language, besides those that TypeScript knows. `include` finds the files that have them.
+    /// `extraFileExtensions`: the extensions, each with its `.`, whose language the host knows,
+    /// besides TypeScript's own. `include` matches files that have them.
     fn extra_file_extensions(&self) -> &[(Vec<u8>, ScriptKind)];
     /// The local scripts of the HTML file at `page`, which Bun serves or bundles with it. A file
     /// that imports the page refers to them.
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>>;
-    fn uses_default_parse_settings(&self, _path: &[u8]) -> bool {
-        true
-    }
-    fn class_options(&self, _path: &[u8]) -> Option<ClassOptions> {
-        None
-    }
-    fn file_timestamps(&self, _path: &[u8]) -> Option<[i64; 4]> {
-        None
-    }
-    fn has_bundler_source(&self, _path: &[u8]) -> bool {
-        false
-    }
-    fn is_scheduled_by_bundler(&self, _path: &[u8]) -> bool {
-        false
-    }
-    fn is_early_parse_cancelled(&self) -> bool {
-        false
-    }
-    fn next_early_paths(&self) -> Option<Vec<Vec<u8>>> {
-        None
-    }
-    fn is_load_abandoned(&self) -> bool {
-        false
-    }
-    /// Called once, when the program and `Options::code_roots` are loaded, with every file so far. The sources of the runtime
-    /// that are compiled with them: they are loaded like `Options::code_roots`. Each with its `Module::builtin`.
-    fn builtin_files(
-        &self,
-        _loaded: &[Option<Box<crate::program::Module<'_>>>],
-        _atoms: &crate::atom::Interner<'_>,
-    ) -> Vec<(Vec<u8>, crate::program::Builtin)> {
-        Vec::new()
-    }
-    fn loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
-        Vec::new()
-    }
-    fn file_loader_entry_points(&self) -> Vec<(u32, crate::hir::ExprId)> {
-        Vec::new()
-    }
-    fn program_is_loaded(&self, _program: &crate::check::Program<'_>) {}
-    fn program_is_compiled(&self, _program: &crate::check::Program<'_>) {}
-    fn is_runtime_commonjs(&self, _path: &[u8]) -> Option<bool> {
-        None
-    }
-    /// `None`: `importer` is none of `builtin_files`. Else the file that `specifier` stands for there, as a specifier that resolves to
-    /// it, or nothing. Such a file refers to its like alone: the disk is not asked.
-    fn builtin_import(&self, _importer: &[u8], _specifier: &[u8]) -> Option<Option<Vec<u8>>> {
-        None
-    }
-    fn is_deferred_import(&self, _importer: &[u8], _specifier: &[u8]) -> bool {
-        false
-    }
-    fn is_deferred_path(&self, _path: &[u8]) -> bool {
-        false
-    }
-    fn loads_on_demand(&self) -> bool {
-        false
-    }
-    fn is_asked_about(&self, _path: &[u8]) -> bool {
-        false
-    }
-    /// The lists of the result are in `arena`, which belongs to the calling thread.
+    /// The result's lists are allocated in `arena`, which belongs to the calling thread.
     fn parse<'s>(
         &self,
         arena: &'s crate::session::Arena,
@@ -210,31 +152,74 @@ pub trait Host: Sync {
         atoms: &crate::atom::Interner<'s>,
         options: ParseOptions,
     ) -> crate::hir::File<'s>;
-    /// `packagejson.Parse`: an object with the fields of `Fields` that `text` has, and no others.
-    /// `None`: an error, after which typescript-go goes on as if the file had no fields.
-    /// An `Expected[T]` that is `Valid` is its `Value`. One that is not is a value of its
-    /// `ActualJSONType` that is no `T`: for a `map[string]string` and an object, `Value` with a
-    /// name repeated at the end. One that is `Null` has a `null` too, behind its other value. Last
-    /// comes the `Value` of a `map[string]string` that is not `Valid` and no object.
-    /// What the parser leaves in `arena`, which belongs to the calling thread, is garbage.
-    fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
-    /// `ExtendedConfigCache`, of a host through which many configuration files are read: what `keep_extended_config`
-    /// was given for the file at `path`.
-    fn extended_config(&self, _path: &[u8]) -> Option<Kept> {
+    /// `parse` for a caller that reads the top level of the file alone: a function may have an empty body in the place of its
+    /// own. `None`: the host has no such parse, or the file has to be parsed whole.
+    fn parse_top_level<'s>(
+        &self,
+        _arena: &'s crate::session::Arena,
+        _path: &[u8],
+        _text: &[u8],
+        _atoms: &crate::atom::Interner<'s>,
+        _options: ParseOptions,
+    ) -> Option<crate::hir::File<'s>> {
         None
     }
-    /// `parsed` is called if the host keeps it.
-    fn keep_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> Kept) {}
-    /// A list that is equal to `paths`, of a host through which many configuration files are read:
-    /// the projects of a build that have their `paths` from one file share one.
+    /// `packagejson.Parse`: returns an object with exactly the fields of `Fields` that `text` has. Returns `None` on an
+    /// error, after which typescript-go continues as if the file had no fields.
+    /// How an `Expected[T]` is encoded: if it's `Valid`, as its `Value`. Otherwise as a value of
+    /// its `ActualJSONType` that isn't a `T`. For a `map[string]string` whose JSON is an object,
+    /// that's `Value` with a name repeated at the end. If it's `Null`, the field is repeated with a
+    /// `null` after its other value. If it's a `map[string]string` that's neither `Valid` nor an
+    /// object, the field is repeated last with its `Value`.
+    /// Whatever the parser leaves in `arena`, which belongs to the calling thread, is garbage.
+    fn parse_package_json(&self, arena: &crate::session::Arena, text: &[u8]) -> Option<Json>;
+    /// `ExtendedConfigCache`, for a host that reads many configuration files. Returns what
+    /// `cache_extended_config` stored for the file at `path`.
+    fn extended_config(&self, _path: &[u8]) -> Option<CachedConfig> {
+        None
+    }
+    /// Only calls `parsed` if the host caches the result.
+    fn cache_extended_config(&self, _path: &[u8], _parsed: &dyn Fn() -> CachedConfig) {}
+    /// For a host that reads many configuration files: returns a shared list equal to `paths`, so
+    /// the projects of a build that get their `paths` from the same file share one copy.
     fn shared_paths(&self, paths: std::sync::Arc<Paths>) -> std::sync::Arc<Paths> {
         paths
     }
     /// Calls `work` with every index below `count`, on any number of threads.
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync));
-    /// Whether `parallel` would run on the calling thread alone now, whatever the number of threads asked for.
-    fn is_of_one_thread(&self) -> bool {
+    /// Runs `parallel`, plus `meanwhile` on the calling thread. `meanwhile` runs concurrently if
+    /// `parallel` would leave the calling thread just waiting, otherwise after `work` is done. So
+    /// `meanwhile` may wait for something `work` does, but `work` must not wait for `meanwhile`.
+    /// Returns when both are done.
+    fn parallel_while(
+        &self,
+        count: usize,
+        work: &(dyn Fn(usize) + Sync),
+        meanwhile: &mut dyn FnMut(),
+    ) {
+        self.parallel(count, work);
+        meanwhile();
+    }
+    /// Runs `work`. Each `parallel` that it calls runs on the calling thread alone. This is for the `meanwhile` of a
+    /// `parallel_while` whose tasks keep every thread until they're all done.
+    fn run_regions_inline(&self, work: &mut dyn FnMut()) {
+        work();
+    }
+    /// True if `parallel` would currently run only on the calling thread, however many threads are requested.
+    fn is_single_threaded(&self) -> bool {
         false
+    }
+    /// Returns true if the process exits right after this host's program is checked and reported: no other program of the
+    /// request is running or will run. `has_a_run` is true if the program shares a `Run` with other programs.
+    fn ends_the_process(&self, _has_a_run: bool) -> bool {
+        false
+    }
+    /// Takes ownership of a checked program's session if `ends_the_process`. Nothing refers to it anymore.
+    fn drop_before_the_process_ends(&self, _session: Session) {}
+    /// Returns how many other threads a `parallel` call would use if it started now. `None` unless `parallel` also runs on
+    /// the calling thread and the host's share of the threads changes over time.
+    fn helpers_now(&self) -> Option<usize> {
+        None
     }
     /// `parallel`, on the calling thread and on at most `helpers` others.
     fn with_helpers(&self, _helpers: usize, count: usize, work: &(dyn Fn(usize) + Sync)) {
@@ -242,24 +227,15 @@ pub trait Host: Sync {
             work(index);
         }
     }
-    /// `parallel` for a program that `blocked` other programs are waiting for. It may use their threads too.
-    fn parallel_while_others_wait(
-        &self,
-        _blocked: usize,
-        count: usize,
-        work: &(dyn Fn(usize) + Sync),
-    ) {
-        self.parallel(count, work);
-    }
-    /// A program is loaded, and `parse` is not called again before it is checked: what the threads
-    /// retain for the next file can be freed. Outside `parallel`.
+    /// Called once a program is loaded. `parse` isn't called again before the program is checked,
+    /// so whatever the threads retain for the next file can be freed. Called outside `parallel`.
     fn loaded(&self) {}
     /// The number of threads `parallel` uses.
     fn threads(&self) -> usize {
         1
     }
-    /// The threads that only read files: `bun_threading::io_thread_pool`. `None`: the threads of
-    /// `parallel` read the files that they process.
+    /// The threads that only read files: `bun_threading::io_thread_pool`. `None`: `parallel`'s
+    /// threads read the files they process.
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
         None
     }
@@ -284,7 +260,7 @@ pub enum ModuleKind {
 }
 
 impl ModuleKind {
-    /// Whether the module format of each file, CommonJS or ECMAScript module, is determined by its
+    /// True if each file's module format (CommonJS or ECMAScript module) is determined by its
     /// extension and its `package.json`.
     pub fn is_node(self) -> bool {
         (ModuleKind::Node16..=ModuleKind::NodeNext).contains(&self)
@@ -333,7 +309,7 @@ bun_core::comptime_string_map! {
 /// `core.ScriptTarget`. Ordered: a later target includes everything an earlier one has.
 #[derive(Default, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum ScriptTarget {
-    /// `target` is not specified.
+    /// `target` isn't specified.
     #[default]
     None,
     ES5,
@@ -394,7 +370,7 @@ bun_core::comptime_string_map! {
     };
 }
 
-/// `core.ModuleDetectionKind`: what makes a file that is not a declaration file a module.
+/// `core.ModuleDetectionKind`: what makes a file that isn't a declaration file a module.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ModuleDetection {
     /// An `import`, an `export` or `import.meta`; a JSX tag that imports its factory; the format
@@ -408,219 +384,8 @@ pub enum ModuleDetection {
 }
 
 impl Options {
-    /// Appends every option that could change what checking a declaration file reports, given the files it refers to.
-    ///
-    /// The checker sees the configuration only through this struct, so a `compilerOptions` entry without a field here cannot
-    /// matter. Every field is part of the key unless it is listed below with the reason it cannot matter. When in doubt a field
-    /// belongs in the key: there it can only cost a repeated check, while a field that is wrongly left out hides an error.
-    pub fn write_check_key(&self, key: &mut Vec<u8>) {
-        use std::io::Write;
-        // No `..`: a new option does not compile until it is put in one of the groups.
-        let Options {
-            // Only used to find the file an import or a reference leads to, which `Files::global_part` describes, and to spell import
-            // paths in emitted declaration files. Nothing is emitted for a declaration file.
-            base_dir: _,
-            paths: _,
-            paths_base_dir: _,
-            base_url: _,
-            root_dirs: _,
-            type_roots: _,
-            // Which projects are referenced. That too only decides which file an import leads to.
-            referenced_outputs: _,
-            project_files: _,
-            referenced_projects: _,
-            referenced_options: _,
-            // Which files are the roots of the program.
-            files: _,
-            file_specs: _,
-            include_specs: _,
-            is_default_include_spec: _,
-            own_roots: _,
-            // Where output goes, and whether it is kept. Besides emit, the checker reads `out_dir`, `root_dir` and `config_path` for an
-            // import that leads into a referenced project, and `global_part` has no file of a referenced project.
-            out_dir: _,
-            root_dir: _,
-            declaration_dir: _,
-            build_info_file_name: _,
-            writes_declaration_files: _,
-            config_path: _,
-            // Errors in the configuration file itself. They are reported apart from the files.
-            errors: _,
-            problems: _,
-            // In the key.
-            skip_lib_check,
-            skip_default_lib_check,
-            no_check,
-            drops_unreferenced,
-            captures_suggestions,
-            emits_first,
-            current_directory,
-            lib_dir,
-            libs,
-            no_lib,
-            lib_replacement,
-            trace_resolution,
-            types,
-            no_resolve,
-            imports_of_sources_add_no_file,
-            custom_conditions,
-            resolve_package_json_exports,
-            resolve_package_json_imports,
-            module_suffixes,
-            preserve_symlinks,
-            no_unchecked_indexed_access,
-            no_property_access_from_index_signature,
-            strict_builtin_iterator_return,
-            exact_optional_property_types,
-            experimental_decorators,
-            strict_null_checks,
-            no_implicit_any,
-            specifies_no_implicit_any,
-            strict_function_types,
-            strict_bind_call_apply,
-            use_unknown_in_catch_variables,
-            strict_property_initialization,
-            no_implicit_this,
-            allow_unreachable_code,
-            allow_unused_labels,
-            no_implicit_returns,
-            no_implicit_override,
-            no_fallthrough_cases_in_switch,
-            no_unused_locals,
-            no_unused_parameters,
-            resolve_json_module,
-            no_unchecked_side_effect_imports,
-            retains_duplicate_packages,
-            force_consistent_casing_in_file_names,
-            specifies_lib,
-            allow_js,
-            max_node_module_js_depth,
-            check_js,
-            has_config_file,
-            suppress_output_path_check,
-            use_case_sensitive_file_names,
-            no_emit,
-            emit_declaration_only,
-            composite,
-            writes_source_maps,
-            writes_declaration_maps,
-            specifies_source_or_map_root,
-            target,
-            module,
-            resolves_like_node,
-            resolves_like_node16,
-            specifies_module_resolution,
-            is_classic,
-            forbids_self_name_references,
-            forbids_synthetic_default_imports,
-            module_detection,
-            jsx_import_source,
-            jsx_runtime,
-            jsx,
-            use_define_for_class_fields,
-            emit_standard_class_fields,
-            isolated_modules,
-            isolated_modules_reported,
-            preserve_const_enums,
-            verbatim_module_syntax,
-            allow_importing_ts_extensions,
-            rewrite_relative_import_extensions,
-            allow_umd_global_access,
-            erasable_syntax_only,
-            isolated_declarations,
-            emits_declarations,
-            no_emit_on_error,
-            remove_comments,
-            is_incremental,
-            is_build,
-            no_error_truncation,
-            emit_decorator_metadata,
-            strips_internal_declarations,
-            import_helpers,
-            allow_arbitrary_extensions,
-            jsx_factory,
-            jsx_fragment_factory,
-            react_namespace,
-            uses_nearest_config_paths,
-            removed_base_url,
-            host_modules_without_paths,
-            early_parse_only,
-            attaches_direct_eval_scopes,
-            bun_intrinsics,
-            bun_global,
-            bun_global_adds_no_file,
-            detects_commonjs_by_free_names,
-            uses_engine_arithmetic,
-            uses_ecmascript_bindings,
-            undefined_properties_have_no_declaration,
-            pops_every_type_resolution,
-            resolves_js_imports_as_code_only,
-            code_roots,
-            every_named_root_is_own,
-            loads_augmented_modules,
-            relative_imports_need_no_extension,
-            emits_nothing,
-            specified_use_define_for_class_fields,
-        } = self;
-        let _ = write!(
-            key,
-            "{skip_lib_check:?} {skip_default_lib_check:?} {no_check:?} {drops_unreferenced:?} {captures_suggestions:?} {emits_first:?} {current_directory:?} {lib_dir:?} "
-        );
-        let _ = write!(
-            key,
-            "{libs:?} {no_lib:?} {lib_replacement:?} {trace_resolution:?} {types:?} {no_resolve:?} {imports_of_sources_add_no_file:?} {custom_conditions:?} "
-        );
-        let _ = write!(
-            key,
-            "{resolve_package_json_exports:?} {resolve_package_json_imports:?} {module_suffixes:?} {preserve_symlinks:?} {no_unchecked_indexed_access:?} {no_property_access_from_index_signature:?} {strict_builtin_iterator_return:?} {exact_optional_property_types:?} "
-        );
-        let _ = write!(
-            key,
-            "{experimental_decorators:?} {strict_null_checks:?} {no_implicit_any:?} {specifies_no_implicit_any:?} {strict_function_types:?} {strict_bind_call_apply:?} {use_unknown_in_catch_variables:?} {strict_property_initialization:?} "
-        );
-        let _ = write!(
-            key,
-            "{no_implicit_this:?} {allow_unreachable_code:?} {allow_unused_labels:?} {no_implicit_returns:?} {no_implicit_override:?} {no_fallthrough_cases_in_switch:?} {no_unused_locals:?} {no_unused_parameters:?} "
-        );
-        let _ = write!(
-            key,
-            "{resolve_json_module:?} {no_unchecked_side_effect_imports:?} {retains_duplicate_packages:?} {force_consistent_casing_in_file_names:?} {specifies_lib:?} {allow_js:?} {max_node_module_js_depth:?} {check_js:?} "
-        );
-        let _ = write!(
-            key,
-            "{has_config_file:?} {suppress_output_path_check:?} {use_case_sensitive_file_names:?} {no_emit:?} {emit_declaration_only:?} {composite:?} {writes_source_maps:?} {writes_declaration_maps:?} "
-        );
-        let _ = write!(
-            key,
-            "{specifies_source_or_map_root:?} {target:?} {module:?} {resolves_like_node:?} {resolves_like_node16:?} {specifies_module_resolution:?} {is_classic:?} {forbids_self_name_references:?} "
-        );
-        let _ = write!(
-            key,
-            "{forbids_synthetic_default_imports:?} {module_detection:?} {jsx_import_source:?} {jsx_runtime:?} {jsx:?} {use_define_for_class_fields:?} {emit_standard_class_fields:?} {isolated_modules:?} "
-        );
-        let _ = write!(
-            key,
-            "{isolated_modules_reported:?} {preserve_const_enums:?} {verbatim_module_syntax:?} {allow_importing_ts_extensions:?} {rewrite_relative_import_extensions:?} {allow_umd_global_access:?} {erasable_syntax_only:?} {isolated_declarations:?} "
-        );
-        let _ = write!(
-            key,
-            "{emits_declarations:?} {no_emit_on_error:?} {remove_comments:?} {is_incremental:?} {is_build:?} {no_error_truncation:?} {emit_decorator_metadata:?} {strips_internal_declarations:?} "
-        );
-        let _ = write!(
-            key,
-            "{import_helpers:?} {allow_arbitrary_extensions:?} {jsx_factory:?} {jsx_fragment_factory:?} {react_namespace:?} "
-        );
-        let _ = write!(
-            key,
-            "{uses_nearest_config_paths:?} {removed_base_url:?} {host_modules_without_paths:?} {early_parse_only:?} {attaches_direct_eval_scopes:?} {bun_intrinsics:?} {bun_global:?} {bun_global_adds_no_file:?} {detects_commonjs_by_free_names:?} "
-        );
-        let _ = write!(
-            key,
-            "{uses_engine_arithmetic:?} {uses_ecmascript_bindings:?} {undefined_properties_have_no_declaration:?} {pops_every_type_resolution:?} {resolves_js_imports_as_code_only:?} {code_roots:?} {every_named_root_is_own:?} {loads_augmented_modules:?} {relative_imports_need_no_extension:?} {emits_nothing:?} {specified_use_define_for_class_fields:?} "
-        );
-    }
-
-    /// `getParseFileRedirect`: `OutputDts`, which is read in place of the file at `path` if that is a source of a referenced project.
+    /// `getParseFileRedirect`: if the file at `path` is a source of a referenced project, returns
+    /// the `OutputDts` that's read instead.
     pub fn parse_file_redirect(&self, path: &[u8]) -> Option<&[u8]> {
         let output = self.referenced_source(path)?.output_dts.as_slice();
         Some(output).filter(|output| !output.is_empty())
@@ -648,7 +413,8 @@ impl Options {
         let files = self.project_files.as_ref()?;
         self.with_path(name, |path| {
             let sources = files.outputs.get(path)?.iter();
-            // It has what the other has.
+            // `outputDtsToProjectReference` stores the same `SourceOutputAndProjectReference` values as
+            // `sourceToProjectReference`, so the entry is looked up through its source.
             let sources = sources.filter_map(|source| {
                 let file = self.last_referenced(files.sources.get(source)?)?;
                 (to_path(&file.output_dts, self.use_case_sensitive_file_names) == path)
@@ -658,16 +424,16 @@ impl Options {
         })
     }
 
-    /// `maps.Copy`: of the referenced projects that have a file, the last one has the entry.
-    fn last_referenced<'a>(&self, of_all: &'a [ProjectFile]) -> Option<&'a ProjectFile> {
-        let referenced = of_all.iter().filter_map(|file| {
+    /// `maps.Copy`: when several referenced projects have the file, the last one's entry wins.
+    fn last_referenced<'a>(&self, candidates: &'a [ProjectFile]) -> Option<&'a ProjectFile> {
+        let referenced = candidates.iter().filter_map(|file| {
             let project = self.referenced_projects.get(&file.project)?;
             Some((project, file))
         });
         referenced.max_by_key(|it| it.0).map(|it| it.1)
     }
 
-    /// `find`, with the `tspath.Path` of the file with this name.
+    /// Calls `find` with the `tspath.Path` of the file called `name`.
     fn with_path<T>(&self, name: &[u8], find: impl FnOnce(&[u8]) -> Option<T>) -> Option<T> {
         if self.use_case_sensitive_file_names {
             return find(name);
@@ -676,10 +442,10 @@ impl Options {
     }
 }
 
-/// A file of a project of a build.
+/// A file of one project in a build.
 #[derive(Debug)]
 pub struct ProjectFile {
-    /// In the build order.
+    /// The project's index in the build order.
     pub project: u32,
     /// `Source`
     pub source: Vec<u8>,
@@ -687,8 +453,8 @@ pub struct ProjectFile {
     pub output_dts: Vec<u8>,
 }
 
-/// The files of the projects of a build that another one references. Each program has it: a list of its own of all the
-/// files of what it references would be made again for each.
+/// The files of every project in a build that another project references. All programs share it,
+/// because building a separate list of referenced files for each program would repeat the work.
 #[derive(Default, Debug)]
 pub struct ProjectFiles {
     /// By `tspath.Path`.
@@ -729,8 +495,8 @@ impl ScriptKind {
         Some(found.1)
     }
 
-    /// Whether a file called `path` is another language than its name says. JavaScript can have
-    /// JSX in it whatever it is called (`GetLanguageVariant`).
+    /// True if this isn't the language that the name `path` implies. JavaScript can contain JSX
+    /// whatever the file is called (`GetLanguageVariant`).
     pub fn differs_from_name(self, path: &[u8]) -> bool {
         ScriptKind::from_file_name(path).is_none_or(|by_name| {
             by_name != self && !(by_name.is_javascript() && self.is_javascript())
@@ -738,33 +504,36 @@ impl ScriptKind {
     }
 }
 
-/// Whose reading of the syntax a file is parsed with, where parsers differ. The default is that of
-/// `tsc` for a file of a program.
+/// Which parser's behavior to follow where parsers disagree about the syntax. The default is
+/// `tsc`'s, for a file of a program.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Dialect {
-    /// TypeScript 5's parser, which typescript-estree runs on, where the native one differs.
+    /// Follows TypeScript 5's parser, which typescript-estree runs on, where the native one differs.
     pub typescript_5: bool,
-    /// JavaScript is what ECMAScript says, with Annex B and with JSX as acorn and Babel parse it,
-    /// where TypeScript's parser rejects valid code or reads it differently. It says nothing about
-    /// TypeScript files.
+    /// Parses JavaScript per ECMAScript, with Annex B and JSX, the way acorn and Babel do, where TypeScript's parser
+    /// rejects valid code or parses it differently. Doesn't affect TypeScript files.
     pub ecmascript: bool,
-    /// What only Babel accepts, with the plugins that Prettier enables, in JavaScript and in
-    /// TypeScript.
+    /// Accepts what only Babel accepts, with the plugins that Prettier enables, in JavaScript and in TypeScript.
     pub babel: bool,
-    /// The file is a script. With `ecmascript`, in JavaScript: whatever is in it. Otherwise: unless
-    /// it has module syntax, whatever its extension.
+    /// The file is a script. With `ecmascript`, a JavaScript file is one no matter what's in it.
+    /// Otherwise a file is one unless it has module syntax, whatever its extension.
     pub script: bool,
-    /// JavaScript has the types and the declarations of Flow, as `flow-parser` reads them.
+    /// JavaScript can have Flow's types and declarations, parsed the way `flow-parser` does.
     pub flow: bool,
-    /// What oxc accepts and the parsers of ESLint do not, in JavaScript and in TypeScript: `import source x from "a"`,
-    /// `import.source("a")`, a `\u` escape in a name of JSX, and in TypeScript too something between the `<` and the `/` of a
-    /// closing tag. A file that is refused as a module is read as a script, if nothing in it says that it is a module:
-    /// `await` is a name there, and `<!--` and `-->` start comments, in TypeScript too. An expression in a type, like a
-    /// computed key, is in the await and yield context of the code around the type.
+    /// Accepts what oxc accepts and ESLint's parsers don't, in JavaScript and in TypeScript:
+    /// `import source x from "a"`, `import.source("a")`, a `\u` escape in a JSX name, and (in
+    /// TypeScript too) something between the `<` and the `/` of a closing tag. A file that fails to
+    /// parse as a module is parsed as a script if nothing in it makes it a module. There `await` is
+    /// a name, and `<!--` and `-->` start comments, even in TypeScript. An expression in a type,
+    /// like a computed key, is in the await and yield context of the code around the type.
     pub oxc: bool,
-    /// With `oxc`: the parser says whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). It is for a caller
-    /// that would make the scopes of the file for nothing else.
+    /// With `oxc`: the parser reports whether a name may be declared twice in a scope (`rare::MAY_REDECLARE`). For a
+    /// caller that would otherwise build the file's scopes just for that.
     pub oxc_names: bool,
+    /// Nothing outside the file says whether it's a module or a script, so its syntax decides. It's read as a module. If that
+    /// fails or the text has a `<!--`, and the file has no `import`, `export` or `import.meta`, it's read again as a script,
+    /// where `await` is a name and `<!--` starts a comment. Not with `script` or `oxc`.
+    pub module_or_script: bool,
 }
 
 impl Dialect {
@@ -778,6 +547,7 @@ impl Dialect {
             flow: false,
             oxc: false,
             oxc_names: false,
+            module_or_script: false,
         }
     }
 
@@ -814,7 +584,7 @@ impl Dialect {
     }
 }
 
-/// Whether `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
+/// True if `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
 pub fn is_jsx_file_name(path: &[u8]) -> bool {
     matches!(
         ScriptKind::from_file_name(path),
@@ -822,54 +592,32 @@ pub fn is_jsx_file_name(path: &[u8]) -> bool {
     )
 }
 
-/// The LANGUAGE of a file: `is_javascript`, unless the host knows better than the name. What goes
-/// by the NAME of a file asks `is_javascript`: which files `include` finds, and which files are
-/// tried for `./a.js`.
+/// True if the file's LANGUAGE is JavaScript: `is_javascript`, unless the host overrides what the
+/// name implies. Code that goes by the file's NAME calls `is_javascript` instead: which files
+/// `include` matches, and which files are tried for `./a.js`.
 pub fn is_javascript_file(host: &dyn Host, path: &[u8]) -> bool {
     let by_name = || is_javascript(path);
     (host.script_kind(path)).map_or_else(by_name, ScriptKind::is_javascript)
 }
 
-/// All that parsing and binding a file read of the options of its program. Two programs in which it is the same have
-/// the same HIR and the same side tables for a file. It is made in one place, [`Options::for_parsing`], and what parses
-/// or binds is not given the options themselves.
+/// Everything that parsing and binding a file read from the program's options. Two programs with
+/// equal `ParseOptions` get the same HIR and the same side tables for a file. It's only built in
+/// [`Options::for_parsing`], and the parser and the binder never see the options themselves.
 #[derive(Default, Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct ParseOptions {
     pub experimental_decorators: bool,
     pub module_detection: ModuleDetection,
+    /// What the project says. A build differs: Bun runs every file as a module, so there `module_detection` is `Force` and
+    /// what the code of a file declares is the file's own. A file that only declares is what the project makes of it.
+    pub written_module_detection: ModuleDetection,
     /// `jsx` is `react-jsx` or `react-jsxdev`: a JSX tag imports its factory.
     pub jsx_imports_its_factory: bool,
-    /// The source text of TypeScript's own libraries is only consulted where they are checked. With `libReplacement` a
-    /// library can be any file.
-    pub keeps_the_text_of_libraries: bool,
-    pub attaches_direct_eval_scopes: bool,
+    /// The source text of TypeScript's own libraries is only needed when they're checked. With
+    /// `libReplacement` a library can be any file.
+    pub keeps_library_text: bool,
+    /// `Options::keeps_comments`
+    pub keeps_comments: bool,
     pub bind: crate::bind::BindOptions,
-}
-
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug)]
-pub struct CheckOptions {
-    pub no_implicit_any: bool,
-    pub strict_property_initialization: bool,
-    pub no_implicit_this: bool,
-    pub use_unknown_in_catch_variables: bool,
-    pub no_unchecked_indexed_access: bool,
-    pub no_property_access_from_index_signature: bool,
-    pub no_unused_locals: bool,
-    pub no_unused_parameters: bool,
-    pub no_implicit_returns: bool,
-    pub no_fallthrough_cases_in_switch: bool,
-    pub no_implicit_override: bool,
-    pub allow_unreachable_code: Option<bool>,
-    pub allow_unused_labels: Option<bool>,
-    pub erasable_syntax_only: bool,
-    pub allow_umd_global_access: bool,
-    pub allow_importing_ts_extensions: bool,
-    pub no_unchecked_side_effect_imports: bool,
-    pub isolated_modules: bool,
-    pub isolated_modules_reported: bool,
-    pub verbatim_module_syntax: bool,
-    pub preserve_const_enums: bool,
-    pub target: ScriptTarget,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -882,22 +630,14 @@ pub struct Options {
     /// `PathsBasePath`: the directory of the configuration file that specifies `paths`, which they
     /// are relative to.
     pub paths_base_dir: Vec<u8>,
-    pub uses_nearest_config_paths: bool,
-    /// `baseUrl`, which TypeScript has removed. Absolute. Empty: there is none. See `tolerate_removed_options`.
-    pub removed_base_url: Vec<u8>,
-    /// See `ignore_paths_for_host_modules`.
-    pub host_modules_without_paths: Vec<Vec<u8>>,
-    /// `skipLibCheck`: declaration files are not checked. `skipDefaultLibCheck`: TypeScript's own are not.
+    /// `skipLibCheck`: declaration files aren't checked. `skipDefaultLibCheck`: TypeScript's own aren't.
     pub skip_lib_check: bool,
     pub skip_default_lib_check: bool,
     /// `noCheck`: only syntax errors are reported.
     pub no_check: bool,
-    /// A file that nothing refers to is parsed only when it is checked, and freed afterwards with
-    /// everything computed about it. Not a TypeScript option. A caller that wants to query such a
-    /// file afterwards leaves it off.
-    pub drops_unreferenced: bool,
-    pub early_parse_only: bool,
-    pub attaches_direct_eval_scopes: bool,
+    /// Keeps `hir::FileIn::comments`, which the checker doesn't read. Not a TypeScript option. For
+    /// a caller that reads the program's files afterwards.
+    pub keeps_comments: bool,
     /// `GetSuggestionDiagnostics` are reported as well. Not a TypeScript option: its tests use
     /// `@captureSuggestions`.
     pub captures_suggestions: bool,
@@ -906,14 +646,11 @@ pub struct Options {
     pub emits_first: bool,
     /// `GetCurrentDirectory`
     pub current_directory: Vec<u8>,
-    /// Where `lib.*.d.ts` are.
+    /// The directory that holds `lib.*.d.ts`.
     pub lib_dir: Vec<u8>,
     /// The `N` of each `lib.N.d.ts` to start from: the entries of `compilerOptions.lib`, or the
     /// default for the target.
     pub libs: Vec<Vec<u8>>,
-    pub bun_intrinsics: Option<Vec<u8>>,
-    pub bun_global: Option<Vec<u8>>,
-    pub bun_global_adds_no_file: bool,
     /// `noLib`: no libraries are loaded, and `/// <reference lib>` is ignored.
     pub no_lib: bool,
     /// `libReplacement`: `lib.dom.d.ts` is replaced by the package `@typescript/lib-dom`, if it
@@ -928,15 +665,15 @@ pub struct Options {
     /// `noResolve`: `/// <reference path>` and `/// <reference types>` are ignored, and imports add
     /// no files to the program.
     pub no_resolve: bool,
-    /// Of what a file imports that is no declaration file, only the declaration files of packages are added to the program.
-    /// For who asks for its globals and nothing else.
+    /// The imports of a file that isn't a declaration file only add packages' declaration files to
+    /// the program. For a caller that only wants the program's globals.
     pub imports_of_sources_add_no_file: bool,
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
-    /// `GetResolvePackageJsonExports`. The resolver asks `has_exports_feature`.
+    /// `GetResolvePackageJsonExports`. The resolver uses `has_exports_feature`.
     pub resolve_package_json_exports: bool,
-    /// `GetResolvePackageJsonImports`. The resolver asks `has_imports_feature`.
+    /// `GetResolvePackageJsonImports`. The resolver uses `has_imports_feature`.
     pub resolve_package_json_imports: bool,
     /// `rootDirs`, as absolute paths: directories that are treated as one directory when a relative
     /// specifier is resolved.
@@ -959,23 +696,12 @@ pub struct Options {
     /// `strict`, which defaults to true.
     pub strict_null_checks: bool,
     pub no_implicit_any: bool,
-    /// `NoImplicitAny.DefaultIfUnknown(Strict).IsTrue()`: without the default of `strict`.
+    /// `NoImplicitAny.DefaultIfUnknown(Strict).IsTrue()`: doesn't apply `strict`'s default.
     pub specifies_no_implicit_any: bool,
     pub strict_function_types: bool,
     pub strict_bind_call_apply: bool,
     pub use_unknown_in_catch_variables: bool,
     pub strict_property_initialization: bool,
-    /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
-    /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
-    pub detects_commonjs_by_free_names: bool,
-    pub uses_engine_arithmetic: bool,
-    pub uses_ecmascript_bindings: bool,
-    /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
-    /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
-    /// has to be the same in every task.
-    pub undefined_properties_have_no_declaration: bool,
-    pub pops_every_type_resolution: bool,
-    pub resolves_js_imports_as_code_only: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,
@@ -1015,28 +741,25 @@ pub struct Options {
     pub referenced_outputs: Vec<(Vec<u8>, Vec<u8>)>,
     /// `tsc -b` reads the declaration file of a referenced project in place of the source (`getParseFileRedirect`).
     pub project_files: Option<std::sync::Arc<ProjectFiles>>,
-    /// The projects that are referenced, directly or not, by `ProjectFile::project`: the index in `referenced_options`.
+    /// Maps the `ProjectFile::project` of each directly or indirectly referenced project to its
+    /// index in `referenced_options`.
     pub referenced_projects: FxHashMap<u32, u32>,
     /// `UseCaseSensitiveFileNames` of the host that the project was read from.
     pub use_case_sensitive_file_names: bool,
     /// The options of the referenced projects.
     pub referenced_options: Vec<Options>,
-    /// A later project of a `tsc -b` run reads the declaration files of this one: `Report::declaration_files` has them.
+    /// A later project of a `tsc -b` run reads this one's declaration files, so they're returned in
+    /// `Report::declaration_files`.
     pub writes_declaration_files: bool,
     /// `ConfigFilePath`. Empty if there is none.
     pub config_path: Vec<u8>,
-    /// The first so many root files are those of the project. The others are added to it by name.
-    /// They, and what only they bring in, are not its sources: nothing is emitted for them, so
-    /// `rootDir` and `composite` have no say about them. `None`: all are its own.
+    /// How many of the root files, counted from the first, belong to the project. The rest were added by name. Those,
+    /// and the files only they bring in, aren't the project's sources: nothing is emitted for them, so `rootDir` and
+    /// `composite` don't apply to them. `None`: all of them belong to it.
     pub own_roots: Option<usize>,
-    pub every_named_root_is_own: bool,
-    pub loads_augmented_modules: bool,
-    pub relative_imports_need_no_extension: bool,
-    pub emits_nothing: bool,
-    /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
-    /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
-    /// have anyway are loaded for whoever compiles it, see `Module::is_code_only`. `None`: there are none.
-    pub code_roots: Option<usize>,
+    /// A root file, a script, whose global declarations and ambient modules count only where no other file declares the name.
+    /// Empty: there is none.
+    pub declarations_of_last_resort: Vec<u8>,
     /// `validatedFilesSpecBeforeSubstitution`, each paired with the corresponding entry of
     /// `validatedFilesSpec` as an absolute path.
     pub file_specs: Vec<(Vec<u8>, Vec<u8>)>,
@@ -1061,20 +784,24 @@ pub struct Options {
     /// The effective `moduleResolution` is `node16` or `nodenext`, specified or defaulted.
     /// Otherwise it is `bundler`.
     pub resolves_like_node: bool,
-    /// The effective `moduleResolution` is `node16`, which does not support `#/` in the `imports`
+    /// What an `import` names is found as `bun run` finds it, which adds an extension and takes the index file of a directory
+    /// under every `moduleResolution`.
+    pub imports_need_no_extension: bool,
+    /// The effective `moduleResolution` is `node16`, which doesn't support `#/` in the `imports`
     /// of a `package.json` (`NodeResolutionFeaturesImportsPatternRoot`). `nodenext` and `bundler`
     /// do.
     pub resolves_like_node16: bool,
     /// `ModuleResolution` is `GetModuleResolutionKind()`: it is specified, and still supported.
     pub specifies_module_resolution: bool,
-    /// `baseUrl`, which only `INSTALLED_MAJOR` below 7 has: a name that is not relative is looked for there first, and
-    /// `paths` are relative to it. Empty: there is none.
+    /// `baseUrl`, only with `INSTALLED_MAJOR` below 7. A non-relative name is looked up there
+    /// first, and `paths` are relative to it. Empty if unspecified.
     pub base_url: Vec<u8>,
-    /// `moduleResolution` is `classic`, which only `INSTALLED_MAJOR` below 7 has.
+    /// `moduleResolution` is `classic`, only with `INSTALLED_MAJOR` below 7.
     pub is_classic: bool,
-    /// `moduleResolution` is `node10`, which only `INSTALLED_MAJOR` below 7 has: no `NodeResolutionFeatures.SelfName`.
+    /// `moduleResolution` is `node10`, only with `INSTALLED_MAJOR` below 7: no
+    /// `NodeResolutionFeatures.SelfName`.
     pub forbids_self_name_references: bool,
-    /// `allowSyntheticDefaultImports` is off, which only `INSTALLED_MAJOR` below 7 has.
+    /// `allowSyntheticDefaultImports` is off, only with `INSTALLED_MAJOR` below 7.
     pub forbids_synthetic_default_imports: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
     pub module_detection: ModuleDetection,
@@ -1087,8 +814,6 @@ pub struct Options {
     pub jsx: JsxEmit,
     /// `useDefineForClassFields`, as specified or as implied by the target.
     pub use_define_for_class_fields: bool,
-    /// As specified, if it is. What runs the program defines the fields of a class unless this is `Some(false)`, whatever the target.
-    pub specified_use_define_for_class_fields: Option<bool>,
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
@@ -1121,8 +846,7 @@ pub struct Options {
     pub is_incremental: bool,
     /// `Build`: the program belongs to a `tsc -b` run. Set for a project with `references` and for every project it references.
     pub is_build: bool,
-    /// `GetBuildInfoFileName`, set together with `is_build`. Any other program has `noEmit`, and
-    /// nothing asks.
+    /// `GetBuildInfoFileName`, set together with `is_build`. Any other program has `noEmit`, so nothing reads it.
     pub build_info_file_name: Vec<u8>,
     /// `noErrorTruncation`
     pub no_error_truncation: bool,
@@ -1148,50 +872,21 @@ impl Options {
         ParseOptions {
             experimental_decorators: self.experimental_decorators,
             module_detection: self.module_detection,
+            written_module_detection: self.module_detection,
             jsx_imports_its_factory: matches!(self.jsx, JsxEmit::ReactJsx | JsxEmit::ReactJsxDev),
-            keeps_the_text_of_libraries: self.lib_replacement
+            keeps_library_text: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
-            attaches_direct_eval_scopes: self.attaches_direct_eval_scopes,
+            keeps_comments: self.keeps_comments,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),
                 before_es2017: is_before(ScriptTarget::ES2017),
-                detects_commonjs_by_free_names: self.detects_commonjs_by_free_names,
-                uses_ecmascript_bindings: self.uses_ecmascript_bindings,
-                is_forced_commonjs: None,
-                is_typed_bundle: false,
+                runtime: None,
             },
         }
     }
 
-    pub fn for_checking(&self) -> CheckOptions {
-        CheckOptions {
-            no_implicit_any: self.no_implicit_any,
-            strict_property_initialization: self.strict_property_initialization,
-            no_implicit_this: self.no_implicit_this,
-            use_unknown_in_catch_variables: self.use_unknown_in_catch_variables,
-            no_unchecked_indexed_access: self.no_unchecked_indexed_access,
-            no_property_access_from_index_signature: self.no_property_access_from_index_signature,
-            no_unused_locals: self.no_unused_locals,
-            no_unused_parameters: self.no_unused_parameters,
-            no_implicit_returns: self.no_implicit_returns,
-            no_fallthrough_cases_in_switch: self.no_fallthrough_cases_in_switch,
-            no_implicit_override: self.no_implicit_override,
-            allow_unreachable_code: self.allow_unreachable_code,
-            allow_unused_labels: self.allow_unused_labels,
-            erasable_syntax_only: self.erasable_syntax_only,
-            allow_umd_global_access: self.allow_umd_global_access,
-            allow_importing_ts_extensions: self.allow_importing_ts_extensions,
-            no_unchecked_side_effect_imports: self.no_unchecked_side_effect_imports,
-            isolated_modules: self.isolated_modules,
-            isolated_modules_reported: self.isolated_modules_reported,
-            verbatim_module_syntax: self.verbatim_module_syntax,
-            preserve_const_enums: self.preserve_const_enums,
-            target: self.target,
-        }
-    }
-
-    /// Whether `compilerOptions.lib` names the DOM.
+    /// True if `compilerOptions.lib` includes `dom`.
     pub fn has_dom_lib(&self) -> bool {
         self.libs.iter().any(|l| l == b"dom")
     }
@@ -1208,7 +903,7 @@ impl Options {
     }
 
     /// `NodeResolutionFeaturesExports` in `newResolutionState`: the `exports` of a `package.json`
-    /// are honored. Only bundler resolution asks the option (`getNodeResolutionFeatures`).
+    /// are honored. Only bundler resolution consults the option (`getNodeResolutionFeatures`).
     fn has_exports_feature(&self) -> bool {
         self.resolves_like_node || self.resolve_package_json_exports
     }
@@ -1246,7 +941,7 @@ impl Options {
     }
 
     /// `getEmitSyntaxForUsageLocationWorker` for a plain `import` in a file whose emit format is
-    /// `implied_format`: if the file name and its package do not determine the format, `module`
+    /// `implied_format`: if the file name and its package don't determine the format, `module`
     /// does.
     pub fn emit_syntax_for_import(&self, implied_format: ResolutionMode) -> ResolutionMode {
         match implied_format {
@@ -1263,13 +958,13 @@ impl Options {
         }
     }
 
-    /// The same for the argument of `import()`, in a file whose plain `import`s are emitted as
-    /// `of_import`. `ShouldTransformImportCall`: the call is preserved unless the file is emitted
-    /// in a module format older than ECMAScript modules.
-    pub fn emit_syntax_for_import_call(&self, of_import: ResolutionMode) -> ResolutionMode {
+    /// `emit_syntax_for_import` for the argument of `import()`, in a file whose plain `import`s are
+    /// emitted as `import_syntax`. `ShouldTransformImportCall`: the call is preserved unless the file
+    /// is emitted in a module format older than ECMAScript modules.
+    pub fn emit_syntax_for_import_call(&self, import_syntax: ResolutionMode) -> ResolutionMode {
         if self.module.is_node()
             || self.module == ModuleKind::Preserve
-            || of_import == ResolutionMode::Import
+            || import_syntax == ResolutionMode::Import
         {
             ResolutionMode::Import
         } else {
@@ -1278,10 +973,10 @@ impl Options {
     }
 }
 
-/// Among `compilerOptions`, where no configuration file can have it: the major version of the TypeScript that is
-/// installed for the project. Below 6, what the file does not say is as TypeScript 5 has it. Below 7, what 7 has removed is
-/// what it was: `baseUrl`, `node10` and `classic`, `amd` and its like, interop that is off. For a tool that stands in for
-/// one that runs on the compiler of the project.
+/// A key in `compilerOptions` that no configuration file can contain. Its value is the major version of the TypeScript
+/// installed for the project. Below 6, unspecified options get TypeScript 5's defaults. Below 7, what 7 removed still
+/// works: `baseUrl`, `node10` and `classic`, `amd` and the like, and turning interop off. For a tool that replaces one
+/// that runs on the project's own compiler.
 pub const INSTALLED_MAJOR: &[u8] = b"(the major version of the TypeScript that is installed)";
 
 impl Options {
@@ -1325,7 +1020,6 @@ impl Options {
         if before_7 {
             options.base_url = directory(b"baseUrl");
         }
-        options.removed_base_url = directory(b"baseUrl");
         // `getPathsBasePath`
         options.paths_base_dir = match options.base_url.is_empty() {
             true => word(b"pathsBasePath").unwrap_or(base_dir).to_vec(),
@@ -1345,7 +1039,7 @@ impl Options {
             _ if options.no_lib => Vec::new(),
             (Some(libs), _) => libs.into_iter().map(lib_name).collect(),
             // `GetDefaultLibFileName`. The empty name is `lib.d.ts`, for a target that
-            // `targetToLibMap` does not have.
+            // `targetToLibMap` doesn't have.
             (None, Some(b"es6" | b"es2015")) => vec![b"es6".to_vec()],
             (None, Some(b"es3" | b"es5")) => vec![Vec::new()],
             (None, target) => vec![[target.unwrap_or(b"es2025"), b".full"].concat()],
@@ -1456,8 +1150,9 @@ impl Options {
             Some(b"node16" | b"nodenext" | b"bundler")
         );
         let like_node = options.resolves_like_node;
-        // `getEmitModuleResolutionKind` of TypeScript 5 and 6, where it is one of the two that 7 does not have, and whether
-        // it is `classic`. `node10` is `bundler` without `exports` and `imports`.
+        // `getEmitModuleResolutionKind` of TypeScript 5 and 6. `Some` if it's one of the two kinds
+        // that 7 removed: true for `classic`, false for `node10`. `node10` is `bundler` without
+        // `exports` and `imports`.
         let old = match resolution.as_deref() {
             _ if !before_7 => None,
             Some(b"node16" | b"nodenext" | b"bundler") => None,
@@ -1499,7 +1194,6 @@ impl Options {
             options.target == ScriptTarget::None || options.target >= ScriptTarget::ES2022;
         let use_define = specified(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
-        options.specified_use_define_for_class_fields = use_define;
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
         options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");
@@ -1512,7 +1206,7 @@ impl Options {
         options.jsx = *JSX_EMITS
             .get_ascii_case_insensitive(one_of(b"jsx"))
             .unwrap_or(&JsxEmit::None);
-        // `GetJSXImplicitImportBase`, of a file without pragmas.
+        // `GetJSXImplicitImportBase`, for a file without pragmas.
         let import_source = word(b"jsxImportSource").filter(|source| !source.is_empty());
         options.jsx_import_source = import_source.unwrap_or(b"react").to_vec();
         let runtime: &[u8] = match options.jsx {
@@ -1541,70 +1235,6 @@ impl Options {
         options
     }
 
-    /// 5102, 5108: `createRemovedOptionDiagnostic`, an option, or a value of one, that TypeScript no longer has. 5090: a substitution
-    /// of `paths` that is no path, which is relative to `baseUrl` where there is one.
-    pub fn is_removed_option_error(&self, code: u32) -> bool {
-        matches!(code, 5102 | 5108) || code == 5090 && !self.removed_base_url.is_empty()
-    }
-
-    /// For a program that is compiled: no declaration file comes of it, so what one could not say is no error.
-    pub fn emit_nothing(&mut self) {
-        self.emits_nothing = true;
-        self.composite = false;
-        self.emits_declarations = false;
-        self.isolated_declarations = false;
-        self.writes_declaration_maps = false;
-    }
-
-    /// For a program that is compiled or run, not checked for its own sake. That its configuration still has an option that TypeScript
-    /// has removed does not keep it from running, and is no error. Most of them are about what is emitted. `baseUrl` says where
-    /// modules are, and the bundler goes by it, so the types are looked for in the same places: `paths` are relative to it, and a
-    /// name that is no path is looked for in it before it is taken for a package.
-    pub fn tolerate_removed_options(&mut self) {
-        if !self.removed_base_url.is_empty() {
-            self.base_url.clone_from(&self.removed_base_url);
-            self.paths_base_dir.clone_from(&self.removed_base_url);
-        }
-        let mut problems = std::mem::take(&mut self.problems);
-        problems.retain(|problem| !self.is_removed_option_error(problem.code));
-        self.problems = problems;
-        let mut errors = std::mem::take(&mut self.errors);
-        errors.retain(|&code| !self.is_removed_option_error(code));
-        self.errors = errors;
-    }
-
-    pub fn is_about_output_option(code: u32, option: Option<&[u8]>) -> bool {
-        const OF_OUTPUT: [&[u8]; 13] = [
-            b"composite", b"declaration", b"declarationDir", b"declarationMap", b"emitDeclarationOnly", b"incremental", b"inlineSourceMap",
-            b"inlineSources", b"mapRoot", b"outFile", b"sourceMap", b"sourceRoot", b"tsBuildInfoFile",
-        ];
-        const OF_OUTPUT_ONCE: [&[u8]; 6] = [b"charset", b"importsNotUsedAsValues", b"noImplicitUseStrict", b"out", b"prepend", b"preserveValueImports"];
-        match code {
-            5051 | 5052 | 5053 | 5069 => option.is_some_and(|option| OF_OUTPUT.contains(&option)),
-            5023 => option.is_some_and(|option| OF_OUTPUT_ONCE.contains(&option)),
-            _ => false,
-        }
-    }
-
-    pub fn tolerate_output_options(&mut self) {
-        let is_about_output = |problem: &crate::verify::Problem| Self::is_about_output_option(problem.code, problem.args.first().map(|option| &option[..]));
-        for problem in self.problems.iter().filter(|problem| is_about_output(problem)) {
-            if let Some(at) = self.errors.iter().position(|&code| code == problem.code) {
-                self.errors.remove(at);
-            }
-        }
-        self.problems.retain(|problem| !is_about_output(problem));
-    }
-
-    /// For a program that is compiled. A specifier that names a module of the host is that module when the program runs, whatever
-    /// `paths` says, so the file that `paths` has for it is no part of the program. Nothing is known of such a module unless something
-    /// declares it.
-    pub fn ignore_paths_for_host_modules(&mut self, is_host_module: impl Fn(&[u8]) -> bool) {
-        let (of_host, others): (Paths, Paths) = self.paths.iter().cloned().partition(|path| is_host_module(&path.0));
-        self.paths = std::sync::Arc::new(others);
-        self.host_modules_without_paths = of_host.into_iter().map(|path| path.0).collect();
-    }
-
     /// Validates the options, which were built from `compiler`, in the configuration file at
     /// `config_path`, if there is one.
     pub fn verify(&mut self, compiler: &Json, config_path: &[u8]) {
@@ -1617,7 +1247,7 @@ impl Options {
     }
 }
 
-/// The library that a name in `lib` refers to. `LIB_FALLBACKS` has the file of one that has moved.
+/// The library that a name in `lib` refers to. `LIB_FALLBACKS` maps a library that has moved to its new file.
 pub fn lib_name(name: &[u8]) -> Vec<u8> {
     match name.to_ascii_lowercase().as_slice() {
         b"es6" => b"es2015".to_vec(),
@@ -1636,8 +1266,8 @@ fn lib_map_get(key: &[u8]) -> Option<&[u8]> {
     LIBS.contains(key).then_some(value)
 }
 
-/// `GetLibFileName`: the `N` of the `lib.N.d.ts` that a name in `/// <reference lib>` refers to.
-/// `None`: it is neither a key of `LibMap` nor one of its values, which are the file names.
+/// `GetLibFileName`: the `N` of the `lib.N.d.ts` that a name in `/// <reference lib>` refers to. Returns `None` if it's
+/// neither a key of `LibMap` nor one of its values, which are the file names.
 pub fn get_lib_file_name(name: &[u8]) -> Option<Vec<u8>> {
     let name = to_file_name_lower_case(name);
     // `LibFilesSet`
@@ -1687,7 +1317,7 @@ bun_core::comptime_string_set! {
     };
 }
 
-/// `IsExternalModuleNameRelative`: `spec` is a file path. It is not searched for in `node_modules`,
+/// `IsExternalModuleNameRelative`: `spec` is a file path. It isn't searched for in `node_modules`,
 /// and no `declare module` matches it.
 pub fn is_relative(spec: &[u8]) -> bool {
     path_is_relative(spec) || is_rooted_disk_path(spec)
@@ -1712,8 +1342,8 @@ pub(crate) fn path_is_relative(path: &[u8]) -> bool {
     )
 }
 
-/// `tspath.ToPath` of an absolute, normalized file name (`GetCanonicalFileName`): what identifies the
-/// file, however its name is spelled.
+/// `tspath.ToPath` of an absolute, normalized file name (`GetCanonicalFileName`). It identifies the
+/// file however its name is spelled.
 pub fn to_path(file_name: &[u8], is_case_sensitive: bool) -> Cow<'_, [u8]> {
     match is_case_sensitive {
         true => Cow::Borrowed(file_name),
@@ -1721,7 +1351,7 @@ pub fn to_path(file_name: &[u8], is_case_sensitive: bool) -> Cow<'_, [u8]> {
     }
 }
 
-/// `to_path`, in `buffer` if it fits there.
+/// `to_path`, written to `buffer` if it fits.
 pub fn to_path_in<'a>(
     file_name: &'a [u8],
     is_case_sensitive: bool,
@@ -1736,8 +1366,8 @@ pub fn to_path_in<'a>(
     }
 }
 
-/// The file with this name. `text` is its `tspath.Path`, which identifies it: tables of files have
-/// that as the key. `pretty` is `FileName()`, the name as it is spelled.
+/// The `Path` of the file called `file_name`. `text` is its `tspath.Path`, which identifies it and
+/// is the key in file tables. `pretty` is `FileName()`, the name as it's spelled.
 pub fn file_path<'s>(file_name: &'s [u8], is_case_sensitive: bool, arena: &'s Arena) -> Path<'s> {
     if is_case_sensitive {
         return Path::init(file_name);
@@ -1750,7 +1380,7 @@ pub fn file_path<'s>(file_name: &'s [u8], is_case_sensitive: bool, arena: &'s Ar
     }
 }
 
-/// Whether two file names have the same `tspath.Path`.
+/// True if two file names have the same `tspath.Path`.
 pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
     a == b
         || !is_case_sensitive
@@ -1760,8 +1390,8 @@ pub fn is_same_path(a: &[u8], b: &[u8], is_case_sensitive: bool) -> bool {
             }
 }
 
-/// The same for two file names that [`is_same_path`] takes for one if the case does not count.
-pub fn hash_without_case(file_name: &[u8]) -> u64 {
+/// A hash that's equal for two file names that [`is_same_path`] treats as one when case is ignored.
+pub fn case_insensitive_hash(file_name: &[u8]) -> u64 {
     match file_name.is_ascii() {
         true => bun_wyhash::hash_ascii_lowercase(0, file_name),
         false => bun_wyhash::hash(&to_file_name_lower_case(file_name)),
@@ -1792,21 +1422,22 @@ pub(crate) fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
     }
 }
 
-/// The options of eslint-import-resolver-node: [`Resolver::resolve_as_require`].
+/// eslint-import-resolver-node's options, for [`Resolver::resolve_as_require`].
 pub struct AsRequire<'a> {
-    /// What is added to a name.
+    /// The extensions to try appending to a name.
     pub extensions: &'a [&'a [u8]],
-    /// `moduleDirectory`: what is looked for in each directory upwards. `node_modules`, unless it is said.
+    /// `moduleDirectory`: the directory names to look for in each ancestor directory.
+    /// `node_modules` unless configured.
     pub module_directories: &'a [&'a [u8]],
-    /// Absolute. Where a package is looked for after these.
+    /// Absolute directories to search for a package after those.
     pub paths: &'a [&'a [u8]],
-    /// `compilerOptions.paths` are asked before any of these, and `exports` of a package counts: as
-    /// eslint-import-resolver-typescript has it.
+    /// Like eslint-import-resolver-typescript: `compilerOptions.paths` are tried before any of
+    /// these, and a package's `exports` are honored.
     pub through_paths: bool,
-    /// As oxc-resolver under oxlint: the condition `import` counts and `types` does not, `a.ts` is found for `a.js`, `a/`
-    /// is a directory, the entry of a package is its `module` or its `main`, or its `index` where these lead to nothing.
-    /// Whatever `exports` is, nothing else is asked, in that package or in one further up. `imports` and the name of
-    /// the package that the file is in count.
+    /// Like oxc-resolver under oxlint: the condition `import` matches and `types` doesn't, `a.js` also finds `a.ts`,
+    /// `a/` is a directory, and a package's entry is its `module` or its `main`, or its `index` if those resolve to
+    /// nothing. If a package has `exports`, nothing else is tried, in that package or in one further up. `imports` and
+    /// the name of the file's own package are honored.
     pub as_import: bool,
     /// `baseUrl`, absolute: where oxc-resolver looks after `paths`, before any package.
     pub base_url: Option<&'a [u8]>,
@@ -1891,11 +1522,11 @@ pub fn get_root_length(path: &[u8]) -> usize {
     (if encoded < 0 { !encoded } else { encoded }) as usize
 }
 
-/// `GetRootLength` of a path in the checker's format, which has a `/` before a root that does not
+/// `GetRootLength` of a path in the checker's format, which puts a `/` before a root that doesn't
 /// begin with one: `/c:/a` is `c:/a`, `/^/a` is `^/a` and `/http://host/a` is `http://host/a`. The
-/// separator at the end of the root is not counted, unless it is all of the root.
-/// A directory in `/` can have such a name. What is in it has a zero byte for a root, which no name
-/// has: `/\0/c:/a` is `/c:/a`.
+/// separator at the end of the root isn't counted, unless it's the whole root.
+/// A real directory in `/` can have such a name. Paths inside it get a zero byte as the root, which
+/// no file name contains: `/\0/c:/a` is `/c:/a`.
 pub fn root_length(path: &[u8]) -> usize {
     match path {
         [b'/', 0] | [b'/', 0, b'/', ..] => 2,
@@ -1910,7 +1541,7 @@ pub fn root_length(path: &[u8]) -> usize {
     }
 }
 
-/// The root of a URL without the separator at its end. That of `://` is none.
+/// A URL's root without its trailing separator. The last `/` of `://` isn't one.
 fn url_root_without_separator(root: &[u8]) -> &[u8] {
     match root.ends_with(b"://") {
         true => root,
@@ -1918,8 +1549,7 @@ fn url_root_without_separator(root: &[u8]) -> &[u8] {
     }
 }
 
-/// `path`, which is in the checker's format, as TypeScript has it. The root by itself lacks the
-/// separator at its end.
+/// Converts `path` from the checker's format to TypeScript's. A bare root comes out without its trailing separator.
 pub fn typescript_path(path: &[u8]) -> &[u8] {
     match root_length(path) {
         0 | 1 => path,
@@ -1929,8 +1559,8 @@ pub fn typescript_path(path: &[u8]) -> &[u8] {
     }
 }
 
-/// `typescript_path`, whole: what a message, a printed type or a line of output has for `path`. The
-/// root by itself has its separator, and the `/\\server/share/a` of Windows is `//server/share/a`.
+/// `typescript_path`, finished for display: how `path` appears in a message, a printed type or a line of output. A bare
+/// root gets its separator, and Windows' `/\\server/share/a` becomes `//server/share/a`.
 pub fn displayed_path(path: &[u8]) -> Cow<'_, [u8]> {
     if cfg!(windows)
         && let [b'/', b'\\', b'\\', rest @ ..] = path
@@ -1954,14 +1584,14 @@ pub(crate) fn get_path_components(path: &[u8]) -> SmallVec<[&[u8]; 8]> {
     components
 }
 
-/// What the file system takes `path` for. It follows `.`, `..` and an empty name, which no listing
-/// of a directory has as an entry. `None`: `path` is absolute and normalized.
+/// The path that the file system resolves `path` to. It follows `.`, `..` and empty names, which never appear in a
+/// directory listing. Returns `None` if `path` is already absolute and normalized.
 fn normalized_for_lookup(path: &[u8]) -> Option<Vec<u8>> {
     let names = &path[get_root_length(path)..];
     let is_normalized = path.starts_with(b"/")
         && (names.is_empty()
             || !strings::split(names, b"/").any(|it| matches!(it, b"" | b"." | b".."))
-            // The root of a URL has a `/` before it in a path of the checker's.
+            // In the checker's format a URL's root has a `/` before it.
             || get_encoded_root_length(&path[1..]) < 0);
     (!is_normalized).then(|| join(b"/", path))
 }
@@ -1977,7 +1607,7 @@ pub(crate) fn normalize_path(path: Vec<u8>) -> Vec<u8> {
     normalized
 }
 
-/// The length of the `//server` that `path` begins with. 0: it begins with no such root.
+/// The length of the `//server` that `path` begins with, or 0 if it has no such root.
 fn unc_root_length(path: &[u8]) -> usize {
     match path {
         [b'/' | b'\\', b'/' | b'\\', after @ ..] => {
@@ -1987,8 +1617,8 @@ fn unc_root_length(path: &[u8]) -> usize {
     }
 }
 
-/// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute and is copied as is: one
-/// pass over `rest`, one allocation.
+/// `GetNormalizedAbsolutePath`. `dir` is already normalized and absolute, so it's copied as is.
+/// That leaves one pass over `rest` and one allocation.
 /// (`bun_paths::join_abs_string_buf` copies the whole path three times before it reaches a `Vec`.)
 pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     // `GetEncodedRootLength`: `C:\a` and `^/a` are absolute paths too, on every system. They are
@@ -2004,7 +1634,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     let dir = if is_rooted || dir == b"/" { b"" } else { dir };
     let mut out = Vec::with_capacity(dir.len() + rest.len() + 1);
     out.extend_from_slice(dir);
-    // And `\\server\share\a` is `/\\server/share/a`. `..` does not leave the share.
+    // `\\server\share\a` is represented as `/\\server/share/a`. `..` can't leave the share.
     let (mut root, mut rest) = (0, rest);
     if cfg!(windows) && !has_drive {
         let native = match rest {
@@ -2021,8 +1651,7 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
             (root, rest) = (out.len(), after);
         }
     } else if !cfg!(windows) {
-        // Elsewhere `//server/a` is what it is for typescript-go, which has `//server/` for a root
-        // on every system.
+        // On other systems `//server/a` stays as typescript-go has it: `//server/` is a root there on every system.
         let server = unc_root_length(rest);
         if server > 0 {
             out.extend_from_slice(b"//");
@@ -2037,8 +1666,8 @@ pub fn join(dir: &[u8], rest: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Appends the names in `names` to the normalized path `out`, which is empty for `/`. `..` leaves
-/// neither the root of `out` nor its first `share` bytes.
+/// Appends the names in `names` to the normalized path `out`, which is empty for `/`. `..` can't go
+/// above `out`'s root or its first `share` bytes.
 #[inline]
 fn append_names(out: &mut Vec<u8>, share: usize, names: &[u8]) {
     for part in strings::split_any(names, b"/\\") {
@@ -2046,7 +1675,7 @@ fn append_names(out: &mut Vec<u8>, share: usize, names: &[u8]) {
             b"" | b"." => {}
             b".." => {
                 let parent = strings::last_index_of_char(out, b'/').unwrap_or(0);
-                // Only the last separator of a root has nothing, or a separator, before it.
+                // Only a root's last separator is at the start or right after another separator.
                 let root = match parent == 0 || out[parent - 1] == b'/' {
                     true => root_length(out),
                     false => 0,
@@ -2061,8 +1690,8 @@ fn append_names(out: &mut Vec<u8>, share: usize, names: &[u8]) {
     }
 }
 
-/// `join` for a `rest` that begins with the root of a URL, which replaces the directory like every
-/// other root. `None`: it has no such root.
+/// `join` for a `rest` that begins with a URL's root, which replaces the directory like any other
+/// root. Returns `None` if it has no such root.
 #[cold]
 fn normalized_url(rest: &[u8]) -> Option<Vec<u8>> {
     let rest = normalize_slashes(rest);
@@ -2118,8 +1747,9 @@ fn normalize_path_for_cjs_resolution(containing_directory: &[u8], module_name: &
 }
 
 struct Package<'h> {
-    json: Json,
-    /// `Name` and `Version`, if both are strings: without them `getPackageId` makes no id.
+    /// Shared, because a program keeps its packages' JSON after the resolver is gone.
+    json: std::sync::Arc<Json>,
+    /// `Name` and `Version`, if both are strings. Without them `getPackageId` returns no id.
     name_and_version: Option<(&'h [u8], &'h [u8])>,
     /// `readPackageJsonPeerDependencies`
     peer_dependencies: std::sync::OnceLock<&'h [u8]>,
@@ -2165,12 +1795,12 @@ impl Tracer {
     }
 }
 
-/// What a lookup has found besides the path: the fields of `resolutionState` and of `resolved` that
-/// are written during the search.
+/// A lookup's results besides the path: the fields of `resolutionState` and of `resolved` that are
+/// written during the search.
 #[derive(Default)]
 struct Outcome<'a> {
-    /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The search returns the first file it
-    /// finds, so the cell is set at most once.
+    /// `resolved.resolvedUsingTsExtension`. Starts as false and is set where a file is found. The
+    /// search returns the first file it finds, so the cell is set at most once.
     using_ts_extension: Cell<bool>,
     /// `resolved.extension` is `.d.css.ts`, `.d.json.ts` or similar, for which
     /// `GetResolutionDiagnostic` requires `allowArbitraryExtensions`.
@@ -2181,19 +1811,19 @@ struct Outcome<'a> {
     found_package: Cell<bool>,
     /// `IsExternalLibraryImport`
     is_external: Cell<bool>,
-    /// With [`Look::as_require`]: a package has a `main` that leads to nothing, for which `resolve` throws: the search
-    /// is over.
+    /// With [`Look::as_require`]: a package's `main` resolves to nothing. `resolve` throws in that
+    /// case, so the search ends.
     is_blocked: Cell<bool>,
-    /// With [`Look::as_require`]: what is added to a name.
+    /// With [`Look::as_require`]: the extensions to try appending to a name.
     require_extensions: &'a [&'a [u8]],
-    /// `resolved.packageId`, as what `getPackageId` has made it of: `PackageDirectory` of the
-    /// `packageInfo`, and `resolved.path`, both before symlinks are resolved. `None`: it is empty,
-    /// as it is in every `resolved` that `tryFile` has found the file of.
+    /// `resolved.packageId`, stored as `getPackageId`'s inputs: the `packageInfo`'s
+    /// `PackageDirectory` and `resolved.path`, both before symlinks are resolved. `None`: it's
+    /// empty, as in every `resolved` whose file `tryFile` found.
     package_id: RefCell<Option<(Vec<u8>, Vec<u8>)>>,
     /// `resolved.originalPath != ""`
     has_original_path: Cell<bool>,
-    /// Targets of `imports` name one another without an end that the stack has room for.
-    /// typescript-go dies of that. Here the search is over, and has found nothing.
+    /// Targets of `imports` refer to each other deeper than the stack allows. typescript-go crashes
+    /// on that. Here the search ends without a result.
     is_out_of_stack: Cell<bool>,
 }
 
@@ -2201,12 +1831,12 @@ struct Outcome<'a> {
 #[derive(Copy, Clone)]
 struct Look<'a> {
     tracer: Option<&'a Tracer>,
-    /// `esmMode`: Node's rules for `import`. No extension is added, and a directory does not
+    /// `esmMode`: Node's rules for `import`. No extension is added, and a directory doesn't
     /// resolve.
     esm: bool,
     /// The condition `import` matches. Otherwise `require` matches.
     import: bool,
-    /// `extensionsTypeScript`: `.ts`, `.tsx`, `.mts` and `.cts` files that are not declaration files.
+    /// `extensionsTypeScript`: `.ts`, `.tsx`, `.mts` and `.cts` files that aren't declaration files.
     typescript: bool,
     /// `extensionsDeclaration`: `.d.ts`, `.d.mts`, `.d.cts` and `.d.*.ts` files.
     declarations: bool,
@@ -2216,20 +1846,20 @@ struct Look<'a> {
     json: bool,
     /// `isConfigLookup`
     is_config_lookup: bool,
-    /// `candidateEndingIsFromConfig`: the extension of the candidate comes from `paths`, `typesVersions` or a `package.json` field, not
-    /// from the specifier.
+    /// `candidateEndingIsFromConfig`: the candidate's extension comes from `paths`, `typesVersions`
+    /// or a `package.json` field, not from the specifier.
     ending_from_config: bool,
     outcome: &'a Outcome<'a>,
     /// Not `NodeResolutionFeaturesExports`: the `exports` of a package in `node_modules` are
     /// ignored.
     ignores_exports: bool,
-    /// `NodeResolutionFeatures.AllFeatures` under `node10`, which has none of them otherwise: what is looked up says
-    /// how it is to be resolved (`resolution-mode`). `GetConditions` has `node` then.
+    /// `NodeResolutionFeatures.AllFeatures` under `node10`, which otherwise has none of them: the reference itself
+    /// specifies how to resolve it (`resolution-mode`). `GetConditions` then includes `node`.
     all_features: bool,
     /// `resolvePackageDirectoryOnly`
     resolve_package_directory_only: bool,
-    /// Not the rules of TypeScript but those of the package `resolve` 2.0 under eslint-import-resolver-node: see
-    /// [`Resolver::resolve_as_require`].
+    /// Follows the rules of the `resolve` 2.0 package under eslint-import-resolver-node instead of
+    /// TypeScript's: see [`Resolver::resolve_as_require`].
     as_require: bool,
     /// [`AsRequire::as_import`]
     as_import: bool,
@@ -2283,7 +1913,7 @@ impl Look<'_> {
         }
     }
 
-    /// `extensionsDeclaration` alone.
+    /// Only `extensionsDeclaration`.
     fn for_declarations(self) -> Self {
         Look {
             typescript: false,
@@ -2372,7 +2002,7 @@ impl PackageId<'_> {
 #[derive(Copy, Clone, Debug)]
 pub struct ResolvedModule<'h> {
     /// `ResolvedFileName`. For a declaration file of a referenced project, the source it is emitted from.
-    /// It is not normalized if it was found in a type root.
+    /// It isn't normalized if it was found in a type root.
     pub resolved_file_name: &'h [u8],
     /// `parseTask.normalizedFilePath` of the task for it: its name in the program.
     pub file_name: &'h [u8],
@@ -2389,21 +2019,15 @@ pub struct ResolvedModule<'h> {
     pub package_id: Option<PackageId<'h>>,
 }
 
-struct ConfigPaths {
-    paths: std::sync::Arc<Paths>,
-    base_dir: Vec<u8>,
-    base_url: Vec<u8>,
-}
-
 /// A memo table of a resolver. Two threads may compute the same entry; they compute the same value.
 enum Memo<K, V> {
     Sharded(ShardedMap<K, V>),
-    /// Of a resolver that is made for a lookup or two: the 256 empty shards of the other cost more than those.
+    /// For a resolver that only does a lookup or two, where 256 empty shards would cost more than the lookups.
     Small(Box<SmallMemo<K, V>>),
 }
 
 struct SmallMemo<K, V> {
-    places: bun_threading::Guarded<FxHashMap<K, u32>>,
+    index_by_key: bun_threading::Guarded<FxHashMap<K, u32>>,
     values: AppendVec<V>,
 }
 
@@ -2411,7 +2035,7 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
     fn new(is_small: bool) -> Memo<K, V> {
         match is_small {
             true => Memo::Small(Box::new(SmallMemo {
-                places: Default::default(),
+                index_by_key: Default::default(),
                 values: AppendVec::new(),
             })),
             false => Memo::Sharded(ShardedMap::default()),
@@ -2427,7 +2051,7 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
         match self {
             Memo::Sharded(map) => map.get_ref(key),
             Memo::Small(map) => {
-                let at = *map.places.lock().get(key)?;
+                let at = *map.index_by_key.lock().get(key)?;
                 Some(map.values.get(at))
             }
         }
@@ -2438,15 +2062,17 @@ impl<K: std::hash::Hash + Eq, V> Memo<K, V> {
         match self {
             Memo::Sharded(map) => map.insert_ref(key, value),
             Memo::Small(map) => {
-                let mut places = map.places.lock();
-                let at = *places.entry(key).or_insert_with(|| map.values.push(value));
+                let mut index_by_key = map.index_by_key.lock();
+                let at = *index_by_key
+                    .entry(key)
+                    .or_insert_with(|| map.values.push(value));
                 map.values.get(at)
             }
         }
     }
 }
 
-/// What a resolver has found so far.
+/// A resolver's memo tables.
 struct Caches<'h> {
     packages: Memo<&'h [u8], Option<Package<'h>>>,
     dirs: Memo<&'h [u8], bool>,
@@ -2455,8 +2081,10 @@ struct Caches<'h> {
     /// the specifier. No directory contains `//`.
     resolved: Memo<&'h [u8], Option<ResolvedModule<'h>>>,
     /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
-    /// `None`: it is not a symlink.
+    /// `None`: it isn't a symlink.
     linked_packages: Memo<&'h [u8], Option<&'h [u8]>>,
+    /// `Some` in a compile build: the text of each `package.json`, which both questions read. See `code.rs`.
+    manifest_texts: Option<Memo<&'h [u8], Option<&'h [u8]>>>,
 }
 
 impl Caches<'_> {
@@ -2467,32 +2095,34 @@ impl Caches<'_> {
             files: Memo::new(are_small),
             resolved: Memo::new(are_small),
             linked_packages: Memo::new(are_small),
+            manifest_texts: None,
         }
     }
 }
 
 pub struct Resolver<'h> {
-    /// Owns every path in the caches. It is not the session of the check: the caches are of no use
+    /// Owns every path in the caches. It isn't the check's session, because the caches are useless
     /// once the program is loaded, and the caller frees them then.
     session: &'h Session,
     host: &'h dyn Host,
     options: &'h Options,
-    /// Its `redirected` have the same, if they find the same on the disk: the empty maps are five times 256 shards, and a
-    /// project of a monorepo references hundreds.
+    /// Shared with its `redirected` resolvers if they see the same files on disk. The empty maps
+    /// are five times 256 shards, and a project in a monorepo references hundreds of projects.
     caches: std::sync::Arc<Caches<'h>>,
-    /// `resolutionState.diagnostics` of all lookups: whether it concerns `imports`, the entry, and
-    /// the `package.json`.
+    /// `resolutionState.diagnostics` of all lookups, each as (true if it's about `imports`, the
+    /// entry, the `package.json`).
     ambiguous_roots: bun_threading::Guarded<Vec<(bool, &'h [u8], &'h [u8]), &'h Session>>,
     /// `OriginalPath` and `ResolvedFileName` of each file found through a symlink. Only recorded
     /// when declaration files are emitted.
     links: bun_threading::Guarded<Vec<(&'h [u8], &'h [u8]), &'h Session>>,
-    config_by_folder: Memo<&'h [u8], Option<&'h [u8]>>,
-    paths_by_config: Memo<&'h [u8], Option<ConfigPaths>>,
-    /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
-    /// first resolved from.
+    /// `GetCompilerOptionsWithRedirect`: one resolver per entry of `options.referenced_options`,
+    /// created the first time something is resolved from a file of that project.
     redirected: Vec<std::sync::OnceLock<Resolver<'h>>>,
-    /// `redirectedReference != nil`: which of the `redirected` of another resolver it is, from 1 on. 0: none.
+    /// `redirectedReference != nil`: its 1-based index in another resolver's `redirected`, or 0 if
+    /// it isn't one of those.
     redirect: u32,
+    /// `Some` in a compile build: what the code question needs. See `code.rs`.
+    code: Option<Box<CodeState<'h>>>,
 }
 
 /// `guessDirectorySymlink`: the real path of the symlinked directory and the path of the symlink,
@@ -2506,14 +2136,14 @@ fn guess_directory_link(
     let mut b: Vec<&[u8]> = strings::split(link, b"/").collect();
     // `isNodeModulesOrScopedPackageDirectory`: the symlink is an entry of such a directory, not the
     // directory itself.
-    let holds_packages = |name: &[u8]| {
+    let is_node_modules_or_scope = |name: &[u8]| {
         is_same_path(name, b"node_modules", is_case_sensitive) || name.starts_with(b"@")
     };
     let mut is_directory = false;
     while a.len() >= 2
         && b.len() >= 2
-        && !holds_packages(a[a.len() - 2])
-        && !holds_packages(b[b.len() - 2])
+        && !is_node_modules_or_scope(a[a.len() - 2])
+        && !is_node_modules_or_scope(b[b.len() - 2])
         && is_same_path(a[a.len() - 1], b[b.len() - 1], is_case_sensitive)
     {
         a.pop();
@@ -2525,7 +2155,7 @@ fn guess_directory_link(
 
 /// `symlinks.KnownSymlinks`
 struct KnownSymlinks {
-    /// The keys of `directories`, without the separator at the end.
+    /// The keys of `directories`, without the trailing separator.
     directories: FxHashSet<Vec<u8>>,
     /// `directoriesByRealpath`: `Real` of each directory, with a symlink to it.
     directories_by_realpath: Vec<(Vec<u8>, Vec<u8>)>,
@@ -2557,8 +2187,8 @@ impl KnownSymlinks {
     }
 }
 
-/// `GetRelativePathFromDirectory` for two absolute, normalized paths. The result is text: a `to`
-/// with another root is `displayed_path`.
+/// `GetRelativePathFromDirectory` for two absolute, normalized paths. The result is for display: a
+/// `to` with a different root is returned as its `displayed_path`.
 pub fn get_relative_path_from_directory(
     from_directory: &[u8],
     to: &[u8],
@@ -2582,9 +2212,9 @@ pub fn get_relative_path_from_directory(
     names.join(&b"/"[..])
 }
 
-/// `GetOutputDeclarationFileNameWorker` for a file that a declaration file is emitted for.
-/// `output`: `declarationDir` or `outDir`, `CommonSourceDirectory`, which need not contain the
-/// file, and `UseCaseSensitiveFileNames`. `None`: next to the source.
+/// `GetOutputDeclarationFileNameWorker` for a file that a declaration file is emitted for. `output`: `declarationDir`
+/// or `outDir`, then `CommonSourceDirectory` (which doesn't have to contain the file), then
+/// `UseCaseSensitiveFileNames`. `None`: the file is emitted next to the source.
 pub fn output_declaration_file_name(
     source: &[u8],
     output: Option<(&[u8], &[u8], bool)>,
@@ -2636,8 +2266,8 @@ pub(crate) fn supported_extensions(options: &Options) -> &'static [&'static [&'s
     }
 }
 
-/// What `GetSupportedExtensions` adds for `extraFileExtensions`. TypeScript source is here what
-/// `ScriptKindDeferred` is there: a language that only the host can tell.
+/// The extensions `GetSupportedExtensions` adds for `extraFileExtensions`. TypeScript source plays
+/// the role here that `ScriptKindDeferred` plays there: a language only the host can determine.
 pub(crate) fn extra_supported_extensions<'h>(
     host: &'h dyn Host,
     options: &Options,
@@ -2650,7 +2280,7 @@ pub(crate) fn extra_supported_extensions<'h>(
         .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
 }
 
-/// `FileExtensionIs`: a path that is nothing but the extension has none.
+/// `FileExtensionIs`: a path that's nothing but the extension doesn't count.
 pub(crate) fn file_extension_is(path: &[u8], extension: &[u8]) -> bool {
     path.len() > extension.len() && path.ends_with(extension)
 }
@@ -2660,7 +2290,7 @@ pub(crate) fn file_extension_is_one_of(path: &[u8], extensions: &[&[u8]]) -> boo
     (extensions.iter()).any(|e| file_extension_is(path, e))
 }
 
-/// Whether the file name has a TypeScript extension, including the declaration file extensions.
+/// True if the file name has a TypeScript extension, including the declaration file extensions.
 pub(crate) fn has_ts_implementation_extension(path: &[u8]) -> bool {
     file_extension_is_one_of(path, &SUPPORTED_TS_IMPLEMENTATION_EXTENSIONS)
 }
@@ -2672,15 +2302,9 @@ pub(crate) fn try_extract_ts_extension(path: &[u8]) -> Option<&'static [u8]> {
         .find(|&e| file_extension_is(path, e))
 }
 
-pub const TYPED_JAVASCRIPT_EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".js", b".aot.ts"), (b".mjs", b".aot.mts"), (b".cjs", b".aot.cts")];
-
-pub(crate) fn is_typed_bundle(path: &[u8]) -> bool {
-    TYPED_JAVASCRIPT_EXTENSIONS.iter().any(|(_, extension)| path.ends_with(extension)) || [&b".sound.ts"[..], b".sound.mts", b".sound.cts"].iter().any(|extension| path.ends_with(extension))
-}
-
 /// `GetImpliedNodeFormatForFile`, as far as the extension alone determines it.
 pub(crate) fn format_by_extension(path: &[u8]) -> ResolutionMode {
-    if file_extension_is_one_of(path, &[b".mts", b".mjs", b".sound.ts", TYPED_JAVASCRIPT_EXTENSIONS[0].1]) {
+    if file_extension_is_one_of(path, &[b".mts", b".mjs"]) {
         ResolutionMode::Import
     } else if file_extension_is_one_of(path, &[b".cts", b".cjs"]) {
         ResolutionMode::Require
@@ -2722,11 +2346,18 @@ pub(crate) fn get_base_file_name(path: &[u8]) -> &[u8] {
 
 /// `IsDeclarationFileName`: the name ends in `.d.ts`, `.d.mts`, `.d.cts` or `.d.*.ts`.
 pub fn is_declaration_file_name(path: &[u8]) -> bool {
-    !get_declaration_file_extension(path).is_empty()
+    let is_separator = |byte: &u8| matches!(byte, b'/' | b'\\');
+    let root_is_one_slash = path.first() == Some(&b'/') && !path.get(1).is_some_and(is_separator);
+    if !root_is_one_slash || path.last().is_some_and(is_separator) {
+        return !get_declaration_file_extension(path).is_empty();
+    }
+    // The base name is the end of such a path, from its last separator on.
+    SUPPORTED_DECLARATION_EXTENSIONS.into_iter().any(|extension| path.ends_with(extension))
+        || (path.ends_with(b".ts") && strings::contains(get_base_file_name(path), b".d."))
 }
 
-/// `GetDeclarationFileExtension`: for `a.d.b.d.json.ts` it is `.d.b.d.json.ts`, from the first
-/// `.d.` on. Empty: `path` names no declaration file.
+/// `GetDeclarationFileExtension`: for `a.d.b.d.json.ts` it's `.d.b.d.json.ts`, from the first `.d.`
+/// on. Empty if `path` isn't a declaration file name.
 pub fn get_declaration_file_extension(path: &[u8]) -> &[u8] {
     let base = get_base_file_name(path);
     if let Some(extension) =
@@ -2741,8 +2372,8 @@ pub fn get_declaration_file_extension(path: &[u8]) -> &[u8] {
 }
 
 /// `GetNodeModulePathParts`: the start of the first `/node_modules` in `path`, the index of the `/`
-/// after it, and the end of the innermost package directory. `None`: `path` is not in a package in
-/// a `node_modules`.
+/// after it, and the end of the innermost package directory. Returns `None` if `path` isn't in a
+/// package in a `node_modules`.
 pub fn node_module_path_parts(path: &[u8]) -> Option<(usize, usize, usize)> {
     #[derive(Copy, Clone)]
     enum State {
@@ -2783,7 +2414,7 @@ pub fn node_module_path_parts(path: &[u8]) -> Option<(usize, usize, usize)> {
     ))
 }
 
-/// Whether the file at `path` is JavaScript, based on its name.
+/// True if the file at `path` is JavaScript, based on its name.
 pub fn is_javascript(path: &[u8]) -> bool {
     file_extension_is_one_of(path, &SUPPORTED_JS_EXTENSIONS_FLAT)
 }
@@ -2810,16 +2441,15 @@ impl<'h> Resolver<'h> {
             caches: std::sync::Arc::new(Caches::new(are_small)),
             ambiguous_roots: bun_threading::Guarded::new(Vec::new_in(session)),
             links: bun_threading::Guarded::new(Vec::new_in(session)),
-            config_by_folder: Memo::new(true),
-            paths_by_config: Memo::new(true),
-            // Not in an arena: a resolver that keeps nothing creates none.
+            // Not in an arena, so a resolver that stores nothing never creates one.
             redirected: redirected.collect(),
             redirect: 0,
+            code: None,
         }
     }
 
-    /// A copy of `bytes` that lives as long as the resolver, in the arena of the calling thread.
-    /// For what is stored after a lookup has missed, which costs system calls.
+    /// Copies `bytes` into the calling thread's arena, where it lives as long as the resolver.
+    /// Meant for what's stored after a cache miss, which costs system calls anyway.
     pub fn keep(&self, bytes: &[u8]) -> &'h [u8] {
         if bytes.is_empty() {
             return &[];
@@ -2832,10 +2462,9 @@ impl<'h> Resolver<'h> {
         self.options
     }
 
-    /// `getRedirectForResolution`: the resolver that resolves the specifiers in the file at `path`,
-    /// which has the options of the project the file belongs to, and the file they are resolved
-    /// from: a declaration file that is read in place of a source resolves its specifiers as the
-    /// source does.
+    /// `getRedirectForResolution`. Returns the resolver for the specifiers in the file at `path`, which has the options
+    /// of the project the file belongs to, and the file to resolve them from. A declaration file that's read in place
+    /// of a source resolves its specifiers the way the source does.
     pub fn redirect_for_resolution<'a>(&'a self, path: &'a [u8]) -> (&'a Resolver<'h>, &'a [u8]) {
         let options = self.options;
         // `getSourceToDtsIfSymlink`
@@ -2869,8 +2498,7 @@ impl<'h> Resolver<'h> {
             links: bun_threading::Guarded::new(Vec::new_in(self.session)),
             redirected: Vec::new(),
             redirect: 1 + project as u32,
-            config_by_folder: Memo::new(true),
-            paths_by_config: Memo::new(true),
+            code: None,
         });
         (redirected, source)
     }
@@ -2883,11 +2511,11 @@ impl<'h> Resolver<'h> {
         real
     }
 
-    /// `getOriginalAndResolvedFileName`: `resolvedFileName`. `None`: `originalPath` is empty.
+    /// `getOriginalAndResolvedFileName`. Returns `resolvedFileName`, or `None` if `originalPath` is empty.
     fn get_original_and_resolved_file_name(&self, file_name: &[u8], look: Look) -> Option<Vec<u8>> {
         let real = self.real_path(file_name, look);
-        // `ComparePaths`. One that differs only in case: the name as it is written, which the
-        // program reports.
+        // `ComparePaths`. A real path that differs only in case doesn't count: the name stays as
+        // written, which the program reports.
         let is_real = |name: &[u8]| is_same_path(&real, name, self.host.is_case_sensitive());
         if is_real(file_name) || normalized_for_lookup(file_name).is_some_and(|it| is_real(&it)) {
             return None;
@@ -2895,8 +2523,8 @@ impl<'h> Resolver<'h> {
         Some(real)
     }
 
-    /// The real path of `found`, which becomes `resolved.originalPath`.
-    fn followed(&self, found: &[u8], look: Look) -> Vec<u8> {
+    /// Returns the real path of `found`. `found` itself becomes `resolved.originalPath`.
+    fn follow_symlink(&self, found: &[u8], look: Look) -> Vec<u8> {
         let Some(real) = self.get_original_and_resolved_file_name(found, look) else {
             return found.to_vec();
         };
@@ -2905,7 +2533,7 @@ impl<'h> Resolver<'h> {
         real
     }
 
-    /// `ResolvePackageDirectory`: `OriginalPath`, unless it is empty, and `ResolvedFileName`.
+    /// `ResolvePackageDirectory`. Returns `OriginalPath` (`None` if it's empty) and `ResolvedFileName`.
     fn resolve_package_directory(
         &self,
         module_name: &[u8],
@@ -2954,8 +2582,14 @@ impl<'h> Resolver<'h> {
         }
         let mut not_linked: Vec<Vec<u8>> = Vec::new();
         let mut seen: Vec<&[u8]> = Vec::new();
+        // The directories handled so far. Thousands of files share hundreds of directories.
+        let mut visited_directories: FxHashSet<&[u8]> = FxHashSet::default();
         for path in emitted {
-            let Some((directory, package)) = self.package_scope(dirname::<Posix>(path)) else {
+            let file_directory = dirname::<Posix>(path);
+            if !visited_directories.insert(file_directory) {
+                continue;
+            }
+            let Some((directory, package)) = self.package_scope(file_directory) else {
                 continue;
             };
             if seen.contains(&directory) {
@@ -2996,10 +2630,10 @@ impl<'h> Resolver<'h> {
                 }
             }
         }
-        // `CombinePaths(packageResolution.OriginalPath, "package.json")` without an `OriginalPath`
-        // is a file in the current directory, which so becomes a link to the first dependency that
-        // is none. Of several, the order of a Go map decides which is first, and each one is more
-        // likely not to be.
+        // Without an `OriginalPath`, `CombinePaths(packageResolution.OriginalPath, "package.json")`
+        // is a file in the current directory, so that directory becomes a link to the first
+        // dependency that isn't linked. With several of those, Go's map order decides which is
+        // first, and each one is more likely not to be, so none is recorded.
         if let [resolved_file_name] = &not_linked[..] {
             known_symlinks.process_resolution(
                 &inside(&self.options.current_directory, b"package.json"),
@@ -3035,7 +2669,7 @@ impl<'h> Resolver<'h> {
         if let Some(normalized) = normalized_for_lookup(path) {
             return self.is_file(&normalized);
         }
-        // Most misses are in directories that do not exist.
+        // Most misses are in directories that don't exist.
         let result = self.is_dir(dirname::<Posix>(path)) && self.host.is_file(path);
         *self.caches.files.insert_ref(self.keep(path), result)
     }
@@ -3050,16 +2684,16 @@ impl<'h> Resolver<'h> {
             return self.package(&normalized);
         }
         let path = inside(dir, b"package.json");
-        // `getPackageJsonInfo`: a file that cannot be read or parsed is a package without fields.
+        // `getPackageJsonInfo`: a file that can't be read or parsed is a package without fields.
         let package = self.is_file(&path).then(|| {
-            let text = self.host.read(&path);
+            let text = self.read_manifest_text(&path);
             let json =
                 text.and_then(|text| (self.host).parse_package_json(self.session.arena(), &text));
             let json = json.unwrap_or(Json::Null);
-            let kept = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
+            let stored_field = |name: &[u8]| Some(self.keep(json.get(name)?.as_str()?));
             Package {
-                name_and_version: kept(b"name").zip(kept(b"version")),
-                json,
+                name_and_version: stored_field(b"name").zip(stored_field(b"version")),
+                json: std::sync::Arc::new(json),
                 peer_dependencies: Default::default(),
             }
         });
@@ -3069,9 +2703,9 @@ impl<'h> Resolver<'h> {
             .as_ref()
     }
 
-    /// `getPackageJsonInfo`: `package`, logged. A directory that does not exist is passed over in
-    /// silence. It is logged as found in `packageJsonInfoCache`: which lookup is the first one is
-    /// known when the log is put in order.
+    /// `getPackageJsonInfo`: `package`, with tracing. A directory that doesn't exist isn't logged.
+    /// Every lookup is logged as a `packageJsonInfoCache` hit, because which lookup came first is
+    /// only known once the log is put in order.
     fn get_package_json_info(&self, dir: &[u8], look: Look) -> Option<&Package<'h>> {
         let dir = strings::without_trailing_slash(dir);
         let package = self.package(dir);
@@ -3087,8 +2721,9 @@ impl<'h> Resolver<'h> {
     }
 
     /// The `package.json` in `dir`, if one exists.
-    pub fn package_json(&self, dir: &[u8]) -> Option<Json> {
-        self.package(dir).map(|package| package.json.clone())
+    pub fn package_json(&self, dir: &[u8]) -> Option<std::sync::Arc<Json>> {
+        self.package(dir)
+            .map(|package| std::sync::Arc::clone(&package.json))
     }
 
     /// `Resolver.GetPackageScopeForPath`: the nearest `package.json` in `dir` or an ancestor
@@ -3097,7 +2732,7 @@ impl<'h> Resolver<'h> {
         ancestors(dir).find_map(|dir| Some((dir, self.package(dir)?)))
     }
 
-    /// `resolutionState.getPackageScopeForPath`: `package_scope`, logged.
+    /// `resolutionState.getPackageScopeForPath`: `package_scope`, with tracing.
     fn get_package_scope_for_path<'d>(
         &self,
         dir: &'d [u8],
@@ -3116,7 +2751,8 @@ impl<'h> Resolver<'h> {
         self.resolve_module_name_traced(spec, from, mode, None)
     }
 
-    /// The same. With a tracer every step is taken again, whatever is known already.
+    /// `resolve_module_name` with an optional tracer. With a tracer, every step runs again even if
+    /// the result is cached.
     pub fn resolve_module_name_traced(
         &self,
         spec: &[u8],
@@ -3183,7 +2819,7 @@ impl<'h> Resolver<'h> {
         *self.caches.resolved.insert_ref(self.keep(&key), found)
     }
 
-    /// The same, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
+    /// `resolve_module_name`, plus `PackageId.String()`, which is `None` if `PackageId.Name` is empty.
     pub fn resolve_module_name_with_package_id(
         &self,
         spec: &[u8],
@@ -3201,10 +2837,10 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// `resolved.packageId` of the file that `look` has found. `None`: `PackageId.Name` is empty.
+    /// `resolved.packageId` of the file that `look` found, or `None` if `PackageId.Name` is empty.
     fn package_id_of(&self, look: Look) -> Option<PackageId<'h>> {
-        let made_of = look.outcome.package_id.borrow();
-        let (directory, found) = made_of.as_ref()?;
+        let package_id_inputs = look.outcome.package_id.borrow();
+        let (directory, found) = package_id_inputs.as_ref()?;
         let package = self.package(directory)?;
         let (name, version) = package.name_and_version.filter(|it| !it.0.is_empty())?;
         let peer_dependencies = *package.peer_dependencies.get_or_init(|| {
@@ -3222,7 +2858,7 @@ impl<'h> Resolver<'h> {
         })
     }
 
-    /// `resolveNodeLike`: `ResolvedFileName` and `AlternateResult`.
+    /// `resolveNodeLike`. Returns `ResolvedFileName` and `AlternateResult`.
     fn resolve_node_like(
         &self,
         spec: &[u8],
@@ -3244,8 +2880,8 @@ impl<'h> Resolver<'h> {
             look.trace(6402, &[Arg::Bytes(mode), Arg::Bytes(&conditions)]);
         }
         let path = self.resolve_with(spec, from, look)?;
-        // Whether types would be found if the `exports` of the package were ignored. The answer is
-        // only used for JavaScript. For other files without types the search is only logged.
+        // Check whether types would be found if the package's `exports` were ignored. The answer is only used for
+        // JavaScript. For other files without types the search only matters for the trace.
         let is_untyped = || match look.tracer {
             Some(_) => {
                 !has_ts_implementation_extension(&path) || look.outcome.arbitrary_extension.get()
@@ -3272,14 +2908,14 @@ impl<'h> Resolver<'h> {
             ..look.for_types()
         };
         let types = self.resolve_with(spec, from, without_exports);
-        // `features` has lost `NodeResolutionFeaturesExports` for good: if the name is a target of
-        // `imports`, the `resolveNodeLike` of the specifier does not search again.
+        // `features` has permanently lost `NodeResolutionFeaturesExports`. So if the name is a
+        // target of `imports`, the specifier's `resolveNodeLike` doesn't search again.
         look.outcome.found_package.set(false);
         Some((path, types.filter(|_| outcome.is_external.get())))
     }
 
-    /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it is the name in a `/// <reference types>`, which
-    /// resolves to declaration files only.
+    /// `newResolutionState`. `is_module`: the name is a module specifier. Otherwise it's the name
+    /// in a `/// <reference types>`, which only resolves to declaration files.
     fn look<'a>(
         &self,
         mode: ResolutionMode,
@@ -3289,8 +2925,10 @@ impl<'h> Resolver<'h> {
         let like_node = self.options.resolves_like_node;
         Look {
             tracer: None,
-            esm: like_node && mode == ResolutionMode::Import,
-            // `GetConditions`: under bundler resolution, a mode that is not explicitly `require` is
+            esm: like_node
+                && mode == ResolutionMode::Import
+                && !self.options.imports_need_no_extension,
+            // `GetConditions`: under bundler resolution, a mode that isn't explicitly `require` is
             // `import`.
             import: mode == ResolutionMode::Import || mode == ResolutionMode::None && !like_node,
             typescript: is_module,
@@ -3308,14 +2946,15 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// The file that `require(spec)` means in the file `from` for eslint-import-resolver-node, which the rules of
-    /// eslint-plugin-import ask unless they are told otherwise: what is named, or that with one of `extensions`, or the
-    /// entry of that directory; a package is looked for in the `node_modules` upwards; its entry is its `module`, its
-    /// `jsnext:main` or its `main`, the first that leads to a file, or its `index`. There are no `exports`, `imports`,
-    /// `typesVersions` or `paths`, and no link is followed. Whether a directory that an entry names is a package again
-    /// is not asked.
+    /// Resolves `require(spec)` in the file `from` the way eslint-import-resolver-node does, which
+    /// is what eslint-plugin-import's rules use by default. It tries the path as written, then with
+    /// each of `extensions`, then as a directory's entry. A package is searched for in the
+    /// `node_modules` of each ancestor directory. Its entry is the first of `module`, `jsnext:main`
+    /// and `main` that resolves to a file, or else its `index`. `exports`, `imports`,
+    /// `typesVersions` and `paths` are ignored, and symlinks aren't resolved. A directory that an
+    /// entry points to isn't treated as a package itself.
     ///
-    /// With it: in which of `how.paths` it was found, if it was.
+    /// Also returns the index in `how.paths` where the file was found, if it was found there.
     pub fn resolve_as_require(
         &self,
         spec: &[u8],
@@ -3329,7 +2968,7 @@ impl<'h> Resolver<'h> {
         let look = Look {
             esm: false,
             import: how.as_import,
-            // Nor is anything looked for in `@types`.
+            // This also skips the lookup in `@types`.
             typescript: false,
             declarations: false,
             ignores_exports: !how.through_paths,
@@ -3341,8 +2980,8 @@ impl<'h> Resolver<'h> {
         let from_dir = dirname::<Posix>(from);
         match is_relative(spec) {
             true => {
-                // `resolve`: only `.`, `..` and what ends in a `/` can be nothing but a directory: `./..` is
-                // `../b.js` too.
+                // `resolve`: only `.`, `..` and a specifier that ends in `/` have to be a
+                // directory. `./..` can also be `../b.js`.
                 let mut candidate = resolve_path(from_dir, spec);
                 if matches!(spec, b"." | b"..") && !candidate.ends_with(b"/") {
                     candidate.push(b'/');
@@ -3353,7 +2992,7 @@ impl<'h> Resolver<'h> {
             false if strings::contains_char(spec, b':') => None,
             false => {
                 if how.through_paths
-                    && let Some(found) = self.through_paths(spec, from_dir, look)
+                    && let Some(found) = self.through_paths(spec, look)
                 {
                     return Some((found, None));
                 }
@@ -3398,33 +3037,22 @@ impl<'h> Resolver<'h> {
         let real = |found: Vec<u8>| {
             let is_in_package = strings::contains(&found, b"/node_modules/");
             look.outcome.is_external.set(is_in_package);
-            // It has one if a target of `imports` names a module, and resolving that has followed
-            // a symlink.
+            // It already has one if a target of `imports` names a module and resolving that went through a symlink.
             if follows_links && is_in_package && !look.outcome.has_original_path.get() {
-                self.followed(&found, look)
+                self.follow_symlink(&found, look)
             } else {
                 found
             }
         };
         // `tryLoadModuleUsingPathsIfEligible`: also for `/a`.
         if !path_is_relative(spec)
-            && let Some(found) = self.through_paths(spec, from_dir, look)
+            && let Some(found) = self.through_paths(spec, look)
         {
             return Some(real(found));
         }
         // `tryLoadModuleUsingBaseUrl`
-        let base_urls: Vec<&[u8]> = match (is_relative(spec), self.goes_by_configs_above(from_dir)) {
-            (true, _) => Vec::new(),
-            (false, false) => vec![&self.options.base_url[..]],
-            (false, true) => (self.configs_above(from_dir))
-                .filter_map(|config| match self.is_config_of_program(config) {
-                    true => Some(&self.options.base_url[..]),
-                    false => self.paths_of_config(config).map(|other| &other.base_url[..]),
-                })
-                .collect(),
-        };
-        for base_url in base_urls.into_iter().filter(|base_url| !base_url.is_empty()) {
-            let candidate = resolve_path(base_url, spec);
+        if !self.options.base_url.is_empty() && !is_relative(spec) {
+            let candidate = resolve_path(&self.options.base_url, spec);
             let found = match self.options.is_classic {
                 true => self.file(&candidate, look),
                 false => self.file_or_directory(&candidate, look),
@@ -3440,8 +3068,7 @@ impl<'h> Resolver<'h> {
             return self
                 .through_root_dirs(spec, from_dir, look)
                 .or_else(|| self.relative(spec, from_dir, look))
-                .map(real)
-                .map(|found| self.typescript_beside_declarations(found, look));
+                .map(real);
         }
         // Tries each location in turn until one produces a result.
         let mut found = Found::No;
@@ -3454,7 +3081,7 @@ impl<'h> Resolver<'h> {
             found = self.self_name(spec, from_dir, look);
         }
         if let Found::No = found {
-            // A specifier that looks like a URI is not in a package.
+            // A specifier that looks like a URI isn't in a package.
             let is_uri = strings::contains_char(spec, b':');
             if look.tracer.is_some() {
                 let code = if is_uri { 6164 } else { 6098 };
@@ -3472,11 +3099,11 @@ impl<'h> Resolver<'h> {
         {
             found = Found::of(self.in_type_roots(roots, true, spec, look.for_declarations()));
         }
-        found.file().map(real).map(|found| self.typescript_beside_declarations(found, look))
+        found.file().map(real)
     }
 
-    /// `classicNameResolver` of TypeScript 5, after `paths`: a file, in the directory or in one above it. No directory is a
-    /// module, and of what is in `node_modules` only `@types`.
+    /// TypeScript 5's `classicNameResolver`, after `paths`. It looks for a file in the directory or in an ancestor. A
+    /// directory is never a module, and the only part of `node_modules` it searches is `@types`.
     fn classic(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
         if is_relative(spec) {
             let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
@@ -3552,12 +3179,6 @@ impl<'h> Resolver<'h> {
         Some(self.package_scope(dirname::<Posix>(path))?.0)
     }
 
-    pub fn package_directory<'d>(&self, path: &'d [u8]) -> Option<&'d [u8]> {
-        let is_narrower_than_module_type = |package: &Package<'h>| !matches!(package.json.as_object(), Some([only]) if only.0 == b"type");
-        let directory = dirname::<Posix>(path);
-        ancestors(directory).find(|at| self.package(at).is_some_and(is_narrower_than_module_type)).or_else(|| Some(self.package_scope(directory)?.0))
-    }
-
     /// `loadSourceFileMetaData`: the `package.json` nearest to the file at `path`
     /// (`PackageJsonDirectory`), if it exists and yields no `PackageJsonType`.
     pub fn package_json_without_type(&self, path: &[u8]) -> Option<Vec<u8>> {
@@ -3565,17 +3186,17 @@ impl<'h> Resolver<'h> {
         let is_requested = self.options.resolves_like_node
             && format_by_extension(path) == ResolutionMode::None
             || strings::contains(path, b"/node_modules/");
-        let says_type = is_requested
+        let has_type_field = is_requested
             && package
                 .json
                 .get(b"type")
                 .and_then(Json::as_str)
                 .is_some_and(|specified| !specified.is_empty());
-        (!says_type).then(|| inside(dir, b"package.json"))
+        (!has_type_field).then(|| inside(dir, b"package.json"))
     }
 
-    /// Under `module: node16` and later: whether the file at `path` is an ECMAScript module,
-    /// determined by its extension, or else by the `package.json` nearest to it.
+    /// Under `module: node16` and later: true if the file at `path` is an ECMAScript module,
+    /// judging by its extension or else by the `package.json` nearest to it.
     pub fn is_ecmascript_module(&self, path: &[u8]) -> bool {
         let format = match format_by_extension(path) {
             ResolutionMode::None => self.package_type(path),
@@ -3585,8 +3206,8 @@ impl<'h> Resolver<'h> {
     }
 
     /// `resolved.packageId = getPackageId(resolved.path, packageInfo)` for the file at `found`.
-    /// `package` is `packageInfo`, the `package.json` in `directory`. `package_id_of` makes the id
-    /// when the search is over. What making it logs is logged here.
+    /// `package` is `packageInfo`, the `package.json` in `directory`. `package_id_of` builds the id
+    /// once the search is over, but what building it logs is logged here.
     fn get_package_id(
         &self,
         found: &[u8],
@@ -3595,8 +3216,8 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) {
         let package = package.filter(|package| package.name_and_version.is_some());
-        let made_of = package.map(|_| (directory.to_vec(), found.to_vec()));
-        look.outcome.package_id.replace(made_of);
+        let package_id_inputs = package.map(|_| (directory.to_vec(), found.to_vec()));
+        look.outcome.package_id.replace(package_id_inputs);
         if look.tracer.is_some()
             && let Some(package) = package
         {
@@ -3604,7 +3225,8 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// `readPackageJsonPeerDependencies`: `+name@version` for each peer of the package in `directory` that is installed next to it.
+    /// `readPackageJsonPeerDependencies`: `+name@version` for each peer of the package in
+    /// `directory` that's installed next to it.
     fn read_package_json_peer_dependencies(
         &self,
         directory: &[u8],
@@ -3615,7 +3237,7 @@ impl<'h> Resolver<'h> {
             json,
             b"peerDependencies",
             b"object",
-            // `IsValid`, which `Host::parse_package_json` has decided: see there.
+            // `IsValid`, as `Host::parse_package_json` encodes it: see there.
             |field| {
                 let peers = field.as_object()?;
                 let is_valid = peers.iter().enumerate().all(|(i, (name, version))| {
@@ -3652,32 +3274,9 @@ impl<'h> Resolver<'h> {
     }
 
     /// `ResolveTypeReferenceDirective`: `/// <reference types="name" />` in the file at `from`,
-    /// resolved in `mode`. An entry of `compilerOptions.types` is in a file with the name
-    /// `INFERRED_TYPES_CONTAINING_FILE`. Returns `ResolvedFileName` and `IsExternalLibraryImport`.
-    pub fn resolve_type_reference(
-        &self,
-        name: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-        tracer: Option<&Tracer>,
-    ) -> Option<(Vec<u8>, bool)> {
-        let (found, is_external, _) =
-            self.resolve_type_reference_and_id(name, from, mode, tracer)?;
-        Some((found, is_external))
-    }
-
-    /// `ResolvedFileName`, with `PackageId.String()`. `None`: `PackageId.Name` is empty.
-    pub fn resolve_type_reference_with_package_id(
-        &self,
-        name: &[u8],
-        from: &[u8],
-        mode: ResolutionMode,
-    ) -> Option<(Vec<u8>, Option<Vec<u8>>)> {
-        let (found, _, id) = self.resolve_type_reference_and_id(name, from, mode, None)?;
-        Some((found, id.map(PackageId::to_bytes)))
-    }
-
-    /// `ResolvedFileName`, `IsExternalLibraryImport` and `PackageId`.
+    /// resolved in `mode`. For an entry of `compilerOptions.types`, `from` is a file named
+    /// `INFERRED_TYPES_CONTAINING_FILE`. Returns `ResolvedFileName`, `IsExternalLibraryImport` and `PackageId`, which is
+    /// `None` if `PackageId.Name` is empty.
     pub fn resolve_type_reference_and_id(
         &self,
         name: &[u8],
@@ -3697,8 +3296,9 @@ impl<'h> Resolver<'h> {
             None => Cow::Owned(self.options.effective_type_roots()),
         };
         if tracer.is_some() {
-            let shown: Vec<Cow<'_, [u8]>> = roots.iter().map(|it| displayed_path(it)).collect();
-            let joined = shown.join(&b","[..]);
+            let displayed_roots: Vec<Cow<'_, [u8]>> =
+                roots.iter().map(|it| displayed_path(it)).collect();
+            let joined = displayed_roots.join(&b","[..]);
             look.trace(
                 6116,
                 &[Arg::Bytes(name), Arg::Path(from), Arg::Bytes(&joined)],
@@ -3706,7 +3306,7 @@ impl<'h> Resolver<'h> {
             self.trace_resolution_using_project_reference(look);
             match roots.is_empty() {
                 true => look.trace(6122, &[]),
-                false => look.trace(6121, &[Arg::Bytes(&shown.join(&b", "[..]))]),
+                false => look.trace(6121, &[Arg::Bytes(&displayed_roots.join(&b", "[..]))]),
             }
         }
         // First in the type roots, regardless of the location of the reference.
@@ -3734,11 +3334,11 @@ impl<'h> Resolver<'h> {
         };
         let is_external = strings::contains(&found, b"/node_modules/");
         let source = self.source_of_project_reference_redirect(&found);
-        // The real path of a file that its source replaces is only logged.
+        // If the file's source replaces it, its real path only matters for the trace.
         let found = if self.options.preserve_symlinks || source.is_some() && tracer.is_none() {
             found
         } else {
-            self.followed(&found, look)
+            self.follow_symlink(&found, look)
         };
         let package_id = self.package_id_of(look);
         // `traceTypeReferenceDirectiveResult`
@@ -3755,7 +3355,7 @@ impl<'h> Resolver<'h> {
         Some((found, is_external, package_id))
     }
 
-    /// The search of `resolveTypeReferenceDirective` and of `resolveFromTypeRoot` in type roots: a
+    /// The type-root search of `resolveTypeReferenceDirective` and `resolveFromTypeRoot`. Finds a
     /// directory in one of `roots`, or with `from_config` a file.
     fn in_type_roots(
         &self,
@@ -3765,7 +3365,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         for root in roots {
-            // `getCandidateFromTypeRoot`. It is not normalized, and neither is what is found there.
+            // `getCandidateFromTypeRoot`. The candidate isn't normalized, and neither is what's found there.
             let candidate = if root.ends_with(b"/node_modules/@types") {
                 combine_paths(root, &look.mangle_scoped_package_name(name))
             } else {
@@ -3784,8 +3384,7 @@ impl<'h> Resolver<'h> {
                 }
                 return Some(found);
             }
-            // In a directory that does not exist `loadNodeModuleFromDirectory` finds nothing, and
-            // logs nothing.
+            // In a directory that doesn't exist, `loadNodeModuleFromDirectory` finds nothing and logs nothing.
             if self.is_dir(&candidate)
                 && let Some(found) = self.package_entry(&candidate, look)
             {
@@ -3796,45 +3395,19 @@ impl<'h> Resolver<'h> {
     }
 
     /// `tryLoadModuleUsingPathsIfEligible`: `tryLoadModuleUsingPaths` with `compilerOptions.paths`.
-    fn through_paths(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        let own_base = if self.options.paths_base_dir.is_empty() { &self.options.base_dir } else { &self.options.paths_base_dir };
-        if !self.goes_by_configs_above(from_dir) {
-            return self.resolve_through_paths(&self.options.paths, own_base, spec, look);
-        }
-        let (paths, base) = self.configs_above(from_dir).find_map(|config| {
-            let (paths, base) = match self.is_config_of_program(config) {
-                true => (&self.options.paths, own_base),
-                false => self.paths_of_config(config).map(|other| (&other.paths, &other.base_dir))?,
-            };
-            best_pattern(paths.iter(), spec).map(|_| (paths, base))
-        })?;
-        self.resolve_through_paths(paths, base, spec, look)
-    }
-
-    fn is_config_of_program(&self, config: &[u8]) -> bool {
-        dirname::<Posix>(config) == &self.options.base_dir[..]
-    }
-
-    fn goes_by_configs_above(&self, from_dir: &[u8]) -> bool {
-        self.options.uses_nearest_config_paths && !strings::contains(from_dir, b"/node_modules/")
-    }
-
-    fn configs_above<'a>(&'a self, from_dir: &[u8]) -> impl Iterator<Item = &'h [u8]> + 'a {
-        std::iter::successors(self.governing_config(from_dir), |config| {
-            let folder = dirname::<Posix>(config);
-            let parent = dirname::<Posix>(folder);
-            (parent != folder && !parent.is_empty()).then(|| self.governing_config(parent)).flatten()
-        })
-    }
-
-    fn resolve_through_paths(&self, paths: &Paths, base: &[u8], spec: &[u8], look: Look) -> Option<Vec<u8>> {
-        if paths.is_empty() {
+    fn through_paths(&self, spec: &[u8], look: Look) -> Option<Vec<u8>> {
+        if self.options.paths.is_empty() {
             return None;
         }
         look.trace(6091, &[Arg::Bytes(spec)]);
-        let (pattern, targets, matched) = best_pattern(paths.iter(), spec)?;
+        let (pattern, targets, matched) = best_pattern(self.options.paths.iter(), spec)?;
         look.trace(6092, &[Arg::Bytes(spec), Arg::Bytes(pattern)]);
         targets.iter().find_map(|target| {
+            let base = if self.options.paths_base_dir.is_empty() {
+                &self.options.base_dir
+            } else {
+                &self.options.paths_base_dir
+            };
             let filled = target.replacen(b"*", matched, 1);
             look.trace(6093, &[Arg::Bytes(target), Arg::Bytes(&filled)]);
             let candidate = resolve_path(base, &filled);
@@ -3842,42 +3415,16 @@ impl<'h> Resolver<'h> {
                 ending_from_config: look.ending_from_config || !known_extension(target).is_empty(),
                 ..look
             };
-            self.very_file(target, &candidate, look)
+            self.exact_file(target, &candidate, look)
                 .or_else(|| self.file_or_directory(&candidate, look))
         })
     }
 
-    fn governing_config(&self, folder: &[u8]) -> Option<&'h [u8]> {
-        if let Some(&known) = self.config_by_folder.get_ref(folder) {
-            return known;
-        }
-        let own = [&b"tsconfig.json"[..], b"jsconfig.json"].into_iter().map(|name| join(folder, name)).find(|config| self.is_file(config));
-        let parent = dirname::<Posix>(folder);
-        let found = match own {
-            Some(own) => Some(self.keep(&own)),
-            None if parent == folder || parent.is_empty() || folder.ends_with(b"/node_modules") => None,
-            None => self.governing_config(parent),
-        };
-        *self.config_by_folder.insert_ref(self.keep(folder), found)
-    }
-
-    fn paths_of_config(&self, config: &'h [u8]) -> Option<&ConfigPaths> {
-        if let Some(known) = self.paths_by_config.get_ref(config) {
-            return known.as_ref();
-        }
-        let found = crate::config::options_for_resolution(self.host, config).map(|options| ConfigPaths {
-            base_dir: if options.paths_base_dir.is_empty() { options.base_dir } else { options.paths_base_dir },
-            paths: options.paths,
-            base_url: options.base_url,
-        });
-        self.paths_by_config.insert_ref(config, found).as_ref()
-    }
-
-    /// In `tryLoadModuleUsingPaths`: a substitution `written` with an extension may name the file
-    /// at `path` exactly. That file is then the result, regardless of the requested kinds of file,
+    /// In `tryLoadModuleUsingPaths`: a `substitution` with an extension may name the file at `path`
+    /// exactly. That file is then the result, regardless of the requested kinds of file,
     /// before the extension is interpreted.
-    fn very_file(&self, written: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
-        if known_extension(written).is_empty() {
+    fn exact_file(&self, substitution: &[u8], path: &[u8], look: Look) -> Option<Vec<u8>> {
+        if known_extension(substitution).is_empty() {
             return None;
         }
         self.try_file(path, look)
@@ -3892,7 +3439,7 @@ impl<'h> Resolver<'h> {
         }
         look.trace(6107, &[Arg::Bytes(spec)]);
         let candidate = resolve_path(from_dir, spec);
-        // The longest of them that contains it. Ties go to the first.
+        // The longest root that contains the candidate. Ties go to the first.
         let mut matched: Option<&[u8]> = None;
         for root in roots {
             let is_longest = candidate
@@ -3957,8 +3504,8 @@ impl<'h> Resolver<'h> {
             6208,
             &[Arg::Bytes(version), Arg::Bytes(VERSION), Arg::Bytes(name)],
         );
-        // `GetPaths`: an entry that is no array is left out, and an element that is no string is
-        // the empty substitution.
+        // `GetPaths`: an entry that isn't an array is skipped, and an element that isn't a string
+        // counts as the empty substitution.
         let paths = (mapping.as_object()?.iter()).filter(|path| path.1.as_array().is_some());
         let (pattern, targets, matched) = best_pattern(paths, name)?;
         look.trace(6092, &[Arg::Bytes(name), Arg::Bytes(pattern)]);
@@ -3970,16 +3517,14 @@ impl<'h> Resolver<'h> {
                 let filled = target.replacen(b"*", matched, 1);
                 look.trace(6093, &[Arg::Bytes(target), Arg::Bytes(&filled)]);
                 let candidate = resolve_path(dir, &filled);
-                self.very_file(target, &candidate, look)
+                self.exact_file(target, &candidate, look)
                     .or_else(|| load(&candidate, !known_extension(target).is_empty()))
             })
     }
 
     /// Resolves the relative specifier `spec` from `from_dir`.
     fn relative(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Option<Vec<u8>> {
-        let candidate = normalize_path_for_cjs_resolution(from_dir, spec);
-        let code = if look.typescript { self.typescript_with_js_extension(&candidate, look) } else { None };
-        code.or_else(|| self.file_or_directory(&candidate, look))
+        self.file_or_directory(&normalize_path_for_cjs_resolution(from_dir, spec), look)
     }
 
     /// `nodeLoadModuleByRelativeName` with `considerPackageJson`.
@@ -4004,7 +3549,7 @@ impl<'h> Resolver<'h> {
         }
         let path = strings::without_trailing_slash(candidate);
         if !has_trailing_directory_separator(candidate) {
-            // Without a tracer, `is_file` finds nothing in a directory that does not exist.
+            // Without a tracer, `is_file` finds nothing in a directory that doesn't exist.
             if is_traced {
                 let parent = dirname::<Posix>(path);
                 if !self.is_dir(parent) {
@@ -4012,8 +3557,8 @@ impl<'h> Resolver<'h> {
                     return None;
                 }
             }
-            // By that very name it is a source file. For a name that TypeScript knows, `a.ts` and
-            // `a.d.ts` come before `a.js`, whatever language that is.
+            // According to the host, the file with exactly this name is a source file. For a name that TypeScript
+            // knows, `a.ts` and `a.d.ts` come before `a.js`, whatever language that is.
             let is_source_file = ScriptKind::from_file_name(path).is_none()
                 && self.host.script_kind(path).is_some()
                 && self.is_file(path);
@@ -4031,7 +3576,7 @@ impl<'h> Resolver<'h> {
                 return Some(found);
             }
         }
-        // Under Node's rules for `import` a directory does not resolve, whether it exists or not.
+        // Under Node's rules for `import` a directory doesn't resolve, whether it exists or not.
         if (is_traced || !look.esm) && !self.is_dir(path) {
             look.trace(6148, &[Arg::Path(candidate)]);
             return None;
@@ -4066,14 +3611,15 @@ impl<'h> Resolver<'h> {
                 .map(|suffix| [stem, &suffix[..], extension].concat())
                 .find(|c| lookup(c))
         }?;
-        // It is the file of a new `resolved`.
+        // This file starts a new `resolved`.
         look.outcome.package_id.replace(None);
         look.outcome.has_original_path.set(false);
         Some(found)
     }
 
-    /// `projectReferenceDtsFakingVfs.FileExists`: the source file from which a referenced project would emit the declaration file
-    /// `path`. Lets a package whose `exports` point at build output be imported without building it.
+    /// `projectReferenceDtsFakingVfs.FileExists`: the source file from which a referenced project
+    /// would emit the declaration file `path`. Lets a package whose `exports` point at build output
+    /// be imported without building it.
     fn source_of_project_reference_redirect(&self, path: &[u8]) -> Option<Vec<u8>> {
         if self.options.referenced_outputs.is_empty()
             || !matches!(known_extension(path), b".d.ts" | b".d.mts" | b".d.cts")
@@ -4091,8 +3637,9 @@ impl<'h> Resolver<'h> {
 
     /// `fileExistsIfProjectReferenceDts`
     fn file_exists_if_project_reference_dts(&self, path: &[u8]) -> Option<Vec<u8>> {
-        // `getRedirectFromOutput(toPath(file))`: by `tspath.Path`. A real path spells a drive and a directory as the system
-        // has them, `output_dir` as the working directory and the configuration files do.
+        // `getRedirectFromOutput(toPath(file))` compares by `tspath.Path`. A real path spells
+        // drives and directories the way the system does, while `output_dir` spells them the way
+        // the working directory and the configuration files do.
         let is_case_sensitive = self.host.is_case_sensitive();
         for (output_dir, root_dir) in &self.options.referenced_outputs {
             if !contains_path(output_dir, path, is_case_sensitive) {
@@ -4132,8 +3679,8 @@ impl<'h> Resolver<'h> {
     }
 
     /// `handleDirectoryCouldBeSymlink` of `ParseNodeModuleFromPath`: `path` with its package
-    /// directory replaced by that directory's symlink target. `None` if it is not in a package, or
-    /// the package directory is not a symlink.
+    /// directory replaced by that directory's symlink target. `None` if it isn't in a package, or
+    /// the package directory isn't a symlink.
     fn path_through_linked_package(&self, path: &[u8]) -> Option<Vec<u8>> {
         const NODE_MODULES: &[u8] = b"/node_modules/";
         let name = strings::last_index_of(path, NODE_MODULES)? + NODE_MODULES.len();
@@ -4195,7 +3742,7 @@ impl<'h> Resolver<'h> {
         path: &[u8],
         look: Look,
     ) -> Option<Vec<u8>> {
-        // `GetBaseFileName` passes over a separator at the end.
+        // `GetBaseFileName` ignores a trailing separator.
         let name = path.strip_suffix(b"/").unwrap_or(path);
         let base = strings::last_index_of_char(name, b'/').map_or(0, |i| i + 1);
         let dot = base + strings::last_index_of_char(&name[base..], b'.')?;
@@ -4208,32 +3755,40 @@ impl<'h> Resolver<'h> {
         self.with_extensions(&path[..path.len() - extension.len()], extension, look)
     }
 
-    /// `tryAddingExtensions`: `stem` with each of the extensions that `written` maps to, in a fixed
-    /// order: TypeScript, declaration, JavaScript or JSON, each kind only if `look` allows it. The
-    /// original extension is not tried first.
-    fn with_extensions(&self, stem: &[u8], written: &[u8], look: Look) -> Option<Vec<u8>> {
-        // No file is looked up in a directory that does not exist. Without a tracer, `is_file` sees
-        // to that.
+    /// `tryAddingExtensions`: `stem` with each of the extensions that `original_extension` maps to, in
+    /// a fixed order: TypeScript, declaration, JavaScript or JSON, each kind only if `look` allows it.
+    /// The original extension isn't tried first.
+    fn with_extensions(
+        &self,
+        stem: &[u8],
+        original_extension: &[u8],
+        look: Look,
+    ) -> Option<Vec<u8>> {
+        // No file is looked up in a directory that doesn't exist. Without a tracer, `is_file` takes care of that.
         if look.tracer.is_some() && !self.is_dir(dirname::<Posix>(stem)) {
             return None;
         }
-        let (typescript, declaration, javascript): (&[&[u8]], &[u8], &[&[u8]]) = match written {
-            b".ts" | b".d.ts" | b".js" | b"" => (&[b".ts", b".tsx"], b".d.ts", &[b".js", b".jsx"]),
-            b".tsx" | b".jsx" => (&[b".tsx", b".ts"], b".d.ts", &[b".jsx", b".js"]),
-            b".mts" | b".d.mts" | b".mjs" => (&[b".mts"], b".d.mts", &[b".mjs"]),
-            b".cts" | b".d.cts" | b".cjs" => (&[b".cts"], b".d.cts", &[b".cjs"]),
-            b".json" => (&[], b".d.json.ts", &[]),
-            // `./a.css` is declared by `a.d.css.ts`.
-            _ => {
-                return if look.declarations {
-                    let found = self.try_file(&[stem, b".d", written, b".ts"].concat(), look)?;
-                    look.outcome.arbitrary_extension.set(true);
-                    Some(found)
-                } else {
-                    None
-                };
-            }
-        };
+        let (typescript, declaration, javascript): (&[&[u8]], &[u8], &[&[u8]]) =
+            match original_extension {
+                b".ts" | b".d.ts" | b".js" | b"" => {
+                    (&[b".ts", b".tsx"], b".d.ts", &[b".js", b".jsx"])
+                }
+                b".tsx" | b".jsx" => (&[b".tsx", b".ts"], b".d.ts", &[b".jsx", b".js"]),
+                b".mts" | b".d.mts" | b".mjs" => (&[b".mts"], b".d.mts", &[b".mjs"]),
+                b".cts" | b".d.cts" | b".cjs" => (&[b".cts"], b".d.cts", &[b".cjs"]),
+                b".json" => (&[], b".d.json.ts", &[]),
+                // `./a.css` is declared by `a.d.css.ts`.
+                _ => {
+                    return if look.declarations {
+                        let found = self
+                            .try_file(&[stem, b".d", original_extension, b".ts"].concat(), look)?;
+                        look.outcome.arbitrary_extension.set(true);
+                        Some(found)
+                    } else {
+                        None
+                    };
+                }
+            };
         let typed = if look.typescript {
             self.first_file(stem, typescript, look)
         } else {
@@ -4249,14 +3804,16 @@ impl<'h> Resolver<'h> {
         if let Some(found) = typed {
             // `tryExtension`
             let is_ts_extension = matches!(
-                written,
+                original_extension,
                 b".ts" | b".d.ts" | b".tsx" | b".mts" | b".d.mts" | b".cts" | b".d.cts"
             );
             look.outcome
                 .using_ts_extension
                 .set(!look.ending_from_config && is_ts_extension);
             // `.d.json.ts`
-            look.outcome.arbitrary_extension.set(written == b".json");
+            look.outcome
+                .arbitrary_extension
+                .set(original_extension == b".json");
             return Some(found);
         }
         if look.js
@@ -4264,28 +3821,12 @@ impl<'h> Resolver<'h> {
         {
             return Some(found);
         }
-        let is_json = match written {
+        let is_json = match original_extension {
             b".json" => look.json,
             b".ts" | b".d.ts" | b".js" | b"" => look.is_config_lookup,
             _ => false,
         };
         is_json.then(|| self.try_file(&[stem, b".json"].concat(), look))?
-    }
-
-    fn typescript_beside_declarations(&self, declarations: Vec<u8>, look: Look) -> Vec<u8> {
-        const EXTENSIONS: [(&[u8], &[u8]); 3] = [(b".d.ts", b".js"), (b".d.mts", b".mjs"), (b".d.cts", b".cjs")];
-        let code = EXTENSIONS.iter().find_map(|(from, to)| Some([declarations.strip_suffix(*from)?, *to].concat()));
-        let is_typescript = |path: &Vec<u8>| look.typescript && self.host.script_kind(path).is_some_and(|kind| !kind.is_javascript());
-        code.filter(is_typescript).filter(|path| self.is_file(path)).unwrap_or(declarations)
-    }
-
-    fn typescript_with_js_extension(&self, candidate: &[u8], look: Look) -> Option<Vec<u8>> {
-        [&b""[..], b".js", b".cjs", b".mjs", b"/index.js"].iter().find_map(|ending| {
-            let path = [candidate, *ending].concat();
-            ScriptKind::from_file_name(&path).filter(|kind| kind.is_javascript())?;
-            self.host.script_kind(&path).filter(|kind| !kind.is_javascript())?;
-            self.try_file(&path, look)
-        })
     }
 
     /// `loadFileNameFromPackageJSONField`: the file at `path`, which a `package.json` names. A
@@ -4301,7 +3842,7 @@ impl<'h> Resolver<'h> {
         let is_implementation = !is_declaration && has_ts_implementation_extension(path);
         if look.typescript && is_implementation || look.declarations && is_declaration {
             let found = self.try_file(path, look)?;
-            // None, if a separator follows the name.
+            // `None` if a separator follows the name.
             let extension = try_extract_ts_extension(&found);
             // A trailing `*` matches a part of the specifier that includes the extension.
             look.outcome
@@ -4327,9 +3868,9 @@ impl<'h> Resolver<'h> {
         self.directory_entry(dir, package, true, look)
     }
 
-    /// `loadNodeModuleFromDirectoryWorker`: the file the directory `candidate` resolves to: the
-    /// file its `package.json` names, or its `index`.
-    /// `package` is the `package.json` of `candidate` if `is_package_dir`. Otherwise it is that of
+    /// `loadNodeModuleFromDirectoryWorker`: the file the directory `candidate` resolves to, which
+    /// is the file its `package.json` names or else its `index`.
+    /// `package` is the `package.json` of `candidate` if `is_package_dir`. Otherwise it's that of
     /// the package enclosing `candidate`, and only its `typesVersions` apply.
     fn directory_entry(
         &self,
@@ -4339,7 +3880,7 @@ impl<'h> Resolver<'h> {
         look: Look,
     ) -> Option<Vec<u8>> {
         if look.as_require {
-            let json = package.filter(|_| is_package_dir).map(|it| &it.json);
+            let json = package.filter(|_| is_package_dir).map(|it| &*it.json);
             let named = |field: &[u8]| {
                 let entry = get_package_json_path_field(json?, field, candidate, look)?;
                 let entry = strings::without_trailing_slash(&entry);
@@ -4347,7 +3888,7 @@ impl<'h> Resolver<'h> {
             };
             let index = || self.file(&inside(candidate, b"index"), look);
             if look.as_import {
-                // One that cannot be parsed ends the search.
+                // A `package.json` that can't be parsed ends the search.
                 look.outcome.is_blocked.set(json == Some(&Json::Null));
                 return match look.outcome.is_blocked.get() {
                     true => None,
@@ -4406,9 +3947,9 @@ impl<'h> Resolver<'h> {
                     self.node_load_module_by_relative_name(path, ConsiderPackageJson::No, inner)
                 })
             };
-            // `typesVersions` also apply to the entry, if it is inside the package, and to `index`
-            // if there is no entry. With the zero `ComparePathsOptions`: without case, on every
-            // file system.
+            // `typesVersions` also apply to the entry, if it's inside the package, and to `index`
+            // if there's no entry. The comparison uses the zero `ComparePathsOptions`, so it
+            // ignores case on every file system.
             if let Some(paths) = version_paths
                 && (entry.as_ref()).is_none_or(|entry| contains_path(dir, entry, false))
             {
@@ -4440,7 +3981,7 @@ impl<'h> Resolver<'h> {
 
     /// `loadModuleFromNearestNodeModulesDirectory`: types in a farther directory take priority over
     /// JavaScript in a nearer one. A specifier that the search for types finds explicitly
-    /// unresolved is not searched for again.
+    /// unresolved isn't searched for again.
     fn node_modules(&self, spec: &[u8], from_dir: &[u8], look: Look) -> Found {
         if look.typescript || look.declarations {
             if look.tracer.is_some() {
@@ -4491,7 +4032,8 @@ impl<'h> Resolver<'h> {
         Found::No
     }
 
-    /// `loadModuleFromSpecificNodeModulesDirectory`: `spec` in `modules`, which is a `node_modules` or the `@types` in one.
+    /// `loadModuleFromSpecificNodeModulesDirectory`: `spec` in `modules`, which is a `node_modules`
+    /// or the `@types` in one.
     fn in_modules(&self, modules: &[u8], spec: &[u8], look: Look) -> Found {
         // `RemoveTrailingDirectorySeparator(NormalizePath(..))`
         let candidate = join(modules, spec);
@@ -4515,8 +4057,8 @@ impl<'h> Resolver<'h> {
         let exports = package
             .and_then(|p| p.json.get(b"exports"))
             .filter(|_| respects_exports);
-        // The log has the calls of `getPackageJsonInfo` in their order: first for `candidate`, even
-        // if the `exports` of the package make the answer irrelevant, then for the package.
+        // The trace shows the `getPackageJsonInfo` calls in their order: first for `candidate`,
+        // even if the package's `exports` make the answer irrelevant, then for the package.
         let is_traced = look.tracer.is_some();
         let mut is_package_logged = !is_traced;
         if !rest.is_empty()
@@ -4732,10 +4274,11 @@ impl<'h> Resolver<'h> {
                 }
             }
         };
-        // Outermost first. The decoder accepts 10000 levels, for which Go's stack grows.
+        // Outermost first. An explicit stack, because the decoder accepts 10000 levels, which Go
+        // handles by growing its stack.
         let mut entered: SmallVec<[Entered<'j>; 4]> = SmallVec::new();
         loop {
-            // Inwards, to a target that has none of its own.
+            // Descend to a target that has no nested targets.
             let found = loop {
                 let mut inner = match target {
                     Json::Object(conditions) => {
@@ -4762,7 +4305,7 @@ impl<'h> Resolver<'h> {
                 }
                 entered.push(inner);
             };
-            // Outwards, to the first that has another target to search. A result ends the search.
+            // Back out to the innermost entry that has another target to try. A result ends the search.
             loop {
                 let Some(innermost) = entered.last_mut() else {
                     return found;
@@ -4786,7 +4329,7 @@ impl<'h> Resolver<'h> {
         }
     }
 
-    /// `loadModuleFromTargetExportOrImport`, for a `target` that is no object and no array.
+    /// `loadModuleFromTargetExportOrImport`, for a `target` that's neither an object nor an array.
     fn plain_export_target(
         &self,
         package_dir: &[u8],
@@ -4839,14 +4382,14 @@ impl<'h> Resolver<'h> {
                     return Found::No;
                 }
                 // The target must stay inside the package and outside the packages nested in it.
-                let leads_away = |path: &[u8], parts_before: usize| {
+                let escapes_package = |path: &[u8], parts_before: usize| {
                     let path = normalize_slashes(path);
                     let parts = get_path_components(&path);
                     let mut parts = parts.iter().skip(parts_before);
                     parts.any(|part| matches!(*part, b".." | b"." | b"node_modules"))
                 };
                 // `partsAfterFirst`: those after the root, which is empty, and the `.`.
-                if leads_away(target_string, 2) || leads_away(subpath, 0) {
+                if escapes_package(target_string, 2) || escapes_package(subpath, 0) {
                     look.trace(6275, &[Arg::Path(package_dir), Arg::Bytes(module_name)]);
                     return Found::No;
                 }
@@ -4936,24 +4479,24 @@ impl<'h> Resolver<'h> {
             ..look
         };
         // `getOutputDirectoriesForBaseDirectory`
-        let mut assigned_to = vec![options.declaration_dir.as_slice()];
+        let mut output_dirs = vec![options.declaration_dir.as_slice()];
         if options.out_dir != options.declaration_dir {
-            assigned_to.push(options.out_dir.as_slice());
+            output_dirs.push(options.out_dir.as_slice());
         }
-        for dir in assigned_to {
+        for dir in output_dirs {
             if dir.is_empty() || !contains_path(dir, path, is_case_sensitive) {
                 continue;
             }
             let input = join(root_dir, path.get(dir.len() + 1..).unwrap_or(b""));
-            let written = known_extension(&input);
+            let output_extension = known_extension(&input);
             // `GetPossibleOriginalInputExtensionForExtension`
-            let extensions: &[&[u8]] = match written {
+            let extensions: &[&[u8]] = match output_extension {
                 b".mjs" | b".d.mts" => &[b".mts", b".mjs"],
                 b".cjs" | b".d.cts" => &[b".cts", b".cjs"],
                 b".js" | b".json" | b".d.ts" => &[b".tsx", b".ts", b".jsx", b".js"],
                 _ => continue,
             };
-            let stem = &input[..input.len() - written.len()];
+            let stem = &input[..input.len() - output_extension.len()];
             for extension in extensions {
                 let candidate = [stem, *extension].concat();
                 if self.is_file(&candidate)
@@ -4977,13 +4520,13 @@ impl<'h> Resolver<'h> {
                 crate::verify::Problem::new(
                     if is_imports { 2210 } else { 2209 },
                     &[entry, &displayed_path(package_json)],
-                    crate::verify::Place::Nowhere,
+                    crate::verify::ConfigLocation::Nowhere,
                 )
             })
             .collect()
     }
 
-    /// `conditionMatches` against the conditions `GetConditions` returns, which have `types`.
+    /// `conditionMatches` against the conditions `GetConditions` returns, which include `types`.
     fn condition_matches(&self, condition: &[u8], look: Look) -> bool {
         let by_mode: &[u8] = if look.import { b"import" } else { b"require" };
         condition == b"default"
@@ -5020,7 +4563,7 @@ impl<'h> Resolver<'h> {
     }
 }
 
-/// `ResolveConfig`. What the lookup caches is left in `session`.
+/// `ResolveConfig`. Whatever the lookup caches stays in `session`.
 pub fn resolve_config(
     host: &dyn Host,
     session: &Session,
@@ -5046,8 +4589,8 @@ pub fn resolve_config(
     resolver.resolve_with(module_name, containing_file, look)
 }
 
-/// `c` is not assigned in Unicode 15, whose tables Go's `unicode` package and `ToUpperJS` have, and
-/// has another case in the tables of `char`, which are those of Unicode 17.
+/// True if `c` is unassigned in Unicode 15, whose tables Go's `unicode` package and `ToUpperJS`
+/// use, but has a case mapping in `char`'s tables, which are Unicode 17's.
 pub(crate) fn is_cased_since_unicode_16(c: char) -> bool {
     matches!(
         c,
@@ -5063,14 +4606,14 @@ pub(crate) fn is_cased_since_unicode_16(c: char) -> bool {
     )
 }
 
-/// `char::to_lowercase` by the tables of Unicode 15.
+/// `char::to_lowercase` with Unicode 15's tables.
 pub(crate) fn to_lowercase_unicode_15(c: char) -> impl Iterator<Item = char> {
     let is_unmapped = is_cased_since_unicode_16(c);
     let mapped = c.to_lowercase().filter(move |_| !is_unmapped);
     mapped.chain(is_unmapped.then_some(c))
 }
 
-/// `char::to_uppercase` by the tables of Unicode 15.
+/// `char::to_uppercase` with Unicode 15's tables.
 pub(crate) fn to_uppercase_unicode_15(c: char) -> impl Iterator<Item = char> {
     let is_unmapped =
         is_cased_since_unicode_16(c) || c.to_uppercase().any(is_cased_since_unicode_16);
@@ -5078,17 +4621,17 @@ pub(crate) fn to_uppercase_unicode_15(c: char) -> impl Iterator<Item = char> {
     mapped.chain(is_unmapped.then_some(c))
 }
 
-/// The same character for all that `unicode.SimpleFold` leads to from `c`: those that differ from
-/// it only in case.
+/// Maps every character that `unicode.SimpleFold` reaches from `c` (the ones that differ from it
+/// only in case) to the same character.
 fn simple_fold(c: char) -> char {
-    /// A mapping to several characters is not a simple one.
+    /// A mapping to several characters isn't a simple one.
     fn simple(mut mapped: impl Iterator<Item = char>, unmapped: char) -> char {
         match (mapped.next(), mapped.next()) {
             (Some(only), None) => only,
             _ => unmapped,
         }
     }
-    // `caseOrbit`: the capital `i` with a dot and the small one without fold with nothing.
+    // `caseOrbit`: the dotted capital `I` and the dotless small `i` don't fold with anything.
     if matches!(c, '\u{130}' | '\u{131}') {
         return c;
     }
@@ -5123,8 +4666,8 @@ pub fn contains_path(parent: &[u8], child: &[u8], is_case_sensitive: bool) -> bo
         && (child.len() == parent.len() || parent.ends_with(b"/") || child[parent.len()] == b'/')
 }
 
-/// `IsFalsy` for a value in a `package.json`. No number is: `v.Value == 0` compares a `float64` in
-/// an `any` with an `int`.
+/// `IsFalsy` for a value in a `package.json`. No number is falsy, because `v.Value == 0` compares a
+/// `float64` in an `any` with an `int`.
 fn is_falsy(json: &Json) -> bool {
     match json {
         Json::Null | Json::Bool(false) => true,
@@ -5142,7 +4685,7 @@ pub(crate) enum ObjectKind {
     Invalid,
 }
 
-/// `initObjectKind`: what the keys of an object in `exports` or `imports` are.
+/// `initObjectKind`: classifies the keys of an object in `exports` or `imports`.
 pub(crate) fn object_kind(entries: &[(Vec<u8>, Json)]) -> ObjectKind {
     let (mut seen_dot, mut seen_hash, mut seen_other) = (false, false, false);
     for (key, _) in entries {
@@ -5177,8 +4720,8 @@ fn json_type(json: &Json) -> &'static [u8] {
     }
 }
 
-/// `Expected.Value` of the field `name` of the `package.json` `json`, a `map[string]string`,
-/// whatever `Valid` is. If it is false, the last name can be there twice.
+/// `Expected.Value` of the `map[string]string` field `name` of the `package.json` `json`, whether
+/// or not it's `Valid`. If it isn't, the last name can appear twice.
 fn get_map_value<'j>(json: &'j Json, name: &[u8]) -> &'j [(Vec<u8>, Json)] {
     let fields = json.as_object().unwrap_or_default().iter();
     (fields.filter(|field| field.0 == name))
@@ -5203,8 +4746,8 @@ fn validate_package_json_field<'j, T>(
     valid
 }
 
-/// What `validatePackageJSONField` logs about the field `name` if it is missing, or if its value
-/// `field` is not of the type `expected`.
+/// Writes what `validatePackageJSONField` logs about the field `name` if it's missing, or if its
+/// value `field` isn't of the type `expected`.
 fn trace_invalid_package_json_field(
     name: &[u8],
     expected: &[u8],
@@ -5241,9 +4784,9 @@ fn get_package_json_path_field(
     Some(path)
 }
 
-/// `GetVersionPaths`: the first entry of `typesVersions` in the `package.json` `json` whose range
-/// contains the compiler's version: the range, and the paths, which are an object. `None`: it does
-/// not `Exists`. Neither does an entry whose range is the empty text, which ends the search.
+/// `GetVersionPaths`: finds the first entry of `typesVersions` in the `package.json` `json` whose range contains the
+/// compiler's version. Returns the range and the paths, which are an object. `None` means `Exists` is false. It's also
+/// false for an entry whose range is the empty string, which ends the search.
 fn get_version_paths<'j>(json: &'j Json, look: Look) -> Option<(&'j [u8], &'j Json)> {
     let (types_versions, object) = (Arg::Bytes(b"typesVersions"), Arg::Bytes(b"object"));
     let Some(field) = json.get(b"typesVersions") else {
@@ -5297,9 +4840,9 @@ fn resolution_key(redirect: u32, spec: &[u8], from: &[u8], mode: ResolutionMode)
     .concat()
 }
 
-/// `MatchPatternOrExact`: the entry of `table` for `name`: an exact match, or else the matching
-/// pattern with the longest prefix, the first of those on a tie. Returns the pattern, the value
-/// and the text matched by the `*`.
+/// `MatchPatternOrExact`: finds the entry of `table` for `name`. That's an exact match, or else the
+/// matching pattern with the longest prefix (the first one on a tie). Returns the pattern, the
+/// value and the text matched by the `*`.
 pub(crate) fn best_pattern<'t, 'n, T: 't>(
     table: impl Iterator<Item = &'t (Vec<u8>, T)> + Clone,
     name: &'n [u8],
@@ -5312,7 +4855,7 @@ pub(crate) fn best_pattern<'t, 'n, T: 't>(
     }
     let mut best: Option<((&'t [u8], &'t T, &'n [u8]), usize)> = None;
     for (pattern, value) in table {
-        // `TryParsePattern`: with more than one `*` it is not a pattern.
+        // `TryParsePattern`: with more than one `*` it isn't a pattern.
         let Some(star) = strings::index_of_char_usize(pattern, b'*') else {
             continue;
         };
@@ -5355,9 +4898,9 @@ fn match_pattern<'a>(pattern: &[u8], text: &'a [u8]) -> Option<&'a [u8]> {
     None
 }
 
-/// `ParseNodeModuleFromPath`: the directory of the package that the file at `path` is in. A file in
-/// the directory of a scope has that directory. A file right in the `node_modules` has that, with
-/// the slash after it, which costs `SubModuleName` its first letter.
+/// `ParseNodeModuleFromPath`: the directory of the package that the file at `path` is in. For a file directly in a
+/// scope's directory, that's the scope's directory. For a file directly in `node_modules`, it's `node_modules/` with
+/// the slash, which costs `SubModuleName` its first letter.
 fn parse_node_module_from_path(path: &[u8]) -> Option<&[u8]> {
     let marker = b"/node_modules/";
     let at = strings::last_index_of(path, marker)? + marker.len();
@@ -5474,7 +5017,7 @@ impl Version<'_> {
 
 /// `comparePreReleaseIdentifiers`
 fn compare_pre_release_identifiers(left: &[u8], right: &[u8]) -> Ordering {
-    // A version that has none comes after the same version with some.
+    // A version without a prerelease sorts after the same version with one.
     if left.is_empty() || right.is_empty() {
         return left.is_empty().cmp(&right.is_empty());
     }
@@ -5512,7 +5055,7 @@ fn is_numeric_identifier(text: &[u8]) -> bool {
     }
 }
 
-/// `getUintComponent`. `None`: it does not fit.
+/// `getUintComponent`. Returns `None` on overflow.
 fn get_uint_component(text: &[u8]) -> Option<u32> {
     bun_core::fmt::parse_unsigned(text, 10).ok()
 }
@@ -5583,7 +5126,7 @@ fn parse_alternatives(text: &[u8]) -> Option<Vec<VersionComparators<'_>>> {
         let mut comparators = VersionComparators::new();
         // `whitespaceRegExp`
         let simples: Vec<&[u8]> = strings::tokenize_any(range, b" \t\n\x0C\r").collect();
-        // `hyphenRegExp`. What is not in its character classes is no partial version either.
+        // `hyphenRegExp`. Anything outside its character classes isn't a valid partial version either.
         if let [left, b"-", right] = simples[..] {
             comparators.extend(parse_hyphen(left, right)?);
         } else {
@@ -5648,7 +5191,7 @@ struct PartialVersion<'a> {
 fn parse_partial(text: &[u8]) -> Option<PartialVersion<'_>> {
     // `partialRegExp`
     let is_xr = |part: &[u8]| is_wildcard(part) || is_numeric_identifier(part);
-    // Under `(?i)`, `[a-z]` has what folds to a letter too: U+017F to `s`, U+212A to `k`.
+    // Under `(?i)`, `[a-z]` also matches what folds to a letter: U+017F to `s`, U+212A to `k`.
     let is_parts = |parts: &[u8]| {
         let is_part =
             |c: char| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | '\u{17f}' | '\u{212a}');
@@ -5708,7 +5251,7 @@ fn parse_comparator<'a>(operator: &[u8], text: &'a [u8]) -> Option<VersionCompar
         prerelease: b"0",
         ..version
     };
-    // The versions that a partial `version` stands for start at `first` and end before `next`.
+    // A partial `version` covers the versions from `first` up to, but not including, `next`.
     let first = if is_partial {
         with_prerelease_zero(version)
     } else {
@@ -5784,4 +5327,41 @@ bun_core::comptime_string_set! {
 pub fn is_node_core_module(spec: &[u8]) -> bool {
     NODE_CORE_MODULES.contains(spec.strip_prefix(b"node:").unwrap_or(spec))
         || PREFIXED_NODE_CORE_MODULES.contains(spec)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declaration_file_names_are_those_with_a_declaration_extension() {
+        let paths: [&[u8]; 22] = [
+            b"",
+            b"/",
+            b"//",
+            b"/a.d.ts",
+            b"/.d.ts",
+            b"/d.ts",
+            b"/a.ts",
+            b"/a.d.mts",
+            b"/a.d.cts",
+            b"/a.d.json.ts",
+            b"/a.d.json.mts",
+            b"/a.d.x/b.ts",
+            b"/a.d.x\\b.ts",
+            b"/a/b.d.ts/",
+            b"/a/b.d.ts\\",
+            b"//a.d.ts",
+            b"/\\a.d.ts",
+            b"a.d.ts",
+            b"c:/a.d.ts",
+            b"c:.d.ts",
+            b"file:///a.d.ts",
+            b"/a.d.tsx",
+        ];
+        for path in paths {
+            let has_extension = !get_declaration_file_extension(path).is_empty();
+            assert_eq!(is_declaration_file_name(path), has_extension, "{}", bstr::BStr::new(path));
+        }
+    }
 }

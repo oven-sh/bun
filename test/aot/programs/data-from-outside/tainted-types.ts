@@ -1,4 +1,4 @@
-// Which declared types can also hold objects that were created by untyped code.
+// Every declared object type can hold objects that untyped code created: they arrive by a cast, an annotation, an argument, a result, a name, an await, a clone and inside a union, beside objects of other types that the program makes itself.
 interface Inner { deep: number }
 interface Element { id: number }
 interface ByCast { inner: Inner; list: Element[]; name: string }

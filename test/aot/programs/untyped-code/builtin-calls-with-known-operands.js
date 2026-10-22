@@ -21,7 +21,7 @@ const source = JSON.parse('{"a":1,"b":"two","c":[3],"d":{"e":4}}');
 let seen = 0;
 const withGetter = { get a() { seen++; return "got"; }, b: 2 };
 const show = (value) => JSON.stringify(value) + " " + Object.keys(value).length;
-const before = count("operationAOTTypedObjectAssignFrom");
+const before = count("operationAOTObjectAssignFrom");
 const said = new Set();
 for (let i = 0; i < 300; i++) {
   for (const f of [first, second, third]) {
@@ -29,7 +29,7 @@ for (let i = 0; i < 300; i++) {
     said.add(show(copy) + (copy !== source) + (copy.c === source.c));
   }
 }
-const calls = count("operationAOTTypedObjectAssignFrom") - before;
+const calls = count("operationAOTObjectAssignFrom") - before;
 console.log([...said].join(" | "), calls === 0 ? "and each copy was made in one step" : "and " + calls + " copies were made property by property");
 console.log(show(call(first, withGetter)), seen, show(call(second, null)), show(call(third, "ab")), show(call(first, [7, 8])), show(call(second, 5)));
 console.log(show(call(withMore, source, { a: 9, z: 0 })), show(call(alsoWithMore, { z: 0 }, source)), show(call(withMore, undefined, source)));
@@ -39,10 +39,10 @@ const frozen = Object.freeze({ a: 0 });
 let thrown = "nothing";
 try { call(intoGiven, frozen, source); } catch (error) { thrown = error.constructor.name; }
 console.log(thrown);
-const searchesBefore = count("operationAOTTypedStringFind8");
+const searchesBefore = count("operationAOTStringFind8");
 for (const url of ["http://localhost/user", "https://example.com/a/b?c=d", "http://nothing", "http://é€.example/€?x"]) {
   console.log(call(pathOf, url), call(alsoPathOf, url), call(queryOf, url), call(alsoQueryOf, url), call(isSecure, url), call(alsoIsSecure, url));
 }
-const searches = count("operationAOTTypedStringFind8") - searchesBefore;
+const searches = count("operationAOTStringFind8") - searchesBefore;
 console.log(searches === 0 ? "a needle of one character was looked for as a character" : searches + " needles of one character were looked for as strings");
 console.log(call(partsOf, "a,b,,c").length, call(alsoPartsOf, "").length, call(partsOf, "no comma").join("|"), call(alsoPartsOf, ",").length);

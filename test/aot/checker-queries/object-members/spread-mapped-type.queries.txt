@@ -1,0 +1,8 @@
+# A member that a spread copies from a mapped type is written only if the member of the mapped type is. An access on the spread is unwritten either way.
+spread-mapped-type.ts:14 has `typeof s1` = a Field unwritten checked string
+spread-mapped-type.ts:15 has `typeof s2` = a Field number checked number optional
+spread-mapped-type.ts:16 has `typeof s3` = a Field number checked number
+
+spread-mapped-type.ts:11 member `s1.a` = member a Field unwritten checked string
+spread-mapped-type.ts:12 member `s2.a` = member a Field unwritten checked number optional
+spread-mapped-type.ts:13 member `s3.a` = member a Field unwritten checked number

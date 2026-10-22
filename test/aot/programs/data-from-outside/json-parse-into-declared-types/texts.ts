@@ -333,7 +333,7 @@ export function parseEveryText(sites: [string, (text: string) => unknown][]) {
         line = describe(value, 0) + " " + mix(0, JSON.stringify(value) ?? "undefined");
       } catch (error) {
         thrown++;
-        line = "threw " + (error as Error).name + ": " + (error as Error).message;
+        line = "threw " + (error instanceof TypeError ? "TypeError" : (error as Error).name + ": " + (error as Error).message);
       }
       if (isVerbose) console.log(name, at, line.slice(0, 300));
       hash = mix(hash, line);

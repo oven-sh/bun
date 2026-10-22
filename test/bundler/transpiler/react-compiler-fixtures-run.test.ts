@@ -115,6 +115,6 @@ describe("react-compiler upstream fixtures, run", () => {
     const expected = ONLY_THE_SOURCE_THROWS.has(name)
       ? (plain[name] as Render[]).map((render, i) => (render[0] === "throws" ? compiled[name][i] : render))
       : plain[name];
-    expect(compiled[name]).toEqual<unknown>(expected);
+    expect(compiled[name]).toEqual(expected);
   });
 });

@@ -301,7 +301,7 @@ for (const name of names) {
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
 say("many, some kept", () => {
   const kept: any[] = [];
-  const before = count("operationAOTPutByNameAndCache");
+  const before = count("operationAOTPutByIdAndCache");
   for (let i = 0; i < 300000; i++) {
     const reply = fresh();
     setFourth(reply, "f" + (i & 7));
@@ -313,7 +313,7 @@ say("many, some kept", () => {
   }
   let sum = 0;
   for (const reply of kept) sum += reply.size + reply.fourth.length + (reply.third === undefined ? 1 : 2);
-  return kept.length + " " + sum + " " + (count("operationAOTPutByNameAndCache") - before < 10000);
+  return kept.length + " " + sum + " " + (count("operationAOTPutByIdAndCache") - before < 10000);
 });
 say("old objects", () => {
   const old: any[] = [];

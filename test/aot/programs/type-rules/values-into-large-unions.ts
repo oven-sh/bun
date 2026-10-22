@@ -1,5 +1,5 @@
 // Values enter unions of many types. A hundred and twenty record types, and fourteen unions that each take sixteen of them, crossing one another so that no numbering of the types
-// makes every union a row. Elements of arrays are anything until they are read: each read is held to its union. What belongs passes, whatever the union is asked by.
+// makes every union a row. Elements of arrays are anything until they are read: each read is tested. What belongs passes, however large the union is.
 interface Root { id: number }
 interface Kind0 extends Root { field0: number }
 interface Kind1 extends Root { field1: number }

@@ -271,7 +271,7 @@ interface ClangTimeTrace {
 const PHASE_FLOOR_MS = 10;
 
 /** The rules compiled with `cxxflags`, which is where flags.ts puts `-ftime-trace`. */
-const clangTraced = new Set<string>(["cxx", "cxx_pch", "pch", "pch_msvc"] satisfies RuleName[]);
+const clangTraced = new Set<string>(["cxx", "cxx_pch", "cxx_pch_chained", "pch", "pch_chained", "pch_msvc"] satisfies RuleName[]);
 const RUSTC: RuleName = "rust_rustc";
 
 /**
@@ -810,18 +810,23 @@ const ruleLane: Record<RuleName, Lane> = {
   dep_host_cc: "dependencies",
   dep_subst: "dependencies",
   bun_install: "codegen",
+  aot_check: "codegen",
   codegen: "codegen",
   codegen_bun: "codegen",
   esbuild: "codegen",
   npm_install: "codegen",
   rust_build_script: "Rust",
+  rust_generated_inputs: "Rust",
   rust_plan: "Rust",
   rust_rustc: "Rust",
   cc: "C and C++",
   cxx: "C and C++",
   cxx_pch: "C and C++",
+  cxx_pch_chained: "C and C++",
   nasm: "C and C++",
   pch: "C and C++",
+  pch_chained: "C and C++",
+  pch_checksum: "C and C++",
   pch_msvc: "C and C++",
   rc: "C and C++",
   ar: "link and checks",
@@ -830,7 +835,8 @@ const ruleLane: Record<RuleName, Lane> = {
   dsymutil: "link and checks",
   duplicate_symbols: "link and checks",
   link: "link and checks",
-  link_with_islands: "link and checks",
+  link_trimmable: "link and checks",
+  cut_profiles: "link and checks",
   shim_verify: "link and checks",
   smoke_test: "link and checks",
   strip: "link and checks",

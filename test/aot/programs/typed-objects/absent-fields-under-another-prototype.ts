@@ -1,5 +1,5 @@
 // Optional fields that are absent at birth, on records that typed code gives another prototype: a read finds what the chain holds at that moment, a first store creates an own field unless the chain intercepts it, and every change of the chain is seen by the next access. Each round runs the same places several times, so whatever they remember is in use when the chain changes.
-// IR+ ^shape \d+ Record "Fields" .* other prototypes prototype set by typed code
+// IR+ ^layout L\d+ .*name="Fields" (?!.*impossibleMutations=\[[^\]]*ChangePrototype)(?!.*isStable=true)
 interface Fields { a: number; b: any; count?: any; ended?: any; size?: number; flag?: boolean; late?: any }
 const base: any = { count: 0 }
 const shared: any = Object.create(base)

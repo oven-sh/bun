@@ -1,7 +1,7 @@
 # An issue tracker on Bun.serve and Bun.sql, and the same in Go and in Rust
 
 `app/` is a web application of 2,000 lines of strict TypeScript. It uses no framework and no package: `Bun.serve` and its
-routes, `Bun.sql` on Postgres, validation by declared types (`JSON.parse<T>()`, `Bun.validate<T>()`), template strings. It is written the way one
+routes, `Bun.sql` on Postgres, validation by declared types (`JSON.parse<T>()`, `validate<T>()` from `"bun:bundle"`), template strings. It is written the way one
 writes TypeScript: interfaces, `async` and `await`, `map` and `join`, `Map` and `Set`. Nothing in it is written for a compiler.
 
 | | pages | JSON |

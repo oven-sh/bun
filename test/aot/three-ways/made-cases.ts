@@ -31,8 +31,8 @@ function filesUnder(folder: string): Record<string, string> {
 function whereItDeparts(aot: string, plain: string) {
   const theirs = plain.split("\n");
   const lines = aot.split("\n").filter((line, i) => line !== theirs[i]);
-  // A long number is a time or an address.
-  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").slice(0, 160).replace(/\d{10,}/g, "<number>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
+  // A long number is a time or an address. A case may cut a message in the middle of the path of the temporary folder.
+  return [...lines.slice(0, 4).map(line => line.replaceAll("program.exe", "program").slice(0, 160).replace(/\d{10,}/g, "<number>").replace(/Cannot load '\/[^']*/g, "Cannot load '<path>")), ...(lines.length > 4 ? [`and ${lines.length - 4} lines more`] : [])].join("\n");
 }
 
 /**

@@ -1,16 +1,16 @@
-// Code that type-checks but behaves differently once the types are enforced at run time.
-function show(label: string, f: () => unknown) { try { const v = f(); console.log(label + " => " + (typeof v === "string" ? JSON.stringify(v) : String(v))) } catch (e) { console.log(label + " => throws " + (e as Error).constructor.name + ": " + (e as Error).message.split("\n")[0]) } }
+// Code that type-checks and in which a written type is false at run time, or that writes to a built-in: a store to a locked built-in throws, and everything else is as in plain Bun: a value of another kind gets where it is put and is read as what it is, and the program's own objects and classes and the built-ins that are not locked change as they are told.
+function show(label: string, f: () => unknown) { try { const v = f(); console.log(label + " => " + (typeof v === "string" ? JSON.stringify(v) : String(v))) } catch (e) { console.log(label + " => throws " + (e as Error).constructor.name) } }
 interface User { name: string; age: number }
 interface Point { x: number; y: number }
 class Account { constructor(public owner: string, public balance: number) {} deposit(n: number) { this.balance += n; return this.balance } }
 
-show("01 annotation validates JSON", () => { const u: User = JSON.parse('{"name":"ada","age":"36"}'); return u.age + 1 });
+show("01 a field of another kind in annotated JSON", () => { const u: User = JSON.parse('{"name":"ada","age":"36"}'); return u.age + 1 });
 show("02 good JSON passes", () => { const u: User = JSON.parse('{"name":"ada","age":36}'); return u.age + 1 });
 show("03 missing field", () => { const u: User = JSON.parse('{"name":"ada"}'); return u.age });
-show("04 bang asserts", () => { function first(xs: number[]) { return xs[0]! } return first([]) });
+show("04 bang on a missing element", () => { function first(xs: number[]) { return xs[0]! } return first([]) });
 show("05 bang on optional", () => { function f(o: { n?: number }) { const n = o.n!; return n } return f({}) });
-show("06 as number converts", () => { const raw: any = "5"; return (raw as number) + 1 });
-show("07 as string converts", () => { const raw: any = 5; return (raw as string) + 1 });
+show("06 as number on a string", () => { const raw: any = "5"; return (raw as number) + 1 });
+show("07 as string on a number", () => { const raw: any = 5; return (raw as string) + 1 });
 show("08 any into a typed parameter", () => { function area(p: Point) { return p.x + p.y } const bad: any = { x: "2", y: 3 }; return area(bad) });
 show("09 wrong store through any", () => { const p: Point = { x: 1, y: 2 }; (p as any).x = "one"; return typeof p.x });
 show("10 delete a required field", () => { const p: Point = { x: 1, y: 2 }; delete (p as any).x; return p.x });
@@ -20,7 +20,7 @@ show("13 prototype pollution", () => { (Object.prototype as any).isAdmin = true;
 show("14 pollution by __proto__", () => { const o: any = {}; o.__proto__.polluted = "yes"; return ({} as any).polluted });
 show("15 replace Math.max", () => { (Math as any).max = () => 42; return Math.max(1, 2) });
 show("16 add to Math", () => { (Math as any).tau = 6.28; return (Math as any).tau });
-show("17 replace JSON.parse", () => { (JSON as any).parse = () => "pwned"; return JSON.parse("1") });
+show("17 replace JSON.parse", () => { const parse = JSON.parse; (JSON as any).parse = () => "pwned"; try { return JSON.parse("1") } finally { (JSON as any).parse = parse } });
 show("18 replace a method of a class", () => { (Account.prototype as any).deposit = function () { return -1 }; return new Account("a", 1).deposit(5) });
 show("19 wrong element in a typed array", () => { const xs: number[] = JSON.parse('[1,"2",3]'); let s = 0; for (const x of xs) s += x; return s });
 show("20 wrong type returned by any", () => { function parse(s: string): number { const v: any = s; return v } return parse("7") + 1 });

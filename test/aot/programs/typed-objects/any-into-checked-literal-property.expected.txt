@@ -1,7 +1,0 @@
-plain TypeError
-spread TypeError
-shorthand TypeError
-pushed 0
-nested TypeError
-right l3 undefined null
-untyped x

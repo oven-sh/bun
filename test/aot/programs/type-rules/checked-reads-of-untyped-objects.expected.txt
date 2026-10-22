@@ -1,0 +1,115 @@
+number outside try a value that fits passes the cast: true
+number outside try literal: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try from entries: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try out of line: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try inherited: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try getter: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try proxy: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number outside try absent: undefined undefined undefined undefined undefined undefined
+number outside try no receiver: rejected rejected
+number in try a value that fits passes the cast: true
+number in try literal: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try from entries: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try out of line: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try inherited: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try getter: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try proxy: fits fits fits fits fits fits fits fits other other other other fits fits other other other other other other other other other
+number in try absent: undefined undefined undefined undefined undefined undefined
+number in try no receiver: rejected rejected
+boolean outside try a value that fits passes the cast: true
+boolean outside try literal: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try from entries: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try out of line: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try inherited: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try getter: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try proxy: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean outside try absent: undefined undefined undefined undefined undefined undefined
+boolean outside try no receiver: rejected rejected
+boolean in try a value that fits passes the cast: true
+boolean in try literal: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try from entries: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try out of line: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try inherited: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try getter: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try proxy: other other other other other other other other fits fits other other fits fits other other other other other other other other other
+boolean in try absent: undefined undefined undefined undefined undefined undefined
+boolean in try no receiver: rejected rejected
+string outside try a value that fits passes the cast: true
+string outside try literal: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try from entries: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try out of line: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try inherited: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try getter: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try proxy: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string outside try absent: undefined undefined undefined undefined undefined undefined
+string outside try no receiver: rejected rejected
+string in try a value that fits passes the cast: true
+string in try literal: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try from entries: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try out of line: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try inherited: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try getter: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try proxy: other other other other other other other other other other fits fits fits fits other other other other other other other other other
+string in try absent: undefined undefined undefined undefined undefined undefined
+string in try no receiver: rejected rejected
+array outside try a value that fits passes the cast: true
+array outside try literal: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try from entries: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try out of line: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try inherited: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try getter: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try proxy: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array outside try absent: undefined undefined undefined undefined undefined undefined
+array outside try no receiver: rejected rejected
+array in try a value that fits passes the cast: true
+array in try literal: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try from entries: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try out of line: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try inherited: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try getter: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try proxy: other other other other other other other other other other other other fits fits fits fits fits other other other other other other
+array in try absent: undefined undefined undefined undefined undefined undefined
+array in try no receiver: rejected rejected
+number outside try in turn: 0 wrong of 5520
+number in try in turn: 0 wrong of 5520
+boolean outside try in turn: 0 wrong of 5520
+boolean in try in turn: 0 wrong of 5520
+string outside try in turn: 0 wrong of 5520
+string in try in turn: 0 wrong of 5520
+array outside try in turn: 0 wrong of 5520
+array in try in turn: 0 wrong of 5520
+chain, first read: Error at line 169
+chain, second read: Error at line 170
+chain, nothing to read from: TypeError at line 170
+chain, no receiver: TypeError at line 169
+chain: returned "c"
+chain on one line, first read: Error at line 173
+chain on one line, second read: Error at line 173
+chain on one line: returned "c"
+chain keeping both, first read: Error at line 176
+chain keeping both, second read: Error at line 177
+chain keeping both: returned 2
+chain in try, first read: returned "Error at line 204"
+chain in try, second read: returned "Error at line 205"
+pair, first read: Error at line 183
+pair, second read: Error at line 184
+pair, no receiver: TypeError at line 183
+pair: returned "{\"x\":1,\"y\":2}"
+pair of two objects, first read: Error at line 190
+pair of two objects, second read: Error at line 191
+pair of two objects, no second receiver: TypeError at line 191
+compared read: Error at line 195
+compared read, no receiver: TypeError at line 195
+compared read, values: returned "text,other,other,other,other,text"
+tested read: Error at line 199
+tested read, no receiver: TypeError at line 199
+tested read, values: returned "set,clear,clear,set,clear,clear,set,clear,clear"
+checked read: Error at line 23
+checked read, no receiver: TypeError at line 23
+once: chain, first read: Error at line 248
+once: chain, second read: Error at line 253
+once: pair, first read: Error at line 258
+once: pair, second read: Error at line 266
+once: compared read: Error at line 270
+once: tested read: Error at line 274
+once: checked read: Error at line 278

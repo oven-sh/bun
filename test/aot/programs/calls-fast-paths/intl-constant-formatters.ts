@@ -1,12 +1,15 @@
 // Intl.DateTimeFormat and Intl.NumberFormat with a constant locale and constant options format from a pattern computed at build time. Every result is compared with a formatter whose options are not constants, which goes through ICU.
-// IRT= 1 formatMinute CallBuiltin FormatDateTime
-// IR= 1 formatCount CallBuiltin FormatNumber
-// IR= 0 formatBuddhist FormatDateTime
-// IRT= 1 formatLocalTime CallBuiltin FormatDateTime
-// IR= 0 formatCompact FormatNumber
-// IR= 1 formatRow CallBuiltin FormatDateTime
-// IR= 1 formatRow CallBuiltin FormatNumber
-// IR= 1 formatNewDate CallBuiltin FormatDateTime
+// IR+ ^variable (g\d+) name="minute" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+// IR+ ^variable (g\d+) name="localTime" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+// IR+ ^variable (g\d+) name="count" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+// IR- ^variable (g\d+) name="buddhist" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+// IR- ^variable (g\d+) name="compact" [\s\S]* (v\d+): \S+ = NewFormatterWithPattern [\s\S]*? = PutModuleVariable \2 variable=\1\b
+// IRT= 1 formatMinute CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatCount CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
+// IRT= 1 formatLocalTime CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
+// IR= 1 formatRow CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlNumberFormatPrototypeFormat/
+// IR= 1 formatNewDate CallBuiltin v[0-9]+ \(v[0-9]+\) overload=IntlDateTimeFormatPrototypeFormat/
 function notConstant<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
@@ -134,7 +137,7 @@ for (const [name, format, locale, options] of dateCases) {
     if (say(() => format(new Date(time))) !== say(() => throughICU.format(new Date(time)))) differences++;
     if (say(() => format(time)) !== say(() => throughICU.format(time))) differences++;
   }
-  for (const make of otherValues) if (say(() => format(make())) !== say(() => throughICU.format(make() as Date))) differences++;
+  for (const make of otherValues) if (say(() => format(make())) !== say(() => throughICU.format(make() as any))) differences++;
   console.log(name + ": " + differences + " differences");
 }
 
@@ -199,7 +202,7 @@ const numbers: unknown[] = [
 for (const [name, format, locale, options] of numberCases) {
   const throughICU = new Intl.NumberFormat(notConstant(locale), options && notConstant(options));
   let differences = 0;
-  for (const number of numbers) if (say(() => format(number)) !== say(() => throughICU.format(number as number))) differences++;
+  for (const number of numbers) if (say(() => format(number)) !== say(() => throughICU.format(number as any))) differences++;
   console.log(name + ": " + differences + " differences");
 }
 

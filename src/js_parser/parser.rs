@@ -260,8 +260,6 @@ pub mod Runtime {
         /// `Define::user_hash` of this parse's define table (runtime transpiler cache key).
         pub define_hash: Option<u64>,
 
-        pub audited: Option<&'static bun_ast::audited::AuditedFile>,
-
         /// REPL mode: transforms code for interactive evaluation
         /// - Wraps lone object literals `{...}` in parentheses
         /// - Hoists variable declarations for REPL persistence
@@ -310,7 +308,6 @@ pub mod Runtime {
                 lower_using: true,
                 bundler_feature_flags: None,
                 define_hash: None,
-                audited: None,
                 repl_mode: false,
                 jsx_optimization_inline: false,
             }

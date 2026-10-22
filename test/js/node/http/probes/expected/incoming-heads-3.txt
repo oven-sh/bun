@@ -1,0 +1,982 @@
+seed 3, connection 0
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    identity true true true
+    headerKeys ["host"]
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "M-SEARCH /p0 HTTP/1.1"
+    headersDistinct null-prototype{from:["v3"],host:["localhost"],server:["0"],max-forwards:["v0"]}
+    identity true true true
+    requestLine "M-SEARCH" "/p0" "1.1" 1 1
+    rawHeaders ["from","v3","Host","localhost","server","0","max-forwards","v0"]
+    headers Object{from:"v3",host:"localhost",server:"0",max-forwards:"v0"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"],te:["v0"]}
+    headerKeys ["host","te"]
+    trailers Object{} []
+    rawHeaders ["Host","localhost","te","v0"]
+    identity true true true
+    requestLine "GET" "/p1" "1.1" 1 1
+    headers Object{host:"localhost",te:"v0"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a|b HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"],referer:["v0"],if-modified-since:["v1"],authorization:["0"]}
+    requestLine "GET" "/a|b" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 1
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    headers Object{host:"localhost"}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "DELETE /p0 HTTP/1.1"
+    requestLine "DELETE" "/p0" "1.1" 1 1
+    headersDistinct null-prototype{x-a:["café ü"],host:["localhost"],set-cookie:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."]}
+    trailers Object{} []
+    singleHeaders "café ü" undefined ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."] "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{accept:[""],x!bang:["v4"],host:["localhost"],x_under:["\"quoted, text\""]}
+    headers Object{accept:"",x!bang:"v4",host:"localhost",x_under:"\"quoted, text\""}
+    rawHeaders ["Accept","","x!bang","v4","Host","localhost","x_under","\"quoted, text\""]
+    headerKeys ["accept","x!bang","host","x_under"]
+    requestLine "GET" "//x//y" "1.1" 1 1
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET http://other.example/abs?q=1 HTTP/1.1"
+    identity true true true
+    requestLine "GET" "http://other.example/abs?q=1" "1.1" 1 1
+    headers Object{max-forwards:"\"quoted, text\"",connection-x:"v0",expires:"a=1; b=2",host:"localhost",cache-control:"v7",authorization:"v7",x_under:"a=1; b=2",pragma:"a=1; b=2"}
+    headersDistinct null-prototype{max-forwards:["\"quoted, text\""],connection-x:["v0"],expires:["a=1; b=2"],host:["localhost"],cache-control:["v7"],authorization:["v7"],x_under:["a=1; b=2"],pragma:["a=1; b=2"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 2
+    request: "GET /warm-up HTTP/1.1"
+    headerKeys ["host"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "FOO /p0 HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 3
+    request: "GET /warm-up HTTP/1.1"
+    identity true true true
+    headersDistinct null-prototype{host:["localhost"]}
+    singleHeaders undefined undefined undefined "localhost"
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "get /p0 HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 4
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    requestLine "GET" "/p0" "1.1" 1 1
+    headers Object{user-agent:"v7",host:"localhost",x-forwarded-for:"v2"}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "FOO /a|b HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 5
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET http://other.example/abs?q=1 HTTP/1.1"
+    headerKeys ["proxy-authorization","if-unmodified-since","x_under","connection-x","content-length-x","user-agent","authorization","etag","te","cookie","expires","retry-after","x-a","host","warning","location","last-modified","referer"]
+    singleHeaders "0" "v3" undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a\\b HTTP/1.1"
+    headers Object{host:"localhost",etag:"padded",content-length-x:"v5",set-cookie:[""],user-agent:"w46",origin:"w83",cache-control:"",expires:"v1"}
+    rawHeaders ["Host","localhost","etag","padded","content-length-x","v5","set-cookie","","User-Agent","w46","origin","w83","cache-control","","expires","v1"]
+    headersDistinct null-prototype{host:["localhost"],etag:["padded"],content-length-x:["v5"],set-cookie:[""],user-agent:["w46"],origin:["w83"],cache-control:[""],expires:["v1"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "get /a|b HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 6
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    trailers Object{} []
+    headerKeys ["host"]
+    headersDistinct null-prototype{host:["localhost"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a\\b HTTP/1.1"
+    response: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    request: "GET /a|b HTTP/1.1"
+    response: "closed"
+seed 3, connection 7
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    headersDistinct null-prototype{user-agent:["café ü"],cache-control:["w39"],cookie:["\"quoted, text\"","v8"],host:["localhost"]}
+    trailers Object{} []
+    singleHeaders undefined "\"quoted, text\"; v8" undefined "localhost"
+    headerKeys ["user-agent","cache-control","cookie","host"]
+    identity true true true
+    requestLine "GET" "//x//y" "1.1" 1 1
+    rawHeaders ["User-Agent","café ü","cache-control","w39","COOKIE","\"quoted, text\"","Host","localhost","COOKIE","v8"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "DELETE /p1 HTTP/1.1"
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    rawHeaders ["x_under","w57","Host","localhost","max-forwards","with: colon"]
+    headerKeys ["x_under","host","max-forwards"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "TRACE * HTTP/1.1"
+    clientError HPE_INVALID_CONSTANT
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 8
+    request: "GET /warm-up HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headerKeys ["host"]
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PATCH /..%2f.. HTTP/1.1"
+    headersDistinct null-prototype{age:["v2"],x.dot:["w26"],content-length:["0"],server:["padded"],x-a:["v2"],host:["localhost"],retry-after:["v5"]}
+    headers Object{age:"v2",x.dot:"w26",content-length:"0",server:"padded",x-a:"v2",host:"localhost",retry-after:"v5"}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    headersDistinct null-prototype{user-agent:["v3"],set-cookie:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],host:["localhost"],connection-x:["w60"],cookie:["with: colon"],te:["w1"],accept-language:["v6"]}
+    headers Object{user-agent:"v3",set-cookie:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],host:"localhost",connection-x:"w60",cookie:"with: colon",te:"w1",accept-language:"v6"}
+    rawHeaders ["user-agent","v3","set-cookie","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","Host","localhost","connection-x","w60","Cookie","with: colon","te","w1","accept-language","v6"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    singleHeaders undefined undefined ["v7"] "localhost"
+    rawHeaders ["keep-alive","v3","location","v2","if-modified-since","\"quoted, text\"","x-1","w80","Host","localhost","dnt","tabbed","Set-Cookie","v7"]
+    headers Object{keep-alive:"v3",location:"v2",if-modified-since:"\"quoted, text\"",x-1:"w80",host:"localhost",dnt:"tabbed",set-cookie:["v7"]}
+    requestLine "GET" "/p2" "1.1" 1 1
+    headerKeys ["keep-alive","location","if-modified-since","x-1","host","dnt","set-cookie"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 9
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    rawHeaders ["if-modified-since","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","Host","localhost","User-Agent","w37","expires","w83","x-b","tabbed"]
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/p0" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    identity true true true
+    rawHeaders ["x-a","v1","warning","","pragma","v6","content-length-x","tabbed","x!bang","v0","Host","localhost","X-A","w31","user-agent","","origin","v3","cache-control","w95","location","v0","from","tabbed","authorization","w30","COOKIE","v8","retry-after","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","x-1","v4","warning","v7","te","v0","origin","v5","COOKIE","padded","content-type","a, b,c","server",""]
+    requestLine "GET" "/p1" "1.1" 1 1
+    trailers Object{} []
+    headersDistinct null-prototype{x-a:["v1","w31"],warning:["","v7"],pragma:["v6"],content-length-x:["tabbed"],x!bang:["v0"],host:["localhost"],user-agent:[""],origin:["v3","v5"],cache-control:["w95"],location:["v0"],from:["tabbed"],authorization:["w30"],cookie:["v8","padded"],retry-after:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],x-1:["v4"],te:["v0"],content-type:["a, b,c"],server:[""]}
+    singleHeaders "v1, w31" "v8; padded" undefined "localhost"
+    headerKeys ["x-a","warning","pragma","content-length-x","x!bang","host","user-agent","origin","cache-control","location","from","authorization","cookie","retry-after","x-1","te","content-type","server"]
+    headers Object{x-a:"v1, w31",warning:", v7",pragma:"v6",content-length-x:"tabbed",x!bang:"v0",host:"localhost",user-agent:"",origin:"v3, v5",cache-control:"w95",location:"v0",from:"tabbed",authorization:"w30",cookie:"v8; padded",retry-after:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",x-1:"v4",te:"v0",content-type:"a, b,c",server:""}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    trailers Object{} []
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 10
+    request: "GET /warm-up HTTP/1.1"
+    identity true true true
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headers Object{host:"localhost"}
+    headerKeys ["host"]
+    headersDistinct null-prototype{host:["localhost"]}
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "TRACE /a?b=c&d=e HTTP/1.1"
+    identity true true true
+    headers Object{cookie:"w94",x-1:"v1",etag:"",dnt:"w48",host:"localhost",proxy-authorization:"padded",last-modified:"v1"}
+    trailers Object{} []
+    rawHeaders ["cookie","w94","x-1","v1","etag","","dnt","w48","Host","localhost","proxy-authorization","padded","last-modified","v1"]
+    singleHeaders undefined "w94" undefined "localhost"
+    requestLine "TRACE" "/a?b=c&d=e" "1.1" 1 1
+    headersDistinct null-prototype{cookie:["w94"],x-1:["v1"],etag:[""],dnt:["w48"],host:["localhost"],proxy-authorization:["padded"],last-modified:["v1"]}
+    headerKeys ["cookie","x-1","etag","dnt","host","proxy-authorization","last-modified"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "TRACE /p1 HTTP/1.1"
+    headerKeys ["if-modified-since","last-modified","expires","x.dot","retry-after","server","host","x_under"]
+    headers Object{if-modified-since:"w52",last-modified:"café ü",expires:"with: colon",x.dot:"\"quoted, text\"",retry-after:"padded",server:"v8",host:"localhost",x_under:"a=1; b=2"}
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{if-modified-since:["w52"],last-modified:["café ü"],expires:["with: colon"],x.dot:["\"quoted, text\""],retry-after:["padded"],server:["v8"],host:["localhost"],x_under:["a=1; b=2"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.."
+    identity true true true
+    singleHeaders "with: colon" undefined ["a, b,c"] "localhost"
+    headerKeys ["x-a","accept","keep-alive","x_under","origin","from","host","set-cookie"]
+    requestLine "GET" "/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.." "1.1" 1 1
+    headers Object{x-a:"with: colon",accept:"a=1; b=2",keep-alive:"tabbed",x_under:"",origin:"a, b,c",from:"v4",host:"localhost",set-cookie:["a, b,c"]}
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 11
+    request: "GET /warm-up HTTP/1.1"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    trailers Object{} []
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.."
+    headers Object{referer:"tabbed",host:"localhost",content-type:"w64",accept:"v7"}
+    headerKeys ["referer","host","content-type","accept"]
+    headersDistinct null-prototype{referer:["tabbed"],host:["localhost"],content-type:["w64"],accept:["v7"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "get /café HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 12
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    headersDistinct null-prototype{host:["localhost"]}
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    headerKeys ["host"]
+    identity true true true
+    rawHeaders ["Host","localhost"]
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    identity true true true
+    headers Object{host:"localhost",user-agent:"café ü"}
+    headerKeys ["host","user-agent"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    trailers Object{} []
+    headersDistinct null-prototype{connection-x:["v7"],content-length-x:["v8"],x-1:["w83"],host:["localhost"]}
+    requestLine "GET" "/p2" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 13
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    singleHeaders undefined undefined undefined "localhost"
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    headerKeys ["host"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "M-SEARCH //x//y HTTP/1.1"
+    headersDistinct null-prototype{cache-control:["w77"],host:["localhost"],x_under:["padded"],age:["v1"]}
+    headerKeys ["cache-control","host","x_under","age"]
+    requestLine "M-SEARCH" "//x//y" "1.1" 1 1
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PUT /p1 HTTP/1.1"
+    requestLine "PUT" "/p1" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"],x!bang:["café ü"],content-length:["0"]}
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    headers Object{accept:"v7",content-type:"w0",host:"localhost",via:"v5"}
+    singleHeaders undefined undefined undefined "localhost"
+    rawHeaders ["Accept","v7","Content-Type","w0","Host","localhost","via","v5"]
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 14
+    request: "GET /warm-up HTTP/1.1"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"]}
+    headerKeys ["host"]
+    rawHeaders ["Host","localhost"]
+    headers Object{host:"localhost"}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PROPFIND http://other.example/abs?q=1 HTTP/1.1"
+    rawHeaders ["x.dot","w52","expires","v6","Host","localhost"]
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{x.dot:["w52"],expires:["v6"],host:["localhost"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    requestLine "GET" "/p1" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"],retry-after:["v4"],accept:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],sec-fetch-mode:["w91"]}
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.."
+    response: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+seed 3, connection 15
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    headerKeys ["host"]
+    identity true true true
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"]}
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "DELETE /..%2f.. HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    rawHeaders ["Host","localhost"]
+    trailers Object{} []
+    headers Object{host:"localhost"}
+    requestLine "DELETE" "/..%2f.." "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    headerKeys ["host"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /..%2f.. HTTP/1.1"
+    headers Object{cookie:"; ; \"quoted, text\"",x!bang:"w56, v7",host:"localhost",content-type:"a=1; b=2",last-modified:"with: colon",authorization:"v1",accept-language:"padded",connection-x:"padded",user-agent:"tabbed",from:"v7",cache-control:"v7, a, b,c",keep-alive:"v4",x-1:"v8",dnt:"padded",sec-fetch-mode:"",age:"",warning:"v2",referer:"\"quoted, text\"",x-forwarded-for:"a, b,c",max-forwards:"a, b,c"}
+    headerKeys ["cookie","x!bang","host","content-type","last-modified","authorization","accept-language","connection-x","user-agent","from","cache-control","keep-alive","x-1","dnt","sec-fetch-mode","age","warning","referer","x-forwarded-for","max-forwards"]
+    headersDistinct null-prototype{cookie:["","","\"quoted, text\""],x!bang:["w56","v7"],host:["localhost"],content-type:["a=1; b=2"],last-modified:["with: colon"],authorization:["v1"],accept-language:["padded"],connection-x:["padded"],user-agent:["tabbed","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],from:["v7"],cache-control:["v7","a, b,c"],keep-alive:["v4"],x-1:["v8"],dnt:["padded"],sec-fetch-mode:[""],age:[""],warning:["v2"],referer:["\"quoted, text\""],x-forwarded-for:["a, b,c"],max-forwards:["a, b,c"]}
+    rawHeaders ["COOKIE","","x!bang","w56","COOKIE","","Host","localhost","cookie","\"quoted, text\"","content-type","a=1; b=2","last-modified","with: colon","authorization","v1","x!bang","v7","accept-language","padded","connection-x","padded","user-agent","tabbed","from","v7","cache-control","v7","keep-alive","v4","user-agent","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","x-1","v8","dnt","padded","sec-fetch-mode","","age","","warning","v2","referer","\"quoted, text\"","x-forwarded-for","a, b,c","cache-control","a, b,c","max-forwards","a, b,c"]
+    singleHeaders undefined "; ; \"quoted, text\"" undefined "localhost"
+    requestLine "GET" "/..%2f.." "1.1" 1 1
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /café HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 16
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    headersDistinct null-prototype{host:["localhost"]}
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PATCH //x//y HTTP/1.1"
+    singleHeaders undefined "v7" undefined "localhost"
+    trailers Object{} []
+    requestLine "PATCH" "//x//y" "1.1" 1 1
+    headerKeys ["x_under","cache-control","x-forwarded-for","retry-after","connection-x","content-type","if-modified-since","via","content-length","last-modified","location","authorization","user-agent","x!bang","keep-alive","x.dot","warning","host","cookie"]
+    rawHeaders ["x_under","tabbed","cache-control","v8","x-forwarded-for","w70","retry-after","v7","connection-x","padded","content-type","v3","if-modified-since","v6","via","café ü","Content-Length","0","last-modified","a, b,c","cache-control","tabbed","location","v8","authorization","v1","x_under","w50","Content-Type","v6","user-agent","w58","x!bang","v2","keep-alive","a=1; b=2","x.dot","with: colon","warning","café ü","last-modified","v1","Host","localhost","cookie","v7","via","tabbed"]
+    headers Object{x_under:"tabbed, w50",cache-control:"v8, tabbed",x-forwarded-for:"w70",retry-after:"v7",connection-x:"padded",content-type:"v3",if-modified-since:"v6",via:"café ü, tabbed",content-length:"0",last-modified:"a, b,c",location:"v8",authorization:"v1",user-agent:"w58",x!bang:"v2",keep-alive:"a=1; b=2",x.dot:"with: colon",warning:"café ü",host:"localhost",cookie:"v7"}
+    headersDistinct null-prototype{x_under:["tabbed","w50"],cache-control:["v8","tabbed"],x-forwarded-for:["w70"],retry-after:["v7"],connection-x:["padded"],content-type:["v3","v6"],if-modified-since:["v6"],via:["café ü","tabbed"],content-length:["0"],last-modified:["a, b,c","v1"],location:["v8"],authorization:["v1"],user-agent:["w58"],x!bang:["v2"],keep-alive:["a=1; b=2"],x.dot:["with: colon"],warning:["café ü"],host:["localhost"],cookie:["v7"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    identity true true true
+    rawHeaders ["x.dot","0","x_under","café ü","X-A","v3","x_under","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","Host","localhost","proxy-authorization","v8"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.."
+    rawHeaders ["x_under","v7","Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    headers Object{x_under:"v7",host:"localhost"}
+    headerKeys ["x_under","host"]
+    requestLine "GET" "/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.." "1.1" 1 1
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 17
+    request: "GET /warm-up HTTP/1.1"
+    headerKeys ["host"]
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{host:["localhost"]}
+    rawHeaders ["Host","localhost"]
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headers Object{host:"localhost"}
+    identity true true true
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET http://other.example/abs?q=1 HTTP/1.1"
+    headers Object{host:"localhost"}
+    requestLine "GET" "http://other.example/abs?q=1" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PUT /p1 HTTP/1.1"
+    rawHeaders ["Content-Length","0","cookie","v3","Host","localhost","cache-control","v6"]
+    requestLine "PUT" "/p1" "1.1" 1 1
+    identity true true true
+    trailers Object{} []
+    headersDistinct null-prototype{content-length:["0"],cookie:["v3"],host:["localhost"],cache-control:["v6"]}
+    headerKeys ["content-length","cookie","host","cache-control"]
+    singleHeaders undefined "v3" undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "M-SEARCH /a\\b HTTP/1.1"
+    headers Object{user-agent:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",x-a:"v0, v3, café ü, v6",connection-x:"w88",x-1:"w53, v1",x-b:"a=1; b=2, a, b,c",pragma:"v0",content-type:"w44",max-forwards:"0",x_under:"café ü",origin:"v7, padded",host:"localhost",authorization:"v3",accept-encoding:"\"quoted, text\"",cache-control:"",if-modified-since:"café ü"}
+    rawHeaders ["User-Agent","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","X-A","v0","connection-x","w88","x-1","w53","x-b","a=1; b=2","pragma","v0","Content-Type","w44","Content-Type","v4","max-forwards","0","x_under","café ü","origin","v7","Host","localhost","authorization","v3","X-A","v3","x-a","café ü","accept-encoding","\"quoted, text\"","max-forwards","w38","X-A","v6","cache-control","","x-1","v1","x-b","a, b,c","content-type","w12","origin","padded","User-Agent","a=1; b=2","if-modified-since","café ü"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 18
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a\\b HTTP/1.1"
+    requestLine "GET" "/a\\b" "1.1" 1 1
+    headerKeys ["host","retry-after","keep-alive","accept","cookie"]
+    singleHeaders undefined "a=1; b=2" undefined "localhost"
+    trailers Object{} []
+    headersDistinct null-prototype{host:["localhost"],retry-after:["w96"],keep-alive:["a, b,c"],accept:["with: colon"],cookie:["a=1; b=2"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    rawHeaders ["referer","v5","COOKIE","","Host","localhost"]
+    singleHeaders undefined "" undefined "localhost"
+    headerKeys ["referer","cookie","host"]
+    headers Object{referer:"v5",cookie:"",host:"localhost"}
+    requestLine "GET" "/p1" "1.1" 1 1
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    headers Object{host:"localhost",set-cookie:["a=1; b=2"]}
+    identity true true true
+    headerKeys ["host","set-cookie"]
+    trailers Object{} []
+    headersDistinct null-prototype{host:["localhost"],set-cookie:["a=1; b=2"]}
+    rawHeaders ["Host","localhost","Set-Cookie","a=1; b=2"]
+    singleHeaders undefined undefined ["a=1; b=2"] "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 19
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    trailers Object{} []
+    identity true true true
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    identity true true true
+    requestLine "GET" "/p0" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "FOO //x//y HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 20
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "get /a?b=c&d=e HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 21
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    headers Object{host:"localhost",x_under:"v6"}
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host","x_under"]
+    rawHeaders ["Host","localhost","x_under","v6"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "POST /p1 HTTP/1.1"
+    headerKeys ["host","dnt","content-length","x-a","user-agent","location","last-modified","x_under"]
+    rawHeaders ["Host","localhost","dnt","café ü","Content-Length","0","x-a","v7","user-agent","a=1; b=2","location","with: colon","last-modified","v0","x_under","w3"]
+    singleHeaders "v7" undefined undefined "localhost"
+    trailers Object{} []
+    headersDistinct null-prototype{host:["localhost"],dnt:["café ü"],content-length:["0"],x-a:["v7"],user-agent:["a=1; b=2"],location:["with: colon"],last-modified:["v0"],x_under:["w3"]}
+    headers Object{host:"localhost",dnt:"café ü",content-length:"0",x-a:"v7",user-agent:"a=1; b=2",location:"with: colon",last-modified:"v0",x_under:"w3"}
+    requestLine "POST" "/p1" "1.1" 1 1
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    requestLine "GET" "//x//y" "1.1" 1 1
+    trailers Object{} []
+    headerKeys ["host","accept","set-cookie","pragma","if-unmodified-since","retry-after"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 22
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    trailers Object{} []
+    headerKeys ["host"]
+    rawHeaders ["Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    trailers Object{} []
+    headerKeys ["x-forwarded-for","host","server"]
+    singleHeaders undefined undefined undefined "localhost"
+    headers Object{x-forwarded-for:"café ü",host:"localhost",server:"a=1; b=2"}
+    identity true true true
+    rawHeaders ["x-forwarded-for","café ü","Host","localhost","server","a=1; b=2"]
+    requestLine "GET" "/p0" "1.1" 1 1
+    headersDistinct null-prototype{x-forwarded-for:["café ü"],host:["localhost"],server:["a=1; b=2"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PATCH /p1 HTTP/1.1"
+    identity true true true
+    trailers Object{} []
+    headerKeys ["content-type","content-length","x-1","expires","host","if-unmodified-since"]
+    singleHeaders undefined undefined undefined "second"
+    requestLine "PATCH" "/p1" "1.1" 1 1
+    rawHeaders ["Content-Type","v1","Content-Length","0","x-1","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","content-type","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","expires","tabbed","Host","second","if-unmodified-since","a, b,c","Host","localhost"]
+    headersDistinct null-prototype{content-type:["v1","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],content-length:["0"],x-1:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],expires:["tabbed"],host:["second","localhost"],if-unmodified-since:["a, b,c"]}
+    headers Object{content-type:"v1",content-length:"0",x-1:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",expires:"tabbed",host:"second",if-unmodified-since:"a, b,c"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "M-SEARCH /{x} HTTP/1.1"
+    headers Object{host:"localhost",server:"v2"}
+    requestLine "M-SEARCH" "/{x}" "1.1" 1 1
+    headerKeys ["host","server"]
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    rawHeaders ["Host","localhost","server","v2"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 23
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    trailers Object{} []
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    identity true true true
+    headersDistinct null-prototype{host:["localhost"]}
+    rawHeaders ["Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "OPTIONS /p0 HTTP/1.1"
+    trailers Object{} []
+    singleHeaders undefined "" undefined "localhost"
+    identity true true true
+    headers Object{proxy-authorization:"café ü",host:"localhost",via:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",if-modified-since:"v0",retry-after:"v7",cookie:"",x!bang:"a, b,c"}
+    rawHeaders ["proxy-authorization","café ü","Host","localhost","via","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","if-modified-since","v0","retry-after","v7","Cookie","","x!bang","a, b,c"]
+    headerKeys ["proxy-authorization","host","via","if-modified-since","retry-after","cookie","x!bang"]
+    requestLine "OPTIONS" "/p0" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "OPTIONS /a\\b HTTP/1.1"
+    headers Object{host:"localhost",last-modified:"w69",accept-encoding:"",location:"v6"}
+    trailers Object{} []
+    headerKeys ["host","last-modified","accept-encoding","location"]
+    headersDistinct null-prototype{host:["localhost"],last-modified:["w69"],accept-encoding:[""],location:["v6"]}
+    rawHeaders ["Host","localhost","last-modified","w69","accept-encoding","","location","v6"]
+    requestLine "OPTIONS" "/a\\b" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    rawHeaders ["keep-alive","a=1; b=2","user-agent","w48","Host","localhost"]
+    headerKeys ["keep-alive","user-agent","host"]
+    trailers Object{} []
+    requestLine "GET" "/p2" "1.1" 1 1
+    identity true true true
+    headersDistinct null-prototype{keep-alive:["a=1; b=2"],user-agent:["w48"],host:["localhost"]}
+    singleHeaders undefined undefined undefined "localhost"
+    headers Object{keep-alive:"a=1; b=2",user-agent:"w48",host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 24
+    request: "GET /warm-up HTTP/1.1"
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    identity true true true
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "DELETE /p0 HTTP/1.1"
+    headerKeys ["x-b","set-cookie","host","last-modified","retry-after","content-type"]
+    singleHeaders undefined undefined ["a, b,c"] "localhost"
+    headersDistinct null-prototype{x-b:["a, b,c"],set-cookie:["a, b,c"],host:["localhost","second"],last-modified:["0"],retry-after:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],content-type:["v4"]}
+    requestLine "DELETE" "/p0" "1.1" 1 1
+    headers Object{x-b:"a, b,c",set-cookie:["a, b,c"],host:"localhost",last-modified:"0",retry-after:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",content-type:"v4"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "DELETE /? HTTP/1.1"
+    headers Object{accept:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",from:"w42",last-modified:"v5",if-modified-since:"v4",host:"localhost",proxy-authorization:"\"quoted, text\"",set-cookie:["v4"],user-agent:"tabbed",max-forwards:"",retry-after:"",origin:"w44",age:"with: colon",x-a:"w53",x_under:"w34",connection-x:"",x!bang:"v8",location:"tabbed"}
+    headerKeys ["accept","from","last-modified","if-modified-since","host","proxy-authorization","set-cookie","user-agent","max-forwards","retry-after","origin","age","x-a","x_under","connection-x","x!bang","location"]
+    requestLine "DELETE" "/?" "1.1" 1 1
+    identity true true true
+    trailers Object{} []
+    singleHeaders "w53" undefined ["v4"] "localhost"
+    headersDistinct null-prototype{accept:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],from:["w42"],last-modified:["v5","v3"],if-modified-since:["v4","v0"],host:["localhost"],proxy-authorization:["\"quoted, text\""],set-cookie:["v4"],user-agent:["tabbed"],max-forwards:["","v5","v1"],retry-after:[""],origin:["w44"],age:["with: colon"],x-a:["w53"],x_under:["w34"],connection-x:[""],x!bang:["v8"],location:["tabbed"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PUT /p2 HTTP/1.1"
+    headersDistinct null-prototype{content-length:["0"],host:["localhost"],te:[""],last-modified:["v5"]}
+    headerKeys ["content-length","host","te","last-modified"]
+    singleHeaders undefined undefined undefined "localhost"
+    headers Object{content-length:"0",host:"localhost",te:"",last-modified:"v5"}
+    trailers Object{} []
+    rawHeaders ["Content-Length","0","Host","localhost","te","","last-modified","v5"]
+    identity true true true
+    requestLine "PUT" "/p2" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 25
+    request: "GET /warm-up HTTP/1.1"
+    identity true true true
+    headers Object{host:"localhost"}
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    headersDistinct null-prototype{host:["localhost"]}
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET * HTTP/1.1"
+    clientError HPE_INVALID_CONSTANT
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 26
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    trailers Object{} []
+    requestLine "GET" "/p0" "1.1" 1 1
+    rawHeaders ["x-1","w64","Host","localhost","sec-fetch-mode","w94","cache-control","a=1; b=2","COOKIE","a, b,c","referer","\"quoted, text\"","x_under","","origin","v3"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "QUERY /p1 HTTP/1.1"
+    identity true true true
+    headerKeys ["via","server","sec-fetch-mode","cache-control","dnt","max-forwards","cookie","set-cookie","if-modified-since","referer","proxy-authorization","etag","x.dot","user-agent","if-unmodified-since","host","x-b","content-length","keep-alive"]
+    singleHeaders undefined "; v5; with: colon" ["café ü","w36","","0"] "localhost"
+    headers Object{via:"v8",server:"0",sec-fetch-mode:"café ü",cache-control:"tabbed, with: colon",dnt:"w72",max-forwards:"v8",cookie:"; v5; with: colon",set-cookie:["café ü","w36","","0"],if-modified-since:"v4",referer:"a=1; b=2",proxy-authorization:"",etag:"v7",x.dot:"padded",user-agent:"a, b,c",if-unmodified-since:"v1",host:"localhost",x-b:"café ü",content-length:"0",keep-alive:"padded"}
+    requestLine "QUERY" "/p1" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "TRACE /p2 HTTP/1.1"
+    headersDistinct null-prototype{age:["padded"],content-length-x:["padded"],host:["localhost"],accept-language:["v5"],x-a:[""],accept-encoding:[""],cookie:["v6"]}
+    singleHeaders "" "v6" undefined "localhost"
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 27
+    request: "GET /warm-up HTTP/1.1"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    headersDistinct null-prototype{host:["localhost"]}
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a;b=c HTTP/1.1"
+    requestLine "GET" "/a;b=c" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    rawHeaders ["accept-encoding","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","Host","localhost","User-Agent","v8","x-forwarded-for","padded","x-forwarded-for","a, b,c","last-modified","","te","café ü","connection-x","v4"]
+    headers Object{accept-encoding:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",host:"localhost",user-agent:"v8",x-forwarded-for:"padded, a, b,c",last-modified:"",te:"café ü",connection-x:"v4"}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /? HTTP/1.1"
+    response: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    request: "GET //x//y HTTP/1.1"
+    response: "closed"
+seed 3, connection 28
+    request: "GET /warm-up HTTP/1.1"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    headerKeys ["host"]
+    identity true true true
+    headersDistinct null-prototype{host:["localhost"]}
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET http://other.example/abs?q=1 HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "http://other.example/abs?q=1" "1.1" 1 1
+    rawHeaders ["Host","localhost"]
+    headersDistinct null-prototype{host:["localhost"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "get /p1 HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 29
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /? HTTP/1.1"
+    headerKeys ["set-cookie","origin","x-a","connection-x","x!bang","x-forwarded-for","retry-after","if-unmodified-since","from","referer","if-modified-since","cookie","accept-language","keep-alive","sec-fetch-mode","expires","proxy-authorization","x-1","host","warning","max-forwards","via"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "FOO /p1 HTTP/1.1"
+    clientError HPE_INVALID_METHOD
+    response: "closed after HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"
+seed 3, connection 30
+    request: "GET /warm-up HTTP/1.1"
+    headerKeys ["host"]
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "PUT http://other.example/abs?q=1 HTTP/1.1"
+    trailers Object{} []
+    requestLine "PUT" "http://other.example/abs?q=1" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a#frag HTTP/1.1"
+    identity true true true
+    headersDistinct null-prototype{host:["localhost"],authorization:["w96"],keep-alive:["tabbed"],last-modified:["0"],if-modified-since:["w40"]}
+    headers Object{host:"localhost",authorization:"w96",keep-alive:"tabbed",last-modified:"0",if-modified-since:"w40"}
+    rawHeaders ["Host","localhost","authorization","w96","keep-alive","tabbed","last-modified","0","if-modified-since","w40"]
+    requestLine "GET" "/a#frag" "1.1" 1 1
+    headerKeys ["host","authorization","keep-alive","last-modified","if-modified-since"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    headerKeys ["connection-x","te","pragma","host","cache-control","set-cookie","cookie","referer","content-type","sec-fetch-mode"]
+    headers Object{connection-x:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",te:"",pragma:"v5",host:"localhost",cache-control:"tabbed",set-cookie:["v2"],cookie:"with: colon",referer:"w77",content-type:"v0",sec-fetch-mode:"v4"}
+    headersDistinct null-prototype{connection-x:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],te:[""],pragma:["v5"],host:["localhost"],cache-control:["tabbed"],set-cookie:["v2"],cookie:["with: colon"],referer:["w77"],content-type:["v0"],sec-fetch-mode:["v4"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 31
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    headers Object{host:"localhost"}
+    headerKeys ["host"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    identity true true true
+    requestLine "GET" "/p0" "1.1" 1 1
+    trailers Object{} []
+    headers Object{host:"localhost",x-a:"w48",user-agent:"padded",keep-alive:"",last-modified:"with: colon",dnt:"w67"}
+    headerKeys ["host","x-a","user-agent","keep-alive","last-modified","dnt"]
+    rawHeaders ["Host","localhost","X-A","w48","user-agent","padded","keep-alive","","last-modified","with: colon","dnt","w67"]
+    headersDistinct null-prototype{host:["localhost"],x-a:["w48"],user-agent:["padded"],keep-alive:[""],last-modified:["with: colon"],dnt:["w67"]}
+    singleHeaders "w48" undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET http://other.example/abs?q=1 HTTP/1.1"
+    headersDistinct null-prototype{set-cookie:[""],x_under:["w19"],host:["localhost"]}
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /café HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    rawHeaders ["Host","localhost"]
+    identity true true true
+    trailers Object{} []
+    headerKeys ["host"]
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/caf�" "1.1" 1 1
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 32
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    headerKeys ["etag","host"]
+    rawHeaders ["etag","a, b,c","Host","localhost"]
+    headersDistinct null-prototype{etag:["a, b,c"],host:["localhost"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /café HTTP/1.1"
+    headersDistinct null-prototype{x-b:["w9"],content-type:["v7"],server:["café ü"],last-modified:["padded"],x-forwarded-for:["v5"],user-agent:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],host:["localhost"]}
+    requestLine "GET" "/caf�" "1.1" 1 1
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p2 HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    headers Object{host:"localhost"}
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["host"]
+    rawHeaders ["Host","localhost"]
+    requestLine "GET" "/p2" "1.1" 1 1
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 33
+    request: "GET /warm-up HTTP/1.1"
+    identity true true true
+    headers Object{host:"localhost"}
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    headers Object{host:"localhost",server:"v3",te:"w12",x-1:"v8"}
+    headerKeys ["host","server","te","x-1"]
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{host:["localhost"],server:["v3"],te:["w12"],x-1:["v8"]}
+    identity true true true
+    requestLine "GET" "/p0" "1.1" 1 1
+    rawHeaders ["Host","localhost","server","v3","te","w12","x-1","v8"]
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "M-SEARCH /p1 HTTP/1.1"
+    response: "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    request: "GET //x//y HTTP/1.1"
+    response: "closed"
+seed 3, connection 34
+    request: "GET /warm-up HTTP/1.1"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    rawHeaders ["Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "OPTIONS /a?b=c&d=e HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    headerKeys ["accept-language","user-agent","host","last-modified"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /{x} HTTP/1.1"
+    headersDistinct null-prototype{accept:["padded"],x.dot:[""],host:["localhost"],content-length-x:["w58","v8"],x-b:["v0"],if-unmodified-since:["v4"]}
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/{x}" "1.1" 1 1
+    trailers Object{} []
+    headers Object{accept:"padded",x.dot:"",host:"localhost",content-length-x:"w58, v8",x-b:"v0",if-unmodified-since:"v4"}
+    identity true true true
+    rawHeaders ["Accept","padded","x.dot","","Host","localhost","content-length-x","w58","x-b","v0","if-unmodified-since","v4","content-length-x","v8"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "QUERY /p2 HTTP/1.1"
+    trailers Object{} []
+    headers Object{host:"localhost",from:"padded",content-length:"0",te:"with: colon",authorization:"v4",referer:"w55"}
+    rawHeaders ["Host","localhost","from","padded","Content-Length","0","te","with: colon","authorization","v4","referer","w55"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 35
+    request: "GET /warm-up HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a;b=c HTTP/1.1"
+    singleHeaders undefined undefined ["a=1; b=2"] "localhost"
+    headerKeys ["content-length-x","host","set-cookie","te","age"]
+    rawHeaders ["content-length-x","0","Host","localhost","Set-Cookie","a=1; b=2","te","v7","age","a=1; b=2"]
+    identity true true true
+    headersDistinct null-prototype{content-length-x:["0"],host:["localhost"],set-cookie:["a=1; b=2"],te:["v7"],age:["a=1; b=2"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a\\b HTTP/1.1"
+    headersDistinct null-prototype{host:["localhost"]}
+    identity true true true
+    headers Object{host:"localhost"}
+    requestLine "GET" "/a\\b" "1.1" 1 1
+    headerKeys ["host"]
+    rawHeaders ["Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /{x} HTTP/1.1"
+    headerKeys ["host","keep-alive","expires"]
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 36
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    identity true true true
+    headersDistinct null-prototype{host:["localhost"]}
+    requestLine "GET" "/warm-up" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    trailers Object{} []
+    singleHeaders "padded" undefined undefined "localhost"
+    headersDistinct null-prototype{content-type:["with: colon","w70"],x-a:["padded"],host:["localhost"],accept:["café ü"]}
+    identity true true true
+    headerKeys ["content-type","x-a","host","accept"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a;b=c HTTP/1.1"
+    identity true true true
+    singleHeaders undefined undefined [""] "localhost"
+    rawHeaders ["if-modified-since","","set-cookie","","location","tabbed","content-type","padded","x!bang","","Host","localhost","retry-after","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."]
+    trailers Object{} []
+    headerKeys ["if-modified-since","set-cookie","location","content-type","x!bang","host","retry-after"]
+    headers Object{if-modified-since:"",set-cookie:[""],location:"tabbed",content-type:"padded",x!bang:"",host:"localhost",retry-after:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."}
+    requestLine "GET" "/a;b=c" "1.1" 1 1
+    headersDistinct null-prototype{if-modified-since:[""],set-cookie:[""],location:["tabbed"],content-type:["padded"],x!bang:[""],host:["localhost"],retry-after:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    identity true true true
+    headersDistinct null-prototype{expires:[""],accept:["w59"],set-cookie:["padded"],content-type:["v2"],host:["localhost"],cache-control:[""]}
+    headerKeys ["expires","accept","set-cookie","content-type","host","cache-control"]
+    requestLine "GET" "//x//y" "1.1" 1 1
+    singleHeaders undefined undefined ["padded"] "localhost"
+    headers Object{expires:"",accept:"w59",set-cookie:["padded"],content-type:"v2",host:"localhost",cache-control:""}
+    trailers Object{} []
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 37
+    request: "GET /warm-up HTTP/1.1"
+    identity true true true
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET //x//y HTTP/1.1"
+    headers Object{x!bang:"v0",location:"\"quoted, text\"",host:"localhost",origin:"v0",if-unmodified-since:"padded",x-a:"v0, tabbed",connection-x:"w38"}
+    trailers Object{} []
+    rawHeaders ["x!bang","v0","location","\"quoted, text\"","Host","localhost","origin","v0","if-unmodified-since","padded","X-A","v0","location","v0","X-A","tabbed","connection-x","w38"]
+    requestLine "GET" "//x//y" "1.1" 1 1
+    headersDistinct null-prototype{x!bang:["v0"],location:["\"quoted, text\"","v0"],host:["localhost"],origin:["v0"],if-unmodified-since:["padded"],x-a:["v0","tabbed"],connection-x:["w38"]}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    trailers Object{} []
+    requestLine "GET" "/p1" "1.1" 1 1
+    identity true true true
+    headersDistinct null-prototype{dnt:["w18"],host:["localhost"]}
+    headerKeys ["dnt","host"]
+    headers Object{dnt:"w18",host:"localhost"}
+    rawHeaders ["dnt","w18","Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a|b HTTP/1.1"
+    singleHeaders undefined undefined ["0"] "localhost"
+    identity true true true
+    headers Object{age:"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..",expires:"v7",warning:"v0",user-agent:"w63",host:"localhost",set-cookie:["0"]}
+    headersDistinct null-prototype{age:["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.."],expires:["v7"],warning:["v0"],user-agent:["w63","w79"],host:["localhost"],set-cookie:["0"]}
+    headerKeys ["age","expires","warning","user-agent","host","set-cookie"]
+    requestLine "GET" "/a|b" "1.1" 1 1
+    trailers Object{} []
+    rawHeaders ["age","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx..","expires","v7","warning","v0","User-Agent","w63","User-Agent","w79","Host","localhost","set-cookie","0"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 38
+    request: "GET /warm-up HTTP/1.1"
+    trailers Object{} []
+    identity true true true
+    rawHeaders ["Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    headersDistinct null-prototype{host:["localhost"]}
+    headerKeys ["host"]
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.."
+    trailers Object{} []
+    rawHeaders ["Host","localhost"]
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    requestLine "GET" "/uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu.." "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    trailers Object{} []
+    singleHeaders undefined undefined undefined "localhost"
+    identity true true true
+    requestLine "GET" "/p1" "1.1" 1 1
+    rawHeaders ["Host","localhost","via","v8","accept","with: colon"]
+    headersDistinct null-prototype{host:["localhost"],via:["v8"],accept:["with: colon"]}
+    headerKeys ["host","via","accept"]
+    headers Object{host:"localhost",via:"v8",accept:"with: colon"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /a;b=c HTTP/1.1"
+    identity true true true
+    headersDistinct null-prototype{x-1:["v3"],host:["localhost"]}
+    headers Object{x-1:"v3",host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+seed 3, connection 39
+    request: "GET /warm-up HTTP/1.1"
+    rawHeaders ["Host","localhost"]
+    trailers Object{} []
+    identity true true true
+    singleHeaders undefined undefined undefined "localhost"
+    headers Object{host:"localhost"}
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p0 HTTP/1.1"
+    trailers Object{} []
+    requestLine "GET" "/p0" "1.1" 1 1
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "GET /p1 HTTP/1.1"
+    singleHeaders undefined undefined undefined "localhost"
+    requestLine "GET" "/p1" "1.1" 1 1
+    headerKeys ["if-unmodified-since","host"]
+    headersDistinct null-prototype{if-unmodified-since:["a, b,c"],host:["localhost"]}
+    headers Object{if-unmodified-since:"a, b,c",host:"localhost"}
+    trailers Object{} []
+    rawHeaders ["if-unmodified-since","a, b,c","Host","localhost"]
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    request: "OPTIONS /p2 HTTP/1.1"
+    headers Object{host:"localhost",origin:"v6",pragma:""}
+    rawHeaders ["Host","localhost","origin","v6","pragma",""]
+    trailers Object{} []
+    requestLine "OPTIONS" "/p2" "1.1" 1 1
+    singleHeaders undefined undefined undefined "localhost"
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"

@@ -3,6 +3,7 @@
 // JSWebView::createAndSend (JSWebView.cpp).
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
 #include "ScriptExecutionContext.h"
@@ -99,6 +100,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewConstructorCloseAll, (JSGlobalObject*, CallFra
 
 JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(constructWebView, __attribute__((minsize)), (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, constructWebView);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

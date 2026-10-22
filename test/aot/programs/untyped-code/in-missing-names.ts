@@ -1,7 +1,7 @@
 // `key in object` where no object of the program has ever had a property of that name, asked over and over with the same string. The answer is remembered, and it follows as soon as the object, or an object it inherits from, gets such a property.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTHasByKeyGeneric:no-such-name") + counted("operationAOTInByValAndCache") : 0;
+const entered = () => counted ? counted("operationAOTInByValGeneric") + counted("operationAOTInByValAndCache") : 0;
 const join = (...parts: string[]) => parts.join("");
 function asks(o: any, k: any): boolean { return k in o; }
 function asksWritten(o: any): number { return ("nobodyHasThisOne" in o ? 1 : 0) + ("norThisOne" in o ? 1 : 0); }

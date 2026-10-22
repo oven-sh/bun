@@ -1,0 +1,41 @@
+as it should be accepted {"id":7,"items":[{"sku":"a","quantity":1}],"to":{"name":"n","city":"c"},"kind":"gift","coupon":null}
+a required property is missing TypeError id: expected number, received undefined [{"path":["id"],"code":"invalid_type","expected":"number","received":"undefined","message":"Invalid input: expected number, received undefined"}]
+a number is a string TypeError id: expected number, received string [{"path":["id"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+null for an object TypeError to: expected object, received null [{"path":["to"],"code":"invalid_type","expected":"object","received":"null","message":"Invalid input: expected object, received null"}]
+an array for an object TypeError to: expected object, received array [{"path":["to"],"code":"invalid_type","expected":"object","received":"array","message":"Invalid input: expected object, received array"}]
+an object for an array TypeError items: expected array, received object [{"path":["items"],"code":"invalid_type","expected":"array","received":"object","message":"Invalid input: expected array, received object"}]
+below, in an array TypeError items[1].quantity: expected number, received string [{"path":["items",1,"quantity"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+two things at once TypeError id: expected number, received null (and 1 more) [{"path":["id"],"code":"invalid_type","expected":"number","received":"null","message":"Invalid input: expected number, received null"},{"path":["to","name"],"code":"invalid_type","expected":"string","received":"number","message":"Invalid input: expected string, received number"}]
+no member of a union of literals TypeError kind: expected "gift" | "plain", received string [{"path":["kind"],"code":"invalid_type","expected":"\"gift\" | \"plain\"","received":"string","message":"Invalid input: expected \"gift\" | \"plain\", received string"}]
+an optional property of another kind TypeError items[0].note: expected undefined | string, received number [{"path":["items",0,"note"],"code":"invalid_type","expected":"undefined | string","received":"number","message":"Invalid input: expected undefined | string, received number"}]
+an optional property that is null TypeError items[0].note: expected undefined | string, received null [{"path":["items",0,"note"],"code":"invalid_type","expected":"undefined | string","received":"null","message":"Invalid input: expected undefined | string, received null"}]
+too long TypeError items[0].sku: expected string to have <=4 characters [{"path":["items",0,"sku"],"code":"too_big","expected":"string to have <=4 characters","received":"string","message":"Too big: expected string to have <=4 characters"}]
+not whole TypeError items[0].quantity: expected int, received number [{"path":["items",0,"quantity"],"code":"invalid_type","expected":"int","received":"number","message":"Invalid input: expected int, received number"}]
+too small, too big TypeError items[0].quantity: expected number to be >=1 (and 1 more) [{"path":["items",0,"quantity"],"code":"too_small","expected":"number to be >=1","received":"number","message":"Too small: expected number to be >=1"},{"path":["items",1,"quantity"],"code":"too_big","expected":"number to be <=99","received":"number","message":"Too big: expected number to be <=99"}]
+too few TypeError items: expected array to have >=1 items [{"path":["items"],"code":"too_small","expected":"array to have >=1 items","received":"array","message":"Too small: expected array to have >=1 items"}]
+more than is declared accepted {"extra":1,"id":7,"items":[{"sku":"a","quantity":1}],"to":{"name":"n","city":"c"},"kind":"gift","coupon":null,"more":[1]}
+the root is of another kind TypeError expected object, received array [{"path":[],"code":"invalid_type","expected":"object","received":"array","message":"Invalid input: expected object, received array"}]
+the root is null TypeError expected object, received null [{"path":[],"code":"invalid_type","expected":"object","received":"null","message":"Invalid input: expected object, received null"}]
+a number too large for a double TypeError n: expected number, received infinity [{"path":["n"],"code":"invalid_type","expected":"number","received":"infinity","message":"Invalid input: expected number, received infinity"}]
+the later of two wins, and fits accepted {"n":1}
+the later of two wins, and does not fit TypeError n: expected number, received string [{"path":["n"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+no arm of a union TypeError radius: expected number, received undefined [{"path":["radius"],"code":"invalid_type","expected":"number","received":"undefined","message":"Invalid input: expected number, received undefined"}]
+no arm of a union by its tag TypeError kind: expected "circle" | "square", received "line" [{"path":["kind"],"code":"invalid_value","expected":"\"circle\" | \"square\"","received":"string","message":"Invalid input: expected \"circle\" | \"square\", received \"line\""}]
+a tuple of another length TypeError expected tuple, received array [{"path":[],"code":"invalid_type","expected":"tuple","received":"array","message":"Invalid input: expected tuple, received array"}]
+a value of a dictionary TypeError b: expected number, received string [{"path":["b"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+a primitive TypeError expected number, received string [{"path":[],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+strict, as declared accepted {"a":1}
+strict, with more TypeError unrecognized key "b" [{"path":[],"code":"unrecognized_keys","expected":"\"b\"","received":"object","message":"Unrecognized key: \"b\""}]
+a reviver makes it fit accepted {"a":1}
+a reviver makes it misfit TypeError a: expected number, received string [{"path":["a"],"code":"invalid_type","expected":"number","received":"string","message":"Invalid input: expected number, received string"}]
+"" true SyntaxError: JSON Parse error: Unexpected EOF
+"{" true SyntaxError: JSON Parse error: Expected '}'
+"{\"id\":7" true SyntaxError: JSON Parse error: Expected '}'
+"{\"id\":7,}" true SyntaxError: JSON Parse error: Property name must be a string literal
+"[1,]" true SyntaxError: JSON Parse error: Unexpected comma at the end of array expression
+"nul" true SyntaxError: JSON Parse error: Unexpected identifier "nul"
+"{\"id\":7} x" true SyntaxError: JSON Parse error: Unable to parse JSON string
+"{'id':7}" true SyntaxError: JSON Parse error: Single quotes (') are not allowed in JSON
+"{\"id\":07}" true SyntaxError: JSON Parse error: Expected '}'
+"\"\n\"" true SyntaxError: JSON Parse error: Unterminated string
+"﻿{}" true SyntaxError: JSON Parse error: Unrecognized token '﻿'

@@ -1,6 +1,6 @@
 // What a written cast yields may be any object, so a read through it tests the shape. The reads that follow share the test, and behind it they yield what the field holds: no conversion is left.
-// IRT= 1 sumOfLeaf HasShapeOf
-// IRT= 1 maybe HasShapeOf
+// IRT= 1 sumOfLeaf TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 maybe TypeTest v[0-9]+ testedType=L[0-9]+!
 interface Leaf { n: number; m: number; k: number }
 interface Base { kind: number }
 interface Holder extends Base { leaf: Leaf; other: number }

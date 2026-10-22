@@ -1,5 +1,5 @@
 declare const aotOperationCount: (name: string) => number;
-// Plain objects become members of a discriminated union, and records with fields whose type is a union of string literals. After the first object of each shape and text the runtime is not called. Texts that are built at run time, ropes, 16-bit texts, longer texts and texts that are not among the literals give the same answers as before.
+// Plain objects that untyped code built are read as members of a discriminated union, and as records with fields whose type is a union of string literals. A text among the literals passes however it was built: at run time, as a rope, out of a 16-bit text. Any other text, and a value that is no string, throws where typed code reads the field; undefined and null pass. The program also prints whether the slow type test of the runtime was entered for most of the objects.
 type Inner = { n: number };
 type Circle = { kind: "circle"; inner: Inner; radius: number };
 type Square = { kind: "square"; inner: Inner; side: number };
@@ -39,7 +39,7 @@ function attempt(run: () => unknown): string {
   try {
     return String(run());
   } catch (e) {
-    return e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(e);
+    return e instanceof Error ? e.name : String(e);
   }
 }
 
@@ -50,22 +50,22 @@ const kept: any[] = [];
 let sum = 0;
 let text = "";
 const letters = ["cir", "cle", "squ", "are", "clo", "sed", "op", "en"];
-let before = aotOperationCount("operationAOTTypedCoerce");
+let before = aotOperationCount("operationAOTEnforceType");
 for (let i = 0; i < 400; i++) {
   const figure = growFigure(i % 2 ? "circle" : "square", inner, i);
   kept.push(figure);
   sum += area(figure);
 }
-let slow = aotOperationCount("operationAOTTypedCoerce") - before;
+let slow = aotOperationCount("operationAOTEnforceType") - before;
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
-before = aotOperationCount("operationAOTTypedCoerce");
+before = aotOperationCount("operationAOTEnforceType");
 for (let i = 0; i < 400; i++) {
   const issue = growIssue(i % 3 ? (i % 3 === 1 ? "open" : "closed") : "", i % 4 ? (i % 4 === 1 ? "low" : i % 4 === 2 ? "high" : null) : undefined, inner);
   kept.push(issue);
   text = describe(issue);
   sum += text.length;
 }
-slow = aotOperationCount("operationAOTTypedCoerce") - before;
+slow = aotOperationCount("operationAOTEnforceType") - before;
 console.log(sum, text, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(kept[1]), JSON.stringify(kept[2]), Object.keys(kept[1]).join(), kept[1].kind, kept[2].kind);
 console.log(JSON.stringify(kept[401]), JSON.stringify(kept[402]), JSON.stringify(kept[403]), JSON.stringify(kept[404]), Object.keys(kept[401]).join());

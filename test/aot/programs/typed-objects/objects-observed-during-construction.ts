@@ -67,7 +67,7 @@ for (let i = 0; i < 9000; i++) {
   onCreate = hook
   const l = i & 4 ? leaf(i) : named("l" + (i & 7))
   onCreate = undefined
-  // Where an extra property comes among the fields is a rule: type-rules/objects-observed-during-construction.
+  // The fields and the extra property are listed apart.
   orders.add(Object.keys(l).filter(k => k[0] !== "x").join() + "+" + Object.keys(l).filter(k => k[0] === "x").join())
   total += l.kind === Kind.Leaf ? l.value : l.label.length + (l.note ? l.note.length : 0)
 }

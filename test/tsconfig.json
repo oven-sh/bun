@@ -53,7 +53,6 @@
     "aot/backend-packages/programs",
     "aot/backend-packages/more-programs",
     "aot/frameworks/apps",
-    "aot/explain", // programs that lose their types on purpose, explain.test.ts checks each on its own
     // Apps with their own package.json and tsconfig.json. Their dependencies are installed by the test.
     "integration/expo-app/app",
     "integration/expo-app/components",

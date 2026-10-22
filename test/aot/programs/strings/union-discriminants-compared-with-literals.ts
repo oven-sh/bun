@@ -45,7 +45,7 @@ const parsed = JSON.parse('[{"kind":"text","n":7},{"kind":"tool","name":"cat"},{
 for (const e of parsed) print(bySwitch(e) + " " + withDefault(e) + " " + byChain(e) + " " + asValue(e) + " " + alsoUsed(e));
 const made: E[] = ["te" + "xt", cat("to", "ol"), part("xendx", 1, 4)].map((kind, i) => ({ kind, n: i, name: "n" + i }) as any);
 for (const e of made) print(bySwitch(e) + " " + fallsThrough(e) + " " + byChain(e) + " " + asValue(e));
-// A tag that untyped code stores to: storing an equal string that was created differently succeeds; anything else is up to the type rules, but must not crash.
+// Untyped code stores to the tag. Every such store succeeds; here it stores an equal string that was created differently, so the typed reads that follow find a member of the union.
 for (const [from, to] of [[0, cat("te", "xt")], [1, "tool"], [2, "end"]] as [number, string][]) { const e = { ...list[from]! }; print(attempt(() => { alter(e, to); return bySwitch(e) + withDefault(e) + asValue(e); })); }
 (async () => { for (const e of [...list, ...parsed]) print(await awaited(e)); })();
 (globalThis as any).kept = [bySwitch, withDefault, fallsThrough, byChain, asValue, alsoUsed, oneLetter, twice, orNil, inLoop, caught, awaited]; console.log("number");

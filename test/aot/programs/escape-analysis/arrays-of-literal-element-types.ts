@@ -1,6 +1,6 @@
-// Arrays with literal element types such as `(0 | 1)[]` are assigned, passed and stored through wider array types.
+// Arrays with literal element types such as `(0 | 1)[]` are assigned, passed and stored through wider array types. A 7 stored through `number[]` into an array written or inferred `1[]` is read as it is: a literal type promises the kind, number.
 declare const console: { log(...a: unknown[]): void };
-function row(name: string, f: () => unknown): void { let got: unknown; try { got = f(); } catch (e) { got = "threw " + (e as Error).name + " " + (e as Error).message; } console.log(name + ": " + got); }
+function row(name: string, f: () => unknown): void { let got: unknown; try { got = f(); } catch (e) { got = "threw " + (e as Error).name; } console.log(name + ": " + got); }
 function w1() { const a: (0 | 1)[] = [0, 1]; const b: (0 | 1)[] = a; return b[0] + b[1]; }
 row("a written array of literals into a place written the same", () => w1());
 function takes(p: (0 | 1)[]) { return p[1]; }

@@ -12,7 +12,7 @@ const removes: Record<string, (o: any) => any> = {
   label: function (o: any): any { return delete o.label; },
 };
 const removeByKey: (o: any, k: any) => any = function (o: any, k: any): any { return delete o[k]; };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteByValAndCache") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTDeleteById") + aotOperationCount("operationAOTDeleteByVal") : 0;
 const show = (o: object): string => JSON.stringify(o, (key, value) => typeof value === "bigint" ? "big" + value : value) + " " + Object.keys(o).join();
 let read = 0;
 for (const name of names) {

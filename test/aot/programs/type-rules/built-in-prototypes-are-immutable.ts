@@ -1,4 +1,4 @@
-// The prototypes of built-in classes are immutable and non-extensible: stores throw, and the `Reflect` functions return false.
+// `Object.prototype` is locked and not extensible: stores throw, and the `Reflect` functions return false.
 const op: any = Object.prototype
 try { op.polluted = 1; console.log("a property added to Object.prototype: no error") } catch (e) { console.log("a property added to Object.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(Reflect.set(op, "polluted2", 1), Reflect.defineProperty(op, "polluted3", { value: 1 }))

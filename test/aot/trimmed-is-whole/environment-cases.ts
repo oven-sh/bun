@@ -13,7 +13,6 @@ const valuesOfOptions: Record<string, string[]> = {
   "--loader": [".js:jsx"],
   "--jsx-runtime": ["classic"],
   "--watch-kill-signal": ["SIGINT"],
-  "--aot-type-errors": ["log", "throw"],
   "--preload": ["<run>/pre.ts"],
   "--require": ["<run>/pre.ts"],
   "--import": ["<run>/pre.ts"],
@@ -275,10 +274,7 @@ export const cases: Case[] = [
 ];
 
 export const refused =
-  /^BUN_OPTIONS=(--preload|-r|--require|--import|--eval|-e|--print|-p)\b|^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--sql-preconnect|-i)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect|install=)|--compile-exec-argv=--preload|built to read it: preload/;
+  /^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--aot-log-type-mismatches|--check|--watch|--hot|--sql-preconnect|-i)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect|install=|preload=|require=|import=|eval=|print=)|^BUN_OPTIONS=-[rep]=|--compile-exec-argv=--preload/;
 
-export const knownToDiffer: [RegExp, string, "in a closed world"?][] = [
-  [/^BUN_BE_BUN=1 (a file|-e|and nothing else)$/, "documented: the Bun command line is left out"],
-  [/^BUN_OPTIONS=-Z$/, "documented: the help of the Bun command line is left out"],
-  [/^BUN_INSPECT( that waits|_NOTIFY nobody)?$/, "the debugger evaluates text", "in a closed world"],
-];
+// Nothing today. A `preload` in a bunfig.toml stood here: an executable ignores it, trimmed or whole.
+export const knownToDiffer: [RegExp, string][] = [];

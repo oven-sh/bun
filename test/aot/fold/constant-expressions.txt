@@ -1,0 +1,330 @@
+# <kind> TAB <value> TAB <expression>
+# string
+string	number	typeof 1
+string	string	typeof "a"
+string	boolean	typeof true
+string	object	typeof null
+string	undefined	typeof void 0
+string	bigint	typeof 1n
+string	string	typeof `a`
+string	ab	"a" + "b"
+string	a1	"a" + 1
+string	12	1 + "2"
+string	33	1 + 2 + "3"
+string	123	"1" + 2 + 3
+string	anull	"a" + null
+string	aundefined	"a" + void 0
+string	atrue	"a" + true
+string	1	"" + 1n
+string	0	"" + -0
+string	NaN	"" + (0 / 0)
+string	Infinity	"" + (1 / 0)
+string	-Infinity	"" + (-1 / 0)
+string	1e+21	"" + 1e21
+string	100000000000000000000	"" + 1e20
+string	123456789012345680000	"" + 123456789012345680000
+string	1e-7	"" + 1e-7
+string	0.000001	"" + 0.000001
+string	1.5e-10	"" + 1.5e-10
+string	0.1	"" + 0.1
+string	1	"" + 1.0
+string	-1.5	"" + -1.5
+string	255	"" + 0xff
+string	5e-324	"" + 5e-324
+string	1.7976931348623157e+308	"" + 1.7976931348623157e308
+string	9007199254740992	"" + 2 ** 53
+string	0.30000000000000004	"" + (0.1 + 0.2)
+string	a	`a`
+string	a1b	`a${1}b`
+string	nullundefined	`${null}${void 0}`
+string	2	`${1 + 1}`
+string	xtrue	`${"x"}${true}`
+string	1	`${1n}`
+string	0	`${-0}`
+string	1e+21	`${1e21}`
+string	a	0 || "a"
+string	d	void 0 ?? "d"
+string	y	1 ? "y" : "n"
+string	n	0 ? "y" : "n"
+string	b	("a", "b")
+string		"" && 1
+string		"" ?? 3
+string	a	'a'
+
+# boolean
+boolean	true	!0
+boolean	true	!-0
+boolean	true	!(0 / 0)
+boolean	false	!1
+boolean	false	!(1 / 0)
+boolean	true	!""
+boolean	false	!"0"
+boolean	false	!" "
+boolean	true	!null
+boolean	true	!void 0
+boolean	true	!0n
+boolean	false	!1n
+boolean	true	!!"a"
+boolean	false	!true
+boolean	false	!0 && !1
+boolean	false	false ?? 1
+boolean	true	true
+boolean	false	false
+boolean	true	1 === 1
+boolean	false	1 === 2
+boolean	false	1 === "1"
+boolean	true	"a" === "a"
+boolean	false	"a" === "b"
+boolean	true	"é" === "é"
+boolean	false	(0 / 0) === (0 / 0)
+boolean	true	0 === -0
+boolean	true	null === null
+boolean	false	null === void 0
+boolean	true	void 0 === void 0
+boolean	false	true === 1
+boolean	true	1n === 1n
+boolean	false	1n === 2n
+boolean	false	1n === 1
+boolean	false	1 !== 1
+boolean	true	1 !== "1"
+boolean	true	(0 / 0) !== (0 / 0)
+boolean	true	1 == "1"
+boolean	true	0 == ""
+boolean	true	0 == " "
+boolean	true	0 == "0"
+boolean	false	"" == "0"
+boolean	true	null == void 0
+boolean	false	null == 0
+boolean	false	null == false
+boolean	false	null == ""
+boolean	false	void 0 == 0
+boolean	true	false == 0
+boolean	true	false == "0"
+boolean	true	false == ""
+boolean	true	true == 1
+boolean	true	true == "1"
+boolean	false	true == 2
+boolean	false	true == "true"
+boolean	false	"a" == 0
+boolean	false	(0 / 0) == (0 / 0)
+boolean	false	1 != "1"
+boolean	false	null != void 0
+boolean	true	null != 0
+boolean	true	1 < 2
+boolean	false	2 < 1
+boolean	false	1 < 1
+boolean	true	1 <= 1
+boolean	true	2 > 1
+boolean	false	1 >= 2
+boolean	true	"a" < "b"
+boolean	false	"a" < "B"
+boolean	true	"B" < "a"
+boolean	true	"10" < "9"
+boolean	false	"10" < 9
+boolean	true	2 < "10"
+boolean	false	"a" < 1
+boolean	false	"a" >= 1
+boolean	true	"" < "a"
+boolean	true	"ab" < "abc"
+boolean	true	null < 1
+boolean	true	null >= 0
+boolean	false	null > 0
+boolean	false	void 0 < 1
+boolean	false	void 0 >= void 0
+boolean	false	(0 / 0) < 1
+boolean	false	(0 / 0) >= (0 / 0)
+boolean	true	true > false
+boolean	false	0 < -0
+boolean	false	-0 < 0
+
+# number
+number	1	1
+number	1.5	1.5
+number	16	0x10
+number	3	0b11
+number	15	0o17
+number	1000	1_000
+number	1000	1e3
+number	0.5	.5
+number	5	5.
+number	0	+""
+number	0	+" "
+number	12	+"12"
+number	12	+" 12 "
+number	1	+"\t1\n"
+number	1000	+"1e3"
+number	Infinity	+"1e1000"
+number	16	+"0x10"
+number	3	+"0b11"
+number	15	+"0o17"
+number	NaN	+"-0x10"
+number	NaN	+"+0x1"
+number	NaN	+"0x"
+number	NaN	+"1_0"
+number	NaN	+"12px"
+number	NaN	+"1 2"
+number	NaN	+"1e"
+number	NaN	+"1n"
+number	NaN	+"."
+number	0.5	+".5"
+number	0.5	+"+.5"
+number	5	+"5."
+number	NaN	+"- 1"
+number	-0	+"-0"
+number	Infinity	+"Infinity"
+number	-Infinity	+"-Infinity"
+number	NaN	+"infinity"
+number	NaN	+"inf"
+number	NaN	+"nan"
+number	1	+true
+number	0	+false
+number	0	+null
+number	NaN	+void 0
+number	-5	-"5"
+number	-0	-0
+number	0	-(-0)
+number	-0	-null
+number	-0	-""
+number	-1	-true
+number	-6	~5
+number	0	~-1
+number	3	~~3.7
+number	-3	~~-3.7
+number	-1	~(0 / 0)
+number	-1	~"a"
+number	0	~4294967295
+number	2147483647	~2147483648
+number	3	1 + 2
+number	0.30000000000000004	0.1 + 0.2
+number	-2	5 - 7
+number	12	3 * 4
+number	3.5	7 / 2
+number	Infinity	1 / 0
+number	-Infinity	-1 / 0
+number	-Infinity	1 / -0
+number	NaN	0 / 0
+number	1	7 % 3
+number	-1	-7 % 3
+number	1	7 % -3
+number	NaN	5 % 0
+number	-0	-1 % 1
+number	1.5	5.5 % 2
+number	NaN	(1 / 0) % 2
+number	2	2 % (1 / 0)
+number	-0	0 * -1
+number	12	"3" * "4"
+number	NaN	"a" * 1
+number	3	"6" / "2"
+number	3	"5" - 2
+number	1	null + 1
+number	2	true + 1
+number	2	true + true
+number	NaN	void 0 + 1
+number	0	null + null
+number	9007199254740992	9007199254740992 + 1
+number	Infinity	1e308 * 10
+number	0	5e-324 / 2
+number	1024	2 ** 10
+number	512	2 ** 3 ** 2
+number	-8	(-2) ** 3
+number	9007199254740992	2 ** 53
+number	1	0 ** 0
+number	1	(0 / 0) ** 0
+number	NaN	2 ** (0 / 0)
+number	NaN	1 ** (1 / 0)
+number	NaN	(-1) ** (1 / 0)
+number	1	5 & 3
+number	7	5 | 3
+number	6	5 ^ 3
+number	-2147483648	1 << 31
+number	1	1 << 32
+number	2	1 << 33
+number	-2147483648	1 << -1
+number	4294967295	-1 >>> 0
+number	1	-1 >>> 31
+number	-1	-1 >> 31
+number	-4	-8 >> 1
+number	4	8 >>> 1
+number	5	4294967301 | 0
+number	-2147483648	2147483648 | 0
+number	2147483647	-2147483649 | 0
+number	1	1.9 | 0
+number	-1	-1.9 | 0
+number	0	(0 / 0) | 0
+number	0	(1 / 0) | 0
+number	-559939584	1e21 | 0
+number	3	"7" & "3"
+number	1	null | 1
+number	1	1 || "a"
+number	2	1 && 2
+number	0	0 && 2
+number	3	null ?? 3
+number	0	0 ?? 3
+number	2	"" ? 1 : 2
+number	2	(1, 2)
+number	5	(0 / 0) || 5
+number	1	0n || 1
+number	0	0 && f()
+number	1	1 || f()
+number	2	1 ? 2 : f()
+number	3	0 ? f() : 3
+number	0	0 ?? f()
+
+# undefined
+undefined	-	void 0
+undefined	-	void "a"
+undefined	-	null || void 0
+
+# null
+null	-	null
+null	-	0 || null
+null	-	void 0 ?? null
+
+# bigint
+bigint	10	10n
+bigint	16	0x10n
+bigint	0	0n
+bigint	7	0 || 7n
+
+# unknown
+unknown	-	x
+unknown	-	f()
+unknown	-	x + 1
+unknown	-	-x
+unknown	-	!x
+unknown	-	typeof x
+unknown	-	typeof f()
+unknown	-	`${x}`
+unknown	-	x === x
+unknown	-	f() || 1
+unknown	-	null ?? f()
+unknown	-	1 && f()
+unknown	-	1 ? x : 2
+unknown	-	x ? 1 : 1
+unknown	-	[] + 1
+unknown	-	({}) + ""
+unknown	-	null.a
+unknown	-	1 in x
+unknown	-	1 instanceof x
+unknown	-	1n + 1
+unknown	-	1n + 2n
+unknown	-	1n * 2
+unknown	-	1n & 1
+unknown	-	+1n
+unknown	-	-1n
+unknown	-	~1n
+unknown	-	1n == 1
+unknown	-	1n == "1"
+unknown	-	1n < 2
+unknown	-	2n > 1n
+unknown	-	2 ** -1
+unknown	-	2 ** 0.5
+unknown	-	4 ** 0.5
+unknown	-	2 ** 54
+unknown	-	3 ** 40
+unknown	-	2 ** 1024
+unknown	-	(-8) ** (1 / 3)
+unknown	-	"～" < "\u{1F600}"
+unknown	-	"é" < "z"
+unknown	-	+" 1"
+unknown	-	"é" == 1

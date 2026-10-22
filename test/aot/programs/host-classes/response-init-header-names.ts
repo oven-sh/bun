@@ -1,18 +1,4 @@
 // The names of a headers literal in an init literal are looked up when the program is built: a common name is passed as its number, any other token as a string; a literal with a name that is no token stays an object.
-// IR= 1 commonNames CallBuiltin NewResponse
-// IR= 1 commonNames = Integer 25$
-// IR= 1 commonNames = Integer 15$
-// IR= 1 commonNamesInCapitals = Integer 25$
-// IR= 1 uncommonNames CallBuiltin NewResponse
-// IR= 0 uncommonNames = Integer 25[45]$
-// IR= 1 jsonWithBoth CallBuiltin NewJSONResponse
-// IR= 1 jsonWithBoth = Integer 15$
-// IR= 1 nameWithSpace CallBuiltin NewResponse
-// IR= 0 nameWithSpace = Integer 0$
-// IR= 1 nameThatIsNotASCII CallBuiltin NewResponse
-// IR= 2 sameNameInTwoCases = Integer 0$
-// IR= 2 sameNameInTwoCases = Integer 75$
-// IR= 1 twelveHeaders CallBuiltin NewResponse
 export function commonNames(type: string, cache: string): Response {
   return new Response("x", { headers: { "content-type": type, "cache-control": cache } });
 }

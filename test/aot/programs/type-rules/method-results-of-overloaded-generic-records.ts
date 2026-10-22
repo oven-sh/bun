@@ -1,5 +1,5 @@
 // A generic overload over an implementation that is typed with `unknown`, one step on: a method of the record that the implementation makes
-// returns a record of its own, laid out as { value: unknown }, and the call through the promised type expects { value: number }.
+// returns a record of its own, laid out as { value: unknown }, and the call through the promised type expects { value: number }. The value fits, so the record is taken as it is.
 interface Fold<In extends unknown[], Out> {
   readonly run: (box: { value: In }) => { value: Out };
   readonly initial: Out;

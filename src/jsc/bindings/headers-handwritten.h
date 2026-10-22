@@ -3,6 +3,7 @@
 #include "wtf/text/OrdinalNumber.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSType.h"
 #include <wtf/Noncopyable.h>
 #include <wtf/Vector.h>
 #include <set>
@@ -146,7 +147,6 @@ typedef struct ResolvedSource {
     bool bytecode_cache_owned;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
-    bool is_compiled_ahead_of_time;
     // Where this module's cache entry starts in `bytecode_cache` (non-zero: one payload shared by every module, JSC::BytecodeLinkEncoder).
     uint32_t bytecode_cache_entry_offset;
     // Owned; Zig::SourceProvider takes it (nulling the field).
@@ -185,6 +185,7 @@ public:
     }
 };
 static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(JSC::CompiledEnvironmentType == 33 && JSC::ObjectType == 34 && JSC::JSFunctionType == 37 && JSC::CompiledClosureType == 38 && JSC::InternalFunctionType == 39 && JSC::Int8ArrayType == 51 && JSC::DataViewType == 63 && JSC::WebAssemblyGCObjectType == 96 && JSC::CompiledObjectType == 97 && JSC::SlimClosureType == 98 && JSC::SlimClosureWithPropertiesType == 99 && JSC::StringObjectType == 100 && JSC::DerivedStringObjectType == 101, "JSType numbers are mirrored in src/jsc/JSType.rs");
 
 typedef struct SystemError {
     int errno_;
@@ -408,9 +409,9 @@ extern "C" bool Bun__fetchBuiltinModule(
     void* bunVM,
     JSC::JSGlobalObject* global,
     const BunString* specifier,
+    bool isCommonJSRequire,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__resolveAndFetchBuiltinModule(
-    JSC::JSGlobalObject* global,
     const BunString* specifier,
     ErrorableResolvedSource* result);
 extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);

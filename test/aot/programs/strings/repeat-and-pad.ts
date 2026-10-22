@@ -1,15 +1,16 @@
 // `repeat()`, `padStart()` and `padEnd()`: short results, long results and errors.
-// CALLS+ repeated operationAOTTypedStringRepeat
-// CALLS+ repeatedByInteger operationAOTTypedStringRepeat
-// CALLS+ paddedAtEnd operationAOTTypedStringPad
-// CALLS+ paddedAtStart operationAOTTypedStringPad
-// CALLS+ filledAtEnd operationAOTTypedStringPad
-// CALLS+ filledAtStart operationAOTTypedStringPad
-// CALLS- withAnyFiller operationAOTTypedStringPad
-// CALLS- withAnyCount operationAOTTypedStringRepeat
-// CALLS+ indented operationAOTTypedStringRepeat
-// CALLS+ indented operationAOTTypedStringPad
-// CALLS- indentedByAnything operationAOTTypedStringRepeat|operationAOTTypedStringPad
+// CALLS+ repeated operationAOTStringRepeat
+// CALLS+ repeatedByInteger operationAOTStringRepeat
+// CALLS+ paddedAtEnd operationAOTStringPad
+// CALLS+ paddedAtStart operationAOTStringPad
+// CALLS+ filledAtEnd operationAOTStringPad
+// CALLS+ filledAtStart operationAOTStringPad
+// CALLS- withAnyFiller operationAOTStringPad
+// CALLS+ withAnyCount operationAOTStringRepeat
+// CALLS+ indented operationAOTStringRepeat
+// CALLS+ indented operationAOTStringPad
+// CALLS+ indentedByAnything operationAOTStringRepeat
+// CALLS- indentedByAnything operationAOTStringPad
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")
@@ -63,7 +64,7 @@ for (let n = 0; n < 10; n++) print(show(repeatedByInteger("ab", n)) + show(repea
 // What comes back where nothing is added is the string itself; the result is a string like any other.
 { const s = cat("same", "one"); print(String(paddedAtEnd(s, 3) === s) + (repeated(s, 1) === s) + (filledAtStart(s, 100, "") === s) + " " + paddedAtEnd("k", 3).length + new Map([[paddedAtEnd("k", 3), 1]]).get("k  ") + ({ "aaa": 7 } as Record<string, number>)[repeated("a", 3)] + " " + (repeated("ab", 2) + paddedAtStart("c", 2)).toUpperCase() + repeated("ab", 3).indexOf("ba") + paddedAtEnd(box, 4, ).charCodeAt(3)); }
 print(show(indented(["one", box + "two", "", "a long line that is longer than the width", "five"], 8)));
-// Whatever else is handed over goes the general way.
+// A count of any kind is converted in front of the call. A filler that may be no string goes the general way.
 print([undefined, null, 5, "", "ab", { toString() { return "<>"; } }, true].map(f => brief(() => withAnyFiller("s", 6, f))).join(" ") + " " + ["3", null, undefined, true, { valueOf() { return 2; } }, "x", [2], 2n, Symbol.iterator].map(n => brief(() => withAnyCount("ab", n))).join(" "));
 print(show(indentedByAnything(["a", "bc"], 3, "-")) + " " + show(indentedByAnything(["a"], "2", 7)));
 print(attempt(() => repeated(undefined as any, 2)) + " " + attempt(() => paddedAtEnd(null as any, 2)) + " " + attempt(() => filledAtStart(undefined as any, 2, "x")));

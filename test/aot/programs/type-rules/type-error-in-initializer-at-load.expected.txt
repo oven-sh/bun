@@ -1,5 +1,0 @@
-a class field written through an interface: TypeError while it was loaded
-a field written through a wider view: TypeError while it was loaded
-a number written as a string through a union: TypeError while it was loaded
-an optional member cleared through a parameter: TypeError while it was loaded
-a method parameter that varies both ways: TypeError while it was loaded

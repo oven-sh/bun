@@ -65,6 +65,7 @@ unsafe extern "C" {
 /// module). Two builds of the same sources have equal digests however their bytecode is laid out.
 #[inline(never)]
 fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_digests);
     let Some(path) = bun_core::env_var::BUN_BYTECODE_DIGEST_OUT.get_not_empty() else {
         return;
     };
@@ -165,7 +166,7 @@ pub(crate) fn write_at_exit(
     let Some(graph) = graph else {
         return;
     };
-    if !graph.aot_image().is_empty() {
+    if graph.compiled_program().is_some() {
         return;
     }
     if WRITTEN.swap(true, core::sync::atomic::Ordering::Relaxed) {
@@ -180,6 +181,7 @@ pub(crate) fn write_at_exit(
 /// it starts in which of the executable's bytecode, and the names come from parsing the text all of it was compiled from.
 #[inline(never)]
 fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
+    bun_removable_features::removable_definition!(Interpreter, write_order_file);
     let Some(path) = output_path() else {
         return;
     };

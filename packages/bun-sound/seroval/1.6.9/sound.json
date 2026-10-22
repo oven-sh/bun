@@ -1,12 +1,11 @@
 {
-  "sound": 1,
+  "sound": 2,
   "name": "seroval",
   "version": "1.6.9",
   "when": {},
   "basis": {},
   "lay": {
-    "dist/index.js": "6838addcfc0bd232c25ab806c6a58875e8dd34e398cd2f539fd48026c7f6c66a",
-    "dist/index.sound.ts": "new"
+    "dist/index.js": "6838addcfc0bd232c25ab806c6a58875e8dd34e398cd2f539fd48026c7f6c66a"
   },
   "needs": []
 }

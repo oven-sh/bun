@@ -1,19 +1,19 @@
 // A short concatenation of strings and numbers that is used as a lookup key in the same function is built as a flat string.
-// CALLS+ getPair operationAOTTypedConcatenateWithIntegers
+// CALLS+ getPair operationAOTConcatenate
 // CALLS- getPair IntToString|DoubleToString
-// CALLS+ hasTemplate operationAOTTypedConcatenateWithIntegers
-// CALLS+ cached operationAOTTypedConcatenateWithIntegers
-// CALLS+ addToSet operationAOTTypedConcatenateWithIntegers
-// CALLS+ throughJoin operationAOTTypedConcatenateWithIntegers
-// CALLS+ property operationAOTTypedTryGetByValWithKeyParts
-// CALLS- returned operationAOTTypedConcatenateWithIntegers
-// CALLS- pixels operationAOTTypedConcatenateWithIntegers
-// CALLS- asValue operationAOTTypedConcatenateWithIntegers
-// CALLS- pushed operationAOTTypedConcatenateWithIntegers
-// CALLS+ handled operationAOTTypedConcatenateWithIntegers
-// CALLS+ twoStrings operationAOTTypedConcatenateWithIntegers
-// CALLS+ templateOfStrings operationAOTTypedConcatenateWithIntegers
-// CALLS- threeStrings operationAOTTypedConcatenateWithIntegers
+// CALLS+ hasTemplate operationAOTConcatenate
+// CALLS+ cached operationAOTConcatenate
+// CALLS+ addToSet operationAOTConcatenate
+// CALLS+ throughJoin operationAOTConcatenate
+// CALLS+ property operationAOTConcatenate
+// CALLS- returned operationAOTConcatenate
+// CALLS- pixels operationAOTConcatenate
+// CALLS- asValue operationAOTConcatenate
+// CALLS- pushed operationAOTConcatenate
+// CALLS+ handled operationAOTConcatenate
+// CALLS+ twoStrings operationAOTConcatenate
+// CALLS+ templateOfStrings operationAOTConcatenate
+// CALLS- threeStrings operationAOTConcatenate
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

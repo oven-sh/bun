@@ -350,7 +350,7 @@ JSObject* JSWritableStreamDefaultWriter::prototype(VM& vm, JSDOMGlobalObject& gl
     return getDOMPrototype<JSWritableStreamDefaultWriter>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSWritableStreamDefaultWriter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSWritableStreamDefaultWriter::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWritableStreamDefaultWriterConstructor, DOMConstructorID::WritableStreamDefaultWriter>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

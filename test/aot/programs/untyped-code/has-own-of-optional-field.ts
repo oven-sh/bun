@@ -15,7 +15,7 @@ const byMethod: Record<string, (o: any) => any> = {
   text: function (o: any): any { return o.hasOwnProperty("text"); }, count: function (o: any): any { return o.hasOwnProperty("count"); }, whole: function (o: any): any { return o.hasOwnProperty("whole"); },
   flag: function (o: any): any { return o.hasOwnProperty("flag"); }, inner: function (o: any): any { return o.hasOwnProperty("inner"); }, any: function (o: any): any { return o.hasOwnProperty("any"); }, big: function (o: any): any { return o.hasOwnProperty("big"); },
 };
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTHasOwnProperty") : 0;
 const objects: Options[] = [];
 for (let i = 0; i < 90; i++) objects.push(i % 3 === 0 ? full(i) : i % 3 === 1 ? bare(i) : withUndefined(i));
 let read = 0;

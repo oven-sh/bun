@@ -1,5 +1,4 @@
-// Texts of seven kinds that begin alike: one first key, whose value names the kind. The parser that expects keys learns them all and goes on serving them.
-declare const aotOperationCount: (name: string) => number;
+// Texts of seven kinds that begin alike: one first key, whose value names the kind. However many of them the parser that expects keys has seen, each is parsed as written.
 const kinds = [
   (at: number) => '{"kind":"first","at":' + at + ',"value":{"kind":"inner","text":"abc"}}',
   (at: number) => '{"kind":"second","at":' + at + ',"block":{"kind":"inner","name":"n"}}',
@@ -15,4 +14,4 @@ for (let turn = 0; turn < 700; turn++) {
   const value: unknown = JSON.parse(text);
   if (JSON.stringify(value) !== text) wrong++;
 }
-console.log("700 texts,", aotOperationCount("jsonParsedWithLearnedShapes"), "by expecting keys, set aside", aotOperationCount("jsonBeginningSetAside"), "times,", aotOperationCount("jsonObjectParsedMemberByMember"), "objects filled member by member,", wrong, "wrong");
+console.log("700 texts,", wrong, "wrong");

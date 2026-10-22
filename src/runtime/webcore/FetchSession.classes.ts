@@ -13,15 +13,21 @@ export default [
     proto: {
       fetch: {
         getter: "getFetch",
+        type: "object",
+        checkedAtRuntime: true,
         cache: true,
         this: true,
       },
       close: {
         fn: "close",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
       "@@dispose": {
         fn: "close",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 0,
       },
     },

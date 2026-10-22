@@ -11,7 +11,7 @@ class OwnToJSON { toJSON: unknown; v = 2; constructor(f: unknown) { this.toJSON 
 let count = 0;
 function show(name: string, make: () => unknown, ...rest: [unknown?, unknown?]) {
   let out: string;
-  try { out = String(JSON.stringify(make(), rest[0] as never, rest[1] as never)); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
+  try { out = String(JSON.stringify(make(), rest[0] as any, rest[1] as any)); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
   console.log(String(++count).padStart(2, "0"), name + ":", out);
 }
 const a = (i: number): A => ({ i, d: i + 0.5, s: "s" + i, t: (i & 1) === 1, n: null });

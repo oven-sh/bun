@@ -41,11 +41,11 @@ try { attempt("an own property by the name of an accessor", () => define(b, name
 try { all("the objects") } catch (e) { console.log("line 43:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { attempt("a static method replaced", () => patch(Base, name("ma", "ke"), () => new Derived())) } catch (e) { console.log("line 44:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(Base.make().who(), Derived.make().who(), Base.make() instanceof Derived) } catch (e) { console.log("line 45:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// Silent: the properties of the prototype object read as neither writable nor configurable.
+// The descriptors of the members, and whether the prototype object is extensible, are plain JavaScript's.
 const who = Object.getOwnPropertyDescriptor(Base.prototype, "who")!, size = Object.getOwnPropertyDescriptor(Base.prototype, "size")!
 try { console.log(who.writable, who.enumerable, who.configurable, size.enumerable, size.configurable, Object.isExtensible(Base.prototype)) } catch (e) { console.log("line 48:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// A member that typed code visibly replaces, without `any`. The prototype object is still not extensible: once
-// deleted, the member cannot be added back, and the subclass, which does not declare it, does not get its own.
+// A member that typed code replaces, without `any`. The subclass, which does not declare it, gets its own, and
+// once deleted the member can be stored again.
 class Seen { m(): string { return "m" } }
 class Below extends Seen {}
 try { Seen.prototype.m = () => "replaced" } catch (e) { console.log("line 53:", e instanceof TypeError ? "TypeError" : "other " + e) }

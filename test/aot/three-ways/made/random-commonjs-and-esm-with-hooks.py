@@ -92,7 +92,7 @@ def cjs(i):
         j = pick(everybody)
         body.append('(globalThis.hooks = globalThis.hooks || []).push(() => { const m = require("./m%d"); return "m%d:" + [%s].join(); });' % (j, j, ', '.join(pick(['attempt(() => m.%s)' % pick(NAMES), 'attempt(() => m.readHeld())', 'attempt(() => m.readConstant())', 'attempt(() => m.g())', 'typeof m']) for _ in range(3))))
     if chance(0.3):
-        body.append('console.log("m%d environment:", attempt(() => require.main === module), attempt(() => module !== require.main), String(module.id).replace(/^.*[\\\\/]/, ""), module.filename, String(__filename).replace(/^.*[\\\\/]/, ""), typeof __dirname);' % i)
+        body.append('console.log("m%d environment:", attempt(() => require.main === module), attempt(() => module !== require.main), String(module.id).replace(/^.*[\\\\/]/, ""), String(module.filename).replace(/^.*[\\\\/]/, ""), String(__filename).replace(/^.*[\\\\/]/, ""), typeof __dirname);' % i)
     target = 'exports'
     if style == 'alias':
         target = pick(['self', 'api'])

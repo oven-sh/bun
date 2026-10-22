@@ -1,7 +1,6 @@
-// One long-lived object gets properties now and then. A site that reads what it has had from the start sees it under many structures, and keeps one slot.
+// One long-lived object gets properties now and then. A site that reads what it has had from the start sees it under many structures. A new structure costs at most one lookup in the run time for each name, and the reads after that cost none.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const counts = typeof aotOperationCount === "function";
-const count = counts ? aotOperationCount : () => 0;
+const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 function Host() { for (let i = 0; i < 30; i++) this["early" + i] = i; this.settings = { mode: "quiet" }; this.depth = 1; }
 Host.prototype.describe = function () { return this.settings.mode + this.depth; };
 const host = new Host();
@@ -13,11 +12,12 @@ function missing(o) { return o.missing; }
 const read = o => settings(o).mode.length + depth(o) + describe(o).call(o).length + (missing(o) === undefined ? 1 : 0);
 let sum = 0;
 for (let k = 0; k < 100; k++) sum += read(host);
-const movedBefore = count("cacheGetById:moved-on"), enteredBefore = count("operationAOTGetById");
-// It goes on changing while the sites are in use.
+const entries = () => count("operationAOTGetById") + count("operationAOTGetByIdAndCache");
+const enteredBefore = entries();
+// It goes on changing while the sites are in use: 60 structures, four names, 1000 reads of each name under each structure.
 for (let i = 0; i < 60; i++) { host["late" + i] = i; for (let k = 0; k < 1000; k++) sum += read(host); }
-const moved = count("cacheGetById:moved-on") - movedBefore, entered = count("operationAOTGetById") - enteredBefore;
-console.log(sum, !counts || moved >= 200 || count("operationAOTGetByNameAndCache") ? "the sites moved on with the object" : "the sites moved on " + moved + " times", entered < 500 ? "and the operation was entered under 500 times" : "and the operation was entered " + entered + " times");
+const entered = entries() - enteredBefore;
+console.log(sum, entered < 500 ? "the run time was entered under 500 times" : "the run time was entered " + entered + " times");
 // Others of its kind at an earlier stage arrive at the same sites: both are served.
 const young = new Host();
 for (let k = 0; k < 200; k++) sum += read(host) + read(young);

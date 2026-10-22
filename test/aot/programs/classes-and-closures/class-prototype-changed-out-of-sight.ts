@@ -1,3 +1,4 @@
+// The prototype and the statics of the program's own classes gain members where the text does not name the class: through a helper, a decorator called by hand, an array, a map, another name, an instance. Every change works as in plain Bun, under the names `toString`, `valueOf`, `then` and `Symbol.toPrimitive` too.
 async function attempt(name: string, run: () => unknown): Promise<void> {
   try {
     console.log(name + ":", await run());

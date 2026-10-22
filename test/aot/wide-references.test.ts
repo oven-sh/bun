@@ -37,7 +37,7 @@ test("a program that outgrows the range of 32-bit references says which option l
   const narrow = join(cwd, isWindows ? "narrow.exe" : "narrow");
   const wide = join(cwd, isWindows ? "wide.exe" : "wide");
   expect((await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", narrow], cwd, bunEnv)).exitCode).toBe(0);
-  expect((await run([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", wide], cwd, { ...bunEnv, BUN_JSC_useAOTWideReferences: "1" })).exitCode).toBe(0);
+  expect((await run([bunExe(), "build", "--compile", "--aot", "--aot-huge-heap", "main.ts", "--outfile", wide], cwd, bunEnv)).exitCode).toBe(0);
   const plain = await run([bunExe(), "run", "main.ts"], cwd, bunEnv);
   expect(plain.exitCode).toBe(0);
 
@@ -45,10 +45,10 @@ test("a program that outgrows the range of 32-bit references says which option l
   const full = await run(withoutCoreDump([narrow]), cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "64" });
   expect(full.exitCode).not.toBe(0);
   expect(full.stdout).not.toContain(plain.stdout);
-  expect(full.stderr).toContain("Compiled with useAOTWideReferences=1 it has no such limit.");
+  expect(full.stderr).toContain("Build with --aot-huge-heap to remove the limit.");
   const none = await run(withoutCoreDump([narrow]), cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: "0" });
   expect(none.exitCode).not.toBe(0);
-  expect(none.stderr).toContain("Compile it with useAOTWideReferences=1 to run it without the cage.");
+  expect(none.stderr).toContain("Build it with --aot-huge-heap to run it without a heap limit.");
 
   for (const reserved of [undefined, "64", "1", "0"])
     expect(await run([wide], cwd, { ...bunEnv, BUN_JSC_markedBlockCageSizeInMB: reserved })).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });

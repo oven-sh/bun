@@ -75,7 +75,7 @@ function behind(): string {
 }
 console.log(behind(), Array.isArray(intsBehind), intsBehind instanceof Array)
 
-// A class that extends Array. (An instance at `number[]`, `sumGuarded(stack)` and `Stack.from([5])[1]`: type-rules/array-subclass-not-array-type.)
+// A class that extends Array. (An instance at `number[]`, `sumGuarded(stack)` and `Stack.from([5])[1]`: type-rules/array-subclass-is-an-array-type.)
 class Stack extends Array<number> { top(): number { return this[this.length - 1] } above(): number | undefined { return this[this.length] } }
 const stack = new Stack()
 stack.push(1)

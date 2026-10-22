@@ -1,7 +1,6 @@
 // A field that is only declared is absent until it is stored to. Where the constructor stores to it before anybody can look at the object, nobody can tell whether it was there from the start.
-// IR- field "options" .* flags 1297 
-// IR+ field "options" .* flags 273 
-// IR+ field "later" .* flags 1553 
+// IR+ ^layout L\d+ .*name="Core" .*\{name="options" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
+// IR- ^layout L\d+ .*name="Core" .*\{name="later" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
 class Core {
   declare name: string; declare size: number; declare run: (x: number) => number; declare options: unknown; declare later?: string;
   constructor(name: string, options: any) { this.name = name; this.size = options.size; this.run = x => x + this.size; this.options = options; }

@@ -1,0 +1,3 @@
+# A `Schema` alias under a second name is the same constraint: the type literal that declares the tag decides, not the name the type is written with.
+renamed-alias.ts:5 shape `number & Positive` = Constrained(number; Min(1))
+renamed-alias.ts:6 shape `number & AtLeast<3>` = Constrained(number; Min(3))

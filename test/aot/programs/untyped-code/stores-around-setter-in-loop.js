@@ -12,7 +12,7 @@ const holder = { heirOf: function Unused() {} };
 holder.heirOf = function heirOf(parent) { return Object.create(parent); };
 function describe(object) { return Object.keys(object).map(key => key + "=" + object[key]).join() + " " + object.guarded + " " + object.veiled; }
 const said = new Set();
-let before = count("operationAOTTypedTryPutProperties");
+let before = count("operationAOTTryPutProperties");
 for (let i = 0; i < 2000; i++) {
   const object = holder.heirOf(known);
   object.a = i & 1;
@@ -26,8 +26,8 @@ for (let i = 0; i < 2000; i++) {
   object.h = i & 1;
   said.add(describe(object));
 }
-const askedWhereKnown = count("operationAOTTypedTryPutProperties") - before;
-before = count("operationAOTTypedTryPutProperties");
+const askedWhereKnown = count("operationAOTTryPutProperties") - before;
+before = count("operationAOTTryPutProperties");
 for (let i = 0; i < 2000; i++) {
   const object = holder.heirOf(unknown);
   object.a = i & 1;
@@ -41,6 +41,6 @@ for (let i = 0; i < 2000; i++) {
   object.h = i & 1;
   said.add(describe(object));
 }
-const askedWhereUnknown = count("operationAOTTypedTryPutProperties") - before;
+const askedWhereUnknown = count("operationAOTTryPutProperties") - before;
 console.log([...said].join("\n"));
 console.log(calls, !counts || askedWhereKnown >= askedWhereUnknown + 2 ? "the stores around the setter were learnt together" : "the run time was asked " + askedWhereKnown + " times, and " + askedWhereUnknown + " times where the name is not known");

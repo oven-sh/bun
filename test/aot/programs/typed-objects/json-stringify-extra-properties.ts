@@ -12,7 +12,7 @@ const mk = (a = 1): P => ({ a });
 let count = 0;
 function show(name: string, make: () => unknown, ...rest: [unknown?, unknown?]) {
   let out: string;
-  try { const value = make(); out = String(JSON.stringify(value, rest[0] as never, rest[1] as never)) + (value && typeof value === "object" ? " | " + keys(value) : ""); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
+  try { const value = make(); out = String(JSON.stringify(value, rest[0] as any, rest[1] as any)) + (value && typeof value === "object" ? " | " + keys(value) : ""); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
   console.log(String(++count).padStart(2, "0"), name + ":", out);
 }
 show("one extra", () => set(mk(), "z", 1));

@@ -43,7 +43,7 @@ function Plain(value) {
 }
 
 const said = new Set();
-const before = count("operationAOTTypedCreateThisWithStores");
+const before = count("operationAOTCreateThis");
 for (let i = 0; i < 3000; i++) {
   const made = new WithSetter(i & 1);
   said.add(describe(made) + " " + made.guarded);
@@ -59,7 +59,7 @@ for (let i = 0; i < 3000; i++) {
     }
   }
 }
-const constructed = count("operationAOTTypedCreateThisWithStores") - before;
+const constructed = count("operationAOTCreateThis") - before;
 console.log([...said].join("\n"));
 console.log(log.splice(0, 2).join("\n"));
 console.log(constructed <= 200 ? "the run time constructed at most 200 of them" : "the run time constructed " + constructed + " of them");

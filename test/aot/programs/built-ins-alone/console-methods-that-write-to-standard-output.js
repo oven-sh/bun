@@ -1,0 +1,11 @@
+console.info("info", 1.5);
+console.debug("debug", { first: 1.5 });
+console.group("group");
+console.log("inside");
+console.groupEnd();
+console.count("times");
+console.count("times");
+console.countReset("times");
+console.count("times");
+console.assert(true, "quiet");
+console.dirxml({ first: 1.5 });

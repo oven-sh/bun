@@ -26,7 +26,6 @@ use crate::diagnostics::CompilerError;
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
-use crate::hir::reactive::ReactiveFunction;
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
 use crate::collections::IndexMap;
@@ -145,24 +144,18 @@ macro_rules! pass {
     }};
 }
 
-/// A function after every pass, before codegen. It borrows from the
-/// `ReactCompilerState` and the AST arena it was made with.
-pub struct Analysis {
-    pub function: ReactiveFunction,
-    pub env: Environment,
-    pub(crate) unique_identifiers: HashSet<String>,
-}
-
-/// Lower a single function and run every pass on it.
-pub(crate) fn analyze_fn(
+/// Run the compilation pipeline on a single function.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compile_fn(
     func: &FunctionNode<'_>,
     fn_name: Option<&str>,
-    host: &dyn Host,
+    host: &mut dyn Host,
+    arena: &bun_alloc::Arena,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
-) -> Result<Analysis, CompilerError> {
+) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
     env.output_mode = context.output_mode;
@@ -186,7 +179,7 @@ pub(crate) fn analyze_fn(
     let mut hir = pass!(
         env,
         "Lowering",
-        lowering::lower(func, fn_name, host, &mut env, import_bindings)
+        lowering::lower(func, fn_name, &*host, &mut env, import_bindings)
     )?;
 
     dump_lowered(&hir, &env);
@@ -206,39 +199,7 @@ pub(crate) fn analyze_fn(
         return Err(env.take_errors());
     }
 
-    let (function, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
-    Ok(Analysis {
-        function,
-        env,
-        unique_identifiers,
-    })
-}
-
-/// Run the compilation pipeline on a single function.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn compile_fn(
-    func: &FunctionNode<'_>,
-    fn_name: Option<&str>,
-    host: &mut dyn Host,
-    arena: &bun_alloc::Arena,
-    fn_type: ReactFunctionType,
-    env_config: &EnvironmentConfig,
-    context: &mut ProgramContext,
-    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
-) -> Result<CodegenFunction, CompilerError> {
-    let Analysis {
-        function: reactive_fn,
-        mut env,
-        unique_identifiers,
-    } = analyze_fn(
-        func,
-        fn_name,
-        &*host,
-        fn_type,
-        env_config,
-        context,
-        import_bindings,
-    )?;
+    let (reactive_fn, unique_identifiers) = run_hir_passes(&mut hir, &mut env, context)?;
 
     let mut cg = Codegen::new(host, arena);
     let codegen_result = pass!(

@@ -1,4 +1,4 @@
-// Sloppy code (CommonJS). Under --aot the `prototype` of a generator function is fixed when the program is compiled. A store to it is refused aloud, in sloppy code as in strict code: it is never dropped in silence.
+// Sloppy code (CommonJS). The `prototype` of a generator function is writable: after a store, new generator objects inherit from the stored object.
 function* gen() { yield 1; }
 async function* agen() { yield 1; }
 function t(what, f) { try { console.log(what + ":", f()); } catch (e) { console.log(what + ":", e.name); } }

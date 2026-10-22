@@ -1,0 +1,6 @@
+# A type argument that names a `.d.ts` alias does not instantiate the written result: its written form, `unknown`, would take the other branch of a conditional type.
+untrusted-type-argument.ts:6 call result `pick<Port>()` = T extends string ? Name : Count checked Name
+absent: untrusted-type-argument.ts:6 call result `pick<Port>()` = Count checked Name
+absent: untrusted-type-argument.ts:6 call result `pick<Port>()` = Name checked Name
+
+untrusted-type-argument.ts:7 call result `pick<string>()` = Name checked Name

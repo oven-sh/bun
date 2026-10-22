@@ -223,6 +223,12 @@
     "musl": 2045,
     "windows": 2892
   },
+  "aot/builtin-modules-keep-layouts.test.ts": {
+    "default": 1639,
+    "asan": 5145,
+    "musl": 1637,
+    "windows": 2888
+  },
   "aot/builtin-modules.test.ts": {
     "default": 24079,
     "asan": 8237,
@@ -654,12 +660,6 @@
     "musl": 8055,
     "windows": 18102
   },
-  "aot/diagnostic-rules.test.ts": {
-    "default": 13180,
-    "asan": 31716,
-    "musl": 13730,
-    "windows": 14507
-  },
   "aot/direct-eval-sloppy-top-level-declarations.test.ts": {
     "default": 54974,
     "asan": 131321,
@@ -713,12 +713,6 @@
     "asan": 5346,
     "musl": 1525,
     "windows": 2571
-  },
-  "aot/explain-joins.test.ts": {
-    "default": 511,
-    "asan": 2100,
-    "musl": 583,
-    "windows": 1409
   },
   "aot/exports-used-by-unseen-files-in-place.test.ts": {
     "default": 35766,
@@ -827,12 +821,6 @@
     "asan": 30454,
     "musl": 14347,
     "windows": 21284
-  },
-  "aot/functions-made-from-text.test.ts": {
-    "default": 10454,
-    "asan": 33513,
-    "musl": 12328,
-    "windows": 19401
   },
   "aot/generated-builtins-vs-running-bun.test.ts": {
     "default": 5201,
@@ -1085,66 +1073,6 @@
     "asan": 6440,
     "musl": 905,
     "windows": 62
-  },
-  "aot/instruction-counts/linux-x64-2.test.ts": {
-    "default": 140064,
-    "asan": 570,
-    "musl": 139840
-  },
-  "aot/instruction-counts/linux-x64-3.test.ts": {
-    "default": 87090,
-    "asan": 535,
-    "musl": 101662
-  },
-  "aot/instruction-counts/linux-x64-4.test.ts": {
-    "default": 52540,
-    "asan": 532,
-    "musl": 52047
-  },
-  "aot/instruction-counts/linux-x64-5.test.ts": {
-    "default": 78828,
-    "asan": 541,
-    "musl": 84113
-  },
-  "aot/instruction-counts/linux-x64-6.test.ts": {
-    "default": 160815,
-    "asan": 570,
-    "musl": 160557
-  },
-  "aot/instruction-counts/linux-x64-7.test.ts": {
-    "default": 170034,
-    "asan": 535,
-    "musl": 198482
-  },
-  "aot/instruction-counts/linux-x64-8.test.ts": {
-    "default": 65675,
-    "asan": 532,
-    "musl": 65059
-  },
-  "aot/instruction-counts/linux-x64-in-place.test.ts": {
-    "default": 74092,
-    "asan": 936,
-    "musl": 82432
-  },
-  "aot/instruction-counts/linux-x64-outside-loops.test.ts": {
-    "default": 63612,
-    "asan": 518,
-    "musl": 69516
-  },
-  "aot/instruction-counts/linux-x64-packages.test.ts": {
-    "default": 32232,
-    "asan": 771,
-    "musl": 25717
-  },
-  "aot/instruction-counts/linux-x64-programs.test.ts": {
-    "default": 136257,
-    "asan": 2342,
-    "musl": 154526
-  },
-  "aot/instruction-counts/linux-x64.test.ts": {
-    "default": 93161,
-    "asan": 541,
-    "musl": 99407
   },
   "aot/int32-is-proven-at-build-time.test.ts": {
     "default": 4475,
@@ -2106,6 +2034,12 @@
     "musl": 233,
     "windows": 307
   },
+  "aot/runtime-evaluated-functions.test.ts": {
+    "default": 10454,
+    "asan": 33513,
+    "musl": 12328,
+    "windows": 19401
+  },
   "aot/server-response-own-properties.test.ts": {
     "default": 1414,
     "asan": 16806,
@@ -2279,12 +2213,6 @@
     "asan": 31285,
     "musl": 136683,
     "windows": 166120
-  },
-  "aot/typed-builtin-modules-mark-no-layout.test.ts": {
-    "default": 1639,
-    "asan": 5145,
-    "musl": 1637,
-    "windows": 2888
   },
   "aot/typed-builtin-modules.test.ts": {
     "default": 2308,
@@ -2652,20 +2580,6 @@
     "musl": 8684,
     "windows": 15827
   },
-  "bundler/bun-build-dts-sound.test.ts": {
-    "default": 4911,
-    "asan": 20373,
-    "musl": 8182,
-    "windows": 5987,
-    "windows-aarch64": 5238
-  },
-  "bundler/bun-build-dts.test.ts": {
-    "default": 590,
-    "asan": 4970,
-    "musl": 1170,
-    "windows": 772,
-    "windows-aarch64": 981
-  },
   "bundler/bundler_compile_aot.test.ts": {
     "default": 174110,
     "asan": 383675,
@@ -2736,20 +2650,6 @@
     "windows": 50,
     "windows-aarch64": 90
   },
-  "cli/aot-adoption.test.ts": {
-    "default": 175107,
-    "asan": 251688,
-    "musl": 88172,
-    "windows": 34827,
-    "windows-aarch64": 29395
-  },
-  "cli/aot-audit-members.test.ts": {
-    "default": 55132,
-    "asan": 64770,
-    "musl": 32360,
-    "windows": 25743,
-    "windows-aarch64": 24300
-  },
   "cli/aot-builtin-modules-and-computed-paths.test.ts": {
     "default": 18109,
     "asan": 55639,
@@ -2799,26 +2699,12 @@
     "windows": 70,
     "windows-aarch64": 90
   },
-  "cli/aot-crash-if-interpreter-is-used.test.ts": {
-    "default": 20986,
-    "asan": 50050,
-    "musl": 27559,
-    "windows": 21959,
-    "windows-aarch64": 22612
-  },
   "cli/aot-docs.test.ts": {
     "default": 2707,
     "asan": 7131,
     "musl": 2511,
     "windows": 100,
     "windows-aarch64": 187
-  },
-  "cli/aot-environment.test.ts": {
-    "default": 1340,
-    "asan": 4760,
-    "musl": 700,
-    "windows": 1540,
-    "windows-aarch64": 1140
   },
   "cli/aot-huge-heap.test.ts": {
     "default": 2340,
@@ -2903,13 +2789,6 @@
     "musl": 2076,
     "windows": 2420,
     "windows-aarch64": 1763
-  },
-  "cli/lint/aot-rules.test.ts": {
-    "default": 1403,
-    "asan": 5912,
-    "musl": 1488,
-    "windows": 2092,
-    "windows-aarch64": 2214
   },
   "cli/lint/bun-rules.test.ts": {
     "default": 1281,
@@ -3008,13 +2887,6 @@
     "musl": 170,
     "windows": 462,
     "windows-aarch64": 1083
-  },
-  "internal/builtins-target.test.ts": {
-    "default": 6280,
-    "asan": 24420,
-    "musl": 4160,
-    "windows": 5780,
-    "windows-aarch64": 5680
   },
   "js/bun/jsc/sealed-global-object-error-message.test.ts": {
     "default": 70,

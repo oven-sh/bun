@@ -336,18 +336,6 @@ impl Execution {
         }
     }
 
-    pub(crate) fn has_timed_out_entry(&self) -> bool {
-        let Some(group) = self.active_group_ref() else { return false };
-        let now = Timespec::now_force_real_time();
-        group.sequences_const(self).iter().any(|sequence| {
-            sequence.active_entry.is_some_and(|entry| {
-                // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                let deadline = unsafe { entry.as_ref() }.timespec;
-                !deadline.eql(&Timespec::EPOCH) && deadline.order(&now) == core::cmp::Ordering::Less
-            })
-        })
-    }
-
     pub(crate) fn step(
         buntest_strong: &BunTestPtr,
         global_this: &JSGlobalObject,

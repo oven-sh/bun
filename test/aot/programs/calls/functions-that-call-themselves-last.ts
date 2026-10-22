@@ -1,5 +1,5 @@
 // Self tail calls are converted to loops: the function can then be inlined, and an object allocated in each iteration for the next one is not allocated.
-// IR= 0 tallied NewObjectWithShape|CallDirect
+// IR= 0 tallied : =?L[0-9]+ = NewObject |CallDirect
 // IR= 0 summed CallDirect
 // IR= 0 sumTo CallDirect
 // IR= 0 swapped CallDirect

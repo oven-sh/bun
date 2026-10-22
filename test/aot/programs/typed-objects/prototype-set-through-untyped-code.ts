@@ -1,3 +1,4 @@
+// The prototype of a typed object is replaced through `any`, an untyped function, Reflect and `__proto__`. Every change succeeds, and typed calls find the methods of the new prototype.
 class Counter {
   count = 1;
   label = "c";

@@ -1,6 +1,6 @@
 // `f.call(thisArg, x)` with an unknown callee is one check and an indirect call.
-// IR+ IsBuiltinFunction v[0-9]+ Function.call
-// IR- CallMethod v[0-9]+ "call"
+// IR+ TypeTest v[0-9]+ testedType=Function\^
+// IR- CallMethod v[0-9]+ \(.*\) name="call"(?!.* isFallback)
 declare const console: any;
 type L = (this: any, ...args: any[]) => void;
 let n = 0;

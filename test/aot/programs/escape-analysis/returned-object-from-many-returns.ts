@@ -37,7 +37,7 @@ export function step({ queue, run, waits = () => true, stale }: Params): Result 
 const make = (seed: number): Queue => { const q = new Queue(); for (let i = 0; i < 6; i++) { const k = seed * 7 + i * 3; q.items.push({ id: k % 5, mode: "wxyz"[k & 3], text: (k % 3 ? "" : "/") + "t".repeat(k % 9) }); } return q; };
 const run = (c: Cmd[]): void => { ran.push(c.map(x => x.id + x.mode).join("")); };
 (globalThis as any).kept = [step];
-// A stranger comes in under the type: the layout admits foreign objects, and JavaScriptCore's check of the types wants every PutField to name an object made in sight.
+// A value from untyped code also gets the type Result, which opens the type at that position: any object can have it.
 const stranger: Result = (globalThis as any).given ?? { done: true };
 const strangers: Result[] = [stranger];
 const byValue: ((p: Params) => Result)[] = [step];

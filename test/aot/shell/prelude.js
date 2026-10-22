@@ -1,7 +1,12 @@
-// The globals that the test programs expect and the `jsc` shell lacks.
-globalThis.performance = { now: () => preciseTime() * 1000 };
-globalThis.console = { log: (...values) => print(values.map(value => Object.is(value, -0) ? "-0" : String(value)).join(" ")) };
+// The globals that the test programs expect and the `jsc` shell lacks. The image is loaded by now, and it has locked each global that its program never stores to and the shell has: such a store throws, and the shell goes on with what it has.
+const provide = (name, value) => { try { globalThis[name] = value; } catch { } };
+provide("performance", { now: () => preciseTime() * 1000 });
+provide("console", { log: (...values) => print(values.map(value => Object.is(value, -0) ? "-0" : String(value)).join(" ")) });
+// Compiled code takes a global of Bun that the program never stores to for present, so `typeof process` or `typeof Bun` is no test for the shell: without these the program reads a null pointer.
+provide("process", { argv: ["jsc", "program"] });
+// Compiled code calls Bun.gc as the native function that it is in Bun, so it is one here.
+provide("Bun", { gc });
 // The shell's setTimeout only takes a JSFunction.
-{ const original = globalThis.setTimeout; globalThis.setTimeout = (callback, delay) => original(() => callback(), delay); }
+{ const original = globalThis.setTimeout; provide("setTimeout", (callback, delay) => original(() => callback(), delay)); }
 // An unhandled promise rejection is reported the way Bun reports it.
 setUnhandledRejectionCallback((promise, reason) => print("Unhandled rejection: " + reason));

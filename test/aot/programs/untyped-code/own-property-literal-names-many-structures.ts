@@ -1,7 +1,7 @@
 // `Object.hasOwn(o, "name")` and `o.hasOwnProperty("name")` with the name written out, asked of objects of sixteen shapes in turn. Each question (shape, name) is worked out once; after that nearly all are answered from what is remembered, whichever shapes they are.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 function ask(o: any): number {
   return (Object.hasOwn(o, "alpha") ? 1 : 0) + (Object.hasOwn(o, "beta") ? 1 : 0) + (o.hasOwnProperty("gamma") ? 1 : 0) + (Object.prototype.hasOwnProperty.call(o, "delta") ? 1 : 0);
 }

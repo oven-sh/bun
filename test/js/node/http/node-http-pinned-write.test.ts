@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { createHash } from "node:crypto";

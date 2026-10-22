@@ -1,6 +1,6 @@
 // A built-in that answers yes or no, in code without types: the answer is a boolean for a fact, so a test of it asks nothing more. Where the built-in is only predicted of a variable, the arm behind the guard branches on the answer, and only the general arm asks whether what it got counts as true.
-// IR= 1 direct boolean = CallBuiltin Array.isArray#
-// IR= 1 owns boolean = CallBuiltin Object.hasOwn#
+// IR= 1 direct boolean = CallBuiltin - \(v[0-9]+\) overload=ArrayIsArray/
+// IR= 1 owns boolean = CallBuiltin - \(v[0-9]+, v[0-9]+\) overload=ObjectHasOwn/
 // IR= 1 owns ToBoolean
 // IR= 0 owns ^  b[1-9][0-9]*\(v
 var isArray = Array.isArray, isInteger = Number.isInteger;

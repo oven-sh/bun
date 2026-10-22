@@ -8,9 +8,9 @@ function sizeOfAny(value: any) { return Reflect.ownKeys(value).length * 10 + Obj
 function listOf(tagged: Tagged) { return Reflect.ownKeys(tagged).map(String).join() + " | " + Object.getOwnPropertySymbols(tagged).map(String).join() + " | " + Object.keys(tagged).join() }
 let total = 0
 for (let i = 0; i < 100; i++) total += sizeOf({ a: i, b: "x" }) + sizeOfAny({ a: i, b: "y" } as Plain)
-const before = count("operationAOTTypedOwnPropertyKeys")
+const before = count("operationAOTOwnPropertyKeys")
 for (let i = 0; i < 20000; i++) total += sizeOf({ a: i, b: "x" }) + sizeOfAny({ a: i, b: "y" } as Plain)
-console.log(total, count("operationAOTTypedOwnPropertyKeys") - before < 100)
+console.log(total, count("operationAOTOwnPropertyKeys") - before < 100)
 const tagged: Tagged = { n: 1, [kTag]: "t" }
 console.log(listOf(tagged), sizeOfAny(tagged), tagged[kTag])
 const other = Symbol("other")

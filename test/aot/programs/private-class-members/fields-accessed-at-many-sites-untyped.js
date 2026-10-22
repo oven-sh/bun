@@ -3,7 +3,7 @@
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const thrownBy = f => { try { return "no error: " + f(); } catch (error) { return error.constructor.name; } };
-const names = ["operationAOTTypedPrivateGetAtSite", "operationAOTTypedPrivateSetAtSite", "operationAOTTypedPrivateGet", "operationAOTTypedPrivateSet"];
+const names = ["operationAOTPrivateGet", "operationAOTPrivateSet"];
 const callsOf = f => { const before = names.map(name => count(name)); f(); return names.map((name, i) => count(name) - before[i]).reduce((a, b) => a + b); };
 
 class Response {

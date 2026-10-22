@@ -1,7 +1,6 @@
 // A module is imported by import(), and all that is ever done with its namespace object is to read members by constant names. An export that nobody calls, names or reads is not in the program: so the variable its setter would store to holds what it was declared with.
-// IR+ ^variable \d+ "hook" .* only f\d+ proven$
-// IR+ ^variable \d+ "moreHook" .* only f\d+ proven$
-// IR+ = String "An export that nothing in the program reads was read
+// IR+ ^variable g\d+ name="hook" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="moreHook" .*declared=f\d+( |$)
 import { callHook, count } from "./hooks.ts";
 import { callMoreHook } from "./more.ts";
 const lines: string[] = [];

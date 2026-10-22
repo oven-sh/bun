@@ -1,7 +1,7 @@
 // As a user's build compiles it, every function of a small program is among the hottest of its program: a read, a store and a method call by name remember at their place where the property was found. A name that is an accessor of a host class's locked prototype is not remembered: no place could serve a host object.
-// CALLS+ readsData GetByNameAndFillSiteCache
-// CALLS+ storesData PutByNameAndFillSiteCache
-// CALLS+ callsMethod FindMethodByNameAndFillSiteCache
+// CALLS+ readsData GetByIdAndFillSiteCache
+// CALLS+ storesData PutByIdAndFillSiteCache
+// CALLS+ callsMethod FindMethodByIdAndFillSiteCache
 // CALLS- readsHostName FillSiteCache
 // CALLS- storesHostName FillSiteCache
 const functions = [

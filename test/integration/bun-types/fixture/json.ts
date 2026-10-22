@@ -1,3 +1,4 @@
+import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 import { expectType } from "./utilities";
 
@@ -10,8 +11,8 @@ declare const text: string;
 declare const user: User;
 declare const unknownValue: unknown;
 
-expectType(Bun.validate<User>(unknownValue)).is<User>();
-expectType(Bun.validate<User>(unknownValue).id).extends<number>();
+expectType(validate<User>(unknownValue)).is<User>();
+expectType(validate<User>(unknownValue).id).extends<number>();
 
 expectType(JSON.parse(text)).is<any>();
 expectType(JSON.parse(text, (key, value) => value)).is<any>();
@@ -44,7 +45,7 @@ expectType(JSON.stringify(user, ["id"], "\t")).is<string>();
 expectType(JSON.stringify(user, (key, value) => value)).is<string>();
 
 try {
-  Bun.validate<User>(unknownValue);
+  validate<User>(unknownValue);
 } catch (error) {
   if (error instanceof TypeError && "issues" in error) {
     const issues = (error as Schema.Error).issues;

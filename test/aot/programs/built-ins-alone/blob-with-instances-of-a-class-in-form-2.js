@@ -1,0 +1,12 @@
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const first = [item, item, item];
+const result = new Blob(first, item);
+console.log(result instanceof Blob, Object.keys(result).join());

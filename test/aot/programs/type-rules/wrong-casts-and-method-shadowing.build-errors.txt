@@ -1,1 +1,0 @@
-error: TS100017: 'as Function' is applied to a value that is always 1: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.

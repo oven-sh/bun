@@ -923,16 +923,14 @@ impl JSValkeyClient {
         self._subscription_ctx.get().is_subscriber
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_connected(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.client.get().status == valkey::Status::Connected)
+    pub(crate) fn get_connected(&self, _global: &JSGlobalObject) -> bool {
+        self.client.get().status == valkey::Status::Connected
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_buffered_amount(&self, _global: &JSGlobalObject) -> f64 {
         let client = self.client.get();
         let len = client.write_buffer.len() + client.read_buffer.len();
-        JSValue::js_number(f64::from(len))
+        f64::from(len)
     }
 
     pub(crate) fn do_connect(

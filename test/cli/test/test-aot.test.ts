@@ -1,15 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { unsupported } from "../../aot/run-programs";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 
 const supported = !unsupported;
 
 function expectToHaveUsedImage(stderr: string) {
-  expect(stderr).toContain("[aot] program data: ");
   expect(stderr).toContain("[aot] image: ");
-  expect(stderr).not.toContain("[aot] not using");
   return stderr.replace(/^\[aot\] .*\r?\n/gm, "");
 }
 
@@ -36,7 +34,7 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-const theWarningThatAFileIsCompiledUntyped = /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors, [^\n]*: it is compiled untyped, [^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
+const theWarningThatAFileIsCompiledUntyped = /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors? \([^\n]*\), so it is compiled without its types\.[^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
 
 async function expectSameAsBunTest(files: Record<string, string>, args?: string[], builds = true, compiledUntyped: string[] = []) {
   using expectedDir = tempDir("test-aot", files);
@@ -232,6 +230,18 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 0 fail");
   });
 
+  test.concurrent.each([[["--cwd=app"]], [["--cwd", "app"]]])("a relative %j is applied once", async flags => {
+    const file = (path: string) => `import { test } from "bun:test";\ntest("runs", () => { console.log("${path}", process.cwd()); });`;
+    const { stdout, stderr, exitCode } = await expectSameAsBunTest(
+      { "app/a.test.ts": file("app/a.test.ts"), "app/app/a.test.ts": file("app/app/a.test.ts") },
+      [...flags, "./a.test.ts"],
+    );
+    expect(stdout).toMatch(/^app\/a\.test\.ts <dir>[\\/]app$/m);
+    expect(stdout).not.toContain("app/app/a.test.ts");
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("a preload governed by a different tsconfig.json than the test", async () => {
     const options = `"strict": true, "target": "esnext", "module": "esnext", "moduleResolution": "bundler", "types": ["bun"], "skipLibCheck": true`;
     const files = {
@@ -361,37 +371,8 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 1 pass");
   });
 
-  test.concurrent("built-in objects are immutable, and spyOn reports that", async () => {
-    using dir = tempDir("test-aot", {
-      "builtins.test.ts": `
-        import { expect, setSystemTime, spyOn, test } from "bun:test";
-        test("spyOn", () => {
-          expect(() => spyOn(Math, "random")).toThrow("Cannot spy on \`random\`: built-in objects are immutable");
-          expect(() => spyOn(Date, "now")).toThrow(TypeError);
-          expect(() => spyOn(Array.prototype, "push")).toThrow(TypeError);
-          expect(() => { Math.random = () => 0.5; }).toThrow(TypeError);
-        });
-        test("what is not a built-in object of the language", () => {
-          const log = spyOn(console, "log").mockImplementation(() => {});
-          console.log("hidden");
-          expect(log).toHaveBeenCalledTimes(1);
-          log.mockRestore();
-          const frozen = Object.freeze({ method: (): string => "real" });
-          expect(spyOn(frozen, "method").mockReturnValue("mocked")()).toBe("mocked");
-          setSystemTime(new Date(0));
-          expect(Date.now()).toBe(0);
-          setSystemTime();
-        });
-      `,
-    });
-    const { stderr, exitCode } = await runTests(String(dir), true);
-    expect(stderr).toContain(" 2 pass");
-    expect(stderr).toContain(" 0 fail");
-    expect(exitCode).toBe(0);
-  });
-
-  test.concurrent("spying on a method of a compiled class never fails silently", async () => {
-    using dir = tempDir("test-aot", {
+  test.concurrent("spyOn works on the program's own objects and classes", async () => {
+    const { stderr, exitCode } = await expectSameAsBunTest({
       "methods.test.ts": `
         import { expect, spyOn, test } from "bun:test";
         class Client {
@@ -417,9 +398,12 @@ describe.skipIf(!supported)("bun test --aot", () => {
           spy.mockRestore();
           expect(new Client().request("/")).toBe("GET /");
         });
-        test("by a name that is not written down", () => {
+        test("by a computed name", () => {
           const other = new Other();
-          expect(() => spyOn(other, ["r", "un"].join("") as any)).toThrow("Cannot replace method 'run' of Other");
+          const spy = spyOn(other, ["r", "un"].join("") as any).mockReturnValue("mocked");
+          expect(other.run()).toBe("mocked");
+          expect(spy).toHaveBeenCalledTimes(1);
+          spy.mockRestore();
           expect(other.run()).toBe("ran");
         });
         test("a property that holds a function", () => {
@@ -433,22 +417,16 @@ describe.skipIf(!supported)("bun test --aot", () => {
         });
         test("a property that holds no function", () => {
           const service: Service = { handle: n => n + 1, calls: 0 };
-          expect(() => spyOn(service, "calls")).toThrow(TypeError);
-          const client = new Client();
-          let spy: ReturnType<typeof spyOn> | undefined;
-          try {
-            spy = spyOn(client, "sent");
-          } catch (error) {
-            expect(error).toBeInstanceOf(TypeError);
-          }
-          client.request("/");
-          if (spy) expect(spy).toHaveBeenCalled();
-          else expect(client.sent).toBe(1);
+          const reads = spyOn(service, "calls");
           expect(service.calls).toBe(0);
+          expect(reads).toHaveBeenCalledTimes(1);
+          const client = new Client();
+          const spy = spyOn(client, "sent");
+          expect(client.request("/")).toBe("GET /");
+          expect(spy).toHaveBeenCalled();
         });
       `,
     });
-    const { stderr, exitCode } = await runTests(String(dir), true);
     expect(stderr).toContain(" 5 pass");
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);

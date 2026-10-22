@@ -614,7 +614,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
-                        || p.options.inline_import_meta_paths
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
@@ -628,7 +627,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Some(
                                 p.new_expr(e_string_init(p.source.path.name().filename), name_loc),
                             );
-                        } else if name == b"path" || name == b"filename" {
+                        } else if name == b"path" {
                             // Inline import.meta.path (full path)
                             return Some(p.new_expr(e_string_init(p.source.path.text), name_loc));
                         } else if name == b"url" {

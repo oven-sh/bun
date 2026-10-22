@@ -1,5 +1,5 @@
 // JSON.parse<T>() on 16-bit strings: string values keep every UTF-16 code unit, and a code unit whose low byte looks like JSON syntax is not syntax.
-// IR+ JSONStartsWith
+// IR+ ^ .*JSONStartsWith
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Person { name: string; tags: string[]; note: string | null; extra: unknown; counts: Record<string, number> }
 
@@ -12,7 +12,7 @@ function attempt(text: string): string {
   }
 }
 const person = (name: string, more = ""): string => `{"name":"${name}","tags":["${name}${name}","a"],"note":null,"extra":{"${name}":["${name}"]},"counts":{"${name}":1,"b":2}${more}}`;
-const fallbacks = (): number => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedJSONDecodeSource") : 0);
+const fallbacks = (): number => (typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONSourceAbandon") : 0);
 
 const before = fallbacks();
 for (const name of [

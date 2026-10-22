@@ -1,0 +1,2 @@
+# A JSDoc type in a JavaScript file is not a written type.
+variable-in-javascript.js:3 variable `a` = unwritten

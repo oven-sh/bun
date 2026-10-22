@@ -42,7 +42,7 @@ function declares(node: ts.Identifier): boolean {
   );
 }
 
-/** Nothing: `resolve_intrinsic` is not asked. The name is in a type, or the file declares it, so that it is an ordinary variable. */
+/** Nothing: it is no intrinsic. The name is in a type, or the file declares it, so that it is an ordinary variable. */
 function positionOf(node: ts.Identifier, declared: Set<string>): Position | undefined {
   if (isInType(node)) return undefined;
   const parent = node.parent as any;
@@ -63,47 +63,27 @@ function positionOf(node: ts.Identifier, declared: Set<string>): Position | unde
   return ts.isCallExpression(parent) && parent.expression === node ? "Call" : "Value";
 }
 
-/**
- * `Checker::uncurried_builtin_held_by` (src/sema/check/aot/builtin_constants.rs) takes `uncurryThis(f)(receiver, ..args)` for a call of `f` on
- * `receiver`. That is so as long as internal/primordials.js says what it says here. Nothing: it does. Else what is no longer there.
- */
-export function uncurryThisMismatch(primordials: string): string | undefined {
-  const source = ts.createSourceFile(primordials, fs.readFileSync(primordials, "utf8"), ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
-  const printer = ts.createPrinter({ removeComments: true });
-  const statements = source.statements.map(statement => printer.printNode(ts.EmitHint.Unspecified, statement, source).replace(/\s+/g, " "));
-  for (const expected of [
-    'const FunctionPrototypeCall = $getByIdDirect(Function.prototype, "call");',
-    "function uncurryThis(func) { return FunctionPrototypeCall.bind(func); }",
-  ]) {
-    if (statements.filter(statement => statement === expected).length !== 1) return expected;
-  }
-  const exported = source.statements.find(ts.isExportAssignment)?.expression;
-  const isExported =
-    exported !== undefined &&
-    ts.isObjectLiteralExpression(exported) &&
-    exported.properties.some(property => ts.isShorthandPropertyAssignment(property) && property.name.text === "uncurryThis");
-  return isExported ? undefined : "export default { uncurryThis }";
+export function censusOfText(file: string, text: string): Use[] {
+  const uses: Use[] = [];
+  const kind = file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS;
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.ESNext, true, kind);
+  const declared = new Set<string>();
+  const collect = (node: ts.Node) => {
+    if (isDollarName(node) && declares(node) && !isInType(node)) declared.add(node.text);
+    ts.forEachChild(node, collect);
+  };
+  collect(source);
+  const visit = (node: ts.Node) => {
+    if (isDollarName(node)) {
+      const position = positionOf(node, declared);
+      if (position) uses.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, name: node.text.slice(1), position });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return uses;
 }
 
 export function census(files: string[]): Use[] {
-  const uses: Use[] = [];
-  for (const file of files) {
-    const kind = file.endsWith(".ts") ? ts.ScriptKind.TS : ts.ScriptKind.JS;
-    const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.ESNext, true, kind);
-    const declared = new Set<string>();
-    const collect = (node: ts.Node) => {
-      if (isDollarName(node) && declares(node) && !isInType(node)) declared.add(node.text);
-      ts.forEachChild(node, collect);
-    };
-    collect(source);
-    const visit = (node: ts.Node) => {
-      if (isDollarName(node)) {
-        const position = positionOf(node, declared);
-        if (position) uses.push({ file, line: source.getLineAndCharacterOfPosition(node.getStart()).line + 1, name: node.text.slice(1), position });
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(source);
-  }
-  return uses;
+  return files.flatMap(file => censusOfText(file, fs.readFileSync(file, "utf8")));
 }

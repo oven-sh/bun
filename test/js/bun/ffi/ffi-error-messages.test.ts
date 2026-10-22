@@ -103,6 +103,12 @@ describe("FFI error messages", () => {
     }
   });
 
+  test.each([4000, 4094, 4095, 4096, 4097, 9000])("dlopen of a library name of %d bytes throws", length => {
+    const error = thrownBy(() => dlopen(Buffer.alloc(length, "a").toString(), { test: { args: [], returns: "int" } }));
+    expect(error?.code).toBe("ERR_DLOPEN_FAILED");
+    expect(error.message).toMatch(/Failed to open library/i);
+  });
+
   test("dlopen shows which symbol is missing when symbol not found", () => {
     // Use appropriate system library for the platform
     const libName =

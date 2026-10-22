@@ -1,3 +1,0 @@
-{
-  "compilerOptions": { "lib": ["ESNext"], "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "types": ["bun"], "strict": true, "noImplicitAny": false, "skipLibCheck": true, "noEmit": true }
-}

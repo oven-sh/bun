@@ -23,6 +23,10 @@ Effect, `effect-sources` is the same program with the Effect packages resolved t
 
 A job is one server and one route. Jobs are distributed over lanes. A lane is four consecutive cores: the server is pinned to
 the first one and the client (load.c) to the other three. Servers are told they have one core (WTF_numberOfProcessorCores=1).
+`--server-cores 4` gives a server four cores, and tells it so: its JavaScript still runs on one thread; the collector's helpers and a
+JIT's compiler threads get the others. A lane is then eight cores.
+`--rate 0.5` adds an open loop behind the rounds of the closed one: every column is sent requests at one fixed rate, half of what
+the slowest column of the job served, for two windows; latency counts from the time a request was due (rate_p50_us, rate_p99_us).
 
 Different runs of the same executable differ by up to 4% in cycles per request on the small routes, while a single process is
 stable within 1%: it depends on where its pages end up. One process per column therefore cannot resolve a change below 5%, so
@@ -43,15 +47,16 @@ executable that was made for it, in /dev/shm (nothing is written to a disk), und
 Where the compiled code lies matters as well, and that is fixed when the executable is built: two builds of Bun that make a server
 do the same work have differed by 3% in cycles per request on the small routes of `effect`, start after start, because the code of
 one lay elsewhere. Two builds compared in one layout each cannot resolve a change below that. `--layouts 5` builds every --aot
-column five times, each with other padding around its code (BUN_AOT_LAYOUT_SEED=1 to 5, read by `bun build --compile --aot` alone),
+column five times, each with other padding around its code (--aot-layout-seed=1 to 5),
 as the columns NAME.1 to NAME.5; layouts.py takes the mean over them, and their spread is the error bar:
 
     python3 measure.py --layouts 5 --starts 2 --column new=/path/to/new/bun:--aot --column previous=/path/to/previous/bun:--aot --servers effect --out rows.jsonl
     python3 layouts.py rows.jsonl new previous
 
 The column order rotates from start to start. Every response is compared with the expected one, byte for byte.
-`--servers go,rust` measures ../go (net/http) and ../rust (axum), which implement six of the routes, for comparison. They are
-built with `go build` and `cargo build --release` and have a single column, "native".
+`--servers go,rust` measures ../go (net/http) and ../rust (axum) for comparison. One handler serves their three POST routes: a typed
+decoder validates by itself. They are built with `go build` and `cargo build --release` and have a single column, "native".
+GOMAXPROCS=1 and SERVER_THREADS=1 in the environment make them run on one thread, like the JavaScript of the other servers.
 TanStack Start has two extra routes, the pages / ("static") and /items ("list"). The expected page is whatever the first process
 returned, with timestamps removed; under load only the length of a page is compared.
 A window runs under `perf stat -p <pid>`, which counts all threads of the server. Hardware counters are saved and restored on
@@ -97,22 +102,51 @@ counters. The Buns must not be stripped.
     alive_mb                                                alive after a full collection under load: one start more, not timed, in which every collection is a full one
     idle_anon_mb, load_anon_mb, after_anon_mb               RssAnon after the first response, its maximum under load, and two seconds after the last request
 """
-import argparse, fcntl, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
+import argparse, fcntl, functools, glob, json, multiprocessing, os, re, resource, shutil, signal, socket, statistics, subprocess, sys, tempfile, threading, time
 
 import layers
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SERVERS = ["bun", "thin", "hono", "elysia", "node", "express", "fastify", "tanstack"]
+SERVERS = ["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "tanstack"]
 API_SERVERS = ["api-bun", "api-thin", "api-hono"]
 EFFECT = {"effect": "./bun.ts", "effect-sources": "./bun.ts", "effect-plain": "./plain.ts"}
 PAGES = [{"name": "static", "method": "GET", "path": "/", "type": "text/html"}, {"name": "list", "method": "GET", "path": "/items", "type": "text/html"}]
 VALIDATING = ("post", "hand")
 NATIVE = {"go": ["go", "build", "-o"], "rust": ["cargo", "build", "--release"]}
-NATIVE_ROUTES = ("text", "json", "params", "post", "async", "stream")
+NATIVE_ROUTES = ("text", "json", "params", "post", "hand", "typed", "async", "stream")
 NATIVE_COLUMN = {"name": "native", "run_env": {}}
 # The kernel drops samples silently above kernel.perf_event_max_sample_rate, which it lowers by itself under load (seen: 5,300).
 SAMPLES_PER_SECOND = 3000
-PER_START = ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us", "first_response_ms", "ready_rss_mb", "peak_rss_mb", "private_mb", "idle_anon_mb", "load_anon_mb", "after_anon_mb")
+PER_START = ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us", "first_response_ms", "ready_rss_mb", "peak_rss_mb", "private_mb", "idle_anon_mb", "load_anon_mb", "after_anon_mb", "p50_us", "p99_us", "main_cpu_us", "ready_private_mb", "ready_instructions", "rate", "rate_p50_us", "rate_p99_us", "rate_cpu_us")
+
+
+SYMBOLS_OF = {}
+
+
+def report_by_address(data, executable):
+    """The lines of `perf report --sort dso,symbol`, with the samples in the executable named by address and its own symbol table. The text of an --aot
+    executable is mapped in several pieces, each at another distance from its file offset, and `perf report` knows one distance for a file."""
+    import bisect, collections
+    if executable not in SYMBOLS_OF:
+        rows = []
+        for line in subprocess.run(["nm", "-C", "--defined-only", executable], capture_output=True, text=True, errors="replace").stdout.split("\n"):
+            fields = line.split(" ", 2)
+            if len(fields) == 3 and fields[1] in "tTwW":
+                rows.append((int(fields[0], 16), fields[2]))
+        rows.sort()
+        SYMBOLS_OF[executable] = ([row[0] for row in rows], [row[1] for row in rows])
+    addresses, names = SYMBOLS_OF[executable]
+    counts = collections.Counter()
+    for line in subprocess.run(["perf", "script", "-i", data, "-F", "ip,sym,dso"], capture_output=True, text=True, errors="replace").stdout.split("\n"):
+        match = re.match(r"\s*([0-9a-f]+) (.*) \((.*)\)$", line)
+        if not match:
+            continue
+        address, symbol, dso = int(match.group(1), 16), match.group(2), match.group(3)
+        if "aot-servers-lane" in dso and addresses:
+            index = bisect.bisect_right(addresses, address) - 1
+            symbol = names[index] if index >= 0 else "[unknown]"
+        counts[dso if dso.startswith("/tmp/perf-") else dso.rsplit("/", 1)[-1], symbol] += 1
+    return "\n".join("%d %s [.] %s" % (samples, dso, symbol) for (dso, symbol), samples in counts.items())
 
 
 class MeasurementError(Exception):
@@ -182,6 +216,7 @@ def proc_status_mb(pid, name):
 class Server:
     def __init__(self, options, lane, spec, server, route, column):
         self.options, self.lane, self.spec, self.route, self.column = options, lane, spec, route, column
+        self.at_rate = {}
         self.name = "%s/%s/%s" % (server, route["name"], column["name"])
         self.executable = os.path.join(options.work, "bin", "%s-%s" % (column.get("server") or server, column["name"]))
         self.folder = os.path.join(options.work, "lane-%d" % lane["server"], column["name"])
@@ -225,9 +260,14 @@ class Server:
         return open(os.path.join(self.folder, "server.log"), "rb").read()[-300:].decode("latin-1").replace("\n", " | ")
 
     def start(self):
-        env = dict(os.environ, NODE_ENV="production", BUN_ENABLE_CRASH_REPORTING="0", DO_NOT_TRACK="1", WTF_numberOfProcessorCores="1")
+        env = dict(os.environ, NODE_ENV="production", BUN_ENABLE_CRASH_REPORTING="0", DO_NOT_TRACK="1", WTF_numberOfProcessorCores=str(self.options.server_cores))
         env.update(self.column["run_env"])
         first_response_times = []
+        self.lane["spawned"] += 1
+        self.port = 20000 + self.lane["server"] * 64 + self.lane["spawned"] % 64
+        env["PORT"] = str(self.port)
+        self.kill()
+        self.ready_instructions = self.count_instructions_to_ready(env)
         for _ in range(self.options.first_responses):
             self.kill()
             self.lane["spawned"] += 1
@@ -236,7 +276,7 @@ class Server:
             log = open(os.path.join(self.folder, "server.log"), "wb")
             shutil.copy(self.executable, self.copy)
             start_time = time.perf_counter()
-            self.process = subprocess.Popen(["taskset", "-c", str(self.lane["server"]), self.copy], env=env, cwd=self.cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
+            self.process = subprocess.Popen(["taskset", "-c", self.lane["server_cores"], self.copy], env=env, cwd=self.cwd, stdin=subprocess.DEVNULL, stdout=log, stderr=log)
             response = None
             while time.perf_counter() - start_time < 30 and self.process.poll() is None:
                 try:
@@ -254,6 +294,7 @@ class Server:
         self.first_response_ms = statistics.median(first_response_times)
         self.ready_rss_mb = proc_status_mb(self.process.pid, "VmRSS")
         self.idle_anon_mb = proc_status_mb(self.process.pid, "RssAnon")
+        self.ready_private_mb = private_mb(self.process.pid)
         self.invalid_order_statuses = {}
         if self.route["method"] == "POST" and self.route.get("status", 200) == 200:
             for description, body in self.spec["invalidOrders"].items():
@@ -276,7 +317,7 @@ class Server:
         open(paths[1], "wb").write(("%d\n%s\n%s\n" % (route.get("status", 200), route["type"], comparison)).encode() + expected_body)
         return paths
 
-    def run_window(self, requests, counters=True):
+    def run_window(self, requests, counters=True, rate=0):
         """Sends a fixed number of requests and returns per-request costs."""
         pid, report, done = self.process.pid, os.path.join(self.folder, "perf.csv"), threading.Event()
 
@@ -289,11 +330,12 @@ class Server:
         sampler.start()
         client = ["taskset", "-c", self.lane["client"], os.path.join(self.options.work, "bin", "load"), str(self.port), str(self.options.connections), str(requests), "3"]
         client_cores = parse_core_range(self.lane["client"])
-        ticks_before = (core_ticks([self.lane["server"]]), sum(self.cpu_ticks()), core_ticks(client_cores), sum(os.times()[:4]), time.perf_counter())
+        main_before = self.main_thread_ns()
+        ticks_before = (core_ticks(parse_core_range(self.lane["server_cores"])), sum(self.cpu_ticks()), core_ticks(client_cores), sum(os.times()[:4]), time.perf_counter())
         try:
             # perf enumerates the threads and then opens a counter on each; a thread that exits in between fails the whole call.
             for _ in range(4):
-                run = subprocess.run(["perf", "stat", "-x,", "-o", report, "-e", ",".join(["instructions:u", "cycles:u", "task-clock"] + [event + ":u" for event in self.options.events]) if counters else "task-clock", "-p", str(pid), "--"] + client + self.load_files, capture_output=True, text=True)
+                run = subprocess.run(["perf", "stat", "-x,", "-o", report, "-e", ",".join(["instructions:u", "cycles:u", "task-clock"] + [event + ":u" for event in self.options.events]) if counters else "task-clock", "-p", str(pid), "--"] + client + self.load_files, capture_output=True, text=True, env=dict(os.environ, LOAD_RATE=str(rate)) if rate else None)
                 if "sys_perf_event_open" not in run.stderr:
                     break
         finally:
@@ -303,7 +345,7 @@ class Server:
             raise MeasurementError("the server exited with code %s: %s" % (self.process.returncode, self.log_tail()))
         ticks = os.sysconf("SC_CLK_TCK")
         elapsed = (time.perf_counter() - ticks_before[4]) * ticks
-        server_guests = (core_ticks([self.lane["server"]]) - ticks_before[0] - (sum(self.cpu_ticks()) - ticks_before[1])) / elapsed
+        server_guests = (core_ticks(parse_core_range(self.lane["server_cores"])) - ticks_before[0] - (sum(self.cpu_ticks()) - ticks_before[1])) / elapsed
         client_guests = (core_ticks(client_cores) - ticks_before[2] - (sum(os.times()[:4]) - ticks_before[3]) * ticks) / (elapsed * len(client_cores))
         words = run.stdout.split()
         printed = dict(zip(words[0::2], words[1::2]))
@@ -322,10 +364,41 @@ class Server:
             "instructions": counted.get("instructions", 0) / requests,
             "cycles": counted.get("cycles", 0) / requests,
             "cpu_us": counted["task-clock"] * 1e3 / requests,
+            "main_cpu_us": (self.main_thread_ns() - main_before) / 1e3 / requests,
+            "p50_us": float(printed["p50_us"]), "p99_us": float(printed["p99_us"]),
             "events": {event: counted.get(event, 0) / requests for event in self.options.events},
             "guests": max(0.0, server_guests),
             "disturbed": server_guests > 0.01 or client_guests > 0.03,
         }
+
+    def main_thread_ns(self):
+        try:
+            return int(open("/proc/%d/task/%d/schedstat" % (self.process.pid, self.process.pid)).read().split()[0])
+        except (OSError, ValueError, IndexError):
+            return 0
+
+    def count_instructions_to_ready(self, env):
+        report = os.path.join(self.folder, "ready.csv")
+        shutil.copy(self.executable, self.copy)
+        counter = subprocess.Popen(["perf", "stat", "-x,", "-o", report, "-e", "instructions:u", "--", "taskset", "-c", self.lane["server_cores"], self.copy], env=env, cwd=self.cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        start_time, answered = time.perf_counter(), False
+        while time.perf_counter() - start_time < 30 and counter.poll() is None and not answered:
+            try:
+                send_request(self.port, self.route)
+                answered = True
+            except (OSError, ValueError, IndexError):
+                time.sleep(0.0005)
+        while counter.poll() is None:
+            subprocess.run(["pkill", "-KILL", "-P", str(counter.pid)])
+            try:
+                counter.wait(timeout=0.2)
+            except subprocess.TimeoutExpired:
+                pass
+        for line in open(report):
+            fields = line.strip().split(",")
+            if answered and len(fields) > 2 and fields[0].isdigit():
+                return int(fields[0])
+        return 0
 
     def cpu_ticks(self):
         fields = open("/proc/%d/stat" % self.process.pid).read().rsplit(")", 1)[1].split()
@@ -343,7 +416,7 @@ class Server:
                 break
         if run.returncode != 0:
             raise MeasurementError("perf record: " + (run.stderr or run.stdout)[-200:].replace("\n", " "))
-        report = subprocess.run(["perf", "report", "-q", "-i", data, "--stdio", "--sort", "dso,symbol", "-n", "-F", "sample,dso,symbol", "--percent-limit", "0", "-g", "none"], capture_output=True, text=True, errors="replace").stdout
+        report = report_by_address(data, self.executable)
         image_map, perf_map = self.executable + ".map", "/tmp/perf-%d.map" % self.process.pid
         by_stub = {}
         if os.path.exists(image_map) and os.path.exists(perf_map):
@@ -423,8 +496,10 @@ class Server:
         best = max(each["requests_per_second"] for each in self.rounds)
         clean_rounds = [each for each in self.rounds if not each["disturbed"]]
         valid_rounds = [each for each in clean_rounds or self.rounds if each["requests_per_second"] >= 0.9 * best] or self.rounds
-        result = {name: statistics.median(each[name] for each in valid_rounds) for name in ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us")}
+        result = {name: statistics.median(each[name] for each in valid_rounds) for name in ("requests_per_second", "counted_requests_per_second", "instructions", "cycles", "cpu_us", "p50_us", "p99_us", "main_cpu_us")}
+        result.update(ready_private_mb=self.ready_private_mb, ready_instructions=self.ready_instructions)
         result.update(first_response_ms=self.first_response_ms, ready_rss_mb=self.ready_rss_mb, peak_rss_mb=peak, private_mb=self.max_private_mb)
+        result.update(rate=self.at_rate.get("rate", 0), rate_p50_us=self.at_rate.get("p50_us", 0), rate_p99_us=self.at_rate.get("p99_us", 0), rate_cpu_us=self.at_rate.get("cpu_us", 0))
         result.update(void=not clean_rounds, guests=max(each["guests"] for each in valid_rounds))
         result["events"] = {event: round(statistics.median(each["events"][event] for each in valid_rounds), 2) for event in self.options.events}
         result.update(idle_anon_mb=self.idle_anon_mb, load_anon_mb=self.max_anon_mb, after_anon_mb=after_anon_mb)
@@ -465,6 +540,14 @@ def measure_job(options, lane, spec, server, route):
                     each.pause()
                 else:
                     running.remove(each)
+        # The open loop: the same rate for every column, one that the slowest can hold, so that what differs is how long a request waits and not how many are served.
+        rate = options.rate * min((max(one["requests_per_second"] for one in each.rounds) for each in running if each.rounds), default=0)
+        for each in list(running) if rate else []:
+            each.resume()
+            if run_step(each, lambda: each.at_rate.update(each.run_window(max(1000, int(rate * options.window_seconds * 2)), counters=False, rate=rate), rate=rate)):
+                each.pause()
+            else:
+                running.remove(each)
         for each in running:
             each.resume()
             run_step(each, lambda: results[each.column["name"]].__setitem__(start, each.result()))
@@ -552,8 +635,13 @@ def layers_job(options, lane, spec, server, route):
 
 
 def run_lane(options, spec, first_core, jobs, results_queue):
-    os.sched_setaffinity(0, set(range(first_core + 1, first_core + 4)))
-    lane = {"server": first_core, "client": "%d-%d" % (first_core + 1, first_core + 3), "spawned": 0}
+    os.sched_setaffinity(0, set(range(first_core + options.server_cores, first_core + options.server_cores + 3)))
+    # A lane's first core gives it its ports and the names of its copies, so two runs on one machine must not share cores: whoever comes second waits.
+    held = []
+    for block in range(first_core // 4 * 4, first_core + options.server_cores + 3, 4):
+        held.append(open(os.path.join("/dev/shm" if os.access("/dev/shm", os.W_OK) else tempfile.gettempdir(), "aot-servers-cores-%03d.lock" % block), "w"))
+        fcntl.flock(held[-1], fcntl.LOCK_EX)
+    lane = {"server": first_core, "server_cores": "%d-%d" % (first_core, first_core + options.server_cores - 1), "client": "%d-%d" % (first_core + options.server_cores, first_core + options.server_cores + 2), "spawned": 0}
     for stale_copy in glob.glob("/dev/shm/aot-servers-lane-%03d-column-*" % first_core):
         os.remove(stale_copy)
     while True:
@@ -570,6 +658,19 @@ def run_checked(command, **more):
     return run.stdout
 
 
+@functools.lru_cache(maxsize=None)
+def accepts_layout_seed_flag(bun):
+    """Older Buns reject the flag and read BUN_AOT_LAYOUT_SEED instead."""
+    probe = subprocess.run([bun, "build", "--compile", "--aot", "--aot-layout-seed=1", "./no-such-file.ts"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    return "unknown flag" not in probe.stderr
+
+
+def with_layout_seed(column, seed):
+    """A copy of the column that is built with another code layout. The variable is always set, so a wrong probe cannot lose the seed: a Bun that takes the flag ignores the variable."""
+    flags = ["--aot-layout-seed=%d" % seed] if accepts_layout_seed_flag(column["bun"]) else []
+    return dict(column, name="%s.%d" % (column["name"], seed), flags=column["flags"] + flags, run_env=dict(column["run_env"]), build_env=dict(column["build_env"], BUN_AOT_LAYOUT_SEED=str(seed)), build_seconds={})
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--column", action="append", required=True, metavar="NAME=BUN[:FLAGS][@SERVER]")
@@ -581,10 +682,12 @@ def main():
     parser.add_argument("--cores", default="0-3", help="a range of consecutive cores, a multiple of four; every four cores form a lane")
     parser.add_argument("--modules", help="a node_modules folder with the packages from ../app/package.json and ../tanstack/package.json; skips `bun install`")
     parser.add_argument("--effect-modules", help="a node_modules folder with the packages from ../effect/package.json; skips `bun install`")
-    parser.add_argument("--lock", help="a file to hold an exclusive lock on while measuring, for cores that are shared with other measurements; building does not hold it")
+    parser.add_argument("--lock", help="a file to hold an exclusive lock on while measuring, for cores that are shared with other measurements; building does not hold it. Several files, separated by commas: all of them. '!' and a line of shell: that line takes the locks, in a shell that lives until the measurement has ended")
     parser.add_argument("--work", help="working directory for executables and logs; a temporary one by default")
+    parser.add_argument("--server-cores", type=int, default=1, help="the cores that a server is pinned to and told that it has; a lane is that many and three for the client, rounded up to a multiple of four")
+    parser.add_argument("--rate", type=float, default=0, metavar="PART", help="behind the closed loop, an open loop: every column is sent requests at this part of what the slowest column of the job served; 0: none")
     parser.add_argument("--starts", type=int, default=3)
-    parser.add_argument("--layouts", type=int, default=0, metavar="K", help="build every --aot column K times, as NAME.1 to NAME.K, each with its code laid out otherwise; see layouts.py")
+    parser.add_argument("--layouts", type=int, default=0, metavar="K", help="build every --aot column K times, as NAME.1 to NAME.K, each with a different code layout; see layouts.py")
     parser.add_argument("--first-responses", type=int, default=3)
     parser.add_argument("--warm-up", type=int, default=200000, help="requests; a JIT build needs 200,000, an --aot build is stable from the first window")
     parser.add_argument("--rounds", type=int, default=3)
@@ -613,11 +716,7 @@ def main():
         options.columns = [
             copy
             for column in options.columns
-            for copy in (
-                [dict(column, name="%s.%d" % (column["name"], seed), run_env=dict(column["run_env"]), build_env=dict(column["build_env"], BUN_AOT_LAYOUT_SEED=str(seed)), build_seconds={}) for seed in range(1, options.layouts + 1)]
-                if "--aot" in column["flags"]
-                else [column]
-            )
+            for copy in ([with_layout_seed(column, seed) for seed in range(1, options.layouts + 1)] if "--aot" in column["flags"] else [column])
         ]
     for column in options.columns if options.layers else []:
         if "--aot" in column["flags"]:
@@ -626,8 +725,8 @@ def main():
         if b".symtab" not in subprocess.run(["readelf", "-S", "-W", column["bun"]], capture_output=True).stdout:
             column["kind"] = "stripped"
     cores = parse_core_range(options.cores)
-    if len(cores) % 4:
-        sys.exit("--cores must be a multiple of four cores")
+    if len(cores) % ((options.server_cores + 6) // 4 * 4):
+        sys.exit("--cores must be a multiple of a lane: %d cores" % ((options.server_cores + 6) // 4 * 4))
 
     temporary = None if options.work else tempfile.mkdtemp(prefix="aot-servers-")
     options.work = os.path.abspath(options.work or temporary)
@@ -692,9 +791,28 @@ def main():
             run_checked([column["bun"], "build", "--compile", *column["flags"], "--target=bun", "--define", 'process.env.NODE_ENV="production"', entry, "--outfile", executable], cwd=folder, env=dict(build_env, **image_map, **column["build_env"]))
             column["build_seconds"][program] = round(time.perf_counter() - start_time, 2)
 
-    if options.lock:
-        lock = open(options.lock, "a")
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    if options.lock and options.lock.startswith("!"):
+        holder = subprocess.Popen(["bash", "-c", options.lock[1:] + " && echo held && while kill -0 %d 2> /dev/null; do sleep 1; done" % os.getpid()], stdout=subprocess.PIPE, text=True)
+        if holder.stdout.readline() != "held\n":
+            sys.exit("--lock: the locks were not taken")
+        print("locked %s" % options.lock, flush=True)
+    elif options.lock:
+        # With several files, none is held for long while another is waited for: whoever needs only that one is not kept out by a waiter.
+        locks = [open(path, "a") for path in options.lock.split(",")]
+        while True:
+            fcntl.flock(locks[0], fcntl.LOCK_EX)
+            deadline, waiting = time.monotonic() + 10, locks[1:]
+            while waiting and time.monotonic() < deadline:
+                try:
+                    fcntl.flock(waiting[0], fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    waiting = waiting[1:]
+                except BlockingIOError:
+                    time.sleep(0.2)
+            if not waiting:
+                break
+            for lock in locks:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            time.sleep(1)
         print("locked %s" % options.lock, flush=True)
     jobs, results_queue = multiprocessing.Queue(), multiprocessing.Queue()
     count = 0
@@ -707,7 +825,7 @@ def main():
         for job in [routes] if options.soak else routes:
             jobs.put((server, job))
             count += 1
-    lanes = [multiprocessing.Process(target=run_lane, args=(options, spec, first, jobs, results_queue)) for first in cores[::4]]
+    lanes = [multiprocessing.Process(target=run_lane, args=(options, spec, first, jobs, results_queue)) for first in cores[::(options.server_cores + 6) // 4 * 4]]
     for lane in lanes:
         jobs.put(None)
         lane.start()

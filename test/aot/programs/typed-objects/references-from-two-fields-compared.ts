@@ -1,5 +1,5 @@
 // `x.a === y.a` of two references that are read out of fields: one object or two, null, undefined, absent, a field that is never nil against one that may be, in a branch; and texts, which are compared by what they say.
-function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0].split(" (bun --aot")[0] : String(e))) } }
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0].split(" (bun compile")[0] : String(e))) } }
 function hide(v: unknown): any { return v }
 interface N { v: number; w: number }
 interface R { a: N; b: N | null; c: N | undefined; d?: N; s: string; t: string | null }

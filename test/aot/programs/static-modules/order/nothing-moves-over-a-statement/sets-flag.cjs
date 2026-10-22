@@ -1,0 +1,1 @@
+globalThis.flag = 1;

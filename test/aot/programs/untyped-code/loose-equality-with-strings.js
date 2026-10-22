@@ -1,7 +1,8 @@
 // `key == "constructor"`, `tag == "[object Arguments]"`: a text that is no number is loosely equal to a string with its characters, to an object that turns into such a string, and to nothing else. One stub answers that from the characters in the image: no cell is made or fetched for the text.
-// CALLS countConstructors LooseEqualsLiteral
-// CALLS- countConstructors LooseEqual;
-// CALLS countOnes LooseEqual;
+// CALLS+ countConstructors LooseEqualsLiteral
+// CALLS- countConstructors Equal\.Loose
+// CALLS+ countOnes Equal\.Loose
+// CALLS- countOnes LooseEqualsLiteral
 function countConstructors(keys) { var count = 0; for (var index = 0; index < keys.length; index++) { if (keys[index] == "constructor") count++; } return count; }
 function countOnes(keys) { var count = 0; for (var index = 0; index < keys.length; index++) { if (keys[index] == "1") count++; } return count; }
 function isConstructor(key) { return key == "constructor"; }

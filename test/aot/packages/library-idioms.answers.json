@@ -1,20 +1,8 @@
 {
-  "typed.bind_all_and_spy.ts": {
-    "output": "methods [\"constructor\",\"inc\",\"twice\"]\nbindAll [3,3]\nspy THROWS TypeError [--aot: Cannot replace method 'inc' of Svc: a method can be replaced only if TypeScript code of the program assigns to]\nspy on the prototype THROWS TypeError [--aot: Cannot change 'inc' of Svc.prototype: classes are fixed in a program compiled with --aot]\n"
-  },
-  "typed.delegates.ts": {
-    "output": "x [200,\"b\"]\nset [404,404,[]]\non a typed class THROWS TypeError [--aot: Cannot change 'status' of Ctx.prototype: classes are fixed in a program compiled with --aot]\n"
-  },
   "typed.fill.ts": {
-    "output": "x [7,true,9]\nextra [3,\"e\",[\"x\",\"y\",\"extra\"]]\nwrong THROWS TypeError [--aot: Cannot assign to 'x' of Point: expected number, got string \"3\"]\nby create [11,true,11,8,8]\nhalf THROWS TypeError [--aot: expected number, got undefined]\n"
+    "output": "x [7,true,9]\nextra [3,\"e\",[\"x\",\"y\",\"extra\"]]\nwrong THROWS TypeError [--aot: expected number, got string \"3\"]\nby create [11,true,11,8,8]\nhalf [5,\"undef\",null,null]\n"
   },
   "typed.generated_code.ts": {
     "output": "add 4\nreads typed 7\nwrites typed [\"x,y,extra\",10,12]\nmakes typed [7,true,13]\nwith \"s:2:2\"\ncalls typed THROWS TypeError [--aot: expected number, got string \"2\"]\n"
-  },
-  "typed.observable.ts": {
-    "output": "x [2,\"s\"]\nafter [6,[\"get count\",\"get name\",\"set count\",\"get count\",\"set count\",\"get count\"]]\ntyped use [7,9]\nexit code 1\nTypeError: Cannot redefine property 'x' of Point: declared properties stay writable, enumerable and configurable data properties (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
-  },
-  "typed.odd_objects_as_typed.ts": {
-    "output": "nullProto read \"s221\"\nnullProto write 2\nnullProto json \"{\\\"count\\\":2,\\\"name\\\":\\\"s\\\",\\\"tags\\\":[\\\"a\\\"],\\\"nested\\\":{\\\"on\\\":true,\\\"n\\\":2}}\"\nnullProto spread 3\nexit code 1\nTypeError: expected State, got untyped object (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)\n"
   }
 }

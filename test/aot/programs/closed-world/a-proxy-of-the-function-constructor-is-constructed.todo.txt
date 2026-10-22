@@ -1,0 +1,1 @@
+Plain Bun makes the function. The executable throws an EvalError: the compiler does not see that `new` of a proxy of the Function constructor makes code from text. A program that also says `new Function` somewhere is right.

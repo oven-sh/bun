@@ -1,10 +1,9 @@
 // `trim()`, `trimStart()` and `trimEnd()` on 16-bit strings, with every kind of Unicode white space.
-// CALLS+ both operationAOTTypedStringTrimmedStart16|StringTrim(;|$)
-// CALLS+ both operationAOTTypedStringTrimmedEnd16|StringTrim(;|$)
-// CALLS+ start operationAOTTypedStringTrimmedStart16|StringTrimStart(;|$)
-// CALLS- start operationAOTTypedStringTrimmedEnd16
-// CALLS+ end operationAOTTypedStringTrimmedEnd16|StringTrimEnd(;|$)
-// CALLS- end operationAOTTypedStringTrimmedStart16
+// CALLS+ both StringTrim\.Both\b
+// CALLS+ start StringTrim\.Start\b
+// CALLS- start StringTrim\.(End|Both)
+// CALLS+ end StringTrim\.End\b
+// CALLS- end StringTrim\.(Start|Both)
 // CALLS- both CallHostFunction
 // CALLS- start CallHostFunction
 // CALLS- end CallHostFunction

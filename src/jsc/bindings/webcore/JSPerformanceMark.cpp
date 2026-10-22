@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSPerformanceMark.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -92,6 +93,7 @@ using JSPerformanceMarkDOMConstructor = JSDOMConstructor<JSPerformanceMark>;
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceMarks, JSPerformanceMarkDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSPerformanceMarkDOMConstructor>(callFrame->jsCallee());
@@ -171,7 +173,7 @@ JSObject* JSPerformanceMark::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSPerformanceMark>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSPerformanceMarkDOMConstructor, DOMConstructorID::PerformanceMark>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

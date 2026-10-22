@@ -1,6 +1,5 @@
 #include "root.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/AOTFunction.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/BytecodeIndex.h"
 #include "wtf/Assertions.h"
@@ -28,11 +27,6 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
             pos.line_zero_based = 0;
             pos.column_zero_based = 0;
             pos.byte_position = 0;
-            return;
-        }
-
-        if (provider->hasNoSourceText()) {
-            pos.column_zero_based = pos.column_zero_based + amount;
             return;
         }
 
@@ -70,18 +64,6 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
-#if ENABLE(AOT)
-    if (auto function = JSC::AOT::FunctionRef::of(code)) {
-        if (auto position = function.reportedPositionFor(bc, JSC::AOT::FunctionRef::ConstructPosition::AtStart)) {
-            return ZigStackFramePosition {
-                .line_zero_based = OrdinalNumber::fromOneBasedInt(position->lineColumn.line).zeroBasedInt(),
-                .column_zero_based = OrdinalNumber::fromOneBasedInt(position->lineColumn.column).zeroBasedInt(),
-                .byte_position = -1,
-            };
-        }
-    }
-#endif
-
     auto expr = code->expressionInfoForBytecodeIndex(bc);
     // Expression info has offsets only. The provider derives the line and the column from the divot.
     auto lineColumn = code->source().provider()->documentLineColumnForOffset(expr.divot);
@@ -92,31 +74,28 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         .byte_position = (int)expr.divot,
     };
 
+    auto inst = code->instructionAt(bc);
+
     /// JavaScriptCore places error divots at different places than v8
     // Uncomment to debug this:
     // printf("lc = %d : %d (byte = %d)\n", pos.line.oneBasedInt(), pos.column.oneBasedInt(), expr.divot);
     // printf("off = %d : %d\n", expr.startOffset, expr.endOffset);
+    // printf("name = %s\n", inst->name());
 
-    bool constructs = false;
-#if ENABLE(AOT)
-    if (auto function = JSC::AOT::FunctionRef::of(code))
-        constructs = function.constructsAt(bc);
-    else
-#endif
-    {
-        switch (code->instructionAt(bc)->opcodeID()) {
-        case op_construct:
-        case op_construct_varargs:
-        case op_super_construct:
-        case op_super_construct_varargs:
-            constructs = true;
-            break;
-        default:
-            break;
-        }
-    }
-    if (constructs)
+    switch (inst->opcodeID()) {
+    case op_construct:
+    case op_construct_varargs:
+    case op_super_construct:
+    case op_super_construct_varargs:
+        // The divot by default is pointing at the `(` or the end of the class name.
+        // We want to point at the `new` keyword, which is conveniently at the
+        // expression start.
         adjustPositionBackwards(pos, expr.startOffset, code);
+        break;
+
+    default:
+        break;
+    }
 
     return pos;
 }

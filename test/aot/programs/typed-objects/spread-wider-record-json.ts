@@ -1,8 +1,8 @@
 // A record spread into a wider record type keeps the key order JavaScript gives it, and the compiled JSON.stringify writes it without leaving for the runtime's writer.
-// ENV JSC_useAOTOperationCounters=1
+// ENV JSC_aotCountsPath=/dev/null
 declare const aotOperationCount: undefined | ((name: string) => number);
 const slowPathCalls = () =>
-  typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedJSONAppendElementsFrom") : 0;
+  typeof aotOperationCount === "function" ? aotOperationCount("operationAOTJSONAppendElements") : 0;
 
 interface UserRef {
   login: string;

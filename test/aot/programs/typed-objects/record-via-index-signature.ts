@@ -1,4 +1,4 @@
-// A record is assignable to a type with an index signature that allows more: a store through that type of a value the field does not allow is taken, and whoever uses the field as its own type afterwards is told.
+// A record is assignable to a type with an index signature that allows more: a store through that type of a value the field does not allow is taken, and every typed read of the field afterwards throws a TypeError, whatever is done with the value.
 function attempt(label: string, f: () => unknown): void { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
 function plusOne(n: number): number { return n + 1 }
 type Lit = { v: number }

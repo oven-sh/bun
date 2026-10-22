@@ -7,7 +7,7 @@ function pushTo(a: number[]): unknown { return a.push(note("arg", 7)) }
 function getFrom(m: Map<string, string>): unknown { return m.get(((m as any).get = () => "new", "k")) }
 try { const fakeArray = { get push() { log.push("get push"); return (x: number) => 100 + x } } as unknown as number[]; console.log(pushTo(fakeArray)); console.log("an object as an array: no error") } catch (e) { console.log("an object as an array:", e instanceof TypeError ? "TypeError" : "other " + e, "[" + flush() + "]") }
 try { const fakeMap = { get: (k: string) => "old " + k } as unknown as Map<string, string>; console.log(getFrom(fakeMap)); console.log("an object as a Map: no error") } catch (e) { console.log("an object as a Map:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// (e-builtins L3, silent, is GONE: the receiver's original structure is tested in front of a resolved built-in method, so an own property shadows it, as in ECMAScript.)
+// The receiver is tested in front of a resolved built-in method, so an own property shadows the method, as in ECMAScript.
 // A receiver that comes out of an `any[]` is untyped: by name.
 const real = new Map([["k", "real"]])
 const untyped: any[] = []; untyped.push(real)

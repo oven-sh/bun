@@ -182,7 +182,7 @@ JSObject* JSCryptoKey::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSCryptoKey>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCryptoKey::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCryptoKey::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCryptoKeyDOMConstructor, DOMConstructorID::CryptoKey>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

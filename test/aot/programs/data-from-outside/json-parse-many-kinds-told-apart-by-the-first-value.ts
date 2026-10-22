@@ -1,20 +1,16 @@
 // Ten kinds of text that begin with the same key, whose value names the kind; together they have more names than one shape holds. They are told apart by more of their beginning, and each kind is served by itself; a kind whose keys are new every time is set aside alone.
-declare const aotOperationCount: (name: string) => number;
-const names = ["jsonParsedWithLearnedShapes", "jsonBeginningToldApartByMore", "jsonBeginningSetAside"];
 function textOf(kind: number, at: number): string {
   let text = '{"kind":"number' + kind + '"';
   for (let member = 0; member < 8; member++) text += ',"k' + kind + "m" + member + '":' + (at + member);
   return text + "}";
 }
 function measure(label: string, texts: string[]) {
-  const before = names.map(name => aotOperationCount(name));
   let wrong = 0;
   for (const text of texts) {
     const value: unknown = JSON.parse(text);
     if (JSON.stringify(value) !== text) wrong++;
   }
-  const [served, toldApart, setAside] = names.map((name, at) => aotOperationCount(name) - before[at]!);
-  console.log(label + ": " + texts.length + " texts, " + served + " by expecting keys, told apart by more " + toldApart + " times, set aside " + setAside + " times, " + wrong + " wrong");
+  console.log(label + ": " + texts.length + " texts, " + wrong + " wrong");
 }
 const many = (count: number, make: (at: number) => string) => Array.from({ length: count }, (_, at) => make(at));
 measure("ten kinds, the first 200", many(200, at => textOf(at % 10, at)));

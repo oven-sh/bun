@@ -23,7 +23,7 @@ for (const lie of ["text", { id: 1 }] as unknown[]) {
   breakContract(lie)
   try { console.log(render(Counter, { step: 1 })) } catch (e) { console.log((e as Error).constructor.name) }
 }
-// Plain JavaScript goes on with the text here. An assertion does not.
+// The type argument of `state(0)` is inferred, so nothing is tested: the value goes on as it is.
 function Only(_: {}): string { const [count] = state(0); return "only " + (count + 1) }
 try { console.log(render(Only, {})) } catch (e) { console.log((e as Error).constructor.name) }
 keepContract()

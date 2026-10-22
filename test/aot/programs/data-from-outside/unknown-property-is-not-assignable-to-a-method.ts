@@ -1,6 +1,6 @@
 // External data of type Pending is passed as { of: unknown }, so that type is external data too. { of(owner: Owner): T } only shares the property name: `unknown` is not assignable to a function type, so it keeps its layout, the generic call's result is checked against Store, and class Store stays closed.
-// IR+ ^shape \d+ Instance "Store"
-// IR- ^shape \d+ Instance "Store" .*foreign
+// IR+ ^layout L\d+ .*name="Store" .* representation=Typed
+// IR- ^layout (L\d+) .*name="Store" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 class Owner { id = 1; }
 class Slot<T extends object> {
   readonly #create: () => T;

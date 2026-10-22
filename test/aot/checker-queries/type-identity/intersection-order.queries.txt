@@ -1,0 +1,4 @@
+# An intersection is identified by its parts in the order in which they are written: `A & B` and `B & A` are two identities, and `A & B` written twice is one.
+intersection-order.ts:4 origin `A & B` = computed
+different: intersection-order.ts:4 identity `A & B` <=> intersection-order.ts:5 identity `B & A`
+same: intersection-order.ts:4 identity `A & B` <=> intersection-order.ts:6 identity `A & B`

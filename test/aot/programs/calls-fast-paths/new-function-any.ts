@@ -1,6 +1,6 @@
 // `new (F as any)()` on a constructor function with a typed `this`: the object is allocated at the call site together with its initial field stores.
-// IR- = Construct v
-// IR+ NewObjectWithShape
+// IR- ^ .*= Construct v
+// IR+ : =?L[0-9]+ = (NewObject|CreateThis) 
 declare const console: any;
 interface NodeLinks { flags: number; resolved: NodeLinks | undefined; depth: number; name: string | undefined }
 function NodeLinks(this: NodeLinks) { this.flags = 0; this.resolved = undefined; this.depth = 1; this.name = undefined; }

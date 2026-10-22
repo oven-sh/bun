@@ -1,0 +1,4 @@
+const held = {};
+Reflect.defineProperty(held, "a", { value: 1.5, enumerable: true });
+Reflect.defineProperty(held, "b", { value: 2.5, enumerable: true });
+for (const key of Object.keys(held)) console.log(key, held[key] + 1);

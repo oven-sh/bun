@@ -27,7 +27,7 @@ test.concurrent.each(["16", "1"])(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([program.stdout.text(), program.stderr.text(), program.exited]);
-    expect(stderr).toContain(`did not fit markedBlockCageSizeInMB=${size}`);
+    expect(stderr).toContain(`don't fit in BUN_JSC_markedBlockCageSizeInMB=${size}`);
     expect({ stdout, exitCode, signalCode: program.signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
   },
   120_000,

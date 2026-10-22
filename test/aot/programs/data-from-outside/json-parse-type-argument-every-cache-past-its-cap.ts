@@ -1,4 +1,5 @@
 // Every cache with a cap is filled from below the cap to above it in the middle of a parse, a write or a conversion of an object that stands on one of its entries. Argument: the number of a road; none: all.
+import { validate } from "bun:bundle";
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 interface Pair { left: Item; right: Item }
@@ -53,9 +54,9 @@ const roads: [string, (count: number) => boolean][] = [
     for (let round = 0; round < 4; round++) good = JSON.stringify(JSON.parse<Holder>(text)) === JSON.stringify(plainParse(text)) && good;
     return good;
   }],
-  ["conversions of plain objects: Bun.validate", count => {
+  ["conversions of plain objects: validate", count => {
     const text = holderText(kinds(count, (unique, at) => '{"k' + unique + '":1,"id":' + at + "}"));
-    return JSON.stringify(Bun.validate<Holder>(plainParse(text))) === text && JSON.stringify(Bun.validate<Holder>(plainParse(text))) === text;
+    return JSON.stringify(validate<Holder>(plainParse(text))) === text && JSON.stringify(validate<Holder>(plainParse(text))) === text;
   }],
   ["conversions of plain objects: the parser gives up", count => {
     const text = holderText(kinds(count, (unique, at) => '{"k' + unique + '":1,"id":' + at + "}"));
@@ -63,12 +64,12 @@ const roads: [string, (count: number) => boolean][] = [
   }],
   ["conversions by a tag", count => {
     const text = holderText(kinds(count, (unique, at) => ['{"k' + unique + '":1,"kind":"a","a":1}', '{"kind":"b","k' + unique + '":1,"b":2}', '{"c":3,"kind":"c","k' + unique + '":1}'][at % 3]));
-    return JSON.stringify(Bun.validate<Tags>(plainParse(text))) === text && JSON.stringify(JSON.parse<Tags>(text)) === text && JSON.stringify(JSON.parse<Tags>(text.replace('"first"', '"\\u0066irst"'))) === text;
+    return JSON.stringify(validate<Tags>(plainParse(text))) === text && JSON.stringify(JSON.parse<Tags>(text)) === text && JSON.stringify(JSON.parse<Tags>(text.replace('"first"', '"\\u0066irst"'))) === text;
   }],
   ["copies of typed objects", count => {
     const text = holderText(kinds(count, (unique, at) => '{"id":' + at + ',"k' + unique + '":' + at + "}"));
     const holder = JSON.parse<Holder>(text);
-    const copy = Bun.validate<Holder>(holder);
+    const copy = validate<Holder>(holder);
     const spread = { ...holder, items: holder.items.map(item => ({ ...item })) };
     return JSON.stringify(copy) === text && JSON.stringify(spread) === text && JSON.stringify(holder) === text;
   }],
@@ -76,7 +77,7 @@ const roads: [string, (count: number) => boolean][] = [
     const levels = count < 300 ? 3 : count < 5000 ? 6 : count < 20000 ? 7 : 8;
     const text = deepText(levels, 3);
     const deep = JSON.parse<Deep>(text);
-    return JSON.stringify(deep) === text && JSON.stringify(Bun.validate<Deep>(plainParse(text))) === text && JSON.stringify(Bun.validate<Deep>(deep)) === text && JSON.stringify(JSON.parse<Deep>(text)) === text;
+    return JSON.stringify(deep) === text && JSON.stringify(validate<Deep>(plainParse(text))) === text && JSON.stringify(validate<Deep>(deep)) === text && JSON.stringify(JSON.parse<Deep>(text)) === text;
   }],
   ["shapes learned by JSON.parse without a type", count => {
     const size = Math.min(count, 5000);
@@ -102,7 +103,7 @@ const roads: [string, (count: number) => boolean][] = [
       const unique = ++serial;
       const text = '{"left":{"id":1,"l' + unique + '":1},"m' + unique + '":{"n":2},"right":{"r' + unique + '":[3],"id":2}}';
       const pair = JSON.parse<Pair>(text);
-      good = JSON.stringify(pair) === text && JSON.stringify(Bun.validate<Pair>(pair)) === text && Object.keys(pair).length === 3 && good;
+      good = JSON.stringify(pair) === text && JSON.stringify(validate<Pair>(pair)) === text && Object.keys(pair).length === 3 && good;
     }
     return good;
   }],

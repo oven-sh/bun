@@ -1,21 +1,22 @@
 // The typed versions of public packages under packages/bun-sound (react-dom, react-reconciler, seroval, fuse.js ..) are compiled
-// into large programs and held to the untouched packages: packages/bun-sound/run.py, whose top says what it checks. Beside the
+// into large programs and compared with the original packages: packages/bun-sound/run.py, whose top says what it checks. Beside the
 // answers it checks that a typed package is still compiled as typed: a change in the compiler can make one fall back to untyped
 // code with every answer right, and nothing else notices.
 //
 //   AOT_TYPED_PACKAGES=<node_modules> SEMA=<bun-sema> bun test test/aot/typed-packages-wide-trees
 //
-// It needs a node_modules folder in which npm has installed the packages (each tree whose packages are missing is passed over),
-// `bun-sema` (the top of shell/quick.py says how to build it) and python3. Without them it is skipped.
+// It needs a node_modules folder in which npm has installed the packages (each tree whose packages are missing is skipped),
+// `bun-sema`, the checker's CLI (BUN_CODEGEN_DIR=$PWD/build/release-local/codegen cargo build --release -p bun_sema_standalone),
+// and python3. Without them it is skipped.
 import { expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
 import { unsupported } from "./run-programs";
+import { python } from "./shell/tools";
 
 const modules = process.env.AOT_TYPED_PACKAGES;
 const sema = process.env.SEMA;
-const python = Bun.which("python3");
 const missing = unsupported || (!modules && "AOT_TYPED_PACKAGES is not set") || (!sema && "SEMA is not set") || (!python && "python3 is not installed");
 
 if (missing && !unsupported) console.error(`SKIPPED: test/aot/typed-packages-wide-trees.test.ts: ${missing}`);

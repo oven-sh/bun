@@ -17,8 +17,6 @@ pub enum Target {
     /// The separate SSR graph when server-components bundling is configured
     /// with `ServerComponents.separate_ssr_graph`. Resolves like [`Target::Bun`].
     ServerComponentsSsr,
-    /// A file of `src/js`. Like [`Target::Bun`], with the syntax of `bun_builtin_syntax`.
-    BunBuiltins,
 }
 
 bun_core::comptime_string_map! {
@@ -35,11 +33,6 @@ impl Target {
     /// Same lookup table as [`TARGET_MAP`] (the type is a ZST).
     pub const MAP: __ComptimeStringMap_TARGET_MAP = __ComptimeStringMap_TARGET_MAP(());
 
-    /// Stands for the `$` of a name in a [`Target::BunBuiltins`] file until the printer writes `@`.
-    pub const PRIVATE_NAME_PREFIX: &'static [u8] = b"__intrinsic__";
-    /// Marks a global that is not read through its private name. The printer drops it.
-    pub const PUBLIC_NAME_PREFIX: &'static [u8] = b"__no_intrinsic__";
-
     // `from_js` lives in bundler_jsc as an extension trait — see PORTING.md.
     // `to_api`/`from(api)` live in `bun_options_types::TargetExt`.
 
@@ -47,11 +40,7 @@ impl Target {
     pub fn is_server_side(self) -> bool {
         matches!(
             self,
-            Target::BunMacro
-                | Target::Node
-                | Target::Bun
-                | Target::ServerComponentsSsr
-                | Target::BunBuiltins
+            Target::BunMacro | Target::Node | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -59,7 +48,7 @@ impl Target {
     pub fn is_bun(self) -> bool {
         matches!(
             self,
-            Target::BunMacro | Target::Bun | Target::ServerComponentsSsr | Target::BunBuiltins
+            Target::BunMacro | Target::Bun | Target::ServerComponentsSsr
         )
     }
 
@@ -73,7 +62,7 @@ impl Target {
     pub fn naming_placeholder(self) -> &'static [u8] {
         match self {
             Target::Browser => b"browser",
-            Target::Bun | Target::BunBuiltins => b"bun",
+            Target::Bun => b"bun",
             Target::Node => b"node",
             Target::BunMacro => b"macro",
             Target::ServerComponentsSsr => b"ssr",
@@ -116,10 +105,7 @@ impl Target {
         match self {
             Target::Node => NODE,
             Target::Browser => BROWSER,
-            Target::Bun
-            | Target::BunMacro
-            | Target::ServerComponentsSsr
-            | Target::BunBuiltins => BUN,
+            Target::Bun | Target::BunMacro | Target::ServerComponentsSsr => BUN,
         }
     }
 
@@ -129,7 +115,7 @@ impl Target {
         match self {
             Target::Node => &[b"node"],
             Target::Browser => &[b"browser", b"module"],
-            Target::Bun | Target::BunBuiltins => &[b"bun", b"node"],
+            Target::Bun => &[b"bun", b"node"],
             Target::ServerComponentsSsr => &[b"bun", b"node"],
             Target::BunMacro => &[b"macro", b"bun", b"node"],
         }

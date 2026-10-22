@@ -1,0 +1,4 @@
+inspector.open: object
+inspector.url: undefined
+inspector.close: undefined
+eval: EvalError

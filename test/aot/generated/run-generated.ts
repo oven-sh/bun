@@ -2,15 +2,17 @@
 // prints is compared, line by line, with what plain `bun run` prints for the same text. So is what `bun run --aot` prints, which runs the
 // sources under the rules of --aot without compiling them: it and the executable must agree, also where both depart from plain Bun.
 //
-//   bun test test/aot/generated-operands                     the part of each generator's programs that always runs
+//   bun test test/aot/generated-operands                     a quarter of the part of each generator's programs that is meant for every run, another for each commit (`inShare` in ../run-programs.ts)
+//   AOT_SHARE=all bun test test/aot/generated-operands       that part whole
 //   AOT_GENERATED=all bun test test/aot/generated-operands   all of them
 //   AOT_GENERATED=<text> bun test test/aot/generated-..      those whose name contains the text
 //   AOT_GENERATED_KEEP=<folder> bun test ..                  writes the programs there and leaves them
+//   AOT_GENERATED_FLAGS="--aot-threads=1" bun test ..        more flags for every build
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, wanted as programsWanted, slot, spawned, unsupported } from "../run-programs";
+import { built, inShare, wanted as programsWanted, slot, spawned, unsupported } from "../run-programs";
 
 export type Generated = {
   name: string;
@@ -20,16 +22,24 @@ export type Generated = {
   mayBeRefused?: true;
   /** Its lines are `<what>: <answer>`, and some try what --aot does not allow. Where plain Bun answers, the executable may say that it threw. It may not give another answer. */
   linesMayBeRefused?: true;
+  /** Its lines are `<case> <answer>`. A case whose name matches puts a value of another type where a type is written: the executable may answer `threw TypeError`, and nothing else, whatever plain Bun answers. */
+  casesMayBeRefused?: RegExp;
   /**
    * Its lines are `<group> | <line>`. A group that tries what is not allowed may end early, with a line that says REFUSED or THROWS: what stands ahead of that
    * line is the same in the executable and in plain Bun. The groups that match the expression print what differs from run to run and are not compared.
    * `bun run --aot` is left out: such a program prints what depends on whether it runs from its sources or as an executable.
    */
   groupsMayBeRefused?: RegExp;
+  /** One of very many programs about what the compiler proves. `bun run --aot` is left out: it takes as long as the build. */
+  isOnlyCompiled?: true;
+  /** It leaves an error that nobody catches: plain Bun goes on and exits with 1, and so does the executable. */
+  leavesAnError?: true;
   /** Nobody has looked at the program. Where TypeScript rejects it, or plain Bun fails on it or needs too long, there is nothing to compare. A crash of the build still fails the test. */
   mayBeUnjudgeable?: true;
   /** Set where plain Bun runs the program for reference, and nowhere else. */
   plainEnv?: Record<string, string>;
+  /** More flags for the build of this program. */
+  flags?: string[];
   /** How the program departs from plain Bun today. It is listed as a todo and not run. */
   failsToday?: string;
   /** How `bun run --aot` departs from the executable today. That run is listed as a todo and left out. The executable is compared with plain Bun all the same. */
@@ -37,12 +47,20 @@ export type Generated = {
 };
 
 const wanted = process.env.AOT_GENERATED ?? "";
+export const moreFlags = process.env.AOT_GENERATED_FLAGS?.split(" ").filter(flag => flag) ?? [];
 
 function isRefused(ours: string | undefined, theirs: string | undefined) {
   if (ours === undefined || theirs === undefined) return false;
   const what = ours.slice(0, ours.lastIndexOf(": ") + 2);
   const threw = (answer: string) => ["THROWS", "caught", "T:"].filter(word => answer.includes(word)).length;
   return what.length > 1 && theirs.startsWith(what) && threw(ours.slice(what.length)) > threw(theirs.slice(what.length));
+}
+
+function isRefusedCase(ours: string | undefined, theirs: string | undefined, cases: RegExp) {
+  const answer = " threw TypeError";
+  if (!ours?.trimEnd().endsWith(answer)) return false;
+  const name = ours.trimEnd().slice(0, -answer.length);
+  return cases.test(name) && !!theirs?.startsWith(name + " ");
 }
 
 function departingGroups(ours: string[], theirs: string[], notCompared: RegExp) {
@@ -66,7 +84,8 @@ export function generated(title: string, programs: Generated[]) {
   const chosen = programs
     .filter(program => (wanted === "all" ? true : wanted ? program.name.includes(wanted) : program.isAlwaysRun))
     // A debug or ASAN build of Bun is many times slower.
-    .filter((_, index) => wanted || programsWanted !== "quick" || index % 10 === 0);
+    .filter((_, index) => wanted || programsWanted !== "quick" || index % 10 === 0)
+    .filter(program => wanted || inShare(`${title} ${program.name}`, 4));
 
   describe.concurrent(`compile/aot/generated/${title}`, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
@@ -87,24 +106,26 @@ export function generated(title: string, programs: Generated[]) {
             const executable = join(folder, isWindows ? "program.exe" : "program");
             try {
               if (program.mayBeUnjudgeable && (await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv })).exitCode !== 0) return;
-              const build = await spawned([bunExe(), "build", "--compile", "--aot", file, "--outfile", executable], folder, bunEnv);
+              const build = await spawned([bunExe(), "build", "--compile", "--aot", ...moreFlags, ...(program.flags ?? []), file, "--outfile", executable], folder, bunEnv);
               if (program.mayBeUnjudgeable && build.exitCode === 1 && /^error: TS\d+:/m.test(build.stderr)) return;
-              const fromSources = program.modeFailsToday || program.groupsMayBeRefused ? undefined : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
+              const fromSources = program.modeFailsToday || program.groupsMayBeRefused || program.isOnlyCompiled ? undefined : await spawned([bunExe(), "run", "--aot", file], folder, bunEnv);
               if (program.mayBeRefused && build.exitCode === 1 && /^error\b/m.test(build.stderr)) return void (fromSources && expect(fromSources.exitCode).not.toBe(0));
               built(build);
               const compiled = await spawned([executable], folder, { ...bunEnv, BUN_AOT_VERBOSE: "1" });
               if (fromSources) expect({ stdout: fromSources.stdout, signal: fromSources.signal, exitCode: fromSources.exitCode }).toEqual({ stdout: compiled.stdout, signal: compiled.signal, exitCode: compiled.exitCode });
               const plain = await spawned([bunExe(), "run", file], folder, { ...bunEnv, ...program.plainEnv });
-              expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode: 0 });
+              const exitCode = program.leavesAnError ? 1 : 0;
+              expect({ signal: plain.signal, exitCode: plain.exitCode }).toEqual({ signal: null, exitCode });
               expect(compiled.stderr).toContain("[aot] module: ");
               if (program.mayBeRefused && compiled.exitCode === 0 && compiled.stdout.startsWith("THROWS TypeError ")) return;
               const [ours, theirs] = [compiled.stdout.split("\n"), plain.stdout.split("\n")];
               if (program.groupsMayBeRefused) return void expect({ departing: departingGroups(ours, theirs, program.groupsMayBeRefused), signal: compiled.signal, exitCode: compiled.exitCode }).toEqual({ departing: [], signal: null, exitCode: 0 });
               const departing: string[] = [];
               for (let i = 0; i < Math.max(ours.length, theirs.length) && departing.length < 20; i++) {
-                if (ours[i] !== theirs[i] && !(program.linesMayBeRefused && isRefused(ours[i], theirs[i]))) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
+                if (ours[i] === theirs[i] || (program.linesMayBeRefused && isRefused(ours[i], theirs[i]))) continue;
+                if (!(program.casesMayBeRefused && isRefusedCase(ours[i], theirs[i], program.casesMayBeRefused))) departing.push(`--aot: ${ours[i]}\nplain: ${theirs[i]}`);
               }
-              expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode: 0, lines: theirs.length });
+              expect({ departing, signal: compiled.signal, exitCode: compiled.exitCode, lines: ours.length }).toEqual({ departing: [], signal: null, exitCode, lines: theirs.length });
             } finally {
               rmSync(executable, { force: true });
             }

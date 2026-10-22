@@ -1,5 +1,5 @@
 // Only what is put in for a type parameter that a Proxy is made of is opened. A generic class that keeps its argument as it is leaves the type closed, also beside a generic class that makes a Proxy of another type.
-// IR- ^shape .*"State".* accepts-untyped
+// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 type Sub = { k: number };
 type State = { n: number; sub: Sub };
 type Other = { o: number };

@@ -1,1 +1,0 @@
-Plain Bun prints "not made yet: 0"; under --aot the program ends with: TypeError: Cannot redefine property 'schema' of Settings: declared properties stay writable, enumerable and configurable

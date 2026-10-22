@@ -1,5 +1,5 @@
 // One generic reader with two calls: one result goes to a declared type, the other to `unknown` and is then changed in every way plain JavaScript allows.
-// IR+ CallBuiltin JSONOpen
+// IR+ ^ .* = JSONSourceOpen v
 interface OrderBody {
   customer: { id: number; name: string; email: string };
   items: { sku: string; quantity: number; unitCents: number }[];

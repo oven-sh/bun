@@ -1,5 +1,5 @@
 // A rest parameter of an inlined function that is only used for `.length` and `[index]` needs no array.
-// IR- NewArray
+// IR- ^ .*NewArray
 declare const console: any;
 function count(...v: number[]) { return v.length + v[0] + (v[5] === undefined ? 1 : 0); }
 let n = 0;

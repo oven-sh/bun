@@ -4,9 +4,9 @@ type Mark = { at: number; note: string };
 type Message = { content: string; spans?: Span[] };
 
 function measure(label: string, run: () => unknown): void {
-  const before = aotOperationCount("operationAOTTypedCoerce");
+  const before = aotOperationCount("operationAOTEnforceType");
   const result = run();
-  console.log(label + ": " + JSON.stringify(result) + ": " + (aotOperationCount("operationAOTTypedCoerce") - before) + " conversions by the runtime");
+  console.log(label + ": " + JSON.stringify(result) + ": " + (aotOperationCount("operationAOTEnforceType") - before) + " conversions by the runtime");
 }
 
 function append(message: Message, added: readonly Span[]): void {

@@ -4,7 +4,7 @@ import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", types: [] as string[], strict: true, composite: true, outDir: "lib", rootDir: "src" };
+const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", typeRoots: [join(import.meta.dir, "..", "..", "packages")], types: ["bun-types"], strict: true, composite: true, outDir: "lib", rootDir: "src" };
 const config = JSON.stringify({ compilerOptions: options, include: ["src"] });
 
 async function run(cwd: string, ...args: string[]) {
@@ -14,7 +14,9 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+// `bun test --aot` reports as the build does, `bun check --aot` as tsc does.
+const errorsOfBuild = (said: string) => [...said.matchAll(/^error: (TS\d+):.*\n\s+at (\S+):(\d+):\d+$/gm)].map(match => `${match[2].replaceAll("\\", "/").replace(/^.*\/(?=packages\/)/, "")}:${match[3]} ${match[1]}`).sort();
+const errorsOfCheck = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
 
 const right = "packages/right/src/right.test.ts";
 const wrong = "packages/wrong/src/wrong.test.ts";
@@ -40,8 +42,8 @@ test.each([
   symlinkSync(join(String(dir), "packages", "right"), join(String(dir), "node_modules", "@workspace", "right"), "dir");
   for (const files of [[wrong], [wrong, right], [right, wrong]]) {
     const tested = await run(String(dir), "test", "--aot", ...files.map(file => `./${file}`));
-    expect({ files, errors: errors(tested.said), passed: passed(tested.said) }).toEqual({ files, errors: [`${wrong}:2 ${code}`], passed: files.includes(right) ? ["right"] : [] });
+    expect({ files, errors: errorsOfBuild(tested.said), hasRunRefusedFile: passed(tested.said).includes("wrong"), exitCode: tested.exitCode }).toEqual({ files, errors: [`${wrong}:2 ${code}`], hasRunRefusedFile: false, exitCode: 1 });
     const checked = await run(String(dir), "check", "--aot", ...files);
-    expect({ files, errors: errors(checked.said), exitCode: checked.exitCode }).toEqual({ files, errors: [`${wrong}:2 ${code}`], exitCode: 1 });
+    expect({ files, errors: errorsOfCheck(checked.said), exitCode: checked.exitCode }).toEqual({ files, errors: [`${wrong}:2 ${code}`], exitCode: 1 });
   }
 }, 120_000);

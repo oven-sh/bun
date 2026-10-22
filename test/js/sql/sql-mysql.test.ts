@@ -168,7 +168,7 @@ for (const image of images) {
           // chain and the hostname are verified (verify-full) and the query runs.
           {
             await using db = new SQL({ ...getOptions(), max: 1 });
-            expect("sslMode" in db.options && db.options.sslMode).toBe(4); // SSLMode.verify_full
+            expect(db.options.sslMode).toBe(4); // SSLMode.verify_full
             expect(await db`select 1 as x`).toEqual([{ x: 1 }]);
           }
           // The server certificate does not chain to this unrelated CA, so the

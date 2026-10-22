@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+setDefaultTimeout(120_000);
 
 const files = {
   "a.ts": `

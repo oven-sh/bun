@@ -4,13 +4,13 @@
 #include "helpers.h"
 #include "JSEnvironmentVariableMap.h"
 
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
-#include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/HeapIterationScope.h>
@@ -959,6 +959,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
 
     auto envIdentifier = JSC::Identifier::fromString(vm, "env"_s);
 
+    // A compiled executable lets nobody store to a member that the program never stores to. This is the host's own store.
+    JSC::AllowLazyMaterializationOfImmutableProperties allowStores(vm);
+
     // process.env may already be reified as an own property on the process object;
     // overwrite it so it resolves to the shared variant.
     if (globalObject->hasProcessObject()) {
@@ -973,6 +976,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
         if (bunObject->getDirect(vm, envIdentifier))
             bunObject->putDirect(vm, envIdentifier, shared, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
     }
+
+    // Compiled code keeps what the first read of process.env and of Bun.env gave.
+    JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
 
     return store;
 }
@@ -1097,7 +1103,6 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     args.append(editWindowsEnvVar);
     args.append(JSC::JSFunction::create(vm, globalObject, 2, "coerceForWrite"_s, jsProcessEnvCoerceForWrite, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, "resetForDelete"_s, jsProcessEnvResetForDelete, ImplementationVisibility::Private));
-    args.append(JSC::Symbol::create(vm, vm.symbolRegistry().symbolForKey("nodejs.util.inspect.custom"_s)));
     auto clientData = WebCore::clientData(vm);
     JSC::CallData callData = JSC::getCallData(getSourceEvent);
     NakedPtr<JSC::Exception> returnedException = nullptr;

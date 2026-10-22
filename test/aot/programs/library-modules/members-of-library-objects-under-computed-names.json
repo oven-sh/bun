@@ -1,0 +1,1 @@
+{ "env": { "PARTS": "log,info,debug,UInt16LE,hex,emit,write,end,read,setHeader,writeHead,listen,address,close,cwd,uptime,escapeHTML,max,stringify" }, "skipInShell": "it asks for modules of Bun" }

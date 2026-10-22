@@ -1,8 +1,8 @@
 // Maps made from literals of constant string keys and constant values: lookups, order, the first change, copies, iteration while changing, keys of other kinds, collections.
-// IR+ table in image \d+ = CallBuiltin Map#\d+ \(\)
-// IR= 1 fresh table in image \d+ = CallBuiltin Map#\d+ \(\)
+// IR+  = NewMapFromTable( table=\d+)?( @|$)
+// IR= 1 fresh  = NewMapFromTable( table=\d+)?( @|$)
 // IR= 0 fresh NewArray
-// IR= 0 computed table in image
+// IR= 0 computed NewMapFromTable
 const NUMBERS = new Map([["one", 1], ["two", 2], ["three", 3]]);
 const TEXTS = new Map<string, string>([["one", "uno"], ["two", "dos"], ["three", "tres"], ["four", "cuatro"], ["five", "cinco"], ["six", "seis"], ["seven", "siete"], ["eight", "ocho"], ["nine", "nueve"]]);
 const MIXED = new Map<string, unknown>([["n", 1.5], ["negative zero", -0], ["nan", NaN], ["big", 1e300], ["int", -2147483648], ["t", true], ["f", false], ["null", null], ["undefined", undefined], ["empty", ""], ["char", "x"], ["text", "café 中文"]]);

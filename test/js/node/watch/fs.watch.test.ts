@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { pathToFileURL } from "bun";
 import {
   bunEnv,

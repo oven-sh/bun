@@ -113,7 +113,8 @@ impl Scripts {
         false
     }
 
-    /// npm's rule for the default `node-gyp rebuild` script. `None`: read `gypfile` if it matters.
+    /// npm's rule for the default `node-gyp rebuild` script. Pass `None` to read `gypfile` from
+    /// disk only if it matters.
     pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Option<bool>) -> bool {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
@@ -304,7 +305,8 @@ impl Scripts {
         }
     }
 
-    /// Runs on the isolated linker's task threads. `trusted`: also `true` to list what would run.
+    /// Runs on the isolated linker's task threads. Pass `trusted: true` to also list the scripts
+    /// that would run.
     pub fn get_list(
         &mut self,
         log: &mut bun_ast::Log,
@@ -431,7 +433,7 @@ pub struct List {
     pub items: [Option<Box<[u8]>>; SCRIPT_NAMES_LEN],
     pub(crate) first_index: u8,
     pub total: u8,
-    /// Neither the project's nor a workspace's own scripts.
+    /// True if these aren't the project's or a workspace's own scripts.
     pub(crate) is_dependency: bool,
     // Owned NUL-terminated heap string, not a borrow.
     pub(crate) cwd: ZBox,

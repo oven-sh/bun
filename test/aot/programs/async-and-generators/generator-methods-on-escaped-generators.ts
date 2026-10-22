@@ -111,9 +111,9 @@ show('a borrowed next', () => next.call(borrowed, 1))
 show('a borrowed next by apply', () => Reflect.apply(next, borrowed, []))
 show('a borrowed return', () => finish.call(borrowed, 'stop'))
 for (const receiver of [undefined, null, 1, 'text', {}, [], () => 1, Object.create(borrowed), (async function* () {})(), [][Symbol.iterator]()]) {
-  show(`next on ${Object.prototype.toString.call(receiver)}`, () => next.call(receiver as never))
-  show(`return on ${Object.prototype.toString.call(receiver)}`, () => finish.call(receiver as never, 'x'))
-  show(`throw on ${Object.prototype.toString.call(receiver)}`, () => raise.call(receiver as never, 'x'))
+  show(`next on ${Object.prototype.toString.call(receiver)}`, () => next.call(receiver as any))
+  show(`return on ${Object.prototype.toString.call(receiver)}`, () => finish.call(receiver as any, 'x'))
+  show(`throw on ${Object.prototype.toString.call(receiver)}`, () => raise.call(receiver as any, 'x'))
 }
 
 class Tree {

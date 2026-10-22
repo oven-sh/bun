@@ -1,7 +1,7 @@
 // The first call of a method by name asks the run time for it, and no later call does, whatever the class looks like: the prototype of the class need not make its members for that.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 class Plain { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } }
 class WithGetter { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } get g() { return 6; } }
 class Parent { f = 0; m1() { return 1; } m2() { return 2; } m3() { return 3; } m4() { return 4; } m5() { return 5; } m6() { return 6; } }

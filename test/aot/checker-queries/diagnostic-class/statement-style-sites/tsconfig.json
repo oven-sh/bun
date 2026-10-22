@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": [],
+    "noEmit": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnusedLabels": false
+  }
+}

@@ -575,12 +575,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let ref_ = p.store_name_in_ref(name);
-                        let mut value = p.new_expr(E::Identifier::init(ref_), key.loc);
-                        if let Some(audited) = p.options.features.audited {
-                            if p.lexer.token != T::TEquals {
-                                Self::mark_audited(p, audited, &mut value, false);
-                            }
-                        }
+                        let value = p.new_expr(E::Identifier::init(ref_), key.loc);
 
                         // Destructuring patterns have an optional default value
                         let mut initializer: Option<Expr> = None;

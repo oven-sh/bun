@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -15,7 +15,7 @@ async function bun(cwd: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-const unsupported = /^error: --aot: |^compile\.aot: /m;
+const unsupported = /^(error: --aot|compile\.aot) (only supports|isn't available)/m;
 
 describe.concurrent("an option that configures bytecode is an error with --aot", () => {
   test.each([
@@ -48,7 +48,7 @@ describe.concurrent("an option that configures bytecode is an error with --aot",
     expect(stdout).toBe(`compile.aot does not support ${name}\n`);
   });
 
-  test("--bytecode is implied by --aot and may be combined with it", async () => {
+  test("--bytecode may be combined with --aot, where it has no effect", async () => {
     using dir = tempDir("aot-with-bytecode", files);
     const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--aot", "--bytecode", "app.ts", "--outfile", "out");
     if (unsupported.test(stderr)) return;
@@ -60,4 +60,34 @@ describe.concurrent("an option that configures bytecode is an error with --aot",
     const { stderr, exitCode } = await bun(String(dir), "build", "--compile", "--bytecode", "--format=esm", "--bytecode-depth=1", "app.ts", "--outfile", "out");
     expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
   }, 60_000);
+});
+
+describe("environment variables and --aot builds", () => {
+  test("removed environment variables do not change the executable", async () => {
+    using dir = tempDir("aot-removed-variables", files);
+    const folder = String(dir);
+    const removed = {
+      BUN_AOT_TYPED_FILE: join(folder, "typed-file"),
+      BUN_AOT_TYPED_SNAPSHOT: join(folder, "snapshot"),
+      BUN_AOT_LAYOUT_SEED: "7",
+      BUN_TRIM_RUNTIME_WITHOUT: "no_such_feature",
+    };
+    const hashes: string[] = [];
+    for (const env of [{}, removed]) {
+      rmSync(join(folder, isWindows ? "out.exe" : "out"), { force: true });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--aot", "app.ts", "--outfile", "out"],
+        cwd: folder,
+        env: { ...bunEnv, NO_COLOR: "1", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (unsupported.test(stderr)) return;
+      expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      hashes.push(new Bun.CryptoHasher("sha256").update(readFileSync(join(folder, isWindows ? "out.exe" : "out"))).digest("hex"));
+    }
+    expect(hashes[1]).toBe(hashes[0]);
+    expect([existsSync(removed.BUN_AOT_TYPED_FILE), existsSync(removed.BUN_AOT_TYPED_SNAPSHOT)]).toEqual([false, false]);
+  }, 120_000);
 });

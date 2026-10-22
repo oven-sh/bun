@@ -1,31 +1,4 @@
-// get, has, set, append and delete on what `x.headers` gave are one native call each. Where nothing else is done with it, no Headers object is made: the Response or Request stands for it, also where it is joined with other values.
-// IR= 1 setOne CallBuiltin CallHeadersMethod
-// IR= 0 setOne = Integer 255$
-// IR= 1 setOne = Integer 537$
-// IR= 1 appendOne CallBuiltin CallHeadersMethod
-// IR= 1 deleteOne CallBuiltin CallHeadersMethod
-// IR= 1 hasOne CallBuiltin CallHeadersMethod
-// IR= 0 getOne CallBuiltin CallHeadersMethod
-// IR= 1 getOne CallBuiltin GetRequestOrResponseHeader
-// IR= 3 setThenRead CallBuiltin CallHeadersMethod
-// IR= 3 joined CallBuiltin CallHeadersMethod
-// IR= 1 withCallBetween CallBuiltin CallHeadersMethod
-// IR= 1 insideTry CallBuiltin CallHeadersMethod
-// IR= 1 inLoop CallBuiltin CallHeadersMethod
-// IR= 1 computedValue CallBuiltin CallHeadersMethod
-// IR= 1 computedName CallBuiltin CallHeadersMethod
-// IR= 2 computedInJoin CallBuiltin CallHeadersMethod
-// IR= 0 methodKept CallBuiltin CallHeadersMethod
-// IR= 1 escapesByReturn CallBuiltin CallHeadersMethod
-// IR= 0 escapesByReturn CallBuiltin HostObjectHasCachedValue
-// IR= 1 escapesAsArgument CallBuiltin CallHeadersMethod
-// IR= 0 escapesAsArgument CallBuiltin HostObjectHasCachedValue
-// IR= 1 isTested CallBuiltin CallHeadersMethod
-// IR= 0 isTested CallBuiltin HostObjectHasCachedValue
-// IR= 1 otherMethod CallBuiltin CallHeadersMethod
-// IR= 0 otherMethod CallBuiltin HostObjectHasCachedValue
-// IR= 0 tooFewArguments CallBuiltin CallHeadersMethod
-// IR= 0 tooManyArguments CallBuiltin CallHeadersMethod
+// get, has, set, append and delete on the result of `x.headers`: called at once, through a variable, after a join with another Headers object, in a try block and in a loop. For every kind of holder, name and value, and whatever happens to the Headers object or its holder before the call or while the arguments are evaluated.
 export function setOne(holder, value) {
   holder.headers.set("content-type", value);
 }

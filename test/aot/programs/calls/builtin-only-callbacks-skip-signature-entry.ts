@@ -1,9 +1,9 @@
 // A call of a function held in a value, where only numbers cross, goes by the signature of the call: the function has a second entry that takes and yields them as they are. Such an entry is worth its bytes only where a closure of the function can get to such a call. One that is only ever called by its name or handed to a method of an array, a map or a promise, or to a function of the host, cannot: those call it the general way.
-// IR+ ^function \d+ "descending" Plain flags \d+ .* result number$
-// IR+ ^function \d+ "byLastDigit" Plain flags \d+ .* result number$
-// IR+ ^function \d+ "productOf" Plain flags \d+ .* result number$
-// IR- ^function \d+ "ascending" Plain flags \d+ .* result number$
-// IR- ^function \d+ "sumOf" Plain flags \d+ .* result number$
+// IR+ ^function f\d+ "descending" \w+ role=SignatureEntrypoint
+// IR+ ^function f\d+ "byLastDigit" \w+ role=SignatureEntrypoint
+// IR+ ^function f\d+ "productOf" \w+ role=SignatureEntrypoint
+// IR- ^function f\d+ "ascending" \w+ role=SignatureEntrypoint
+// IR- ^function f\d+ "sumOf" \w+ role=SignatureEntrypoint
 function ascending(a: number, b: number): number { return a - b; }
 function descending(a: number, b: number): number { return b - a; }
 function byLastDigit(a: number, b: number): number { return a % 10 - b % 10; }

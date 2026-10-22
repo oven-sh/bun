@@ -1,0 +1,5 @@
+a module of the executable: refused: Cannot load '..': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+a built-in module: true
+process.getBuiltinModule: true
+the module by its constant name: inside
+require of a computed name, where the compiler sees it: refused: Cannot load '..': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)

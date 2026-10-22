@@ -1,7 +1,7 @@
 // `super.name` is asked of the run time once for each class it is read from, not at every read. What was learnt ends when the member is replaced, when the name arrives nearer by, and when the home object gets another prototype.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTTypedLanguageOperation") + count("operationAOTTypedGetSuperPropertyByName");
+const asked = () => count("operationAOTGetSuperBase") + count("operationAOTSuperGet") + count("operationAOTGetSuperPropertyById");
 class Base {
   x = 1; y = 2;
   sum() { return this.x + this.y; }

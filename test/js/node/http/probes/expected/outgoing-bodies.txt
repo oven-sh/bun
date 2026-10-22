@@ -1,0 +1,2492 @@
+an empty string, undefined, end(body)
+an empty string, utf8, end(body)
+an empty string, utf-8, end(body)
+an empty string, UTF8, end(body)
+an empty string, latin1, end(body)
+an empty string, binary, end(body)
+an empty string, ascii, end(body)
+an empty string, hex, end(body)
+an empty string, base64, end(body)
+an empty string, base64url, end(body)
+an empty string, utf16le, end(body)
+an empty string, ucs2, end(body)
+an empty string, ucs-2, end(body)
+one ASCII character, hex, end(body)
+one ASCII character, base64, end(body)
+one ASCII character, base64url, end(body)
+a two-byte character, hex, end(body)
+a two-byte character, base64, end(body)
+a two-byte character, base64url, end(body)
+a three-byte character, hex, end(body)
+a three-byte character, base64, end(body)
+a three-byte character, base64url, end(body)
+a four-byte character, hex, end(body)
+a four-byte character, base64, end(body)
+a four-byte character, base64url, end(body)
+a lone surrogate, hex, end(body)
+a NUL character, hex, end(body)
+characters of every width, hex, end(body)
+characters of every width, base64, end(body)
+characters of every width, base64url, end(body)
+base64 text, hex, end(body)
+1000 two-byte characters, hex, end(body)
+1000 two-byte characters, base64, end(body)
+1000 two-byte characters, base64url, end(body)
+5000 four-byte characters, hex, end(body)
+5000 four-byte characters, base64, end(body)
+5000 four-byte characters, base64url, end(body)
+70000 ASCII characters, hex, end(body)
+an empty Buffer, undefined, end(body)
+an empty Buffer, utf8, end(body)
+    done _contentLength 0 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+an empty string, undefined, write(body), end()
+an empty string, utf8, write(body), end()
+an empty string, utf-8, write(body), end()
+an empty string, UTF8, write(body), end()
+an empty string, latin1, write(body), end()
+an empty string, binary, write(body), end()
+an empty string, ascii, write(body), end()
+an empty string, hex, write(body), end()
+an empty string, base64, write(body), end()
+an empty string, base64url, write(body), end()
+an empty string, utf16le, write(body), end()
+an empty string, ucs2, write(body), end()
+an empty string, ucs-2, write(body), end()
+one ASCII character, hex, write(body), end()
+one ASCII character, base64, write(body), end()
+one ASCII character, base64url, write(body), end()
+a two-byte character, hex, write(body), end()
+a two-byte character, base64, write(body), end()
+a two-byte character, base64url, write(body), end()
+a three-byte character, hex, write(body), end()
+a three-byte character, base64, write(body), end()
+a three-byte character, base64url, write(body), end()
+an empty Buffer, undefined, write(body), end()
+an empty Buffer, utf8, write(body), end()
+    write() returns true writableLength 0
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+an empty string, undefined, write(body), write(body), end(body)
+an empty string, utf8, write(body), write(body), end(body)
+an empty string, utf-8, write(body), write(body), end(body)
+an empty string, UTF8, write(body), write(body), end(body)
+an empty string, latin1, write(body), write(body), end(body)
+an empty string, binary, write(body), write(body), end(body)
+an empty string, ascii, write(body), write(body), end(body)
+an empty string, hex, write(body), write(body), end(body)
+an empty string, base64, write(body), write(body), end(body)
+an empty string, base64url, write(body), write(body), end(body)
+an empty string, utf16le, write(body), write(body), end(body)
+an empty string, ucs2, write(body), write(body), end(body)
+an empty string, ucs-2, write(body), write(body), end(body)
+one ASCII character, hex, write(body), write(body), end(body)
+one ASCII character, base64, write(body), write(body), end(body)
+one ASCII character, base64url, write(body), write(body), end(body)
+a two-byte character, hex, write(body), write(body), end(body)
+a two-byte character, base64, write(body), write(body), end(body)
+a two-byte character, base64url, write(body), write(body), end(body)
+a three-byte character, hex, write(body), write(body), end(body)
+a three-byte character, base64, write(body), write(body), end(body)
+a three-byte character, base64url, write(body), write(body), end(body)
+an empty Buffer, undefined, write(body), write(body), end(body)
+an empty Buffer, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 0
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+an empty string, undefined, Content-Length, end(body)
+an empty string, utf8, Content-Length, end(body)
+an empty string, utf-8, Content-Length, end(body)
+an empty string, UTF8, Content-Length, end(body)
+an empty string, latin1, Content-Length, end(body)
+an empty string, binary, Content-Length, end(body)
+an empty string, ascii, Content-Length, end(body)
+an empty string, hex, Content-Length, end(body)
+an empty string, base64, Content-Length, end(body)
+an empty string, base64url, Content-Length, end(body)
+an empty string, utf16le, Content-Length, end(body)
+an empty string, ucs2, Content-Length, end(body)
+an empty string, ucs-2, Content-Length, end(body)
+one ASCII character, hex, Content-Length, end(body)
+one ASCII character, base64, Content-Length, end(body)
+one ASCII character, base64url, Content-Length, end(body)
+a two-byte character, hex, Content-Length, end(body)
+a two-byte character, base64, Content-Length, end(body)
+a two-byte character, base64url, Content-Length, end(body)
+a three-byte character, hex, Content-Length, end(body)
+a three-byte character, base64, Content-Length, end(body)
+a three-byte character, base64url, Content-Length, end(body)
+a four-byte character, hex, Content-Length, end(body)
+a four-byte character, base64, Content-Length, end(body)
+a four-byte character, base64url, Content-Length, end(body)
+a lone surrogate, hex, Content-Length, end(body)
+a NUL character, hex, Content-Length, end(body)
+characters of every width, hex, Content-Length, end(body)
+characters of every width, base64, Content-Length, end(body)
+characters of every width, base64url, Content-Length, end(body)
+base64 text, hex, Content-Length, end(body)
+1000 two-byte characters, hex, Content-Length, end(body)
+1000 two-byte characters, base64, Content-Length, end(body)
+1000 two-byte characters, base64url, Content-Length, end(body)
+5000 four-byte characters, hex, Content-Length, end(body)
+5000 four-byte characters, base64, Content-Length, end(body)
+5000 four-byte characters, base64url, Content-Length, end(body)
+70000 ASCII characters, hex, Content-Length, end(body)
+an empty Buffer, undefined, Content-Length, end(body)
+an empty Buffer, utf8, Content-Length, end(body)
+    done _contentLength 0 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+an empty string, undefined, writeHead(), write(body), end()
+an empty string, utf8, writeHead(), write(body), end()
+an empty string, utf-8, writeHead(), write(body), end()
+an empty string, UTF8, writeHead(), write(body), end()
+an empty string, latin1, writeHead(), write(body), end()
+an empty string, binary, writeHead(), write(body), end()
+an empty string, ascii, writeHead(), write(body), end()
+an empty string, hex, writeHead(), write(body), end()
+an empty string, base64, writeHead(), write(body), end()
+an empty string, base64url, writeHead(), write(body), end()
+an empty string, utf16le, writeHead(), write(body), end()
+an empty string, ucs2, writeHead(), write(body), end()
+an empty string, ucs-2, writeHead(), write(body), end()
+one ASCII character, hex, writeHead(), write(body), end()
+one ASCII character, base64, writeHead(), write(body), end()
+one ASCII character, base64url, writeHead(), write(body), end()
+a two-byte character, hex, writeHead(), write(body), end()
+a two-byte character, base64, writeHead(), write(body), end()
+a two-byte character, base64url, writeHead(), write(body), end()
+a three-byte character, hex, writeHead(), write(body), end()
+a three-byte character, base64, writeHead(), write(body), end()
+a three-byte character, base64url, writeHead(), write(body), end()
+a four-byte character, hex, writeHead(), write(body), end()
+a four-byte character, base64, writeHead(), write(body), end()
+a four-byte character, base64url, writeHead(), write(body), end()
+a lone surrogate, hex, writeHead(), write(body), end()
+a NUL character, hex, writeHead(), write(body), end()
+characters of every width, hex, writeHead(), write(body), end()
+characters of every width, base64, writeHead(), write(body), end()
+characters of every width, base64url, writeHead(), write(body), end()
+base64 text, hex, writeHead(), write(body), end()
+1000 two-byte characters, hex, writeHead(), write(body), end()
+1000 two-byte characters, base64, writeHead(), write(body), end()
+1000 two-byte characters, base64url, writeHead(), write(body), end()
+5000 four-byte characters, hex, writeHead(), write(body), end()
+5000 four-byte characters, base64, writeHead(), write(body), end()
+5000 four-byte characters, base64url, writeHead(), write(body), end()
+70000 ASCII characters, hex, writeHead(), write(body), end()
+an empty Buffer, undefined, writeHead(), write(body), end()
+an empty Buffer, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+an empty string, bogus, end(body)
+an empty string, bogus, write(body), end()
+an empty string, bogus, write(body), write(body), end(body)
+an empty string, bogus, Content-Length, end(body)
+an empty string, bogus, writeHead(), write(body), end()
+one ASCII character, bogus, end(body)
+one ASCII character, bogus, write(body), end()
+one ASCII character, bogus, write(body), write(body), end(body)
+one ASCII character, bogus, Content-Length, end(body)
+one ASCII character, bogus, writeHead(), write(body), end()
+a two-byte character, bogus, end(body)
+a two-byte character, bogus, write(body), end()
+a two-byte character, bogus, write(body), write(body), end(body)
+a two-byte character, bogus, Content-Length, end(body)
+a two-byte character, bogus, writeHead(), write(body), end()
+a three-byte character, bogus, end(body)
+a three-byte character, bogus, write(body), end()
+a three-byte character, bogus, write(body), write(body), end(body)
+a three-byte character, bogus, Content-Length, end(body)
+a three-byte character, bogus, writeHead(), write(body), end()
+a four-byte character, bogus, end(body)
+a four-byte character, bogus, write(body), end()
+a four-byte character, bogus, write(body), write(body), end(body)
+a four-byte character, bogus, Content-Length, end(body)
+a four-byte character, bogus, writeHead(), write(body), end()
+a lone surrogate, bogus, end(body)
+a lone surrogate, bogus, write(body), end()
+a lone surrogate, bogus, write(body), write(body), end(body)
+a lone surrogate, bogus, Content-Length, end(body)
+a lone surrogate, bogus, writeHead(), write(body), end()
+a NUL character, bogus, end(body)
+a NUL character, bogus, write(body), end()
+a NUL character, bogus, write(body), write(body), end(body)
+a NUL character, bogus, Content-Length, end(body)
+a NUL character, bogus, writeHead(), write(body), end()
+characters of every width, bogus, end(body)
+characters of every width, bogus, write(body), end()
+characters of every width, bogus, write(body), write(body), end(body)
+characters of every width, bogus, Content-Length, end(body)
+characters of every width, bogus, writeHead(), write(body), end()
+hex digits, bogus, end(body)
+hex digits, bogus, write(body), end()
+hex digits, bogus, write(body), write(body), end(body)
+hex digits, bogus, Content-Length, end(body)
+hex digits, bogus, writeHead(), write(body), end()
+base64 text, bogus, end(body)
+base64 text, bogus, write(body), end()
+base64 text, bogus, write(body), write(body), end(body)
+base64 text, bogus, Content-Length, end(body)
+base64 text, bogus, writeHead(), write(body), end()
+three ASCII characters, bogus, end(body)
+three ASCII characters, bogus, write(body), end()
+three ASCII characters, bogus, write(body), write(body), end(body)
+three ASCII characters, bogus, Content-Length, end(body)
+three ASCII characters, bogus, writeHead(), write(body), end()
+1000 two-byte characters, bogus, end(body)
+1000 two-byte characters, bogus, write(body), end()
+1000 two-byte characters, bogus, write(body), write(body), end(body)
+1000 two-byte characters, bogus, Content-Length, end(body)
+1000 two-byte characters, bogus, writeHead(), write(body), end()
+5000 four-byte characters, bogus, end(body)
+5000 four-byte characters, bogus, write(body), end()
+5000 four-byte characters, bogus, write(body), write(body), end(body)
+5000 four-byte characters, bogus, Content-Length, end(body)
+5000 four-byte characters, bogus, writeHead(), write(body), end()
+70000 ASCII characters, bogus, end(body)
+70000 ASCII characters, bogus, write(body), end()
+70000 ASCII characters, bogus, write(body), write(body), end(body)
+70000 ASCII characters, bogus, Content-Length, end(body)
+70000 ASCII characters, bogus, writeHead(), write(body), end()
+    throws TypeError ERR_UNKNOWN_ENCODING _contentLength null chunkedEncoding false
+    response: "closed"
+    the connection serves another request: false
+one ASCII character, undefined, end(body)
+one ASCII character, utf8, end(body)
+one ASCII character, utf-8, end(body)
+one ASCII character, UTF8, end(body)
+one ASCII character, latin1, end(body)
+one ASCII character, binary, end(body)
+one ASCII character, ascii, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\na"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, undefined, write(body), end()
+one ASCII character, utf8, write(body), end()
+one ASCII character, utf-8, write(body), end()
+one ASCII character, UTF8, write(body), end()
+one ASCII character, latin1, write(body), end()
+one ASCII character, binary, write(body), end()
+one ASCII character, ascii, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, undefined, write(body), write(body), end(body)
+one ASCII character, utf8, write(body), write(body), end(body)
+one ASCII character, utf-8, write(body), write(body), end(body)
+one ASCII character, UTF8, write(body), write(body), end(body)
+one ASCII character, latin1, write(body), write(body), end(body)
+one ASCII character, binary, write(body), write(body), end(body)
+one ASCII character, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\na\r\n1\r\na\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, undefined, Content-Length, end(body)
+one ASCII character, utf8, Content-Length, end(body)
+one ASCII character, utf-8, Content-Length, end(body)
+one ASCII character, UTF8, Content-Length, end(body)
+one ASCII character, latin1, Content-Length, end(body)
+one ASCII character, binary, Content-Length, end(body)
+one ASCII character, ascii, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, undefined, writeHead(), write(body), end()
+one ASCII character, utf8, writeHead(), write(body), end()
+one ASCII character, utf-8, writeHead(), write(body), end()
+one ASCII character, UTF8, writeHead(), write(body), end()
+one ASCII character, latin1, writeHead(), write(body), end()
+one ASCII character, binary, writeHead(), write(body), end()
+one ASCII character, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, utf16le, end(body)
+one ASCII character, ucs2, end(body)
+one ASCII character, ucs-2, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\na\u0000"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, utf16le, write(body), end()
+one ASCII character, ucs2, write(body), end()
+one ASCII character, ucs-2, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\na\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, utf16le, write(body), write(body), end(body)
+one ASCII character, ucs2, write(body), write(body), end(body)
+one ASCII character, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\na\u0000\r\n2\r\na\u0000\r\n2\r\na\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, utf16le, Content-Length, end(body)
+one ASCII character, ucs2, Content-Length, end(body)
+one ASCII character, ucs-2, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000"
+    again
+    again
+    the connection serves another request: true
+one ASCII character, utf16le, writeHead(), write(body), end()
+one ASCII character, ucs2, writeHead(), write(body), end()
+one ASCII character, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\na\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, undefined, end(body)
+a two-byte character, utf8, end(body)
+a two-byte character, utf-8, end(body)
+a two-byte character, UTF8, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nÃ©"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, undefined, write(body), end()
+a two-byte character, utf8, write(body), end()
+a two-byte character, utf-8, write(body), end()
+a two-byte character, UTF8, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nÃ©\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, undefined, write(body), write(body), end(body)
+a two-byte character, utf8, write(body), write(body), end(body)
+a two-byte character, utf-8, write(body), write(body), end(body)
+a two-byte character, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nÃ©\r\n2\r\nÃ©\r\n2\r\nÃ©\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, undefined, Content-Length, end(body)
+a two-byte character, utf8, Content-Length, end(body)
+a two-byte character, utf-8, Content-Length, end(body)
+a two-byte character, UTF8, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nÃ©"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, undefined, writeHead(), write(body), end()
+a two-byte character, utf8, writeHead(), write(body), end()
+a two-byte character, utf-8, writeHead(), write(body), end()
+a two-byte character, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nÃ©\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, latin1, end(body)
+a two-byte character, binary, end(body)
+a two-byte character, ascii, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\né"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, latin1, write(body), end()
+a two-byte character, binary, write(body), end()
+a two-byte character, ascii, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\né\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, latin1, write(body), write(body), end(body)
+a two-byte character, binary, write(body), write(body), end(body)
+a two-byte character, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\né\r\n1\r\né\r\n1\r\né\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, latin1, Content-Length, end(body)
+a two-byte character, binary, Content-Length, end(body)
+a two-byte character, ascii, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\né"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, latin1, writeHead(), write(body), end()
+a two-byte character, binary, writeHead(), write(body), end()
+a two-byte character, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\né\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, utf16le, end(body)
+a two-byte character, ucs2, end(body)
+a two-byte character, ucs-2, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\né\u0000"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, utf16le, write(body), end()
+a two-byte character, ucs2, write(body), end()
+a two-byte character, ucs-2, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\né\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, utf16le, write(body), write(body), end(body)
+a two-byte character, ucs2, write(body), write(body), end(body)
+a two-byte character, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\né\u0000\r\n2\r\né\u0000\r\n2\r\né\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, utf16le, Content-Length, end(body)
+a two-byte character, ucs2, Content-Length, end(body)
+a two-byte character, ucs-2, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\né\u0000"
+    again
+    again
+    the connection serves another request: true
+a two-byte character, utf16le, writeHead(), write(body), end()
+a two-byte character, ucs2, writeHead(), write(body), end()
+a two-byte character, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\né\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, undefined, end(body)
+a three-byte character, utf8, end(body)
+a three-byte character, utf-8, end(body)
+a three-byte character, UTF8, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\nâ¬"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, undefined, write(body), end()
+a three-byte character, utf8, write(body), end()
+a three-byte character, utf-8, write(body), end()
+a three-byte character, UTF8, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nâ¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, undefined, write(body), write(body), end(body)
+a three-byte character, utf8, write(body), write(body), end(body)
+a three-byte character, utf-8, write(body), write(body), end(body)
+a three-byte character, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nâ¬\r\n3\r\nâ¬\r\n3\r\nâ¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, undefined, Content-Length, end(body)
+a three-byte character, utf8, Content-Length, end(body)
+a three-byte character, utf-8, Content-Length, end(body)
+a three-byte character, UTF8, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nâ¬"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, undefined, writeHead(), write(body), end()
+a three-byte character, utf8, writeHead(), write(body), end()
+a three-byte character, utf-8, writeHead(), write(body), end()
+a three-byte character, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nâ¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, latin1, end(body)
+a three-byte character, binary, end(body)
+a three-byte character, ascii, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\n¬"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, latin1, write(body), end()
+a three-byte character, binary, write(body), end()
+a three-byte character, ascii, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, latin1, write(body), write(body), end(body)
+a three-byte character, binary, write(body), write(body), end(body)
+a three-byte character, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n¬\r\n1\r\n¬\r\n1\r\n¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, latin1, Content-Length, end(body)
+a three-byte character, binary, Content-Length, end(body)
+a three-byte character, ascii, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n¬"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, latin1, writeHead(), write(body), end()
+a three-byte character, binary, writeHead(), write(body), end()
+a three-byte character, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n¬\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, utf16le, end(body)
+a three-byte character, ucs2, end(body)
+a three-byte character, ucs-2, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\n¬ "
+    again
+    again
+    the connection serves another request: true
+a three-byte character, utf16le, write(body), end()
+a three-byte character, ucs2, write(body), end()
+a three-byte character, ucs-2, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n¬ \r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, utf16le, write(body), write(body), end(body)
+a three-byte character, ucs2, write(body), write(body), end(body)
+a three-byte character, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n¬ \r\n2\r\n¬ \r\n2\r\n¬ \r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a three-byte character, utf16le, Content-Length, end(body)
+a three-byte character, ucs2, Content-Length, end(body)
+a three-byte character, ucs-2, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n¬ "
+    again
+    again
+    the connection serves another request: true
+a three-byte character, utf16le, writeHead(), write(body), end()
+a three-byte character, ucs2, writeHead(), write(body), end()
+a three-byte character, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n¬ \r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, undefined, end(body)
+a four-byte character, utf8, end(body)
+a four-byte character, utf-8, end(body)
+a four-byte character, UTF8, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\nð"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, undefined, write(body), end()
+a four-byte character, utf8, write(body), end()
+a four-byte character, utf-8, write(body), end()
+a four-byte character, UTF8, write(body), end()
+    write() returns true writableLength 9
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, undefined, write(body), write(body), end(body)
+a four-byte character, utf8, write(body), write(body), end(body)
+a four-byte character, utf-8, write(body), write(body), end(body)
+a four-byte character, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 18
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nð\r\n4\r\nð\r\n4\r\nð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, undefined, Content-Length, end(body)
+a four-byte character, utf8, Content-Length, end(body)
+a four-byte character, utf-8, Content-Length, end(body)
+a four-byte character, UTF8, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nð"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, undefined, writeHead(), write(body), end()
+a four-byte character, utf8, writeHead(), write(body), end()
+a four-byte character, utf-8, writeHead(), write(body), end()
+a four-byte character, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, latin1, end(body)
+a four-byte character, binary, end(body)
+a four-byte character, ascii, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\n=\u0000"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, latin1, write(body), end()
+a four-byte character, binary, write(body), end()
+a four-byte character, ascii, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, latin1, write(body), write(body), end(body)
+a four-byte character, binary, write(body), write(body), end(body)
+a four-byte character, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n=\u0000\r\n2\r\n=\u0000\r\n2\r\n=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, latin1, Content-Length, end(body)
+a four-byte character, binary, Content-Length, end(body)
+a four-byte character, ascii, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n=\u0000"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, latin1, writeHead(), write(body), end()
+a four-byte character, binary, writeHead(), write(body), end()
+a four-byte character, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, hex, write(body), end()
+a four-byte character, base64, write(body), end()
+a four-byte character, base64url, write(body), end()
+a lone surrogate, hex, write(body), end()
+a NUL character, hex, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, hex, write(body), write(body), end(body)
+a four-byte character, base64, write(body), write(body), end(body)
+a four-byte character, base64url, write(body), write(body), end(body)
+a lone surrogate, hex, write(body), write(body), end(body)
+a NUL character, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, utf16le, end(body)
+a four-byte character, ucs2, end(body)
+a four-byte character, ucs-2, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\n=Ø\u0000Þ"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, utf16le, write(body), end()
+a four-byte character, ucs2, write(body), end()
+a four-byte character, ucs-2, write(body), end()
+    write() returns true writableLength 9
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n=Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, utf16le, write(body), write(body), end(body)
+a four-byte character, ucs2, write(body), write(body), end(body)
+a four-byte character, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 18
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n=Ø\u0000Þ\r\n4\r\n=Ø\u0000Þ\r\n4\r\n=Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, utf16le, Content-Length, end(body)
+a four-byte character, ucs2, Content-Length, end(body)
+a four-byte character, ucs-2, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n=Ø\u0000Þ"
+    again
+    again
+    the connection serves another request: true
+a four-byte character, utf16le, writeHead(), write(body), end()
+a four-byte character, ucs2, writeHead(), write(body), end()
+a four-byte character, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n=Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, undefined, end(body)
+a lone surrogate, utf8, end(body)
+a lone surrogate, utf-8, end(body)
+a lone surrogate, UTF8, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nxï¿½y"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, undefined, write(body), end()
+a lone surrogate, utf8, write(body), end()
+a lone surrogate, utf-8, write(body), end()
+a lone surrogate, UTF8, write(body), end()
+    write() returns true writableLength 10
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nxï¿½y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, undefined, write(body), write(body), end(body)
+a lone surrogate, utf8, write(body), write(body), end(body)
+a lone surrogate, utf-8, write(body), write(body), end(body)
+a lone surrogate, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 20
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nxï¿½y\r\n5\r\nxï¿½y\r\n5\r\nxï¿½y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, undefined, Content-Length, end(body)
+a lone surrogate, utf8, Content-Length, end(body)
+a lone surrogate, utf-8, Content-Length, end(body)
+a lone surrogate, UTF8, Content-Length, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nxï¿½y"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, undefined, writeHead(), write(body), end()
+a lone surrogate, utf8, writeHead(), write(body), end()
+a lone surrogate, utf-8, writeHead(), write(body), end()
+a lone surrogate, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nxï¿½y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, latin1, end(body)
+a lone surrogate, binary, end(body)
+a lone surrogate, ascii, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\nx\u0000y"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, latin1, write(body), end()
+a lone surrogate, binary, write(body), end()
+a lone surrogate, ascii, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nx\u0000y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, latin1, write(body), write(body), end(body)
+a lone surrogate, binary, write(body), write(body), end(body)
+a lone surrogate, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nx\u0000y\r\n3\r\nx\u0000y\r\n3\r\nx\u0000y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, latin1, Content-Length, end(body)
+a lone surrogate, binary, Content-Length, end(body)
+a lone surrogate, ascii, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nx\u0000y"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, latin1, writeHead(), write(body), end()
+a lone surrogate, binary, writeHead(), write(body), end()
+a lone surrogate, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nx\u0000y\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, base64, end(body)
+a lone surrogate, base64url, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\nÇ"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, base64, write(body), end()
+a lone surrogate, base64url, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nÇ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, base64, write(body), write(body), end(body)
+a lone surrogate, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nÇ\r\n1\r\nÇ\r\n1\r\nÇ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, base64, Content-Length, end(body)
+a lone surrogate, base64url, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nÇ"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, base64, writeHead(), write(body), end()
+a lone surrogate, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nÇ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, utf16le, end(body)
+a lone surrogate, ucs2, end(body)
+a lone surrogate, ucs-2, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 6\r\n\r\nx\u0000\u0000Øy\u0000"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, utf16le, write(body), end()
+a lone surrogate, ucs2, write(body), end()
+a lone surrogate, ucs-2, write(body), end()
+    write() returns true writableLength 11
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nx\u0000\u0000Øy\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, utf16le, write(body), write(body), end(body)
+a lone surrogate, ucs2, write(body), write(body), end(body)
+a lone surrogate, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 22
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nx\u0000\u0000Øy\u0000\r\n6\r\nx\u0000\u0000Øy\u0000\r\n6\r\nx\u0000\u0000Øy\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, utf16le, Content-Length, end(body)
+a lone surrogate, ucs2, Content-Length, end(body)
+a lone surrogate, ucs-2, Content-Length, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nx\u0000\u0000Øy\u0000"
+    again
+    again
+    the connection serves another request: true
+a lone surrogate, utf16le, writeHead(), write(body), end()
+a lone surrogate, ucs2, writeHead(), write(body), end()
+a lone surrogate, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\nx\u0000\u0000Øy\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, undefined, end(body)
+a NUL character, utf8, end(body)
+a NUL character, utf-8, end(body)
+a NUL character, UTF8, end(body)
+a NUL character, latin1, end(body)
+a NUL character, binary, end(body)
+a NUL character, ascii, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\na\u0000b"
+    again
+    again
+    the connection serves another request: true
+a NUL character, undefined, write(body), end()
+a NUL character, utf8, write(body), end()
+a NUL character, utf-8, write(body), end()
+a NUL character, UTF8, write(body), end()
+a NUL character, latin1, write(body), end()
+a NUL character, binary, write(body), end()
+a NUL character, ascii, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\na\u0000b\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, undefined, write(body), write(body), end(body)
+a NUL character, utf8, write(body), write(body), end(body)
+a NUL character, utf-8, write(body), write(body), end(body)
+a NUL character, UTF8, write(body), write(body), end(body)
+a NUL character, latin1, write(body), write(body), end(body)
+a NUL character, binary, write(body), write(body), end(body)
+a NUL character, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\na\u0000b\r\n3\r\na\u0000b\r\n3\r\na\u0000b\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, undefined, Content-Length, end(body)
+a NUL character, utf8, Content-Length, end(body)
+a NUL character, utf-8, Content-Length, end(body)
+a NUL character, UTF8, Content-Length, end(body)
+a NUL character, latin1, Content-Length, end(body)
+a NUL character, binary, Content-Length, end(body)
+a NUL character, ascii, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000b"
+    again
+    again
+    the connection serves another request: true
+a NUL character, undefined, writeHead(), write(body), end()
+a NUL character, utf8, writeHead(), write(body), end()
+a NUL character, utf-8, writeHead(), write(body), end()
+a NUL character, UTF8, writeHead(), write(body), end()
+a NUL character, latin1, writeHead(), write(body), end()
+a NUL character, binary, writeHead(), write(body), end()
+a NUL character, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\na\u0000b\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, base64, end(body)
+a NUL character, base64url, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\ni"
+    again
+    again
+    the connection serves another request: true
+a NUL character, base64, write(body), end()
+a NUL character, base64url, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\ni\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, base64, write(body), write(body), end(body)
+a NUL character, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\ni\r\n1\r\ni\r\n1\r\ni\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, base64, Content-Length, end(body)
+a NUL character, base64url, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\ni"
+    again
+    again
+    the connection serves another request: true
+a NUL character, base64, writeHead(), write(body), end()
+a NUL character, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\ni\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, utf16le, end(body)
+a NUL character, ucs2, end(body)
+a NUL character, ucs-2, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 6\r\n\r\na\u0000\u0000\u0000b\u0000"
+    again
+    again
+    the connection serves another request: true
+a NUL character, utf16le, write(body), end()
+a NUL character, ucs2, write(body), end()
+a NUL character, ucs-2, write(body), end()
+    write() returns true writableLength 11
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000\u0000\u0000b\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, utf16le, write(body), write(body), end(body)
+a NUL character, ucs2, write(body), write(body), end(body)
+a NUL character, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 22
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000\u0000\u0000b\u0000\r\n6\r\na\u0000\u0000\u0000b\u0000\r\n6\r\na\u0000\u0000\u0000b\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a NUL character, utf16le, Content-Length, end(body)
+a NUL character, ucs2, Content-Length, end(body)
+a NUL character, ucs-2, Content-Length, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000\u0000\u0000b\u0000"
+    again
+    again
+    the connection serves another request: true
+a NUL character, utf16le, writeHead(), write(body), end()
+a NUL character, ucs2, writeHead(), write(body), end()
+a NUL character, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000\u0000\u0000b\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, undefined, end(body)
+characters of every width, utf8, end(body)
+characters of every width, utf-8, end(body)
+characters of every width, UTF8, end(body)
+    done _contentLength 10 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 10\r\n\r\naÃ©â¬ð"
+    again
+    again
+    the connection serves another request: true
+characters of every width, undefined, write(body), end()
+characters of every width, utf8, write(body), end()
+characters of every width, utf-8, write(body), end()
+characters of every width, UTF8, write(body), end()
+    write() returns true writableLength 15
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\naÃ©â¬ð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, undefined, write(body), write(body), end(body)
+characters of every width, utf8, write(body), write(body), end(body)
+characters of every width, utf-8, write(body), write(body), end(body)
+characters of every width, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 30
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\naÃ©â¬ð\r\na\r\naÃ©â¬ð\r\na\r\naÃ©â¬ð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, undefined, Content-Length, end(body)
+characters of every width, utf8, Content-Length, end(body)
+characters of every width, utf-8, Content-Length, end(body)
+characters of every width, UTF8, Content-Length, end(body)
+    done _contentLength 10 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\naÃ©â¬ð"
+    again
+    again
+    the connection serves another request: true
+characters of every width, undefined, writeHead(), write(body), end()
+characters of every width, utf8, writeHead(), write(body), end()
+characters of every width, utf-8, writeHead(), write(body), end()
+characters of every width, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\naÃ©â¬ð\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, latin1, end(body)
+characters of every width, binary, end(body)
+characters of every width, ascii, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\naé¬=\u0000"
+    again
+    again
+    the connection serves another request: true
+characters of every width, latin1, write(body), end()
+characters of every width, binary, write(body), end()
+characters of every width, ascii, write(body), end()
+    write() returns true writableLength 10
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\naé¬=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, latin1, write(body), write(body), end(body)
+characters of every width, binary, write(body), write(body), end(body)
+characters of every width, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 20
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\naé¬=\u0000\r\n5\r\naé¬=\u0000\r\n5\r\naé¬=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, latin1, Content-Length, end(body)
+characters of every width, binary, Content-Length, end(body)
+characters of every width, ascii, Content-Length, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\naé¬=\u0000"
+    again
+    again
+    the connection serves another request: true
+characters of every width, latin1, writeHead(), write(body), end()
+characters of every width, binary, writeHead(), write(body), end()
+characters of every width, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\naé¬=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, hex, write(body), end()
+base64 text, hex, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, hex, write(body), write(body), end(body)
+base64 text, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, base64, write(body), end()
+characters of every width, base64url, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, base64, write(body), write(body), end(body)
+characters of every width, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, utf16le, end(body)
+characters of every width, ucs2, end(body)
+characters of every width, ucs-2, end(body)
+    done _contentLength 10 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 10\r\n\r\na\u0000é\u0000¬ =Ø\u0000Þ"
+    again
+    again
+    the connection serves another request: true
+characters of every width, utf16le, write(body), end()
+characters of every width, ucs2, write(body), end()
+characters of every width, ucs-2, write(body), end()
+    write() returns true writableLength 15
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\na\u0000é\u0000¬ =Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, utf16le, write(body), write(body), end(body)
+characters of every width, ucs2, write(body), write(body), end(body)
+characters of every width, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 30
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\na\u0000é\u0000¬ =Ø\u0000Þ\r\na\r\na\u0000é\u0000¬ =Ø\u0000Þ\r\na\r\na\u0000é\u0000¬ =Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+characters of every width, utf16le, Content-Length, end(body)
+characters of every width, ucs2, Content-Length, end(body)
+characters of every width, ucs-2, Content-Length, end(body)
+    done _contentLength 10 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000é\u0000¬ =Ø\u0000Þ"
+    again
+    again
+    the connection serves another request: true
+characters of every width, utf16le, writeHead(), write(body), end()
+characters of every width, ucs2, writeHead(), write(body), end()
+characters of every width, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\na\r\na\u0000é\u0000¬ =Ø\u0000Þ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, undefined, end(body)
+hex digits, utf8, end(body)
+hex digits, utf-8, end(body)
+hex digits, UTF8, end(body)
+hex digits, latin1, end(body)
+hex digits, binary, end(body)
+hex digits, ascii, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 6\r\n\r\n68690a"
+    again
+    again
+    the connection serves another request: true
+hex digits, undefined, write(body), end()
+hex digits, utf8, write(body), end()
+hex digits, utf-8, write(body), end()
+hex digits, UTF8, write(body), end()
+hex digits, latin1, write(body), end()
+hex digits, binary, write(body), end()
+hex digits, ascii, write(body), end()
+    write() returns true writableLength 11
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n68690a\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, undefined, write(body), write(body), end(body)
+hex digits, utf8, write(body), write(body), end(body)
+hex digits, utf-8, write(body), write(body), end(body)
+hex digits, UTF8, write(body), write(body), end(body)
+hex digits, latin1, write(body), write(body), end(body)
+hex digits, binary, write(body), write(body), end(body)
+hex digits, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 22
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n68690a\r\n6\r\n68690a\r\n6\r\n68690a\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, undefined, Content-Length, end(body)
+hex digits, utf8, Content-Length, end(body)
+hex digits, utf-8, Content-Length, end(body)
+hex digits, UTF8, Content-Length, end(body)
+hex digits, latin1, Content-Length, end(body)
+hex digits, binary, Content-Length, end(body)
+hex digits, ascii, Content-Length, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n68690a"
+    again
+    again
+    the connection serves another request: true
+hex digits, undefined, writeHead(), write(body), end()
+hex digits, utf8, writeHead(), write(body), end()
+hex digits, utf-8, writeHead(), write(body), end()
+hex digits, UTF8, writeHead(), write(body), end()
+hex digits, latin1, writeHead(), write(body), end()
+hex digits, binary, writeHead(), write(body), end()
+hex digits, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n68690a\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, hex, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\nhi\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, hex, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhi\n\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhi\n\r\n3\r\nhi\n\r\n3\r\nhi\n\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, hex, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nhi\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, hex, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhi\n\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, base64, end(body)
+hex digits, base64url, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\nëÎ½Ñ"
+    again
+    again
+    the connection serves another request: true
+hex digits, base64, write(body), end()
+hex digits, base64url, write(body), end()
+    write() returns true writableLength 9
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nëÎ½Ñ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, base64, write(body), write(body), end(body)
+hex digits, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 18
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nëÎ½Ñ\r\n4\r\nëÎ½Ñ\r\n4\r\nëÎ½Ñ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, base64, Content-Length, end(body)
+hex digits, base64url, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nëÎ½Ñ"
+    again
+    again
+    the connection serves another request: true
+hex digits, base64, writeHead(), write(body), end()
+hex digits, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nëÎ½Ñ\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, utf16le, end(body)
+hex digits, ucs2, end(body)
+hex digits, ucs-2, end(body)
+    done _contentLength 12 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 12\r\n\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000"
+    again
+    again
+    the connection serves another request: true
+hex digits, utf16le, write(body), end()
+hex digits, ucs2, write(body), end()
+hex digits, ucs-2, write(body), end()
+    write() returns true writableLength 17
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\nc\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, utf16le, write(body), write(body), end(body)
+hex digits, ucs2, write(body), write(body), end(body)
+hex digits, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 34
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\nc\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000\r\nc\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000\r\nc\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+hex digits, utf16le, Content-Length, end(body)
+hex digits, ucs2, Content-Length, end(body)
+hex digits, ucs-2, Content-Length, end(body)
+    done _contentLength 12 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000"
+    again
+    again
+    the connection serves another request: true
+hex digits, utf16le, writeHead(), write(body), end()
+hex digits, ucs2, writeHead(), write(body), end()
+hex digits, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\nc\r\n6\u00008\u00006\u00009\u00000\u0000a\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, undefined, end(body)
+base64 text, utf8, end(body)
+base64 text, utf-8, end(body)
+base64 text, UTF8, end(body)
+base64 text, latin1, end(body)
+base64 text, binary, end(body)
+base64 text, ascii, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\naGk="
+    again
+    again
+    the connection serves another request: true
+base64 text, undefined, write(body), end()
+base64 text, utf8, write(body), end()
+base64 text, utf-8, write(body), end()
+base64 text, UTF8, write(body), end()
+base64 text, latin1, write(body), end()
+base64 text, binary, write(body), end()
+base64 text, ascii, write(body), end()
+    write() returns true writableLength 9
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\naGk=\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, undefined, write(body), write(body), end(body)
+base64 text, utf8, write(body), write(body), end(body)
+base64 text, utf-8, write(body), write(body), end(body)
+base64 text, UTF8, write(body), write(body), end(body)
+base64 text, latin1, write(body), write(body), end(body)
+base64 text, binary, write(body), write(body), end(body)
+base64 text, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 18
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\naGk=\r\n4\r\naGk=\r\n4\r\naGk=\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, undefined, Content-Length, end(body)
+base64 text, utf8, Content-Length, end(body)
+base64 text, utf-8, Content-Length, end(body)
+base64 text, UTF8, Content-Length, end(body)
+base64 text, latin1, Content-Length, end(body)
+base64 text, binary, Content-Length, end(body)
+base64 text, ascii, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\naGk="
+    again
+    again
+    the connection serves another request: true
+base64 text, undefined, writeHead(), write(body), end()
+base64 text, utf8, writeHead(), write(body), end()
+base64 text, utf-8, writeHead(), write(body), end()
+base64 text, UTF8, writeHead(), write(body), end()
+base64 text, latin1, writeHead(), write(body), end()
+base64 text, binary, writeHead(), write(body), end()
+base64 text, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\naGk=\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, base64, end(body)
+base64 text, base64url, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nhi"
+    again
+    again
+    the connection serves another request: true
+base64 text, base64, write(body), end()
+base64 text, base64url, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, base64, write(body), write(body), end(body)
+base64 text, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n2\r\nhi\r\n2\r\nhi\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, base64, Content-Length, end(body)
+base64 text, base64url, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nhi"
+    again
+    again
+    the connection serves another request: true
+base64 text, base64, writeHead(), write(body), end()
+base64 text, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, utf16le, end(body)
+base64 text, ucs2, end(body)
+base64 text, ucs-2, end(body)
+    done _contentLength 8 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 8\r\n\r\na\u0000G\u0000k\u0000=\u0000"
+    again
+    again
+    the connection serves another request: true
+base64 text, utf16le, write(body), end()
+base64 text, ucs2, write(body), end()
+base64 text, ucs-2, write(body), end()
+    write() returns true writableLength 13
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\na\u0000G\u0000k\u0000=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, utf16le, write(body), write(body), end(body)
+base64 text, ucs2, write(body), write(body), end(body)
+base64 text, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 26
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\na\u0000G\u0000k\u0000=\u0000\r\n8\r\na\u0000G\u0000k\u0000=\u0000\r\n8\r\na\u0000G\u0000k\u0000=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+base64 text, utf16le, Content-Length, end(body)
+base64 text, ucs2, Content-Length, end(body)
+base64 text, ucs-2, Content-Length, end(body)
+    done _contentLength 8 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000G\u0000k\u0000=\u0000"
+    again
+    again
+    the connection serves another request: true
+base64 text, utf16le, writeHead(), write(body), end()
+base64 text, ucs2, writeHead(), write(body), end()
+base64 text, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\na\u0000G\u0000k\u0000=\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, undefined, end(body)
+three ASCII characters, utf8, end(body)
+three ASCII characters, utf-8, end(body)
+three ASCII characters, UTF8, end(body)
+three ASCII characters, latin1, end(body)
+three ASCII characters, binary, end(body)
+three ASCII characters, ascii, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\nabc"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, undefined, write(body), end()
+three ASCII characters, utf8, write(body), end()
+three ASCII characters, utf-8, write(body), end()
+three ASCII characters, UTF8, write(body), end()
+three ASCII characters, latin1, write(body), end()
+three ASCII characters, binary, write(body), end()
+three ASCII characters, ascii, write(body), end()
+    write() returns true writableLength 8
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, undefined, write(body), write(body), end(body)
+three ASCII characters, utf8, write(body), write(body), end(body)
+three ASCII characters, utf-8, write(body), write(body), end(body)
+three ASCII characters, UTF8, write(body), write(body), end(body)
+three ASCII characters, latin1, write(body), write(body), end(body)
+three ASCII characters, binary, write(body), write(body), end(body)
+three ASCII characters, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 16
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n3\r\nabc\r\n3\r\nabc\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, undefined, Content-Length, end(body)
+three ASCII characters, utf8, Content-Length, end(body)
+three ASCII characters, utf-8, Content-Length, end(body)
+three ASCII characters, UTF8, Content-Length, end(body)
+three ASCII characters, latin1, Content-Length, end(body)
+three ASCII characters, binary, Content-Length, end(body)
+three ASCII characters, ascii, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nabc"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, undefined, writeHead(), write(body), end()
+three ASCII characters, utf8, writeHead(), write(body), end()
+three ASCII characters, utf-8, writeHead(), write(body), end()
+three ASCII characters, UTF8, writeHead(), write(body), end()
+three ASCII characters, latin1, writeHead(), write(body), end()
+three ASCII characters, binary, writeHead(), write(body), end()
+three ASCII characters, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, hex, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\n«"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, hex, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n«\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n«\r\n1\r\n«\r\n1\r\n«\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, hex, Content-Length, end(body)
+    done _contentLength 1 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n«"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, hex, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n«\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, base64, end(body)
+three ASCII characters, base64url, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\ni·"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, base64, write(body), end()
+three ASCII characters, base64url, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\ni·\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, base64, write(body), write(body), end(body)
+three ASCII characters, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\ni·\r\n2\r\ni·\r\n2\r\ni·\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, base64, Content-Length, end(body)
+three ASCII characters, base64url, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\ni·"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, base64, writeHead(), write(body), end()
+three ASCII characters, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\ni·\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, utf16le, end(body)
+three ASCII characters, ucs2, end(body)
+three ASCII characters, ucs-2, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 6\r\n\r\na\u0000b\u0000c\u0000"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, utf16le, write(body), end()
+three ASCII characters, ucs2, write(body), end()
+three ASCII characters, ucs-2, write(body), end()
+    write() returns true writableLength 11
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000b\u0000c\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, utf16le, write(body), write(body), end(body)
+three ASCII characters, ucs2, write(body), write(body), end(body)
+three ASCII characters, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 22
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000b\u0000c\u0000\r\n6\r\na\u0000b\u0000c\u0000\r\n6\r\na\u0000b\u0000c\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, utf16le, Content-Length, end(body)
+three ASCII characters, ucs2, Content-Length, end(body)
+three ASCII characters, ucs-2, Content-Length, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\na\u0000b\u0000c\u0000"
+    again
+    again
+    the connection serves another request: true
+three ASCII characters, utf16le, writeHead(), write(body), end()
+three ASCII characters, ucs2, writeHead(), write(body), end()
+three ASCII characters, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\na\u0000b\u0000c\u0000\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, undefined, end(body)
+1000 two-byte characters, utf8, end(body)
+1000 two-byte characters, utf-8, end(body)
+1000 two-byte characters, UTF8, end(body)
+    done _contentLength 2000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2000\r\n\r\n" + 2000 bytes, checksum 2847007269
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, undefined, write(body), end()
+1000 two-byte characters, utf8, write(body), end()
+1000 two-byte characters, utf-8, write(body), end()
+1000 two-byte characters, UTF8, write(body), end()
+    write() returns true writableLength 2007
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 2012 bytes, checksum 771955510
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, undefined, write(body), write(body), end(body)
+1000 two-byte characters, utf8, write(body), write(body), end(body)
+1000 two-byte characters, utf-8, write(body), write(body), end(body)
+1000 two-byte characters, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 4014
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 6026 bytes, checksum 1210259112
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, undefined, Content-Length, end(body)
+1000 two-byte characters, utf8, Content-Length, end(body)
+1000 two-byte characters, utf-8, Content-Length, end(body)
+1000 two-byte characters, UTF8, Content-Length, end(body)
+    done _contentLength 2000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 2000 bytes, checksum 2847007269
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, undefined, writeHead(), write(body), end()
+1000 two-byte characters, utf8, writeHead(), write(body), end()
+1000 two-byte characters, utf-8, writeHead(), write(body), end()
+1000 two-byte characters, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 2012 bytes, checksum 771955510
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, latin1, end(body)
+1000 two-byte characters, binary, end(body)
+1000 two-byte characters, ascii, end(body)
+    done _contentLength 1000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1000\r\n\r\n" + 1000 bytes, checksum 1294813437
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, latin1, write(body), end()
+1000 two-byte characters, binary, write(body), end()
+1000 two-byte characters, ascii, write(body), end()
+    write() returns true writableLength 1007
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 1012 bytes, checksum 4074421445
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, latin1, write(body), write(body), end(body)
+1000 two-byte characters, binary, write(body), write(body), end(body)
+1000 two-byte characters, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 2014
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 3026 bytes, checksum 1604143985
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, latin1, Content-Length, end(body)
+1000 two-byte characters, binary, Content-Length, end(body)
+1000 two-byte characters, ascii, Content-Length, end(body)
+    done _contentLength 1000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 1000 bytes, checksum 1294813437
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, latin1, writeHead(), write(body), end()
+1000 two-byte characters, binary, writeHead(), write(body), end()
+1000 two-byte characters, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 1012 bytes, checksum 4074421445
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, hex, write(body), end()
+    write() returns true writableLength 507
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 1014
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, base64, write(body), end()
+1000 two-byte characters, base64url, write(body), end()
+    write() returns true writableLength 757
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, base64, write(body), write(body), end(body)
+1000 two-byte characters, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 1514
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, utf16le, end(body)
+1000 two-byte characters, ucs2, end(body)
+1000 two-byte characters, ucs-2, end(body)
+    done _contentLength 2000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2000\r\n\r\n" + 2000 bytes, checksum 3280900325
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, utf16le, write(body), end()
+1000 two-byte characters, ucs2, write(body), end()
+1000 two-byte characters, ucs-2, write(body), end()
+    write() returns true writableLength 2007
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 2012 bytes, checksum 4048832374
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, utf16le, write(body), write(body), end(body)
+1000 two-byte characters, ucs2, write(body), write(body), end(body)
+1000 two-byte characters, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 4014
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 6026 bytes, checksum 1346743912
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, utf16le, Content-Length, end(body)
+1000 two-byte characters, ucs2, Content-Length, end(body)
+1000 two-byte characters, ucs-2, Content-Length, end(body)
+    done _contentLength 2000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 2000 bytes, checksum 3280900325
+    again
+    again
+    the connection serves another request: true
+1000 two-byte characters, utf16le, writeHead(), write(body), end()
+1000 two-byte characters, ucs2, writeHead(), write(body), end()
+1000 two-byte characters, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 2012 bytes, checksum 4048832374
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, undefined, end(body)
+5000 four-byte characters, utf8, end(body)
+5000 four-byte characters, utf-8, end(body)
+5000 four-byte characters, UTF8, end(body)
+    done _contentLength 20000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 20000\r\n\r\n" + 20000 bytes, checksum 383789573
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, undefined, write(body), end()
+5000 four-byte characters, utf8, write(body), end()
+5000 four-byte characters, utf-8, write(body), end()
+5000 four-byte characters, UTF8, write(body), end()
+    write() returns true writableLength 20008
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 20013 bytes, checksum 1834456000
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, undefined, write(body), write(body), end(body)
+5000 four-byte characters, utf8, write(body), write(body), end(body)
+5000 four-byte characters, utf-8, write(body), write(body), end(body)
+5000 four-byte characters, UTF8, write(body), write(body), end(body)
+    write() returns true true writableLength 40016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 60029 bytes, checksum 3543809500
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, undefined, Content-Length, end(body)
+5000 four-byte characters, utf8, Content-Length, end(body)
+5000 four-byte characters, utf-8, Content-Length, end(body)
+5000 four-byte characters, UTF8, Content-Length, end(body)
+    done _contentLength 20000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 20000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 20000 bytes, checksum 383789573
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, undefined, writeHead(), write(body), end()
+5000 four-byte characters, utf8, writeHead(), write(body), end()
+5000 four-byte characters, utf-8, writeHead(), write(body), end()
+5000 four-byte characters, UTF8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 20013 bytes, checksum 1834456000
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, latin1, end(body)
+5000 four-byte characters, binary, end(body)
+5000 four-byte characters, ascii, end(body)
+    done _contentLength 10000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 10000\r\n\r\n" + 10000 bytes, checksum 1405643493
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, latin1, write(body), end()
+5000 four-byte characters, binary, write(body), end()
+5000 four-byte characters, ascii, write(body), end()
+    write() returns true writableLength 10008
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 10013 bytes, checksum 1495623717
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, latin1, write(body), write(body), end(body)
+5000 four-byte characters, binary, write(body), write(body), end(body)
+5000 four-byte characters, ascii, write(body), write(body), end(body)
+    write() returns true true writableLength 20016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 30029 bytes, checksum 2866887681
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, latin1, Content-Length, end(body)
+5000 four-byte characters, binary, Content-Length, end(body)
+5000 four-byte characters, ascii, Content-Length, end(body)
+    done _contentLength 10000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 10000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 10000 bytes, checksum 1405643493
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, latin1, writeHead(), write(body), end()
+5000 four-byte characters, binary, writeHead(), write(body), end()
+5000 four-byte characters, ascii, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 10013 bytes, checksum 1495623717
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, hex, write(body), end()
+    write() returns true writableLength 5008
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, hex, write(body), write(body), end(body)
+    write() returns true true writableLength 10016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, base64, write(body), end()
+5000 four-byte characters, base64url, write(body), end()
+    write() returns true writableLength 7508
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, base64, write(body), write(body), end(body)
+5000 four-byte characters, base64url, write(body), write(body), end(body)
+    write() returns true true writableLength 15016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, utf16le, end(body)
+5000 four-byte characters, ucs2, end(body)
+5000 four-byte characters, ucs-2, end(body)
+    done _contentLength 20000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 20000\r\n\r\n" + 20000 bytes, checksum 579983509
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, utf16le, write(body), end()
+5000 four-byte characters, ucs2, write(body), end()
+5000 four-byte characters, ucs-2, write(body), end()
+    write() returns true writableLength 20008
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 20013 bytes, checksum 1568962096
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, utf16le, write(body), write(body), end(body)
+5000 four-byte characters, ucs2, write(body), write(body), end(body)
+5000 four-byte characters, ucs-2, write(body), write(body), end(body)
+    write() returns true true writableLength 40016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 60029 bytes, checksum 3386669388
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, utf16le, Content-Length, end(body)
+5000 four-byte characters, ucs2, Content-Length, end(body)
+5000 four-byte characters, ucs-2, Content-Length, end(body)
+    done _contentLength 20000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 20000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 20000 bytes, checksum 579983509
+    again
+    again
+    the connection serves another request: true
+5000 four-byte characters, utf16le, writeHead(), write(body), end()
+5000 four-byte characters, ucs2, writeHead(), write(body), end()
+5000 four-byte characters, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 20013 bytes, checksum 1568962096
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, undefined, end(body)
+70000 ASCII characters, utf8, end(body)
+70000 ASCII characters, utf-8, end(body)
+70000 ASCII characters, UTF8, end(body)
+70000 ASCII characters, latin1, end(body)
+70000 ASCII characters, binary, end(body)
+70000 ASCII characters, ascii, end(body)
+a 70000-byte Buffer, undefined, end(body)
+a 70000-byte Buffer, utf8, end(body)
+    done _contentLength 70000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 70000\r\n\r\n" + 70000 bytes, checksum 3718630277
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, undefined, write(body), end()
+70000 ASCII characters, utf8, write(body), end()
+70000 ASCII characters, utf-8, write(body), end()
+70000 ASCII characters, UTF8, write(body), end()
+70000 ASCII characters, latin1, write(body), end()
+70000 ASCII characters, binary, write(body), end()
+70000 ASCII characters, ascii, write(body), end()
+a 70000-byte Buffer, undefined, write(body), end()
+a 70000-byte Buffer, utf8, write(body), end()
+    write() returns false writableLength 70009
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 70014 bytes, checksum 26863967
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, undefined, write(body), write(body), end(body)
+70000 ASCII characters, utf8, write(body), write(body), end(body)
+70000 ASCII characters, utf-8, write(body), write(body), end(body)
+70000 ASCII characters, UTF8, write(body), write(body), end(body)
+70000 ASCII characters, latin1, write(body), write(body), end(body)
+70000 ASCII characters, binary, write(body), write(body), end(body)
+70000 ASCII characters, ascii, write(body), write(body), end(body)
+a 70000-byte Buffer, undefined, write(body), write(body), end(body)
+a 70000-byte Buffer, utf8, write(body), write(body), end(body)
+    write() returns false false writableLength 140018
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 210032 bytes, checksum 2286600759
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, undefined, Content-Length, end(body)
+70000 ASCII characters, utf8, Content-Length, end(body)
+70000 ASCII characters, utf-8, Content-Length, end(body)
+70000 ASCII characters, UTF8, Content-Length, end(body)
+70000 ASCII characters, latin1, Content-Length, end(body)
+70000 ASCII characters, binary, Content-Length, end(body)
+70000 ASCII characters, ascii, Content-Length, end(body)
+a 70000-byte Buffer, undefined, Content-Length, end(body)
+a 70000-byte Buffer, utf8, Content-Length, end(body)
+    done _contentLength 70000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 70000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 70000 bytes, checksum 3718630277
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, undefined, writeHead(), write(body), end()
+70000 ASCII characters, utf8, writeHead(), write(body), end()
+70000 ASCII characters, utf-8, writeHead(), write(body), end()
+70000 ASCII characters, UTF8, writeHead(), write(body), end()
+70000 ASCII characters, latin1, writeHead(), write(body), end()
+70000 ASCII characters, binary, writeHead(), write(body), end()
+70000 ASCII characters, ascii, writeHead(), write(body), end()
+a 70000-byte Buffer, undefined, writeHead(), write(body), end()
+a 70000-byte Buffer, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 70014 bytes, checksum 26863967
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, hex, write(body), end()
+    write() returns true writableLength 35008
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, hex, write(body), write(body), end(body)
+    write() returns true false writableLength 70016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, base64, end(body)
+70000 ASCII characters, base64url, end(body)
+    done _contentLength 52500 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 52500\r\n\r\n" + 52500 bytes, checksum 2232129637
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, base64, write(body), end()
+70000 ASCII characters, base64url, write(body), end()
+    write() returns true writableLength 52508
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 52513 bytes, checksum 3235143445
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, base64, write(body), write(body), end(body)
+70000 ASCII characters, base64url, write(body), write(body), end(body)
+    write() returns true false writableLength 105016
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 157529 bytes, checksum 2947946077
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, base64, Content-Length, end(body)
+70000 ASCII characters, base64url, Content-Length, end(body)
+    done _contentLength 52500 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 52500\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 52500 bytes, checksum 2232129637
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, base64, writeHead(), write(body), end()
+70000 ASCII characters, base64url, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 52513 bytes, checksum 3235143445
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, utf16le, end(body)
+70000 ASCII characters, ucs2, end(body)
+70000 ASCII characters, ucs-2, end(body)
+    done _contentLength 140000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 140000\r\n\r\n" + 140000 bytes, checksum 4124483013
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, utf16le, write(body), end()
+70000 ASCII characters, ucs2, write(body), end()
+70000 ASCII characters, ucs-2, write(body), end()
+    write() returns false writableLength 140009
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 140014 bytes, checksum 2174156784
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, utf16le, write(body), write(body), end(body)
+70000 ASCII characters, ucs2, write(body), write(body), end(body)
+70000 ASCII characters, ucs-2, write(body), write(body), end(body)
+    write() returns false false writableLength 280018
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 420032 bytes, checksum 1218004590
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, utf16le, Content-Length, end(body)
+70000 ASCII characters, ucs2, Content-Length, end(body)
+70000 ASCII characters, ucs-2, Content-Length, end(body)
+    done _contentLength 140000 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 140000\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n" + 140000 bytes, checksum 4124483013
+    again
+    again
+    the connection serves another request: true
+70000 ASCII characters, utf16le, writeHead(), write(body), end()
+70000 ASCII characters, ucs2, writeHead(), write(body), end()
+70000 ASCII characters, ucs-2, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n" + 140014 bytes, checksum 2174156784
+    again
+    again
+    the connection serves another request: true
+a Buffer, undefined, end(body)
+a Buffer, utf8, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 5\r\n\r\nbytes"
+    again
+    again
+    the connection serves another request: true
+a Buffer, undefined, write(body), end()
+a Buffer, utf8, write(body), end()
+    write() returns true writableLength 10
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nbytes\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Buffer, undefined, write(body), write(body), end(body)
+a Buffer, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 20
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nbytes\r\n5\r\nbytes\r\n5\r\nbytes\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Buffer, undefined, Content-Length, end(body)
+a Buffer, utf8, Content-Length, end(body)
+    done _contentLength 5 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nbytes"
+    again
+    again
+    the connection serves another request: true
+a Buffer, undefined, writeHead(), write(body), end()
+a Buffer, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nbytes\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Buffer slice, undefined, end(body)
+a Buffer slice, utf8, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 6\r\n\r\n345678"
+    again
+    again
+    the connection serves another request: true
+a Buffer slice, undefined, write(body), end()
+a Buffer slice, utf8, write(body), end()
+    write() returns true writableLength 11
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n345678\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Buffer slice, undefined, write(body), write(body), end(body)
+a Buffer slice, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 22
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n345678\r\n6\r\n345678\r\n6\r\n345678\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Buffer slice, undefined, Content-Length, end(body)
+a Buffer slice, utf8, Content-Length, end(body)
+    done _contentLength 6 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n345678"
+    again
+    again
+    the connection serves another request: true
+a Buffer slice, undefined, writeHead(), write(body), end()
+a Buffer slice, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n6\r\n345678\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array, undefined, end(body)
+a Uint8Array, utf8, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array, undefined, write(body), end()
+a Uint8Array, utf8, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array, undefined, write(body), write(body), end(body)
+a Uint8Array, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n2\r\nok\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array, undefined, Content-Length, end(body)
+a Uint8Array, utf8, Content-Length, end(body)
+    done _contentLength 2 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array, undefined, writeHead(), write(body), end()
+a Uint8Array, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array with an offset, undefined, end(body)
+a Uint8Array with an offset, utf8, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\n2345"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array with an offset, undefined, write(body), end()
+a Uint8Array with an offset, utf8, write(body), end()
+    write() returns true writableLength 9
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n2345\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array with an offset, undefined, write(body), write(body), end(body)
+a Uint8Array with an offset, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 18
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n2345\r\n4\r\n2345\r\n4\r\n2345\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array with an offset, undefined, Content-Length, end(body)
+a Uint8Array with an offset, utf8, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n2345"
+    again
+    again
+    the connection serves another request: true
+a Uint8Array with an offset, undefined, writeHead(), write(body), end()
+a Uint8Array with an offset, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\n2345\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint16Array, undefined, end(body)
+a Uint16Array, utf8, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 4\r\n\r\nok!!"
+    again
+    again
+    the connection serves another request: true
+a Uint16Array, undefined, write(body), end()
+a Uint16Array, utf8, write(body), end()
+    write() returns true writableLength 7
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nok!!\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint16Array, undefined, write(body), write(body), end(body)
+a Uint16Array, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 14
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nok!!\r\n4\r\nok!!\r\n4\r\nok!!\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Uint16Array, undefined, Content-Length, end(body)
+a Uint16Array, utf8, Content-Length, end(body)
+    done _contentLength 4 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nok!!"
+    again
+    again
+    the connection serves another request: true
+a Uint16Array, undefined, writeHead(), write(body), end()
+a Uint16Array, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nok!!\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Float64Array, undefined, end(body)
+a Float64Array, utf8, end(body)
+    done _contentLength 8 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 8\r\n\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?"
+    again
+    again
+    the connection serves another request: true
+a Float64Array, undefined, write(body), end()
+a Float64Array, utf8, write(body), end()
+    write() returns true writableLength 6
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Float64Array, undefined, write(body), write(body), end(body)
+a Float64Array, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 12
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?\r\n8\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?\r\n8\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a Float64Array, undefined, Content-Length, end(body)
+a Float64Array, utf8, Content-Length, end(body)
+    done _contentLength 8 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?"
+    again
+    again
+    the connection serves another request: true
+a Float64Array, undefined, writeHead(), write(body), end()
+a Float64Array, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n8\r\n\u0000\u0000\u0000\u0000\u0000\u0000ð?\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a DataView, undefined, end(body)
+a DataView, utf8, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 3\r\n\r\n123"
+    again
+    again
+    the connection serves another request: true
+a DataView, undefined, write(body), end()
+a DataView, utf8, write(body), end()
+    write() returns true writableLength 0
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n123\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a DataView, undefined, write(body), write(body), end(body)
+a DataView, utf8, write(body), write(body), end(body)
+    write() returns true true writableLength 0
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n123\r\n3\r\n123\r\n3\r\n123\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true
+a DataView, undefined, Content-Length, end(body)
+a DataView, utf8, Content-Length, end(body)
+    done _contentLength 3 chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\n123"
+    again
+    again
+    the connection serves another request: true
+a DataView, undefined, writeHead(), write(body), end()
+a DataView, utf8, writeHead(), write(body), end()
+    done _contentLength null chunkedEncoding false
+    response: "HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n3\r\n123\r\n0\r\n\r\n"
+    again
+    again
+    the connection serves another request: true

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, it } from "bun:test";
 import stripAnsi from "strip-ansi";
 

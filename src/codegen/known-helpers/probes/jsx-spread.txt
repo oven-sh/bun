@@ -1,0 +1,3 @@
+export function ProbeComponent(probeProperties) {
+  return <div probeFirst="1" {...probeProperties} probeLast="2"><span {...probeProperties} /></div>;
+}

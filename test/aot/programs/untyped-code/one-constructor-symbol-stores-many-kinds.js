@@ -19,11 +19,11 @@ for (let i = 0; i < 12; i++) {
   kinds.push(Kind);
 }
 const said = new Set();
-const before = count("operationAOTTypedTryPutProperties");
+const before = count("operationAOTTryPutProperties");
 for (let turn = 0; turn < 2000; turn++) {
   for (const Kind of kinds) said.add(new Kind(10).show());
 }
-const asked = count("operationAOTTypedTryPutProperties") - before;
+const asked = count("operationAOTTryPutProperties") - before;
 console.log([...said].join("\n"));
 console.log(asked <= 400 ? "the run time was asked at most 400 times" : "the run time was asked " + asked + " times");
 kMode = Symbol("second");

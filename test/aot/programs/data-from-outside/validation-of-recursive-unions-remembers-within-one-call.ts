@@ -1,4 +1,5 @@
 // A union that contains itself and whose arms no constant tells apart: one validation remembers what it found out about an object; the next one knows nothing of it.
+import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 
 type Tree = { below: Tree | null; k: number } | { below: Tree | null; k: string };
@@ -17,23 +18,23 @@ function outcome(run: () => unknown): string {
   try {
     return JSON.stringify(run());
   } catch (error: any) {
-    return error.name + ": " + error.message + " " + JSON.stringify(error.issues ?? null);
+    return error.name;
   }
 }
 
 const mended = nest(6, null, "s");
-console.log(outcome(() => Bun.validate<Tree>(mended)));
+console.log(outcome(() => validate<Tree>(mended)));
 mended.below.below.below.k = true;
-console.log(outcome(() => Bun.validate<Tree>(mended)));
+console.log(outcome(() => validate<Tree>(mended)));
 mended.below.below.below.k = 3;
-console.log(outcome(() => Bun.validate<Tree>(mended)));
+console.log(outcome(() => validate<Tree>(mended)));
 mended.below.below.below.below.below.below = [];
-console.log(outcome(() => Bun.validate<Tree>(mended)));
+console.log(outcome(() => validate<Tree>(mended)));
 mended.below.below.below.below.below.below = null;
-console.log(outcome(() => Bun.validate<Tree>(mended)));
+console.log(outcome(() => validate<Tree>(mended)));
 
 const given = nest(5, null, "s");
-let copy: any = Bun.validate<Tree>(given);
+let copy: any = validate<Tree>(given);
 let original: any = given;
 let distinct = 0;
 while (copy !== null) {
@@ -45,26 +46,26 @@ console.log(distinct, original);
 
 const inner = nest(4, null, "s");
 let within = "";
-const asking = nest(3, { get below() { within = outcome(() => Bun.validate<Tree>(inner)); return inner; }, k: "s" }, "s");
-console.log(outcome(() => Bun.validate<Tree>(asking)));
+const asking = nest(3, { get below() { within = outcome(() => validate<Tree>(inner)); return inner; }, k: "s" }, "s");
+console.log(outcome(() => validate<Tree>(asking)));
 console.log(within);
 
 inner.below.k = null;
-console.log(outcome(() => Bun.validate<Tree>(asking)));
+console.log(outcome(() => validate<Tree>(asking)));
 console.log(within);
 inner.below.k = 1;
 
 const throwing = nest(3, { get below(): never { throw new RangeError("not today"); }, k: "s" }, "s");
-console.log(outcome(() => Bun.validate<Tree>(throwing)));
-console.log(outcome(() => Bun.validate<Tree>(asking)));
+console.log(outcome(() => validate<Tree>(throwing)));
+console.log(outcome(() => validate<Tree>(asking)));
 
 const shared = nest(3, null, "s");
-console.log(outcome(() => Bun.validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
+console.log(outcome(() => validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
 shared.below.below.k = false;
-console.log(outcome(() => Bun.validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
+console.log(outcome(() => validate<Pair>({ left: shared, right: shared, both: [shared, shared.below, shared] })));
 
-console.log(outcome(() => Bun.validate<Filled>(nest(4, null, "s"))));
-console.log(outcome(() => Bun.validate<Filled>(nest(4, null, 1))));
+console.log(outcome(() => validate<Filled>(nest(4, null, "s"))));
+console.log(outcome(() => validate<Filled>(nest(4, null, 1))));
 console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, null, "s")))));
 console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, { below: null, k: 1, size: 2 }, "s")))));
 console.log(outcome(() => JSON.parse<Filled>(JSON.stringify(nest(4, { below: null, k: 1, size: "2" }, "s")))));
@@ -73,7 +74,7 @@ console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (
 console.log(outcome(() => JSON.parse<Tree>(JSON.stringify(nest(4, null, "s")), (key, value) => (key === "k" ? null : value))));
 
 for (const text of ['[[[null,2],2],2]', '[[[null,2],1],"end"]', '[[[null,3],1],2]', '[[["end",[null,1]],2],[null,2],"end"]', '[[[null,2],2],{}]']) {
-  console.log(outcome(() => JSON.parse<Lists>(text)), outcome(() => Bun.validate<Lists>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Lists>(text)), outcome(() => validate<Lists>(JSON.parse(text))));
 }
 
 for (const text of [
@@ -82,5 +83,5 @@ for (const text of [
   '{"kind":"a","below":{"kind":"c","below":null}}',
   '{"kind":"a","below":{"kind":"b","below":{"below":{"below":{"below":7,"other":1},"other":1},"other":1}},"other":2}',
 ]) {
-  console.log(outcome(() => JSON.parse<Partly>(text)), outcome(() => Bun.validate<Partly>(JSON.parse(text))));
+  console.log(outcome(() => JSON.parse<Partly>(text)), outcome(() => validate<Partly>(JSON.parse(text))));
 }

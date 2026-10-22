@@ -1,4 +1,0 @@
-native-getters-any-receiver: 2 layouts, 23 given, 2 open, places 69 of 178, reads 11 of 113
-native-getters-undeclared-results: 1 layouts, 0 given, 2 open, places 12 of 39, reads 7 of 16
-replaced-prototype-getters: 0 layouts, 0 given, 1 open, places 23 of 61, reads 1 of 35
-server-request-getters: 1 layouts, 0 given, 3 open, places 14 of 65, reads 3 of 40

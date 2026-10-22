@@ -1,16 +1,11 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
-#include <JavaScriptCore/CallFrame.h>
-#include <JavaScriptCore/Error.h>
-#include <JavaScriptCore/JSGlobalObject.h>
 #include <cstdio>
 
 #if !OS(WINDOWS)
-#include <wtf/StackBounds.h>
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <sys/stat.h>
 #include <signal.h>
 #include <unistd.h>
@@ -26,7 +21,11 @@
 #include <sys/socket.h>
 #if OS(DARWIN)
 #include <mach-o/loader.h>
+#endif
+#if defined(BUN_SAFE_STACK)
+#include <climits>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #endif
 #else
 #include <uv.h>
@@ -305,14 +304,28 @@ static void unset_cloexec(int fd)
 }
 
 #if OS(LINUX)
-static uint64_t inheritedFileDescriptors = 0;
+#include <dirent.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/Vector.h>
+
+static WTF::Vector<int>& inheritedFileDescriptors()
+{
+    static NeverDestroyed<WTF::Vector<int>> descriptors;
+    return descriptors.get();
+}
 
 extern "C" void bun_remember_inherited_file_descriptors()
 {
-    for (int fd = 3; fd < 64; fd++) {
-        if (fcntl(fd, F_GETFD, 0) != -1)
-            inheritedFileDescriptors |= 1ULL << fd;
+    DIR* directory = opendir("/proc/self/fd");
+    if (!directory)
+        return;
+    while (struct dirent* entry = readdir(directory)) {
+        char* end = nullptr;
+        long fd = strtol(entry->d_name, &end, 10);
+        if (end != entry->d_name && *end == '\0' && fd >= 3 && fd <= INT_MAX && fd != dirfd(directory))
+            inheritedFileDescriptors().append(static_cast<int>(fd));
     }
+    closedir(directory);
 }
 #endif
 
@@ -331,10 +344,8 @@ extern "C" void on_before_reload_process_posix([[maybe_unused]] bool closeInheri
 #endif
 #if OS(LINUX)
     if (!closeInheritedFileDescriptors) {
-        for (int fd = 3; fd < 64; fd++) {
-            if (inheritedFileDescriptors & (1ULL << fd))
-                unset_cloexec(fd);
-        }
+        for (int fd : inheritedFileDescriptors())
+            unset_cloexec(fd);
     }
 #endif
 
@@ -396,6 +407,129 @@ static pid_t execve_counting_pid = 0;
 extern "C" int __real_execve(const char*, char* const[], char* const[]);
 extern "C" int __real_pthread_create(pthread_t*, const pthread_attr_t*, void* (*)(void*), void*);
 
+#if defined(BUN_SAFE_STACK)
+extern "C" __attribute__((visibility("default"))) thread_local void* __safestack_unsafe_stack_ptr = nullptr;
+
+namespace {
+
+constexpr size_t unsafeStackGuardSize = 256 * 1024;
+constexpr size_t unsafeStackDefaultSize = 8 * 1024 * 1024;
+constexpr size_t unsafeStackPageSize = 4096;
+
+struct UnsafeStack {
+    void* mapping;
+    size_t mappingSize;
+    void* (*routine)(void*);
+    void* argument;
+    pid_t process;
+    pid_t thread;
+    int destructorRoundsLeft;
+    UnsafeStack* next;
+};
+
+pthread_key_t unsafeStackKey;
+pthread_mutex_t retiredUnsafeStacksLock = PTHREAD_MUTEX_INITIALIZER;
+UnsafeStack* retiredUnsafeStacks = nullptr;
+
+void* mapUnsafeStack(size_t size, size_t& mappingSize)
+{
+    size = (size + unsafeStackPageSize - 1) & ~(unsafeStackPageSize - 1);
+    mappingSize = size + 2 * unsafeStackGuardSize;
+    void* mapping = mmap(nullptr, mappingSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (mapping == MAP_FAILED)
+        return nullptr;
+    if (mprotect(static_cast<char*>(mapping) + unsafeStackGuardSize, size, PROT_READ | PROT_WRITE)) {
+        munmap(mapping, mappingSize);
+        return nullptr;
+    }
+    return mapping;
+}
+
+void* topOfUnsafeStack(void* mapping, size_t mappingSize)
+{
+    return static_cast<char*>(mapping) + mappingSize - unsafeStackGuardSize;
+}
+
+void releaseUnsafeStack(UnsafeStack* stack)
+{
+    munmap(stack->mapping, stack->mappingSize);
+    free(stack);
+}
+
+bool threadIsGone(const UnsafeStack* stack)
+{
+    return stack->process != getpid() || (syscall(SYS_tgkill, stack->process, stack->thread, 0) == -1 && errno == ESRCH);
+}
+
+void retireUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    if (--stack->destructorRoundsLeft > 0) {
+        pthread_setspecific(unsafeStackKey, stack);
+        return;
+    }
+    pthread_mutex_lock(&retiredUnsafeStacksLock);
+    UnsafeStack** link = &retiredUnsafeStacks;
+    while (UnsafeStack* each = *link) {
+        if (threadIsGone(each)) {
+            *link = each->next;
+            releaseUnsafeStack(each);
+        } else
+            link = &each->next;
+    }
+    stack->next = retiredUnsafeStacks;
+    retiredUnsafeStacks = stack;
+    pthread_mutex_unlock(&retiredUnsafeStacksLock);
+}
+
+void* startWithUnsafeStack(void* value)
+{
+    auto* stack = static_cast<UnsafeStack*>(value);
+    stack->process = getpid();
+    stack->thread = static_cast<pid_t>(syscall(SYS_gettid));
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(stack->mapping, stack->mappingSize);
+    pthread_setspecific(unsafeStackKey, stack);
+    return stack->routine(stack->argument);
+}
+
+UnsafeStack* makeUnsafeStack(const pthread_attr_t* attributes, void* (*routine)(void*), void* argument)
+{
+    size_t size = 0;
+    pthread_attr_t defaults;
+    if (attributes)
+        pthread_attr_getstacksize(attributes, &size);
+    else if (!pthread_attr_init(&defaults)) {
+        pthread_attr_getstacksize(&defaults, &size);
+        pthread_attr_destroy(&defaults);
+    }
+    auto* stack = static_cast<UnsafeStack*>(malloc(sizeof(UnsafeStack)));
+    if (!stack)
+        return nullptr;
+    *stack = { nullptr, 0, routine, argument, 0, 0, PTHREAD_DESTRUCTOR_ITERATIONS, nullptr };
+    stack->mapping = mapUnsafeStack(size ? size : unsafeStackDefaultSize, stack->mappingSize);
+    if (!stack->mapping) {
+        free(stack);
+        return nullptr;
+    }
+    return stack;
+}
+
+void giveMainThreadItsUnsafeStack()
+{
+    struct rlimit limit;
+    size_t size = !getrlimit(RLIMIT_STACK, &limit) && limit.rlim_cur != RLIM_INFINITY ? limit.rlim_cur : unsafeStackDefaultSize;
+    size_t mappingSize;
+    void* mapping = mapUnsafeStack(size, mappingSize);
+    if (!mapping || pthread_key_create(&unsafeStackKey, retireUnsafeStack))
+        abort();
+    __safestack_unsafe_stack_ptr = topOfUnsafeStack(mapping, mappingSize);
+}
+
+__attribute__((section(".preinit_array"), used)) void (*unsafeStackInitializer)() = giveMainThreadItsUnsafeStack;
+
+} // namespace
+#endif
+
 extern "C" int __wrap_execve(const char* path, char* const argv[], char* const envp[])
 {
     if (getpid() != execve_counting_pid)
@@ -409,7 +543,7 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 }
 
 // The attempt bound keeps a real limit, hit while an exec never completes, from looping forever.
-extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+static int createThreadUnlessExecIsInFlight(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
 {
     for (int attempt = 0;; attempt++) {
         unsigned generation = execve_generation.load(std::memory_order_seq_cst);
@@ -424,6 +558,21 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
         }
         usleep(1000);
     }
+}
+
+extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* attr, void* (*start_routine)(void*), void* arg)
+{
+#if defined(BUN_SAFE_STACK)
+    UnsafeStack* stack = makeUnsafeStack(attr, start_routine, arg);
+    if (!stack)
+        return EAGAIN;
+    int rc = createThreadUnlessExecIsInFlight(thread, attr, startWithUnsafeStack, stack);
+    if (rc)
+        releaseUnsafeStack(stack);
+    return rc;
+#else
+    return createThreadUnlessExecIsInFlight(thread, attr, start_routine, arg);
+#endif
 }
 #endif // OS(LINUX)
 
@@ -711,32 +860,13 @@ extern "C" int32_t bun_is_stdio_null[3] = { 0, 0, 0 };
 #if OS(DARWIN)
 extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
 extern "C" struct mach_header __dso_handle;
-
-static void makePiecesOfConstantsReadOnly()
-{
-    const auto* header = reinterpret_cast<const mach_header_64*>(&__dso_handle);
-    const auto* command = reinterpret_cast<const load_command*>(header + 1);
-    uintptr_t slide = 0;
-    for (uint32_t index = 0; index < header->ncmds; index++) {
-        if (command->cmd == LC_SEGMENT_64) {
-            const auto* segment = reinterpret_cast<const segment_command_64*>(command);
-            if (!strncmp(segment->segname, SEG_TEXT, sizeof(segment->segname)))
-                slide = reinterpret_cast<uintptr_t>(header) - segment->vmaddr;
-            else if (!strncmp(segment->segname, "__DATA_CONST.", 13))
-                mprotect(reinterpret_cast<void*>(segment->vmaddr + slide), segment->vmsize, PROT_READ);
-        }
-        command = reinterpret_cast<const load_command*>(reinterpret_cast<const char*>(command) + command->cmdsize);
-    }
-}
 #endif
-
-extern "C" bool Bun__hasTypeChecker();
 
 extern "C" void bun_initialize_process()
 {
 #if OS(DARWIN)
-    if (!Bun__hasTypeChecker())
-        makePiecesOfConstantsReadOnly();
+    if (JSC::Bun__removableFeatureState.isTrimmed || JSC::Bun__removableFeatureState.removedRangeCount) [[unlikely]]
+        Bun__prepareTrimmedExecutable();
 #endif
 
     // Disable printf() buffering. We buffer it ourselves.
@@ -751,10 +881,6 @@ extern "C" void bun_initialize_process()
     bun_close_range(4, ~0U, CLOSE_RANGE_CLOEXEC);
 
     execve_counting_pid = getpid();
-
-    bool isTrimmed = !Bun__hasTypeChecker();
-    if (isTrimmed)
-        WTF::StackBounds::useAuxiliaryVectorForMainThread();
 #endif
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
@@ -858,9 +984,6 @@ extern "C" void bun_initialize_process()
             }
         }
     }
-
-    _setmode(2, _O_BINARY);
-    _set_fmode(_O_BINARY);
 
     // add ctrl+c handler on windows
     Bun__setCTRLHandler(1);
@@ -1216,138 +1339,6 @@ extern "C" void Bun__signpost_emit(os_log_t log, os_signpost_type_t type, os_sig
 #undef FOR_EACH_TRACE_EVENT
 
 #endif // OS(DARWIN) signpost code
-
-extern "C" __attribute__((weak)) const char Bun__trimmedFeatures[] = "";
-extern "C" __attribute__((weak)) const char Bun__islands[] = "";
-
-static JSC::EncodedJSValue throwThatItWasRemoved(JSC::JSGlobalObject* globalObject, const WTF::String& description, bool wasRemovedByName)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* error = JSC::createError(globalObject, wasRemovedByName ? WTF::makeString("compile.trim removed "_s, description, " from this executable"_s) : WTF::makeString("this executable was built with --compile-trim-runtime, without "_s, description));
-    error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_FEATURE_REMOVED"_s)));
-    JSC::throwException(globalObject, scope, error);
-    return {};
-}
-
-#if OS(WINDOWS)
-extern "C" JSC::EncodedJSValue Bun__trimmedOut(uint32_t door)
-#else
-extern "C" JSC::EncodedJSValue Bun__trimmedOut(void* firstArgumentOfTheDoor, void*, uint32_t door)
-#endif
-{
-    const char* description = Bun__trimmedFeatures;
-    for (uint32_t feature = door & 2047; feature--;)
-        description += strlen(description) + 1;
-    const bool wasRemovedByName = door & 2048;
-#if !OS(WINDOWS)
-    if (door >> 30 == 1)
-        return throwThatItWasRemoved(static_cast<JSC::JSGlobalObject*>(firstArgumentOfTheDoor), WTF::String::fromUTF8(description), wasRemovedByName);
-#endif
-    const auto print = [](const char* text) {
-#if OS(WINDOWS)
-        (void)_write(2, text, static_cast<unsigned>(strlen(text)));
-#else
-        struct pollfd standardError = { STDERR_FILENO, POLLOUT, 0 };
-        if (poll(&standardError, 1, 0))
-            (void)!write(STDERR_FILENO, text, strlen(text));
-#endif
-    };
-    if (door >> 30 == 2) {
-        print("warning: this executable was built with --compile-trim-runtime, without ");
-        print(description);
-        print(", and something has just asked for it: it finds undefined.\n");
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    }
-    const char* actsAsBun = getenv("BUN_BE_BUN");
-    if (wasRemovedByName) {
-        print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but compile.trim removed " : "error: compile.trim removed ");
-        print(description);
-        print(actsAsBun && *actsAsBun ? " from this executable.\n" : " from this executable, and something has just asked for it.\n");
-        _exit(70);
-    }
-    print(actsAsBun && *actsAsBun ? "error: BUN_BE_BUN is set, but this executable was built with --compile-trim-runtime, without " : "error: this executable was built with --compile-trim-runtime, without ");
-    print(description);
-    if (actsAsBun && *actsAsBun) {
-        print(".\n");
-        _exit(70);
-    }
-    char digits[9];
-    size_t first = sizeof(digits) - 1;
-    digits[first] = 0;
-    for (uint32_t number = door >> 12 & 0x3ffff; number || !digits[first]; number /= 10)
-        digits[--first] = static_cast<char>('0' + number % 10);
-    print(", and something has just asked for it.");
-    if (getenv("BUN_OPTIONS"))
-        print(" BUN_OPTIONS is set: an option in it may be what asked.");
-    print(" Otherwise this is a bug in Bun: please report it, with this number: ");
-    print(digits + first);
-    print("\n");
-    _exit(70);
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasTypeChecker()
-{
-    bool hasTypeChecker = true;
-    asm volatile("" : "+r"(hasTypeChecker));
-    return hasTypeChecker;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__evaluatesText()
-{
-    uint32_t evaluatesText = 22;
-    asm volatile("" : "+r"(evaluatesText));
-    return evaluatesText;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasBundler()
-{
-    uint32_t hasBundler = 2;
-    asm volatile("" : "+r"(hasBundler));
-    return hasBundler;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasInternalTestingAPIs()
-{
-    uint32_t hasInternalTestingAPIs = 26;
-    asm volatile("" : "+r"(hasInternalTestingAPIs));
-    return hasInternalTestingAPIs;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasWorker()
-{
-    uint32_t hasWorker = 6;
-    asm volatile("" : "+r"(hasWorker));
-    return hasWorker;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasFetch()
-{
-    uint32_t hasFetch = 10;
-    asm volatile("" : "+r"(hasFetch));
-    return hasFetch;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasValkey()
-{
-    uint32_t hasValkey = 14;
-    asm volatile("" : "+r"(hasValkey));
-    return hasValkey;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasInstall()
-{
-    uint32_t hasInstall = 18;
-    asm volatile("" : "+r"(hasInstall));
-    return hasInstall;
-}
-
-extern "C" __attribute__((noinline)) bool Bun__hasInspector()
-{
-    uint32_t hasInspector = 30;
-    asm volatile("" : "+r"(hasInspector));
-    return hasInspector;
-}
 
 #if OS(DARWIN) || defined(__linux__) || defined(__FreeBSD__)
 

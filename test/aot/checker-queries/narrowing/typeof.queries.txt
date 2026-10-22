@@ -1,0 +1,5 @@
+# `typeof x === "string"` narrows a union of primitives in both branches. After the statement `x` has its declared type.
+typeof.ts:3 type `x` = string | number
+typeof.ts:4 type `x` = string
+typeof.ts:6 type `x` = number
+typeof.ts:8 type `x` = string | number

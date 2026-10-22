@@ -1,13 +1,15 @@
-// A call of a built-in on values that are only expected to be strings or numbers, outside loops. Such calls go to a function that
-// all calls of the same kind share: it tests what is expected and does the work. A call of a method in tail position tests in line,
-// so that it stays a tail call. Neither enters the host's function while the expectations hold, and a loop elsewhere in the
+// A call of a built-in on values of unknown type, outside loops. Such calls go to a body that
+// all equal calls share. A call of a method in tail position stays in line,
+// so that it stays a tail call, and a loop elsewhere in the
 // function changes nothing.
+// IR-UNTIL OutlineColdOperations
 // IR= 0 pathBesideLoop  = Call v
-// IR= 1 pathBesideLoop tail = CallMethod v[0-9]+ "slice"
+// IR= 1 pathBesideLoop  = PropGet v[0-9]+ name="slice"
+// IR= 1 pathBesideLoop  = TailCall v[0-9]+, v[0-9]+ \(
 // IR= 0 pathWithoutLoop  = Call(Method)? v
 // IR= 0 part CallMethod
-// IR= 0 larger CallBuiltin Math
-// IR= 2 countDown tail = Call
+// IR= 0 larger CallBuiltin .* overload=Math
+// IR= 2 countDown  = TailCall v
 function pathBesideLoop(request) {
   const url = request.url;
   const start = url.indexOf("/", url.indexOf(":") + 4);

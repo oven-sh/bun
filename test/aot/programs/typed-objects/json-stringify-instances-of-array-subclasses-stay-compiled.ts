@@ -1,3 +1,5 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 interface Label { id: number; name: string }
 interface Issue { id: number; title: string; labels: Label[] }
@@ -16,10 +18,10 @@ function fill<T, L extends T[]>(list: L, ...items: T[]): L {
 }
 function measure(label: string, run: () => string | undefined): void {
   for (let i = 0; i < 10; i++) run();
-  const finished = aotOperationCount("operationAOTTypedJSONFinish");
+  const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
   let length = 0;
   for (let i = 0; i < 100; i++) length += run()!.length;
-  console.log(label + ": " + length + " characters, " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code");
+  console.log(label + ": " + length + " characters, " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code");
 }
 const label = (id: number): Label => ({ id, name: "label " + id });
 const inARecord: Issue = { id: 1, title: "one", labels: fill(new Rows<Label>(), label(1), label(2)) };

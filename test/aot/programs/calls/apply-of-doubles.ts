@@ -15,6 +15,12 @@ const lists: any[] = [parse("[]"), parse("[1.5]"), parse("[1.5,2.5]"), parse("[1
 { const frozen = Object.freeze(parse("[1.5,2.5]")); lists.push(frozen); }
 { class Sub extends Array {} const sub: any = Sub.from([1.5, 2.5]); lists.push(sub); }
 { const reproto = parse("[1.5,,2.5]".replace(",,", ",0.5,")); delete reproto[1]; Object.setPrototypeOf(reproto, { 1: "inherited", __proto__: Array.prototype }); lists.push(reproto); }
+const long = (): any => parse("[0.5,1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5,9.5]");
+{ const edges = long(); edges[0] = -0; edges[4] = Infinity; edges[5] = -Infinity; edges[6] = 5e-324; edges[8] = -1.7976931348623157e308; edges[9] = -0; lists.push(edges); }
+for (const at of [0, 4, 9]) { const withNaN = long(); withNaN[at] = NaN; lists.push(withNaN); }
+for (const at of [0, 4, 9]) { const holey = long(); delete holey[at]; lists.push(holey); }
+{ const mixed = long(); mixed[9] = "s"; lists.push(mixed); }
+{ const named = long(); named.extra = 1; lists.push(named); }
 for (let round = 0; round < 2; round++) {
   for (const list of lists) console.log(show.apply("T", list), "|", show(...list), "|", fixed.apply(null, list), "|", fixed(...list), "|", Math.max(...list), Math.min.apply(null, list), "|", Reflect.apply(show, "R", list));
 }

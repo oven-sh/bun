@@ -3,6 +3,7 @@ import { define } from "../../codegen/class-definitions.ts";
 export default [
   define({
     name: "SecureContext",
+    types: [{ path: ["$Node", "NativeSecureContext"], isView: false, typeArguments: [] }],
     construct: true,
     finalize: true,
     memoryCost: true,
@@ -11,11 +12,11 @@ export default [
       // `tls.createSecureContext()` entry — WeakGCMap-memoised by config
       // digest so identical configs return the same JS cell. Replaces the
       // old SHA-256/WeakRef cache that lived in `tls.ts`.
-      intern: { fn: "intern", length: 1 },
-      createPrivate: { fn: "create_private", length: 1 },
+      intern: { fn: "intern", returns: "SecureContext", checkedAtRuntime: true, length: 1 },
+      createPrivate: { fn: "create_private", returns: "SecureContext", checkedAtRuntime: true, length: 1 },
       // Parses a PKCS#12 (`pfx`) blob into { key, cert, ca } PEM strings so
       // the regular key/cert/ca option plumbing can consume it.
-      parsePkcs12: { fn: "parse_pkcs12", length: 2 },
+      parsePkcs12: { fn: "parse_pkcs12", returns: "object", checkedAtRuntime: true, length: 2 },
     },
     // node:tls hands out the SecureContext object itself as `.context`. We
     // deliberately do NOT expose the underlying SSL_CTX* to JS: a Number
@@ -28,11 +29,15 @@ export default [
       // missing property; the value stays hidden, see above.
       _external: {
         getter: "get_external",
+        type: "undefined",
+        checkedAtRuntime: true,
       },
       // `secureContext.context.addCACert(pem)` — Node's SecureContext exposes
       // this so extra CAs can be appended to an existing context's store.
       addCACert: {
         fn: "add_ca_cert",
+        returns: "undefined",
+        checkedAtRuntime: true,
         length: 1,
       },
     },

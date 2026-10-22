@@ -41,8 +41,9 @@ test("a __dirname that the program declares is no folder of the file", async () 
   using dir = tempDir("dirname-and-a-literal", files);
   const plain = await run([bunExe(), "run", "declared.cjs"], String(dir));
   expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "common\n", exitCode: 0 });
-  const build = await run([bunExe(), "build", "--compile", "--aot", "declared.cjs", "--outfile", "program"], String(dir));
-  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+  // The path is no constant, so the build says so and takes no file for it: the file is given as a further entry point.
+  const build = await run([bunExe(), "build", "--compile", "--aot", "declared.cjs", "lib/common.js", "--outfile", "program"], String(dir));
+  expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.stringContaining("TS100064"), exitCode: 0 });
   const ran = await run([join(String(dir), "program")], String(dir));
   expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 }, 120_000);

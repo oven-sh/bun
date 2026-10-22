@@ -1,8 +1,8 @@
 // A symbol that a module keeps in a constant is a property name where the receiver is `this` of a class without a layout.
-// IR= 0 Task (GetByVal|PutByVal)
-// IR= 0 start (GetByVal|PutByVal)
-// IR= 0 finish (GetByVal|PutByVal)
-// IR= 0 describe (GetByVal|PutByVal)
+// IR= 0 Task (ElemGet|ElemSet)
+// IR= 0 start (ElemGet|ElemSet)
+// IR= 0 finish (ElemGet|ElemSet)
+// IR= 0 describe (ElemGet|ElemSet)
 const state = Symbol("state");
 const owner = Symbol("owner");
 const steps = Symbol("steps");

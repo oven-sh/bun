@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSWebSocket.h"
 
 #include "ActiveDOMObject.h"
@@ -330,6 +331,7 @@ static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject,
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWebSocketDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, JSWebSocketDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSWebSocketDOMConstructor>(callFrame->jsCallee());
@@ -437,7 +439,7 @@ JSObject* JSWebSocket::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSWebSocket>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSWebSocket::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWebSocketDOMConstructor, DOMConstructorID::WebSocket>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -734,6 +736,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_sendBody(JSC::JSG
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_send, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_send);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_sendBody>(*lexicalGlobalObject, *callFrame, "send");
 }
 
@@ -755,6 +758,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_closeBody(JSC::JS
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_close);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_closeBody>(*lexicalGlobalObject, *callFrame, "close");
 }
 
@@ -779,6 +783,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pingBody(JSC::JSG
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_ping, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_ping);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_pingBody>(*lexicalGlobalObject, *callFrame, "ping");
 }
 
@@ -789,6 +794,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pongBody(JSC::JSG
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_pong, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_pong);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_pongBody>(*lexicalGlobalObject, *callFrame, "pong");
 }
 
@@ -804,6 +810,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_terminateBody(JSC
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_terminate);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_terminateBody>(*lexicalGlobalObject, *callFrame, "terminate");
 }
 
@@ -816,6 +823,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_pauseBody(JSC::JS
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_pause, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_pause);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_pauseBody>(*lexicalGlobalObject, *callFrame, "pause");
 }
 
@@ -828,6 +836,7 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_resumeBody(JSC::J
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_resume, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebSocket, jsWebSocketPrototypeFunction_resume);
     return IDLOperation<JSWebSocket>::call<jsWebSocketPrototypeFunction_resumeBody>(*lexicalGlobalObject, *callFrame, "resume");
 }
 
@@ -927,8 +936,9 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     return createWrapper<WebSocket>(globalObject, WTF::move(impl));
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)
+NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, WebSocket& impl)
 {
+    BUN_REMOVABLE_DEFINITION(WebSocket, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, WebSocket&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
@@ -1121,7 +1131,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketStreamClosedForWs, (JSGlobalObject * lexical
     return JSValue::encode(jsUndefined());
 }
 
-// sendFrame(ws, data, opcode, fin, compress). No-op unless `ws` is OPEN. `compress` is honored as-is, with no minimum size.
+// sendFrame(ws, data, opcode, fin, compress). Sends nothing and returns false unless `ws` is OPEN. `compress` is honored as-is, with no minimum size.
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1142,7 +1152,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrameForWs, (JSGlobalObject * lexicalGlo
 
     auto& impl = socket->wrapped();
     if (impl.readyState() != WebSocket::OPEN)
-        return JSValue::encode(jsUndefined());
+        return JSValue::encode(jsBoolean(false));
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.sendFrame(opcode, *payload, flags); })));
 }
 

@@ -111,7 +111,7 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(
 /// terminal string. `theme` is an optional object: `{ colors?, hyperlinks?,
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Markdown)]
 pub(crate) fn render_to_ansi(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
@@ -182,7 +182,7 @@ pub(crate) fn render_to_ansi(
     bun_string_jsc::create_utf8_for_js(global_this, &result)
 }
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Markdown)]
 fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
@@ -285,7 +285,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// Each callback receives the accumulated children as a string plus an optional
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Markdown)]
 fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
@@ -335,7 +335,7 @@ fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 /// containing the parsed markdown as children.
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Markdown)]
 fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }

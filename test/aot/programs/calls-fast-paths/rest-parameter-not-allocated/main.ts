@@ -1,15 +1,17 @@
 // Rest parameters and `arguments` are not allocated where they are only read, in untyped functions that are called as values.
 // IR= 0 lengthOnly CreateRest
-// IR= 1 lengthOnly GetRestLength 0
+// IR= 1 lengthOnly GetRestLength(?! firstArgument=)
 // IR= 0 firstOnly CreateRest
 // IR= 0 sum CreateRest
 // IR= 1 sum GetMyArgumentByVal
 // IR= 0 viaArguments CreateRest
-// IR= 0 viaArguments CreateArguments
+// IR= 0 viaArguments Create\w+Arguments
 // IR= 0 copies CreateRest
 // IR= 1 copies GetMyArgumentByVal
-// IR= 0 inHandler CreateRest
-// IR+ "dispatch" .* flags 1966
+// inHandler has one caller, is copied into it and is gone: what is left of it stands in run.
+// IR= 0 run CreateRest
+// IR+ "dispatch" \w+ role=GenericEntrypoint
+// IR- "dispatch" \w+ role=GenericEntrypoint .* arguments=Registers
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;

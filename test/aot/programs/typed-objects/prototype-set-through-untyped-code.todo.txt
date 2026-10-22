@@ -1,1 +1,0 @@
-A bug: plain Bun throws in none of the seven cases; under --aot four throw: TypeError: Cannot set prototype of Counter: objects of a declared type keep their prototype; and Reflect.setPrototypeOf() answers false and the program goes on with the old prototype.

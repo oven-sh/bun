@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "paths": {
+      "broken": ["./packages/broken/index"]
+    }
+  }
+}

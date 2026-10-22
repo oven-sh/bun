@@ -1,0 +1,24 @@
+a circle: documented value, got value {"kind": "circle", "radius": 1}
+an unknown tag: documented TypeError, got TypeError
+no tag: documented TypeError, got TypeError
+a tag in other letters: documented TypeError, got TypeError
+a tag with a space: documented TypeError, got TypeError
+an empty tag: documented TypeError, got TypeError
+null as the tag: documented TypeError, got TypeError
+a list as the tag: documented TypeError, got TypeError
+a circle with the members of a square: documented TypeError, got TypeError
+a square with the members of a circle: documented TypeError, got TypeError
+two tags, the last one decides: documented TypeError, got TypeError
+two tags, the last one fits: documented value, got value {"kind": "circle", "radius": 1}
+the member is of another kind: documented TypeError, got TypeError
+the tag is in __proto__: documented TypeError, got TypeError
+one bad shape among many: documented TypeError, got TypeError
+ok is true and there is only an error: documented TypeError, got TypeError
+ok is 1: documented TypeError, got TypeError
+ok is a text: documented TypeError, got TypeError
+ok is null: documented TypeError, got TypeError
+level 3: documented TypeError, got TypeError
+level 1.5: documented TypeError, got TypeError
+level as a text: documented TypeError, got TypeError
+level 1 with the member of level 2: documented TypeError, got TypeError
+level 2: documented value, got value {"b": "b", "level": 2}

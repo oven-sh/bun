@@ -1,6 +1,6 @@
 // A small function that reads a lazily initialized module constant is still inlined.
-// IR= 0 one CallDirect f[0-9]+ \(v
-// IR= 0 five CallDirect f[0-9]+ \(v
+// IR= 0 one CallDirect \(v
+// IR= 0 five CallDirect \(v
 declare const console: any;
 const TABLE: number[] = [3, 1, 4, 1, 5, 9, 2, 6];
 function pick(i: number, j: number): number { return TABLE[i & 7] + TABLE[j & 7] * 2 + (i ^ j) + (i | j); }

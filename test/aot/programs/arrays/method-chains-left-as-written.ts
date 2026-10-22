@@ -1,16 +1,16 @@
-// IR= 2 logsItsOrder NewArrayWith
-// IR= 2 countsItsCalls NewArrayWith
-// IR= 2 writesWhatTheNextReads NewArrayWith
-// IR= 2 takesTheIndex NewArrayWith
-// IR= 2 takesTheArray NewArrayWith
-// IR= 2 callsWhatItIsGiven NewArrayWith
-// IR= 2 hasALoop NewArrayWith
-// IR= 2 hasAReceiver NewArrayWith
-// IR= 2 changesTheElements NewArrayWith
-// IR= 2 changesTheArray NewArrayWith
-// IR= 2 readsWhatMayBeNull NewArrayWith
-// IR= 2 throwsByItself NewArrayWith
-// IR= 2 throwsBetweenTheCalls NewArrayWith
+// IR= 2 logsItsOrder NewArray(Like|WithCapacity)
+// IR= 2 countsItsCalls NewArray(Like|WithCapacity)
+// IR= 2 writesWhatTheNextReads NewArray(Like|WithCapacity)
+// IR= 2 takesTheIndex NewArray(Like|WithCapacity)
+// IR= 2 takesTheArray NewArray(Like|WithCapacity)
+// IR= 2 callsWhatItIsGiven NewArray(Like|WithCapacity)
+// IR= 2 hasALoop NewArray(Like|WithCapacity)
+// IR= 2 hasAReceiver NewArray(Like|WithCapacity)
+// IR= 2 changesTheElements NewArray(Like|WithCapacity)
+// IR= 2 changesTheArray NewArray(Like|WithCapacity)
+// IR= 2 readsWhatMayBeNull NewArray(Like|WithCapacity)
+// IR= 2 throwsByItself NewArray(Like|WithCapacity)
+// IR= 2 throwsBetweenTheCalls NewArray(Like|WithCapacity)
 interface Owner {
   name: string;
 }

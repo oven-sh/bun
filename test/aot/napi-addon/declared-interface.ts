@@ -8,16 +8,16 @@ interface Addon {
   freeze(o: object): string; del(o: object, name: string): boolean | string; defineValue(o: object, name: string, value: unknown, attributes: number): string; allNames(o: object, mode: number, filter: number, conversion: number): (string | symbol)[];
   makeRow(): Row; keep(o: object): string; keptValue(): object; dropKept(): string; coerceToObject<T>(o: T): T;
 }
-const addon: Addon = require(process.env.ADDON!);
+const loaded = { exports: {} as Addon }; process.dlopen(loaded, process.env.ADDON!); const addon: Addon = loaded.exports;
 function options(): Options { return { width: 3, fast: true, data: new Uint8Array([1, 2, 3]), list: [1, 2], below: { x: 1, deep: { y: "y" } } }; }
 function row1(): Row { return { id: 9, name: "made by the program", list: [] }; }
 function widthOf(o: Options) { return o.width; } function belowOf(o: Options) { return o.below.x + o.below.deep.y; } function nameOf(r: Row) { return r.name + r.id + r.list.length; }
 function show(v: unknown): string { return v === undefined ? "undefined" : (JSON.stringify(v, (_, x) => (typeof x === "symbol" ? String(x) : x instanceof Uint8Array ? "bytes " + [...x].join() : x === undefined ? "undefined" : x)) ?? "undefined"); }
 let at = 0;
-function row(label: string, f: () => unknown) { at++; let said: string; try { said = show(f()); } catch (e) { said = "THROWN TO JAVASCRIPT " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
+function row(label: string, f: () => unknown) { at++; let said: string; try { said = show(f()); } catch (e) { said = "THROWN TO JAVASCRIPT " + (e as Error).constructor.name + ": " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ "); } console.log(String(at).padStart(3) + " " + label + ": " + said); }
 // A row that stores what the declared type does not allow: one call; what the call said | what the object looks like afterwards | what an object that nobody touched looks like.
 function typeRow<T>(label: string, make: () => T, change: (o: T) => unknown, look: (o: T) => unknown) {
-  at++; const o = make(); const told = (f: () => unknown) => { try { return show(f()); } catch (e) { return show("threw " + String((e as Error).message).replace(/ \(bun --aot[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
+  at++; const o = make(); const told = (f: () => unknown) => { try { return show(f()); } catch (e) { return show("threw " + String((e as Error).message).replace(/ \(bun compile[^)]*\)/, "").replace(/\n */g, " ~ ")); } };
   console.log(String(at).padStart(3) + " TYPE " + label + ": " + told(() => change(o)) + " | after: " + told(() => look(o)) + " | untouched: " + told(() => look(make())));
 }
 row("names", () => addon.names(options()));

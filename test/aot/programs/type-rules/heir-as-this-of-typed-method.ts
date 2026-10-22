@@ -1,4 +1,4 @@
-// The smallest program in which a declared type stayed closed to an object that satisfies it: an heir of a typed object, as the `this` of a method that declares `this: Large`. Large has a property that is an object, so it was not opened as a flat type is.
+// An heir of a typed object is the `this` of a method that declares `this: Large`. Any object passes a written `this` type, whatever the properties of the type are, and the method reads and stores through the heir as in plain JavaScript.
 interface Small { weight: number; run(this: Small, x: number): number }
 interface Large { weight: number; inner: { a: number }; run(this: Large, x: number): number }
 function makeSmall(weight: number): Small { return { weight, run(x: number): number { return x + this.weight; } }; }

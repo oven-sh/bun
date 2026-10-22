@@ -1,37 +1,19 @@
-//! `bun_sema` with Bun's parser as its front end, backed by the file system: the basis of its tests
-//! and of the `bun-sema` command line tool. The bundler does not use this crate.
+//! What `bun_sema`'s tests and the `bun-sema` command line tool need to link and to measure. The product doesn't use
+//! it.
 
 #![feature(linkage)]
 
 pub mod hir_dump;
 pub mod native;
+pub mod native_libraries;
+#[path = "../../runtime/cli/typescript_libs.rs"]
+mod typescript_libs;
 
-use bun_sema::atom::Interner;
-use bun_sema::hir;
-use bun_sema::session::Arena;
+/// TypeScript's `lib.*.d.ts` files as Bun ships them.
+pub const TYPESCRIPT_LIBS: bun_sema_driver::host::BundledLibs = typescript_libs::BUNDLED;
+
 #[cfg(unix)]
 use core::mem::MaybeUninit;
-
-/// Parses `text` with default options. The extension of `path` determines the file kind.
-pub fn parse<'s>(
-    arena: &'s Arena,
-    path: &str,
-    text: &[u8],
-    atoms: &Interner<'s>,
-    experimental_decorators: bool,
-) -> hir::File<'s> {
-    let path = path.as_bytes();
-    bun_sema_parser::summarize(
-        arena,
-        path,
-        None,
-        text,
-        atoms,
-        experimental_decorators,
-        false,
-        false,
-    )
-}
 
 /// Runs `work(i)` for every `i` below `count` on `threads` threads, which have the stack of a thread of `bun check`.
 pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sync) {
@@ -56,27 +38,7 @@ pub fn for_each_parallel(threads: usize, count: usize, work: impl Fn(usize) + Sy
     });
 }
 
-/// Peak resident memory of the process, in bytes.
-/// The number of instructions the process has executed and the cycles they took, on all threads.
-/// The instruction count is nearly constant between runs, unlike the elapsed time. (0, 0) where it
-/// is not available.
-pub fn instructions_and_cycles() -> (u64, u64) {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
-        let failed = unsafe {
-            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
-        };
-        if failed == 0 {
-            return (info.ri_instructions, info.ri_cycles);
-        }
-    }
-    (0, 0)
-}
-
-/// The column count of the terminal that standard output is attached to. 0 if it is not a terminal.
+/// Returns the column count of the terminal attached to standard output, or 0 if it isn't a terminal.
 pub fn terminal_width() -> usize {
     #[cfg(unix)]
     // SAFETY: all zeros is a valid `winsize`, which the call fills in.
@@ -89,14 +51,14 @@ pub fn terminal_width() -> usize {
     0
 }
 
-/// Peak memory of the process, as the operating system accounts it to the process. Excludes memory
-/// that has been released but not yet reclaimed, which `getrusage` counts.
+/// Returns the process's peak memory as the operating system accounts for it. Excludes memory that
+/// has been released but not yet reclaimed, which `getrusage` counts.
 pub fn peak_memory() -> u64 {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: all zeros is a valid `rusage_info_v4`.
         let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
+        // SAFETY: `info` has the type that `RUSAGE_INFO_V4` fills in, and it outlives the call.
         let failed = unsafe {
             libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
         };
@@ -107,23 +69,8 @@ pub fn peak_memory() -> u64 {
     peak_rss()
 }
 
-pub fn current_memory() -> u64 {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: all zeros is a valid `rusage_info_v4`.
-        let mut info: libc::rusage_info_v4 = unsafe { MaybeUninit::zeroed().assume_init() };
-        // SAFETY: `info` is what `RUSAGE_INFO_V4` fills in, and outlives the call.
-        let failed = unsafe {
-            libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast())
-        };
-        if failed == 0 {
-            return info.ri_phys_footprint;
-        }
-    }
-    0
-}
-
-pub fn peak_rss() -> u64 {
+/// Returns the process's peak resident memory in bytes.
+fn peak_rss() -> u64 {
     #[repr(C)]
     struct Rusage {
         times: [i64; 4],
@@ -142,7 +89,7 @@ pub fn peak_rss() -> u64 {
     if unsafe { getrusage(0, &raw mut usage) } != 0 {
         return 0;
     }
-    // Bytes on macOS, kilobytes on Linux.
+    // `ru_maxrss` is in bytes on macOS and in kilobytes on Linux.
     if cfg!(target_os = "macos") {
         usage.max_rss as u64
     } else {
@@ -150,14 +97,15 @@ pub fn peak_rss() -> u64 {
     }
 }
 
-// Here and not beside what it tests: this crate has what a test binary needs to link (`native`).
+// These tests aren't next to the code they test because only this crate has what a test binary
+// needs to link (`native`).
 #[cfg(all(test, not(windows)))]
 mod tests {
     use bun_sema::resolve::{Host, displayed_path, join};
     use bun_sema_driver::host::{Disk, from_argument, from_native, to_native};
 
     #[test]
-    fn a_directory_in_the_root_can_be_named_like_a_root_of_typescript() {
+    fn directory_in_root_can_be_named_like_a_typescript_root() {
         for native in [
             &b"/c:/a/b.ts"[..],
             b"/c:",
@@ -172,17 +120,17 @@ mod tests {
             assert_eq!(from_native(to_native(&path)), path);
             assert_eq!(join(b"/", &path), path);
         }
-        // What TypeScript takes for a drive is another path, which the system looks for in the
-        // working directory.
+        // A path that TypeScript treats as starting with a drive is a different path. The OS resolves
+        // it against the working directory.
         let drive = join(b"/x", b"c:/a");
         assert_ne!(drive, from_native(b"/c:/a"));
         assert_eq!(to_native(&drive), b"c:/a");
-        // `..` ends at `/`.
+        // `..` stops at `/`.
         let inside = from_native(b"/c:/a");
         assert_eq!(to_native(&join(&inside, b"../b")), b"/c:/b");
         assert_eq!(&*displayed_path(&join(&inside, b"../..")), b"/");
         assert_eq!(&*displayed_path(&join(&inside, b"../../..")), b"/");
-        // On the command line.
+        // Command-line arguments.
         assert_eq!(
             from_argument(&inside, b"/c:/a/b.ts"),
             from_native(b"/c:/a/b.ts")
@@ -192,8 +140,8 @@ mod tests {
     }
 
     #[test]
-    fn the_real_path_of_what_is_below_the_marked_root_is_below_it() {
-        // No test can make a directory in `/`. This one is there, and is no link.
+    fn realpath_under_the_marked_root_stays_under_it() {
+        // A test can't create a directory in `/`. `/usr/lib` already exists and isn't a symlink.
         let disk = Disk::with_already_read(1, Default::default(), b"/");
         assert_eq!(disk.realpath(b"/usr/lib"), b"/usr/lib");
         assert_eq!(disk.realpath(b"/\0/usr/lib"), b"/\0/usr/lib");

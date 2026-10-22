@@ -69,7 +69,7 @@ async function main(): Promise<void> {
     withSync[Symbol.iterator] = function* () {
         note("its own iterator is asked for");
         yield 7;
-    } as never;
+    } as any;
     await over("own Symbol.iterator", withSync);
 
     const withNull = [5, 6] as number[] & { [Symbol.asyncIterator]?: null };

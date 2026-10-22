@@ -2,6 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "nod
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { loadFeatures } from "../../../scripts/build/trim/features";
 import { aQuarterOfTheMemory, compareAll, coresOfTheMachine, described, inJail, jailOfThisMachine, Tally, type Program, type Result, type Settings } from "./compare";
 import { aotPrograms, benches, bunTests, documentedExamples, jsTests, listed, nodeTests, repository, test262 } from "./corpora";
 import { programsOfEveryLocale } from "./locales";
@@ -9,7 +10,7 @@ import { programsThatNameEverything, programsThatReachNames, reflect } from "./r
 
 const usage = `bun test/aot/trimmed-against-whole/run.ts [options] [entry files]
 
-Builds each program twice, with \`bun build --compile --aot\` and with --compile-trim-runtime as well, runs both executables
+Builds each program twice, with \`bun build --compile --aot\` and with --trim as well, runs both executables
 with the same arguments, environment, standard input and a fresh working directory, and compares standard output, standard
 error, the exit code and the signal. Where they differ, the whole executable runs twice more. A program that does not compile,
 does not end, or whose whole executable does not do the same each time is set aside and counted.
@@ -36,7 +37,7 @@ cluster, Worker, execPath, spawn, fork or exec are set aside and counted.
   --seed <text>         the seed of --sample and of the corpus "names" (default 1)
   --count <n>           how many programs the corpus "names" generates (default 200)
   --bun <path>          the Bun that builds (default: the one that runs this script)
-  --doors <file>        scripts/build/islands.doors as that Bun was linked with it (default: the repository's)
+  --features <folder>   the checkout that Bun was built from: its src/trim/features is read (default: this repository)
   --cores <set>         Linux: the cores that may be used, as taskset has them: 0-15 or 0,2,8-11. Every program is built and run on
                         one of them alone, whatever number of threads a build starts
   --jobs <n>            programs at a time (default: one for each of --cores, or one for every two cores of the machine)
@@ -66,7 +67,7 @@ const { values, positionals } = parseArgs({
     "seed": { type: "string", default: "1" },
     "count": { type: "string", default: "200" },
     "bun": { type: "string", default: process.execPath },
-    "doors": { type: "string", default: join(repository, "scripts/build/islands.doors") },
+    "features": { type: "string", default: repository },
     "cores": { type: "string" },
     "jobs": { type: "string" },
     "highest-load": { type: "string" },
@@ -94,6 +95,8 @@ if (values.help || (values.corpus.length === 0 && positionals.length === 0 && !v
   process.exit(values.help ? 0 : 1);
 }
 
+const model = loadFeatures(resolve(values.features));
+
 const needs = (option: "test262" | "jstests") => {
   if (!values[option]) throw new Error(`--corpus ${option} needs --${option} <folder>`);
   return resolve(values[option]);
@@ -109,7 +112,7 @@ const corpora: Record<string, () => Program[]> = {
   "docs": documentedExamples,
   "locales": programsOfEveryLocale,
   "every-name": () => programsThatNameEverything(reflect(values.bun)),
-  "names": () => programsThatReachNames(reflect(values.bun), readFileSync(values.doors, "utf8"), values.seed, Number(values.count)),
+  "names": () => programsThatReachNames(reflect(values.bun), values.seed, Number(values.count)),
 };
 
 let programs: Program[] = listed(positionals);
@@ -156,7 +159,7 @@ const settings: Settings = {
   bun: resolve(values.bun),
   scratch,
   kept: resolve(values.kept ?? (report ? `${report}.kept` : join(tmpdir(), "trimmed-against-whole-kept"))),
-  doors: readFileSync(values.doors, "utf8"),
+  model,
   jobs: Number(values.jobs) || cores?.length || Math.max(1, coresOfTheMachine() >> 1),
   cores,
   highestLoad: Number(values["highest-load"]) || coresOfTheMachine(),

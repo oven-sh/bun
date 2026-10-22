@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunExe, isWindows } from "harness";
 import { exec } from "node:child_process";

@@ -1,15 +1,19 @@
-// The pages about --aot show commands and what they print. Each command that is directly followed by its output is run
+// The pages about bun compile, and the page about validation, show commands and what they print. Each command that is directly followed by its output is run
 // here. Every line of the output on the page has to be printed, in that order; a page may leave lines out.
 import { describe, expect, test } from "bun:test";
 import { unsupported } from "../aot/run-programs";
 import { mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "path";
 
 const compiles = !unsupported;
 const hasTheShellOfThePages = !isWindows;
 
-type Example = { line: number; commands: string; printed: string; filesAbove: Record<string, string> };
+type Example = { line: number; commands: string; printed: string; filesAbove: Record<string, string>; hasBunTypes: boolean };
+
+// What a section shows in front of this command happens in a folder where it has not been run yet.
+const installsBunTypes = "bun add -d @types/bun";
+const restOfSection = (page: string, index: number) => page.slice(index, page.indexOf("\n#", index) + 1 || page.length);
 
 // Bun itself and what it has built. Nothing that needs the network.
 const isRunHere = (command: string) => /^(bun (?!add |install|x |create |upgrade)|\.\/)/.test(command);
@@ -29,7 +33,7 @@ function examplesOf(page: string) {
     if (/^[\w./-]+\.\w+$/.test(name)) files[name] = text;
     if (language === "bash") commands = { text: text.trim(), line: page.slice(0, block.index).split("\n").length };
     if (language === "bash" && !text.trim().split("\n").every(isRunHere)) commands = undefined;
-    if (language === "txt" && commands) examples.push({ line: commands.line, commands: commands.text, printed: text, filesAbove: { ...files } });
+    if (language === "txt" && commands) examples.push({ line: commands.line, commands: commands.text, printed: text, filesAbove: { ...files }, hasBunTypes: !restOfSection(page, block.index).includes(installsBunTypes) });
     if (language === "txt") commands = undefined;
     end = block.index + block[0].length;
   }
@@ -42,7 +46,7 @@ const withoutTimes = (text: string) =>
     .split("\n")
     .map(line => line.replace(/ *\[\d+(\.\d+)?m?s\]/, "").trimEnd());
 
-const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "bundler")).filter(name => /^aot.*\.mdx$/.test(name));
+const pages = readdirSync(join(import.meta.dir, "..", "..", "docs", "bundler")).filter(name => /^(aot.*|validate)\.mdx$/.test(name));
 
 describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%s", name => {
   const page = readFileSync(join(import.meta.dir, "..", "..", "docs", "bundler", name), "utf8");
@@ -53,8 +57,8 @@ describe.skipIf(!compiles || !hasTheShellOfThePages).each(pages)("docs/bundler/%
   });
 
   const titled = examples.map(it => [`line ${it.line}: ${it.commands.replaceAll("\n", "; ")}`, it] as const);
-  test.concurrent.each(titled)("%s", async (_, { commands, printed, filesAbove }) => {
-    using dir = tempDirWithBunTypes("aot-docs", { ...files, ...filesAbove });
+  test.concurrent.each(titled)("%s", async (_, { commands, printed, filesAbove, hasBunTypes }) => {
+    using dir = (hasBunTypes ? tempDirWithBunTypes : tempDir)("aot-docs", { ...files, ...filesAbove });
     const cwd = realpathSync(String(dir));
     mkdirSync(join(cwd, ".bin"));
     symlinkSync(bunExe(), join(cwd, ".bin", "bun"));

@@ -115,7 +115,7 @@ add("an enum as a key", () => { const m: Record<Name, number> = { [Name.A]: 1, [
 // async, generators, iterators
 add("async functions", async () => { const f = async (n: number): Promise<number> => n * 2; return [await f(1), await Promise.all([f(2), f(3)]), await Promise.resolve("s")]; });
 add("await of what is no promise", async () => { const v: number | Promise<number> = 4; return await v; });
-add("a thenable", async () => { const t: PromiseLike<number> = { then(ok) { return Promise.resolve(ok ? ok(6) : undefined) as never; } }; return await t; });
+add("a thenable", async () => { const t: PromiseLike<number> = { then(ok) { return Promise.resolve(ok ? ok(6) : undefined) as any; } }; return await t; });
 add("Promise.allSettled and race", async () => { const r = await Promise.allSettled([Promise.resolve(1), Promise.reject(new Error("x"))]); return [r.map(x => x.status), await Promise.race([Promise.resolve("first")])]; });
 add("generators", () => { function* g(n: number): Generator<number, string, boolean> { let i = 0; while (i < n) { const stop: boolean = yield i++; if (stop) break; } return "done"; } const it = g(3); return [it.next(), it.next(false), it.next(true)]; });
 add("async generators", async () => { async function* g(): AsyncGenerator<number> { yield 1; yield 2; } const l: number[] = []; for await (const v of g()) l.push(v); return l; });

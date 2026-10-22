@@ -1,15 +1,11 @@
 // The parser that expects keys keeps a credit for each beginning of a text. Texts that make it learn again and again, or that are mostly long strings, use the credit up and go straight to the former parser; after a while one more is tried, so a shape that settles late is served again.
-declare const aotOperationCount: (name: string) => number;
-const names = ["jsonParsedWithLearnedShapes", "jsonBeginningSetAside"];
 function measure(label: string, texts: string[]) {
-  const before = names.map(name => aotOperationCount(name));
   let wrong = 0;
   for (const text of texts) {
     const value: unknown = JSON.parse(text);
     if (JSON.stringify(value) !== JSON.stringify(JSON.parse(text, (_, held) => held))) wrong++;
   }
-  const [served, setAside] = names.map((name, at) => aotOperationCount(name) - before[at]!);
-  console.log(label + ": " + texts.length + " texts, " + served + " by expecting keys, set aside " + setAside + " times, " + wrong + " wrong");
+  console.log(label + ": " + texts.length + " texts, " + wrong + " wrong");
 }
 const many = (count: number, make: (at: number) => string) => Array.from({ length: count }, (_, at) => make(at));
 measure("one shape", many(300, at => '{"steady":' + at + ',"name":"n","ok":true}'));

@@ -36,15 +36,16 @@ export async function buildAndRun(bunUnderTest: string, name: string, program: s
   try {
     writeFileSync(join(dir, "main.ts"), program);
     const executable = join(dir, process.platform === "win32" ? "main.exe" : "main");
-    const built = await run([bunUnderTest, "build", "--compile", "--aot", "main.ts", "--outfile", executable], dir, { ...env, BUN_JSC_logAOTFormatPatterns: "1" });
-    const counts = /(\d+) Intl formatters have a constant locale and constant options; (\d+) have a pattern in the image; (\d+) patterns differed/.exec(built.stderr);
-    if (built.exitCode || !counts) {
+    const built = await run([bunUnderTest, "build", "--compile", "--aot", "--explain=statistics", "main.ts", "--outfile", executable], dir, env);
+    const statistics = new Map(Array.from(built.stderr.matchAll(/^(\w+) (\d+)$/gm), ([, statistic, value]) => [statistic, Number(value)] as const));
+    const counts = ["ConstantFormatterRequests", "FormatPatternsCreated", "FormatPatternsRejectedByCheck"].map(statistic => statistics.get(statistic));
+    if (built.exitCode || counts.includes(undefined)) {
       outcome.differences++;
       outcome.said.push(`${name}: the build: exit code ${built.exitCode}: ${built.stderr.trim().split("\n").slice(-3).join(" | ")}`);
       return outcome;
     }
-    [outcome.formatters, outcome.withAPattern, outcome.refused] = counts.slice(1).map(Number);
-    outcome.said.push(...built.stderr.split("\n").filter(line => line.includes("differs from ICU on a sample")).map(line => `${name}: ${line}`));
+    [outcome.formatters, outcome.withAPattern, outcome.refused] = counts as number[];
+    if (statistics.get("MaxConstantFormatterRequestsHits")) outcome.said.push(`${name}: the build reached the limit MaxConstantFormatterRequests, so some formatters were not planned`);
     for (const [way, value] of Object.entries(waysToRun)) {
       const ran = await run([executable], dir, { ...env, BUN_JSC_formatPatternsOfAnotherICUForTesting: value });
       const result = /^(\d+) comparisons, (\d+) differences$/m.exec(ran.stdout);

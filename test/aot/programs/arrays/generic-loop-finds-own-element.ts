@@ -2,7 +2,7 @@
 declare const console: { log(...values: unknown[]): void };
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const asked = () => (counted ? counted("operationAOTTypedHasKey") + counted("operationAOTTypedElementOrEmpty") : 0);
+const asked = () => (counted ? counted("operationAOTInByVal") + counted("operationAOTElementOrEmpty") : 0);
 class Rows<T> extends Array<T> {}
 class Inherits<T> extends Array<T> {}
 (Inherits.prototype as any)[1] = "inherited";

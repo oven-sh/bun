@@ -349,7 +349,7 @@ scenario("25 refs, keys and children as props; what is passed through", async sa
   say(await stream(say, <Spread k="kk" id="i" title="t" />));
 });
 
-// THE WORKFLOW's REPORT.md 6.1: what `resume` is handed is GIVEN: a PostponedState that ANOTHER bundle made (react-dom/static: the node bundle, untyped) and that JSON may have carried: JSON drops the members that are undefined: its ResumableState has 14 of the 17 members the typed bundle's own births have. A VALUE THAT SATISFIES ITS TYPE IS NEVER REFUSED: so it is walked here, carried and as it is, by both entries.
+// What `resume` is handed is GIVEN: a PostponedState that ANOTHER bundle made (react-dom/static: the node bundle, untyped) and that JSON may have carried: JSON drops the members that are undefined: its ResumableState has 14 of the 17 members the typed bundle's own births have. A VALUE THAT SATISFIES ITS TYPE IS NEVER REFUSED: so it is walked here, carried and as it is, by both entries.
 scenario("26 a prerender postpones; the state is carried by JSON, or handed over as it is; the server resumes", async say => {
   if (legacy) { say("(no such entry there)"); return; }
   for (const way of ["carried by JSON", "as it is"]) for (const entry of ["resume", "resumeToPipeableStream"]) {

@@ -1,4 +1,4 @@
-// The entry point of a typed function for callers that do not know its types converts the arguments and jumps to the function; it holds no second copy of the body.
+// The entry point of a typed function for callers that do not know its types tests the arguments and jumps to the function; it holds no second copy of the body.
 // IR= 1 yieldsObject CallDirect
 // IR= 1 yieldsNumber CallDirect
 // IR= 1 yieldsNothing CallDirect

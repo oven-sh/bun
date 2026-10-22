@@ -1,0 +1,11 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "built-ins-alone-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+fs.readdir(folder, { withFileTypes: true }, function (error, result) {
+  console.log(error === null, arguments.length);
+  console.log(result.length, result[0] instanceof fs.Dirent, result[0].name, result[0].isFile(), result[0].isDirectory());
+  fs.rmSync(folder, { recursive: true });
+});

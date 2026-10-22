@@ -1,4 +1,4 @@
-// IR+ CallBuiltin JSONOpen
+// IR+ ^ .* = JSONSourceOpen v
 interface Flat {
   id: number;
   name: string;

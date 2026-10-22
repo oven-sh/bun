@@ -1,1 +1,0 @@
-It prints RangeError: with other.d.ts in the project the call grows the stack. Without that file it prints 6.

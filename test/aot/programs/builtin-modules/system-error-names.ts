@@ -1,4 +1,4 @@
-// util.getSystemErrorName() and the errors that are named through it: one function, whoever asks for it; its checks, its name and its length are as before.
+// util.getSystemErrorName() and the errors that are named through it: one function, whoever asks for it; its checks, its name and its length are plain Bun's.
 import util from "node:util";
 import { constants } from "node:os";
 
@@ -7,7 +7,7 @@ for (const number of known) console.log(-number, util.getSystemErrorName(-number
 console.log(util.getSystemErrorName.name, util.getSystemErrorName.length, Object.keys(util).includes("getSystemErrorName"));
 for (const value of [0, 1, -1.5, -(2 ** 53), NaN, -Infinity, "-2", undefined, null, {}, 2n]) {
   try {
-    console.log(util.getSystemErrorName(value as number));
+    console.log(util.getSystemErrorName(value as any));
   } catch (error) {
     console.log((error as any).name, (error as any).code, (error as Error).message);
   }

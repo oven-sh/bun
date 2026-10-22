@@ -1,10 +1,9 @@
 // sql<Row[]>`..` decodes each row from the wire into a typed object of Row. A row that does not match Row is created as a plain object, as before.
 // A callback called with such rows gets a typed body, and an untyped clone for rows that do not match.
-// IR+ SetExpectedRowType
-// IR+ Arrow .*\(undefined\|null\|Comment\.\d+ annotated\)
+// IR+ ^layout (L\d+) .*name="Comment" [\s\S]*^function f\d+ (-|"[^"]*") Arrow .*\((undefined\|null\|)?=?\1!?[,)]
 // An object literal that such a callback returns is allocated as the type the enclosing call is expected to return.
-// IR+ : Summary\.\d+ = NewObjectWithShape
-// IR+ : Author\.\d+ = NewObjectWithShape
+// IR+ ^layout (L\d+) .*name="Summary" [\s\S]*: =?\1 = NewObject 
+// IR+ ^layout (L\d+) .*name="Author" [\s\S]*: =?\1 = NewObject 
 import { SQL } from "bun";
 
 const OID = { bool: 16, int8: 20, int4: 23, text: 25, json: 114, float4: 700, float8: 701, varchar: 1043, timestamp: 1114, timestamptz: 1184, uuid: 2950, mood: 70000 } as const;
@@ -181,7 +180,7 @@ tables.set("nothing", { columns: [["id", "int4"], ["name", "text"]], rows: [] })
 
 function show(what: string, rows: unknown[]): void {
   console.log(what);
-  for (const row of rows) console.log(" ", Object.keys(row as object).join(), JSON.stringify(row), Bun.inspect(row, { compact: true } as never).replace(/\s+/g, " "));
+  for (const row of rows) console.log(" ", Object.keys(row as object).join(), JSON.stringify(row), Bun.inspect(row, { compact: true } as any).replace(/\s+/g, " "));
 }
 
 async function twice<Row>(what: string, query: () => Promise<Row[]>, use?: (rows: Row[]) => unknown): Promise<void> {

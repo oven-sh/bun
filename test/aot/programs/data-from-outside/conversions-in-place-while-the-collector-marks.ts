@@ -1,7 +1,7 @@
-// Plain objects that the collector can already reach are converted to record types in place while it marks. The integers and the
-// small numbers in them are chosen so that the converted object's bytes, read as the properties of a plain object, are pointers to
-// nowhere, and so that the plain object's bytes, read as a converted object's references, are too: a marker that reads one of these
-// objects by the wrong layout crashes at once. Everything the objects held is still there afterwards.
+// Parsed objects that the collector can already reach are read through record types while it marks. The integers and the small
+// numbers in them are chosen so that the bytes of an object with a fixed layout, read as the properties of a plain object, are
+// pointers to nowhere, and so that the plain object's bytes, read as the references of a fixed layout, are too: a marker that reads
+// one of these objects by the wrong layout crashes at once. Everything the objects held is still there afterwards.
 type Row = { a: number; b: number; c: number; d: number; tiny: number; flag: boolean; name: string; tags: string[] };
 type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h: number; name: string; last: string };
 type Child = { a: number; b: number; label: string };

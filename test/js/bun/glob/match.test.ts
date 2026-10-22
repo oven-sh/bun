@@ -2756,7 +2756,7 @@ describe("Glob.match", () => {
     pattern => {
       const glob = new Glob(pattern);
       for (let round = 0; round < 40; round++) glob.match("axb");
-      const differs: string[] = [];
+      const differs = [];
       // The first and the last character of each range of first and second bytes in UTF-8, and some in between.
       const edges = [0x80, 0x800, 0x1000, 0xd000, 0xd800, 0xe000, 0x10000, 0x40000, 0x100000, 0x110000];
       const codes = edges.flatMap(edge => [edge - 1, edge]).slice(0, -1);

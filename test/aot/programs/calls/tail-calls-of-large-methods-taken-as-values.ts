@@ -1,4 +1,4 @@
-// Typed methods that are also taken as values, so that a call of the closure first checks `this` and the arguments, and that are too large to be copied into that check.
+// Typed methods that are also taken as values, so that a call of the closure first tests the arguments, and that are too large to be copied into that test. `this` is not tested: another object takes the generic path.
 // Each ends in a call of a function kept in a field. Chains of any length run in constant space, whoever starts them.
 const lines: string[] = [];
 function say(...parts: unknown[]): void { lines.push(parts.map(part => (typeof part === "object" && part !== null ? JSON.stringify(part) : String(part))).join(" ")); }
@@ -57,5 +57,5 @@ say(namer.name(deep, ""), [namer.name].map(method => method.call(namer, deep + 1
 
 let threw = "";
 try { (walkers[0].step as any).call({ hop() { throw new RangeError("the end"); } }, 5, 0); } catch (error) { threw = (error as Error).message; }
-say(threw, (walkers[0].step as any).call({ hop: (n: unknown, acc: unknown) => n + "|" + acc, weights: [] }, "7", "x"));
+try { say(threw, (walkers[0].step as any).call({ hop: (n: unknown, acc: unknown) => n + "|" + acc, weights: [] }, "7", "x")); } catch (error) { say(threw, "texts for numbers:", (error as Error).constructor.name); }
 console.log(lines.join("\n"));

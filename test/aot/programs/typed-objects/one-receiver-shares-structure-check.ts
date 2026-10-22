@@ -1,11 +1,11 @@
 // Point also admits objects from elsewhere, so an access through it tests the shape of the receiver. An object that was created as a Point stays one, so the accesses to one receiver share one test, calls between them included.
-// IRT= 1 fourReads HasShapeOf
-// IRT= 1 fourStores HasShapeOf
-// IRT= 2 twoReceivers HasShapeOf
-// IRT= 1 inBranches HasShapeOf
-// IRT= 1 inLoop HasShapeOf
-// IRT= 1 aroundCall HasShapeOf
-// IRT= 2 nested HasShapeOf
+// IRT= 1 fourReads TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 fourStores TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 twoReceivers TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 inBranches TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 inLoop TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 1 aroundCall TypeTest v[0-9]+ testedType=L[0-9]+!
+// IRT= 2 nested TypeTest v[0-9]+ testedType=L[0-9]+!
 // MESSAGE-DATA< 3
 interface Inner { v: number; w: number }
 interface Point { x: number; y: number; z: number; w: number; inner: Inner }

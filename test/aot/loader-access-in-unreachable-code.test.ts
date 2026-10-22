@@ -38,7 +38,8 @@ test("a door in a function that nothing reaches brings no built-in module along"
   }
 }, 240_000);
 
-const name = `const name = ["node:", "zlib"].join("");\n`;
+// A load under a computed name brings nothing along: it finds a built-in module that a constant name keeps in the executable.
+const name = `const name = ["node:", "zlib"].join("");\nif (process.argv.length > 99) require("node:zlib");\n`;
 
 const reached: Record<string, string> = {
   "at-the-top-of-the-module": `${name}console.log(typeof require(name).gzipSync);\n`,
@@ -60,7 +61,7 @@ const reached: Record<string, string> = {
 };
 
 for (const [form, text] of Object.entries(reached)) {
-  test(`a door ${form.replaceAll("-", " ")} is a door`, async () => {
+  test(`a load under a computed name ${form.replaceAll("-", " ")} finds a built-in module that another line names`, async () => {
     const found = await built("main.cjs", { "main.cjs": text });
     expect({ stdout: found.stdout, exitCode: found.exitCode }).toEqual({ stdout: "function\n", exitCode: 0 });
   }, 120_000);

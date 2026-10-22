@@ -1,0 +1,2 @@
+const result = Intl.NumberFormat(1.5, "text");
+console.log(typeof result, Object.keys(result).join());

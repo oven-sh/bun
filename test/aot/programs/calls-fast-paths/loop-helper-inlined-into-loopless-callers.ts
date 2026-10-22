@@ -1,14 +1,14 @@
 // A small utility that calls its function argument in a loop is inlined into callers that pass a known function, even when the caller itself has no loop.
 // IRT= 1 withLiteral = LoopHint
 // IRT= 0 withLiteral = Call v
-// IRT= 0 withLiteral = NewClosure f
+// IRT= 0 withLiteral = NewClosure \(.*\) function=f
 // IRT= 1 withDeclared = LoopHint
 // IRT= 0 withDeclared = Call v
 // IRT= 1 withTwo = LoopHint
 // IRT= 0 withTwo = Call v
 // IRT= 0 withUnknown = LoopHint
 // IRT= 0 withLarge = LoopHint
-// IRT= 1 withLarge = NewClosure f
+// IRT= 1 withLarge = NewClosure \(.*\) function=f
 class N { constructor(public id: number, public parent: N | undefined) { } }
 function up(n: N | undefined, f: (n: N) => boolean): N | undefined { while (n) { if (f(n)) return n; n = n.parent } return undefined }
 function total(xs: readonly N[], f: (n: N) => number): number { let s = 0; for (let i = 0; i < xs.length; i++) s += f(xs[i]); return s }

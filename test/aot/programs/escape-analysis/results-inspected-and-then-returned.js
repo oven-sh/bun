@@ -1,9 +1,9 @@
 // A function that looks at the object another function returned and then returns it hands it on in registers too.
-// IR= 0 readsInspected GetById|NewObject
+// IR= 0 readsInspected PropGet| = New(Plain)?Object 
 // IR= 2 readsInspected ResultAt
-// IR= 0 readsAfterWork GetById|NewObject
+// IR= 0 readsAfterWork PropGet| = New(Plain)?Object 
 // IR= 2 readsAfterWork ResultAt
-// IR= 0 readsInspectedTwice NewObject
+// IR= 0 readsInspectedTwice  = New(Plain)?Object 
 // IR= 2 readsInspectedTwice ResultAt
 // IR= 3 inspects Results
 // IR= 2 inspectsTwice Results

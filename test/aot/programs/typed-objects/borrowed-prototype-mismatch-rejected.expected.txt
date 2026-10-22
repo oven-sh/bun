@@ -1,7 +1,0 @@
-one of its own: [7,"q",3]
-one that matches: [1,null,"none"]
-without the member: TypeError
-a number under the name: TypeError
-a string under the optional name: TypeError
-below, without a member: TypeError
-below, a string for the number: TypeError

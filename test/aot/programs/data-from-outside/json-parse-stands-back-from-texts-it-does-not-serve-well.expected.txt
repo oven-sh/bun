@@ -1,8 +1,0 @@
-one shape: 300 texts, 284 by expecting keys, set aside 0 times, 0 wrong
-a key that is new every time: 300 texts, 48 by expecting keys, set aside 2 times, 0 wrong
-the same again: 300 texts, 23 by expecting keys, set aside 1 times, 0 wrong
-mostly one long string: 300 texts, 12 by expecting keys, set aside 3 times, 0 wrong
-new keys at first: 100 texts, 25 by expecting keys, set aside 0 times, 0 wrong
-then one shape, the first 200: 200 texts, 184 by expecting keys, set aside 0 times, 0 wrong
-then one shape, the next 400: 400 texts, 400 by expecting keys, set aside 0 times, 0 wrong
-one shape, still: 300 texts, 300 by expecting keys, set aside 0 times, 0 wrong

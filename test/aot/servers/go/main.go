@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"expvar"
 	"fmt"
 	"net"
 	"net/http"
@@ -346,8 +347,11 @@ func main() {
 	mux.HandleFunc("GET /json", catalog)
 	mux.HandleFunc("GET /users/{userId}/posts/{postId}", postPage)
 	mux.HandleFunc("POST /shops/{shop}/orders", orders)
+	mux.HandleFunc("POST /shops/{shop}/checked-orders", orders)
+	mux.HandleFunc("POST /shops/{shop}/typed-orders", orders)
 	mux.HandleFunc("GET /async/{id}", summarize)
 	mux.HandleFunc("GET /stream", exportProducts)
+	mux.Handle("GET /debug/vars", expvar.Handler())
 	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)

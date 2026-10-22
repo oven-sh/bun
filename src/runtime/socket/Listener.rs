@@ -1,5 +1,6 @@
 //! This is the code for the object returned by Bun.listen().
 
+use bun_jsc::proven_return::ProvenString;
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem::size_of;
@@ -10,6 +11,7 @@ use bun_boringssl_sys as boring_sys;
 use bun_core::{EncodedSlice, String as BunString};
 use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -21,6 +23,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
+use crate::generated_bindgen::listener::{ListenerContext, ServerHandle};
 use crate::socket::{
     Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
@@ -781,24 +784,19 @@ impl Listener {
         this_socket
     }
 
-    pub(crate) fn add_server_name(
+    pub(crate) fn add_server_name<'a>(
+        cx: &mut JsScope<'a>,
         this: &Self,
-        global: &JSGlobalObject,
-        hostname: JSValue,
-        tls: JSValue,
-    ) -> JsResult<JSValue> {
+        server_name_bytes: &[u8],
+        tls: JsLocal<'a>,
+    ) -> JsResult<()> {
+        let global = cx.global();
+        let tls = tls.to_js();
         if !this.ssl {
             return Err(
                 global.throw_invalid_arguments(format_args!("addServerName requires SSL support"))
             );
         }
-        if !hostname.is_string() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("hostname pattern expects a string"))
-            );
-        }
-        let host_str = hostname.to_utf8(global)?;
-        let server_name_bytes = host_str.slice();
         if server_name_bytes.is_empty() {
             return Err(
                 global.throw_invalid_arguments(format_args!("hostname pattern cannot be empty"))
@@ -806,13 +804,13 @@ impl Listener {
         }
         // No ClientHello can carry a NUL, so this pattern matches nothing, as in Node.
         if bun_core::strings::contains_char(server_name_bytes, 0) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         let server_name = server_name_z.as_zstr().as_cstr();
 
         let ListenerType::Uws(ls) = this.listener.get() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
 
         // Both real callers (node:tls addContext, node:net) pass a native
@@ -845,7 +843,7 @@ impl Listener {
                 }
             }
         } else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         };
 
         super::socket_body::install_sni_alpn_selector(sni_ctx.as_ptr());
@@ -858,29 +856,7 @@ impl Listener {
             core::ptr::null_mut(),
         );
 
-        Ok(JSValue::UNDEFINED)
-    }
-
-    /// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
-    pub(crate) fn set_secure_context(this: &Self, secure_context: &SecureContext) -> JSValue {
-        if !this.ssl {
-            return JSValue::UNDEFINED;
-        }
-        let ctx = secure_context.ctx.clone();
-        match this.listener.get() {
-            ListenerType::Uws(ls) => {
-                // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
-                this.secure_ctx.set(Some(ctx));
-            }
-            #[cfg(windows)]
-            ListenerType::NamedPipe(pipe) => {
-                // SAFETY: the pipe context is live while `this.listener` holds it.
-                unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
-            }
-            ListenerType::None => {}
-        }
-        JSValue::UNDEFINED
+        Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -1035,28 +1011,25 @@ impl Listener {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_unix(this: &Self, global: &JSGlobalObject) -> JsResult<Option<ProvenString>> {
         let UnixOrHost::Unix(unix) = &this.connection else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
-        bun_string_jsc::create_utf8_for_js(global, unix)
+        bun_string_jsc::create_utf8_for_js(global, unix).map(|text| Some(ProvenString::expect(text)))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_hostname(this: &Self, global: &JSGlobalObject) -> JsResult<Option<ProvenString>> {
         let UnixOrHost::Host { host, .. } = &this.connection else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(None);
         };
-        bun_string_jsc::create_utf8_for_js(global, host)
+        bun_string_jsc::create_utf8_for_js(global, host).map(|text| Some(ProvenString::expect(text)))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_port(this: &Self, _global: &JSGlobalObject) -> Option<f64> {
         let UnixOrHost::Host { port, .. } = &this.connection else {
-            return JSValue::UNDEFINED;
+            return None;
         };
-        JSValue::js_number(*port as f64)
+        Some(*port as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1745,46 +1718,29 @@ fn connect_finish<const IS_SSL: bool>(
     Ok(promise_value)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [listener, hostname, tls] = frame.arguments_as_array::<3>();
-    if frame.arguments_count() < 3 {
-        return Err(global.throw_not_enough_arguments(
-            "addServerName",
-            3,
-            frame.arguments_count() as usize,
-        ));
+/// `tls.Server#setSecureContext()` while listening. Accepted sockets keep their context.
+pub(crate) fn set_secure_context(handle: ServerHandle<'_>, context: ListenerContext<'_>) {
+    let (ServerHandle::Listener(this), ListenerContext::SecureContext(secure_context)) =
+        (handle, context)
+    else {
+        return;
+    };
+    if !this.ssl {
+        return;
     }
-    if let Some(this) = listener.as_class_ref::<Listener>() {
-        return Listener::add_server_name(this, global, hostname, tls);
-    }
-    Err(global.throw(format_args!("Expected a Listener instance")))
-}
-
-#[bun_jsc::host_fn]
-pub(crate) fn js_set_secure_context(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    jsc::mark_binding!();
-
-    let [listener, secure_context] = frame.arguments_as_array::<2>();
-    if frame.arguments_count() < 2 {
-        return Err(global.throw_not_enough_arguments(
-            "setSecureContext",
-            2,
-            frame.arguments_count() as usize,
-        ));
-    }
-    // A cluster worker's `_handle` is no `Listener`: JS wraps its connections.
-    match (
-        listener.as_class_ref::<Listener>(),
-        secure_context.as_class_ref::<SecureContext>(),
-    ) {
-        (Some(this), Some(sc)) => Ok(Listener::set_secure_context(this, sc)),
-        _ => Ok(JSValue::UNDEFINED),
+    let ctx = secure_context.ctx.clone();
+    match this.listener.get() {
+        ListenerType::Uws(ls) => {
+            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            bun_opaque::opaque_deref_mut(ls).set_default_ssl_ctx(&ctx);
+            this.secure_ctx.set(Some(ctx));
+        }
+        #[cfg(windows)]
+        ListenerType::NamedPipe(pipe) => {
+            // SAFETY: the pipe context is live while `this.listener` holds it.
+            unsafe { pipe.as_ref() }.ctx.set(Some(ctx));
+        }
+        ListenerType::None => {}
     }
 }
 

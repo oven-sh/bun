@@ -1,8 +1,8 @@
-// Bun: plain Bun calls the array's own iterator in every row that says TypeError here. With --aot an array type means an ordinary array: `for...of` and destructuring throw instead of calling it. At the type Iterable<T> it is called.
+// An array or typed array with its own Symbol.iterator, from a subclass or stored on the value. `for...of`, destructuring and spread call it at every declared type, as in plain Bun.
 class Heir extends Array<number> { *[Symbol.iterator](): ArrayIterator<number> { yield 7; yield 8; } }
 class Bytes extends Uint8Array { *[Symbol.iterator](): ArrayIterator<number> { yield 5; } }
 function attempt(name: string, f: () => unknown): void {
-  try { console.log(name + ":", JSON.stringify(f())); } catch (e) { console.log(name + ":", e instanceof Error ? e.name + ": " + e.message.split(" (bun --aot")[0] : String(e)); }
+  try { console.log(name + ":", JSON.stringify(f())); } catch (e) { console.log(name + ":", e instanceof Error ? e.name + ": " + e.message.split(" (bun compile")[0] : String(e)); }
 }
 const heir: number[] = new Heir(1, 2);
 const own: number[] = [1, 2];

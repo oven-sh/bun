@@ -4,7 +4,7 @@ const stillRope: (s: string) => boolean = typeof isRope === "function" ? isRope 
 const outside = new Function("f", "return (...a) => f(...a)") as <F>(f: F) => F;
 const table: Record<string, number> = {};
 
-function partOfBaseThatBecomes16Bit(upper: string, from: number, to: number) {
+function substringOfBaseWidenedTo16Bit(upper: string, from: number, to: number) {
     const lower = upper.toLowerCase();
     const flat = lower + "☃";
     Symbol(flat);
@@ -49,7 +49,7 @@ function trimmed(s: string) { return s.trim() === "ertyui"; }
 function code(s: string) { return s.charCodeAt(1) + s.length; }
 
 const long = "QWERTYUIOPASDFGHJKLZXCVBNMQWERTYUIOPASDFGHJKLZXCVBNM";
-const fresh = (to: number) => partOfBaseThatBecomes16Bit(long, 2, to);
+const fresh = (to: number) => substringOfBaseWidenedTo16Bit(long, 2, to);
 console.log("equals3", outside(equals3)(fresh(5)), outside(equals3)(fresh(6)));
 console.log("equals6", outside(equals6)(fresh(8)), outside(equals6)(fresh(9)));
 console.log("equals8", outside(equals8)(fresh(10)), outside(equals8)(fresh(11)));
@@ -58,7 +58,7 @@ console.log("equals40", outside(equals40)(fresh(42)), outside(equals40)(fresh(43
 console.log("differs6", outside(differs6)(fresh(8)), outside(differs6)(fresh(9)));
 console.log("which", outside(which)(fresh(5)), outside(which)(fresh(8)), outside(which)(fresh(10)), outside(which)(fresh(15)), outside(which)(fresh(7)));
 console.log("same", outside(same)(fresh(8), "ERTYUI".toLowerCase()), outside(same)("ERTYUI".toLowerCase(), fresh(8)), outside(same)(fresh(8), fresh(8)), outside(same)(fresh(8), "ERTYUO".toLowerCase()), outside(same)(fresh(30), fresh(30)));
-console.log("same at the start of the bases only", outside(same)(fresh(8), partOfBaseThatBecomes16Bit("QWERABCDEFGHIJKLMNOPQRSTUVWXYZ", 2, 8)));
+console.log("same at the start of the bases only", outside(same)(fresh(8), substringOfBaseWidenedTo16Bit("QWERABCDEFGHIJKLMNOPQRSTUVWXYZ", 2, 8)));
 console.log("starts", outside(starts)(fresh(8)), "ends", outside(ends)(fresh(8)), "has", outside(has)(fresh(8)), "where", outside(where)(fresh(8)), outside(whereLast)(fresh(8)));
 console.log("inLoop", outside(inLoop)(fresh(8), 5));
 console.log("anyValue", outside(anyValue)(fresh(8)));

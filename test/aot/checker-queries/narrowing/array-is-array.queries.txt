@@ -1,0 +1,4 @@
+# `Array.isArray` is a type guard that the library declares. It narrows like one that the program declares.
+array-is-array.ts:3 type `x` = string | number[]
+array-is-array.ts:4 type `x` = number[]
+array-is-array.ts:6 type `x` = string

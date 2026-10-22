@@ -1,5 +1,5 @@
 // Only a generic function that makes a Proxy opens the types put in for its type parameter. One that hands its argument back leaves them closed, also beside a Proxy of another type.
-// IR- ^shape .*"State".* accepts-untyped
+// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 type Sub = { k: number };
 type State = { n: number; sub: Sub };
 type Other = { o: number };

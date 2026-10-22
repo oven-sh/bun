@@ -1,21 +1,21 @@
 function throwsValue() { throw 1; }
 function catchesValue() { try { throwsValue(); } catch (e) { return 1; } return 0; }
+// Only the throws are timed, not the calls that lead down to them.
 function atDepth(depth, count) {
     if (depth > 0)
         return atDepth(depth - 1, count) + 0;
+    const start = preciseTime();
     let sum = 0;
     for (let i = 0; i < count; i++)
         sum += catchesValue();
-    return sum;
+    if (sum !== count)
+        throw new Error("wrong count");
+    return preciseTime() - start;
 }
 function secondsFor(depth) {
     let best = Infinity;
-    for (let i = 0; i < 3; i++) {
-        const start = preciseTime();
-        if (atDepth(depth, 3000) !== 3000)
-            throw new Error("wrong count");
-        best = Math.min(best, preciseTime() - start);
-    }
+    for (let i = 0; i < 3; i++)
+        best = Math.min(best, atDepth(depth, 20000));
     return best;
 }
 const shallow = secondsFor(200);

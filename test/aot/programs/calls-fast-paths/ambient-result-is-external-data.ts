@@ -1,8 +1,8 @@
-// What a name without code yields is data from outside the program: nobody has held it to its type. Where it is cast to a record type, that type is
-// what the data is expected to be and no more, so the records of the type have no fixed layout. That goes by the cast alone: also in a program
+// What a name without code yields is data from outside the program: nobody has held it to its type. Where it is cast to a record type, any object
+// passes, so no position that it reaches is closed, while the records that the program creates keep their layout. That goes by the cast alone: also in a program
 // that parses nothing, reads no file and gets no message.
-// IR- NewObjectWithShape
-// IR+ NewObject$
+// IR+ : =?L[0-9]+ = NewObject
+// IR- L[0-9]+!
 declare const given: any;
 interface Kind { flags: number }
 const kinds: Kind[] = [];

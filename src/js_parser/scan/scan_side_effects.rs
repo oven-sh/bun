@@ -220,12 +220,6 @@ impl SideEffects {
                 }
             }
 
-            ExprData::ECall(call) if matches!(call.target.data, ExprData::EMissing(_)) => {
-                if p.expr_can_be_removed_if_unused(&bun_ast::audited::unmarked(expr)) {
-                    return None;
-                }
-            }
-
             ExprData::ECall(call) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -573,28 +567,6 @@ impl SideEffects {
                 }
             }
             _ => {}
-        }
-    }
-
-    pub(crate) fn always_throws_or_returns<'a, const TS: bool, const SCAN: bool>(
-        p: &P<'a, TS, SCAN>,
-        stmt: Stmt,
-    ) -> bool {
-        match stmt.data {
-            StmtData::SThrow(_) | StmtData::SReturn(_) => true,
-            StmtData::SBlock(block) => block
-                .stmts
-                .slice()
-                .iter()
-                .any(|child| Self::always_throws_or_returns(p, *child)),
-            StmtData::SIf(if_) => match Self::to_boolean(p, &if_.test.data) {
-                Some(known) if known.value => Self::always_throws_or_returns(p, if_.yes),
-                Some(_) => if_
-                    .no
-                    .is_some_and(|no| Self::always_throws_or_returns(p, no)),
-                None => false,
-            },
-            _ => false,
         }
     }
 

@@ -1,4 +1,10 @@
-// A module of the runtime that no reachable code imports by a literal name is not in the image. Code that imports it by a computed name, and native code, still get it.
+// A module of the runtime is in the image where the program imports it by a literal name somewhere. Code that asks for it by a computed name gets it then, however it asks.
+// (One that nobody names is refused: library-modules/the-example-of-the-page.) Native code gets what it asks for itself.
+import "node:zlib";
+import "node:os";
+import "node:querystring";
+import "node:dns";
+import "node:timers/promises";
 const join = (...parts) => parts.join("");
 const zlib = require(join("node:", "z", "lib"));
 console.log(typeof zlib.gzipSync, zlib.gunzipSync(zlib.gzipSync("abc")).toString());

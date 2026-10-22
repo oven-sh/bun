@@ -1,4 +1,4 @@
-// The same inside a closure that captures the variable.
+// A closure captures a variable with a written type and tests one of its properties for a kind that the type rules out. The read is a typed read: a string where `string[] | true` is written throws a TypeError.
 function compose(app: any): () => string {
   const meta: { secrets?: string | string[]; sign: string[] | true } = app.config.cookie;
   const encode = () => {
@@ -10,6 +10,6 @@ function compose(app: any): () => string {
   };
   return () => encode() + " " + encode();
 }
-console.log(compose({ config: { cookie: { sign: "one" } } })());
+try { console.log(compose({ config: { cookie: { sign: "one" } } })()); } catch (e) { console.log("a string:", (e as Error).constructor.name); }
 console.log(compose({ config: { cookie: { sign: ["a"] } } })());
 console.log(compose({ config: { cookie: { path: "/" } } })());

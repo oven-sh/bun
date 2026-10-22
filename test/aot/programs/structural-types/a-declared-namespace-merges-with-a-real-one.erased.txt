@@ -1,0 +1,17 @@
+the declared part comes first: typeof: string "object"
+what is made: [number 1, [string "made", string "both", string "heading", string "viaPromised"]]
+what is promised, from outside: [undefined undefined, string "undefined", undefined undefined, number NaN]
+what is promised, from inside: number NaN
+the promised text, from outside: undefined undefined
+the promised text, from inside: string "undefined!"
+the promised function, from outside: threw TypeError
+the promised function, from inside: threw ReferenceError
+in: [boolean false, boolean true]
+the declared part comes second: typeof: string "object"
+what is made: [number 2, [string "made", string "both"]]
+what is promised, from outside: [undefined undefined, number NaN]
+what is promised, from inside: number NaN
+after a store: from outside: [string "stored", [string "made", string "both", string "heading", string "viaPromised", string "promisedTitle"]]
+after a store: from inside: string "stored!"
+after the constant is stored to through a view: [number 10, number 10, [string "made", string "both", string "heading", string "viaPromised", string "promisedTitle", string "promised"]]
+after that, from inside: number 11

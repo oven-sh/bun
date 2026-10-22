@@ -1,38 +1,27 @@
-const [domainToASCII, domainToUnicode, idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+type DomainConversion = (domain: string) => string;
+const [domainToASCII, domainToUnicode, idnaToASCII]: [DomainConversion, DomainConversion, DomainConversion] = $cpp(
+  "NodeURL.cpp",
+  "Bun::createNodeURLBinding",
+);
 
-function urlToHttpOptions(url) {
-  if (!(url instanceof URL)) return urlToHttpOptionsUntyped(url);
-  // A URL's accessors are native and make a string at each read: each is read once.
-  const hostname = url.hostname;
-  const search = url.search;
-  const pathname = url.pathname;
-  const options: Record<string, unknown> = {
-    __proto__: null,
-    ...url,
-    protocol: url.protocol,
-    hostname: hostname.startsWith("[") ? hostname.slice(1, -1) : hostname,
-    hash: url.hash,
-    search,
-    pathname,
-    path: `${pathname || ""}${search || ""}`,
-    href: url.href,
-  };
-  const port = url.port;
-  if (port !== "") {
-    options.port = Number(port);
-  }
-  const username = url.username;
-  const password = url.password;
-  if (username || password) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
-  }
-  return options;
+interface HttpOptions {
+  __proto__: null;
+  protocol: string;
+  hostname: string;
+  hash: string;
+  search: string;
+  pathname: string;
+  path: string;
+  href: string;
+  port?: number;
+  auth?: string;
 }
 
-function urlToHttpOptionsUntyped(url) {
-  const options = {
+function urlToHttpOptions(url: URL) {
+  const options: HttpOptions = {
     __proto__: null,
-    ...url,
+    // Own properties only: the members of a URL are accessors of its prototype.
+    ...(url as object),
     protocol: url.protocol,
     hostname:
       typeof url.hostname === "string" && url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname,
@@ -47,7 +36,7 @@ function urlToHttpOptionsUntyped(url) {
     options.port = Number(port);
   }
   const username = url.username;
-  let password;
+  let password: string | undefined;
   if (username || (password = url.password)) {
     options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password ?? url.password)}`;
   }

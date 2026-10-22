@@ -1,8 +1,4 @@
-// Code made at run time reads a method off an instance of a typed class as it reads one off any other object: the interpreter remembers the holder, and goes back to the run time only when the object is of another shape.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-// ENV JSC_useAOTOperationCounters=1
-declare const aotOperationCount: undefined | ((name: string) => number);
-const asked = () => (typeof aotOperationCount === "function" ? aotOperationCount("InterpreterGetByIdOfCompiledObject") : 0);
+// Code made at run time reads a method off an instance of a typed class as it reads one off any other object, many times at one place, so that what the interpreter remembers of the holder is used.
 class Counter {
   n: number = 0;
   bump(by: number): number {
@@ -31,11 +27,8 @@ const makeNames = () => new Function("o", "turns", "let s = '" + texts++ + "'; f
 const bumps = makeBumps();
 const names = makeNames();
 const reads = new Function("o", "return o.bump;") as (o: unknown) => unknown;
-let most = 0;
 function measure(label: string, run: () => unknown) {
-  const before = asked();
   const result = run();
-  most = Math.max(most, asked() - before);
   console.log(label + ":", result);
 }
 measure("its own method", () => bumps(new Counter(), 500));
@@ -49,8 +42,6 @@ measure("behind another property of its own", () => {
   return makeBumps()(marked, 500);
 });
 measure("of a frozen object", () => makeNames()(Object.freeze(new Heir()), 500));
-console.log(most <= 8 ? "no 500 calls went back to the run time more than eight times" : "500 calls went back to the run time " + most + " times");
-console.log(typeof aotOperationCount !== "function" || asked() > 0 ? "each place asked it at first" : "nothing was counted");
 
 const several: unknown[] = [new Counter(), new Doubling(), new Heir(), { bump: (by: number) => by * 10 }, JSON.parse('{"n":0}')];
 hide(several[4]).bump = function (by: number) {

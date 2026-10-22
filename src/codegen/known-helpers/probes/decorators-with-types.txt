@@ -1,0 +1,11 @@
+function probeDecorator(...probeArguments: any[]): any {}
+class ProbeService {}
+@probeDecorator
+export class ProbeInjected {
+  @probeDecorator probeField: string = "";
+  @probeDecorator probeService: ProbeService;
+  constructor(@probeDecorator probeFirst: ProbeService, @probeDecorator probeSecond: number) {}
+  @probeDecorator probeMethod(@probeDecorator probeValue: string): Promise<number> {
+    return Promise.resolve(1);
+  }
+}

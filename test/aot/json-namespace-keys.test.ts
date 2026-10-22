@@ -4,8 +4,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // The keys of `import * as ns from "./data.json"`. A module namespace lists its names sorted. `bun run` exports every key of the
-// object; the bundler only those that are identifiers. Ahead-of-time compiled programs must agree with the mode they stand beside:
-// `bun run --aot` with `bun run`, `bun build --compile --aot` with `bun build --compile`.
+// object; the bundler only those that are identifiers. Nothing is bundled under --aot: `bun run --aot` and an executable built with
+// --aot print what `bun run` prints.
 
 async function spawned(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -80,10 +80,9 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
   });
 
-  test("bun build --compile --aot prints what bun build --compile prints", async () => {
+  test("bun build --compile --aot prints what bun run prints", async () => {
     using dir = tempDir("json-namespace-keys", tree);
-    // The bundle loses the names that `export * from` takes from a JSON file. `bun run` has them.
-    const plain = entry === "re-exported.mjs" ? await run([], String(dir), entry) : await compiled([], String(dir), entry);
+    const plain = await run([], String(dir), entry);
     const aot = await compiled(["--aot"], String(dir), entry);
     expect(plain.exitCode).toBe(0);
     expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });

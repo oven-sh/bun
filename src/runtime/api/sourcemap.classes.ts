@@ -8,10 +8,14 @@ export default [
     proto: {
       findOrigin: {
         fn: "findOrigin",
+        returns: "object",
+        checkedAtRuntime: true,
         length: 2,
       },
       findEntry: {
         fn: "findEntry",
+        returns: "object",
+        checkedAtRuntime: true,
         length: 2,
       },
       payload: {

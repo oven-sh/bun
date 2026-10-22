@@ -132,16 +132,16 @@ say("old objects", () => {
   return sum;
 });
 say("made and not read", () => {
-  const closures = "Heap::didAllocate:block:AOTClosure:32";
+  const closures = "operationAOTMaterializeDeferredClosure";
   const before = count(closures);
   let sum = 0;
   for (let i = 0; i < 20000; ++i) sum += make(i).base;
-  const bytes = count(closures) - before;
-  return [sum, bytes <= 20000 * 64 ? "at most two closures over `this` an object" : bytes + " bytes of closures over `this`"];
+  const created = count(closures) - before;
+  return [sum, created <= 20000 * 2 ? "at most two closures over `this` an object" : created + " closures over `this`"];
 });
 say("rounds", () => {
   let sum = 0;
-  const names = ["operationAOTGetByNameAndCache", "operationAOTPutById", "operationAOTTypedCreateThisAt", "operationAOTTypedPutLazyClosure"];
+  const names = ["operationAOTGetByIdAndCache", "operationAOTPutById", "operationAOTPutByIdAndCache", "operationAOTCreateThis"];
   const before = names.map(count);
   for (let i = 0; i < 3000; ++i) sum += typed.callThree(make(i)) + (i % 3 ? typed.callBackwards(make(i)) : typed.readOne(make(i))(1)) + callThreeUntyped(make(i));
   const asked = names.map((name, at) => count(name) - before[at]);

@@ -1,5 +1,5 @@
 // `f.apply(this, arguments)`: the `arguments` object is allocated only on the slow path.
-// IR+ IsBuiltinFunction v[0-9]+ Function.apply
+// IR+ TypeTest v[0-9]+ testedType=Function\^
 declare const console: any;
 type L = (...args: any[]) => void;
 let n = 0;

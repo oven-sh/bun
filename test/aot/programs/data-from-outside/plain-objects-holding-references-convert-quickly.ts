@@ -1,5 +1,5 @@
 declare const aotOperationCount: (name: string) => number;
-// A plain object that enters a typed parameter is converted in place. After the first object of a shape the conversion takes the cached path, also when its properties hold typed objects, arrays and functions.
+// A plain object that untyped code built enters a typed parameter: any object passes and stays the same object, also when its properties hold typed objects, arrays and functions. A property of the wrong kind throws where typed code reads it, and one that is missing reads undefined. For 400 objects of one shape the slow type test of the runtime is entered fewer than 20 times.
 type Author = { nick: string; editor: Author | null };
 type Post = { id: number; author: Author; tags: string[]; render: (text: string) => string; note: unknown; reviewer?: Author };
 
@@ -27,7 +27,7 @@ function firstLine(f: () => string): string {
   try {
     return f();
   } catch (e) {
-    return e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(e);
+    return e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "") : String(e);
   }
 }
 
@@ -38,13 +38,13 @@ const tags = ["x", "y"];
 const upper = (text: string) => text.toUpperCase();
 const kept: any[] = [];
 let text = "";
-const before = aotOperationCount("operationAOTTypedCoerce");
+const before = aotOperationCount("operationAOTEnforceType");
 for (let i = 0; i < 400; i++) {
   const post = grow(i, author, tags, upper, i % 2 ? "n" : [i]);
   kept.push(post);
   text = show(post);
 }
-const slow = aotOperationCount("operationAOTTypedCoerce") - before;
+const slow = aotOperationCount("operationAOTEnforceType") - before;
 console.log(text, slow < 20 ? "cached" : "not cached: " + slow);
 
 const same = kept[7];

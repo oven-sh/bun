@@ -329,7 +329,7 @@ uint32_t AbortSignal::addAlgorithm(Algorithm&& algorithm)
     return m_algorithmIdentifier;
 }
 
-NEVER_INLINE void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
+void AbortSignal::removeAlgorithm(uint32_t algorithmIdentifier)
 {
     if (m_algorithms.removeFirstMatching([algorithmIdentifier](auto& pair) {
             return pair.first == algorithmIdentifier;

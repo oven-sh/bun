@@ -1,4 +1,5 @@
 // What comes in from outside is checked against these types: a JSON body as it is parsed, what a form holds as an object.
+import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 import type { IssueState } from "./types";
 
@@ -73,7 +74,7 @@ export function parseNewComment(text: string): Checked<NewComment> {
 
 export function checkNewIssue(input: unknown): Checked<NewIssue> {
   try {
-    return { value: Bun.validate<NewIssue>(input) };
+    return { value: validate<NewIssue>(input) };
   } catch (error) {
     return refused(error);
   }
@@ -81,7 +82,7 @@ export function checkNewIssue(input: unknown): Checked<NewIssue> {
 
 export function checkIssueChange(input: unknown): Checked<IssueChange> {
   try {
-    return { value: Bun.validate<IssueChange>(input) };
+    return { value: validate<IssueChange>(input) };
   } catch (error) {
     return refused(error);
   }
@@ -89,7 +90,7 @@ export function checkIssueChange(input: unknown): Checked<IssueChange> {
 
 export function checkNewComment(input: unknown): Checked<NewComment> {
   try {
-    return { value: Bun.validate<NewComment>(input) };
+    return { value: validate<NewComment>(input) };
   } catch (error) {
     return refused(error);
   }
@@ -97,7 +98,7 @@ export function checkNewComment(input: unknown): Checked<NewComment> {
 
 export function checkCredentials(input: unknown): Checked<Credentials> {
   try {
-    return { value: Bun.validate<Credentials>(input) };
+    return { value: validate<Credentials>(input) };
   } catch (error) {
     return refused(error);
   }

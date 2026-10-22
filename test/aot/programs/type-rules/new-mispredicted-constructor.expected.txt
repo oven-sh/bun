@@ -1,8 +1,0 @@
-made ["pos","end","kind"]
-4
-refused TypeError
-made ["kind","end","pos"]
-4
-made ["pos","end","kind"]
-4
-8

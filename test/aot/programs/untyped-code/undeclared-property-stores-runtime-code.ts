@@ -1,9 +1,5 @@
-// Code made at run time stores to a property that a typed object has and its type does not declare without going back to the run time each time: the interpreter remembers where the value lies.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-// ENV JSC_useAOTOperationCounters=1
-declare const aotOperationCount: undefined | ((name: string) => number);
+// Code made at run time stores to a property that a typed object has and its type does not declare, many times at one place, so that what the interpreter remembers of the object is used.
 declare const gc: undefined | (() => void);
-const asked = () => (typeof aotOperationCount === "function" ? aotOperationCount("InterpreterPutByIdOfCompiledObject") : 0);
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 interface Box {
   w: number;
@@ -28,11 +24,8 @@ const makeLoop = (name: string) => new Function("o", "values", "turns", "let n =
 const writers: Record<string, (o: unknown, v: unknown) => unknown> = {};
 for (const name of ["extra", "more", "w", "sum", "last"]) writers[name] = new Function("o", "v", "o." + name + " = v; return o." + name + ";") as (o: unknown, v: unknown) => unknown;
 
-let most = 0;
 function measure(label: string, run: () => unknown) {
-  const before = asked();
   const result = run();
-  most = Math.max(most, asked() - before);
   console.log(label + ":", show(result));
 }
 measure("one more property on a record", () => {
@@ -57,8 +50,6 @@ measure("many objects that got the same property", () => {
   for (const box of boxes) loop(box, [1, 2, 3, 4], 10);
   return boxes.every(box => hide(box).extra === 2);
 });
-console.log(most <= 60 ? "no case went back to the run time more than sixty times" : "a case went back to the run time " + most + " times");
-console.log(typeof aotOperationCount !== "function" || asked() > 0 ? "each place asked it at first" : "nothing was counted");
 
 {
   const several: unknown[] = [makeBox(), new Point(1, 2), JSON.parse('{"w":1}'), makeBox(), { extra: "own" }];

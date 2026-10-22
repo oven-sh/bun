@@ -1,0 +1,16 @@
+inner.cjs runs
+first.cjs starts
+late.cjs runs
+shared runs
+c runs
+first.cjs sees c(late,shared(inner,late))
+other.cjs runs
+second.cjs starts
+in-cycle.cjs runs
+cycle-left runs
+cycle-right runs function
+second.cjs sees right(late)
+b runs
+second.cjs sees b(18,26,other)
+a runs
+main runs: a(inner) first b(18,26,other) second c(late,shared(inner,late)) left(in-cycle,right(late))

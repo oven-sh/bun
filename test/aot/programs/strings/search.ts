@@ -1,17 +1,17 @@
 // `indexOf`, `includes`, `lastIndexOf`, `startsWith` and `endsWith`.
 // CALLS+ indexOfCharacter StringFindCharacter
 // CALLS+ includesCharacter StringFindCharacter
-// CALLS+ lastIndexOfCharacter operationAOTTypedStringReverseFindCharacter8|operationAOTTypedStringLastIndexOfLiteral
+// CALLS+ lastIndexOfCharacter operationAOTStringReverseFindCharacter8|operationAOTStringLastIndexOfLiteral
 // CALLS+ indexOf1 StringFindString
 // CALLS+ includes1 StringFindString
-// CALLS+ lastIndexOf1 operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
+// CALLS+ lastIndexOf1 operationAOTStringReverseFind8|operationAOTStringLastIndexOf
 // CALLS- searchKnown CallHostFunction|CallValue
 // CALLS+ searchKnown StringFindString
-// CALLS+ searchKnown operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
+// CALLS+ searchKnown operationAOTStringReverseFind8|operationAOTStringLastIndexOf
 // CALLS- startsWithKnown CallHostFunction|CallValue|OperationValueWithInstance
 // CALLS- endsWithKnown CallHostFunction|CallValue|OperationValueWithInstance
-// CALLS- startsWithText CallHostFunction|CallValue|operationAOTTypedStringConstant
-// CALLS+ indexOfAnything CallHostFunction|CallValue|Call1|operationAOTTypedCall
+// CALLS- startsWithText CallHostFunction|CallValue|operationAOTStringConstant
+// CALLS+ indexOfAnything CallHostFunction|CallValue|Call1
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

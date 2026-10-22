@@ -1,4 +1,3 @@
-use bun_lint::language::RuleOverlaps;
 use bun_lint::prelude::*;
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::types::tsutils::{
@@ -34,21 +33,20 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         Some(arrow) if matches!(function_node.body(), FnBody::Expr(body) if body == return_node) => arrow,
         _ => Span::new(reporting_node.start, reporting_node.start + "return".len() as u32),
     };
-    // oxlint points at what is returned.
+    // oxlint points at the returned expression.
     let reporting_node = if cx.language().is_oxlint { return_node.outer_span() } else { reporting_node };
     let return_node_type = return_node.ty();
     let any_type = discriminate_any_type(return_node_type, return_node);
 
-    // The return type of a function expression does not depend on what receives it, so the
-    // contextual type is asked: in `const foo: () => Set<string> = () => new Set<any>()` the
-    // arrow function returns a `Set<any>`.
+    // A function expression's return type doesn't depend on what receives it, so use the contextual type. In
+    // `const foo: () => Set<string> = () => new Set<any>()` the arrow function returns a `Set<any>`.
     let function_type = match function_node.kind() {
         FnKind::Expr | FnKind::Arrow => get_contextual_type(function_node),
         _ => None,
     };
     let uses_contextual_type = function_type.is_some();
     let function_type = function_type.unwrap_or_else(|| function_node.type_at_location());
-    // tsgolint says what is returned and, where that is written in the file, what is expected.
+    // tsgolint labels the returned type and, if it's written in the file, the expected type.
     let labels = |labels: &mut Details| {
         let render = |ty: Type| if is_intrinsic_error_type(ty) { b"error".to_vec() } else { ty.to_text() };
         let returned = render(get_constrained_type_at_location(return_node));
@@ -74,7 +72,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     };
     let any_or_unknown = TypeFlags::ANY | TypeFlags::UNKNOWN;
 
-    // What an explicit annotation says is intentional, even if it is unsafe.
+    // An explicit annotation is intentional, even if it's unsafe.
     if has_return_type {
         for signature in &call_signatures {
             let signature_return_type = signature.get_return_type();
@@ -114,9 +112,6 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
             return;
         }
 
-        if return_node.ts_node().is_deferred_to_aot_no_any_to_typed(RuleOverlaps::NO_UNSAFE_RETURN_LEAVES) {
-            return;
-        }
         let options = cx.file().type_checker().compiler_options();
         let is_this_any = !is_strict_compiler_option_enabled(options, CompilerOption::NoImplicitThis)
             && get_this_expression(return_node)
@@ -132,7 +127,7 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         return;
     }
 
-    // tsgolint takes the first of the signatures collected from the constituents.
+    // tsgolint uses the first of the signatures collected from the constituents.
     let (signature, sender_node) = match is_oxlint {
         true => (call_signatures.first().copied(), Some(return_node)),
         false => (function_type.get_call_signatures().first(), Some(return_node)),
@@ -144,9 +139,6 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
     else {
         return;
     };
-    if return_node.ts_node().is_deferred_to_aot_no_any_to_typed(RuleOverlaps::NO_UNSAFE_RETURN_LEAVES) {
-        return;
-    }
     cx.report(reporting_node, UNSAFE_RETURN_ASSIGNMENT)
         .comments_apply_at(keyword)
         .data("receiver", result.receiver.to_text())

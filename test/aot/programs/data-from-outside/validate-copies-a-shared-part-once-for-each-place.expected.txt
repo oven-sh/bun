@@ -1,0 +1,13 @@
+two members of one record type, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+two members of one record type, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+a type that contains itself or null, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+a type that contains itself or null, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+arrays, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+arrays, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+dictionaries, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+dictionaries, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+a union told apart by a tag, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+a union told apart by a tag, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+a union that is tried arm by arm, plain data: shared in the value, copied twice, no object of the value, copied twice again, equal
+a union that is tried arm by arm, objects of the program: shared in the value, copied twice, no object of the value, copied twice again, equal
+what the type does not describe: true true true

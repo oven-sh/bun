@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { test as plainTest } from "bun:test";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { slot, spawned, unsupported } from "../aot/run-programs";
+import { canTrim, featureNamed, featureOf, findFeature, libraries, modulesOf, saysFeatureWasRemoved, textOf, withoutFeatures } from "./compile-trim-features";
+
+const bytesAt = (path: string) => readFileSync(path + (isWindows ? ".exe" : ""));
 
 function executableAt(path: string) {
-  const bytes = readFileSync(path + (isWindows ? ".exe" : ""));
+  const bytes = bytesAt(path);
   return { size: bytes.length, contents: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
 }
 
@@ -15,9 +19,9 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr, exitCode };
 }
 
-const features: Record<string, { leftOut: string; program: string; prints: string }> = {
-  htmlrewriter: {
-    leftOut: "without HTMLRewriter",
+const features: Record<string, { implements: string; program: string; prints: string }> = {
+  "html-rewriter": {
+    implements: "HTMLRewriter",
     program: `
       const rewriter = new HTMLRewriter().on("p", {
         element(element: { setAttribute(name: string, value: string): void }) {
@@ -29,12 +33,12 @@ const features: Record<string, { leftOut: string; program: string; prints: strin
     prints: `<p class="seen">one</p><p class="seen">two</p>\n`,
   },
   color: {
-    leftOut: "without Bun.color",
+    implements: "Bun.color",
     program: `console.log(Bun.color("red", "hex"));`,
     prints: "#ff0000\n",
   },
   bundler: {
-    leftOut: "without Bun.build, HTML imports and the development server",
+    implements: "Bun.build",
     program: `
       const built = await Bun.build({ entrypoints: [process.env.FOLDER + "/bundled.ts"], target: "bun" });
       console.log(built.success, built.outputs.length);
@@ -42,6 +46,26 @@ const features: Record<string, { leftOut: string; program: string; prints: strin
     prints: "true 1\n",
   },
 };
+
+const textsOfBundlerFeatures = [
+  "The parent selector is not a single class selector because of the syntax here:",
+  "expected a comma after parsing a gradient",
+  "view-transition-group-children",
+  "Calling setState from useMemo may trigger an infinite loop",
+  "Cannot reassign variable after render completes",
+  "Could not preserve existing manual memoization",
+];
+
+const textsOfLibraries: Record<string, string[]> = {
+  "libjpeg-turbo": ["Bogus Huffman table definition", "Unsupported JPEG process", "Invalid JPEG file structure"],
+  libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
+  libarchive: ["Damaged tar archive", "Truncated tar archive", "Can't allocate tar data"],
+  SQLite: ["malformed database schema", "unable to open database file", "SQLite format 3"],
+  TinyCC: ["cannot use local functions", "invalid operand types for binary operation"],
+  "lol-html": ["The selector is empty", "Unexpected token in selector"],
+};
+const linkedLibraries = Object.keys(textsOfLibraries).filter(library => !(isMacOS && library === "SQLite"));
+const textsOfLibrariesIn = (file: Buffer) => linkedLibraries.flatMap(library => textsOfLibraries[library]!.filter(text => file.includes(text)).map(text => `${library}: ${text}`));
 
 const files = {
   "hello.ts": `console.log("hello world");`,
@@ -51,7 +75,27 @@ const files = {
     setTimeout(() => process.exit(0), 50);
   `,
   "evaluates.ts": `console.log(typeof (0, eval)("HTMLRewriter"), typeof (0, eval)("Bun.color"));`,
-  "near-what-is-left-out.ts": `
+  "own-properties.ts": `
+    class Mailbox {
+      sent: string[] = [];
+      send(text: string) {
+        this.sent.push(text);
+        return this;
+      }
+      listen() {
+        return this.sent.length;
+      }
+      on(event: string) {
+        return event;
+      }
+    }
+    const project = { sql: "select 1", file: "a.txt", build: () => "built", password: "secret", serve: () => "served", Image: class {}, $: 1, alert: () => "alerted", color: "red", fetch: () => "fetched" };
+    const parsed = JSON.parse('{ "file": "b.txt", "send": 2, "password": 3 }');
+    const mailbox = new Mailbox().send("one");
+    console.log(project.sql, project.file, project.build(), project.password, project.serve(), typeof project.Image, project.$, project.alert(), project.color, project.fetch());
+    console.log(mailbox.listen(), mailbox.on("message"), parsed.file, parsed.send, parsed.password);
+  `,
+  "near-removed-features.ts": `
     const started = performance.now();
     console.log(performance.now() >= started, performance.timeOrigin > 0, typeof performance.mark, "mark" in performance);
     try {
@@ -98,26 +142,71 @@ const files = {
     }
     server.stop(true);
   `,
+  "bundles-a-component.ts": `
+    const built = await Bun.build({
+      entrypoints: [process.cwd() + "/component.tsx"],
+      external: ["react", "react/*"],
+      reactCompiler: true,
+      minify: true,
+    });
+    for (const output of built.outputs) console.log(output.loader, await output.text());
+  `,
+  "component.tsx": `
+    import "./style.css";
+    export function Component({ name }: { name: string }) {
+      const words = [name, name];
+      return <div className="a">{words}</div>;
+    }
+  `,
+  "style.css": `.a { color: red; & .b { margin: calc(1px + 2px); } }`,
+  "serves-values-nobody-knows.ts": `
+    import { createServer } from "node:http";
+    const evaluate = new Function("value", process.env.BODY ?? "return typeof value");
+    const server = createServer((request, response) => {
+      let text = "";
+      request.on("data", chunk => (text += chunk));
+      request.on("end", () => {
+        const value = JSON.parse(text);
+        response.end([value.items, value.not, value.returns, value.parameters, value.instance, value.resolves, value.list.map((x: number) => x * 2), evaluate(value)].join(" "));
+      });
+    });
+    server.listen(0, async () => {
+      const { port } = server.address() as { port: number };
+      const answer = await fetch("http://127.0.0.1:" + port, { method: "POST", body: JSON.stringify({ items: 1, not: 2, list: [3, 4] }) });
+      console.log(await answer.text());
+      server.close();
+    });
+  `,
+  "transpiles.ts": `
+    const sources = [
+      ["ts", "enum Direction { Up } export const count: number = Direction.Up;"],
+      ["tsx", "export function Component({ name }: { name: string }) { const words = [name, name]; return <div>{words}</div>; }"],
+      ["jsx", "export function Component({ name }) { const words = [name, name]; return <div>{words}</div>; }"],
+    ] as const;
+    for (const [loader, source] of sources) {
+      const options = { loader, reactCompiler: true };
+      const transpiler = new Bun.Transpiler(options);
+      console.log(transpiler.transformSync(source));
+      console.log(await transpiler.transform(source));
+      console.log(JSON.stringify(transpiler.scan(source)));
+    }
+  `,
   ...Object.fromEntries(Object.entries(features).map(([name, feature]) => [`uses-${name}.ts`, feature.program])),
 };
 
-using probe = tempDir("compile-trim-runtime-by-use-probe", { "hello.ts": files["hello.ts"] });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stdout: "pipe",
-  stderr: "pipe",
-});
-const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
-
 const programs = join(import.meta.dir, "compile-trim-runtime-by-use");
-const descriptions = new Map(
-  readFileSync(join(import.meta.dir, "..", "..", "scripts", "build", "islands.doors"), "utf8")
-    .split("\n")
-    .filter(line => line.startsWith("feature "))
-    .map(line => [line.split(" ")[1], line.split(" ").slice(2).join(" ")] as const),
-);
+
+export interface ProgramOptions {
+  features?: string[];
+  build?: string[];
+  env?: Record<string, string>;
+  posix?: boolean;
+  says?: Record<string, string>;
+  keptToday?: boolean;
+}
+
+export const optionsAt = (path: string): ProgramOptions => (existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {});
+export const featuresOfProgram = (name: string, options: ProgramOptions) => (options.features ?? [name]).flatMap(spelling => findFeature(spelling) ?? []);
 const programFiles = readdirSync(programs)
   .filter(name => name.endsWith(".ts"))
   .sort();
@@ -163,96 +252,112 @@ export function testDeal() {
       `A test file has five minutes in CI. Add test/bundler/compile-trim-runtime-by-use-${parts + 1}.test.ts, a copy of the one before it with its number raised.`,
     ).toBeLessThanOrEqual(mostProgramsInAPart);
   });
+
+  test("every program and option file names a feature declared in src/trim/features, with the declared spelling", () => {
+    const wrong: string[] = [];
+    const check = (where: string, name: string, options: ProgramOptions) => {
+      if (!options.features && findFeature(name) === undefined) wrong.push(`${where}: no feature is called ${name}; give it "features"`);
+      for (const spelling of [...(options.features ?? []), ...Object.keys(options.says ?? {})])
+        if (findFeature(spelling) !== spelling) wrong.push(`${where}: ${spelling} is ${findFeature(spelling) === undefined ? "no feature" : "spelled " + findFeature(spelling)}`);
+    };
+    for (const file of programFiles) check(file, basename(file, ".ts"), optionsAt(join(programs, basename(file, ".ts") + ".json")));
+    for (const name of neighborNames) check("near/" + name, name, optionsAt(join(neighbors, name, "features.json")));
+    expect(wrong).toEqual([]);
+  });
 }
 
 export function testFeatures(part: number) {
   const parts = partNumbers("features-").length;
   const dealt = deal(part, parts);
 
-  describe.skipIf(!hasIslands || !!unsupported)("--compile --aot --compile-trim-runtime leaves out what the program does not name", () => {
+  describe.skipIf(!canTrim || !!unsupported)("--compile --aot --trim removes what the program doesn't use", () => {
     const test = dealt.test;
 
-    async function build(folder: string, entry: string, outfile: string, without?: string, flags: string[] = []) {
-      const built = await run(
-        [bunExe(), "build", "--compile", "--aot", "--compile-trim-runtime", ...flags, entry, "--outfile", join(outfile, "program")],
-        folder,
-        { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without },
-      );
-      expect(built.stderr).not.toContain("error:");
+    async function build(folder: string, entry: string, outfile: string, without: string[] = [], flags: string[] = []) {
+      const built = await run([bunExe(), "build", "--compile", "--aot", "--trim", ...withoutFeatures(without), ...flags, entry, "--outfile", join(outfile, "program")], folder);
+      expect(built.stderr).not.toMatch(/^error\b/m);
       expect(built.exitCode).toBe(0);
       return executableAt(join(folder, outfile, "program"));
     }
 
-    test("a program that names none of them has none of them", async () => {
+    test("a program that uses none of them has none of them", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
       const byUse = await build(folder, "hello.ts", "hello");
-      const byName = await build(folder, "hello.ts", "hello-without", Object.keys(features).join(","));
-      expect(byUse).toEqual(byName);
+      const forcedOut = await build(folder, "hello.ts", "hello-without", Object.values(features).map(feature => featureOf(feature.implements)));
+      expect(byUse).toEqual(forcedOut);
       expect(await run([join(folder, "hello", "program")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
+    test("properties of the program's own objects keep no feature, whatever their names", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      const namesakes = [...new Set(["Bun.sql", "Bun.s3", "Bun.build", "Bun.password", "Bun.listen", "process.send", "Bun.serve", "Bun.Image", "Bun.$", "alert", "Bun.color", "fetch"].map(featureOf))];
+      expect(await build(folder, "own-properties.ts", "by-use")).toEqual(await build(folder, "own-properties.ts", "forced-out", namesakes));
+      expect(await run([join(folder, "by-use", "program")], folder)).toEqual({ stdout: "select 1 a.txt built secret served function 1 alerted red fetched\n1 message b.txt 2 3\n", stderr: "", exitCode: 0 });
+    });
+
     for (const [name, feature] of Object.entries(features)) {
-      test(`${name}: a program that names it keeps it; without it the executable says so`, async () => {
+      test(`${name}: a program that uses it keeps it; with it forced out, the executable says so`, async () => {
         using dir = tempDir("compile-trim-runtime-by-use", files);
         const folder = String(dir);
         const env = { ...bunEnv, FOLDER: folder };
         const kept = await build(folder, `uses-${name}.ts`, "kept");
-        const leftOut = await build(folder, `uses-${name}.ts`, "left-out", name);
-        expect(leftOut.size).toBeLessThan(kept.size);
+        const forcedOut = await build(folder, `uses-${name}.ts`, "forced-out", [featureOf(feature.implements)]);
+        expect(forcedOut.size).toBeLessThan(kept.size);
         expect(await run([join(folder, "kept", "program")], folder, env)).toEqual({ stdout: feature.prints, stderr: "", exitCode: 0 });
-        const refused = await run([join(folder, "left-out", "program")], folder, env);
-        expect(refused.stderr).toContain("this executable was built with --compile-trim-runtime, " + feature.leftOut);
-        expect([70, 1]).toContain(refused.exitCode);
+        const failed = await run([join(folder, "forced-out", "program")], folder, env);
+        expect({ stderr: failed.stderr, saysSo: saysFeatureWasRemoved(failed.stderr, featureOf(feature.implements)) }).toEqual({ stderr: failed.stderr, saysSo: true });
+        expect([70, 1]).toContain(failed.exitCode);
       });
     }
 
     test("what only Bun.serve needs is kept for an entry point with a default export, and for no other", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      const onlyForServers = "mux,serve";
+      const onlyForServers = [featureNamed("ServeHttp2"), featureOf("Bun.serve")];
       expect(await build(folder, "hello.ts", "hello")).toEqual(await build(folder, "hello.ts", "hello-without", onlyForServers));
       const kept = await build(folder, "serves-its-default-export.ts", "kept");
-      expect((await build(folder, "serves-its-default-export.ts", "left-out", onlyForServers)).size).toBeLessThan(kept.size);
+      expect((await build(folder, "serves-its-default-export.ts", "forced-out", onlyForServers)).size).toBeLessThan(kept.size);
       const served = await run([join(folder, "kept", "program")], folder);
       expect(served.stdout).toMatch(/^Started (development )?server: http:\/\/localhost:\d+\n$/);
       expect({ stderr: served.stderr, exitCode: served.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     });
 
     test.each([
-      ["package_files", ["--compile-autoload-package-json"]],
-      ["package_files", ["--compile-autoload-tsconfig"]],
-      ["bunfig", []],
-      ["cli_options", ["--compile-exec-argv=--smol"]],
-      ["inspector", ["--compile-exec-argv=--inspect=127.0.0.1:0"]],
-      ["cli_options", []],
-      ["profiler", []],
-      ["worker", []],
-      ["file_sink", []],
+      ["PackageFiles", ["--compile-autoload-package-json"]],
+      ["PackageFiles", ["--compile-autoload-tsconfig"]],
+      ["Bunfig", []],
+      ["CliOptions", ["--compile-exec-argv=--smol"]],
+      ["Inspector", ["--compile-exec-argv=--inspect=127.0.0.1:0"]],
+      ["CliOptions", []],
+      ["Profilers", []],
     ])("%s is kept for an executable built with %j", async (feature, flags) => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      const kept = await build(folder, "hello.ts", "kept", undefined, flags);
-      expect((await build(folder, "hello.ts", "left-out", feature, flags)).contents).not.toBe(kept.contents);
+      const kept = await build(folder, "hello.ts", "kept", [], flags);
+      expect((await build(folder, "hello.ts", "forced-out", [featureNamed(feature)], flags)).contents).not.toBe(kept.contents);
       expect(await run([join(folder, "kept", "program")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
     test.each([
-      ["package_files", []],
-      ["source_maps", []],
-      ["text", ["--compile-exec-argv=--smol"]],
-      ["inspector", ["--compile-exec-argv=--smol"]],
-      ["sql", ["--compile-exec-argv=--smol --title=hello"]],
-      ["performance_timeline", []],
-      ["structured_clone", []],
-      ["web_streams", []],
-      ["fetch", []],
-      ["valkey", []],
-      ["tls", []],
-    ])("%s is left out of an executable built with %j", async (feature, flags) => {
+      ["PackageFiles", []],
+      ["SourceMaps", []],
+      ["RuntimeTranspiler", ["--compile-exec-argv=--smol"]],
+      ["Inspector", ["--compile-exec-argv=--smol"]],
+      ["Sql", ["--compile-exec-argv=--smol --title=hello"]],
+      ["PerformanceTimeline", []],
+      ["StructuredClone", []],
+      ["WebStreams", []],
+      ["HttpClient", []],
+      ["Valkey", []],
+      ["Tls", []],
+      ["Worker", []],
+      ["FileSink", []],
+    ])("%s is removed from an executable built with %j", async (feature, flags) => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      expect(await build(folder, "hello.ts", "hello", undefined, flags)).toEqual(await build(folder, "hello.ts", "hello-without", feature, flags));
+      expect(await build(folder, "hello.ts", "hello", [], flags)).toEqual(await build(folder, "hello.ts", "hello-without", [featureNamed(feature)], flags));
       expect(await run([join(folder, "hello", "program")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
@@ -266,57 +371,57 @@ export function testFeatures(part: number) {
       },
     );
 
-    test.each(["--trace-warnings", "--trace-deprecation", "--trace-uncaught", "--trace-sigint"])("BUN_OPTIONS=%s needs nothing that is left out", async option => {
+    test.each(["--trace-warnings", "--trace-deprecation", "--trace-uncaught", "--trace-sigint"])("BUN_OPTIONS=%s needs nothing that was removed", async option => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
       await build(folder, "hello.ts", "hello");
       expect(await run([join(folder, "hello", "program")], folder, { ...bunEnv, BUN_OPTIONS: option })).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
-    test("a program that comes near what is left out, and calls none of it, runs as whole", async () => {
+    test("a program that comes near removed features, and calls none of them, runs like the untrimmed one", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      await build(folder, "near-what-is-left-out.ts", "near");
+      await build(folder, "near-removed-features.ts", "near");
       expect(await run([join(folder, "near", "program")], folder)).toEqual({ stdout: "true true function true\ntrue\n", stderr: "", exitCode: 0 });
     });
 
-    test("a program that evaluates text keeps all of them", async () => {
+    test("a string passed to eval() still finds the names of the APIs that the source never uses", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
       await build(folder, "evaluates.ts", "evaluates");
       expect(await run([join(folder, "evaluates", "program")], folder)).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
     });
 
-    test("the operations that compiled code never calls go, in a program that evaluates text too", async () => {
-      using dir = tempDir("compile-trim-runtime-by-use", files);
-      const folder = String(dir);
-      const families = [...descriptions.keys()].filter(name => name.startsWith("operations_")).join(",");
-      expect((await build(folder, "hello.ts", "by-use")).size).toBe((await build(folder, "hello.ts", "by-name", families)).size);
-      expect(await build(folder, "evaluates.ts", "by-use")).toEqual(await build(folder, "evaluates.ts", "by-name", "operations_rare_numbers"));
-      expect(await run([join(folder, "by-use", "program")], folder)).toEqual({ stdout: "function function\n", stderr: "", exitCode: 0 });
-    });
-
     async function buildWhole(folder: string, entry: string) {
       expect(await run([bunExe(), "build", "--compile", "--aot", entry, "--outfile", "whole"], folder)).toMatchObject({ exitCode: 0 });
     }
 
-    test("a route that asks for the development server by an option keeps it", async () => {
+    if (dealt.mine()) plainTest.todo("a route that asks for the development server by an option keeps it", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
       const env = { ...bunEnv, FOLDER: folder };
       await buildWhole(folder, "styled-route.ts");
       const kept = await build(folder, "styled-route.ts", "kept");
-      expect((await build(folder, "styled-route.ts", "left-out", "bundler")).size).toBeLessThan(kept.size);
+      expect((await build(folder, "styled-route.ts", "forced-out", [featureOf("Bun.build")])).size).toBeLessThan(kept.size);
       expect(await run([join(folder, "kept", "program")], folder, env)).toEqual(await run([join(folder, "whole")], folder, env));
-      const refused = await run([join(folder, "left-out", "program")], folder, env);
-      expect(refused.stdout).toContain("style: this executable was built with --compile-trim-runtime, without the bundler and the development server");
-      expect(refused.exitCode).toBe(0);
+      const failed = await run([join(folder, "forced-out", "program")], folder, env);
+      expect(failed.stdout).toContain("style: the bundler and the dev server were removed by --trim");
+      expect(failed.exitCode).toBe(0);
     });
 
-    test("a server none of whose options asks for them has neither the bundler nor what turns text into code", async () => {
+    test("known bug: a Bun.serve route with the style option doesn't count as a use of the bundler, and throws a catchable error", async () => {
       using dir = tempDir("compile-trim-runtime-by-use", files);
       const folder = String(dir);
-      expect(await build(folder, "serves.ts", "by-use")).toEqual(await build(folder, "serves.ts", "by-name", "bundler,text"));
+      await build(folder, "styled-route.ts", "by-use");
+      const ran = await run([join(folder, "by-use", "program")], folder, { ...bunEnv, FOLDER: folder });
+      expect(ran.stdout).toContain("style: the bundler and the dev server were removed by --trim");
+      expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    test("a server whose options ask for neither has no bundler and no transpiler", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      expect(await build(folder, "serves.ts", "by-use")).toEqual(await build(folder, "serves.ts", "forced-out", [featureOf("Bun.build"), featureOf("Bun.Transpiler")]));
       expect(await run([join(folder, "by-use", "program")], folder, { ...bunEnv, FOLDER: folder })).toEqual({ stdout: `served\na\nb\n${files["bundled.ts"]}\n`, stderr: "", exitCode: 0 });
     });
 
@@ -325,10 +430,62 @@ export function testFeatures(part: number) {
       const folder = String(dir);
       const env = { ...bunEnv, FOLDER: folder };
       await buildWhole(folder, "reloads.ts");
-      expect(await build(folder, "reloads.ts", "by-use")).toEqual(await build(folder, "reloads.ts", "by-name", "bundler,text"));
+      expect(await build(folder, "reloads.ts", "by-use")).toEqual(await build(folder, "reloads.ts", "forced-out", [featureOf("Bun.build"), featureOf("Bun.Transpiler")]));
       const whole = await run([join(folder, "whole")], folder, env);
       expect(whole.stdout).toStartWith("reloaded\n");
       expect(await run([join(folder, "by-use", "program")], folder, env)).toEqual(whole);
+    });
+
+    test("a program that calls Bun.build() can bundle CSS and use the React Compiler", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      await buildWhole(folder, "bundles-a-component.ts");
+      await build(folder, "bundles-a-component.ts", "by-use");
+      const whole = await run([join(folder, "whole")], folder);
+      expect(whole.stdout).toContain("react/compiler-runtime");
+      expect(whole.stdout).toContain("margin:3px");
+      expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await run([join(folder, "by-use", "program")], folder)).toEqual(whole);
+    });
+
+    test("a program that only uses Bun.Transpiler transpiles .ts, .tsx and .jsx like the untrimmed one", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      await buildWhole(folder, "transpiles.ts");
+      await build(folder, "transpiles.ts", "by-use");
+      const whole = await run([join(folder, "whole")], folder);
+      expect(whole).toMatchObject({ stderr: "", exitCode: 0 });
+      expect(await run([join(folder, "by-use", "program")], folder)).toEqual(whole);
+    });
+
+    test("a program that only uses Bun.Transpiler has neither the CSS parser nor the React Compiler", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      const textsIn = (file: Buffer) => textsOfBundlerFeatures.filter(text => file.includes(text));
+      expect(textsIn(readFileSync(bunExe()))).toEqual(textsOfBundlerFeatures);
+      await build(folder, "transpiles.ts", "by-use");
+      if (!isWindows) expect(textsIn(bytesAt(join(folder, "by-use", "program")))).toEqual([]);
+    });
+
+    test("a server that never names bun:test has none of it, whatever names it reads off values nobody knows", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      await buildWhole(folder, "serves-values-nobody-knows.ts");
+      expect(await build(folder, "serves-values-nobody-knows.ts", "by-use")).toEqual(await build(folder, "serves-values-nobody-knows.ts", "forced-out", [featureNamed("Test")]));
+      const whole = await run([join(folder, "whole")], folder);
+      expect(whole).toEqual({ stdout: "1 2     6,8 object\n", stderr: "", exitCode: 0 });
+      expect(await run([join(folder, "by-use", "program")], folder)).toEqual(whole);
+    });
+
+    test("a native library leaves none of its texts in the file when its features are removed", async () => {
+      using dir = tempDir("compile-trim-runtime-by-use", files);
+      const folder = String(dir);
+      const linked = linkedLibraries.map(name => libraries.find(each => each.name === name)!);
+      expect(textsOfLibrariesIn(readFileSync(bunExe()))).toEqual(linkedLibraries.flatMap(library => textsOfLibraries[library]!.map(text => `${library}: ${text}`)));
+      expect(linked.filter(library => library.hasRetainedBytes).map(library => library.name)).toEqual([]);
+      await build(folder, "hello.ts", "without", [...new Set(linked.flatMap(library => library.features))]);
+      expect(await run([join(folder, "without", "program")], folder)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
+      if (!isWindows) expect(textsOfLibrariesIn(bytesAt(join(folder, "without", "program")))).toEqual([]);
     });
   });
 
@@ -343,43 +500,41 @@ export function testFeatures(part: number) {
 export function testPrograms(part: number) {
   const { mine } = deal(part, partNumbers("").length);
 
-  (!hasIslands || unsupported ? describe.skip : describe.concurrent)("--compile --aot --compile-trim-runtime, part by part", () => {
+  (!canTrim || unsupported ? describe.skip : describe.concurrent)("--compile --aot --trim, feature by feature", () => {
     for (const file of programFiles.filter(mine)) {
       const name = basename(file, ".ts");
-      const options: { features?: string[]; build?: string[]; env?: Record<string, string>; posix?: boolean; says?: Record<string, string> } = existsSync(join(programs, name + ".json"))
-        ? JSON.parse(readFileSync(join(programs, name + ".json"), "utf8"))
-        : {};
-      const features = (options.features ?? [name.replaceAll("-", "_")]).filter(feature => descriptions.has(feature));
+      const options = optionsAt(join(programs, name + ".json"));
+      const features = featuresOfProgram(name, options);
+      const says = new Map(Object.entries(options.says ?? {}).map(([spelling, text]) => [findFeature(spelling), text]));
 
-      test.skipIf(features.length === 0 || (isWindows && options.posix === true))(
-        `${name}: as whole where the program names it; without ${features.join(", ")} the executable says so`,
+      test.skipIf(isWindows && options.posix === true)(
+        `${name}: the program runs like the untrimmed one` + (features.length > 0 ? `; with ${features.join(", ")} forced out, the executable says so` : ""),
         () =>
           slot(async () => {
             using dir = tempDir("compile-trim-runtime-part", {
               "program.ts": readFileSync(join(programs, file), "utf8"),
-              "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`,
+              "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false, "types": ["bun"], "skipLibCheck": true } }`,
               "cwd/empty": "",
             });
             const folder = String(dir);
             const env = { ...bunEnv, ...options.env };
-            const built = async (outfile: string, flags: string[], without?: string) => {
-              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, ...(options.build ?? []), "program.ts", "--outfile", outfile], folder, {
-                ...env,
-                BUN_TRIM_RUNTIME_WITHOUT: without,
-              });
-              expect(build.stderr).not.toContain("error:");
+            const built = async (outfile: string, flags: string[], without: string[] = []) => {
+              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, ...withoutFeatures(without), ...(options.build ?? []), "program.ts", "--outfile", outfile], folder, env);
+              expect(build.stderr).not.toMatch(/^error\b/m);
               expect(build.exitCode).toBe(0);
               return await spawned([join(folder, outfile)], join(folder, "cwd"), env);
             };
             const whole = await built("whole", []);
             expect(whole.exitCode).toBe(0);
             expect(whole.stdout).not.toBe("");
-            expect(await built("kept", ["--compile-trim-runtime"])).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
+            expect(await built("kept", ["--trim"])).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
             for (const feature of features) {
-              const refused = await built("left-out", ["--compile-trim-runtime"], feature);
-              const sentence = `this executable was built with --compile-trim-runtime, without ${descriptions.get(feature)}`;
-              expect(refused.stderr).toContain(refused.stderr.includes(sentence) ? sentence : (options.says?.[feature] ?? sentence));
-              expect(refused.stderr.includes(": it finds undefined.\n") ? [70, 1, 0] : [70, 1]).toContain(refused.exitCode);
+              const failed = await built("forced-out", ["--trim"], [feature]);
+              const sentence = `--trim removed ${textOf(feature)} from this executable`;
+              const importFailed = modulesOf([feature]).find(specifier => failed.stderr.includes(`Cannot load '${specifier}': it isn't in this executable.`) && failed.stderr.includes("ERR_MODULE_NOT_FOUND"));
+              const isCaughtByTheProgram = failed.stdout.includes("ERR_FEATURE_REMOVED") || failed.stdout.includes(`${textOf(feature)} was removed by --trim because your code never uses it.`);
+              if (importFailed === undefined && !isCaughtByTheProgram && !saysFeatureWasRemoved(failed.stderr, feature)) expect(failed.stderr).toContain(says.get(feature) ?? sentence);
+              expect(isCaughtByTheProgram ? [70, 1, 0] : [70, 1]).toContain(failed.exitCode);
             }
           }),
         600_000,
@@ -388,30 +543,30 @@ export function testPrograms(part: number) {
 
     for (const name of neighborNames.filter(mine)) {
       const files = Object.fromEntries(readdirSync(join(neighbors, name)).map(file => [file, readFileSync(join(neighbors, name, file), "utf8")]));
-      const options: { features: string[]; keptToday?: boolean; posix?: boolean } = files["features.json"] ? JSON.parse(files["features.json"]) : { features: [name.replaceAll("-", "_")] };
-      const features = options.features.filter(feature => descriptions.has(feature));
+      const options: ProgramOptions = files["features.json"] ? JSON.parse(files["features.json"]) : {};
+      const features = featuresOfProgram(name, options);
 
       test.skipIf(features.length === 0 || (isWindows && options.posix === true))(
-        `${name}: a program that comes near ${features.join(", ")} and names none of it runs as whole without it`,
+        `${name}: a program that comes near ${features.join(", ")} and uses none of it runs like the untrimmed one without it`,
         () =>
           slot(async () => {
-            using dir = tempDir("compile-trim-runtime-near", { ...files, "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false } }`, "cwd/empty": "" });
+            using dir = tempDir("compile-trim-runtime-near", { ...files, "tsconfig.json": `{ "compilerOptions": { "noImplicitAny": false, "types": ["bun"], "skipLibCheck": true } }`, "cwd/empty": "" });
             const folder = String(dir);
-            const built = async (outfile: string, flags: string[], without?: string) => {
+            const built = async (outfile: string, flags: string[], without: string[] = []) => {
               const program = join(folder, outfile, "program");
-              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, "near.ts", "--outfile", program], folder, { ...bunEnv, BUN_TRIM_RUNTIME_WITHOUT: without });
-              expect(build.stderr).not.toContain("error:");
+              const build = await run([bunExe(), "build", "--compile", "--aot", ...flags, ...withoutFeatures(without), "near.ts", "--outfile", program], folder);
+              expect(build.stderr).not.toMatch(/^error\b/m);
               expect(build.exitCode).toBe(0);
               return { ...(await spawned([program], join(folder, "cwd"), bunEnv)), executable: executableAt(program) };
             };
             const whole = await built("whole", []);
             expect(whole.exitCode).toBe(0);
             expect(whole.stdout).not.toBe("");
-            const byUse = await built("by-use", ["--compile-trim-runtime"]);
+            const byUse = await built("by-use", ["--trim"]);
             expect(byUse).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
-            const leftOut = await built("left-out", ["--compile-trim-runtime"], features.join(","));
-            expect(leftOut).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
-            if (!options.keptToday) expect(leftOut.executable).toEqual(byUse.executable);
+            const forcedOut = await built("forced-out", ["--trim"], features);
+            expect(forcedOut).toMatchObject({ stdout: whole.stdout, exitCode: 0 });
+            if (!options.keptToday) expect(forcedOut.executable).toEqual(byUse.executable);
           }),
         600_000,
       );

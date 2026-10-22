@@ -180,7 +180,7 @@ JSObject* JSEventTarget::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSEventTarget>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSEventTarget::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSEventTarget::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSEventTargetDOMConstructor, DOMConstructorID::EventTarget>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

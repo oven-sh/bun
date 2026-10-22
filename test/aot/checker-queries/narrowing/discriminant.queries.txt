@@ -1,0 +1,7 @@
+# A comparison of a property that has literal types narrows a union. A property of type `string` leaves its object as declared.
+discriminant.ts:4 type `s` = S
+discriminant.ts:5 type `s` = { kind: "a"; x: number; }
+discriminant.ts:7 type `s` = { kind: "b"; y: string; }
+
+discriminant.ts:11 type `t` = { kind: string; }
+discriminant.ts:13 type `t` = { kind: string; }

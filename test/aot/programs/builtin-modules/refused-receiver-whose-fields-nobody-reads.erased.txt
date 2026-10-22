@@ -1,0 +1,39 @@
+ERR_INVALID_THIS: Can only call Buffer.compare on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.compare on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.compare on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.compare on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.compare on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.toString on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.toString on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.toString on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.toString on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.toString on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.write on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.write on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.write on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.write on instances of Buffer
+ERR_INVALID_THIS: Can only call Buffer.write on instances of Buffer
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received {}
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype] {}
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Can only call URL.toString on instances of URL
+ERR_INVALID_THIS: Can only call URL.toString on instances of URL
+ERR_INVALID_THIS: Can only call URL.toString on instances of URL
+ERR_INVALID_THIS: Can only call URL.toString on instances of URL
+ERR_INVALID_THIS: Can only call URL.toString on instances of URL
+ERR_INVALID_THIS: Expected this to be instanceof TextDecoder, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof TextDecoder, but received {}
+ERR_INVALID_THIS: Expected this to be instanceof TextDecoder, but received [Object: null prototype]
+ERR_INVALID_THIS: Expected this to be instanceof TextDecoder, but received [Object: null prototype] {}
+ERR_INVALID_THIS: Expected this to be instanceof TextDecoder, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received {}
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype] {}
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype]
+ERR_INVALID_THIS: Expected this to be instanceof Blob, but received [Object: null prototype]

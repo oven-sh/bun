@@ -1,1 +1,1 @@
-{ "features": ["brotli_encoder", "brotli_decoder"] }
+{ "features": ["BrotliEncoder", "BrotliDecoder"] }

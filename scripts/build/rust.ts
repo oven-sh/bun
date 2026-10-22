@@ -2,7 +2,8 @@
  * Rust build step — every crate a ninja edge.
  *
  * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the root of the crate graph is
- * `src/runtime` (`bun_runtime`), a library like the rest, with `main` exported `#[no_mangle] extern "C"`.
+ * `src/executable` (`bun_executable`), an empty library that depends on the crates the link takes and nothing else
+ * depends on. `main` is in `bun_runtime`, exported `#[no_mangle] extern "C"`.
  * Every crate's rlib, std's included, is an input of bun's own link, beside the C/C++ objects: no crate is a
  * final Rust artifact, and nothing copies the crate graph into one archive.
  *
@@ -34,13 +35,13 @@
  */
 
 import { existsSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
 import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
-import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
+import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
 import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
 import { buildRustGraph, linkedRlibs } from "./rust/units.ts";
 
@@ -184,7 +185,7 @@ export function windowsShimPath(cfg: Config): string {
 
 /**
  * `<buildDir>/rust-target`: everything Rust. Each planned graph has a directory of its own there — its plan, unit
- * manifests and artifacts; bun_runtime's is that directory itself, the Windows shim's is `rust-target/shim`. It is
+ * manifests and artifacts; bun_executable's is that directory itself, the Windows shim's is `rust-target/shim`. It is
  * also the `--target-dir` the planner gives cargo, which writes nothing there, and cargo's own layout
  * (`<triple>/<profile>/…`) does not meet the units' (`<triple>/deps`, `host/`, `units/`).
  */
@@ -220,10 +221,9 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
-   * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
-   * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
-   * files each crate read, so a changed one rebuilds just its includers.
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist. Order-only for the edges
+   * of the crates that read them (`generatedFilesReadBy`): they must exist before such a crate compiles, and from
+   * then on rustc's dep-info names exactly the files each crate read, so a changed one rebuilds just its includers.
    */
   codegenOrderOnly: string[];
   /**
@@ -240,6 +240,43 @@ export interface RustBuildInputs {
    * re-plans — and order-only for every crate edge.
    */
   vendorStamps: string[];
+}
+
+/**
+ * The packages that read generated files, with what each reads: paths in the codegen directory, or in the repository
+ * when they start with `src/`, where a trailing `/` names a directory. A package's crates wait for those files alone,
+ * and every other crate for none.
+ */
+const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
+const generatedSchemaFiles = ["aot-schema-is-current.stamp", "src/aot/ir/generated/"];
+
+const generatedFilesReadBy: Record<string, string[] | "all"> = {
+  bun_aot: [...generatedBuiltinTables, ...generatedSchemaFiles],
+  bun_aot_builtins: [...generatedBuiltinTables, ...generatedSchemaFiles],
+  bun_aot_interface: generatedSchemaFiles,
+  bun_ast: ["runtime.out.js"],
+  bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
+  bun_core: ["build_options.rs"],
+  bun_install: ["bun-shim-impl.exe"],
+  bun_jsc: [
+    "ErrorCode.generated.rs",
+    "cpp.rs",
+    "generated_bindgen_bun_jsc.rs",
+    "generated_builtin_module_key_index.rs",
+    "generated_resolved_source_tag.rs",
+  ],
+  bun_lint: ["compressed/lint/", "compressed/src/lint/"],
+  bun_lint_driver: ["compressed/lint/", "compressed/codegen/lint-rule-pages.txt.zst"],
+  bun_parsers: ["json_byte_class.rs", "xml_byte_class.rs"],
+  bun_removable_features: ["removable_features.rs"],
+  bun_resolver: ["node-fallbacks/"],
+  bun_runtime: "all",
+  bun_sema: ["compressed/src/sema/"],
+  bun_semver_jsc: ["generated_bindgen_bun_semver_jsc.rs"],
+};
+
+function generatedFilesOf(packageName: string): string[] | "all" {
+  return generatedFilesReadBy[packageName] ?? [];
 }
 
 /** The `cargo build` invocation the Rust step plans with (`cargo build <args> --unit-graph`), and what it implies for every unit. */
@@ -261,7 +298,7 @@ export interface CargoInvocation {
 }
 
 /**
- * Compute the cargo command line + environment for `cargo build -p bun_runtime`.
+ * Compute the cargo command line + environment for `cargo build -p bun_executable`.
  * Pure function of `cfg`; does no I/O.
  */
 export function cargoBuildInvocation(cfg: Config): CargoInvocation {
@@ -272,7 +309,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // ─── Build args ───
   const args: string[] = [
     "-p",
-    "bun_runtime",
+    "bun_executable",
     "--lib",
     "--target-dir",
     targetDir,
@@ -320,11 +357,16 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // always PIC), Android (bionic loader requires PIE — flags.ts:934), and
   // Windows (COFF has its own model) are excluded.
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
-    rustflags.push("-Crelocation-model=static");
+    rustflags.push(
+      ...(cfg.hardened ? ["-Crelocation-model=pie", "-Zplt=yes", "--cfg=bun_hardened"] : ["-Crelocation-model=static"]),
+    );
   }
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
+  if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
+  if (cfg.hardened) rustflags.push("-Zub-checks=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
@@ -392,6 +434,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `builtin.mode == .Debug`, which the Rust port had proxied via
   // `debug_assertions` only because the two were coextensive until now.
   rustflags.push("--check-cfg=cfg(bun_debug)");
+  rustflags.push("--check-cfg=cfg(bun_hardened)");
   if (cfg.debug) {
     rustflags.push("--cfg=bun_debug");
   }
@@ -597,6 +640,12 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // instrumentation has about doubled; nothing built with ASan ships, so take cargo's release default instead.
     env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
   }
+  if (cfg.rustCodegenUnits !== undefined) {
+    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = String(cfg.rustCodegenUnits);
+  }
+  if (cfg.rustIncremental) {
+    env.CARGO_PROFILE_RELEASE_INCREMENTAL = "true";
+  }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
     // cargo profile. `cfg.assertions` defaults to `debug || asan`
@@ -680,8 +729,8 @@ function shimCargoInvocation(
 }
 
 /**
- * Emit the Rust step: for bun_runtime — and on Windows targets the .bin/ shim — a plan edge and, once the plans
- * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_runtime` and of
+ * Emit the Rust step: for bun_executable — and on Windows targets the .bin/ shim — a plan edge and, once the plans
+ * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_executable` and of
  * every library it depends on, std's included. No crate is a final Rust artifact; the link is bun's own.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
@@ -777,7 +826,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       n,
       { ...context, graph, binDestination: exe },
       {
-        localOrderOnly: [],
+        generatedInputs: () => [],
         implicitInputs: {},
         vendorStamps: inputs.vendorStamps,
         rootValidations: inputs.shimValidations,
@@ -792,14 +841,24 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     graph.root.kind === "lib",
     `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected a library`,
   );
+  const generatedInputs = (packageName: string): string[] => {
+    const reads = generatedFilesOf(packageName);
+    if (reads === "all") return ["rust-codegen-ready"];
+    const paths = reads.map(
+      entry => resolve(entry.startsWith("src/") ? cfg.cwd : cfg.codegenDir, entry) + (entry.endsWith("/") ? sep : ""),
+    );
+    return inputs.codegenOrderOnly.filter(file =>
+      paths.some(path => (path.endsWith(sep) ? file.startsWith(path) : file === path)),
+    );
+  };
   emitRustUnits(
     n,
     { ...context, graph },
     {
-      localOrderOnly: ["rust-codegen-ready"],
+      generatedInputs,
       implicitInputs: packageInputs,
       vendorStamps: inputs.vendorStamps,
-      rootValidations: [],
+      rootValidations: [emitGeneratedInputsCheck(n, graph, cfg.codegenDir, generatedFilesOf)],
     },
   );
   const rlibs = linkedRlibs(graph).map(unit => unit.output);

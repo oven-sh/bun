@@ -1,1 +1,1 @@
-{"features": ["string_locale_case", "number_to_text", "string_padding", "string_html", "string_normalize", "string_well_formed", "string_repeat", "string_last_index_of", "escape_unescape", "uri_coding"]}
+{"features": ["StringLocaleCase", "NumberPrecisionMethods", "StringPadding", "StringHTML", "StringNormalize", "StringWellFormed", "StringRepeat", "StringLastIndexOf", "EscapeUnescape", "URICoding"]}

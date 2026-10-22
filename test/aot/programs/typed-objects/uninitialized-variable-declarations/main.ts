@@ -4,7 +4,7 @@ function readConst(): number { return tooEarly }
 let r: string = "none"
 try { r = String(readConst()) } catch (e) { r = "caught" }
 console.log(r)
-const tooEarly: number = Math.abs(-5) // not a constant expression: those are in rule_constant_dead_zone.ts
+const tooEarly: number = Math.abs(-5) // not a constant expression: those are in type-rules/constant-tdz
 console.log(readConst())
 function innerZone(flag: boolean): string {
   const peek = () => inside

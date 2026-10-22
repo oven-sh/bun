@@ -12,9 +12,30 @@
  */
 
 import { join } from "node:path";
-import { bunExeName, type Config } from "./config.ts";
+import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { quote, slash } from "./shell.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
+
+export const safeStackDependencies = [
+  "brotli",
+  "hdrhistogram",
+  "libarchive",
+  "libdeflate",
+  "libjpeg-turbo",
+  "libspng",
+  "libwebp",
+  "lshpack",
+  "zlib",
+  "zstd",
+];
+
+export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
+  return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
+}
+
+export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
+  return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
+}
 
 export type FlagValue = string | string[] | ((cfg: Config) => string | string[]);
 
@@ -44,6 +65,7 @@ export interface Flag {
    * bun. See computeTargetLinkFlags().
    */
   toolchain?: true;
+  hardening?: true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -84,8 +106,8 @@ export const cpuTargetFlags: Flag[] = [
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GLOBAL COMPILER FLAGS
-//   Applied to BOTH bun's own sources AND forwarded to vendored deps
-//   via -DCMAKE_C_FLAGS / -DCMAKE_CXX_FLAGS.
+//   Applied to BOTH bun's own sources AND vendored deps
+//   (computeDepFlags).
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const globalFlags: Flag[] = [
@@ -308,12 +330,12 @@ export const globalFlags: Flag[] = [
     // Nix LLVM doesn't support zstd — but we target standard distros.
     // Nix users can override via profile if needed.
     flag: ["-g3", "-gz=zstd"],
-    when: c => c.unix && c.debug,
+    when: c => c.unix && c.debug && c.debugInfo === "full",
     desc: "Full debug info, zstd-compressed",
   },
   {
     flag: ["-g", "-gz=zstd"],
-    when: c => c.unix && c.release && !c.lto,
+    when: c => c.unix && c.release && c.debugInfo === "full",
     desc: "Full debug info (types and variables) where no LTO link has to carry it: local release, asan, the non-LTO CI lanes",
   },
   {
@@ -327,14 +349,19 @@ export const globalFlags: Flag[] = [
     // same file is 5.25s), object 9.0 MB -> 5.2 MB. Irrelevant to the LTO
     // builds: line tables (-g1 below) carry no type definitions either way.
     flag: "-fno-standalone-debug",
-    when: c => c.unix && (c.debug || !c.lto),
+    when: c => c.unix && c.debugInfo === "full",
     desc: "Emit each type's debug info once, where it is defined, instead of in every TU",
   },
   {
     // The bitcode carries the debug info through the ThinLTO link, which is the longest step of a CI build; the -lto WebKit prebuilts make the same trade.
     flag: "-g1",
-    when: c => c.unix && c.release && c.lto,
-    desc: "Line tables only for LTO builds (backtraces and symbolication; no types)",
+    when: c => c.unix && c.debugInfo === "lines",
+    desc: "Line tables only (backtraces and symbolication; no types): LTO builds, --debug-info=lines",
+  },
+  {
+    flag: "-g0",
+    when: c => c.unix && c.debugInfo === "none",
+    desc: "No debug info (--debug-info=none: the symbol table still names every function)",
   },
 
   // ─── ASAN (global — passed to deps so they link against the same runtime) ───
@@ -376,10 +403,7 @@ export const globalFlags: Flag[] = [
     desc: "Skip static destructors at exit (JSC assumes this)",
   },
   {
-    // /clang: (not -Xclang): single token survives CMAKE_CXX_FLAGS
-    // re-tokenization in nested dep configures. -Xclang <arg> pair gets
-    // split by cmake's try_compile → "unknown argument". Also more correct:
-    // /clang: passes to the driver, -Xclang to cc1.
+    // /clang: (not -Xclang): /clang: passes to the driver, -Xclang to cc1.
     flag: "/clang:-fno-c++-static-destructors",
     when: c => c.windows,
     lang: "cxx",
@@ -411,8 +435,51 @@ export const globalFlags: Flag[] = [
     // has always shipped on Linux, FreeBSD and Android, and a canary
     // load+check in most JSC frames is not free.
     flag: "-fno-stack-protector",
-    when: c => c.unix && !c.darwin,
+    when: c => c.unix && !c.darwin && !c.hardened,
     desc: "No stack protector (pin the toolchain-independent default)",
+  },
+  {
+    flag: "-fstack-protector-strong",
+    when: c => c.hardened,
+    desc: "Hardened: a canary in every function with an array, an alloca or a local whose address is taken",
+    hardening: true,
+  },
+  {
+    flag: ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=3"],
+    when: c => c.hardened && c.release && !c.asan,
+    desc: "Hardened: glibc checks the length of memcpy, strcpy, sprintf, read and the like against the size of the destination",
+    hardening: true,
+  },
+  {
+    flag: "-fstack-clash-protection",
+    when: c => c.hardened,
+    desc: "Hardened: a frame larger than a page touches every page, so it cannot step over the guard page",
+    hardening: true,
+  },
+  {
+    flag: "-ftrivial-auto-var-init=zero",
+    when: c => c.hardened,
+    desc: "Hardened: locals without an initializer start as zero",
+    hardening: true,
+  },
+  {
+    flag: "-D_GLIBCXX_ASSERTIONS=1",
+    when: c => c.hardened,
+    lang: "cxx",
+    desc: "Hardened: libstdc++ checks indexes and preconditions (WebKit always has it)",
+    hardening: true,
+  },
+  {
+    flag: ["-fno-delete-null-pointer-checks", "-fno-strict-overflow", "-fno-strict-aliasing"],
+    when: c => c.hardened,
+    desc: "Hardened: the optimizer assumes nothing from a null dereference, a signed overflow or a type pun",
+    hardening: true,
+  },
+  {
+    flag: ["-fsanitize=array-bounds", "-fsanitize-trap=array-bounds"],
+    when: c => c.hardened,
+    desc: "Hardened: an index outside an array of fixed size traps",
+    hardening: true,
   },
   {
     // Every clang turns the protector on for a Darwin target (level 1, what
@@ -626,6 +693,12 @@ export const globalFlags: Flag[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export const bunOnlyFlags: Flag[] = [
+  {
+    flag: "-DBUN_SAFE_STACK=1",
+    when: c => usesSafeStack(c),
+    desc: "Hardened: every thread gets the second stack that the libraries compiled with SafeStack keep their arrays on",
+  },
+
   // ─── Build profiling ───
   {
     flag: "-ftime-trace",
@@ -713,8 +786,13 @@ export const bunOnlyFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-fno-pie"],
-    when: c => c.unix && c.abi !== "android",
+    when: c => c.unix && c.abi !== "android" && !c.hardened,
     desc: "No position-independent code (we're a final executable)",
+  },
+  {
+    flag: ["-fPIE", "-DBUN_HARDENED=1", "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1"],
+    when: c => c.hardened,
+    desc: "Hardened: position-independent executable",
   },
   {
     flag: "-fPIC",
@@ -1350,8 +1428,14 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: ["-fno-pic", "-Wl,-no-pie"],
-    when: c => c.linux && c.abi !== "android",
+    when: c => c.linux && c.abi !== "android" && !c.hardened,
     desc: "No PIE (we don't need ASLR; simpler codegen)",
+    toolchain: true,
+  },
+  {
+    flag: ["-fPIE", "-pie"],
+    when: c => c.hardened,
+    desc: "Hardened: position-independent executable",
     toolchain: true,
   },
   {
@@ -1361,17 +1445,15 @@ export const linkerFlags: Flag[] = [
     toolchain: true,
   },
   {
-    flag: [
+    flag: c => [
       "-Wl,--as-needed",
       "-Wl,-z,stack-size=12800000",
-      "-Wl,-z,lazy",
-      "-Wl,-z,norelro",
+      ...(c.hardened ? ["-Wl,-z,now", "-Wl,-z,relro", "-Wl,-z,separate-code"] : ["-Wl,-z,lazy", "-Wl,-z,norelro"]),
       // (no --pack-dyn-relocs=relr: DT_RELR needs glibc ≥ 2.36 to load,
       // and we wrap symbols for portability down to 2.17. With -no-pie
       // there are <500 R_*_RELATIVE entries anyway — not worth the compat
       // break.)
       "-Wl,-O2",
-      "-Wl,--gdb-index",
       "-Wl,-z,combreloc",
       // NOTE: --sort-section=name was here historically; lld ignores it
       // for the default `.text` rule. We also deliberately do NOT pass
@@ -1384,7 +1466,27 @@ export const linkerFlags: Flag[] = [
       "-Wl,--build-id=sha1",
     ],
     when: c => c.linux,
-    desc: "Linux linker tuning: lazy binding, large stack, fast gdb loading",
+    desc: "Linux linker tuning: lazy binding, large stack",
+  },
+  {
+    flag: "-Wl,-z,pack-relative-relocs",
+    when: c => c.relr,
+    desc: "Packed relative relocations (DT_RELR): the file then asks for glibc 2.36 or later",
+  },
+  {
+    flag: "-Wl,-z,noexecstack",
+    when: c => c.hardened,
+    desc: "Hardened: the stack is not executable (lld's default, stated)",
+  },
+  {
+    flag: "-Wl,--gdb-index",
+    when: c => c.linux && c.debugInfo !== "none",
+    desc: "Fast gdb loading",
+  },
+  {
+    flag: "-Wl,--strip-debug",
+    when: c => (c.linux || c.freebsd) && c.debugInfo === "none",
+    desc: "Leave out the debug sections of the Rust crates and the prebuilt libraries too",
   },
   {
     flag: "-Wl,--gc-sections",
@@ -1402,7 +1504,7 @@ export const linkerFlags: Flag[] = [
   },
   {
     flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
-    when: c => c.linux && writesLinkerMap(c),
+    when: c => (c.linux || c.freebsd) && writesLinkerMap(c),
     desc: "Linker map",
   },
   {
@@ -1517,7 +1619,7 @@ export const linkerFlags: Flag[] = [
     // An uncompressed bun-profile is ~2x larger and every `--compile` test
     // copies it, so leaving it uncompressed times CI out.
     flag: "-Wl,--compress-debug-sections=zlib",
-    when: c => c.linux || c.freebsd,
+    when: c => (c.linux || c.freebsd) && c.debugInfo !== "none",
     desc: "Compress ELF debug sections",
   },
   {
@@ -1529,24 +1631,15 @@ export const linkerFlags: Flag[] = [
 
 /**
  * Release Rust reaches the link as ThinLTO bitcode (rust.ts) and the linker optimises it: together with the C/C++
- * where `lto` is on, by itself where it is off. ASan builds link machine code.
+ * where `lto` is on, by itself where it is off. ASan builds and `--rust-lto=off` link machine code.
  */
 export function rustLtoInLink(c: Config): boolean {
-  return c.release && !c.asan;
+  return c.release && !c.asan && c.rustLto;
 }
 
 /** The link optimises bitcode: the C/C++'s (`lto`), the Rust crates', or both. */
 function linkRunsLto(c: Config): boolean {
   return c.lto || rustLtoInLink(c);
-}
-
-/**
- * An lld does the link: every one but a native macOS link, which goes through Apple's ld. That linker takes none of
- * lld's LTO-level or ICF options (it runs clang's libLTO at its default level and has no ICF), so those are stated
- * only here.
- */
-export function linksWithLld(c: Config): boolean {
-  return !c.darwin || c.crossTarget !== undefined;
 }
 
 /**
@@ -1610,26 +1703,18 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "linker.order");
 }
 
-export function islandsPlanPath(cfg: Pick<Config, "buildDir">): string {
-  return join(cfg.buildDir, "islands.plan");
-}
-
-export function freshIslandsPlanPath(cfg: Config): string {
-  return join(cfg.buildDir, `${bunExeName(cfg)}${cfg.exeSuffix}.islands-plan`);
-}
-
 /**
- * Whether the link writes its map(s); mirrors the map flags above (linux: the
- * `-icf=safe` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
+ * Whether the link writes its map(s); mirrors the map flags above (linux and
+ * freebsd: the `-Map` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
  * `linkerMapOutputs()` names them: bun.ts declares those to ninja as the link's
  * outputs, and ci.ts ships them in the profile zip — on windows the trace-order
  * step cannot work without them (see the `/lldmap` entry).
  */
 export function writesLinkerMap(
-  cfg: Pick<Config, "linux" | "darwin" | "windows" | "release" | "asan" | "valgrind">,
+  cfg: Pick<Config, "linux" | "darwin" | "windows" | "freebsd" | "release" | "asan" | "valgrind" | "linkerMap">,
 ): boolean {
-  if (!cfg.release) return false;
-  if (cfg.linux) return !cfg.asan && !cfg.valgrind;
+  if (!cfg.release || !cfg.linkerMap) return false;
+  if (cfg.linux || cfg.freebsd) return !cfg.asan && !cfg.valgrind;
   return cfg.darwin || cfg.windows;
 }
 
@@ -1682,7 +1767,6 @@ export function linkDepends(cfg: Config): string[] {
       ? [join(cfg.cwd, "src/symbols.txt")]
       : [exportListPath(cfg), versionScriptPath(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
-  if (cfg.islands) depends.push(islandsPlanPath(cfg));
   return depends;
 }
 
@@ -1939,6 +2023,15 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
     out.push(...resolveFlagValue(f.flag, cfg));
   }
   if (!cfg.windows) out.push(cfg.darwin ? "-Wl,-dead_strip" : "-Wl,--gc-sections");
+  return out;
+}
+
+export function computeHardeningFlags(cfg: Config): string[] {
+  const out: string[] = [];
+  for (const f of globalFlags) {
+    if (!f.hardening || (f.when && !f.when(cfg))) continue;
+    out.push(...resolveFlagValue(f.flag, cfg));
+  }
   return out;
 }
 

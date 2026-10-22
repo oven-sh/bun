@@ -171,7 +171,7 @@ A compiled executable does not read its own command line as Bun flags. `./server
 
 `bun compile --trim` does not turn the flag on. `eval` and `new Function` work in a trimmed executable as in any other.
 
-If you pass both, the flag also makes the executable smaller: Bun leaves out the JavaScript parser and the interpreter, which nothing can reach any more. See [Turn off code from strings](/bundler/aot-size#turn-off-code-from-strings).
+If you pass both, the flag also makes the executable smaller: Bun removes the JavaScript parser and the interpreter, since nothing can use them. See [Turn off code from strings](/bundler/aot-size#turn-off-code-from-strings).
 
 ### Files on disk are not part of the program
 

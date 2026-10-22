@@ -1,0 +1,10 @@
+Buffer.alloc TypeError ERR_INVALID_ARG_TYPE
+Buffer.alloc asked: 
+readUInt8 TypeError ERR_INVALID_ARG_TYPE
+readUInt8 asked: 
+write TypeError ERR_INVALID_ARG_TYPE
+write asked: 
+indexOf TypeError ERR_INVALID_ARG_TYPE
+indexOf asked: 
+Buffer.concat TypeError ERR_INVALID_ARG_TYPE
+Buffer.concat asked: 

@@ -1,5 +1,5 @@
 // trees/fuse/wide.ts: the wide tree of fuse.js: a gate of correctness for a typed fuse.js 7.0.0 (dist/fuse.mjs typed in place), not a measure. Each scenario runs inside a try, so one run names every fault. The reference is the same file run plainly on the untouched package.
-// Three programs out of one file (see run.py): what stands between C marks is cut for `born` (no index comes in from outside); between D marks stands carry(), which `doors` takes from an untyped file; between L marks stands the one road that hands JSON.parse's own result to the package.
+// Three programs out of one file (see run.py): the text between C marks is removed for .internal (no index comes in from outside); between D marks is carry(), which .boundary imports from an untyped file; between L marks is the one call that passes JSON.parse's own result to the package.
 import Fuse, { type Expression, type FuseIndex, type IFuseOptions } from "fuse.js";
 
 /*C*//*D*/const carry = <T,>(x: T): T => JSON.parse(JSON.stringify(x));/*D*//*C*/

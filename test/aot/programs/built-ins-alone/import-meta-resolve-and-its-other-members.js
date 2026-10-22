@@ -1,0 +1,1 @@
+console.log(typeof import.meta.resolve("./other.js"), typeof import.meta.dirname, typeof import.meta.filename, typeof import.meta.file, typeof import.meta.path, import.meta.env === process.env, import.meta.hot === undefined);

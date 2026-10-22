@@ -403,18 +403,7 @@ struct SubspaceForInit {
         Destructible,
         Custom } cellType;
     bool hasOutputConstraints;
-    bool usesLowerTierWithAOT;
 };
-
-template<typename T>
-inline constexpr bool mayBeCallable = [] {
-    if constexpr (std::is_base_of_v<JSC::InternalFunction, T> || std::is_base_of_v<JSC::JSCallee, T>)
-        return true;
-    else if constexpr (requires { T::StructureFlags; })
-        return !!(T::StructureFlags & JSC::OverridesGetCallData);
-    else
-        return true;
-}();
 
 JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM&, const SubspaceForInit&, SubspaceSlots, JSC::HeapCellType& (*getCustomHeapCellType)(JSHeapData&));
 
@@ -426,7 +415,6 @@ inline constexpr SubspaceForInit subspaceForInit {
         : std::is_base_of_v<JSC::JSDestructibleObject, T> ? SubspaceForInit::CellType::Destructible
                                                           : SubspaceForInit::CellType::Cell,
     static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(T::visitOutputConstraints) != static_cast<void (*)(JSC::JSCell*, JSC::SlotVisitor&)>(JSC::JSCell::visitOutputConstraints),
-    std::is_base_of_v<JSC::JSDestructibleObject, T> && !mayBeCallable<T>,
 };
 
 // True when T::destroy is JSCell::destroy, which runs no destructor. A non-public destroy can only be an override.

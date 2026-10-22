@@ -1,6 +1,5 @@
-// `import * as ns` of a CommonJS package in an executable. Bun's bundler turns a file made only of top-level `exports.name = value`
-// into an ES module: `ns` is then its exports object, without a `default` key. Every other CommonJS file gets `default` first.
-// `bun run` differs from both (a real module namespace has sorted keys), so every importer is compared with `bun build --compile`.
+// `import * as ns` of a CommonJS package in an executable: a real module namespace, with sorted keys and a `default`, as under `bun run`. Bun's bundler differs: it turns a file made only of
+// top-level `exports.name = value` into an ES module, whose `ns` is its exports object without a `default` key, and gives every other CommonJS file `default` first.
 import { pkg, type Case } from "./run-packages";
 
 export const cases: Case[] = [

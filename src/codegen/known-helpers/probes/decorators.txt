@@ -1,0 +1,15 @@
+function probeDecorator(...probeArguments) {}
+function probeFactory(...probeArguments) {
+  return probeDecorator;
+}
+@probeDecorator
+export class ProbeDecorated {
+  @probeDecorator probeField = 1;
+  @probeFactory() static probeStaticField = 2;
+  @probeDecorator probeMethod() {}
+  @probeDecorator get probeAccessor() {
+    return 1;
+  }
+  @probeDecorator static probeStaticMethod() {}
+  @probeDecorator ["probe" + "Computed"]() {}
+}

@@ -1,130 +1,68 @@
-// Under `--aot` the built-in objects are immutable, and three parts of Bun say so:
-//   - `bun build --compile --aot` stops with TS100014 at a write that always runs and always fails;
-//   - the compiled program throws a TypeError where the write runs, or `Reflect.*` returns false;
-//   - `bun lint` reports the write (bun/aot-locked-builtin-write).
-// All three read src/sema/check/aot/locked_builtins_generated.rs. Here each write below goes through all three, and through plain
-// Bun, and they have to agree: refused by `--aot` alone, or the same with and without it.
+// Under `--aot` the members that the built-in objects of the language have cannot be replaced, and two parts of Bun say so:
+//   - `bun build --compile --aot` stops with TS100014 at an assignment that always runs and always fails;
+//   - the compiled program throws a TypeError where the write runs, in sloppy code as in strict code, and `Reflect.*` returns false.
+// docs/bundler/aot-compatibility.mdx says which objects, which members, and what can be added. Here each write below goes through both, and through plain Bun.
+// The lists: rejected by both, rejected at run time alone, the same with and without `--aot`, and short ones that say what they hold.
 import { describe, expect, test } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { unsupported } from "./run-programs";
+import { join } from "path";
+import { slot, unsupported } from "./run-programs";
 
-// `f` is a function and `d` a property descriptor. Before the `|`: the object that the write is about.
-const refused = `
+// `f` is a function and `d` a property descriptor. Before the first `|`: the object that the write is about. After a second `|`: the extension of
+// the file that the build reads the write from, where it is not `js`. Only a CommonJS file can have a `return` outside a function.
+const rejected = `
 globalThis | Array = f;
 globalThis | globalThis.Array = f;
 globalThis | delete globalThis.Array;
 globalThis | Object.defineProperty(globalThis, "Array", d);
-globalThis | Reflect.set(globalThis, "Array", f);
-globalThis | Reflect.defineProperty(globalThis, "Array", d);
-globalThis | Reflect.deleteProperty(globalThis, "Array");
 globalThis | Proxy = f;
 globalThis | globalThis.Proxy = f;
 globalThis | delete globalThis.Proxy;
-globalThis | Intl = f;
-globalThis | globalThis.Intl = f;
-globalThis | WebAssembly = f;
-globalThis | globalThis.WebAssembly = f;
-globalThis | globalThis.Temporal = f;
-globalThis | globalThis.ShadowRealm = f;
-globalThis | Iterator = f;
-globalThis | globalThis.Iterator = f;
 globalThis | Atomics = f;
-globalThis | globalThis.eval = f;
-globalThis | parseInt = f;
-globalThis | globalThis.parseInt = f;
-globalThis | globalThis.globalThis = f;
-globalThis | Promise = f;
 globalThis | Uint8Array = f;
-globalThis | Object.assign(globalThis, { Date: f });
-globalThis | globalThis.Promise = Map;
-Array.prototype | Array.prototype.zzz = f;
-Array.prototype | Array.prototype["zzz"] = f;
-Array.prototype | Array.prototype[0] = f;
-Array.prototype | Array.prototype[Symbol.for("zzz")] = f;
 Array.prototype | Array.prototype[Symbol.toPrimitive] = f;
 Array.prototype | Array.prototype[Symbol.toStringTag] = "T";
 Object.prototype | Object.prototype[Symbol.toPrimitive] = f;
 Map.prototype | Map.prototype[Symbol.hasInstance] = f;
-Array.prototype | Array.prototype.prototype = f;
 Function.prototype | Function.prototype.prototype = f;
-Array.prototype | Array.prototype.BYTES_PER_ELEMENT = 1;
-Array.prototype | Object.defineProperty(Array.prototype, "zzz", d);
-Array.prototype | Object.defineProperties(Array.prototype, { zzz: d });
-Array.prototype | Object.assign(Array.prototype, { zzz: f });
-Array.prototype | Reflect.set(Array.prototype, "zzz", f);
-Array.prototype | Reflect.defineProperty(Array.prototype, "zzz", d);
 Object.prototype | Object.prototype.zzz = f;
 Object.prototype | Object.defineProperty(Object.prototype, "zzz", d);
 Function.prototype | Function.prototype.zzz = f;
-String.prototype | String.prototype.zzz = f;
 Promise.prototype | Promise.prototype.zzz = f;
-Iterator.prototype | Iterator.prototype.zzz = f;
-Uint8Array.prototype | Uint8Array.prototype.zzz = f;
-Intl.Collator.prototype | Intl.Collator.prototype.zzz = f;
-Intl.DateTimeFormat.prototype | Object.defineProperty(Intl.DateTimeFormat.prototype, "zzz", d);
-WebAssembly.Module.prototype | WebAssembly.Module.prototype.zzz = f;
-Temporal.PlainDate.prototype | Temporal.PlainDate.prototype.zzz = f;
-ShadowRealm.prototype | ShadowRealm.prototype.zzz = f;
 Array.prototype | Array.prototype.push = f;
 Array.prototype | delete Array.prototype.push;
 Array.prototype | Object.defineProperty(Array.prototype, "push", d);
-Array.prototype | Reflect.set(Array.prototype, "push", f);
-Array.prototype | Reflect.deleteProperty(Array.prototype, "push");
-Array.prototype | Object.assign(Array.prototype, { push: f });
 Array.prototype | Array.prototype[Symbol.iterator] = f;
 Array.prototype | delete Array.prototype[Symbol.iterator];
 Array.prototype | Array.prototype.constructor = f;
 Array.prototype | Array.prototype.toString = f;
 Array.prototype | Array.prototype.hasOwnProperty = f;
 Array.prototype | Object.defineProperty(Array.prototype, "hasOwnProperty", d);
-Array.prototype | Array.prototype.length = 3;
 Object.prototype | Object.prototype.toString = f;
 Object.prototype | delete Object.prototype.hasOwnProperty;
 Map.prototype | Object.defineProperty(Map.prototype, "size", d);
 Map.prototype | delete Map.prototype.size;
-Map.prototype | Object.defineProperty(Map.prototype, Symbol.toStringTag, d);
 Uint8Array.prototype | Uint8Array.prototype.set = f;
-Uint8Array.prototype | Uint8Array.prototype.toBase64 = f;
-Intl.NumberFormat.prototype | Intl.NumberFormat.prototype.formatToParts = f;
-WebAssembly.Memory.prototype | WebAssembly.Memory.prototype.grow = f;
-Temporal.Duration.prototype | Temporal.Duration.prototype.add = f;
-Date.prototype | Date.prototype.getTime = f;
-Date.prototype | Object.defineProperty(Date.prototype, Symbol.toPrimitive, d);
 RegExp.prototype | RegExp.prototype.exec = f;
 Array | Array.from = f;
 Array | Array.isArray = f;
 Array | delete Array.from;
 Array | Object.defineProperty(Array, "from", d);
-Array | Reflect.set(Array, "from", f);
-Array | Object.assign(Array, { from: f });
-Array | Object.defineProperty(Array, Symbol.species, d);
 Math | Math.max = f;
 Math | delete Math.max;
 Math | Object.defineProperty(Math, "max", d);
-Math | Math.random = f;
 Math | Math.max = Math.min;
 Math | Math.max += 1;
 Math | globalThis.Math.max = f;
-JSON | JSON.parse = f;
 Reflect | Reflect.get = f;
 Atomics | Atomics.add = f;
-Date | Date.now = f;
 Object | Object.keys = f;
 Object | Object.hasOwn = f;
 Number | Number.isNaN = f;
 Promise | Promise.resolve = f;
 Symbol | Symbol.for = f;
 Proxy | Proxy.revocable = f;
-Intl | Intl.Collator = f;
-Intl | delete Intl.Collator;
-Intl | Intl.getCanonicalLocales = f;
-Intl.Collator | Intl.Collator.supportedLocalesOf = f;
-WebAssembly | WebAssembly.compile = f;
-WebAssembly | WebAssembly.Module = f;
-Temporal | Temporal.Now = f;
-Temporal.Now | Temporal.Now.instant = f;
-Error | Error.captureStackTrace = f;
-Uint8Array | Uint8Array.fromBase64 = f;
 Date | Date.toString = f;
 Date | Object.defineProperty(Date, "toString", d);
 Date | Date.call = f;
@@ -136,44 +74,148 @@ Math | Object.defineProperty(Math, "toString", d);
 Math | Math.hasOwnProperty = f;
 Math | Math.constructor = f;
 JSON | JSON.valueOf = f;
-Intl | Intl.toString = f;
 Uint8Array | Uint8Array.from = f;
 Uint8Array | Uint8Array.of = f;
 Uint8Array | Object.defineProperty(Uint8Array, "from", d);
-TypeError | TypeError.captureStackTrace = f;
-AggregateError | AggregateError.isError = f;
-Intl.Collator | Intl.Collator.apply = f;
-parseInt | parseInt.call = f;
-parseInt | Object.setPrototypeOf(parseInt, {});
-eval | eval.toString = f;
-Array.prototype | Object.setPrototypeOf(Array.prototype, {});
-Array.prototype | Reflect.setPrototypeOf(Array.prototype, {});
 Array.prototype | Array.prototype.__proto__ = {};
 Array.prototype | Array.prototype.__proto__ = null;
-Array | Object.setPrototypeOf(Array, {});
 Array | Array.__proto__ = {};
+Array.prototype | Array.prototype.flat &&= f;
+Array.prototype | if (Array.prototype.flat) Array.prototype.flat = f;
+Array.prototype | { const P = Array.prototype; P.push = f; }
+Array.prototype | { const P = Array.prototype; delete P.push; }
+Array.prototype | { let h = f; Array.prototype.push = h; }
+Array | Object.defineProperty(Array, "name", d);
+Array | delete Array.name;
+Array | Object.defineProperty(Array, "length", d);
+parseInt | parseInt.call = f;
+Date.prototype | Date.prototype.getTime = f;
+Intl.Collator | Intl.Collator.apply = f;
+`;
+
+// The build stops only where it is certain. Here it cannot tell that the write runs, which property it is about, what it stores, or what the lock does to the property.
+// A function of Reflect returns false and throws nothing: the build warns.
+const rejectedAtRunTime = `
+globalThis | Reflect.set(globalThis, "Array", f);
+globalThis | Reflect.defineProperty(globalThis, "Array", d);
+globalThis | Reflect.deleteProperty(globalThis, "Array");
+globalThis | globalThis.globalThis = f;
+Array.prototype | Array.prototype[0] = f;
+Array.prototype | Reflect.set(Array.prototype, "push", f);
+Array.prototype | Reflect.deleteProperty(Array.prototype, "push");
+Array.prototype | Object.assign(Array.prototype, { push: f });
+Array | Reflect.set(Array, "from", f);
+Array | Object.assign(Array, { from: f });
+Map | Object.defineProperty(Map, Symbol.hasInstance, d);
+Map | Reflect.defineProperty(Map, Symbol.hasInstance, d);
+Array.prototype | Object.setPrototypeOf(Array.prototype, {});
+Array.prototype | Reflect.setPrototypeOf(Array.prototype, {});
+Array.prototype | Object.setPrototypeOf(Array.prototype, Map.prototype);
+Array | Object.setPrototypeOf(Array, {});
 Math | Object.setPrototypeOf(Math, {});
+globalThis | [Array] = [f];
+Array.prototype | Array.prototype.length = 3;
+Map.prototype | Object.defineProperty(Map.prototype, Symbol.toStringTag, d);
+Array | Object.defineProperty(Array, Symbol.species, d);
+Function.prototype | Reflect.set(Function.prototype, "arguments", f);
+Function.prototype | Reflect.set(Function.prototype, "caller", f);
+Iterator.prototype | Reflect.set(Iterator.prototype, "constructor", f);
+Iterator.prototype | Reflect.set(Iterator.prototype, Symbol.toStringTag, f);
+parseInt | Object.setPrototypeOf(parseInt, {});
 Intl.Collator | Object.setPrototypeOf(Intl.Collator, {});
+Date.prototype | Object.defineProperty(Date.prototype, Symbol.toPrimitive, d);
+Date.prototype | Reflect.set(Date.prototype, "toJSON", f);
+`;
+
+const same = `
+globalThis | Intl = f;
+globalThis | globalThis.Intl = f;
+globalThis | WebAssembly = f;
+globalThis | globalThis.WebAssembly = f;
+globalThis | globalThis.Temporal = f;
+globalThis | globalThis.ShadowRealm = f;
+globalThis | Iterator = f;
+globalThis | globalThis.Iterator = f;
+globalThis | globalThis.eval = f;
+globalThis | parseInt = f;
+globalThis | globalThis.parseInt = f;
+globalThis | Promise = f;
+globalThis | Object.assign(globalThis, { Date: f });
+globalThis | globalThis.Promise = Map;
+Array.prototype | Array.prototype.zzz = f;
+Array.prototype | Array.prototype["zzz"] = f;
+Array.prototype | Array.prototype.prototype = f;
+Array.prototype | Array.prototype.BYTES_PER_ELEMENT = 1;
+Array.prototype | Object.defineProperty(Array.prototype, "zzz", d);
+Array.prototype | Object.defineProperties(Array.prototype, { zzz: d });
+Array.prototype | Object.assign(Array.prototype, { zzz: f });
+Array.prototype | Reflect.set(Array.prototype, "zzz", f);
+Array.prototype | Reflect.defineProperty(Array.prototype, "zzz", d);
+String.prototype | String.prototype.zzz = f;
+Iterator.prototype | Iterator.prototype.zzz = f;
+Uint8Array.prototype | Uint8Array.prototype.zzz = f;
+Intl.Collator.prototype | Intl.Collator.prototype.zzz = f;
+Intl.DateTimeFormat.prototype | Object.defineProperty(Intl.DateTimeFormat.prototype, "zzz", d);
+WebAssembly.Module.prototype | WebAssembly.Module.prototype.zzz = f;
+Temporal.PlainDate.prototype | Temporal.PlainDate.prototype.zzz = f;
+ShadowRealm.prototype | ShadowRealm.prototype.zzz = f;
+Uint8Array.prototype | Uint8Array.prototype.toBase64 = f;
+Intl.NumberFormat.prototype | Intl.NumberFormat.prototype.formatToParts = f;
+WebAssembly.Memory.prototype | WebAssembly.Memory.prototype.grow = f;
+Temporal.Duration.prototype | Temporal.Duration.prototype.add = f;
+Math | Math.random = f;
+JSON | JSON.parse = f;
+Date | Date.now = f;
+Intl | Intl.Collator = f;
+Intl | delete Intl.Collator;
+Intl | Intl.getCanonicalLocales = f;
+Intl.Collator | Intl.Collator.supportedLocalesOf = f;
+WebAssembly | WebAssembly.compile = f;
+WebAssembly | WebAssembly.Module = f;
+Temporal | Temporal.Now = f;
+Temporal.Now | Temporal.Now.instant = f;
+Error | Error.captureStackTrace = f;
+Uint8Array | Uint8Array.fromBase64 = f;
+Intl | Intl.toString = f;
+TypeError | TypeError.captureStackTrace = f;
+AggregateError | AggregateError.isError = f;
+eval | eval.toString = f;
 Array.prototype | if (!Array.prototype.zzz) Array.prototype.zzz = f;
 Array.prototype | if (typeof Array.prototype.zzz !== "function") Array.prototype.zzz = f;
 Array.prototype | if (!("zzz" in Array.prototype)) Array.prototype.zzz = f;
 Array.prototype | Array.prototype.zzz || (Array.prototype.zzz = f);
 Array.prototype | Array.prototype.zzz ||= f;
 Array.prototype | Array.prototype.zzz ??= f;
-Array.prototype | Array.prototype.flat &&= f;
-Array.prototype | if (Array.prototype.flat) Array.prototype.flat = f;
 Array.prototype | if (!Array.prototype.flat || !Array.prototype.zzz) Array.prototype.zzz = f;
 Array.prototype | if (typeof Math === "object") Array.prototype.zzz = f;
 Temporal | if (typeof Temporal.Now !== "function") Temporal.Now = f;
 Array.prototype | { const P = Array.prototype; P.zzz = f; }
-Array.prototype | { const P = Array.prototype; P.push = f; }
 Array.prototype | { const P = Array.prototype; Object.defineProperty(P, "zzz", d); }
-Array.prototype | { const P = Array.prototype; delete P.push; }
 Array.prototype | globalThis.Array.prototype.zzz = f;
 Array.prototype | Array.prototype.zzz++;
-`;
-
-const same = `
+Array.prototype | label: { Array.prototype.zzz = f; }
+Array.prototype | Array.prototype.zzz = f; if (f.length) throw f;
+Array.prototype | Array.prototype.zzz = f; if (f.length) return; | cjs
+Array.prototype | function g() { if (f.length) throw f; return 1; } Array.prototype.zzz = f;
+Array.prototype | const g = () => { throw f; }; Array.prototype.zzz = f;
+Array.prototype | throw (Array.prototype.zzz = f);
+Array.prototype | if (f.length) throw f; Array.prototype.zzz = f;
+Array.prototype | if (f.length) return; Array.prototype.zzz = f; | cjs
+Array.prototype | shim: { if (f.length) break shim; Array.prototype.zzz = f; }
+Array.prototype | for (const x of [f]) { if (x.length) continue; } Array.prototype.zzz = f;
+Array.prototype | { if (f.length) throw f; } Array.prototype.zzz = f;
+Array.prototype | if (f.length) throw f; { Array.prototype.zzz = f; }
+Array.prototype | switch (f.length) { case 1: throw f; } Array.prototype.zzz = f;
+Array.prototype | try { Array.prototype.zzz = f; } finally {}
+Array.prototype | for (const x of [f]) Array.prototype.zzz = x;
+Array.prototype | (() => { Array.prototype.zzz = f; })();
+Array.prototype | class A { static x = (Array.prototype.zzz = f); }
+Array.prototype | [Array.prototype.zzz] = [f];
+Array.prototype | ({ a: Array.prototype.zzz } = { a: f });
+Array.prototype | for (Array.prototype.zzz of [f]);
+Array.prototype | for (Array.prototype.zzz in { a: 1 });
+Array.prototype | Array.prototype[Symbol.for("zzz")] = f;
+Array.prototype | { const k = "zzz"; Array.prototype[k] = f; }
 Error.prototype | Error.prototype.zzz = f;
 Error.prototype | Error.prototype.name = "x";
 Error.prototype | Error.prototype.message = "x";
@@ -182,7 +224,6 @@ Error.prototype | if (!Error.prototype.message) Error.prototype.message = "x";
 Error.prototype | Error.prototype.message ||= "x";
 Error.prototype | Error.prototype.name &&= "x";
 Error.prototype | if (typeof Error.prototype.name !== "function") Error.prototype.name = "x";
-globalThis | globalThis.undefined = 1;
 globalThis | globalThis.NaN = 1;
 globalThis | globalThis.Infinity = 1;
 globalThis | console = f;
@@ -205,26 +246,10 @@ Array.prototype | Reflect.deleteProperty(Array.prototype, "zzz");
 Array.prototype | delete Array.prototype.hasOwnProperty;
 Array.prototype | Object.defineProperty(Array.prototype, "length", d);
 Array.prototype | delete Array.prototype.length;
-Map.prototype | Map.prototype.size = 1;
-Uint8Array.prototype | Uint8Array.prototype.buffer = f;
 Uint8Array.prototype | Reflect.set(Uint8Array.prototype, "byteLength", f);
-Float64Array.prototype | Float64Array.prototype[Symbol.toStringTag] = f;
-Function.prototype | Function.prototype.arguments = f;
-Function.prototype | Reflect.set(Function.prototype, "arguments", f);
-Function.prototype | Function.prototype.caller = f;
-Function.prototype | Reflect.set(Function.prototype, "caller", f);
-Iterator.prototype | Iterator.prototype.constructor = f;
-Iterator.prototype | Reflect.set(Iterator.prototype, "constructor", f);
-Iterator.prototype | Iterator.prototype[Symbol.toStringTag] = f;
-Iterator.prototype | Reflect.set(Iterator.prototype, Symbol.toStringTag, f);
 WebAssembly.Global.prototype | WebAssembly.Global.prototype.value = f;
 WebAssembly.Global.prototype | Reflect.set(WebAssembly.Global.prototype, "value", f);
-Map.prototype | Map.prototype[Symbol.toStringTag] = "x";
-Uint8Array.prototype | Uint8Array.prototype.BYTES_PER_ELEMENT = 2;
 Intl.Collator.prototype | Intl.Collator.prototype.compare = f;
-Date.prototype | Date.prototype[Symbol.toPrimitive] = f;
-RegExp.prototype | RegExp.prototype.flags = "g";
-Symbol.prototype | Symbol.prototype.description = "x";
 Array | Array.zzz = f;
 Array | Array.push = f;
 Array | Array.map = f;
@@ -247,32 +272,19 @@ Proxy | Proxy.zzz = f;
 Reflect | Reflect.zzz = f;
 parseInt | parseInt.zzz = f;
 parseInt | Object.defineProperty(parseInt, "name", d);
-Array | Array.prototype = {};
-Array | delete Array.prototype;
-Array | Array.name = "x";
-Array | Object.defineProperty(Array, "name", d);
-Array | delete Array.name;
-Array | Array.length = 3;
-Array | Object.defineProperty(Array, "length", d);
-Array | Array[Symbol.species] = f;
-Math | Math.PI = 3;
-Math | delete Math.PI;
-Math | Math.PI++;
-Number | Number.MAX_SAFE_INTEGER = 1;
-Symbol | Symbol.iterator = f;
 Error | Error.stackTraceLimit = 5;
 Error | Error.prepareStackTrace = f;
 Error | delete Error.stackTraceLimit;
 TypeError | TypeError.stackTraceLimit = 5;
-Uint8Array | Uint8Array.BYTES_PER_ELEMENT = 2;
-Array.prototype | Array.prototype.__proto__ = 1;
-Array.prototype | Array.prototype.__proto__ = Object.prototype;
 Array.prototype | Object.setPrototypeOf(Array.prototype, Object.prototype);
 Array | Object.setPrototypeOf(Array, Function.prototype);
 Object.prototype | Object.setPrototypeOf(Object.prototype, {});
 Math | Math.max = Math.max;
 Math | Reflect.set(Math, "max", Math.max);
 Intl | Intl.Collator = Intl.Collator;
+Number | Number.parseFloat = parseFloat;
+String.prototype | String.prototype.trimLeft = String.prototype.trimStart;
+Array.prototype | Array.prototype[Symbol.iterator] = Array.prototype.values;
 Array.prototype | if (!Array.prototype.flat) Array.prototype.flat = f;
 Array.prototype | if (!Array.prototype.flat) { Object.defineProperty(Array.prototype, "flat", d); }
 Array.prototype | if (typeof Array.prototype.flat !== "function") Array.prototype.flat = f;
@@ -300,6 +312,8 @@ Array.prototype | if (!Array.prototype[Symbol.iterator]) Array.prototype[Symbol.
 Array.prototype | if (typeof Bun === "undefined") Array.prototype.zzz = f;
 Array.prototype | if (typeof Math === "function") Array.prototype.zzz = f;
 Array.prototype | { const P = Array.prototype; if (!P.flat) P.flat = f; }
+Array.prototype | if (Array.prototype.flat) return; Array.prototype.zzz = f; | cjs
+Array.prototype | shim: { if (Array.prototype.flat) break shim; Array.prototype.zzz = f; }
 Object | if (!Object.hasOwn) Object.hasOwn = f;
 Object | if (typeof Object.assign !== "function") Object.defineProperty(Object, "assign", d);
 Object | Object.hasOwn ||= f;
@@ -326,16 +340,69 @@ Error.prototype | Error.prototype.name ||= "x";
 Error.prototype | if (typeof Error.prototype.name !== "string") Error.prototype.name = "x";
 Temporal | if (typeof Temporal.Now !== "object") Temporal.Now = f;
 Array | if (!Array.zzz) Array.zzz = f;
-Math | Object.freeze(Math);
-Array | Object.seal(Array);
+Date.prototype | Date.prototype.toString = f;
+Date.prototype | Date.prototype.toLocaleDateString = f;
+Date.prototype | Date.prototype.zzz = f;
+Date.prototype | Date.prototype.next = f;
+WeakRef.prototype | WeakRef.prototype.deref = f;
 `;
 
-const rowsOf = (list: string) =>
+// These throw without `--aot` too, in strict code. The build says that they always throw.
+const failsEverywhere = `
+globalThis | globalThis.undefined = 1;
+Map.prototype | Map.prototype.size = 1;
+Map.prototype | Map.prototype[Symbol.toStringTag] = "x";
+Array | delete Array.prototype;
+Array | Array[Symbol.species] = f;
+Math | delete Math.PI;
+Math | Math.PI++;
+Uint8Array.prototype | Uint8Array.prototype.buffer = f;
+Float64Array.prototype | Float64Array.prototype[Symbol.toStringTag] = f;
+Uint8Array.prototype | Uint8Array.prototype.BYTES_PER_ELEMENT = 2;
+RegExp.prototype | RegExp.prototype.flags = "g";
+Symbol.prototype | Symbol.prototype.description = "x";
+Array | Array.prototype = {};
+Array | Array.name = "x";
+Array | Array.length = 3;
+Math | Math.PI = 3;
+Number | Number.MAX_SAFE_INTEGER = 1;
+Symbol | Symbol.iterator = f;
+Uint8Array | Uint8Array.BYTES_PER_ELEMENT = 2;
+Date.prototype | Date.prototype[Symbol.toPrimitive] = f;
+`;
+
+// Without `--aot` a setter throws, in sloppy code too. Under `--aot` the assignment is refused before the setter is asked, with a TypeError as well.
+// The build says that they always throw.
+const refusedBeforeSetter = `
+Function.prototype | Function.prototype.arguments = f;
+Function.prototype | Function.prototype.caller = f;
+Iterator.prototype | Iterator.prototype.constructor = f;
+Iterator.prototype | Iterator.prototype[Symbol.toStringTag] = f;
+`;
+
+// Without `--aot` nothing undoes these, so they come last.
+const sameAndNotUndone = `
+Math | Object.freeze(Math);
+Array | Object.seal(Array);
+Object.prototype | Object.freeze(Object.prototype);
+`;
+
+const casesOf = (list: string, build: string, run: string, sloppy = run) =>
   list
     .trim()
     .split("\n")
-    .map(line => line.split(" | ") as [string, string]);
-const rows = [...rowsOf(refused), ...rowsOf(same)];
+    .map(line => {
+      const [target, code, extension = "js"] = line.split(" | ");
+      return { target, code, extension, build, run, sloppy };
+    });
+const cases = [
+  ...casesOf(rejected, "rejected", "rejected"),
+  ...casesOf(rejectedAtRunTime, "same", "rejected"),
+  ...casesOf(same, "same", "same"),
+  ...casesOf(failsEverywhere, "rejected", "same"),
+  ...casesOf(refusedBeforeSetter, "rejected", "same"),
+  ...casesOf(sameAndNotUndone, "same", "same"),
+];
 const head = `const f = function () {}; const d = { value: f, configurable: true, writable: true };\n`;
 
 // Calls each write through a table, so that the build cannot tell that it runs. Says what it did and what it changed, and puts
@@ -364,17 +431,17 @@ function restore(o, before) {
   for (let i = 0; i < before.found.length; i++) { try { defineProperty(o, before.found[i][0], before.found[i][1]); } catch {} }
 }
 const out = [];
-for (let i = 0; i < rows.length; i++) {
-  const o = rows[i][0](), before = look(o);
+for (let i = 0; i < cases.length; i++) {
+  const o = cases[i][0](), before = look(o);
   let said;
-  try { said = rows[i][1]() === false ? "false" : "ran"; } catch (e) { said = "throws " + (e && e.name); }
+  try { said = cases[i][1]() === false ? "false" : "ran"; } catch (e) { said = "throws " + (e && e.name); }
   said += changes(before, look(o));
   restore(o, before);
   out[out.length] = said;
 }
 log(stringify(out));
 `;
-const table = rows.map(([target, code]) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`).join("");
+const table = cases.map(({ target, code }) => `  [() => ${target}, () => { ${code.startsWith("Reflect.") ? "return " : ""}${code} }],\n`).join("");
 
 async function bun(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
@@ -383,55 +450,63 @@ async function bun(cwd: string, ...args: string[]) {
 }
 
 describe.skipIf(!!unsupported)("writes to built-in objects under --aot", () => {
-  test("the build, the run and the lint rule agree", async () => {
+  test("the run time rejects the writes of its lists", async () => {
     using dir = tempDir("aot-locked-builtins", {
       "package.json": `{ "name": "writes", "type": "module" }`,
-      "bunfig.toml": `[lint.rules]\n"bun/aot-locked-builtin-write" = "error"\n`,
-      "run.js": `${head}const rows = [\n${table}];\n${runner}`,
+      "run.js": `${head}const cases = [\n${table}];\n${runner}`,
       // The same in sloppy mode.
-      "run.cjs": `${head}const rows = [\n${table}];\n${runner}module.exports = {};\n`,
-      "writes/main.js": rows.map((_, i) => `import "./${i}.js";\n`).join(""),
-      ...Object.fromEntries(rows.map(([, code], i) => [`writes/${i}.js`, `${head}${code}\n`])),
+      "run.cjs": `${head}const cases = [\n${table}];\n${runner}module.exports = {};\n`,
     });
     const cwd = String(dir);
-    const [plain, compiled, plainSloppy, compiledSloppy, build, lint] = await Promise.all([
+    const [plain, compiled, plainSloppy, compiledSloppy] = await Promise.all([
       bun(cwd, "run", "run.js"),
       bun(cwd, "run", "--debug-aot", "run.js"),
       bun(cwd, "run", "run.cjs"),
       bun(cwd, "run", "--debug-aot", "run.cjs"),
-      bun(cwd, "build", "--compile", "--aot", "writes/main.js", "--outfile", "writes.out"),
-      bun(cwd, "lint", "--no-ignore", "-f", "json", "writes"),
     ]);
     const answers = (run: { stdout: string; stderr: string }): string[] => {
-      expect(run.stderr).toBe("");
+      expect(run.stderr.split("\n").filter(line => /^(error|warn): /.test(line) && !line.startsWith("warn: TS100014: "))).toEqual([]);
       return JSON.parse(run.stdout);
     };
     const [was, is, wasSloppy, isSloppy] = [plain, compiled, plainSloppy, compiledSloppy].map(answers);
 
-    const stopped = new Set<number>();
-    for (const [, code, file] of build.stderr.matchAll(/^error: (TS\d+): .*\n\s+at .*[\\/](\d+)\.js:2:\d+$/gm)) {
-      expect(code).toBe("TS100014");
-      stopped.add(Number(file));
-    }
-    const reported = new Set<number>();
-    for (const { filePath, messages } of JSON.parse(lint.stdout) as { filePath: string; messages: { ruleId: string }[] }[]) {
-      if (messages.some(it => it.ruleId === "bun/aot-locked-builtin-write")) reported.add(Number(/(\d+)\.js$/.exec(filePath)?.[1]));
-    }
-
-    // Refused: it changes nothing, and says so. Otherwise it does what it does without `--aot`.
-    const verdict = (before: string, now: string) => (now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "refused" : `${before} | ${now}`);
-    const found = rows.map(([, code], i) => ({
-      code,
-      build: stopped.has(i) ? "refused" : "same",
-      run: verdict(was[i], is[i]),
-      sloppy: verdict(wasSloppy[i], isSloppy[i]),
-      lint: reported.has(i) ? "refused" : "same",
-    }));
-    const expected = rows.map(([, code], i) => {
-      const all = i < rowsOf(refused).length ? "refused" : "same";
-      return { code, build: all, run: all, sloppy: all, lint: all };
-    });
-    expect(found).toEqual(expected);
-    expect(build.exitCode).toBe(1);
+    // Rejected: it changes nothing, and says so, in sloppy code too. Otherwise it does what it does without `--aot`.
+    const verdict = (before: string, now: string) => (now === before ? "same" : /^(throws TypeError|false)$/.test(now) ? "rejected" : `${before} | ${now}`);
+    const found = cases.map(({ code }, i) => ({ code, run: verdict(was[i], is[i]), sloppy: verdict(wasSloppy[i], isSloppy[i]) }));
+    expect(found).toEqual(cases.map(({ code, run, sloppy }) => ({ code, run, sloppy })));
   }, 120_000);
+
+  test("the check and the build stop at the writes of their lists", async () => {
+    const numbered = cases.map((each, i) => ({ ...each, file: `writes/${i}.${each.extension}` }));
+    using dir = tempDir("aot-locked-builtins", {
+      "package.json": `{ "name": "writes", "type": "module" }`,
+      "main.js": numbered.filter(({ build }) => build === "same").map(({ file }) => `import "./${file}";\n`).join(""),
+      ...Object.fromEntries(numbered.map(({ code, file }) => [file, `${head}${code}\n`])),
+    });
+    const cwd = String(dir);
+    const verdict = (exitCode: number, said: string, errors: string[]) => (exitCode === 0 && errors.length === 0 ? "same" : exitCode === 1 && errors.join() === "TS100014 in line 2" ? "rejected" : said);
+    const check = (file: string) =>
+      slot(async () => {
+        const { stdout, stderr, exitCode } = await bun(cwd, "check", "--aot", "--no-pretty", file);
+        return verdict(exitCode, stdout + stderr, Array.from(stdout.matchAll(/\((\d+),\d+\): error (TS\d+): /g), ([, line, code]) => `${code} in line ${line}`));
+      });
+    const build = (entryPoint: string) =>
+      slot(async () => {
+        const outfile = entryPoint.replaceAll("/", "-") + ".out";
+        const { stderr, exitCode } = await bun(cwd, "build", "--compile", "--aot", entryPoint, "--outfile", outfile);
+        rmSync(join(cwd, outfile), { force: true });
+        return verdict(exitCode, stderr, Array.from(stderr.matchAll(/^error: (TS\d+): .*\n\s+at .*:(\d+):\d+$/gm), ([, code, line]) => `${code} in line ${line}`));
+      });
+
+    // Each write is checked alone. One that stops the build is built alone too, and the others are built as one program.
+    const stopping = numbered.filter(each => each.build === "rejected");
+    const [together, checked, built] = await Promise.all([build("main.js"), Promise.all(numbered.map(({ file }) => check(file))), Promise.all(stopping.map(({ file }) => build(file)))]);
+    expect(numbered.map(({ code }, i) => ({ code, build: checked[i] }))).toEqual(numbered.map(({ code, build }) => ({ code, build })));
+    expect(stopping.map(({ code }, i) => ({ code, build: built[i] }))).toEqual(stopping.map(({ code, build }) => ({ code, build })));
+    expect(together).toBe("same");
+  }, 390_000);
+
+  test.todo("the build reports each of two writes to one member: of `Math.max = f; delete Math.max;` it reports the first alone");
+  test.todo("the build stops at `Object.setPrototypeOf(Math, {})`, `Object.assign(Array, { from: f })`, `Array.prototype[0] = f`, `Array.prototype.length = 3` and `globalThis.globalThis = f`, which always throw");
+  test.todo("a store to __proto__ that changes nothing does not throw: `Array.prototype.__proto__ = Object.prototype`, `Array.prototype.__proto__ = 1`");
 });

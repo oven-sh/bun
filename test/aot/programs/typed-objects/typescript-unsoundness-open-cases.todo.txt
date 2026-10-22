@@ -1,0 +1,6 @@
+Each row waits for a rule.
+"any to an element": is list.push(v) in checked code a store into written contents, so that a string for number[] throws?
+"an array of numbers looked at as more": is the element that map hands to a callback typed by context tested against the written contents?
+"what a declared function yields": is the result of `declare function f(): Point`, written in a checked file and held in a variable without an annotation, a typed receiver?
+"a declared constant": is `declare const c: { retries: number }` in a checked file a written location?
+"an overload that lies": is the result of a call tested against the overload's signature when the implementation says unknown?

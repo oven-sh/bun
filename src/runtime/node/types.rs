@@ -1,11 +1,12 @@
 use bun_paths::strings;
 use core::ffi::c_int;
 
-use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
@@ -154,26 +155,6 @@ impl BlobOrStringOrBuffer {
         value: JSValue,
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         Self::from_js_maybe_file(global, value, FileBlobs::Reject)
-    }
-
-    /// Like [`from_js_with_encoding_value_allow_request_response`] but takes an
-    /// already-parsed [`Encoding`], so callers that must inspect the encoding
-    /// first (e.g. to validate odd-length hex) don't coerce `encoding_value`
-    /// twice.
-    pub(crate) fn from_js_with_encoding(
-        global: &JSGlobalObject,
-        value: JSValue,
-        encoding: Encoding,
-    ) -> JsResult<Option<BlobOrStringOrBuffer>> {
-        if value.js_type() == jsc::JSType::DOMWrapper {
-            if let Some(blob) = value.as_class_ref::<Blob>() {
-                return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
-            }
-        }
-        match StringOrBuffer::from_js_with_encoding(global, value, encoding)? {
-            Some(s) => Ok(Some(Self::StringOrBuffer(s))),
-            None => Ok(None),
-        }
     }
 
     pub(crate) fn from_js_with_encoding_value_allow_request_response(
@@ -634,13 +615,12 @@ impl From<bun_core::NodeEncoding> for Encoding {
     }
 }
 
-pub(crate) fn js_assert_encoding_valid(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let value = call_frame.argument(0);
-    let _ = Encoding::assert(value, global, Encoding::Utf8)?;
-    Ok(JSValue::UNDEFINED)
+pub(crate) fn assert_encoding_valid<'a>(
+    cx: &mut JsScope<'a>,
+    encoding: JsLocal<'a>,
+) -> JsResult<()> {
+    Encoding::assert(encoding.to_js(), cx.global(), Encoding::Utf8)?;
+    Ok(())
 }
 
 impl Encoding {
@@ -1157,12 +1137,28 @@ impl PathLikeExt for PathLike<'_> {
     }
 }
 
+/// The system resolves a relative path against its own working directory, which is never a folder of the executable.
+fn from_working_directory_in_executable(str: bun_core::String) -> bun_core::String {
+    use bun_paths::resolve_path::{self, platform};
+    let Some(directory) = bun_core::working_directory_in_executable() else {
+        return str;
+    };
+    let utf8 = str.to_utf8();
+    let path = utf8.slice();
+    if path.is_empty() || bun_paths::is_absolute(path) || strings::contains_char(path, 0) {
+        drop(utf8);
+        return str;
+    }
+    bun_core::String::clone_utf8(resolve_path::join_abs_string::<platform::Auto>(directory, &[path]))
+}
+
 /// `str` as a `PathLike`, NUL-checked; the caller checks the length ([`Valid::path_length`]).
 fn path_like_from_string(
     global: &JSGlobalObject,
     str: bun_core::String,
     will_be_async: bool,
 ) -> JsResult<PathLike<'static>> {
+    let str = from_working_directory_in_executable(str);
     let utf8 = if will_be_async {
         str.into_utf8_with_string_thread_isolated()
     } else {

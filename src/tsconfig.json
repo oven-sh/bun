@@ -11,10 +11,8 @@
   // js and runtime/bake are projects of their own, with settings that only apply there. The `bun init` and
   // `bun create` templates are users' projects: each has its own tsconfig and dependencies that are not installed
   // here (`cli` is a link to `runtime/cli`). The libuv stub generator needs tree-sitter, which is not installed.
-  // aot/prelude/engine is written with the engine's intrinsics for built-in functions, which nothing declares here.
   "exclude": [
     "js",
-    "aot/prelude/engine",
     "runtime/bake",
     "runtime/cli/init",
     "runtime/cli/create",

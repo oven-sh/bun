@@ -1,7 +1,9 @@
-// Under `bun test` a mock may put another value in the place of what a module exports. What the compiler has concluded from the initializer of an exported variable, that `N` is 5,
-// does not hold for the value a mock supplies: that one is held to the declared type, `number`, and to nothing else.
-import { expect, test } from "bun:test";
+// Under `bun test` a mock may put another value in the place of what a module exports. What a compiler may conclude from the initializer of an exported variable, that `N` is 5,
+// does not hold for the value a mock supplies: under `bun test --aot` every function reads the mocked value, as under `bun test`.
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+
+setDefaultTimeout(120_000);
 
 const files = {
   "a.ts": `
@@ -53,7 +55,7 @@ async function seen(cwd: string, args: string[]) {
 }
 
 test.concurrent.each(["main.test.ts", "unmocked.test.ts"])(
-  "bun test --aot %s: a number that a mock supplies is held to the declared type of the export",
+  "bun test --aot %s prints what bun test prints: numbers, strings and booleans that a mock supplies",
   async file => {
     using dir = tempDir("mocked-numbers", files);
     const plain = await seen(String(dir), ["test", "./" + file]);

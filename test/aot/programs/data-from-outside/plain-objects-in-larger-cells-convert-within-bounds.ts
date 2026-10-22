@@ -1,4 +1,4 @@
-// Plain objects of one shape can lie in cells of different sizes. A conversion in place writes no more than the object's own cell holds, whichever size the first converted object had.
+// Plain objects of one shape can lie in cells of different sizes. Each passes a parameter of a record type as it is, whichever size the first one had, and typed and untyped reads of it agree afterwards.
 type Link = { n: number; next: Link | null; previous: Link | null };
 
 function typedLink(n: number): Link {

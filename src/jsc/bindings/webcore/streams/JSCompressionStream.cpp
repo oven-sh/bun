@@ -1,4 +1,5 @@
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSCompressionStream.h"
 
 #include "DOMClientIsoSubspaces.h"
@@ -142,6 +143,7 @@ template<> void JSCompressionStreamConstructor::finishCreation(VM& vm, JSDOMGlob
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(CompressionStream, JSCompressionStreamConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* constructor = uncheckedDowncast<JSCompressionStreamConstructor>(callFrame->jsCallee());
@@ -152,8 +154,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCompressionStreamConst
     CodecOptions options = parseCodecOptions(lexicalGlobalObject, callFrame->argument(1), *format);
     RETURN_IF_EXCEPTION(scope, {});
 
-    void* coder = CompressionStreamCoder__create(lexicalGlobalObject, callFrame, static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0));
-    RETURN_IF_EXCEPTION(scope, {});
+    if (*format == CompressionFormat::Brotli && JSC::isFeatureRemoved(Bun::Feature::BrotliEncoder)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, Bun__throwForRemovedFeature(lexicalGlobalObject, static_cast<uint16_t>(Bun::Feature::BrotliEncoder)));
+
+    void* coder = CompressionStreamCoder__create(static_cast<uint8_t>(*format), false, options.highWaterMark, options.level.has_value(), options.level.value_or(0));
     if (!coder) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "failed to initialize compressor"_s);
         return {};
@@ -210,7 +214,7 @@ JSObject* JSCompressionStream::prototype(VM& vm, JSDOMGlobalObject& globalObject
     return getDOMPrototype<JSCompressionStream>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCompressionStream::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCompressionStreamConstructor, DOMConstructorID::CompressionStream>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

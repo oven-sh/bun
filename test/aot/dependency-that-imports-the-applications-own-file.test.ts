@@ -13,7 +13,7 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n\s+at (\S+):(\d+):\d+$/gm)].map(match => `${match[2]}:${match[3]} ${match[1]}`).sort();
 
 const names = ["core", "select", "testing", "app"];
 const packages = Object.fromEntries(

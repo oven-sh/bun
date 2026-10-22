@@ -1,7 +1,7 @@
 // What the engine has cached about one name on a prototype chain outlives changes to other names of the prototypes, and ends with a change to its own.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const counted = ["operationAOTGetById", "plainly:answered", "operationAOTPutById", "operationAOTGetByValAndCache"];
+const counted = ["operationAOTGetById", "operationAOTGetByIdAndCache", "operationAOTPutById", "operationAOTPutByIdAndCache", "operationAOTGetByValAndCache"];
 const entered = () => counted.map(count);
 function Base() {}
 Base.prototype.method = function () { return 1; };

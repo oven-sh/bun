@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "CryptoAlgorithmRegistry.h"
 
 #if ENABLE(WEB_CRYPTO)
@@ -56,8 +57,9 @@
 
 namespace WebCore {
 
-void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
+NEVER_INLINE void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
 {
+    BUN_REMOVABLE_DEFINITION(WebCrypto, &CryptoAlgorithmRegistry::platformRegisterAlgorithms);
     registerAlgorithm<CryptoAlgorithmAES_CBC>();
     registerAlgorithm<CryptoAlgorithmAES_CFB>();
     registerAlgorithm<CryptoAlgorithmAES_CTR>();

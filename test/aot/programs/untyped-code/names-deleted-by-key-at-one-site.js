@@ -1,5 +1,5 @@
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTDeleteByValAndCache");
+const visits = () => count("operationAOTDeleteByVal") + count("operationAOTDeleteByValSloppy");
 
 const strip = (object, keys) => { for (const key of keys) delete object[key]; return object; };
 const show = object => JSON.stringify(object) + " " + Reflect.ownKeys(object).map(String).join();

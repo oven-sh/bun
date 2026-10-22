@@ -1,0 +1,19 @@
+total 2, 2 rows, sum 303, ids [1,2] {"items":[{"id":1},{"id":2}],"total":2} true true {"items":[{"id":1},{"id":2}],"total":2}
+total 3, 3 rows, sum 1212, ids [3,4,5] {"items":[{"id":3},{"id":4},{"id":5}],"total":3}
+total 3, 3 rows, sum 1212, ids [3,4,5]
+total 0, 0 rows, sum 0, ids []
+total 0, 0 rows, sum 0, ids []
+a wrong element: threw TypeError items.1.id invalid_type
+two wrong elements: threw TypeError items.0.id invalid_type; items.2 invalid_type
+no array: threw TypeError items invalid_type
+a wrong element in a text: threw TypeError items.1.id invalid_type
+two wrong elements in a text: threw TypeError items.0.id invalid_type; items.2 invalid_type
+no array in a text: threw TypeError items invalid_type
+a text that ends early: threw SyntaxError without issues
+a getter adds a row: total 2, 3 rows, sum 606, ids [1,2,3], true true false true
+a getter adds a wrong row: threw TypeError items.2.id invalid_type
+a getter names a property: total 2, 2 rows, sum 303, ids [1,2], true true false true
+a getter freezes: total 2, 2 rows, sum 303, ids [1,2], true true false true
+a getter replaces a row: total 2, 2 rows, sum 1212, ids [10,2], true true false true
+0 total 1, 1 rows, sum 101, ids [1]
+{"rows":2} {"rows":3} 1,2 total 1, 3 rows, sum 606, ids [1,2,3]

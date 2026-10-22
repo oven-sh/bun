@@ -1,6 +1,6 @@
-// JSON.parse(text) whose result goes to a declared type is parsed by code compiled for that type where the text is compact and has the declared keys in the declared order, and by JSON.parse itself otherwise. Whatever the text is, the result is what JSON.parse makes of it.
-// IR+ CallBuiltin JSONOpen
-// IR+ CallBuiltin JSONParseWithShape
+// JSON.parse(text) whose result goes to a declared type is parsed by code compiled for that type where the text is compact and has the declared keys in the declared order, and by JSON.parse itself otherwise. Whatever the text is, an object or array that comes out is what JSON.parse makes of it. A primitive for an object or an array type throws a TypeError at the cast, annotation, parameter or result. A cast refuses no object, so an object passes `as Flat[]` and an object that is no text passes `as string`. `x!` tests nothing.
+// IR+ ^ .* = JSONSourceOpen v
+// IR+ JSONStartsWith v\d+ text="\\x22id\\x22:"
 import { describe, parseEveryText } from "./texts";
 const namedInCode = ["id", "name", "ok", "note", "a", "b", "c", "d", "e", "first", "second", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "sku", "quantity", "items", "tags", "owner", "age", "value", "next", "label", "children", "kind", "radius", "side", "color", "level", "mode", "zero", "flag", "nothing", "anything", "unknown", "object", "when", "table", "run", "big", "constructor", "toString", "list", "left", "right", "sites", "text", "held", "notTexts", "get", "enumerable", "configurable", "extra01", "extra02", "extra03", "extra04", "extra05", "extra06", "extra07", "extra08", "extra09", "extra10", "extra11", "extra12", "extra13", "extra14", "extra15", "extra16"];
 console.log(namedInCode.length);
@@ -229,7 +229,7 @@ for (const given of notTexts) {
   try {
     console.log("not a text:", describe(JSON.parse(given as string) as Flat, 0), conversions);
   } catch (error) {
-    console.log("not a text: threw", (error as Error).name + ":", (error as Error).message, conversions);
+    console.log("not a text: threw", error instanceof TypeError ? "TypeError" : (error as Error).name + ": " + (error as Error).message, conversions);
   }
 }
 

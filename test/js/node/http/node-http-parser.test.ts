@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser") as any;

@@ -57,6 +57,8 @@ pub(crate) mod js_transpiler;
 pub(crate) mod json5_object;
 #[path = "api/JSONCObject.rs"]
 pub(crate) mod jsonc_object;
+#[path = "api/declared_types_testing.rs"]
+pub(crate) mod declared_types_testing;
 #[path = "api/MarkdownObject.rs"]
 pub(crate) mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]
@@ -67,6 +69,8 @@ pub(crate) mod output_file_jsc;
 pub(crate) mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
 pub(crate) mod toml_object;
+#[path = "api/trim_testing.rs"]
+pub(crate) mod trim_testing;
 #[path = "api/UnsafeObject.rs"]
 pub(crate) mod unsafe_object;
 #[path = "api/XMLObject.rs"]

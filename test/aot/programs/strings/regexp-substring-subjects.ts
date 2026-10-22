@@ -1,5 +1,5 @@
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
-const names = ["operationAOTTypedRegExpTest", "operationAOTTypedRegExpTestBoxed", "operationAOTTypedRegExpExec", "operationAOTTypedStringMatchRegExp", "operationAOTTypedStringReplaceRegExpString"];
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp", "operationAOTStringReplaceRegExpString"];
 const entries = () => names.reduce((sum, name) => sum + count(name), 0);
 
 const narrow = "let total = 12 + -345 * x9 - 0x1f; // 678 done, 90";

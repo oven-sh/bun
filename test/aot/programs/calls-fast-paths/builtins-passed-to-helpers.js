@@ -1,10 +1,10 @@
 // A library hands built-ins to a helper that keeps them in the variables of a closure: `overArg(Object.keys, Object)`. What the calls of the helper pass is predicted of its parameters, up to two built-ins a parameter.
-// IR= 1 composed IsBuiltinFunction v[0-9]+ Object$
-// IR= 1 composed IsBuiltinFunction v[0-9]+ Object.keys
-// IR= 1 composed IsBuiltinFunction v[0-9]+ Object.getPrototypeOf
-// IR= 1 composed CallBuiltin Object.keys#
-// IR= 1 composed CallBuiltin Object.getPrototypeOf#
-// IR= 0 threeWays IsBuiltinFunction
+// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(Object\)
+// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(ObjectKeys\)
+// IR= 1 composed TypeTest v[0-9]+ testedType=builtin\(ObjectGetPrototypeOf\)
+// IR= 1 composed CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
+// IR= 1 composed CallBuiltin - \(v[0-9]+\) overload=ObjectGetPrototypeOf/
+// IR= 0 threeWays TypeTest v[0-9]+ testedType=builtin\(
 var root = (typeof globalThis == "object" && globalThis && globalThis.Object === Object && globalThis) || Function("return this")();
 function make(context) {
   var Object = context.Object, Math = context.Math;

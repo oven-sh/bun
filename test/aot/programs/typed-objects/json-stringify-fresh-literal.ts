@@ -29,7 +29,17 @@ function threeLevels(name: string, sides: number): string { return JSON.stringif
 function fourLevels(name: string, sides: number): string { return JSON.stringify({ a: { b: { c: { name, sides }, sides }, name }, sides }); }
 function outerEscapes(name: string, sides: number): string { const outer = { inner: { name, sides } }; const text = JSON.stringify(outer); return text + outer.inner.sides; }
 function siblings(name: string, sides: number): string { return JSON.stringify({ first: { name, sides }, second: { name: name + "2", sides: sides + 1 }, third: { label: name } }); }
-const writers: ((name: string, sides: number) => string)[] = [direct, declared, nested, nestedTwice, changed, grown, shrunk, handedOn, held, twice, inBranch, keysInAnotherOrder, marked, indented, undefinedMember, onlyUndefinedMembers, sharedInner, innerEscapes, innerReadLater, threeLevels, fourLevels, outerEscapes, siblings];
+function changedBetweenCalls(name: string, sides: number): string { const row: Row = { name, sides }; const before = JSON.stringify(row); row.sides = sides + 1; return before + JSON.stringify(row); }
+function innerChangedByClosure(name: string, sides: number): string { const inner: Row = { name, sides }; const outer = { inner }; const bump = (times: number): void => { if (times > 0) { inner.sides += 1; bump(times - 1); } }; bump(2); return JSON.stringify(outer); }
+function bumpInside(box: { inner: Row }, times: number): void { if (times > 0) { box.inner.sides += 1; bumpInside(box, times - 1); } }
+function innerChangedThroughContainer(name: string, sides: number): string { const inner: Row = { name, sides }; const outer = { inner }; const box = { inner }; bumpInside(box, 2); return JSON.stringify(outer); }
+function firstOf(pair: Pair, hops: number): Row { return hops > 0 ? firstOf(pair, hops - 1) : pair.first; }
+function innerReturnedByCallee(name: string, sides: number): string { const pair: Pair = { first: { name, sides }, second: null }; firstOf(pair, 1).sides += 1; return JSON.stringify(pair); }
+let kept: Row | undefined;
+function keepFirst(pair: Pair, hops: number): void { if (hops > 0) keepFirst(pair, hops - 1); else kept = pair.first; }
+function bumpKept(): void { if (kept !== undefined) kept.sides += 1; }
+function innerKeptByCallee(name: string, sides: number): string { const pair: Pair = { first: { name, sides }, second: null }; keepFirst(pair, 1); bumpKept(); return JSON.stringify(pair); }
+const writers: ((name: string, sides: number) => string)[] = [direct, declared, nested, nestedTwice, changed, grown, shrunk, handedOn, held, twice, inBranch, keysInAnotherOrder, marked, indented, undefinedMember, onlyUndefinedMembers, sharedInner, innerEscapes, innerReadLater, threeLevels, fourLevels, outerEscapes, siblings, changedBetweenCalls, innerChangedByClosure, innerChangedThroughContainer, innerReturnedByCallee, innerKeptByCallee];
 const names = ["plain", "", 'quo"te', "back\\slash", "line\nbreak", "é世😀", "\ud800", "a".repeat(300)];
 const numbers = [0, -0, 1, 3, 2.5, -7, 1e21, 1e-7, NaN, Infinity, -Infinity, 2147483648, -2147483649, 4294967295.5];
 for (const write of writers) {

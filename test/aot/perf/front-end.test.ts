@@ -8,10 +8,12 @@
 //   AOT_PERF=update bun test test/aot/perf/front-end.test.ts   rewrites the pins
 //
 // Without AOT_PERF, off Linux x64, or where cc or python3 is not installed, it is skipped.
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(120_000);
 
 const mode = process.env.AOT_PERF;
 const cc = Bun.which("cc");

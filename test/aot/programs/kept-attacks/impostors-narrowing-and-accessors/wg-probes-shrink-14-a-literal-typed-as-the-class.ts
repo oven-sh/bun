@@ -1,0 +1,15 @@
+// Impostors narrowing and accessors: wg probes shrink  a literal typed as the class. It prints what plain Bun prints.
+class Leaf {
+  weight = 7;
+}
+
+class Cell {
+  leaf: Leaf | null = new Leaf();
+}
+
+function weigh(c: Cell): number {
+  return c.leaf === null ? -1 : c.leaf.weight;
+}
+
+const bare: Cell = { leaf: null };
+console.log(weigh(new Cell()), weigh(bare));

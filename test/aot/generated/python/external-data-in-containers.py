@@ -19,7 +19,7 @@ if f == "n": USE += [("* 2", "V * 2"), ("negated", "-V"), ("compared", "V < 5"),
 else: USE += [(".length", "V.length"), ("compared", "V < 'm'"), ("concat twice", "V + V")]
 out = ["declare const console: { log(text: string): void }; declare function structuredClone<T>(value: T): T;", "const data = JSON.parse('{\"n\":\"abc\",\"s\":5}') as { n: number; s: string };", "const boxes: unknown[] = []; const hide = <T,>(x: T): T => { boxes.push(x); return boxes.pop() as T; };",
        "const show = (v: unknown): string => v === undefined ? '<undefined>' : v === null ? '<null>' : typeof v === 'number' ? (Object.is(v, -0) ? '<-0>' : String(v)) : typeof v === 'string' ? JSON.stringify(v) : String(v);",
-       "const say = (label: string, f: () => unknown): void => { let r: string; try { r = show(f()); } catch (e) { r = 'throws ' + (e as Error).constructor.name + (String((e as Error).message).includes('bun --aot') ? ' by the compiler' : ''); } console.log(label + ' ==> ' + r); };"]
+       "const say = (label: string, f: () => unknown): void => { let r: string; try { r = show(f()); } catch (e) { r = 'throws ' + (e as Error).constructor.name + (String((e as Error).message).includes('(bun compile') ? ' by the compiler' : ''); } console.log(label + ' ==> ' + r); };"]
 k = 0
 i = seed // 2; mt, m = MAKE[i]
 if True:

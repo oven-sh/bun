@@ -8,7 +8,7 @@ class Debounce {
 function later(): ReturnType<typeof startTimer> { return startTimer(() => {}, 5); }
 function keep(): { id: Timer | undefined } { const held: { id: Timer | undefined } = { id: undefined }; held.id = startTimer(() => {}, 7); return held; }
 function pass(timer: Timer): Timer { return timer; }
-function attempt(name: string, f: () => unknown): void { try { console.log(name, String(f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n")[0].replace(/ \(bun --aot[^)]*\)/, "")); } }
+function attempt(name: string, f: () => unknown): void { try { console.log(name, String(f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "")); } }
 attempt("a field:", () => { const d = new Debounce(); d.start(); return d.stop(); });
 attempt("a result:", () => later());
 attempt("a member:", () => keep().id);

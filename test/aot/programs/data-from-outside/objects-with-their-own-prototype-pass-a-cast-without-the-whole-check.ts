@@ -1,6 +1,6 @@
-// An object made by Object.create(proto) can never become a record. A cast to a record type that lets such objects pass works out once, for the
-// object's Structure, where the fields of the type are found; after that it reads those places. What the program prints may not depend on that.
-// Only the jsc shell with --useAOTOperationCounters=1 can count. Elsewhere the program checks the answers alone.
+// Objects made by Object.create(proto) are used through record types thousands of times. Any object passes where a record type is written, and a field is read
+// where the object has it, its own or inherited, also after the prototype gains, loses or changes a member. What the program prints is what plain Bun prints.
+// Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
 declare const aotOperationCount: undefined | ((name: string) => number)
 const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
 
@@ -60,9 +60,9 @@ const label: {
 const boxes = [makeBox(1), makeBox(10), makeBox(100)]
 let sum = 0
 for (let i = 0; i < 30; i++) sum += bump(boxes[i % 3], 1).run()
-const before = count('operationAOTTypedCoerce') + count('operationAOTTypedCoerceProperty')
+const before = count('operationAOTEnforceType')
 for (let i = 0; i < 3000; i++) sum += bump(boxes[i % 3], 1).run()
-const entered = count('operationAOTTypedCoerce') + count('operationAOTTypedCoerceProperty') - before
+const entered = count('operationAOTEnforceType') - before
 console.log(sum, entered < 300 ? 'without the whole check' : 'the whole check ran ' + entered + ' times')
 const labels = () => boxes.map(box => label(box, '.').run()).join()
 console.log(labels())

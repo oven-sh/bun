@@ -61,7 +61,7 @@ const hot: Record<string, (o: any) => unknown> = {
   warmThenDeleted: o => { Object.entries(o); Object.entries(o); Object.entries(o); try { delete o.a } catch {} return Object.entries(o) },
   warmThenHidden: o => { Object.entries(o); Object.entries(o); Object.entries(o); try { Object.defineProperty(o, "a", { enumerable: false }) } catch {} return Object.entries(o) },
   warmThenAGetter: o => { Object.entries(o); Object.entries(o); Object.entries(o); try { Object.defineProperty(o, "a", { get() { log.push("G"); return "got" }, enumerable: true }) } catch {} return Object.entries(o) },
-  pairsAreTheirOwn: o => { Object.entries(o); Object.entries(o); const first = Object.entries(o), second = Object.entries(o); if (first.length) { first[0]![0] = "mine"; first[0]!.push("more" as never); first.push(["pushed", 1]) } return [first, second, first === second, first.length && first[0] === second[0], Array.isArray(second), second.length && Array.isArray(second[0]) && second[0]!.length] },
+  pairsAreTheirOwn: o => { Object.entries(o); Object.entries(o); const first = Object.entries(o), second = Object.entries(o); if (first.length) { first[0]![0] = "mine"; first[0]!.push("more" as any); first.push(["pushed", 1]) } return [first, second, first === second, first.length && first[0] === second[0], Array.isArray(second), second.length && Array.isArray(second[0]) && second[0]!.length] },
   keysAndValuesAgree: o => { Object.entries(o); Object.entries(o); const e = Object.entries(o), k = Object.keys(o), v = Object.values(o); return e.length === k.length && e.every((p, i) => p[0] === k[i] && Object.is(p[1], v[i])) },
   fromEntries: o => { Object.entries(o); Object.entries(o); return Object.fromEntries(Object.entries(o)) },
 }

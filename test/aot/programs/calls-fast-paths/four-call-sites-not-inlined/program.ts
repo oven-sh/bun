@@ -1,4 +1,4 @@
-// IRM= 4 CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)$
+// IRM= 4 CallDirect \(v[0-9]+, v[0-9]+, v[0-9]+\) function=f[0-9]+
 interface Item { kind: number; flags: number; next: Item | undefined; name: string; weight: number }
 
 const seen: string[] = [];

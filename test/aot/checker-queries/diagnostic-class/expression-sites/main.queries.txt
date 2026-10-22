@@ -1,0 +1,17 @@
+# The errors about `super`, `arguments`, private names and decorators that are raised among the type checks: an early error only where JavaScript rejects the text too. Implicit `any` is style.
+main.ts:3 diagnostic TS2815 = EarlyError StopsBuild
+main.ts:4 diagnostic TS2335 = EarlyError StopsBuild
+main.ts:5 diagnostic TS2660 = EarlyError StopsBuild
+main.ts:6 diagnostic TS2337 = EarlyError StopsBuild
+main.ts:7 diagnostic TS18016 = EarlyError StopsBuild
+main.ts:8 diagnostic TS18016 = EarlyError StopsBuild
+main.ts:9 diagnostic TS1497 = EarlyError StopsBuild
+
+main.ts:11 diagnostic TS2335 = Semantic StopsBuild
+main.ts:12 diagnostic TS2337 = Semantic StopsBuild
+main.ts:13 diagnostic TS2336 = Semantic StopsBuild
+main.ts:14 diagnostic TS2815 = Semantic StopsBuild
+main.ts:19 diagnostic TS2338 = Semantic StopsBuild
+
+main.ts:15 diagnostic TS2683 = Style StopsBuild
+main.ts:16 diagnostic TS7017 = Style StopsBuild

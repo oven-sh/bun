@@ -24,6 +24,7 @@ for (const width of process.argv.slice(2).map(Number)) {
     nameOf(width),
     [
       `// Records of ${width} declared ${width === 1 ? "field" : "fields"} and as many undeclared keys, four deep, in arrays, tuples and dictionaries, are parsed by JSON.parse<T> while the collector runs as often as it can be made to.`,
+      `import { validate } from "bun:bundle";`,
       ...[1, 2, 3, 4].map(level => record(width, level)),
       `const width: number = ${width};`,
       `const lastOf = (leaf: Level1): string => ${last};`,

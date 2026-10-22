@@ -1,6 +1,7 @@
 import { expect } from "bun:test";
 import { test } from "../aot/supported";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { importingByName } from "./aot-builtin-modules";
 
 const plain = "plain.cjs";
 const never = (how: string) => `const load = name => ${how};\nconsole.log(process.argv.length > 100 ? load("lib") : "run");`;
@@ -20,34 +21,35 @@ const withoutADoor: Record<string, string> = {
 
 const zlib = `const name = process.argv[5] ?? "zlib";\n`;
 const loaded = (how: string) => `console.log(typeof ${how}.gzipSync === "function" ? "run" : "");`;
-const withADoor: Record<string, string> = {
+const withADoor = importingByName("node:zlib", {
   "a-sum-that-starts-with-a-scheme.cjs": `${zlib}${loaded('require("node:" + name)')}`,
   "a-sum-that-starts-with-nothing.cjs": `${zlib}${loaded('require("" + name)')}`,
   "a-template-that-starts-with-the-name.cjs": `${zlib}${loaded("require(`${name}`)")}`,
   "joined-to-a-dot.cjs": `const path = require("node:path");\n${zlib}${loaded('require(path.join("./", name))')}`,
   "joined-by-a-function-of-the-program.cjs": `const path = { join: (...parts) => parts[parts.length - 1], resolve: part => part };\n${zlib}${loaded("require(path.join(__dirname, name))")}\n${loaded("require(path.resolve(name))")}`.replace(`"run" : "");\n`, `"" : "");\n`),
   "a-folder-of-the-program.cjs": `${zlib}{\n  const __dirname = "";\n  ${loaded("require(__dirname + name)")}\n}`,
-};
+});
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1", BUN_AOT_VERBOSE: "1" };
 
-test("a computed name that can only be a path does not make bun run --aot compile every built-in module", async () => {
-  const programs = { ...withoutADoor, ...withADoor };
-  using dir = tempDir("builtin-modules-and-computed-paths", programs);
+test("a computed name that can only be a path does not make bun run --aot compile built-in modules", async () => {
+  // Each kind in a folder of its own: `require("./" + name + ".cjs")` may load every .cjs file beside it, and those with a door import node:zlib.
+  using dir = tempDir("builtin-modules-and-computed-paths", withoutADoor);
+  using doors = tempDir("builtin-modules-and-computed-paths", withADoor);
   const cost: Record<string, number> = {};
-  for (const entry of Object.keys(programs)) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", entry], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+  for (const entry of Object.keys({ ...withoutADoor, ...withADoor })) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "run", "--debug-aot", entry], cwd: String(entry in withADoor ? doors : dir), env, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ entry, stdout: stdout.trim(), exitCode }).toEqual({ entry, stdout: "run", exitCode: 0 });
-    const bytesOfTheImage = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
-    cost[entry] = isWindows ? bytesOfTheImage : Number(proc.resourceUsage()!.cpuTime.total) / 1e6;
+    cost[entry] = Number(/\[aot\] image: (\d+) bytes/.exec(stderr)?.[1]);
   }
-  for (const entry of Object.keys(withoutADoor)) {
-    expect({ entry, cost: cost[entry], plain: cost[plain], costsAsMuchAsADoor: !(cost[entry] <= 3 * cost[plain]) }).toEqual({
+  // The bytes of the image: the same from run to run, which seconds are not. The functions of the loader come with a computed path. A built-in module such as node:zlib is more than they are.
+  for (const entry of Object.keys({ ...withoutADoor, ...withADoor })) {
+    expect({ entry, cost: cost[entry], plain: cost[plain], costsAsMuchAsABuiltinModule: !(cost[entry] <= 2.5 * cost[plain]) }).toEqual({
       entry,
       cost: expect.any(Number),
       plain: expect.any(Number),
-      costsAsMuchAsADoor: false,
+      costsAsMuchAsABuiltinModule: entry in withADoor,
     });
   }
 }, 280_000);

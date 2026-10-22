@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 
 test("Buffer.concat throws RangeError for too large buffers", () => {

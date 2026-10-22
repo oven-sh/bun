@@ -12,18 +12,26 @@ export default [
     proto: {
       stop: {
         fn: "stop",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 0,
       },
       "@@dispose": {
         fn: "stop",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 0,
       },
       ref: {
         fn: "doRef",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 0,
       },
       unref: {
         fn: "doUnref",
+        returns: "this",
+        checkedAtRuntime: true,
         length: 0,
       },
       cron: {

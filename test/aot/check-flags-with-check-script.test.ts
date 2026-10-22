@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { test } from "./supported";
 
-test.each(["--aot", "--aot-explain=throws"])("bun check %s is the type checker where package.json has a `check` script", async flag => {
+test.each(["--aot", "--explain=guards"])("bun check %s is the type checker where package.json has a `check` script", async flag => {
   using dir = tempDir("aot-check-script", {
     "package.json": JSON.stringify({ scripts: { check: "echo the script ran" } }),
     "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),

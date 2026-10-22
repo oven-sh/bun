@@ -96,6 +96,8 @@ misctools/sha
 myscript.sh
 node_modules
 node_modules_*
+!test/aot/programs/**/node_modules/
+!test/aot/ir/**/node_modules/
 out
 out.*
 outcss
@@ -201,6 +203,7 @@ Heap-*.json
 Heap-*.json.*
 isolate-*.log
 core
+!test/aot/programs/**/core/
 core.[0-9]*
 # Legacy codegen outputs (no longer written, but old build trees still have
 # them on disk; keep ignored so they don't show as untracked).

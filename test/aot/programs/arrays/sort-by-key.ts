@@ -1,15 +1,11 @@
-// xs.sort((a, b) => a.k - b.k), (a, b) => a.k < b.k ? -1 : a.k > b.k ? 1 : 0, (a, b) => a.k.localeCompare(b.k), the same on the elements themselves, and each the other way round. Such a comparator only orders two keys. It runs no code of the program when every key is an element or an own data property of one, and all keys are numbers, or all are strings. With no NaN among them it is also consistent, so every stable sort gives the same result and nobody can tell how often it was called. Then the keys are read once per element and the pairs are sorted by key. Anything else (a NaN, a hole, a getter, an inherited key, keys of two kinds, null) goes to the sort that calls the comparator, and so does a comparator that is not consistent, like a.k < b.k ? -1 : 1.
-declare const aotOperationCount: undefined | ((name: string) => number);
+// xs.sort((a, b) => a.k - b.k), (a, b) => a.k < b.k ? -1 : a.k > b.k ? 1 : 0, (a, b) => a.k.localeCompare(b.k), the same on the elements themselves, and each the other way round. Such a comparator only orders two keys. It runs no code of the program when every key is an element or an own data property of one, and all keys are numbers, or all are strings. With no NaN among them it is also consistent, so every stable sort gives the same result and nobody can tell how often it was called. Everything else is here too: a NaN, a hole, a getter, an inherited key, keys of two kinds, null, and a comparator that is not consistent, like a.k < b.k ? -1 : 1.
 interface Row { k: number; at: number }
-let standIn = 0;
-const tried = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTTypedTrySortByKey") : ++standIn;
 let seed = 7;
 function next(): number { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed; }
 const show = (v: unknown): string => Object.is(v, -0) ? "-0" : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v);
 const list = (a: readonly unknown[]): string => { const out: string[] = []; for (let i = 0; i < a.length; i++) out.push(i in a ? show(a[i]) : "hole"); return out.join(" "); };
 const attempt = (what: string, run: () => readonly unknown[]): void => { try { console.log(what + ":", list(run())); } catch (error: any) { console.log(what + ":", error.constructor.name); } };
 
-const before = tried();
 attempt("whole numbers", () => [5, 3, 9, 1, 3, -2, 0].sort((a, b) => a - b));
 attempt("whole numbers, falling", () => [5, 3, 9, 1, 3, -2, 0].sort((a, b) => b - a));
 attempt("fractions", () => [5.5, 3.25, 9.75, 1.5, -2.5].sort((a, b) => a - b));
@@ -22,7 +18,6 @@ attempt("mixed whole and fraction", () => { const a: number[] = [3, 1.5, 2, 0.5]
 attempt("none", () => ([] as number[]).sort((a, b) => a - b));
 attempt("one", () => [4].sort((a, b) => a - b));
 attempt("undefined goes last", () => [3, undefined, 1, undefined, 2].sort((a: any, b: any) => a - b));
-console.log("the keys were tried:", tried() > before);
 
 const rows: Row[] = [];
 for (let i = 0; i < 40; i++) rows.push({ k: next() % 7, at: i });
@@ -79,7 +74,6 @@ const people: Named[] = [];
 const words = ["pear", "Apple", "fig", "apple", "", "Zoo", "zoo", "fig", "\u00e9clair", "eclair", "a\uD83D\uDE42", "a\uFFFD", "10", "9"];
 for (let i = 0; i < words.length; i++) people.push({ name: words[i]!, k: (i * 5) % 4, at: i });
 const names = (a: readonly Named[]): string[] => a.map(p => JSON.stringify(p.name) + p.at);
-const beforeThreeWay = tried();
 attempt("three ways, numbers", () => [5, 3, 9, 1, 3].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
 attempt("three ways, greater first", () => [5, 3, 9, 1, 3].sort((a, b) => a > b ? 1 : a < b ? -1 : 0));
 attempt("three ways, falling", () => [5, 3, 9, 1, 3].sort((a, b) => a < b ? 1 : a > b ? -1 : 0));
@@ -98,7 +92,6 @@ attempt("by locale", () => words.slice().sort((a, b) => a.localeCompare(b)).map(
 attempt("by locale, falling", () => words.slice().sort((a, b) => b.localeCompare(a)).map(w => JSON.stringify(w)));
 attempt("by locale, keys", () => names(people.slice().sort((a, b) => a.name.localeCompare(b.name))));
 attempt("by locale, keys, toSorted", () => names(people.toSorted((a, b) => b.name.localeCompare(a.name))));
-console.log("the keys were tried:", tried() > beforeThreeWay);
 attempt("numbers and text among the keys", () => ([{ k: 2 }, { k: "10" }, { k: 1 }, { k: "9" }] as any[]).sort((a: any, b: any) => a.k < b.k ? -1 : a.k > b.k ? 1 : 0));
 attempt("NaN, three ways", () => [3, NaN, 1, 2, NaN, 0].sort((a, b) => a < b ? -1 : a > b ? 1 : 0));
 attempt("text, by difference", () => (["10", "9", "100"] as any[]).sort((a: any, b: any) => a - b));

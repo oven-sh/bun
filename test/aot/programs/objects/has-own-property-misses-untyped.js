@@ -12,20 +12,20 @@ function get(settings, setting) {
   return undefined;
 }
 const seen = new Set();
-let before = count("operationAOTTypedHasOwnProperty");
+let before = count("operationAOTHasOwnProperty");
 for (let i = 0; i < 2000; i++)
   seen.add([get(settings, "json escape"), get(settings, "json replacer"), get(settings, "json spaces"), get(settings, "etag"), get(settings, "query parser")].join());
-let calls = count("operationAOTTypedHasOwnProperty") - before;
+let calls = count("operationAOTHasOwnProperty") - before;
 console.log([...seen].join(" | "), calls <= 40 ? "and the run time was asked at most 40 times" : "and the run time was asked " + calls + " times");
 
 // Object.hasOwn likewise, and a name that is put together.
 const parts = ["never", "a", "name"];
 const others = new Set();
-before = count("operationAOTTypedHasOwnProperty");
+before = count("operationAOTHasOwnProperty");
 const joined = parts.join(" ");
 for (let i = 0; i < 2000; i++)
   others.add([Object.hasOwn(settings, "nobody has this"), Object.hasOwn(settings, joined), Object.hasOwn(settings, "env")].join());
-calls = count("operationAOTTypedHasOwnProperty") - before;
+calls = count("operationAOTHasOwnProperty") - before;
 console.log([...others].join(" | "), calls <= 40 ? "and the run time was asked at most 40 times" : "and the run time was asked " + calls + " times");
 
 // The answer changes with the object.

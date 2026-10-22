@@ -176,7 +176,7 @@ JSObject* JSAbortSignal::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSAbortSignal>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSAbortSignal::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSAbortSignal::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSAbortSignalDOMConstructor, DOMConstructorID::AbortSignal>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

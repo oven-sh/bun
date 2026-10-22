@@ -353,7 +353,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.react_compiler_candidate_name = Some(id.r#ref);
                     self.react_compiler_in_react_hoc = in_hoc;
                 }
-                let receives_own_file_path = self.imports_create_require() && Self::is_call_with_import_meta_path(&val);
                 self.visit_expr_in_out(
                     &mut val,
                     ExprIn {
@@ -365,24 +364,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
                 self.react_compiler_candidate_name = None;
                 self.react_compiler_in_react_hoc = false;
-                if self.options.compiles_ahead_of_time
-                    && let (BData::BObject(pattern), ExprData::ERequireString(required)) = (decl.binding.data, val.data)
-                    && matches!(self.import_records.items()[required.import_record_index as usize].path.text, b"module" | b"node:module")
-                {
-                    for property in pattern.properties.slice() {
-                        if let (ExprData::EString(key), BData::BIdentifier(id)) = (property.key.data, property.value.data)
-                            && key.eql_comptime(b"createRequire")
-                        {
-                            self.create_require_refs.push(id.r#ref);
-                        }
-                    }
-                }
-                if self.imports_create_require()
-                    && let BData::BIdentifier(id) = decl.binding.data
-                    && self.is_own_create_require(&val, receives_own_file_path)
-                {
-                    self.own_require_refs.push(id.r#ref);
-                }
                 decl.value = Some(val);
                 self.decorator_class_name = prev_decorator_class_name;
 
@@ -1068,9 +1049,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.record_declared_symbol(shadow_ref);
 
         if let Some(extends) = class.extends.as_mut() {
-            if self.options.bun_builtin_syntax {
-                self.keep_public_heritage(extends);
-            }
             self.visit_expr(extends);
         }
 
@@ -1534,7 +1512,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Save the current control-flow liveness. This represents if we are
             // currently inside an "if (false) { ... }" block.
             let old_is_control_flow_dead = p.is_control_flow_dead;
-            let old_is_after_jump = p.is_after_jump;
             // Restored manually at block end. The error
             // path (`?`) skips restore; acceptable because callers `.expect()` or
             // propagate fatally (parse abort) — no resumption after error.
@@ -1620,14 +1597,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     break 'list_getter &mut visited;
                 };
-                let was_after_jump = p.is_after_jump;
-                if matches!(stmt.data, StmtData::SFunction(_)) {
-                    p.is_after_jump = old_is_after_jump;
-                }
                 p.visit_and_append_stmt(list, stmt)?;
-                p.is_after_jump = was_after_jump
-                    || (p.options.compiles_ahead_of_time
-                        && SideEffects::always_throws_or_returns(p, *stmt));
             }
 
             // Transform block-level function declarations into variable declarations
@@ -1780,7 +1750,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // manual restore for the block-level `defer`s
             p.nearest_stmt_list = prev_nearest_stmt_list;
             p.is_control_flow_dead = old_is_control_flow_dead;
-            p.is_after_jump = old_is_after_jump;
         }
 
         // Lower using declarations
@@ -1990,11 +1959,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // Try to substitute the identifier with the initializer. This will
                     // fail if something with side effects is in between the declaration
                     // and the usage.
-                    let would_be_tail_call = p.options.features.audited.is_some()
-                        && matches!(stmt.data, StmtData::SReturn(_))
-                        && matches!(bun_ast::audited::unmarked(replacement).data, ExprData::ECall(_));
                     if symbol.use_count_estimate == 1
-                        && !would_be_tail_call
                         && p.substitute_single_use_symbol_in_stmt(stmt, id, replacement)
                     {
                         // `const ns = await import(x); return ns` — the single use just

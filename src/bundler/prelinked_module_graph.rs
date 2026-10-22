@@ -27,7 +27,6 @@ mod module_flags {
     pub(super) const HAS_TLA: u32 = 1 << 2;
     pub(super) const HAS_STAR_EXPORTS: u32 = 1 << 3;
     pub(super) const ALL_REQUESTS_IN_GRAPH: u32 = 1 << 4;
-    pub(super) const IS_ENTRY_POINT: u32 = 1 << 5;
 }
 
 /// `PrelinkedModuleGraph::Request::phaseDeferBit`.
@@ -116,7 +115,6 @@ pub struct ModuleInput<'a> {
     pub info: &'a ModuleInfo,
     /// Local string id → id in the shared module-info string table (`ModuleInfoSlotTableBuilder::intern_all`).
     pub table_ids: &'a [u32],
-    pub is_entry_point: bool,
 }
 
 /// The module count in a serialized graph's header; `None` if `bytes` is not a graph of this `VERSION`.
@@ -127,19 +125,6 @@ pub fn module_count(bytes: &[u8]) -> Option<u32> {
         ))
     };
     (word(0)? == MAGIC && word(1)? == VERSION).then_some(word(3)?)
-}
-
-pub fn is_entry_point(bytes: &[u8], module: u32) -> Option<bool> {
-    let word = |i: usize| {
-        Some(u32::from_le_bytes(
-            bytes.get(i * 4..i * 4 + 4)?.try_into().ok()?,
-        ))
-    };
-    if module >= module_count(bytes)? {
-        return None;
-    }
-    let flags = word(word(8)? as usize / 4 + module as usize * MODULE_WORDS + 1)?;
-    Some(flags & module_flags::IS_ENTRY_POINT != 0)
 }
 
 /// Serializes the graph for `modules` (graph module `i` is `modules[i]`). `string_table` gives a string's runtime slot
@@ -307,9 +292,6 @@ fn parse_module(
     }
     if info.flags.has_tla {
         flags |= module_flags::HAS_TLA;
-    }
-    if input.is_entry_point {
-        flags |= module_flags::IS_ENTRY_POINT;
     }
 
     // Requested modules, in the record's order. An entry references its request by (specifier, type), as

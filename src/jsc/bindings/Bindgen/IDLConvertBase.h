@@ -1,6 +1,8 @@
 #pragma once
 #include "BunIDLConvertBase.h"
 #include "ErrorCode.h"
+#include <JavaScriptCore/Operations.h>
+#include <optional>
 #include <wtf/text/MakeString.h>
 
 namespace Bun::Bindgen {
@@ -69,6 +71,70 @@ struct LiteralConversionContext : Detail::ContextBase<LiteralConversionContext> 
 
 private:
     const WTF::ASCIILiteral m_name;
+};
+
+// A value of the wrong type throws Node's `ERR_INVALID_ARG_TYPE(name, expected, actual)`.
+struct NodeArgumentContext : Detail::ContextBase<NodeArgumentContext> {
+    using ElementContext = Detail::ElementOf<NodeArgumentContext>;
+
+    NodeArgumentContext(WTF::ASCIILiteral name, std::span<const WTF::ASCIILiteral> expected, JSC::JSValue actual)
+        : m_name(name)
+        , m_expected(expected)
+        , m_actual(actual)
+    {
+    }
+
+    auto source()
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    {
+        Bun::ERR::INVALID_ARG_TYPE(scope, &global, m_name, m_expected, m_actual);
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const std::span<const WTF::ASCIILiteral> m_expected;
+    const JSC::JSValue m_actual;
+};
+
+// A value of the wrong type throws what src/runtime/node/util/validators.rs does: `The "name" property must be of type string, got number`.
+// With an index, the value is one of the arguments that `name` stands for: `The "name[2]" property ..`.
+struct ValidatorArgumentContext : Detail::ContextBase<ValidatorArgumentContext> {
+    using ElementContext = Detail::ElementOf<ValidatorArgumentContext>;
+
+    ValidatorArgumentContext(WTF::ASCIILiteral name, WTF::ASCIILiteral expected, JSC::JSValue actual, std::optional<size_t> index = std::nullopt)
+        : m_name(name)
+        , m_expected(expected)
+        , m_actual(actual)
+        , m_index(index)
+    {
+    }
+
+    auto source()
+    {
+        return m_name;
+    }
+
+    template<typename String>
+    NEVER_INLINE void throwGenericTypeError(JSC::JSGlobalObject& global, JSC::ThrowScope& scope, String&&)
+    {
+        // `JSValue::type_name` in src/jsc/JSValue.rs.
+        bool isArray = m_actual.isCell() && (m_actual.asCell()->type() == JSC::ArrayType || m_actual.asCell()->type() == JSC::DerivedArrayType);
+        WTF::String actual = isArray ? WTF::String("array"_s) : JSC::jsTypeStringForValue(&global, m_actual)->value(&global).data;
+        WTF::String index = m_index ? WTF::makeString('[', *m_index, ']') : WTF::emptyString();
+        Bun::throwError(&global, scope, ErrorCode::ERR_INVALID_ARG_TYPE,
+            WTF::makeString("The \""_s, m_name, index, "\" property must be of type "_s, m_expected, ", got "_s, actual));
+    }
+
+private:
+    const WTF::ASCIILiteral m_name;
+    const WTF::ASCIILiteral m_expected;
+    const JSC::JSValue m_actual;
+    const std::optional<size_t> m_index;
 };
 
 }

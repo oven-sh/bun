@@ -1,4 +1,4 @@
-// A class of which one method is replaced somewhere has its other methods fixed one at a time, as read-only properties of its prototype. `Object.assign(Object.create(Object.getPrototypeOf(x)), x)` still keeps the layout of x: what counts is whether an accessor or a read-only property stands under a name that is copied, and none does.
+// One method of a class is replaced somewhere in the program, and the prototype stays an ordinary object whose every method can be replaced. `Object.assign(Object.create(Object.getPrototypeOf(x)), x)` still keeps the layout of x: what counts is whether an accessor or a read-only property stands under a name that is copied.
 // CALLS+ Labeled.copy TryCloneWithPrototype
 // CALLS+ Shape.copy TryCloneWithPrototype
 // CALLS+ Watched.copy TryCloneWithPrototype

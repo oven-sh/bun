@@ -1,11 +1,12 @@
 // `this.step = ..` where `step` is a method of the class: the objects have a field for it and the method stays fixed. A method that nobody stores to has no field, and one that is stored to through a variable is looked for by name.
-// IR+ ^  field "step" .* flags
-// IR+ ^  method "step" Method f[0-9]+$
-// IR- ^  method "step" Method f[0-9]+ replaced$
-// IR- ^  field "untouched"
-// IR+ ^  method "untouched" Method f[0-9]+$
-// IR- ^  field "patched"
-// IR+ ^  method "patched" Method f[0-9]+ replaced$
+// IR+ ^layout L[0-9]+ .*\{name="step" declared=
+// IR+ ^layout L[0-9]+ .*\{name="step" function=f[0-9]+
+// IR- ^layout L[0-9]+ .*\{name="untouched" declared=
+// IR+ ^layout L[0-9]+ .*\{name="untouched" function=f[0-9]+
+// IRM= 0 CallMethod v[0-9]+ \(.*\) name="untouched"(?!.* isFallback)
+// IR- ^layout L[0-9]+ .*\{name="patched" declared=
+// IR+ ^layout L[0-9]+ .*\{name="patched" function=f[0-9]+
+// IRM= 1 CallMethod v[0-9]+ \(.*\) name="patched"(?!.* isFallback)
 declare const console: any;
 class Walker {
   total = 0;

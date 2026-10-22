@@ -1,5 +1,7 @@
 // Typed values written by code that does not know their type: every line must read as plain Bun.
-// ENV JSC_useAOTOperationCounters=1
+// ENV JSC_aotCountsPath=/dev/null
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: undefined | ((name: string) => number);
 const writers: Record<string, (value: unknown) => string> = {
   write: (value) => JSON.stringify(value) as string,
@@ -239,10 +241,10 @@ say(write(row(63)));
 
 if (typeof aotOperationCount === "function") {
   const list = [holds(45), holds(46)];
-  const before = aotOperationCount("operationAOTTypedJSONFinish");
+  const before = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
   for (let i = 0; i < 10; i++) {
     write(holds(i));
     write(list);
   }
-  if (aotOperationCount("operationAOTTypedJSONFinish") - before < 20) throw new Error("a value of unknown type was not written by the compiled writer");
+  if ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - before < 20) throw new Error("a value of unknown type was not written by the compiled writer");
 }

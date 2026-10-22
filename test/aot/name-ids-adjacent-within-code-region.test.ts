@@ -12,7 +12,7 @@ const files = {
 function early(o) { return ${sumOf(seldom.filter((_, i) => i % 2 === 0))}; }
 function late(o) { return ${sumOf(seldom.filter((_, i) => i % 2 === 1))}; }
 let total = 0;
-for (let i = 0; i < 3; i++) total += busy({ often7: i }) + early({}) + late({});
+for (let i = 0; i < 3; i++) total += busy(JSON.parse('{"often7":' + i + "}")) + early(JSON.parse("{}")) + late(JSON.parse("{}"));
 console.log(total);
 `,
 };

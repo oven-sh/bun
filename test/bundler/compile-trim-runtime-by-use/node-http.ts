@@ -11,7 +11,7 @@ const server = http.createServer((request: any, response: any) => {
 });
 const ask = (path: string, method: string, body?: string) =>
   new Promise<string>(resolve => {
-    const request = http.request({ host: "127.0.0.1", port: server.address().port, path, method }, (response: any) => {
+    const request = http.request({ host: "127.0.0.1", port: (server.address() as { port: number }).port, path, method }, (response: any) => {
       let text = "";
       response.on("data", (chunk: any) => (text += chunk));
       response.on("end", () => resolve(`${response.statusCode} ${response.headers["x-method"]} ${text}`));

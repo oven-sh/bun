@@ -1,4 +1,3 @@
-// @ts-nocheck
 // BUN-2C1
 //   const value = @field(this, @tagName(field));
 //  if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {

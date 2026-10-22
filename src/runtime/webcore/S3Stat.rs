@@ -34,9 +34,8 @@ impl S3Stat {
         }))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.size as f64)
+    pub(crate) fn get_size(&self, _global: &JSGlobalObject) -> f64 {
+        self.size as f64
     }
 
     #[bun_jsc::host_fn(getter)]

@@ -15,9 +15,7 @@ class GlobalObject;
 }
 
 namespace JSC {
-class JSModuleLoader;
 class JSPromise;
-class JSSourceCode;
 }
 
 namespace Bun {
@@ -100,17 +98,12 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
-bool hasCompiledProgramFiles(JSC::JSGlobalObject*);
-JSC::JSObject* compiledRuntimeHelpers(JSC::JSGlobalObject*, const String& key);
-JSC::JSPromise* importCompiledProgramFile(Zig::GlobalObject*, JSC::JSModuleLoader*, const String& name, const String& referrer);
-JSC::JSSourceCode* compiledProgramFileSource(Zig::GlobalObject*, const String& key);
-JSC::JSPromise* asyncCompiledProgramFileSource(Zig::GlobalObject*, const String& key);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionCompiledNamespaceSource);
-void recordRequireCacheRead(Zig::GlobalObject*);
-void evictCompiledModule(Zig::GlobalObject*, const String& path);
-JSC::JSObject* evaluatedCompiledModuleNamespace(Zig::GlobalObject*, const String& path);
-void appendEvaluatedCompiledModules(Zig::GlobalObject*, JSC::MarkedArgumentBuffer& keys, const WTF::Function<bool(const JSC::Identifier&)>& isAlreadyListed);
-bool evaluateCompiledFileForDefaultLoader(Zig::GlobalObject*, JSCommonJSModule* target, const String& path, bool isTypeScriptLoader);
+// Appends { ...object, default: object }. Returns object if any export was deferred (its value is empty), null otherwise or on exception.
+JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* object, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+// Appends what an `import` of a module in NativeModuleList.h gets. Returns the object that a deferred export (its value is empty) is read from, null for a module that never defers or on exception.
+JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+
+JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,

@@ -1,4 +1,0 @@
-view TypeError 0 TypeError 0
-base TypeError 0 TypeError 0
-exact TypeError 0
-right 3 4 3 4

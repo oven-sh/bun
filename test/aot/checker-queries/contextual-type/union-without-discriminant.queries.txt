@@ -1,0 +1,2 @@
+# An object literal typed by a union without a discriminant has no contextual type.
+union-without-discriminant.ts:3 contextual `{ x: 1 }` = none

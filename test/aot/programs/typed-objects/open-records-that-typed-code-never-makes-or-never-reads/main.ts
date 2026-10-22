@@ -1,8 +1,9 @@
-// IR- ^shape \d+ Record "(Reader|Nested)" .*\ballocated\b
-// IR+ ^shape \d+ Record "Reader" .*\baccepts-untyped\b
-// IR+ ^shape \d+ Record "Nested" .*\baccepts-untyped\b
-// IR+ ^shape \d+ Record "Settings" .*\ballocated\b
-// IR+ ^shape \d+ Record "Both" .*\ballocated\b
+// IR+ ^layout L\d+ .*name="Reader" .*isNeverAllocated=true
+// IR+ ^layout L\d+ .*name="Nested" .*isNeverAllocated=true
+// IR+ ^layout (L\d+) .*name="Reader" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout (L\d+) .*name="Nested" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
+// IR+ ^layout L\d+ .*name="Settings" (?!.*isNeverAllocated=true)
+// IR+ ^layout L\d+ .*name="Both" (?!.*isNeverAllocated=true)
 import { look, mangle, give, giveOdd, keep, through, call } from "./untyped.js";
 
 interface Settings { path: string; depth: number; strict: boolean; note?: string }

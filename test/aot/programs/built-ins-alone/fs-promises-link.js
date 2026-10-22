@@ -1,0 +1,10 @@
+import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const folder = fs.mkdtempSync(join(tmpdir(), "built-ins-alone-"));
+const file = join(folder, "file.txt");
+fs.writeFileSync(file, "hello");
+const result = await fs.promises.link(file, join(folder, "link.txt"));
+console.log(result === undefined);
+console.log(fs.statSync(file).nlink + 1);
+fs.rmSync(folder, { recursive: true });

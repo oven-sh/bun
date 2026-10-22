@@ -1,0 +1,4 @@
+a module of the executable: refused: The built-in function '..' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+a built-in module: refused: The built-in function '..' was not compiled into this executable because your code never uses it. To keep it, use it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+process.getBuiltinModule: refused: Cannot load '..': this executable can't load a module from a dynamic path. The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+the module by its constant name: inside

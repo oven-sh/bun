@@ -1,0 +1,236 @@
+import * as internals from "bun:internal-for-testing";
+import { jscDescribe } from "bun:jsc";
+import { isBuiltin } from "node:module";
+import { types } from "node:util";
+import { isObject, type CallMode, type DumpedEntry, type DumpedType, type Table } from "./table-description";
+
+export type Member = { holder: object | undefined; key: PropertyKey; descriptor: PropertyDescriptor | undefined };
+export type Invocation = {
+  mode: CallMode;
+  callee: Function | undefined;
+  key: PropertyKey;
+  callsWhatIsRead: boolean;
+};
+
+const prototypeOf = (value: unknown): object => Reflect.getPrototypeOf(Object(value))!;
+
+function createHiddenRoots(): Map<string, () => unknown> {
+  const generatorFunction = prototypeOf(function* () {});
+  const asyncGeneratorFunction = prototypeOf(async function* () {});
+  const asyncGeneratorPrototype = () => Reflect.get(asyncGeneratorFunction, "prototype");
+  return new Map<string, () => unknown>([
+    ["%TypedArray%", () => prototypeOf(Int8Array)],
+    ["%ArrayIterator%.prototype", () => prototypeOf([].values())],
+    ["%MapIterator%.prototype", () => prototypeOf(new Map().values())],
+    ["%SetIterator%.prototype", () => prototypeOf(new Set().values())],
+    ["%StringIterator%.prototype", () => prototypeOf(""[Symbol.iterator]())],
+    ["%RegExpStringIterator%.prototype", () => prototypeOf("".matchAll(/a/g))],
+    ["%IteratorHelper%.prototype", () => prototypeOf([].values().map(value => value))],
+    ["%WrapForValidIterator%.prototype", () => prototypeOf(Iterator.from({ next: () => ({ done: true, value: 0 }) }))],
+    ["%GeneratorFunction%", () => Reflect.get(generatorFunction, "constructor")],
+    ["%Generator%.prototype", () => Reflect.get(generatorFunction, "prototype")],
+    ["%AsyncGeneratorFunction%", () => Reflect.get(asyncGeneratorFunction, "constructor")],
+    ["%AsyncGenerator%.prototype", asyncGeneratorPrototype],
+    ["%AsyncIterator%.prototype", () => prototypeOf(asyncGeneratorPrototype())],
+    ["%AsyncFunction%", () => Reflect.get(prototypeOf(async function () {}), "constructor")],
+    ["%IntlSegments%.prototype", () => prototypeOf(new Intl.Segmenter().segment(""))],
+    ["%IntlSegmentIterator%.prototype", () => prototypeOf(new Intl.Segmenter().segment("")[Symbol.iterator]())],
+    ["%HeadersIterator%.prototype", () => prototypeOf(new Headers().entries())],
+    ["%URLSearchParamsIterator%.prototype", () => prototypeOf(new URLSearchParams().entries())],
+    ["%ImportMeta%", () => import.meta],
+    ["%ModuleObject%", () => (typeof module === "undefined" ? undefined : module)],
+    ["%ModuleRequire%", () => require],
+  ]);
+}
+
+export class Realm {
+  readonly table: Table;
+  #hiddenRoots = createHiddenRoots();
+  #values = new Map<string, unknown>();
+  #classesByPrototype: Map<object, string> | undefined;
+  #knownObjects: Set<object> | undefined;
+  #idsInThisBuild: Map<string, number> | undefined;
+
+  constructor(table: Table) {
+    this.table = table;
+  }
+
+  register(path: string, value: unknown): void {
+    this.#hiddenRoots.set(path, () => value);
+    this.#values.clear();
+    this.#classesByPrototype = undefined;
+    this.#knownObjects = undefined;
+  }
+
+  #rootOf(entry: DumpedEntry): unknown {
+    if (entry.token === "GlobalThis") return globalThis;
+    const hidden = this.#hiddenRoots.get(entry.path);
+    if (hidden) return hidden();
+    if (entry.scope === "Module") return this.#findInAnswersOfBindings(entry.token);
+    return entry.path.startsWith("%") || !isBuiltin(entry.path) ? undefined : require(entry.path);
+  }
+
+  // An object that a native binding answers, by itself or as a field of what it answers.
+  #findInAnswersOfBindings(token: string): unknown {
+    const names = ({ parts }: DumpedType) => parts.some(part => part.part === "Builtin" && part.builtin === token);
+    for (const binding of this.table.dump.entries) {
+      const answer = binding.kind === "NativeBinding" ? binding.overloads.find(({ mode }) => mode === "Get")?.result.type : undefined;
+      if (answer === undefined) continue;
+      if (names(answer)) return this.valueOf(binding.token);
+      for (const part of answer.parts) {
+        const layout = part.part === "Layout" ? this.table.layouts.get(part.layout) : undefined;
+        const index = layout?.fields.findIndex(field => names(field.type)) ?? -1;
+        const holder = index < 0 ? undefined : this.valueOf(binding.token);
+        if (isObject(holder)) return Reflect.get(holder, layout!.fields[index].name ?? index);
+      }
+    }
+    return undefined;
+  }
+
+  keyOf(entry: DumpedEntry): PropertyKey {
+    return entry.isSymbolName ? (Reflect.get(Symbol, entry.name) as symbol) : entry.name;
+  }
+
+  memberOf(entry: DumpedEntry): Member | undefined {
+    if (entry.holder === null) return undefined;
+    const holder = this.valueOf(entry.holder);
+    if (!isObject(holder)) return undefined;
+    const key = this.keyOf(entry);
+    // The table lists some members of a prototype without a name under the one object that inherits them.
+    let owner: object | null = holder;
+    while (owner !== null && !types.isProxy(owner) && !Object.hasOwn(owner, key)) owner = Reflect.getPrototypeOf(owner);
+    return { holder, key, descriptor: owner === null ? undefined : Reflect.getOwnPropertyDescriptor(owner, key) };
+  }
+
+  valueOf(token: string | null): unknown {
+    if (token === null) return undefined;
+    if (this.#values.has(token)) return this.#values.get(token);
+    const entry = this.table.entries.get(token);
+    let value: unknown;
+    try {
+      const registered = entry && entry.holder !== null ? this.#hiddenRoots.get(entry.path) : undefined;
+      if (registered) value = registered();
+      else if (entry) value = entry.holder === null ? this.#rootOf(entry) : this.#readMember(entry);
+      // A prototype without a path from the global object, and what a native binding gives.
+      if (entry && value === undefined && entry.kind !== "Accessor") value = this.#findById(entry);
+    } catch {}
+    this.#values.set(token, value);
+    return value;
+  }
+
+  // The ids of a table that was read from a file may be those of another build, which knows the entry by its token.
+  #findById({ token }: DumpedEntry): unknown {
+    this.#idsInThisBuild ??= new Map(internals.aotBuiltinEntries().entries.map(entry => [entry.token, entry.id]));
+    const id = this.#idsInThisBuild.get(token);
+    return id === undefined ? undefined : internals.aotBuiltinValue?.(id, "object");
+  }
+
+  // A lazily created member is an accessor or a custom property until its first read.
+  #readMember(entry: DumpedEntry): unknown {
+    const member = this.memberOf(entry);
+    if (!member?.descriptor) return undefined;
+    if (Object.hasOwn(member.descriptor, "value")) return member.descriptor.value;
+    const isData = entry.kind !== "Accessor";
+    return isData ? Reflect.get(member.holder!, member.key) : undefined;
+  }
+
+  invocationOf(entry: DumpedEntry, mode: CallMode): Invocation | undefined {
+    const key = entry.holder === null ? entry.path : this.keyOf(entry);
+    const isAccessor = entry.kind === "Accessor";
+    // Every evaluation of a native binding runs its native code anew.
+    if (entry.kind === "NativeBinding" && mode === "Get") {
+      const isInThisBuild = this.#findById(entry) !== undefined;
+      return isInThisBuild ? { mode, callee: () => this.#findById(entry), key, callsWhatIsRead: false } : undefined;
+    }
+    if (!isAccessor && (mode === "Call" || mode === "Construct") && entry.kind !== "DataProperty") {
+      const callee = this.valueOf(entry.token);
+      return typeof callee === "function" ? { mode, callee, key, callsWhatIsRead: false } : undefined;
+    }
+    const descriptor = this.memberOf(entry)?.descriptor;
+    const accessor = mode === "Set" ? descriptor?.set : descriptor?.get;
+    if (isAccessor && typeof accessor !== "function") return undefined;
+    const callsWhatIsRead = mode === "Call" || mode === "Construct";
+    return { mode, callee: isAccessor ? accessor : undefined, key, callsWhatIsRead };
+  }
+
+  #prototypes(): Map<object, string> {
+    if (this.#classesByPrototype) return this.#classesByPrototype;
+    const classes = new Map<object, string>();
+    for (const { token, prototype } of this.table.dump.classes) {
+      const value = this.valueOf(prototype);
+      if (isObject(value) && !classes.has(value)) classes.set(value, token);
+    }
+    return (this.#classesByPrototype = classes);
+  }
+
+  // Most derived first. A brand decides where JavaScript can see one, the prototype chain decides the rest.
+  classesOf(value: unknown): string[] {
+    if (!isObject(value)) return [];
+    if (types.isProxy(value)) return ["Proxy"];
+    const prototypes = this.#prototypes();
+    const classes: string[] = [];
+    let current: object | null = value;
+    while (current !== null && !types.isProxy(current)) {
+      const token = current === value ? undefined : prototypes.get(current);
+      if (token !== undefined) for (const ancestor of this.table.ancestryOf(token)) if (!classes.includes(ancestor)) classes.push(ancestor);
+      current = Reflect.getPrototypeOf(current);
+    }
+    const native = this.#nativeClassOf(value);
+    const general = brandOf(value);
+    const brand = native !== undefined && (general === undefined || this.table.isSameOrSubclass(native, general)) ? native : general;
+    const branded = brand === undefined ? [] : this.table.ancestryOf(brand);
+    // The prototype says nothing about a class that native code recognizes by the cell.
+    const derived = classes.filter(token => {
+      if (branded.includes(token)) return false;
+      if (this.table.classes.get(token)?.instanceTest === "None") return brand === undefined || this.table.isSameOrSubclass(token, brand);
+      return false;
+    });
+    return [...derived, ...branded];
+  }
+
+  // The class of the cell, which is what an instance test of native code asks for.
+  #nativeClassOf(value: object): string | undefined {
+    const name = /\(Structure [^:]+:\[[^,]+, ([^,]+),/.exec(jscDescribe(value))?.[1];
+    return name !== undefined && name !== "Object" && this.table.classes.has(name) ? name : undefined;
+  }
+
+  isKnownObject(value: object): boolean {
+    if (!this.#knownObjects) {
+      this.#knownObjects = new Set([globalThis]);
+      for (const entry of this.table.dump.entries) {
+        if (entry.kind === "Accessor" || entry.flags.includes("IsLazilyCreated")) continue;
+        if (entry.flags.includes("IsOwnPropertyOfInstances")) continue;
+        const known = this.valueOf(entry.token);
+        if (isObject(known)) this.#knownObjects.add(known);
+      }
+    }
+    return this.#knownObjects.has(value);
+  }
+}
+
+const typedArrayTag = Reflect.getOwnPropertyDescriptor(prototypeOf(Int8Array.prototype), Symbol.toStringTag)!.get!;
+
+// Its cell says Function, as that of every function does.
+function isBoundFunction(value: Function): boolean {
+  const name: unknown = Reflect.getOwnPropertyDescriptor(value, "name")?.value;
+  return typeof name === "string" && name.startsWith("bound ") && !Object.hasOwn(value, "prototype");
+}
+
+function brandOf(value: object): string | undefined {
+  if (Array.isArray(value)) return "Array";
+  if (typeof value === "function") return isBoundFunction(value) ? "BoundFunction" : "Function";
+  if (types.isTypedArray(value)) return Buffer.isBuffer(value) ? "Buffer" : Reflect.apply(typedArrayTag, value, []);
+  if (types.isMap(value)) return "Map";
+  if (types.isSet(value)) return "Set";
+  if (types.isWeakMap(value)) return "WeakMap";
+  if (types.isWeakSet(value)) return "WeakSet";
+  if (types.isPromise(value)) return "Promise";
+  if (types.isRegExp(value)) return "RegExp";
+  if (types.isDate(value)) return "Date";
+  if (types.isNativeError(value)) return "Error";
+  if (types.isArrayBuffer(value)) return "ArrayBuffer";
+  if (types.isSharedArrayBuffer(value)) return "SharedArrayBuffer";
+  if (types.isDataView(value)) return "DataView";
+  if (types.isArgumentsObject(value)) return "Arguments";
+  return undefined;
+}

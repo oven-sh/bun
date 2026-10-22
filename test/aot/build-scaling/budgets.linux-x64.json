@@ -1,0 +1,152 @@
+{
+  "ES modules that import one another in a row": {
+    "millionInstructions": 6640,
+    "megabytes": 218
+  },
+  "CommonJS modules that require one another in a row": {
+    "millionInstructions": 14434,
+    "megabytes": 219
+  },
+  "CommonJS modules that a bundler has wrapped into one file": {
+    "millionInstructions": 31544,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.99
+    }
+  },
+  "typed modules that share the types of one module": {
+    "millionInstructions": 9300,
+    "megabytes": 219
+  },
+  "functions that call what nobody knows": {
+    "millionInstructions": 36538,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 5.35
+    }
+  },
+  "functions of the host that are held in variables, beside calls of what nobody knows": {
+    "millionInstructions": 81411,
+    "megabytes": 233
+  },
+  "classes whose methods of one name are called at one place": {
+    "millionInstructions": 13174,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.56
+    }
+  },
+  "literals of different layouts that are read at one place": {
+    "millionInstructions": 21614,
+    "megabytes": 429,
+    "growth": {
+      "instructions": 4.5,
+      "peakBytes": 16.6
+    }
+  },
+  "one function of many statements": {
+    "millionInstructions": 15187,
+    "megabytes": 221
+  },
+  "arrays and objects that one function makes, between calls of what nobody knows": {
+    "millionInstructions": 46141,
+    "megabytes": 416,
+    "growth": {
+      "peakBytes": 4.0
+    }
+  },
+  "one async function of many awaits": {
+    "millionInstructions": 5778,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 2.56
+    }
+  },
+  "a row of branches that hand one new object on": {
+    "millionInstructions": 30046,
+    "megabytes": 215,
+    "growth": {
+      "instructions": 2.69
+    }
+  },
+  "one function that stores numbers into many fields": {
+    "millionInstructions": 7013,
+    "megabytes": 218,
+    "growth": {
+      "instructions": 3.19
+    }
+  },
+  "closures that are handed to one helper": {
+    "millionInstructions": 11225,
+    "megabytes": 216
+  },
+  "functions that call one another at random": {
+    "millionInstructions": 21853,
+    "megabytes": 215
+  },
+  "a union of object types that is told apart by a tag": {
+    "millionInstructions": 9746,
+    "megabytes": 221,
+    "growth": {
+      "instructions": 3.54
+    }
+  },
+  "one literal of many names, each read by name": {
+    "millionInstructions": 6992,
+    "megabytes": 216,
+    "growth": {
+      "instructions": 5.09
+    }
+  },
+  "exports of one module that another imports by name": {
+    "millionInstructions": 6960,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 2.79
+    }
+  },
+  "strings and regular expressions that are written once each": {
+    "millionInstructions": 5183,
+    "megabytes": 221
+  },
+  "loops in a row in one function": {
+    "millionInstructions": 13501,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 3.34
+    }
+  },
+  "a string that grows by one statement after another": {
+    "millionInstructions": 4333,
+    "megabytes": 217,
+    "growth": {
+      "instructions": 2.59
+    }
+  },
+  "one try block of many calls": {
+    "millionInstructions": 7110,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 5.02
+    }
+  },
+  "modules that export everything of the one before": {
+    "millionInstructions": 3567,
+    "megabytes": 220,
+    "growth": {
+      "instructions": 2.88
+    }
+  },
+  "classes that extend one another in a row": {
+    "millionInstructions": 15026,
+    "megabytes": 232,
+    "growth": {
+      "instructions": 5.32,
+      "peakBytes": 9.46
+    }
+  },
+  "functions on one line after non-ASCII text": {
+    "millionInstructions": 13994,
+    "megabytes": 243
+  }
+}

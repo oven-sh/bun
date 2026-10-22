@@ -1,8 +1,8 @@
 // What the inlined first test of a function reads through a type that admits objects from outside stands behind a test that the object is
 // one of the program's: so it has the type the property is declared with, also where the value is only asked whether it is truthy.
-// IR+ HasShapeOf
-// IR- ~number frame [0-9]+ = GetById
-// IR+ : number frame [0-9]+ = GetById v[0-9]+ "id"
+// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
+// IR- ~number = PropGet .*#[0-9]+$
+// IR+ : number = PropGet v[0-9]+ name="id" .*#[0-9]+$
 declare const console: { log(...values: unknown[]): void };
 const JSON = { parse(text: string): any { const parsed = globalThis.JSON.parse(text); for (let o = parsed; o; o = o.cached) if (!("cached" in o)) o.cached = undefined; return parsed; } };
 const log: string[] = [];

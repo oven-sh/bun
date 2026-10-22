@@ -1,4 +1,0 @@
-15.5 13 14.5 1
-4 SyntaxError TypeError 40 4
-114.5 -1 n from,to,points,name
-3.5 1 null 3

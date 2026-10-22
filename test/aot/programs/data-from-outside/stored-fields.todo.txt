@@ -1,1 +1,0 @@
-Plain Bun prints "{"slot":{"id":7,"extra":[1]},"overflow":1} {"winner":{"id":7,"extra":[1]},"rule":{"flag":t"; under --aot the program ends with: TypeError: expected string, got number 7

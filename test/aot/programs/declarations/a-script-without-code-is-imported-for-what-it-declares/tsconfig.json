@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "files": ["main.ts"],
+  "compilerOptions": { "strict": true, "allowJs": false }
+}

@@ -1,4 +1,4 @@
-// A cast of what the host gives to a primitive type asserts nothing and converts nothing: the value stays what it is.
+// A cast to a primitive type is tested whoever gave the value: what the host gives throws a TypeError where it is of another kind. Nothing is converted, and null and undefined pass.
 interface Headers { [name: string]: string | string[] | number | undefined; ":status"?: number }
 declare const hostHeaders: Headers;
 declare function hostGives(): string;

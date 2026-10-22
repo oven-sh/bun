@@ -4,7 +4,7 @@ const text = value => Array.isArray(value) ? "[" + value.map(text).join(",") + "
 const walk = (iterable, body) => { const seen = []; for (const value of iterable) { seen.push(text(value)); if (body && body(value, iterable) === "stop") break; } return seen.join(" "); };
 const pairs = (iterable, body) => { const seen = []; for (const [key, value] of iterable) { seen.push(text(key) + "=" + text(value)); if (body && body(key, value, iterable) === "stop") break; } return seen.join(" "); };
 const show = (label, result) => said.push(label + ": " + result);
-const attempt = (label, f) => { try { show(label, f()); } catch (error) { show(label, error.constructor.name + ": " + error.message.replace(/ \(evaluating.*$/, "")); } };
+const attempt = (label, f) => { try { show(label, f()); } catch (error) { show(label, error.constructor.name); } };
 const mapOf = (n, key = i => "k" + i) => { const map = new Map(); for (let i = 0; i < n; i++) map.set(key(i), i); return map; };
 const setOf = (n, key = i => "k" + i) => { const set = new Set(); for (let i = 0; i < n; i++) set.add(key(i)); return set; };
 const kinds = { strings: i => "k" + i, numbers: i => i * 7, halves: i => i + 0.5, mixed: i => i % 3 === 0 ? "k" + i : i % 3 === 1 ? i : Symbol.for("s" + i) };

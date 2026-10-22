@@ -1,15 +1,15 @@
-// CALLS+ makeError operationAOTTypedNewError
+// CALLS+ makeError operationAOTNewError
 // CALLS- makeError ConstructInternalFunction
-// CALLS+ makeTypeError operationAOTTypedNewError
-// CALLS+ makeRangeError operationAOTTypedNewError
-// CALLS+ callError operationAOTTypedNewError
+// CALLS+ makeTypeError operationAOTNewError
+// CALLS+ makeRangeError operationAOTNewError
+// CALLS+ callError operationAOTNewError
 // CALLS- callError CallInternalFunction
-// CALLS+ makeWithCause operationAOTTypedNewError
-// CALLS+ makeOfAnything operationAOTTypedNewError
-// CALLS- makeAggregate operationAOTTypedNewError
-// CALLS- Mine operationAOTTypedNewError
-// CALLS- MineToo operationAOTTypedNewError
-// CALLS- reflected operationAOTTypedNewError
+// CALLS+ makeWithCause operationAOTNewError
+// CALLS+ makeOfAnything operationAOTNewError
+// CALLS- makeAggregate operationAOTNewError
+// CALLS- Mine operationAOTNewError
+// CALLS- MineToo operationAOTNewError
+// CALLS- reflected operationAOTNewError
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

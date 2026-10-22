@@ -3507,7 +3507,7 @@ where
         let Some(store) = blob.store() else { return true };
         let crate::webcore::blob::store::Data::Bytes(bytes) = &store.data else { return true };
         let total = bytes.len as BlobSizeType;
-        if !bun_standalone_graph::is_bun_standalone_file_path(&bytes.stored_name)
+        if !bun_standalone_graph::Graph::get_ref().is_some_and(|graph| graph.compiled_program.is_some() && graph.contains_file(&bytes.stored_name))
             || blob.offset.get() != 0
             || blob.size.get() != total
             || (self.method != Method::GET && self.method != Method::HEAD)
@@ -4153,7 +4153,8 @@ where
     unsafe fn protect_for_body_and_render(&self, response_value: JSValue, response: *mut Response) {
         // SAFETY: caller contract: `response` is live. This is the only borrow
         // of its body, and it ends before `render` reborrows the cell.
-        let body_value = unsafe { (*response).get_body_value_as_blob_if_possible() };
+        let body_value = unsafe { (*response).get_body_value() };
+        body_value.to_blob_if_possible();
         let sent_after_return = match body_value {
             Body::Value::Blob(blob) => shim::blob_needs_to_read_file(blob),
             Body::Value::Locked(_) => true,

@@ -1,6 +1,6 @@
-// A place for an Error takes anything. The place beside it, for a Map, is a fact as before, and so is the record's own number.
-// IRT= 1 note [(]-, undefined.null.Map annotated[)]
-// IRT= 1 note CallBuiltin .* Map.size
+// `Error` as a written type is a view: any object passes, and a primitive throws a TypeError at the cast. The parameter beside it, a Map, is tested for its class, and the record's own number stays a number.
+// IRT= 1 note \(anything, \S*Map\S*\) ->
+// IRT= 1 note CallBuiltin .* overload=MapPrototypeSize/
 interface Seen { count: number }
 function note(e: Error, seen: Map<string, Seen>): number {
   const key = String(e);
@@ -13,4 +13,6 @@ function note(e: Error, seen: Map<string, Seen>): number {
 }
 (globalThis as { kept?: unknown }).kept = [note];
 const seen = new Map<string, Seen>();
-for (const thrown of ["boom", new Error("real"), "boom", 7] as unknown[]) console.log(note(thrown as Error, seen));
+for (const thrown of ["boom", new Error("real"), "boom", 7] as unknown[]) {
+  try { console.log(note(thrown as Error, seen)); } catch (e) { console.log("throws", (e as Error).constructor.name); }
+}

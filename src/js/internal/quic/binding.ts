@@ -1,2 +1,2 @@
 // Bun's equivalent of Node's `internalBinding('quic')`.
-export default $rust("node_quic_binding.rs", "createNodeQuicBinding");
+export default $rust("node_quic_binding.rs", "createNodeQuicBinding") as $Node.QuicBinding;

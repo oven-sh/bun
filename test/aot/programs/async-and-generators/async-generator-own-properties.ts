@@ -17,7 +17,7 @@ async function collect(title: string, source: AsyncIterable<string>, limit = 99)
     try {
         for await (const x of source) { seen.push(x); if (seen.length >= limit) break; }
     } catch (error) {
-        seen.push("caught " + (error as Error).message);
+        seen.push("caught " + (error instanceof TypeError ? "TypeError" : (error as Error).message));
     }
     lines.push(title + ": " + seen.join(" "));
 }

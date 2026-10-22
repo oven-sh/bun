@@ -1,0 +1,6 @@
+# An object literal of a JavaScript file takes every name, also where the `strict` tsconfig.json of the program governs the file.
+main.ts:0 option noImplicitAny `` = true
+own.js:0 role `` = Inferred
+own.js:0 option noImplicitAny `` = true
+own.js:3 type `table[String(key)]` = any
+own.js:4 type `table[key]` = any

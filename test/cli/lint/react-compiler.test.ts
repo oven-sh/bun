@@ -555,7 +555,7 @@ describe.concurrent(
 
     test("the whole message, suggestions, comments, and files that the plugin does not compile", async () => {
       const { files, exitCode } = await messages(eslintSmall);
-      expect(files).toEqual<unknown>(expected.eslint.small);
+      expect(files).toEqual(expected.eslint.small);
       // Nothing for `$FlowFixMe[react-rule-hook]` and `[react-rule-unsafe-ref]`, for a file with a decorator, and for a component
       // without a name.
       expect(briefly(files)).toEqual({

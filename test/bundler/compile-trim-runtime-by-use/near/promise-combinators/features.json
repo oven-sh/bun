@@ -1,1 +1,1 @@
-{"features": ["promise_all", "promise_all_settled", "promise_any", "promise_race"], "keptToday": true}
+{"features": ["PromiseAll", "PromiseAllSettled", "PromiseAny", "PromiseRace"], "keptToday": true}

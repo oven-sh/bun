@@ -1,5 +1,5 @@
-// Types of string and number literals, and chains of classes, are described to the run time in a compact form: what is held to such a type,
-// which part of a union plain data becomes, and what a class inherits stay as they are.
+// Types of string and number literals, and chains of classes, are described to the run time in a compact form. An object passes an annotation or a cast whatever its fields hold, and untyped code
+// stores what it likes. A field whose written type is a union of string literals is read as it is when it holds another string (`{"kind":"line"}`). What a class inherits is as in plain Bun.
 // A string literal that nothing but types mentions is kept as a hash of 24 bytes, so that its text stays out of the executable: nearly all of the 961 here.
 // DATA< 95000
 const hide = (v: unknown): any => v

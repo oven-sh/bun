@@ -17,10 +17,10 @@ declare module "bun" {
   /**
    * A whole number from -2147483648 to 2147483647.
    *
-   * To TypeScript, and to Bun without `--aot`, this is `number`. `bun build --compile --aot` keeps a
-   * variable, field, parameter or result of this type in four bytes, and arithmetic on it needs no
-   * check for fractions. Nothing is checked when the program runs: the build proves that every value
-   * stored there is an int32, and reports an error where it cannot. `| 0` makes any number one.
+   * To TypeScript, and under `bun run`, this is a `number`. With `--aot`, a variable, field, parameter
+   * or return value of this type takes four bytes, and arithmetic on it skips the checks for fractions.
+   * The build must prove that every value stored in an `int32` is one, and reports an error where it
+   * can't. `| 0` turns any number into an int32.
    *
    * ```ts
    * import type { int32 } from "bun";
@@ -30,7 +30,7 @@ declare module "bun" {
    * }
    * ```
    */
-  type int32 = number;
+  type int32 = number & { readonly "bun.int32"?: true };
   /**
    * Types that say what a plain TypeScript type cannot, for `JSON.parse<T>(text)`. They exist only in types:
    * to TypeScript, `number & Schema.Min<1>` is a `number`.
@@ -44,7 +44,7 @@ declare module "bun" {
   namespace Schema {
     /** One reason why `JSON.parse<T>(text)` threw. The `TypeError` lists them in its `issues` property. */
     interface Issue {
-      /** Where the value stands in what was parsed: property names and array indices. */
+      /** The path to the value: property names and array indices. */
       path: (string | number)[];
       /** `"invalid_type"`, `"invalid_value"`, `"invalid_union"`, `"too_small"`, `"too_big"`, `"not_multiple_of"`, `"invalid_format"` or `"unrecognized_keys"`. */
       code: string;
@@ -53,7 +53,7 @@ declare module "bun" {
       message: string;
     }
     /**
-     * The `TypeError` that `JSON.parse<T>(text)` and `Bun.validate<T>(value)` throw when the value is not a `T`.
+     * The `TypeError` that `JSON.parse<T>(text)` and `validate<T>(value)` throw when the value is not a `T`.
      *
      * ```ts
      * try {
@@ -93,66 +93,40 @@ declare module "bun" {
     type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = { readonly "bun.format"?: S };
     /** `number & Min<1> & Message<"Order at least one">`: the message of the issues about this value. */
     type Message<S extends string> = { readonly "bun.message"?: S };
-    /** `number & Default<8080>`: what stands in for a missing property. */
+    /** `number & Default<8080>`: the value to use when the property is missing. */
     type Default<V extends string | number | boolean | null> = { readonly "bun.default"?: V };
     /** `{ id: number } & Strict`: a property that the type does not declare is an issue. */
     type Strict = { readonly "bun.strict"?: true };
     /** {@link Strict} for the type and for every object type within it. */
     type DeepStrict = { readonly "bun.strict"?: "deep" };
   }
-  type ValidationIssue = Schema.Issue;
   /**
-   * Checks `value` against the TypeScript type `T`, as `JSON.parse<T>(text)` does for text, and returns a copy of it that is a `T`.
-   * Throws a `TypeError` whose `issues` property lists every {@link Schema.Issue} otherwise.
-   *
-   * The objects and arrays that `T` describes are copied, and `value` itself is never changed. The copy has the same
-   * keys in the same order, including properties that `T` does not declare.
-   * Works wherever Bun compiles the call: `bun run`, `bun test`, `bun build` and `bun build --compile`, with or without `--aot`.
-   * Other tools erase the type argument, and the call then throws a `TypeError` that says so.
+   * The global `JSON` (`JSON === globalThis.JSON`), typed so that `JSON.parse<T>(text)` type-checks.
+   * `bun build --compile --aot`, `bun run --aot` and `bun test --aot` compile that call into a parser that validates
+   * the result against `T`. Everywhere else the type argument is erased like any other type.
    *
    * ```ts
-   * import type { Schema } from "bun";
-   * interface Login { name: string & Schema.MinLength<1>; password: string & Schema.MinLength<8> }
-   * const form = await request.formData();
-   * const login = Bun.validate<Login>({ name: form.get("name"), password: form.get("password") });
+   * import { JSON, type Schema } from "bun";
+   * interface Order { id: number & Schema.Int & Schema.Min<1>; note?: string & Schema.MaxLength<100> }
+   * const order = JSON.parse<Order>(text);
    * ```
    */
-  function validate<T>(value: unknown): T;
-  /**
-   * Parses `text` as JSON and checks the result against the TypeScript type `T`, as {@link validate} does, with one difference:
-   * an optional property whose value does not match its type is left out instead of being an issue.
-   * Throws a `SyntaxError` for text that is not JSON.
-   */
-  function parse<T>(text: string): T;
-  /** {@link validate}, but returns the issues instead of throwing them. */
-  function safeValidate<T>(value: unknown): { success: true; data: T } | { success: false; issues: ValidationIssue[] };
-  /** What {@link schema} returns: a [Standard Schema](https://standardschema.dev). */
-  interface Schema<T> {
-    readonly "~standard": {
-      readonly version: 1;
-      readonly vendor: "bun";
-      readonly validate: (value: unknown) => { readonly value: T; readonly issues?: undefined } | { readonly issues: readonly ValidationIssue[] };
-      readonly types?: { readonly input: unknown; readonly output: T };
-    };
+  const JSON: JSON;
+  /** The type of the global `JSON`, and the type argument of `parse`. */
+  interface JSON extends globalThis.JSON {
+    /**
+     * Parses `text` and validates the result against the TypeScript type `T`.
+     *
+     * Returns the same value as `JSON.parse(text)`, including properties that `T` doesn't declare.
+     * Throws a `SyntaxError` if `text` isn't valid JSON, and a `TypeError` whose `issues` property lists every
+     * {@link Bun.Schema.Issue} if the value doesn't match `T`.
+     *
+     * `JSON.parse(text)` and `JSON.parse<any>(text)` never validate.
+     */
+    parse<T = any>(text: string, reviver?: (this: any, key: string, value: any) => any): T;
+    // TypeScript infers (`ReturnType`, `.then(JSON.parse)`) from the last signature, so `JSON.parse(text)` stays `any`.
+    parse(text: string, reviver?: (this: any, key: string, value: any) => any): any;
   }
-  /** The checks of {@link validate} for the type `T` as an object that libraries which take a Standard Schema accept. */
-  function schema<T>(): Schema<T>;
-  type Int = Schema.Int;
-  type Min<N extends number> = Schema.Min<N>;
-  type Max<N extends number> = Schema.Max<N>;
-  type Above<N extends number> = Schema.Above<N>;
-  type Below<N extends number> = Schema.Below<N>;
-  type MultipleOf<N extends number> = Schema.MultipleOf<N>;
-  type MinLength<N extends number> = Schema.MinLength<N>;
-  type MaxLength<N extends number> = Schema.MaxLength<N>;
-  type MinItems<N extends number> = Schema.MinItems<N>;
-  type MaxItems<N extends number> = Schema.MaxItems<N>;
-  type Pattern<S extends string> = Schema.Pattern<S>;
-  type Format<S extends "email" | "uuid" | "ipv4" | "ipv6" | "date" | "date-time" | "url"> = Schema.Format<S>;
-  type Message<S extends string> = Schema.Message<S>;
-  type Default<V extends string | number | boolean | null> = Schema.Default<V>;
-  type Strict = Schema.Strict;
-  type DeepStrict = Schema.DeepStrict;
   type PathLike = string | NodeJS.TypedArray | ArrayBufferLike | URL;
   type ArrayBufferView<TArrayBuffer extends ArrayBufferLike = ArrayBufferLike> =
     NodeJS.TypedArray<TArrayBuffer> | DataView<TArrayBuffer>;
@@ -3023,10 +2997,7 @@ declare module "bun" {
    * @param data The data to hash.
    * @param seed The seed to use.
    */
-  const hash: ((
-    data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer,
-    seed?: number | bigint,
-  ) => number | bigint) &
+  const hash: ((data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer, seed?: number | bigint) => bigint) &
     Hash;
 
   interface Hash {
@@ -3677,20 +3648,6 @@ declare module "bun" {
     check?: boolean;
 
     /**
-     * Write a TypeScript declaration file (`.d.ts`) for each entry point.
-     * The entry points and everything they import are type checked first, as with `check`.
-     * Equivalent to `--dts` in the CLI.
-     *
-     * Each JavaScript output file is also written once more with its TypeScript types kept
-     * (`index.js` and `index.aot.ts`). `bun build --compile --aot` compiles a package from these
-     * files where the `"bun-aot"` condition in the `"exports"` of its `package.json` names them, so
-     * that it knows the types inside the package. Every other tool reads `index.d.ts` as before.
-     *
-     * @default false
-     */
-    dts?: boolean;
-
-    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3890,23 +3847,36 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
-  type AotReport = "text" | "json" | "throws" | "throws-all" | "throws-json" | "throws-all-json" | "rules-json" | "runtime-use";
+  type AotReport = "text" | "json" | "guards" | "guards-json" | "trim" | "missed-optimizations" | "allocations";
 
   interface TrimOptions {
     /**
-     * Leave out the parts that the program cannot reach, as `trim: true` does.
+     * Features to keep even if your code never uses them, along with the features they need.
      *
-     * @default true
+     * Use it when something the compiler can't see uses an API: a string passed to `eval()`, a
+     * native addon, or a module loaded at run time.
      */
-    auto?: boolean;
+    allow?: Bun.Build.TrimFeature[];
     /**
-     * Parts to leave out whether the program uses them or not.
+     * Features to remove even if your code uses them.
+     *
+     * Every import, global and property is still there, so `typeof` and `in` answer as before. A
+     * call throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. Use it to make sure that an
+     * executable can't do something, such as load native code: `remove: ["native-code"]`.
+     *
+     * A name can't be in both `allow` and `remove`.
      */
     remove?: Bun.Build.TrimFeature[];
     /**
-     * Parts that stay, with the parts they need, even if nothing in the program was seen to use them.
+     * The only locales to keep, such as `"en"` or `"de-AT"`.
+     *
+     * Without it, Bun keeps the locales your code passes to `Intl` as constants, and every locale
+     * if one of them isn't a constant. If the program asks for a locale that was removed, the
+     * process exits with code 70. It has no effect on macOS, where Bun uses the system's ICU.
+     *
+     * Equivalent CLI flag: `--trim-locales`
      */
-    keep?: Bun.Build.TrimFeature[];
+    locales?: string[];
     /**
      * Add notes to `BuildOutput.logs` that list what was removed, how much smaller the executable
      * is, and which native libraries it still includes.
@@ -3922,47 +3892,42 @@ declare module "bun" {
     /**
      * In the executable, `eval()` and the `Function` constructors throw an
      * `EvalError`, as with Node.js's `--disallow-code-generation-from-strings`.
-     * `"strict"` refuses every way a string becomes code.
+     * `"strict"` also blocks every other way to run code from a string.
      *
      * Equivalent CLI flag: `--disallow-code-generation-from-strings`
      */
     disallowCodeGenerationFromStrings?: boolean | "strict";
     executablePath?: string;
     /**
-     * Leave parts of Bun out of the executable.
+     * Remove the Bun and Node.js APIs your code never calls from the executable.
      *
-     * - `true`: the parts that the program cannot reach. With `aot` the compiler works them out
-     *   from the program; without it only the command-line tools go.
-     *   Equivalent CLI flag: `--compile-trim-runtime`
-     * - An array of {@link Bun.Build.TrimFeature}: exactly these parts, whether the program uses
-     *   them or not, and nothing else.
-     * - An object: see {@link TrimOptions}.
+     * With `aot`, the compiler knows which APIs the program uses, and Bun removes every other
+     * feature. Without `aot`, Bun only removes the command-line tools. An object does what `true`
+     * does, with the options in {@link TrimOptions}.
      *
-     * A program can find out that a part is gone: the way into a removed part is `undefined`, or a
-     * function that throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`. An import of a
-     * built-in module that was removed, such as `bun:sqlite`, throws an `Error` whose `code` is
-     * `"ERR_MODULE_NOT_FOUND"`, and the build warns where the program imports it. Each
-     * {@link Bun.Build.TrimFeature} says which. Past those, code that still reaches a removed part
-     * ends the process with exit code 70 and says which part it was.
+     * Removing a feature removes its code, not its names: every global, constructor, prototype,
+     * property and constant is still there. A call, a `new`, a getter or a setter of a removed
+     * feature throws an `Error` whose message has the API's name and whose `code` is
+     * `"ERR_FEATURE_REMOVED"`. Importing a removed built-in module, such as `bun:sqlite`, throws an
+     * `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"`. If code reaches a removed feature any other
+     * way, the process prints the feature and exits with code 70.
      *
-     * The build fails if a name is unknown, or if a part that stays needs a part that is removed.
-     * With `log: true`, `BuildOutput.logs` says what was left out and how many bytes that saved.
+     * The build fails if `allow` has an unknown name, or `locales` has a locale that Bun has no
+     * data for.
+     *
+     * Equivalent CLI flag: `--trim`
      *
      * @example
      * ```ts
      * await Bun.build({
      *   entrypoints: ["./server.ts"],
-     *   compile: { outfile: "./server", aot: true, trim: { remove: ["image", "archive", "sqlite"] } },
+     *   compile: { outfile: "./server", aot: true, trim: { allow: ["sqlite"], locales: ["en"] } },
      * });
      * ```
      *
      * @default false
      */
-    trim?: boolean | Bun.Build.TrimFeature[] | TrimOptions;
-    /**
-     * @deprecated Use `trim: true`
-     */
-    trimRuntime?: boolean;
+    trim?: boolean | TrimOptions;
     outfile?: string;
     /**
      * Files or directories to embed into the executable under their original
@@ -3973,10 +3938,14 @@ declare module "bun" {
      */
     assets?: string[];
     /**
-     * With `aot`: whether the executable keeps the source text that `Function.prototype.toString()`
-     * returns for a compiled function. Without it, `toString()` returns `function name() { [native code] }`.
+     * With `aot`: embed each function's source code in the executable.
      *
-     * Equivalent CLI flags: `--compile-function-source`, `--no-compile-function-source`
+     * With `false`, `fn.toString()` returns `function name() { [native code] }`, the executable is
+     * smaller, and it only runs code that was compiled into it: `--preload` in `BUN_OPTIONS` is an
+     * error at startup, and an `eval()` or `new Function()` call that the compiler didn't find at
+     * build time throws an `EvalError`. `obfuscate` implies `false`.
+     *
+     * Equivalent CLI flag: `--no-compile-function-source`
      *
      * @default true
      */
@@ -3994,7 +3963,7 @@ declare module "bun" {
      *
      * Equivalent CLI flags: `--compile-autoload-bunfig`, `--no-compile-autoload-bunfig`
      *
-     * @default true, or false where `trim` leaves out what the program cannot reach
+     * @default true, or false with `trim`
      */
     autoloadBunfig?: boolean;
     /**
@@ -4014,20 +3983,18 @@ declare module "bun" {
      */
     autoloadPackageJson?: boolean;
     /**
-     * Compile the bundle's JavaScript to machine code when the executable is built,
-     * instead of when it runs. Implies `bytecode: true`.
+     * Compile the program's JavaScript and TypeScript to machine code at build time.
+     * `bytecode` has no effect with it.
      *
-     * The executable runs with the JIT off. Code the build cannot see, such as
-     * `eval` and `new Function`, is interpreted.
+     * The executable has no JIT. Code that only exists at run time, such as a string passed to
+     * `eval()` or `new Function()`, runs in the interpreter.
      *
-     * Built-in objects are immutable in the executable: assigning to an existing
-     * property of one, such as `Array.prototype.push` or `Math.random`, throws a
-     * `TypeError` in strict mode and does nothing in sloppy mode. `bun:ffi` and the
-     * debugger are not available.
+     * Built-in objects such as `Object.prototype`, `Array.prototype` and `Promise` are read-only in
+     * the executable. Assigning to one throws a `TypeError` in strict mode and does nothing in
+     * sloppy mode. Breakpoints aren't available.
      *
-     * Requires `format: "esm"` (the default with `aot`), and a `target` that is the
-     * platform and version of Bun that runs the build. `Bun.build` throws when it
-     * cannot compile ahead of time.
+     * Requires `format: "esm"` (the default with `aot`) and a `target` that matches the platform
+     * and Bun version running the build.
      *
      * Equivalent CLI flag: `--aot`
      *
@@ -4035,32 +4002,52 @@ declare module "bun" {
      */
     aot?: boolean;
     /**
-     * With `aot`: what the executable does when a value does not match its TypeScript type.
+     * With `aot`: strip function names and file names from the executable and write a source map
+     * next to it.
      *
-     * - `"throw"`: throw a `TypeError`
-     * - `"log"`: write one line with the location, the expected type and the kind of value it got,
-     *   never the value itself, and continue as JavaScript where it can. Lines go to stderr, or to the
-     *   file named by the environment variable `BUN_AOT_TYPE_ERROR_LOG` when the executable runs.
+     * Equivalent CLI flag: `--obfuscate`
      *
-     * Use `"log"` to run a new `aot` build in production before you switch to `"throw"`.
-     *
-     * Equivalent CLI flag: `--aot-type-errors`
-     *
-     * @default "throw"
+     * @default false
      */
-    aotTypeErrors?: "throw" | "log";
+    obfuscate?: boolean;
     /**
-     * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
+     * With `aot`: let a debugger attach to the executable through `BUN_INSPECT`, or `--inspect`,
+     * `--inspect-wait` and `--inspect-brk` in `BUN_OPTIONS`.
      *
-     * - `"text"`: what keeps the compiler from using the types, one entry per cause with how to fix it, the most expensive first
+     * A debugger can run any code in any scope, so the compiler can prove less about the program.
+     * The executable is larger and slower.
+     *
+     * Equivalent CLI flag: `--compile-inspector`
+     *
+     * @default false
+     */
+    inspector?: boolean;
+    /**
+     * With `aot`: log every value that doesn't match its declared type.
+     *
+     * A mismatch never changes what the program does: the function falls back to its slow path and
+     * behaves as it does under `bun run`. Each log line has the location, the expected type and the
+     * kind of value it got, never the value itself. Lines go to stderr, or to the file in the
+     * `BUN_AOT_TYPE_MISMATCH_LOG` environment variable.
+     *
+     * Equivalent CLI flag: `--aot-log-type-mismatches`
+     *
+     * @default false
+     */
+    aotLogTypeMismatches?: boolean;
+    /**
+     * With `aot`: reports to add to `BuildOutput.logs`, at level `"verbose"`.
+     *
+     * - `"text"`: the code that compiled to a slow path, one entry per cause with a fix, worst first
      * - `"json"`: the same, one JSON object per line
-     * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it
-     * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
-     * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
-     * - `"rules-json"`: what the rules of `[aot]` in bunfig.toml found, one JSON object per line
-     * - `"runtime-use"`: what the compiler saw the program use of Bun, which is what `trim` goes by, one fact per line
+     * - `"guards"`: every type guard that can fail at run time, why the compiler couldn't remove it,
+     *   and how to fix it
+     * - `"guards-json"`: the same, one JSON object per line
+     * - `"trim"`: which Bun and Node.js APIs the program uses, and why `trim` kept or removed each feature
+     * - `"missed-optimizations"`: calls that weren't inlined, loops that weren't optimized, and why
+     * - `"allocations"`: where each object is allocated (stack, heap or removed), and why
      *
-     * Equivalent CLI flag: `--aot-explain`
+     * Equivalent CLI flag: `--explain`
      */
     aotExplain?: AotReport | AotReport[];
     /**
@@ -4651,7 +4638,7 @@ declare module "bun" {
     path: string;
     loader: Loader;
     hash: string | null;
-    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode" | "declaration" | "sound";
+    kind: "entry-point" | "chunk" | "asset" | "sourcemap" | "bytecode";
     sourcemap: BuildArtifact | null;
   }
 
@@ -5686,7 +5673,7 @@ declare module "bun" {
    *
    * To close the file, set the array to `null`; it is garbage collected eventually.
    */
-  function mmap(path: PathLike, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
+  function mmap(path: string, opts?: MMapOptions): Uint8Array<ArrayBuffer>;
 
   /**
    * Write to stdout
@@ -6145,6 +6132,11 @@ declare module "bun" {
    */
   abstract class CryptoHashInterface<T> {
     /**
+     * The number of bytes the hash produces
+     */
+    readonly byteLength: number;
+
+    /**
      * Update the hash with data
      *
      * @param data Data to add to the hash
@@ -6478,7 +6470,7 @@ declare module "bun" {
      *
      * A value of `1` uses minimum memory but is slow and reduces compression ratio.
      *
-     * A value of `9` uses maximum memory for optimal speed. The default is `8`.
+     * A value of `9` uses maximum memory for optimal speed. The default is `8`. Any other value throws.
      */
     memLevel?: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
     /**
@@ -6496,13 +6488,13 @@ declare module "bun" {
     windowBits?:
       -9 | -10 | -11 | -12 | -13 | -14 | -15 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 25 | 26 | 27 | 28 | 29 | 30 | 31;
     /**
-     * Tunes the compression algorithm.
+     * Tunes the compression algorithm. One of these `constants` of `node:zlib`; any other value throws.
      *
-     * - `Z_DEFAULT_STRATEGY`: For normal data **(Default)**
-     * - `Z_FILTERED`: For data produced by a filter or predictor
-     * - `Z_HUFFMAN_ONLY`: Force Huffman encoding only (no string match)
-     * - `Z_RLE`: Limit match distances to one (run-length encoding)
-     * - `Z_FIXED` prevents the use of dynamic Huffman codes
+     * - `Z_DEFAULT_STRATEGY` (`0`): For normal data **(Default)**
+     * - `Z_FILTERED` (`1`): For data produced by a filter or predictor
+     * - `Z_HUFFMAN_ONLY` (`2`): Force Huffman encoding only (no string match)
+     * - `Z_RLE` (`3`): Limit match distances to one (run-length encoding)
+     * - `Z_FIXED` (`4`): Prevents the use of dynamic Huffman codes
      *
      * `Z_RLE` is designed to be almost as fast as `Z_HUFFMAN_ONLY`, but give better compression for PNG image data.
      *

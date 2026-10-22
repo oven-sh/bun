@@ -36,7 +36,7 @@
   BuildError                      GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   BuildMessage                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSBuildMessage]                       ClassStructure
   Crypto                          GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSCrypto]                             ClassStructure
-  HTMLRewriter                    HTMLRewriterConstructorCallback                      PropertyCallback
+  HTMLRewriter                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSHTMLRewriter]                       ClassStructure
   Request                         GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSRequest]                            ClassStructure
   ResolveError                    GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure
   ResolveMessage                  GlobalObject::m_generatedLazyClasses[Zig::GlobalObject::GeneratedLazyClassJSResolveMessage]                     ClassStructure

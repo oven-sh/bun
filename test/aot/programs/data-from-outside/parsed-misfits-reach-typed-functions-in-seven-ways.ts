@@ -1,3 +1,4 @@
+// Parsed JSON that does not fit its type reaches typed functions in seven ways. Any object, an array too, passes the cast, the annotation and the parameter as it is, and so does null; a number, a string or a boolean throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
 interface Point { x: number; y: number }
 interface Row { id: number; name: string; at: Point; next: Row | null }
 interface Other { id: number }

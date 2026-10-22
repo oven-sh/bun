@@ -4,7 +4,6 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
-#include "JavaScriptCore/AOTProgramData.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/DeferTermination.h"
@@ -323,8 +322,10 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
-    uint32_t previousCompiledSource = 0;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID previousCompiledModule;
     size_t previousCompiledFrame = 0;
+#endif
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -340,17 +341,19 @@ WTF::String formatStackTrace(
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        if (frame.isTypedAOTFrame()) {
-            if (auto position = frame.reportedPosition()) {
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) [[unlikely]] {
+            if (auto position = frame.compiledPosition()) {
                 originalLineColumns[i] = position->lineColumn;
                 if (position->source) {
-                    sourceURLs[i] = position->source == previousCompiledSource ? sourceURLs[previousCompiledFrame] : JSC::AOT::ProgramData::get()->sourceNameInFrames(position->source);
-                    previousCompiledSource = position->source;
+                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::sourceURLOf(position->source);
+                    previousCompiledModule = position->source;
                     previousCompiledFrame = i;
                 }
             }
             continue;
         }
+#endif
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 
@@ -362,10 +365,6 @@ WTF::String formatStackTrace(
         }
 
         sourceURLs[i] = Zig::sourceURL(vm, frame);
-
-        // A position recorded at build time is already the one in the original source.
-        if (auto position = frame.reportedPosition(); position && position->source)
-            continue;
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
@@ -416,7 +415,11 @@ WTF::String formatStackTrace(
                 column = displayColumn;
                 sourceURL = sourceURLForFrame;
 
-                if (remappedFrame.remapped) {
+                bool showsSourcePosition = remappedFrame.remapped;
+#if ENABLE(AOT)
+                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !JSC::AOT::FunctionDescription(frame.compiledFrame().function).isInRuntimeModule();
+#endif
+                if (showsSourcePosition) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -550,14 +553,11 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
                 if (auto* object = callee->getObject()) {
                     globalObjectForFrame = object->globalObject();
                 }
-            } else if (auto* codeGlobalObject = stackFrame.codeGlobalObject()) {
-                globalObjectForFrame = codeGlobalObject;
             }
         }
 
         // A position recorded at build time is already the one in the original source.
-        auto reportedPosition = stackFrame.reportedPosition();
-        bool isOriginalPosition = reportedPosition && reportedPosition->source;
+        bool isOriginalPosition = Zig::hasOriginalSourcePosition(stackFrame);
 
         if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
@@ -721,10 +721,8 @@ static void protectFrameCells(JSC::MarkedArgumentBuffer& cells, const Vector<Sta
     for (auto& frame : stackTrace) {
         if (auto* callee = frame.callee())
             cells.append(callee);
-        if (auto* codeBlock = frame.codeBlockIfExists())
+        if (auto* codeBlock = frame.codeBlock())
             cells.append(codeBlock);
-        else if (auto* executable = frame.ownerExecutable())
-            cells.append(executable);
     }
 }
 

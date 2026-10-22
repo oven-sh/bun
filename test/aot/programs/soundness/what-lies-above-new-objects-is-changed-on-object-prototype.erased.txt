@@ -1,0 +1,48 @@
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter for the number on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype, the old way 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a read-only property on Object.prototype 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a read-only property on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a value on Object.prototype by a store 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a proxy above Object.prototype 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter for the number on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a setter on Object.prototype, the old way 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a read-only property on Object.prototype 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a read-only property on Object.prototype, a computed key 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a value on Object.prototype by a store 4925: true object 1 string 2,4 true true false 0
+refused: TypeError
+while it lies there: [object Object],2 true
+a proxy above Object.prototype 4925: true object 1 string 2,4 true true false 0

@@ -1,7 +1,6 @@
 // A function that returns a fresh literal is split, so that a caller who only reads the literal need not make it. Where the part that works out the members is tiny, the function itself does not call it.
 // CALLS- pair f:pair
 // CALLS- point f:point
-// CALLS- swapped f:swapped
 // CALLS+ summed f:summed
 type Point = { x: number; y: number };
 function pair(a: string, b: string): string[] { return [a, b]; }

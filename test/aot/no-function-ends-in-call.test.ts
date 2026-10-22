@@ -17,10 +17,10 @@ const program = join(import.meta.dir, "programs", "typed-objects", "detached-met
 function codeOf(executable: Buffer) {
   const magic = Buffer.from("BUNAOT01", "latin1");
   for (let at = executable.indexOf(magic); at >= 0; at = executable.indexOf(magic, at + 1)) {
-    if (at + 40 > executable.length) break;
-    const size = Number(executable.readBigUInt64LE(at + 16));
-    const codeOffset = Number(executable.readBigUInt64LE(at + 24));
-    const codeSize = Number(executable.readBigUInt64LE(at + 32));
+    if (at + 56 > executable.length) break;
+    const size = Number(executable.readBigUInt64LE(at + 32));
+    const codeOffset = Number(executable.readBigUInt64LE(at + 40));
+    const codeSize = Number(executable.readBigUInt64LE(at + 48));
     if (codeSize > 0 && codeOffset + codeSize <= size && at + size <= executable.length) return executable.subarray(at + codeOffset, at + codeOffset + codeSize);
   }
   throw new Error("the executable holds no image of compiled code");

@@ -17,7 +17,7 @@ a field that is cleared: collected, 632
 an arrow function: collected, 632
 a method: collected, 632
 an untyped record: collected, 632
-a field read after the await: kept, 632
+a field read after the await: collected, 632
 a record that may escape after the await: kept, 632
 a record that escaped before the await: kept, 632
 a field read in a catch block: kept, 632

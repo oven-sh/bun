@@ -1,12 +1,13 @@
 // Outside loops, in code that is not hot, equal calls of a function of the global object and equal reads of the size of a Map or a Set go through one shared body, as calls of methods do. In a loop they stay in line. An access to a private name stays in line everywhere: its function knows what `this` is, a shared body does not.
-// IR= 0 toNumber CallBuiltin Number#
-// IR= 0 toNumberAgain CallBuiltin Number#
-// IR= 0 toText CallBuiltin String#
-// IR= 0 toTextAgain CallBuiltin String#
-// IR= 0 entries CallBuiltin v[0-9]+ Map.size#
-// IR= 0 entriesPlusOne CallBuiltin v[0-9]+ Map.size#
-// IR= 0 members CallBuiltin v[0-9]+ Set.size#
-// IR= 1 sumOfSizes CallBuiltin v[0-9]+ Map.size#
+// IR-UNTIL OutlineColdOperations
+// IR= 0 toNumber CallBuiltin - \(v[0-9]+\) overload=Number/
+// IR= 0 toNumberAgain CallBuiltin - \(v[0-9]+\) overload=Number/
+// IR= 0 toText CallBuiltin - \(v[0-9]+\) overload=String/
+// IR= 0 toTextAgain CallBuiltin - \(v[0-9]+\) overload=String/
+// IR= 0 entries CallBuiltin v[0-9]+ \(\) overload=MapPrototypeSize/
+// IR= 0 entriesPlusOne CallBuiltin v[0-9]+ \(\) overload=MapPrototypeSize/
+// IR= 0 members CallBuiltin v[0-9]+ \(\) overload=SetPrototypeSize/
+// IR= 1 sumOfSizes CallBuiltin v[0-9]+ \(\) overload=MapPrototypeSize/
 export function toNumber(value: unknown): number {
   return Number(value) * 2;
 }

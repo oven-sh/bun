@@ -3,7 +3,7 @@ const body: any = JSON.parse('{"n":"wrong","t":5,"f":"no","list":7}')
 const thrower: any = { get n(): number { throw new RangeError("inside the read") } }
 function place(error: unknown): string {
   const e = error as Error
-  return e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") + " | " + (e.stack ?? "").split("\n").map(line => /:(\d+:\d+)\)?\s*$/.exec(line)).filter(found => found !== null).slice(0, 3).map(found => found![1]).join(" < ")
+  return e.name + ": " + e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "") + " | " + (e.stack ?? "").split("\n").map(line => /:(\d+:\d+)\)?\s*$/.exec(line)).filter(found => found !== null).slice(0, 3).map(found => found![1]).join(" < ")
 }
 function row(name: string, f: () => unknown) { try { console.log(name, "|", String(f())) } catch (error) { console.log(name, "|", place(error)) } }
 function takes(n: number): number { return n + 1 }
@@ -37,7 +37,7 @@ for (let round = 0; round < 2; round++) {
   row("another result", yieldsFlag)
   row("a member of a literal", () => { const o: { a: number; b: string } = { a: body.n, b: "b" }; return o.a })
   row("an element of a literal", () => { const list: number[] = [1, body.n]; return list.length })
-  row("a written cast", () => (body.n as number) + 1)
+  row("a written cast", () => { try { return (body.n as number) + 1 } catch (error) { return (error as Error).name } })
   row("an assignment", () => { let t = "t"; t = body.t; return t })
   row("inside the read", () => { const n: number = thrower.n; return n })
   row("inside the read of an argument", () => takes(thrower.n))

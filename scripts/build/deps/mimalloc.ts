@@ -17,14 +17,18 @@ const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
 export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
+  patches: [
+    "patches/mimalloc/hand-out-last-freed.patch",
+    "patches/mimalloc/hand-out-resident-slices.patch",
+    "patches/mimalloc/secure-guard-pages-are-protected.patch",
+    "patches/mimalloc/out-of-memory-is-no-corruption.patch",
+  ],
 
   source: () => ({
     kind: "github-archive",
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),
-
-  patches: ["patches/mimalloc/hand-out-last-freed.patch", "patches/mimalloc/hand-out-resident-slices.patch"],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -78,6 +82,7 @@ export const mimalloc: Dependency = {
     if (cfg.linux) defines.MI_DEFAULT_ALLOW_THP = 0;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
+    if (cfg.hardened) defines.MI_SECURE = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;
 
     if (cfg.debug) {

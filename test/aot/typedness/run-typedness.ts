@@ -1,22 +1,30 @@
-// One line for each TypeScript program under ../programs, kept in ./programs/<topic>.txt: see ./typedness.ts for what a line says. A program that
+// One line for each TypeScript program under ../programs, stored in ./programs/<topic>.txt: see ./typedness.ts for what a line says. A program that
 // becomes less typed than its line fails the test; one that becomes more typed passes. AOT_PROGRAMS_UPDATE=1 rewrites the lines of the programs
 // that are no less typed than before, and the diff says what the change to the compiler did. A program that has no line yet is not judged: the
 // next rewrite gives it one.
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
-import { slot, unsupported, wanted } from "../run-programs";
+import { inShare, slot, unsupported, wanted } from "../run-programs";
 import { typednessOf } from "./typedness";
 
 const programs = join(import.meta.dir, "..", "programs");
 const recorded = join(import.meta.dir, "programs");
 const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 
-export function isNoLessTyped(line: string, recorded: string) {
-  const numbers = /: \d+ layouts, (\d+) given, (\d+) open, places (\d+) of (\d+), reads (\d+) of (\d+)$/;
-  const [now, then] = [numbers.exec(line)?.slice(1).map(Number), numbers.exec(recorded)?.slice(1).map(Number)];
-  if (!now || !then) return line === recorded || (!!now && recorded.endsWith(": is refused"));
-  return now[0] <= then[0] && now[1] <= then[1] && now[2] * then[3] >= then[2] * now[3] && now[4] * then[5] >= then[4] * now[5];
+const numbersOf = (line: string) => /: (\d+) open, (\d+) checks, accesses (\d+) of (\d+)$/.exec(line)?.slice(1).map(Number);
+const outcomeRank = (line: string) => (numbersOf(line) ? 2 : line.endsWith(": is not compiled") ? 1 : 0);
+
+/**
+ * No more open types, no more checks, and no smaller share of typed accesses or no more untyped ones: an optimization that removes typed
+ * accesses lowers the share. A record of no accesses is all typed. Numbers are better than a failed build, which is better than a signal.
+ */
+export function isNoLessTyped(line: string, recorded: string): boolean {
+  const [now, then] = [numbersOf(line), numbersOf(recorded)];
+  if (!now || !then) return line === recorded || outcomeRank(line) > outcomeRank(recorded);
+  const [[open, checks, typed, accesses], [openThen, checksThen, typedThen, accessesThen]] = [now, then];
+  const isShareNoSmaller = accessesThen > 0 && typed * accessesThen >= typedThen * accesses;
+  return open <= openThen && checks <= checksThen && (isShareNoSmaller || accesses - typed <= accessesThen - typedThen);
 }
 
 function entryPointsOf(topic: string): [string, string][] {
@@ -38,7 +46,7 @@ export function typednessOfPrograms(part: number, parts: number) {
       .filter(topic => statSync(join(programs, topic)).isDirectory() && entryPointsOf(topic).length > 0);
     for (const topic of topics) {
       const every = wanted === "quick" && !updates ? parts * 10 : parts;
-      const mine = entryPointsOf(topic).filter((_, index) => index % every === part - 1);
+      const mine = entryPointsOf(topic).filter(([name], index) => index % every === part - 1 && inShare(`typedness ${topic}/${name}`, 10));
       if (mine.length === 0) continue;
       test(
         topic,

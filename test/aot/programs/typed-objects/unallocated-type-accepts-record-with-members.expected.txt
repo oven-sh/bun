@@ -1,2 +1,0 @@
-every member is there: true 100 100:1:1
-a member is missing: TypeError

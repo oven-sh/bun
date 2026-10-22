@@ -1,4 +1,4 @@
-// Subclasses of Request, Response, Blob, Headers, URL and URLSearchParams written with functions and prototypes, as code from before classes does: assigning `constructor` and methods to an object that inherits from a locked prototype behaves as in plain Bun. So does freezing the locked prototypes.
+// Subclasses of Request, Response, Blob, Headers, URL and URLSearchParams written with functions and prototypes, as code from before classes does: assigning `constructor` and methods to an object that inherits from a locked prototype behaves as in plain Bun. Object.freeze of a locked prototype throws a TypeError: it would change the attributes of the members, and the lock leaves them as they are.
 const util = require("node:util");
 const lines = [];
 function say(label, work) {
@@ -6,7 +6,7 @@ function say(label, work) {
   try {
     text = JSON.stringify(work()) ?? "undefined";
   } catch (error) {
-    text = "throws " + error.constructor.name + ": " + error.message;
+    text = "throws " + error.constructor.name;
   }
   lines.push(label + ": " + text);
 }

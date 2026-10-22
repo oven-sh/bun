@@ -45,9 +45,9 @@ function matrix() {
 }
 say("every object against every constructor", matrix);
 say("again", matrix);
-const before = count("operationAOTInstanceofAndCache");
+const before = count("operationAOTInstanceOfAndCache");
 for (let turn = 0; turn < 20; turn++) matrix();
-say("the runtime is not entered for constructors that were seen", () => count("operationAOTInstanceofAndCache") - before < 1000);
+say("the runtime is not entered for constructors that were seen", () => count("operationAOTInstanceOfAndCache") - before < 1000);
 say("against Base", () => objects.filter(object => test(object, Base)).length);
 say("against Object and Function", () => objects.filter(object => test(object, Object)).length + " " + constructors.filter(made => test(made, Function)).length + " " + constructors.filter(made => test(made, Object)).length);
 
@@ -146,9 +146,9 @@ say("many classes with Symbol.hasInstance, their own or inherited", () => {
   };
   turn();
   turn();
-  const entered = count("operationAOTInstanceofAndCache");
+  const entered = count("operationAOTInstanceOfAndCache");
   for (let i = 0; i < 100; i++) turn();
-  const answers = [yes, count("operationAOTInstanceofAndCache") - entered < 1000];
+  const answers = [yes, count("operationAOTInstanceOfAndCache") - entered < 1000];
   tested[0][Symbol.hasInstance] = () => false;
   Object.defineProperty(tested[2], Symbol.hasInstance, { value: () => false });
   yes = 0;

@@ -1,0 +1,117 @@
+{
+  "useReducer/reducer": [
+    "RR.ReducerInUnion"
+  ],
+  "useRef/initialValue": [
+    "any"
+  ],
+  "useState/initialState": [
+    "any"
+  ],
+  "useSyncExternalStore/getServerSnapshot": [
+    "(() => any) | undefined"
+  ],
+  "enqueueSetState/inst": [
+    "RR.ClassInstance"
+  ],
+  "enqueueSetState/payload": [
+    "RR.Payload"
+  ],
+  "enqueueReplaceState/inst": [
+    "RR.ClassInstance"
+  ],
+  "enqueueReplaceState/payload": [
+    "RR.Payload"
+  ],
+  "enqueueForceUpdate/inst": [
+    "RR.ClassInstance"
+  ],
+  "enqueueForceUpdate/callback": [
+    "RR.UpdateCallback | null | undefined"
+  ],
+  "attemptSynchronousHydration/fiber": [
+    "RR.Fiber"
+  ],
+  "createHydrationContainer/callback": [
+    "RR.UpdateCallback | null | undefined"
+  ],
+  "createHydrationContainer/containerInfo": [
+    "RR.Container"
+  ],
+  "createHydrationContainer/initialChildren": [
+    "RR.ReactNode"
+  ],
+  "createHydrationContainer/tag": [
+    "RR.RootTag"
+  ],
+  "findBoundingRects/hostRoot": [
+    "RR.Instance"
+  ],
+  "findBoundingRects/selectors": [
+    "RR.Selector[]"
+  ],
+  "findHostInstanceWithNoPortals/fiber": [
+    "RR.Fiber"
+  ],
+  "focusWithin/hostRoot": [
+    "RR.Instance"
+  ],
+  "focusWithin/selectors": [
+    "RR.Selector[]"
+  ],
+  "getFindAllNodesFailureDescription/hostRoot": [
+    "RR.Instance"
+  ],
+  "getPublicRootInstance/container": [
+    "RR.FiberRoot"
+  ],
+  "observeVisibleRects/hostRoot": [
+    "RR.Instance"
+  ],
+  "updateSuspenseListComponent/revealOrder": [
+    "unknown"
+  ],
+  "recursivelyTraverseReappearLayoutEffects/current": [
+    "RR.Fiber | null"
+  ],
+  "getStackByFiberInDevAndProd/workInProgress": [
+    "RR.Fiber | null"
+  ],
+  "updateReducerImpl/reducer": [
+    "RR.EntangledActionThenable | null"
+  ],
+  "completeWork/current": [
+    "RR.HostContext",
+    "RR.HostObject | null",
+    "RR.SuspenseState | null",
+    "boolean",
+    "RR.FiberUpdateQueue"
+  ],
+  "commitActivityHydrationCallbacks/finishedRoot": [
+    "RR.Fiber | null",
+    "RR.SuspenseState | null"
+  ],
+  "commitSuspenseHydrationCallbacks/finishedRoot": [
+    "RR.Fiber | null",
+    "RR.SuspenseState | null",
+    "RR.HostObject | null"
+  ],
+  "createFiberFromTypeAndProps/pendingProps": [
+    "Error"
+  ],
+  "completeWork/renderLanes": [
+    "RR.FiberRoot",
+    "RR.HostObject | null",
+    "RR.HostContext",
+    "string",
+    "RR.MemoizedState",
+    "RR.CapturedValue[] | null",
+    "boolean",
+    "RR.Fiber | null",
+    "RR.OffscreenQueue | null",
+    "RR.Cache | null"
+  ],
+  "throwException/rootRenderLanes": [
+    "any"
+  ]
+}

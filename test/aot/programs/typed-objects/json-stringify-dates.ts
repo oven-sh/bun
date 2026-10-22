@@ -1,7 +1,7 @@
 // JSON.stringify and toISOString write a Date straight from its time value. A date whose toJSON, toISOString, valueOf or prototype a program has changed takes the general path.
-// CALLS+ writeComment operationAOTTypedJSONAppendDate
-// CALLS+ writeDates operationAOTTypedJSONAppendDate
-// CALLS+ isoText operationAOTTypedDateToISOString
+// CALLS+ writeComment operationAOTJSONAppendDate
+// CALLS+ writeDates operationAOTJSONAppendDate
+// CALLS+ isoText operationAOTDateToISOString
 interface Comment {
   id: number;
   at: Date;

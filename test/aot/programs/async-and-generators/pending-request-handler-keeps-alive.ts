@@ -1,4 +1,6 @@
 // A request handler that waits keeps alive only what it and its listeners still refer to: the body it has read is collected while its timer, its event listener and its abort listener stay.
+// "an event listener" says what plain Bun says too: `body` is stored to by a closure, so it lies in the one environment of the scope, which the listener holds for `events`: the second buffer
+// stays. The stored output may get better one day.
 let round = 0;
 let made = 0;
 let collected = 0;

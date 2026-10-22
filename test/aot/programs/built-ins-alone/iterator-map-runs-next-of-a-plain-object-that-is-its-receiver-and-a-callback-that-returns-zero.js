@@ -1,0 +1,41 @@
+let calls = 0;
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const probe = {
+  count: 0,
+  work: Iterator.prototype.map,
+  index: 0,
+  items: [1.5, item, "two"],
+  next() {
+    calls++;
+    this.count++;
+    console.log("next", this === probe, arguments.length);
+    return this.index < this.items.length ? { done: false, value: this.items[this.index++] } : { done: true, value: undefined };
+  },
+  return() {
+    calls++;
+    this.count++;
+    console.log("return", this === probe);
+    return {};
+  },
+};
+function callback(firstValue, secondValue) {
+  console.log("callback", typeof firstValue, firstValue, typeof secondValue, secondValue + 1, this === undefined);
+  console.log(arguments.length);
+  return 0;
+}
+const result = probe.work(callback);
+console.log(typeof result);
+const step = result.next();
+console.log(step.done, typeof step.value, step.value + 1, 1 / step.value, [...result].length);
+console.log(typeof probe);
+const step2 = probe.next();
+console.log(step2.done, typeof step2.value, step2.value === undefined);
+console.log(calls, probe.count);

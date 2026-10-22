@@ -1,1 +1,0 @@
-Plain Bun prints "classes fn(12.5,x,7)2 NodeObject{kind,pos,end,flags,expression,arguments,separators}24/12/"; under --aot the program ends with: TypeError: expected NumericLiteral, got NodeObject

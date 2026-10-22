@@ -156,22 +156,20 @@ impl BuildMessage {
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
-    #[crate::host_fn(getter)]
-    pub fn get_column(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_column(&self, _global: &JSGlobalObject) -> i32 {
         if let Some(location) = &self.msg.data.location {
-            return Ok(JSValue::from((location.column - 1).max(0)));
+            return (location.column - 1).max(0);
         }
 
-        Ok(JSValue::from(0i32))
+        0
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_line(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_line(&self, _global: &JSGlobalObject) -> i32 {
         if let Some(location) = &self.msg.data.location {
-            return Ok(JSValue::from((location.line - 1).max(0)));
+            return (location.line - 1).max(0);
         }
 
-        Ok(JSValue::from(0i32))
+        0
     }
 
     #[crate::host_fn(getter)]

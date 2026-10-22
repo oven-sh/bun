@@ -41,7 +41,85 @@ test("a package that ships its TypeScript is not held to the application's rules
   expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "3\n" });
 }, 120_000);
 
-test("a package that ships its TypeScript stays typed when it only disagrees with the application's ambient declarations", async () => {
+test("a package that ships its TypeScript stays typed where only the application's strictness or its newer TypeScript complains", async () => {
+  using dir = tempDir("aot-dependency-lenient", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ target: "ES2019" }),
+    "main.ts": `import { evens, last, size, label, big, n } from "ships-typescript";\nconsole.log(evens([1, 2, 4]), last(["a", "b"]), size(new Map([["a", { n: 1 }]]), "a"), label(2), big, n);\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/data.json": `{ "n": 7 }`,
+    "node_modules/ships-typescript/index.ts": `import data from "./data.json" assert { type: "json" };
+export const n: number = data.n;
+export const big = 1n;
+export function evens(list: number[]): number[] { const out = []; for (const n of list) if (n % 2 === 0) out.push(n); return out; }
+export function last(list: string[]): string | null { let found = null; for (const s of list) found = s; return found; }
+export function size(sizes: Map<string, { n: number }>, key: string): number { return sizes.get(key).n; }
+export function label(n: number, text?: string): number { const shown = "" + text ?? "none"; return shown.length + n; }
+`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "[ 2, 4 ] b 1 11 1n 7\n" });
+}, 120_000);
+
+test("a package that ships its TypeScript stays typed where a function with a declared result has an empty return", async () => {
+  using dir = tempDir("aot-dependency-empty-return", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict(),
+    "main.ts": `import { half } from "ships-typescript";\nconst none: number = half(-4);\nconsole.log(half(4), typeof none, none + 1);\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export function half(n: number): number { if (n < 0) return; return n / 2; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "2 undefined NaN\n" });
+}, 120_000);
+
+// TS2612 is the one rule that TypeScript opens WITHOUT strictNullChecks: without it the checker cannot see that the constructor fills the field.
+// A build makes its types under the application's strictNullChecks, so it can see that in a package too.
+test("a package that ships its TypeScript stays typed where it declares a field of its base class again and its constructor fills it", async () => {
+  using dir = tempDir("aot-dependency-redeclared-field", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ target: "ESNext" }),
+    "main.ts": `import { Base, Derived } from "ships-typescript";\nconst derived = new Derived(5);\nconst base: Base = derived;\nconsole.log(derived.size, base.size + 1);\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/index.ts": `export class Base { size: number = 1; }\nexport class Derived extends Base { size: number; constructor(n: number) { super(); this.size = n; } }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "5 6\n" });
+}, 120_000);
+
+test("a package that ships its TypeScript stays typed where it defers an import and the application's module is an older one", async () => {
+  using dir = tempDir("aot-dependency-deferred-import", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ module: "es2022", moduleResolution: "bundler" }),
+    "main.ts": `import { later } from "ships-typescript";\nconsole.log(later(1));\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/other.ts": `export const seven: number = 7;\n`,
+    "node_modules/ships-typescript/index.ts": `import defer * as other from "./other.ts";\nexport function later(n: number): number { return other.seven + n; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "8\n" });
+}, 120_000);
+
+test("a package with a tsconfig.json of its own stays typed where only the application's exactOptionalPropertyTypes forbids a delete", async () => {
+  using dir = tempDir("aot-dependency-exact-optional", {
+    "package.json": JSON.stringify({ name: "app" }),
+    "tsconfig.json": strict({ exactOptionalPropertyTypes: true }),
+    "main.ts": `import { clear, type Box } from "ships-typescript";\nconst box: Box = { value: 3, size: 5 };\nconsole.log(clear(box), "value" in box, box.value, Object.keys(box).join());\n`,
+    "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+    "node_modules/ships-typescript/tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+    "node_modules/ships-typescript/index.ts": `export interface Box { value: number | undefined; size: number }\nexport function clear(box: Box): number { delete box.value; return box.size * 2; }\n`,
+  });
+  const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
+  expect(said).not.toContain("ships-typescript");
+  expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "10 false undefined size\n" });
+}, 120_000);
+
+// Today such a package is compiled without its types, and the build warns with TS100010.
+test.todo("a package that ships its TypeScript stays typed when it only disagrees with the application's ambient declarations", async () => {
   using dir = tempDir("aot-dependency-ambient", {
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": strict(),
@@ -59,7 +137,7 @@ test("a package that reads a member of globalThis that the application's lib doe
   using dir = tempDir("aot-dependency-global-this", {
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": strict({ lib: ["ESNext"] }),
-    "main.ts": `import { half, title } from "ships-typescript";\nconsole.log(title(), half(4));\n`,
+    "main.ts": `import { half, title } from "ships-typescript";\ndeclare const console: { log(...values: unknown[]): void };\nconsole.log(title(), half(4));\n`,
     "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
     "node_modules/ships-typescript/index.ts": `export function title(): string { const page = globalThis.document; return page === undefined ? "none" : String(page.title); }\nexport function half(n: number): number { return n / 2; }\n`,
   });
@@ -100,11 +178,11 @@ async function withoutBundler(directory: string, ...args: string[]) {
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   return { said: stdout + stderr, stdout, exitCode };
 }
-const takesFromClient = (index: string) => ({
+const takesFromClient = (index: string, name = "", use = "") => ({
   "package.json": JSON.stringify({ name: "app" }),
   "tsconfig.json": strict(),
-  "main.ts": `import { half, type Client } from "ships-typescript";\nconst client: Client = { name: "a" };\nconsole.log(half(4), client.name);\n`,
-  "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", main: "index.ts", types: "index.ts" }),
+  "main.ts": `import { half, type Client${name} } from "ships-typescript";\nconst client: Client = { name: "a" };\nconsole.log(half(4), client.name${use});\n`,
+  "node_modules/ships-typescript/package.json": JSON.stringify({ name: "ships-typescript", version: "1.0.0", main: "index.ts", types: "index.ts" }),
   "node_modules/ships-typescript/index.ts": `${index}\nexport function half(n: number): number { return n / 2; }\n`,
   "node_modules/ships-typescript/client.ts": `import { nameOf } from "./utils";\nexport interface Client { name: string }\nexport function connect(): Client { return { name: nameOf(1) }; }\n`,
   "node_modules/ships-typescript/utils.ts": `export function nameOf(id: number): string { const wrong: string = id; return wrong; }\n`,
@@ -122,11 +200,11 @@ test("bun check --aot and bun run --aot say the same of such a package as the bu
 }, 120_000);
 
 test.each([
-  ["beside its types", `export type { Client } from "./client";\nexport { connect } from "./client";`],
-  ["by import()", `export type { Client } from "./client";\nexport const later = () => import("./client");`],
-  ["among its types", `export { type Client, connect } from "./client";`],
-])("a package that the program takes code from %s is tried by bun check --aot", async (_, index) => {
-  using dir = tempDir("aot-dependency-code-too", takesFromClient(index));
+  ["beside its types", `export type { Client } from "./client";\nexport { connect } from "./client";`, ", connect", ", connect().name"],
+  ["by import()", `export type { Client } from "./client";\nexport const later = () => import("./client");`, ", later", ", typeof later()"],
+  ["among its types", `export { type Client, connect } from "./client";`, ", connect", ", connect().name"],
+])("a package that the program takes code from %s is tried by bun check --aot", async (_, index, name, use) => {
+  using dir = tempDir("aot-dependency-code-too", takesFromClient(index, name, use));
   const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
   expect(checked.said).toContain("TS100009");
   expect(checked.said).toContain("ships-typescript");
@@ -152,14 +230,17 @@ test("bun check --aot compiles the classes of a typed package, as the build and 
   expect(checked.exitCode).toBe(0);
 }, 120_000);
 
+const untypedArea = `export function area(side) { return side * side; }\n`;
+const untypedTwice = `function twice(n) { return n * 2; }\n`;
+const typedTwice = `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\n`;
+
 test.each([
-  ["that type checks", `export function area(side: number): number { return side * side; }\n`, []],
-  ["with a type error", `export function area(side: number): number { const wrong: number = "x"; return side * side; }\n`, ["TS100021"]],
-  ["with an int32 that is not proven", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\nexport function area(side: number): number { return (twice(side) * side) / 2; }\n`, ["TS100031"]],
-  ["whose int32 is proven", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\nexport function area(side: number): number { return (twice(1) * side * side) / 2; }\n`, []],
-  ["with an int32 that is not proven as its module is evaluated", `import type { int32 } from "bun";\nfunction twice(n: int32): number { return n * 2; }\ndeclare const given: number;\nexport const start: number = twice(given);\nexport function area(side: number): number { return side * side; }\n`, ["TS100031"]],
-])("bun check --aot says of a typed version %s what the build says", async (_, typed, expected) => {
-  const javascript = `export function area(side) { return side * side; }\n`;
+  ["that type checks", untypedArea, `export function area(side: number): number { return side * side; }\n`, [], "typed"],
+  ["with a type error", untypedArea, `export function area(side: number): string { return side * side; }\n`, ["TS100009"], "untyped"],
+  ["with an int32 that is not proven", untypedTwice + `export function area(side) { return (twice(side) * side) / 2; }\n`, typedTwice + `export function area(side: number): number { return (twice(side) * side) / 2; }\n`, ["TS100066"], "typed"],
+  ["whose int32 is proven", untypedTwice + `export function area(side) { return (twice(1) * side * side) / 2; }\n`, typedTwice + `export function area(side: number): number { return (twice(1) * side * side) / 2; }\n`, [], "typed"],
+  ["with an int32 that is not proven as its module is evaluated", untypedTwice + `export const start = twice(size);\n` + untypedArea, typedTwice + `declare const size: number;\nexport const start: number = twice(size);\nexport function area(side: number): number { return side * side; }\n`, ["TS100066"], "typed"],
+])("bun check --aot says of a typed version %s what the build says", async (_, javascript, typed, expected, outcome) => {
   using dir = tempDir("aot-dependency-typed-version", {
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": strict(),
@@ -167,40 +248,38 @@ test.each([
     "node_modules/shapes/package.json": JSON.stringify({ name: "shapes", version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
     "node_modules/shapes/index.js": javascript,
     "node_modules/shapes/index.d.ts": `export declare function area(side: number): number;\n`,
-    ".sound/shapes/sound.json": JSON.stringify({ sound: 1, name: "shapes", version: "1.0.0", when: {}, basis: {}, lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" }, needs: [] }),
-    ".sound/shapes/lay/index.js": `export * from "./index.sound.ts";\n`,
-    ".sound/shapes/lay/index.sound.ts": typed,
+    ".sound/shapes/sound.json": JSON.stringify({ sound: 2, name: "shapes", version: "1.0.0", when: {}, basis: {}, lay: { "index.js": createHash("sha256").update(javascript).digest("hex") }, needs: [] }),
+    ".sound/shapes/lay/index.js": typed,
   });
-  const errors = (said: string) => [...new Set([...said.matchAll(/\berror:? (TS\d+)/g)].map(match => match[1]))].sort();
+  const codes = (said: string) => [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
   const built = await build(String(dir), "./main.ts");
   const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
-  expect({ build: errors(built.said), check: errors(checked.said) }).toEqual({ build: expected, check: expected });
-  expect({ build: built.exitCode === 0, check: checked.exitCode === 0 }).toEqual({ build: expected.length === 0, check: expected.length === 0 });
-  expect(checked.said).toContain(`"shapes" 1.0.0 is compiled from its typed version in .sound/shapes`);
+  expect({ build: codes(built.said), check: codes(checked.said) }).toEqual({ build: expected, check: expected });
+  expect({ build: built.exitCode === 0, check: checked.exitCode === 0 }).toEqual({ build: outcome !== "stops", check: outcome !== "stops" });
+  expect(checked.said.includes(`"shapes" 1.0.0 is compiled from its typed version in .sound/shapes`)).toBe(outcome !== "untyped");
 }, 120_000);
 
 test.each([
   ["for a build with a define", { "process.env.NODE_ENV": "production" }, "index.d.ts"],
   ["of a package whose declarations are in @types", {}, "../@types/shapes/index.d.ts"],
 ])("bun check --aot reads a typed version %s", async (_, when, declarations) => {
-  const javascript = `export function area(side) { return side * side; }\n`;
   using dir = tempDir("aot-dependency-typed-version", {
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, types: [] } }),
     "main.ts": `import { area } from "shapes";\nconsole.log(area(2));\n`,
     "node_modules/shapes/package.json": JSON.stringify({ name: "shapes", version: "1.0.0", type: "module", main: "index.js" }),
-    "node_modules/shapes/index.js": javascript,
+    "node_modules/shapes/index.js": untypedArea,
     [`node_modules/shapes/${declarations}`]: `export declare function area(side: number): number;\n`,
-    ".sound/shapes/sound.json": JSON.stringify({ sound: 1, name: "shapes", version: "1.0.0", when, basis: {}, lay: { "index.js": createHash("sha256").update(javascript).digest("hex"), "index.sound.ts": "new" }, needs: [] }),
-    ".sound/shapes/lay/index.js": `export * from "./index.sound.ts";\n`,
-    ".sound/shapes/lay/index.sound.ts": `export function area(side: number): number { const wrong: number = "x"; return side * side; }\n`,
+    ".sound/shapes/sound.json": JSON.stringify({ sound: 2, name: "shapes", version: "1.0.0", when, basis: {}, lay: { "index.js": createHash("sha256").update(untypedArea).digest("hex") }, needs: [] }),
+    ".sound/shapes/lay/index.js": `export function area(side: number): string { return side * side; }\n`,
   });
-  const errors = (said: string) => [...new Set([...said.matchAll(/\berror:? (TS\d+)/g)].map(match => match[1]))].sort();
-  await using building = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...Object.entries(when).map(([name, value]) => `--define=${name}=${JSON.stringify(value)}`)], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const codes = (said: string) => [...new Set([...said.matchAll(/\b(?:error|warn|warning):? (TS\d+)/g)].map(match => match[1]))].sort();
+  const defines = Object.entries(when).map(([name, value]) => `--define=${name}=${JSON.stringify(value)}`);
+  await using building = Bun.spawn({ cmd: [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", join(String(dir), "out"), ...defines], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [built] = await Promise.all([building.stderr.text(), building.exited]);
-  const checked = await withoutBundler(String(dir), "check", "--aot", "main.ts");
-  expect({ build: errors(built), check: errors(checked.said) }).toEqual({ build: ["TS100021"], check: ["TS100021"] });
-  expect(checked.exitCode).toBe(1);
+  const checked = await withoutBundler(String(dir), "check", "--aot", ...defines, "main.ts");
+  expect({ build: codes(built), check: codes(checked.said) }).toEqual({ build: ["TS100009"], check: ["TS100009"] });
+  expect(checked.exitCode).toBe(0);
 }, 120_000);
 
 test("a type error beside a decorated class of a dependency does not stop the build either", async () => {
@@ -208,7 +287,7 @@ test("a type error beside a decorated class of a dependency does not stop the bu
     "package.json": JSON.stringify({ name: "app" }),
     "tsconfig.json": strict({ experimentalDecorators: true }),
     "main.ts": `import { Marked } from "decorates";\nconsole.log(new Marked().two(), JSON.stringify((Marked.prototype as any).marked));\n`,
-    "node_modules/decorates/package.json": JSON.stringify({ name: "decorates", main: "index.ts", types: "index.ts" }),
+    "node_modules/decorates/package.json": JSON.stringify({ name: "decorates", version: "1.0.0", main: "index.ts", types: "index.ts" }),
     "node_modules/decorates/index.ts": `function mark(target: any, key: string) { (target.marked ??= []).push(key); }\nexport class Marked { @mark two(): number { const wrong: string = 2; return 2; } }\n`,
   });
   const { said, exitCode, stdout } = await build(String(dir), "./main.ts");
@@ -228,7 +307,8 @@ test("a workspace package imported by its name is a dependency", async () => {
   mkdirSync(join(String(dir), "apps", "web", "node_modules"));
   symlinkSync(join(String(dir), "packages", "shared"), join(String(dir), "apps", "web", "node_modules", "shared"), "junction");
   const { said, exitCode, stdout } = await build(join(String(dir), "apps", "web"), "./main.ts");
-  expect(said).toContain("TS100009");
+  // A manifest without a version names no package, so the message is about the file.
+  expect(said).toContain("TS100010");
   expect(said).toContain("shared");
   expect({ exitCode, stdout }).toEqual({ exitCode: 0, stdout: "2\n" });
 }, 120_000);

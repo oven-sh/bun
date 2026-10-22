@@ -1,9 +1,11 @@
 // The typed writer writes a typed object's undeclared keys itself, below another object and at the top: the engine's own writer is not asked.
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point }
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const finished = () => (counted ? counted("operationAOTTypedJSONFinish") + counted("objectWithExtraPropertiesWrittenByTypedWriter") : 0);
+const finished = () => (counted ? (counted("operationAOTJSONWriterFinish") - writersFailed()) : 0);
 function measure(label: string, run: () => string, isWrittenByTypedWriter: boolean): void {
   for (let i = 0; i < 10; i++) run();
   const before = finished();

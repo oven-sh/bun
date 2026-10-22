@@ -1,12 +1,12 @@
 // A small function that is copied into the loop that calls it keeps what it takes in where it stands alone.
 //
 // The callback of a built-in or of a function of the program: its call is as deep as the place where the closure was written. What is left of forEach is its own call for the rest, which takes five arguments.
-// IR= 0 copiesForEach CallDirect f\d+ \(v\d+, v\d+\)$
+// IR= 0 copiesForEach CallDirect \(v\d+, v\d+\) function=f\d+
 // IR= 0 copiesEach CallDirect
 // What the copy of a built-in calls, its own helpers and what it was handed, is as deep as the call of the built-in.
 // IR= 0 copiesSort CallDirect
 // A closure that two functions make has no such place: handed on through a copy of a copy, its call stays a call.
-// IR= 1 copiesEachWithAClosureOfTwoMakers CallDirect f\d+ \(v\d+\)$
+// IR= 1 copiesEachWithAClosureOfTwoMakers CallDirect \(v\d+\) function=f\d+
 // A function of the program is a level: what it calls from a copy of a copy stays a call.
 // IR= 2 copiesTwoLevels CallDirect
 // What only a loop calls moves into the loop however small the function around the loop is; outside a loop it stays a call.

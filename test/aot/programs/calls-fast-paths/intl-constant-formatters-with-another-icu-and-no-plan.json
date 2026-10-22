@@ -1,6 +1,5 @@
 {
   "env": {
-    "JSC_formatPatternsOfAnotherICUForTesting": "2",
-    "JSC_useAOTOperationCounters": "1"
+    "JSC_formatPatternsOfAnotherICUForTesting": "2"
   }
 }

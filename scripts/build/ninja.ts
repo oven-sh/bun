@@ -26,6 +26,9 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
+  // aot.ts
+  aot_check: ["cwd", "args", "desc"],
+  cut_profiles: [],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],
@@ -46,16 +49,20 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
+  cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
   link: ["ldflags", "lazy"],
-  link_with_islands: ["ldflags", "lazy"],
+  link_trimmable: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
+  pch_chained: ["cxxflags", "pch_header"],
+  pch_checksum: [],
   pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
   regen: [],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
+  rust_generated_inputs: [],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts

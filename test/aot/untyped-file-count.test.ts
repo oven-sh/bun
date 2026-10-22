@@ -18,16 +18,15 @@ test("a package's file with type errors is counted on the compile line", async (
     "node_modules/wrong/index.ts": `export function twice(n: number): number { const text: string = n; return n * 2; }`,
   });
   expect(built.stderr).toContain("TS100009");
-  expect({ counted: built.line.includes("1 compiled untyped"), exitCode: built.exitCode }).toEqual({ counted: true, exitCode: 0 });
+  expect({ counted: built.line.includes("1 file compiled without types"), exitCode: built.exitCode }).toEqual({ counted: true, exitCode: 0 });
 }, 120_000);
 
 test("a warning of another kind that quotes the words is not", async () => {
   const built = await build({
-    "main.ts": `import data from "./compiled untyped.xml"; console.log(typeof data);`,
-    "compiled untyped.xml": `<a/>`,
-    "tsconfig.json": `{ "compilerOptions": { "typeRoots": ["./no-types-here"] } }`,
+    "main.ts": `if (process.argv.length > 9) Math.max = () => "1 file compiled without types".length;\nconsole.log("built");`,
   });
-  expect(built.stderr).toContain("TS2307: Cannot find module './compiled untyped.xml'");
+  expect(built.stderr).toContain("warn: TS100014");
+  expect(built.stderr).toContain("1 file compiled without types");
   expect(built.stderr).not.toContain("TS100009");
-  expect({ line: built.line.replace(/^.* compile /, "").includes("compiled untyped"), exitCode: built.exitCode }).toEqual({ line: false, exitCode: 0 });
+  expect({ line: built.line.replace(/^.* compile /, "").includes("compiled without types"), exitCode: built.exitCode }).toEqual({ line: false, exitCode: 0 });
 }, 120_000);

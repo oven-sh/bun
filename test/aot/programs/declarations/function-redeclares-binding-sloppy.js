@@ -1,4 +1,4 @@
-// A function declaration with the same name as a parameter, a `var`, another function or `arguments`, in sloppy code.
+// A function declaration with the same name as a parameter, a `var`, another function or `arguments`, in sloppy code. Plain Bun's transpiler declares no `var` for a function in a block (the row "in a block, sloppy, no parameter"), and plain Bun leaves the argument in `arguments[0]` where a function is declared over the parameter (the row "arguments shows it, strict": the directive of a function has no effect in a sloppy file, so `arguments` is mapped). In both rows the expected output follows ECMAScript.
 function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
 function row(label, f) { console.log(label + ": " + said(f)); }
 module.exports = {};

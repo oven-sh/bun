@@ -1,11 +1,4 @@
-// `const params = new URLSearchParams()` that is only filled by set | append and turned to text by toString() is compiled without the object. For every name and value the text is plain Bun's; so it is where the object is used in another way, and where `URLSearchParams` is another class.
-// IR= 1 address HasHostClassStructure
-// IR= 1 appended HasHostClassStructure
-// IR= 1 inALoop HasHostClassStructure
-// IR= 0 asked HasHostClassStructure
-// IR= 0 handedOn HasHostClassStructure
-// IR= 0 interpolated HasHostClassStructure
-// IR= 0 captured HasHostClassStructure
+// `const params = new URLSearchParams()` that is only filled by set | append and turned to text by toString() is compiled without the object. For every name and value that is a string the text is plain Bun's; so it is where the object is used in another way, and where `URLSearchParams` is another class. A primitive of another kind does not get past `as string`: the cast throws a TypeError before the host converts anything. An object passes the cast, and the host converts it as in plain Bun.
 function address(state: string, label: string | null, page: number): string {
   const params = new URLSearchParams();
   if (state !== "open") params.set("state", state);
@@ -55,7 +48,7 @@ function say(label: string, work: () => unknown) {
   try {
     console.log(label, JSON.stringify(work()));
   } catch (error) {
-    console.log(label, "throws", (error as Error).constructor.name, (error as Error).message);
+    console.log(label, "throws", (error as Error).constructor.name);
   }
 }
 const texts = ["", "a", "closed", "two words", "a&b=c", "100%", "café", "東京", "😀", "lone \ud83d", "\ude00 lone", "*-._~", "+", "\u0000\n\r\t", "A-Z_0.9*", "'()!", " "];

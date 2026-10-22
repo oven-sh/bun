@@ -221,7 +221,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
     let error_message = "Expected a S3 or path to get size";
     let mut blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => return Ok(blob.get_size(global)),
+        PathOrBlob::Blob(blob) => return Ok(JSValue::js_number(blob.get_size(global))),
         path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
     };
     S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)

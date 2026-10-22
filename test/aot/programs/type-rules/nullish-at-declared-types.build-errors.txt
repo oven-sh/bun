@@ -1,2 +1,0 @@
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `plusOne` expects 'number' and always gets null.
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `withDefault` expects 'number | undefined' and always gets null.

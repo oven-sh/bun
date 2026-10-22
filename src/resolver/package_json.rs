@@ -180,7 +180,8 @@ const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
-    /// Whether auto-install can look up the version of an imported package in this package.json.
+    /// Returns true if auto-install can look up the version of an imported package in this
+    /// package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {
         self.dependencies.map.count() > 0
             || self.package_manager_package_id != INVALID_PACKAGE_ID
@@ -1059,6 +1060,43 @@ pub struct ExportsMap {
 }
 
 impl ExportsMap {
+    /// The keys that name one subpath each, without their dot: `/feature` for `"./feature"`. Neither `"."` nor a pattern.
+    pub fn written_subpaths(&self) -> Vec<&[u8]> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let keys = map.list.iter().map(|entry| &entry.key[..]);
+        keys.filter(|key| key.starts_with(b"./") && key.len() > 2 && !key.contains(&b'*') && !key.ends_with(b"/"))
+            .map(|key| &key[1..])
+            .collect()
+    }
+
+    /// The subpaths, without their dot, that a key with a `*` may give the file at `path_in_package` (`/lib/a.js`): for each text
+    /// that the key can lead to, whatever its conditions, what the `*` has to stand for. The resolver says which of them hold.
+    pub fn subpaths_by_pattern(&self, path_in_package: &[u8]) -> Vec<Vec<u8>> {
+        let EntryData::Map(map) = &self.root.data else {
+            return Vec::new();
+        };
+        let mut subpaths = Vec::new();
+        for entry in map.list.iter() {
+            let Some((key_start, key_end)) = split_at_star(&entry.key) else {
+                continue;
+            };
+            let Some(key_start) = key_start.strip_prefix(b".") else {
+                continue;
+            };
+            entry.value.for_each_text(&mut |target| {
+                let matched = split_at_star(target).and_then(|(start, end)| {
+                    path_in_package.strip_prefix(start.strip_prefix(b".")?)?.strip_suffix(end)
+                });
+                if let Some(matched) = matched.filter(|matched| !matched.is_empty()) {
+                    subpaths.push([key_start, matched, key_end].concat());
+                }
+            });
+        }
+        subpaths
+    }
+
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
@@ -1279,7 +1317,21 @@ pub struct MapEntry {
     pub(crate) value: Entry,
 }
 
+fn split_at_star(text: &[u8]) -> Option<(&[u8], &[u8])> {
+    let star = text.iter().position(|&byte| byte == b'*')?;
+    Some((&text[..star], &text[star + 1..]))
+}
+
 impl Entry {
+    fn for_each_text(&self, each: &mut dyn FnMut(&[u8])) {
+        match &self.data {
+            EntryData::Invalid | EntryData::Null => {}
+            EntryData::String(text) => each(text),
+            EntryData::Array(entries) => entries.iter().for_each(|entry| entry.for_each_text(each)),
+            EntryData::Map(map) => map.list.iter().for_each(|entry| entry.value.for_each_text(each)),
+        }
+    }
+
     pub(crate) fn keys_start_with_dot(&self) -> bool {
         matches!(&self.data, EntryData::Map(m) if !m.list.is_empty() && strings::starts_with_char(&m.list[0].key, b'.'))
     }

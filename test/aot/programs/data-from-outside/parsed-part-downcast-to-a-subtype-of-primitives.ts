@@ -1,3 +1,4 @@
+// A part of parsed JSON is cast from its base type to a subtype whose other fields are primitives. Any object passes the cast, a number throws there. A missing field reads undefined, and a field of another kind throws at its first typed read.
 interface Base { kind: number }
 interface Leaf extends Base { text: string; size: number }
 interface Info { version: string; root: Base }

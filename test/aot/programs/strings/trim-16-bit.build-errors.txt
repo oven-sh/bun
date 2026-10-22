@@ -1,1 +1,0 @@
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `start` expects 'string' and always gets 12.

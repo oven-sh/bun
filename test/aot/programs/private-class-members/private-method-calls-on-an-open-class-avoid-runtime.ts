@@ -1,8 +1,8 @@
-// A call of a private method on a class that also takes untyped objects does not look the method up by name. The program counts the entries of the operation that a lookup by name goes through.
+// A call of a private method on a class that also takes untyped objects does not look the method up by name. The program counts the entries of the operations that a lookup by name goes through.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
 function entered(): number {
-  return counted ? counted("operationAOTTypedGetByName") : 0;
+  return counted ? counted("operationAOTGetById") + counted("operationAOTGetByIdAndCache") : 0;
 }
 class Pool {
   served = 0;

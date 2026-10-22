@@ -1,6 +1,6 @@
 // `f.apply(thisArg, [a, b])`: the array is allocated only on the slow path.
-// IR+ IsBuiltinFunction v[0-9]+ Function.apply
-// IR- CallBuiltin Apply
+// IR+ TypeTest v[0-9]+ testedType=Function\^
+// IR- ^ .*overload=FunctionPrototypeApply/
 declare const console: any;
 type L = (this: any, ...args: any[]) => void;
 let n = 0;

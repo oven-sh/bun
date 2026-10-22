@@ -1,8 +1,12 @@
-// Objects the program makes itself stay typed when external data is nearby: a table of functions, and a Map or Set, are not external data.
+// Objects the program makes itself stay typed when external data is nearby: a table of functions, and a Map or Set, are not external data. The read of `data.t`, a text under a written `number`, throws a TypeError, which changes nothing for them.
 const data = JSON.parse('{"t":"abc","name":"n"}') as { t: number; name: string };
 const table = { first() { return 1; }, second: () => 2, label: "table" };
 const other: { first?: unknown; label?: unknown } = {};
-other.first = data.t;
+try {
+  other.first = data.t;
+} catch (error) {
+  other.first = (error as Error).constructor.name;
+}
 other.label = data.name;
 export const one = table.first();
 export const two = table.second();

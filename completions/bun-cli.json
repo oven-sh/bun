@@ -4663,93 +4663,80 @@
         },
         {
           "name": "aot",
-          "description": "Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode",
+          "description": "Compile JavaScript and TypeScript to machine code at build time. Requires --compile",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
-          "name": "aot-explain",
-          "description": "With --aot: print a report. --aot-explain=throws lists every type check that can fail when the program runs",
-          "hasValue": true,
-          "valueType": "val",
+          "name": "aot-log-type-mismatches",
+          "description": "With --aot: the executable logs every value that doesn't match its declared type",
+          "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
-          "name": "aot-type-errors",
-          "description": "With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue",
+          "name": "explain",
+          "description": "With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations",
           "hasValue": true,
           "valueType": "val",
           "required": false,
-          "multiple": false
+          "multiple": true
         },
         {
           "name": "aot-huge-heap",
-          "description": "With --aot: let each thread have more than 32 GB of objects. The executable uses more memory and runs slower",
+          "description": "With --aot: remove the 32 GB heap limit per thread. Uses more memory and runs slower",
           "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
-          "name": "aot-deny",
-          "description": "With --aot: fail where a rule finds something. --aot-deny=untyped-file,open-layout, or all",
-          "hasValue": true,
-          "valueType": "val",
-          "required": false,
-          "multiple": true
-        },
-        {
-          "name": "aot-warn",
-          "description": "With --aot: the same, as warnings",
-          "hasValue": true,
-          "valueType": "val",
-          "required": false,
-          "multiple": true
-        },
-        {
-          "name": "aot-allow",
-          "description": "With --aot: turn a rule off. Of two flags that name the same rule and file, the later one counts",
-          "hasValue": true,
-          "valueType": "val",
-          "required": false,
-          "multiple": true
-        },
-        {
-          "name": "aot-baseline",
-          "description": "With --aot: a file with the number of findings per rule and file that are accepted",
-          "hasValue": true,
-          "valueType": "val",
-          "required": false,
-          "multiple": false
-        },
-        {
-          "name": "aot-update-baseline",
-          "description": "With --aot-baseline: write the file anew from this build",
-          "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
-          "name": "compile-function-source",
-          "description": "With --compile --aot: keep the source text that Function.prototype.toString() returns (default: true)",
-          "hasValue": false,
-          "defaultValue": "true",
           "required": false,
           "multiple": false
         },
         {
           "name": "no-compile-function-source",
-          "description": "With --compile --aot: omit that source text; toString() on a compiled function returns [native code]",
+          "description": "With --aot: don't embed function source code. fn.toString() returns [native code], and an eval() or new Function() call the compiler didn't find at build time throws",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile-in-place",
+          "description": "With --aot: keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the machine that built it",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trim",
+          "description": "Remove the Bun and Node.js APIs your code never calls from the executable. Requires --compile",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "trim-locales",
+          "description": "With --trim: keep only these locales, such as en,de-AT",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
+        },
+        {
+          "name": "obfuscate",
+          "description": "With --aot: strip function names and source locations from the executable and write them to <outfile>.map",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "dts",
-          "description": "Write TypeScript declaration files (.d.ts) to --outdir. Implies --check. --dts=sound also writes each output file with its types kept, for --aot",
-          "hasValue": true,
-          "valueType": "val",
+          "description": "Write TypeScript declaration files (.d.ts) to --outdir. Implies --check",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "compile-inspector",
+          "description": "With --aot: let a debugger attach to the executable (BUN_INSPECT, --inspect). Makes it larger and slower",
+          "hasValue": false,
           "required": false,
           "multiple": false
         }

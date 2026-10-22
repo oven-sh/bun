@@ -7,7 +7,7 @@ function take(answer: Whole, source: unknown): unknown[] { return seen(answer, s
 class Holder { value: Whole; constructor(given: any) { this.value = given; } }
 function wider(given: { k: Part; j?: number }): unknown { return [given.k.id, given.j]; }
 function seen(answer: Whole, source: unknown): unknown[] { return [answer.k.id, answer === source, wider(answer), Object.keys(answer).length, typeof answer, Array.isArray(answer), Object.getPrototypeOf(answer) === Object.getPrototypeOf(source), [answer, own()].map(one => one.k.id)]; }
-async function attempt(name: string, f: () => unknown): Promise<void> { try { console.log(name, JSON.stringify(await f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun --aot[^)]*\)/, "").slice(0, 120)); } }
+async function attempt(name: string, f: () => unknown): Promise<void> { try { console.log(name, JSON.stringify(await f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun compile[^)]*\)/, "").slice(0, 120)); } }
 const makers: [string, () => any][] = [
   ["parsed", () => JSON.parse('{"k": {"id": 1}}')],
   ["an accessor", () => Object.defineProperty({}, 'k', { get() { return { id: 1 } }, enumerable: true })],

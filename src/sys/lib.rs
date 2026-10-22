@@ -1303,7 +1303,7 @@ impl Tag {
     pub const access: Tag = Tag(2);
     pub const connect: Tag = Tag(3);
     pub const chmod: Tag = Tag(4);
-    pub(crate) const chown: Tag = Tag(5);
+    pub const chown: Tag = Tag(5);
     pub const clonefile: Tag = Tag(6);
     pub const close: Tag = Tag(8);
     pub const copy_file_range: Tag = Tag(9);
@@ -1322,7 +1322,7 @@ impl Tag {
     pub const getdents64: Tag = Tag(21);
     pub const getdirentries64: Tag = Tag(22);
     pub const lchmod: Tag = Tag(23);
-    pub(crate) const lchown: Tag = Tag(24);
+    pub const lchown: Tag = Tag(24);
     pub const link: Tag = Tag(25);
     pub(crate) const lseek: Tag = Tag(26);
     pub const lstat: Tag = Tag(27);
@@ -1905,19 +1905,8 @@ mod posix_impl {
         openat(Fd::cwd(), path, flags, mode)
     }
     /// Always `O_CLOEXEC`. A child gets a descriptor only through the spawn path.
-    #[inline]
     pub fn openat(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        if flags & (O::WRONLY | O::RDWR | O::CREAT | O::TRUNC | O::APPEND) != 0 {
-            return openat_for_writing(dir.as_fd(), path, flags, mode);
-        }
-        openat_with_flags(dir.as_fd(), path, flags, mode)
-    }
-    #[inline(never)]
-    fn openat_for_writing(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
-        openat_with_flags(dir, path, flags, mode)
-    }
-    #[inline(always)]
-    fn openat_with_flags(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
         // macOS: `openat$NOCANCEL`, retried on EINTR.
         #[cfg(target_os = "macos")]
@@ -4318,27 +4307,11 @@ mod windows_impl {
         // makePath (NtCreateFile rejects them anyway).
         let it = ComponentIterator::init(&buf.0[..w], PathFormat::Windows)
             .map_err(|_| Error::new(E::EINVAL, Tag::mkdir))?;
-        let climbs_above_dir = pinned_end > root_end;
         let mut z = bun_paths::path_buffer_pool::get();
         bun_paths::make_path_with(it, |p| {
             z.0[..p.len()].copy_from_slice(p);
             z.0[p.len()] = 0;
-            let made = if climbs_above_dir {
-                super::open_dir_at_windows_a(
-                    dir,
-                    p,
-                    super::WindowsOpenDirOptions {
-                        iterable: false,
-                        can_rename_or_delete: true,
-                        op: super::WindowsOpenDirOp::OnlyCreate,
-                        ..Default::default()
-                    },
-                )
-                .map(|made| made.close())
-            } else {
-                mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode)
-            };
-            match made {
+            match mkdirat(dir, ZStr::from_buf(&z.0[..], p.len()), mode) {
                 Ok(()) => Ok(MakePathStep::Created),
                 Err(e) if e.get_errno() == E::EEXIST => Ok(MakePathStep::Exists),
                 Err(e) if e.get_errno() == E::ENOENT => Ok(MakePathStep::NotFound(e)),
@@ -7712,7 +7685,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize)?;
+        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+            // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
+            if err.get_errno() == E::ENOSPC {
+                err.errno = E::ENAMETOOLONG as _;
+            }
+            return Err(err);
+        }
         // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
         let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
         return Ok(&mut out.0[..len]);
@@ -8598,6 +8577,10 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// `dlpi_phdr` — `program_header_count` headers, mapped until the object is unloaded.
+        pub program_headers: *const libc::Elf64_Phdr,
+        /// `dlpi_phnum`.
+        pub program_header_count: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8658,6 +8641,8 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        program_headers: info.dlpi_phdr,
+                        program_header_count: info.dlpi_phnum as usize,
                     });
                     return 1; // error.Found → stop iteration
                 }
@@ -9367,12 +9352,11 @@ fn qw_set_fd(qw: &mut bun_core::output::QuietWriter, fd: Fd) {
     }
 }
 
-/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
-/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
-fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
+/// Writes all of `bytes` to stdout or stderr, for a caller that has to know whether they got there. `Output` doesn't say.
+pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     while !bytes.is_empty() {
         match write(fd, bytes) {
-            Ok(0) => return false, // short write → give up
+            Ok(0) => return Err(Error::from_code(E::EIO, Tag::write)),
             Ok(n) => bytes = &bytes[n..],
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
@@ -9382,14 +9366,18 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
                     events: posix::POLL_OUT,
                     revents: 0,
                 }];
-                if posix::poll(&mut pfd, -1).is_err() {
-                    return false;
-                }
+                posix::poll(&mut pfd, -1)?;
             }
-            Err(_) => return false,
+            Err(e) => return Err(e),
         }
     }
-    true
+    Ok(())
+}
+
+/// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
+/// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
+fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {
+    write_all_to_stdio(fd, bytes).is_ok()
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

@@ -1,6 +1,6 @@
 // Objects with hundreds of own properties: values, functions that are called, getters and setters. A property has its place in the table by name however far out of line it lies: every answer is that of the language, and the run time is asked once.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTGetByNameAndCache") + count("operationAOTPutByNameAndCache");
+const visits = () => count("operationAOTGetByIdAndCache") + count("operationAOTPutByIdAndCache");
 const makeValues = seed => ({
   p0: seed + 0, p1: seed + 1, p2: seed + 2, p3: seed + 3, p4: seed + 4, p5: seed + 5, p6: seed + 6, p7: seed + 7, p8: seed + 8, p9: seed + 9,
   p10: seed + 10, p11: seed + 11, p12: seed + 12, p13: seed + 13, p14: seed + 14, p15: seed + 15, p16: seed + 16, p17: seed + 17, p18: seed + 18, p19: seed + 19,

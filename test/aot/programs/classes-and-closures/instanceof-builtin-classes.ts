@@ -1,3 +1,4 @@
+// `instanceof` against built-in classes, on typed, untyped and odd values, alone and in loops. The constructors and prototypes of these classes are locked: Symbol.hasInstance cannot be defined on them and their prototype links cannot be changed, so after the attempts every test answers as before them.
 type Thing = Map<string, number> | Set<string> | WeakMap<object, number> | WeakSet<object> | Date | RegExp | Promise<number> | number[];
 const lines: string[] = [];
 function thingIsMap(v: Thing): boolean { return v instanceof Map; }

@@ -1,7 +1,6 @@
 // A closure that was given properties is still a closure of its function. Where the program gives properties to the closures of a function, the test for a predicted callee takes them too.
-// IR= 1 ofAClosureWithProperties boolean = IsClosureOf v[0-9]+ f[0-9]+ possibly modified
+// IR= 1 ofAClosureWithProperties boolean = IsClosureOf v[0-9]+ function=f[0-9]+
 // IR= 1 ofAClosureWithout boolean = IsClosureOf
-// IR= 0 ofAClosureWithout possibly modified
 const makers = {
   withProperties(f) {
     const made = function (n) {

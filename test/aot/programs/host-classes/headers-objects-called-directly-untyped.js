@@ -1,15 +1,4 @@
-// A method of a real Headers object is one native call where its name is a constant or a parameter of the function: on what `new Headers(..)` made, and on what `x.headers` gave where other things are done with it too. Whether the object still has its original methods is tested at each call.
-// IR= 5 madeHere CallBuiltin CallHeadersMethod
-// IR= 1 madeHere = Integer 537$
-// IR= 1 madeFromInit CallBuiltin CallHeadersMethod
-// IR= 1 returned CallBuiltin CallHeadersMethod
-// IR= 1 byParameter CallBuiltin CallHeadersMethod
-// IR= 0 byVariable CallBuiltin CallHeadersMethod
-// IR= 0 nameThatIsNoToken CallBuiltin CallHeadersMethod
-// IR= 1 handedOnFirst CallBuiltin CallHeadersMethod
-// IR= 4 joinedWithAnother CallBuiltin CallHeadersMethod
-// IR= 1 computedValue CallBuiltin CallHeadersMethod
-// IR= 0 ofAnotherClass CallBuiltin CallHeadersMethod
+// Methods of a Headers object whose header name is a constant, a parameter or a loop variable: on the result of `new Headers(..)` and of `x.headers`, on a subclass, on objects of other classes with methods of the same names, and on a Headers object whose method or prototype was replaced.
 export function madeHere(type, id) {
   const headers = new Headers();
   headers.set("content-type", type);

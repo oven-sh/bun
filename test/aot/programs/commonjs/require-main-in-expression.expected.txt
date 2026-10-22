@@ -1,9 +1,0 @@
-main: true.
-main: true.
-main: true.
-not main: false.
-2 boolean false
-true false
-true true
-yes and or
-the statement as it is usually written

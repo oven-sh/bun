@@ -1,7 +1,7 @@
 // Object.freeze() and Object.assign() on a prototype object invalidate the cached lookups of the names they touch, and no others.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const misses = () => count("operationAOTGetByNameAndCache") + count("operationAOTPutByNameAndCache");
+const misses = () => count("operationAOTGetByIdAndCache") + count("operationAOTPutByIdAndCache");
 const kinds = [];
 for (let k = 0; k < 40; k++) {
   function Kind(value) {

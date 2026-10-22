@@ -1,0 +1,21 @@
+only declared keys: documented value, got value {"id": 1, "name": "n"}
+without the optional key: documented value, got value {"id": 1}
+a declared key twice: documented value, got value {"id": 1}
+a declared key written with an escape: documented value, got value {"id": 1}
+one more key: documented TypeError, got TypeError
+one more key first: documented TypeError, got TypeError
+a key named __proto__: documented TypeError, got TypeError
+a key named __proto__ that is null: documented TypeError, got TypeError
+a key named constructor: documented TypeError, got TypeError
+a key named toString: documented TypeError, got TypeError
+an empty key: documented TypeError, got TypeError
+an index: documented TypeError, got TypeError
+a key in other letters: documented TypeError, got TypeError
+a key with a space: documented TypeError, got TypeError
+a key whose value is null: documented TypeError, got TypeError
+strict outside only: more keys inside: documented value, got value {"inner": {"x": 1, "more": 0}, "list": [{"y": 1, "more": 0}]}
+strict outside only: more keys outside: documented TypeError, got TypeError
+strict throughout: only declared keys: documented value, got value {"inner": {"x": 1}, "list": [{"y": 1}]}
+strict throughout: more keys in a member: documented TypeError, got TypeError
+strict throughout: more keys in an element: documented TypeError, got TypeError
+strict throughout: more keys outside: documented TypeError, got TypeError

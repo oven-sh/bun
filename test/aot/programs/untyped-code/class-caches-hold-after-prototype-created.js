@@ -1,7 +1,7 @@
 // What compiled code has learnt about the members of a class while its prototype was unmade goes on holding when something makes the prototype make its members: nothing is asked of the run time again. And from then on the members are read where they now lie.
 // Only the jsc shell can count. Elsewhere the program checks the answers alone.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 class Gauge {
   level = 1;
   read() { return this.level; }

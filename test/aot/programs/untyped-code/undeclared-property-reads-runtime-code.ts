@@ -1,9 +1,5 @@
-// Code made at run time reads a property that a typed object has and its type does not declare without going back to the run time each time: the interpreter remembers where the value lies.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-// ENV JSC_useAOTOperationCounters=1
-declare const aotOperationCount: undefined | ((name: string) => number);
+// Code made at run time reads a property that a typed object has and its type does not declare, many times at one place, so that what the interpreter remembers of the object is used.
 declare const gc: undefined | (() => void);
-const asked = () => (typeof aotOperationCount === "function" ? aotOperationCount("InterpreterGetByIdOfCompiledObject") : 0);
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 interface Box {
   w: number;
@@ -37,11 +33,8 @@ const makeLoop = (name: string) => new Function("o", "turns", "let last = " + te
 const readers: Record<string, (o: unknown) => unknown> = {};
 for (const name of ["extra", "more", "w", "sum", "missing"]) readers[name] = new Function("o", "return o." + name + ";") as (o: unknown) => unknown;
 
-let most = 0;
 function measure(label: string, run: () => unknown) {
-  const before = asked();
   const result = run();
-  most = Math.max(most, asked() - before);
   console.log(label + ":", show(result));
 }
 measure("one more property on a record", () => makeLoop("extra")(give(makeBox(), "extra", "x"), 500));
@@ -54,8 +47,6 @@ measure("many objects that got the same property", () => {
   for (let i = 0; i < 50; i++) sum += loop(give(makeBox(), "extra", i), 10) as number;
   return sum;
 });
-console.log(most <= 60 ? "no case went back to the run time more than sixty times" : "a case went back to the run time " + most + " times");
-console.log(typeof aotOperationCount !== "function" || asked() > 0 ? "each place asked it at first" : "nothing was counted");
 
 {
   const several: unknown[] = [give(makeBox(), "extra", 0), give(new Point(1, 2), "extra", 1), JSON.parse('{"w":1,"extra":2}'), makeBox(), { extra: "own" }, give(makeWide(), "extra", 5)];

@@ -902,10 +902,7 @@ impl WebWorker {
                 // Same rule as the main thread (run_command): a CJS worker
                 // entry's top-level throw is an uncaughtException; only an
                 // ESM entry rejection reports origin "unhandledRejection".
-                unsafe extern "C" {
-                    fn JSC__AOT__entryPointIsCommonJS(global: *const JSGlobalObject) -> bool;
-                }
-                let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs && !JSC__AOT__entryPointIsCommonJS(vm.global());
+                let is_rejection = !vm.entry_point_is_commonjs();
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
@@ -1265,6 +1262,17 @@ unsafe fn resolve_entry_point_specifier<'s>(
     {
         return Some(name);
     }
+    // The file of the first entry point has the name of the executable, and its module the name of its source.
+    // SAFETY: per fn contract; the resolver is only read.
+    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
+        && let Some(module) = unsafe {
+            let root = graph.base_public_path_with_default_suffix();
+            (*parent).transpiler.resolver.resolve_embedded_module(root, str)
+        }
+        && let Some(entry) = crate::compiled_program::find_entry_point_by_module_path(module)
+    {
+        return Some(crate::compiled_program::module_key(entry));
+    }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
@@ -1318,18 +1326,20 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     };
 
+    if let Some(entry) = resolved_entry_point
+        .path_const()
+        .and_then(|path| crate::compiled_program::find_entry_point_by_source_path(path.text))
+    {
+        return Some(crate::compiled_program::module_key(entry));
+    }
+
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    let path = resolved_entry_point
-        .path_const()
-        .expect("resolve_entry_point rejects disabled results")
-        .text;
-    // SAFETY: per fn contract; `standalone_module_graph` is a read-only field.
-    if let Some(graph) = unsafe { (*parent).standalone_module_graph }
-        && let Some(name) = graph.find_by_source_path(path)
-    {
-        return Some(name);
-    }
-    Some(path)
+    Some(
+        resolved_entry_point
+            .path_const()
+            .expect("resolve_entry_point rejects disabled results")
+            .text,
+    )
 }

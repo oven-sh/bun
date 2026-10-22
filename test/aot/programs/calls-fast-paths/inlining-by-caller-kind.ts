@@ -1,9 +1,9 @@
 // The inliner takes the kind of caller into account: plain functions inline small callees, and so do async functions, which stay one function across an `await`; module top-level code does not.
 // IR= 0 plain CallDirect
-// IR= 0 waits CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
-// IR= 2 waits frame [0-9]+ = Mul
-// IRM= 1 CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
-// IRM= 3 CallDirect f[0-9]+ \(v[0-9]+\)$
+// IR= 0 waits CallDirect \(v[0-9]+, v[0-9]+\) function=f[0-9]+
+// IR= 2 waits  = Mul .*#[0-9]+$
+// IRM= 1 CallDirect \(v[0-9]+, v[0-9]+\) function=f[0-9]+
+// IRM= 3 CallDirect \(v[0-9]+\) function=f[0-9]+
 declare const console: any;
 function add(a: number, b: number): number { return a * 3 + b; }
 interface Pt { x: number; y: number }

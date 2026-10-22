@@ -1,8 +1,0 @@
-0,2,id,label,extra,opt,more,1.5,-1,Symbol(mark),Symbol(second)
-0,2,id,label,extra,opt,more,1.5,-1 0,2,id,label,extra,opt,more,1.5,-1 {"0":"zero","2":"two","id":1,"label":"l1","extra":"e","opt":"late","more":1,"1.5":"not an index","-1":"minus"}
-{"0":"zero","2":"two","id":1,"label":"l1","extra":"e","opt":"late","more":1,"1.5":"not an index","-1":"minus"} 0,2,id,label,extra,opt,more,1.5,-1,Symbol(mark),Symbol(second) 0=zero&2=two&id=1&label=l1&extra=e&opt=late&more=1&1.5=not an index&-1=minus
-2,id,label,more,1.5,-1,extra,opt,Symbol(second) again again
-103 id,label,x1,x3 x199 opt
-id,label,z,opt,y
-by the name of a method: no error
-own1 false id,render

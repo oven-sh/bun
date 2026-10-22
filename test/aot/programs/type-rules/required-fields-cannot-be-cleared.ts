@@ -1,4 +1,4 @@
-// A required field cannot be deleted, and undefined or null cannot be stored into a `number` or `boolean` field, through `any`, `Partial<T>` or reflection.
+// A required field is deleted, and undefined or null is stored into a `number` or `boolean` field, through `any`, `Partial<T>` or reflection: every change succeeds, and a typed read afterwards gets undefined or null, which pass every written type.
 function refused(label: string, f: () => unknown) { try { f(); console.log(label + ": no error") } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
 interface Rec { n: number; s: string; b: boolean; tail: number }
 interface Looser { n?: number; s?: string | null }

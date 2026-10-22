@@ -1,5 +1,5 @@
 // The counterpart of unknown-property-is-not-assignable-to-a-method.ts: `any` is assignable to a function type, so { of(owner: Owner): T } may hold the external data that is passed as { of: any }, and class Store accepts objects its constructor has not made.
-// IR+ ^shape \d+ Instance "Store" .* accepts-untyped
+// IR+ ^layout (L\d+) .*name="Store" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 class Owner { id = 1; }
 class Slot<T extends object> {
   readonly #create: () => T;

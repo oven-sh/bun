@@ -1,12 +1,12 @@
-// The first named property stored to an array needs new out-of-line storage around the indexing header, which the stubs do not allocate, so every such store reaches the runtime. There it used to take the whole generic put path each time. TypeScript's own parser does this for every node array (array.pos = ...).
+// The first named property stored to an array needs new out-of-line storage around the indexing header, which the stubs do not allocate, so every such store reaches the runtime. The next ones fit in that storage and stay in the stubs. TypeScript's own parser does this for every node array (array.pos = ...).
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const grown = () => count("operationAOTPutByNameAndCache:grows-the-storage-of-an-array");
+const visits = () => count("operationAOTPutByIdAndCache");
 function mark(array, i) {
   array.pos = i;
   array.end = i + 1;
   return array;
 }
-const before = grown();
+const before = visits();
 let sum = 0;
 for (let i = 0; i < 2000; i++) {
   const array = mark([], i);
@@ -17,7 +17,7 @@ for (let i = 0; i < 2000; i++) {
   const array = mark(new Array(i % 7).fill(i), i);
   sum += array.pos + array.end + array.length + (array.length ? array[array.length - 1] : 0);
 }
-console.log("4000 arrays get two named properties:", sum, "nearly all first stores take the short path:", typeof aotOperationCount !== "function" || grown() - before >= 3900);
+console.log("4000 arrays get two named properties:", sum, "nearly all second stores stay out of the runtime:", typeof aotOperationCount !== "function" || visits() - before <= 4100);
 
 const literal = i => mark([1, 2, 3], i);
 let fromLiterals = 0;

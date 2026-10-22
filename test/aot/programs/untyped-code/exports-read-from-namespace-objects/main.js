@@ -50,9 +50,9 @@ say("destructured", alpha, beta(2), byDefault);
 say("spread", { ...other }.alpha, Object.entries(other).map(([name, value]) => name + ":" + typeof value).join());
 {
   let sum = 0;
-  const before = count("operationAOTGetByNameAndCache");
+  const before = count("operationAOTGetByIdAndCache");
   for (let i = 0; i < 3000; ++i) sum += table.readTwo(i % 2 ? lazy : other) + table.readDefault(lazy).length + table.readTwo(staticNamespace);
-  const asked = count("operationAOTGetByNameAndCache") - before;
+  const asked = count("operationAOTGetByIdAndCache") - before;
   say("rounds", sum);
   say(asked <= 200 ? "the reads asked the run time at most 200 times" : "the reads asked the run time " + asked + " times");
 }

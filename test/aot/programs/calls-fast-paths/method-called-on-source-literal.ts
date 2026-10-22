@@ -1,11 +1,11 @@
 // A method called on the array literal that it was read off is resolved by the class of the literal, also where an argument is a call, so that the method is read first.
-// IR= 0 collect IsBuiltinFunction
-// IR= 0 collect GetById v[0-9]+ "push"
-// IR= 1 collect CallBuiltin v[0-9]+ Array.push#[0-9]+ original structure
-// IR= 0 collectSome IsBuiltinFunction
-// IR= 1 collectSome CallBuiltin v[0-9]+ Array.push#[0-9]+ original structure
-// IR= 0 prepend IsBuiltinFunction
-// IR- IsBuiltinFunction v[0-9]+ Array.push
+// IR= 0 collect TypeTest v[0-9]+ testedType=builtin\(
+// IR= 0 collect PropGet v[0-9]+ name="push"(?!.* isFallback)
+// IR= 1 collect CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+// IR= 0 collectSome TypeTest v[0-9]+ testedType=builtin\(
+// IR= 1 collectSome CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+// IR= 0 prepend TypeTest v[0-9]+ testedType=builtin\(
+// IR- TypeTest v[0-9]+ testedType=builtin\(ArrayPrototypePush\)
 function collect<T, U>(items: readonly T[] | undefined, convert: (item: T, index: number) => U): U[] | undefined {
   let result: U[] | undefined;
   if (items !== undefined) {

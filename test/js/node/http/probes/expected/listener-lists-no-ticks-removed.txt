@@ -1,0 +1,1162 @@
+nothing, end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+nothing, write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+one finish listener, end(body)
+socket listeners, end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+one finish listener, write(), end(body)
+socket listeners, write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+three finish listeners, end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish b
+    res finish c
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+three finish listeners, write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish b
+    res finish c
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+one close listener, end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+one close listener, write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+finish and close listeners, end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+finish and close listeners, write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+prependListener(finish), end(body)
+    prepare: done
+    respond: done
+    res finish, prepended
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prependListener(finish), write(), end(body)
+    prepare: done
+    respond: done
+    res finish, prepended
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prependOnceListener(finish), end(body)
+    prepare: done
+    respond: done
+    res finish, prepended
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prependOnceListener(finish), write(), end(body)
+    prepare: done
+    respond: done
+    res finish, prepended
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prependListener(close), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res close, prepended
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+prependListener(close), write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res close, prepended
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+once(), end(body)
+    prepare: done
+    respond: done
+    res finish, once a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish, once b
+    end() callback
+    res close, once
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+once(), write(), end(body)
+    prepare: done
+    respond: done
+    res finish, once a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish, once b
+    end() callback
+    res close, once
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+the same function twice, end(body)
+    prepare: done
+    respond: done
+    res finish, the same function
+    res finish, the same function
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+the same function twice, write(), end(body)
+    prepare: done
+    respond: done
+    res finish, the same function
+    res finish, the same function
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+events.once(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    events.once(finish)
+    events.once(close)
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+events.once(), write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    events.once(finish)
+    events.once(close)
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+stream.finished(res), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    finished undefined
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","end","close","error"] []
+    again
+    again
+stream.finished(res), write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    finished undefined
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","end","close","error"] []
+    again
+    again
+stream.promises.finished(res), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    finished
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","end","close","error"] []
+    again
+    again
+stream.promises.finished(res), write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    finished
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","end","close","error"] []
+    again
+    again
+stream.finished(req), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    finished undefined
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] ["close","error","end","finish"]
+    again
+    again
+stream.finished(req), write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    finished undefined
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] ["close","error","end","finish"]
+    again
+    again
+counts the listeners, end(body)
+    ["finish"] 1 1
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+counts the listeners, write(), end(body)
+    ["finish"] 1 1
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+removes the listeners that are already there, end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+removes the listeners that are already there, write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+moves the listeners that are already there to the end, end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    res finish b
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+moves the listeners that are already there to the end, write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    res finish b
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+calls the first listener directly, end(body)
+    undefined
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+calls the first listener directly, write(), end(body)
+    undefined
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+emit(finish), end(body)
+    res finish a
+      req[complete readableEnded] res[ socket=set] message=null
+    true
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+emit(finish), write(), end(body)
+    res finish a
+      req[complete readableEnded] res[ socket=set] message=null
+    true
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+emit(prefinish), end(body)
+    res prefinish a
+      req[complete readableEnded] res[ socket=set] message=res
+    true
+    prepare: done
+    res prefinish a
+      req[complete readableEnded] res[finished writableFinished socket=set] message=res
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","prefinish"] []
+    again
+    again
+emit(prefinish), write(), end(body)
+    res prefinish a
+      req[complete readableEnded] res[ socket=set] message=res
+    true
+    prepare: done
+    res prefinish a
+      req[complete readableEnded] res[finished writableFinished socket=set] message=res
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","prefinish"] []
+    again
+    again
+emit(close), end(body)
+    res close a
+      req[complete readableEnded] res[ socket=set] message=res
+    true
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+emit(close), write(), end(body)
+    res close a
+      req[complete readableEnded] res[ socket=set] message=res
+    true
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+emit(finish) without listeners, end(body)
+    true
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+emit(finish) without listeners, write(), end(body)
+    true
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+emit(error), end(body)
+    res error emitted by the test
+    true
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","error"] []
+    again
+    again
+emit(error), write(), end(body)
+    res error emitted by the test
+    true
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","error"] []
+    again
+    again
+newListener and removeListener on res, end(body)
+    res newListener removeListener
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","newListener","removeListener"] []
+    again
+    again
+newListener and removeListener on res, write(), end(body)
+    res newListener removeListener
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","newListener","removeListener"] []
+    again
+    again
+newListener and removeListener on req, end(body)
+    req newListener removeListener
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] ["newListener","removeListener"]
+    again
+    again
+newListener and removeListener on req, write(), end(body)
+    req newListener removeListener
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] ["newListener","removeListener"]
+    again
+    again
+setMaxListeners(1), end(body)
+    prepare: done
+    respond: done
+    warning MaxListenersExceededWarning Possible EventEmitter memory leak detected. 2 finish listeners added to [ServerResponse]. 
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish b
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+setMaxListeners(1), write(), end(body)
+    prepare: done
+    respond: done
+    warning MaxListenersExceededWarning Possible EventEmitter memory leak detected. 2 finish listeners added to [ServerResponse]. 
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    res finish b
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+appends to _events.finish, end(body)
+    prepare: done
+    respond: done
+    res finish, appended to _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+appends to _events.finish, write(), end(body)
+    prepare: done
+    respond: done
+    res finish, appended to _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prepends to _events.finish, end(body)
+    prepare: done
+    respond: done
+    res finish, prepended to _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prepends to _events.finish, write(), end(body)
+    prepare: done
+    respond: done
+    res finish, prepended to _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+replaces _events.finish, end(body)
+    prepare: done
+    respond: done
+    res finish, alone in _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+replaces _events.finish, write(), end(body)
+    prepare: done
+    respond: done
+    res finish, alone in _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+replaces _events, end(body)
+    prepare: done
+    respond: done
+    res finish, in a new _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+replaces _events, write(), end(body)
+    prepare: done
+    respond: done
+    res finish, in a new _events
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+errorMonitor, end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","Symbol(events.errorMonitor)"] []
+    again
+    again
+errorMonitor, write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","Symbol(events.errorMonitor)"] []
+    again
+    again
+async finish listener, end(body)
+    prepare: done
+    respond: done
+    async listener, before await
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    async listener, after await
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+async finish listener, write(), end(body)
+    prepare: done
+    respond: done
+    async listener, before await
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    async listener, after await
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+async finish listener that throws, end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    unhandled rejection Error
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+async finish listener that throws, write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    unhandled rejection Error
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again
+prefinish listener that calls end(), end(body)
+    prepare: done
+    true
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","prefinish"] []
+    again
+    again
+prefinish listener that calls end(), write(), end(body)
+    prepare: done
+    true
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","prefinish"] []
+    again
+    again
+every event of req, end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    req close
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] ["close","error","data","end","readable","pause","resume"]
+    again
+    again
+every event of req, write(), end(body)
+    prepare: done
+    respond: done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    req close
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] ["close","error","data","end","readable","pause","resume"]
+    again
+    again
+finish, close and end listeners, req.resume(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    req close a
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] ["close","end"]
+    again
+    again
+finish, close and end listeners, req.resume(), write(), end(body)
+    prepare: done
+    respond: done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close a
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    req close a
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] ["close","end"]
+    again
+    again
+adds listeners after end(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    res finish, prepended after end()
+    res finish late
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close late
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+adds listeners after end(), write(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    res finish, prepended after end()
+    res finish late
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=null
+    end() callback
+    res close late
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=null
+    microtask queued after end()
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish","close"] []
+    again
+    again
+removeAllListeners(finish) after end(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names [] []
+    again
+    again
+removeAllListeners(finish) after end(), write(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    end() callback
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names [] []
+    again
+    again
+removes the first finish listener after end(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 2\r\n\r\nok"
+    after the response
+    event names ["finish"] []
+    again
+    again
+removes the first finish listener after end(), write(), end(body)
+    prepare: done
+    respond: done
+    after end(): done
+    res finish a
+      req[complete readableEnded destroyed] res[finished writableFinished socket=set] message=res
+    end() callback
+    microtask queued after end()
+      req[complete readableEnded destroyed closed] res[finished writableFinished destroyed closed socket=set] message=res
+    immediate
+    response: "HTTP/1.1 200 OK\r\nDate: <date>\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nTransfer-Encoding: chunked\r\n\r\n1\r\no\r\n1\r\nk\r\n0\r\n\r\n"
+    after the response
+    event names ["finish"] []
+    again
+    again

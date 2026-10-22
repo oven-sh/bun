@@ -1,2 +1,2 @@
-function name(of: symbol): { v: string } { return { v: `${of as unknown as string}` }; }
+function name(of: symbol): { v: string } { return { v: `${of as any}` }; }
 export const made = name(Symbol("s"));

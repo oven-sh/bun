@@ -1391,8 +1391,8 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.is_closed.get())
+    pub fn get_is_closed_from_js(&mut self, _global_object: &JSGlobalObject) -> bool {
+        self.is_closed.get()
     }
 
     fn process_result(

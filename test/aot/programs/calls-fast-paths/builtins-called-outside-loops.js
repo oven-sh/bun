@@ -6,9 +6,9 @@ function larger(a, b) { return max(a, b); }
 var calls = [removeAt, larger];
 var list = [];
 for (var i = 0; i < 300; i++) list.push(i);
-var before = count("operationAOTTypedArraySplice"), sum = 0;
+var before = count("operationAOTArraySplice"), sum = 0;
 for (var i = 0; i < 200; i++) sum += calls[0](list, i % 50)[0] + calls[1](i, 100);
-console.log(sum, list.length, typeof aotOperationCount === "function" ? count("operationAOTTypedArraySplice") - before : 200);
+console.log(sum, list.length, typeof aotOperationCount === "function" ? count("operationAOTArraySplice") - before : 200);
 console.log(JSON.stringify(removeAt({ length: 2, 0: "a", 1: "b" }, 0)), JSON.stringify(removeAt([1.5, 2.5], "1")), larger("3", 2), larger({ valueOf: function () { return 7; } }, 1), larger(NaN, 1), larger(-0, 0));
 try { removeAt(null, 0); } catch (error) { console.log(error.name); }
 try { larger(1n, 2); } catch (error) { console.log(error.name); }

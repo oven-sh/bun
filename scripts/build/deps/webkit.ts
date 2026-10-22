@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-757-6c160573";
+export const WEBKIT_VERSION = "autobuild-preview-pr-757-398e8767";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -25,10 +25,14 @@ export const WEBKIT_VERSION = "autobuild-preview-pr-757-6c160573";
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { aotDirectories, findAotSourceListProblems, handwrittenAotFiles } from "../aot-source-lists.ts";
+import type { EngineSources } from "../aot.ts";
 import { evaluateCMake, type CMakeEvaluation } from "../cmake.ts";
 import type { Config } from "../config.ts";
 import { assert, BuildError } from "../error.ts";
+import { writeIfChanged } from "../fs.ts";
+import { computeCpuTargetFlags, computeHardeningFlags } from "../flags.ts";
 import { quote } from "../shell.ts";
 import {
   depBuildDir,
@@ -77,15 +81,18 @@ function prebuiltUrl(cfg: Config): string {
   return `https://github.com/oven-sh/WebKit/releases/download/${tag}/${name}.tar.gz`;
 }
 
+/** Name prefix shared by every prebuilt extraction dir of one WebKit version, across targets and variants. */
+export function prebuiltDirPrefix(version: string): string {
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  return `webkit-${version.startsWith("autobuild-") ? version.slice("autobuild-".length) : version.slice(0, 16)}`;
+}
+
 /**
  * Prebuilt extraction dir. Suffix in the key so switching debug ↔ release
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
-  // meaningful sha is at the end, so use the whole thing.
-  const v = cfg.webkitVersion;
-  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
   // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
   // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
@@ -102,7 +109,7 @@ function prebuiltDestDir(cfg: Config): string {
             ? "-android"
             : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
-  return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
+  return resolve(cfg.cacheDir, `${prebuiltDirPrefix(cfg.webkitVersion)}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -120,6 +127,80 @@ export function webkitJSCPath(cfg: Config): string {
   return cfg.webkit === "prebuilt"
     ? resolve(prebuiltDestDir(cfg), "bin", `jsc${cfg.exeSuffix}`)
     : resolve(cfg.buildDir, `jsc${cfg.exeSuffix}`);
+}
+
+/** `testaot`: the prebuilt tarball ships one in bin/; local mode builds it next to bun on request (`--target=testaot`). */
+export function webkitTestAotPath(cfg: Config): string {
+  return cfg.webkit === "prebuilt"
+    ? resolve(prebuiltDestDir(cfg), "bin", `testaot${cfg.exeSuffix}`)
+    : resolve(cfg.buildDir, `testaot${cfg.exeSuffix}`);
+}
+
+export type WebKitAotFile = "AOTSchema.def" | "schema-generated" | "builtins-generated" | "tests";
+
+/** A file or folder under JavaScriptCore's aot/ that Bun's build or tests read. The prebuilt tarball has it at the checkout's path. Absolute. It need not exist yet. */
+export function webkitAotFile(cfg: Config, name: WebKitAotFile): string {
+  const aot =
+    cfg.webkit === "prebuilt"
+      ? join(prebuiltDestDir(cfg), "Source", "JavaScriptCore", "aot")
+      : join(webkitLayout(cfg).JSC, "aot");
+  switch (name) {
+    case "AOTSchema.def":
+      return join(aot, "ir", "AOTSchema.def");
+    case "schema-generated":
+      return join(aot, "ir", "generated");
+    case "builtins-generated":
+      return join(aot, "builtins", "generated");
+    case "tests":
+      return join(aot, "tests");
+  }
+}
+
+const engineDeclarations = "AOTBuiltinEngineDeclarations.json";
+
+/** What Bun's code generators read and write in the engine (../aot.ts). With the prebuilt, one file stands for each folder: the fetch edge extracts all of the tarball. */
+export function webkitEngineSources(cfg: Config): EngineSources {
+  const schema = webkitAotFile(cfg, "AOTSchema.def");
+  const schemaGeneratedDirectory = webkitAotFile(cfg, "schema-generated");
+  const builtinsGeneratedDirectory = webkitAotFile(cfg, "builtins-generated");
+  const common = { schema, schemaGeneratedDirectory, builtinsGeneratedDirectory, requiresVerifiedOverloads: cfg.ci };
+  if (cfg.webkit === "prebuilt") {
+    return {
+      ...common,
+      javaScriptCore: undefined,
+      schemaInputs: [schema],
+      schemaOutputs: [],
+      schemaUsers: [],
+      builtinTableInputs: [join(builtinsGeneratedDirectory, engineDeclarations)],
+      builtinTableOutputs: [],
+    };
+  }
+  const wk = webkitLayout(cfg);
+  const lists = checkoutLists(wk).jsc;
+  return {
+    ...common,
+    javaScriptCore: wk.JSC,
+    schemaInputs: lists.paths("JavaScriptCore_AOT_SCHEMA_INPUTS"),
+    schemaOutputs: [
+      ...aotGeneratedFiles(lists, "SCHEMA"),
+      join(schemaGeneratedDirectory, "AOTSchemaFiles.cmake"),
+      join(schemaGeneratedDirectory, "AOTSchemaInputs.sha256"),
+    ],
+    schemaUsers: handwrittenAotFiles(wk.JSC),
+    builtinTableInputs: [
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_DECLARATIONS"),
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS"),
+      ...lists.paths("JavaScriptCore_AOT_BUILTIN_TABLE_MODEL_FUNCTIONS"),
+      ...lists.paths("JavaScriptCore_BUILTINS_SOURCES"),
+      ...lists.paths("JavaScriptCore_OBJECT_LUT_SOURCES"),
+      join(wk.JSC, "aot", "builtins", "AOTBuiltinTable.cmake"),
+      join(wk.JSC, "CMakeLists.txt"),
+    ],
+    builtinTableOutputs: [
+      ...aotGeneratedFiles(lists, "BUILTIN_TABLE"),
+      join(builtinsGeneratedDirectory, engineDeclarations),
+    ],
+  };
 }
 
 /** Build a lib path under the WebKit install's lib/ dir. */
@@ -568,6 +649,8 @@ function filesIn(wk: WebKitBuild, dir: string, ...exts: string[]): string[] {
 /** One library's CMake variables, its relative entries resolved against the directory of its CMakeLists.txt. */
 interface LibraryLists {
   paths(variable: string): string[];
+  /** The list as written, nothing resolved. */
+  values(variable: string): string[];
   files: string[];
 }
 
@@ -619,28 +702,41 @@ function webkitLists(wk: WebKitBuild): WebKitLists {
     // A set: cmake takes a file a list names twice (bmalloc's TZoneLog.cpp on macOS) once.
     return {
       paths: variable => [...new Set(evaluated.list(variable).map(p => resolve(dir, p)))],
+      values: variable => evaluated.list(variable),
       files: evaluated.files,
     };
   };
   return { bmalloc: library(wk.BM), wtf: library(join(wk.WTF, "wtf")), jsc: library(wk.JSC) };
 }
 
-// ─── The spec ───
-
-function webkitBuildSpec(cfg: Config): DirectBuild {
-  const wk = webkitLayout(cfg);
+/** `webkitLists` of a checkout that exists and has the AoT compiler. */
+function checkoutLists(wk: WebKitBuild): WebKitLists {
   assert(existsSync(join(wk.JSC, "Sources.txt")), `local WebKit checkout not found at ${wk.W}`, {
     hint: process.env.BUN_WEBKIT_PATH
       ? `$BUN_WEBKIT_PATH is set to '${process.env.BUN_WEBKIT_PATH}' but that path does not contain a WebKit checkout`
       : "Clone oven-sh/WebKit to vendor/WebKit/, or set $BUN_WEBKIT_PATH to an existing clone (useful for worktrees)",
   });
   const lists = webkitLists(wk);
+  assert(lists.jsc.values("JavaScriptCore_AOT_SCHEMA_INPUTS").length > 0, "this WebKit checkout has no aot/AOT.cmake", {
+    hint: "Bun needs a checkout whose JavaScriptCore has the AoT compiler: update $BUN_WEBKIT_PATH or vendor/WebKit",
+  });
+  return lists;
+}
+
+// ─── The spec ───
+
+function webkitBuildSpec(cfg: Config): DirectBuild {
+  const wk = webkitLayout(cfg);
+  const lists = checkoutLists(wk);
+  checkAotSourceLists(wk);
   const flags = webkitFlags(wk);
   const icu = icuBuild(wk);
   const codegen = jscCodegenSteps(wk, lists.jsc);
+  // Checked in, and rewritten in this graph by Bun's own code generators (../aot.ts).
+  const aotGenerated = [...aotGeneratedFiles(lists.jsc, "SCHEMA"), ...aotGeneratedFiles(lists.jsc, "BUILTIN_TABLE")];
   // All codegen must exist before any JSC TU compiles; after that the
   // depfiles know exactly which TU reads which header.
-  const codegenReady = [...codegen.headers, ...codegen.sources, ...icu.outputs];
+  const codegenReady = [...codegen.headers, ...codegen.sources, ...aotGenerated, ...icu.outputs];
   const jsc = jscCompileFlags(wk, flags, lists.jsc);
   const wtf = wtfGroup(wk, flags, lists.wtf, icu.outputs);
   const llint = llintSteps(wk, jsc, lists.jsc, codegenReady);
@@ -654,14 +750,26 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       bmallocGroup(wk, flags, lists.bmalloc),
       wtf.group,
       ...llint.groups,
-      jscGroup(wk, jsc, jscSources.sources, codegenReady, llint.assembly),
+      jscGroup(
+        wk,
+        jsc,
+        jscSources.sources,
+        lists.jsc.paths("JavaScriptCore_AOT_SOURCES_COMPILED_FOR_SIZE"),
+        codegenReady,
+        llint.assembly,
+      ),
     ],
     steps: wk.steps,
     libs: icu.libs,
     // What a consumer's compile waits for: JSC's generated headers (bun
     // includes them through the PrivateHeaders stubs), WTF's MIG stubs, and
     // ICU's headers where a step produces them.
-    consumerOutputs: [...codegen.headers, ...wtf.migHeaders, ...icu.outputs],
+    consumerOutputs: [
+      ...codegen.headers,
+      ...aotGenerated.filter(file => !file.endsWith(".cpp")),
+      ...wtf.migHeaders,
+      ...icu.outputs,
+    ],
     // A directory's mtime moves when a file is added to or removed from it.
     configureInputs: [
       ...lists.bmalloc.files,
@@ -669,6 +777,7 @@ function webkitBuildSpec(cfg: Config): DirectBuild {
       ...lists.jsc.files,
       ...jscSources.listFiles,
       ...wk.listedDirs,
+      testb3Dir(wk),
     ],
   };
 }
@@ -692,7 +801,8 @@ function webkitLocalIncludes(cfg: Config): string[] {
 // ─── ICU ───
 //
 // Not built here. Linux uses the system's (headers on the default search
-// path, -licu* in bun.ts). macOS links the SDK's libicucore, whose
+// path, -licu* in bun.ts), or the static one $BUN_ICU_ROOT names, such as the
+// include/ and lib/ of a prebuilt WebKit. macOS links the SDK's libicucore, whose
 // headers Apple does not ship: WebKit carries a matching set in Source/WTF/icu,
 // used with symbol renaming off (OptionsJSCOnly.cmake / FindICU.cmake). Android
 // has none: $BUN_ANDROID_ICU_ROOT names a static cross-built one (the NDK
@@ -702,24 +812,57 @@ function webkitLocalIncludes(cfg: Config): string[] {
 
 const androidIcuRoot = (): string => process.env.BUN_ANDROID_ICU_ROOT ?? "/tmp/icu-android";
 const windowsIcuDir = (wk: WebKitBuild): string => join(wk.B, "icu");
+export const linuxIcuRoot = (cfg: Config): string | undefined =>
+  cfg.linux && cfg.abi !== "android" ? process.env.BUN_ICU_ROOT || undefined : undefined;
+const staticIcuLibs = (root: string): string[] =>
+  ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(lib => join(root, "lib", lib));
 
 function icuIncludes(wk: WebKitBuild): string[] {
   const { cfg } = wk;
   if (cfg.darwin) return [join(wk.WTF, "icu")];
   if (cfg.windows) return [join(windowsIcuDir(wk), "include")];
   if (cfg.abi === "android") return [join(androidIcuRoot(), "include")];
-  return [];
+  const root = linuxIcuRoot(cfg);
+  return root === undefined ? [] : [join(root, "include")];
 }
 
 /** `libs` join bun's link; `outputs` are the ones a step of this graph produces, with ICU's headers as a side effect. */
 function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
   const { cfg } = wk;
   if (cfg.abi === "android") {
-    return {
-      libs: ["libicui18n.a", "libicuuc.a", "libicudata.a"].map(l => join(androidIcuRoot(), "lib", l)),
-      outputs: [],
-    };
+    return { libs: staticIcuLibs(androidIcuRoot()), outputs: [] };
   }
+  const root = linuxIcuRoot(cfg);
+  if (cfg.hardened) {
+    if (root === undefined) {
+      throw new BuildError("hardened needs ICU's headers and data", { hint: "Name the include/ and lib/ of a prebuilt WebKit in BUN_ICU_ROOT" });
+    }
+    const dir = join(wk.B, "icu");
+    const script = join(cfg.cwd, "scripts", "build", "hardened-icu.sh");
+    const libs = ["libicui18n.a", "libicuuc.a"].map(lib => join(dir, "lib", lib));
+    gen(wk, {
+      outputs: libs,
+      inputs: [script, join(wk.W, "icu", "source.json"), join(wk.W, "icu", "udata-decompress-hook.patch")],
+      cwd: wk.W,
+      cmd: [
+        "bash",
+        script,
+        join(wk.W, "icu"),
+        dir,
+        cfg.cc,
+        cfg.cxx,
+        cfg.ar,
+        ...(cfg.crossTarget !== undefined ? [`--target=${cfg.crossTarget}`] : []),
+        ...(cfg.sysroot !== undefined ? [`--sysroot=${cfg.sysroot}`] : []),
+        "-fPIE",
+        ...computeCpuTargetFlags(cfg),
+        ...computeHardeningFlags(cfg),
+      ],
+      desc: "ICU (hardened-icu.sh)",
+    });
+    return { libs: [...libs, join(root, "lib", "libicudata.a")], outputs: [] };
+  }
+  if (root !== undefined) return { libs: staticIcuLibs(root), outputs: [] };
   if (!cfg.windows) return { libs: [], outputs: [] };
   const dir = windowsIcuDir(wk);
   const script = join(wk.W, "build-icu.ps1");
@@ -1251,6 +1394,30 @@ function jscCodegenSteps(wk: WebKitBuild, lists: LibraryLists): { headers: strin
   return { headers, sources };
 }
 
+// ─── JavaScriptCore: AoT ───
+//
+// aot/AOT.cmake is data first: what JSC's cmake build and this one both need
+// to know about aot/ is written there as plain lists, outside any function.
+
+/** The files of one generated folder that are compiled or included, from the list file beside them. */
+function aotGeneratedFiles(lists: LibraryLists, generator: "SCHEMA" | "BUILTIN_TABLE"): string[] {
+  return [
+    ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_HEADERS`),
+    ...lists.paths(`JavaScriptCore_AOT_${generator}_GENERATED_SOURCES`),
+  ];
+}
+
+/** AOT_CHECK_SOURCE_LISTS and AOT_CHECK_EXPORTED_HEADERS of aot/AOT.cmake. */
+function checkAotSourceLists(wk: WebKitBuild): void {
+  wk.listedDirs.push(...aotDirectories(wk.JSC));
+  const problems = findAotSourceListProblems(wk.JSC);
+  if (problems.length > 0) {
+    throw new BuildError(problems.sort().join("\n"), {
+      hint: "bun scripts/build/aot-source-lists.ts writes the lists of aot/ for the tree as it is",
+    });
+  }
+}
+
 // ─── JavaScriptCore: compile flags ───
 
 interface JSCCompileFlags {
@@ -1465,14 +1632,49 @@ function jscSourceList(wk: WebKitBuild, lists: LibraryLists): { sources: string[
   return { sources: [...sources, ...lists.paths("JavaScriptCore_SOURCES")], listFiles: [...listFiles, bundler] };
 }
 
+interface AotPrefix {
+  header: string;
+  base: string;
+  directories: string[];
+  files?: RegExp;
+}
+
+const aotPrefixes: AotPrefix[] = [
+  {
+    header: "aot/support/AOTCompilerPrefix.h",
+    base: "JavaScriptCorePrefix.h",
+    directories: ["analysis", "builtins", "ir", "passes", "pipeline", "place", "represent", "select", "valueflow"],
+  },
+  {
+    header: "aot/support/AOTCodeGeneratorPrefix.h",
+    base: "aot/support/AOTCompilerPrefix.h",
+    directories: ["codegen"],
+    files: /^(builtins\/AOT\w*Emitter\w*|image\/AOTCodeGenerationDriver|image\/AOTCompile)\.cpp$/,
+  },
+  {
+    header: "aot/support/AOTRuntimePrefix.h",
+    base: "JavaScriptCorePrefix.h",
+    directories: ["image", "object", "runtime", "stubs", "support"],
+  },
+];
+
 function jscGroup(
   wk: WebKitBuild,
   jsc: JSCCompileFlags,
   sources: string[],
+  compiledForSize: string[],
   codegenReady: string[],
   llintAssembly: string,
 ): SourceGroup {
   const { cfg, JSC } = wk;
+  const forSize = new Set(cfg.release && cfg.unix ? compiledForSize : []);
+  const aotPrefixOf = (path: string): AotPrefix | undefined => {
+    const file = relative(join(JSC, "aot"), path).replaceAll(sep, "/");
+    return (
+      aotPrefixes.find(prefix => prefix.files?.test(file)) ??
+      aotPrefixes.find(prefix => prefix.directories.some(directory => file.startsWith(`${directory}/`)))
+    );
+  };
   // Windows ARM64: the alignment directives in these files' inline asm break
   // LLVM's SEH unwind-info emission (llvm.org/pr47432), so JSC's CMakeLists
   // builds them without unwind tables. (ThunkGenerators.cpp is listed there
@@ -1485,8 +1687,11 @@ function jscGroup(
   return {
     name: "JavaScriptCore",
     sources: [
-      ...sources.map(path => {
-        const extra = noUnwindTables(path);
+      // Last, so that a function several sources instantiate is linked from one that is compiled for speed.
+      ...[...sources.filter(path => !forSize.has(path)), ...sources.filter(path => forSize.has(path))].map(path => {
+        const extra = [...noUnwindTables(path), ...(forSize.has(path) ? ["-mllvm=-force-attribute=optsize"] : [])];
+        const prefix = aotPrefixOf(path);
+        if (prefix !== undefined) return { path, cflags: extra, pch: join(JSC, prefix.header) };
         return extra.length > 0 ? { path, cflags: extra } : path;
       }),
       // LowLevelInterpreter.cpp: the inline-asm interpreter (includes
@@ -1506,6 +1711,7 @@ function jscGroup(
     cflags: [...jsc.targetFlags, "-DBUILDING_JavaScriptCore"],
     cxxflags: jsc.cxx,
     pch: join(JSC, "JavaScriptCorePrefix.h"),
+    chainedPch: aotPrefixes.map(({ header, base }) => ({ header: join(JSC, header), base: join(JSC, base) })),
     orderOnly: codegenReady,
   };
 }
@@ -1518,24 +1724,51 @@ export interface JSCProgram {
   sources: string[];
   cxxflags: string[];
   ldflags: string[];
+  /**
+   * Headers to precompile for the program's sources, with its flags, each on top of the one before. A source takes
+   * the last one whose `files` matches its path, or that has none.
+   */
+  pch?: Array<{ header: string; files?: RegExp }>;
+}
+
+/** jscPrograms() lists it for testb3's sources, so it is a configure input. */
+const testb3Dir = (wk: WebKitBuild): string => join(wk.JSC, "b3");
+
+/**
+ * `source` (relative to JavaScriptCore) as a TU of `program` alone: a
+ * forwarding stub, like a framework header's. For a source of several programs:
+ * an object's path follows from its source's (compile.ts objectPath), and cmake
+ * too compiles such a source once per target, with that target's flags.
+ */
+function forwardingSource(wk: WebKitBuild, program: string, source: string): string {
+  const stub = join(wk.B, "programs", program, basename(source));
+  writeIfChanged(stub, `#include "${join(wk.JSC, source).replaceAll("\\", "/")}"\n`);
+  return stub;
 }
 
 /**
  * WebKit's own executables worth having beside a local build
  * (shell/CMakeLists.txt): the `jsc` shell; `testFFI`, JSC's bun:ffi C++/ABI
- * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; and `testb3`
- * and `testair`, the tests of the B3 and Air compilers. bun.ts links
- * them, from the same dep objects bun gets, so this only says how: the sources,
- * the flags a JSC-family TU compiles with, and what a standalone JSC executable
- * needs at link. None is a default target: `bun run build:local --target=jsc`.
+ * test program, which test/js/bun/jsc-stress/testFFI.test.ts runs; `testb3`,
+ * `testair`, `testmasm` and `testRegExp`, the tests of the B3 and Air
+ * compilers, the macro assembler and Yarr; and `testaot`, the tests of the AoT
+ * compiler. bun.ts links them, from the same dep objects bun gets, so this only
+ * says how: the sources, the flags a JSC-family TU compiles with, and what a
+ * standalone JSC executable needs at link. None is a default target:
+ * `bun run build:local --target=jsc`.
  */
 export function jscPrograms(cfg: Config): JSCProgram[] {
   if (cfg.webkit !== "local") return [];
   const wk = webkitLayout(cfg);
-  const jsc = jscCompileFlags(wk, webkitFlags(wk), webkitLists(wk).jsc);
+  const lists = webkitLists(wk).jsc;
+  const jsc = jscCompileFlags(wk, webkitFlags(wk), lists);
+  // What a program that embeds JSC defines for the AoT run time; testaot's own sources define it.
+  const embedder = lists.values("JavaScriptCore_AOT_PROGRAM_SOURCES");
+  const shell = lists.values("JavaScriptCore_AOT_SHELL_SOURCES");
+  const shared = new Set([...embedder, ...shell]);
   const program = (name: string, sources: string[], ldflags: string[]): JSCProgram => ({
     name,
-    sources: sources.map(s => join(wk.JSC, s)),
+    sources: sources.map(s => (shared.has(s) ? forwardingSource(wk, name, s) : join(wk.JSC, s))),
     cxxflags: groupCompileFlags(cfg, wk.W, {
       includes: jsc.includes,
       cflags: [...jsc.targetFlags, `-DBUILDING_${name}`, "-DSTATICALLY_LINKED_WITH_JavaScriptCore"],
@@ -1543,11 +1776,28 @@ export function jscPrograms(cfg: Config): JSCProgram[] {
     }).cxx,
     ldflags: [...standaloneExeLinkFlags(cfg), ...ldflags],
   });
+  const testb3 = readdirSync(testb3Dir(wk))
+    .filter(f => f.startsWith("testb3_") && f.endsWith(".cpp"))
+    .sort()
+    .map(f => `b3/${f}`);
   return [
-    program("jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp"], cfg.darwin ? ["-ledit"] : []),
-    program("testFFI", ["ffi/tests/testFFI.cpp"], []),
-    program("testb3", [...[1, 2, 3, 4, 5, 6, 7, 8].map(n => `b3/testb3_${n}.cpp`), "b3/testb3_bun.cpp"], []),
-    program("testair", ["b3/air/testair.cpp"], []),
+    program("jsc", ["jsc.cpp", "tools/JSDollarVMShell.cpp", ...shell, ...embedder], cfg.darwin ? ["-ledit"] : []),
+    program("testFFI", ["ffi/tests/testFFI.cpp", ...embedder], []),
+    program("testb3", [...testb3, ...embedder], []),
+    program("testair", ["b3/air/testair.cpp", ...embedder], []),
+    program("testmasm", ["assembler/testmasm.cpp", ...embedder], []),
+    program("testRegExp", ["testRegExp.cpp", ...embedder], []),
+    {
+      ...program("testaot", lists.values("JavaScriptCore_AOT_TEST_SOURCES"), []),
+      pch: [
+        { header: join(wk.JSC, "aot", "tests", "AOTTestPrefix.h") },
+        { header: join(wk.JSC, "aot", "tests", "AOTCompilerTestPrefix.h") },
+        {
+          header: join(wk.JSC, "aot", "tests", "AOTCodeGeneratorTestPrefix.h"),
+          files: /\/aot\/(tests\/AOT(Image|Stub)\w*|codegen\/\w+)\.cpp$/,
+        },
+      ],
+    },
   ];
 }
 
@@ -1603,7 +1853,9 @@ export const webkit: Dependency = {
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return { libs, includes };
+      const { schemaInputs, builtinTableInputs } = webkitEngineSources(cfg);
+      const files = [...schemaInputs, ...builtinTableInputs].map(file => relative(prebuiltDestDir(cfg), file));
+      return { libs, includes, files };
     }
 
     // The objects go straight on the link line; consumers see the framework

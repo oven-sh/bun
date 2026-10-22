@@ -4,23 +4,72 @@
     clippy::disallowed_macros
 )]
 
+use std::env;
+use std::path::PathBuf;
+
+const SOURCES: [&str; 26] = [
+    "common/debug.c",
+    "common/entropy_common.c",
+    "common/error_private.c",
+    "common/fse_decompress.c",
+    "common/pool.c",
+    "common/threading.c",
+    "common/xxhash.c",
+    "common/zstd_common.c",
+    "compress/fse_compress.c",
+    "compress/hist.c",
+    "compress/huf_compress.c",
+    "compress/zstd_compress.c",
+    "compress/zstd_compress_literals.c",
+    "compress/zstd_compress_sequences.c",
+    "compress/zstd_compress_superblock.c",
+    "compress/zstd_double_fast.c",
+    "compress/zstd_fast.c",
+    "compress/zstd_lazy.c",
+    "compress/zstd_ldm.c",
+    "compress/zstd_opt.c",
+    "compress/zstd_preSplit.c",
+    "compress/zstdmt_compress.c",
+    "decompress/huf_decompress.c",
+    "decompress/zstd_ddict.c",
+    "decompress/zstd_decompress.c",
+    "decompress/zstd_decompress_block.c",
+];
+
 fn main() {
-    println!("cargo:rerun-if-env-changed=BUN_CODEGEN_DIR");
-    let codegen = std::env::var("BUN_CODEGEN_DIR").expect("BUN_CODEGEN_DIR: the codegen directory of a build of Bun");
-    if std::env::var_os("CARGO_FEATURE_MIMALLOC").is_some() {
-        let object = std::path::Path::new(&codegen).join("../obj/vendor/mimalloc/src/static.c.o");
-        if object.exists() {
-            println!("cargo:rustc-link-arg-bins={}", object.display());
-        }
-        println!("cargo:rerun-if-changed={}", object.display());
+    let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+    let repository = manifest
+        .ancestors()
+        .nth(3)
+        .expect("repository root from CARGO_MANIFEST_DIR");
+    let library = repository.join("vendor/zstd/lib");
+    let header = library.join("zstd.h");
+    println!("cargo:rerun-if-changed={}", header.display());
+
+    // `cargo check` for another target links nothing, and a C cross compiler need not exist.
+    if env::var("TARGET").unwrap() != env::var("HOST").unwrap() {
+        return;
     }
-    let library = std::path::Path::new(&codegen).join("../obj/vendor/zstd/lib");
-    for directory in ["common", "compress", "decompress"] {
-        let Ok(entries) = std::fs::read_dir(library.join(directory)) else { continue };
-        let mut objects: Vec<_> = entries.filter_map(|entry| Some(entry.ok()?.path())).filter(|path| path.extension().is_some_and(|it| it == "o")).collect();
-        objects.sort();
-        for object in objects {
-            println!("cargo:rustc-link-arg-bins={}", object.display());
-        }
+    if !header.exists() {
+        println!(
+            "cargo:warning=vendor/zstd is missing: a program that reads Bun's own modules will not link. Run bun scripts/build.ts --target=clone-zstd"
+        );
+        return;
     }
+
+    let mut decoder = cc::Build::new();
+    decoder
+        .files(SOURCES.map(|source| library.join(source)))
+        .include(&library)
+        .include(library.join("common"))
+        .define("ZSTD_DISABLE_ASM", "1")
+        .define("ZSTD_LEGACY_SUPPORT", "0")
+        .define("XXH_NAMESPACE", "ZSTD_")
+        .opt_level(2)
+        .warnings(false);
+    if env::var_os("CARGO_CFG_WINDOWS").is_some() {
+        // `patches/zstd/bmi2-probe-once.patch` calls `__atomic_load_n`, which cl.exe does not have.
+        decoder.compiler("clang-cl").define("ZSTD_HEAPMODE", "0");
+    }
+    decoder.compile("bun_sema_standalone_zstd");
 }

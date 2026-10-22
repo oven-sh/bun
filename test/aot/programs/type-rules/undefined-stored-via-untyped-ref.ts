@@ -1,4 +1,4 @@
-// Untyped code stores undefined to a required field of parsed JSON that typed code holds too.
+// Untyped code stores undefined to a required field of parsed JSON that typed code holds too. The store succeeds, and undefined passes the check at the next typed read, so the program prints what plain Bun prints.
 declare const console: { log(...values: unknown[]): void };
 function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
 function hide(v: unknown): any { return v }

@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it needs import() of files beside it",
+  "skipInVariant": { "validated": "it stops today with \"AOT validation: ValueType\" behind the line \"five is deleted\"; alone, without the two other modules, it does not. The fix deletes this line" }
+}

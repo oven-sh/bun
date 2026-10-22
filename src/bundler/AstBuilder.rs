@@ -565,7 +565,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: u32::MAX,
             ts_enums: Default::default(),
-            jsx_pragmas: None,
         })
     }
 

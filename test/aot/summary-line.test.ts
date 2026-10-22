@@ -1,6 +1,23 @@
+// The line that ends a build says how many of the program's property accesses are one load or store. They are counted in the
+// optimized program, so no count is written down here: a test says whether its program has typed and untyped accesses,
+// and computes the line from the numbers of `--explain=json`.
+// The read of `console.log` is one of the typed accesses, so only a program that prints nothing has none. An object that never
+// leaves its function is not allocated. So a program that is to be typed keeps its objects in an array.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
+import { parseExplainLines, type ExplainNumbers } from "./explain/explain-report";
+import { countAccesses } from "./harness/build-report";
+import { slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
+
+type Files = Record<string, string>;
+
+interface Program {
+  files: Files;
+  /** Left out where it depends on what the optimizer removes. */
+  hasTyped?: boolean;
+  hasUntyped: boolean;
+}
 
 const stock = `export interface Item {
   sku: string;
@@ -27,9 +44,159 @@ const begins = `const stock = new Stock();
 stock.add({ sku: "A-1", price: 2.5, quantity: 4 });
 `;
 
-const programs: Record<string, Record<string, string>> = {
-  "a server that only reads its own type and what Bun provides": {
-    "main.ts": `interface Todo {
+const ends = `const value = stock.value();
+console.log(value);
+`;
+
+const savedText = `'[{"sku":"B-2","price":10,"quantity":3}]'`;
+
+const programs: Record<string, Program> = {
+  "a class and a loop": {
+    hasTyped: true,
+    hasUntyped: false,
+    files: {
+      "main.ts": `class Account {
+  constructor(
+    public id: number,
+    public balance: number,
+  ) {}
+}
+function total(accounts: Account[]): number {
+  let sum = 0;
+  for (const account of accounts) sum += account.balance;
+  return sum;
+}
+const accounts: Account[] = [];
+for (let id = 0; id < 10; id++) {
+  const account = new Account(id, id % 3);
+  accounts.push(account);
+}
+const sum = total(accounts);
+console.log(sum);
+`,
+    },
+  },
+  "objects of a class behind an any": {
+    hasTyped: true,
+    hasUntyped: false,
+    files: {
+      "main.ts": `class Account {
+  id = 1;
+  balance = 2;
+}
+const accounts: any[] = [];
+for (let id = 0; id < 10; id++) {
+  const account = new Account();
+  accounts.push(account);
+}
+let sum = 0;
+for (const account of accounts) sum += account.balance;
+console.log(sum);
+`,
+    },
+  },
+  "a JavaScript file of the program": {
+    hasTyped: true,
+    hasUntyped: false,
+    files: {
+      "helper.js": `export function describe(jobs) {
+  let text = "";
+  for (const job of jobs) text += job.id + ": " + job.state + "\\n";
+  return text;
+}
+`,
+      "main.ts": `import { describe } from "./helper.js";
+class Job {
+  id = 1;
+  state = "queued";
+}
+const jobs = [new Job(), new Job()];
+const text = describe(jobs);
+console.log(text);
+`,
+    },
+  },
+  "properties of parsed data": {
+    hasUntyped: true,
+    files: {
+      "main.ts": `const body: any = JSON.parse('{"visits":3}');
+const visits = body.visits;
+const visitor = body.name;
+console.log(visits, visitor);
+`,
+    },
+  },
+  "parsed data that reaches a type": {
+    hasUntyped: true,
+    files: {
+      "stock.ts": stock,
+      "main.ts": `import { Stock } from "./stock";
+${begins}
+const saved: any = JSON.parse(${savedText});
+for (const item of saved) stock.add(item);
+${ends}`,
+    },
+  },
+  "parsed data cast to a type": {
+    hasUntyped: true,
+    files: {
+      "stock.ts": stock,
+      "main.ts": `import { Stock, type Item } from "./stock";
+${begins}
+const saved = JSON.parse(${savedText}) as Item[];
+for (const item of saved) stock.add(item);
+${ends}`,
+    },
+  },
+  "parsed data checked and built anew: only its own properties are looked up": {
+    hasTyped: true,
+    hasUntyped: true,
+    files: {
+      "stock.ts": stock,
+      "main.ts": `import { Stock, type Item } from "./stock";
+function toItem(value: unknown): Item {
+  if (typeof value !== "object" || value === null) throw new TypeError("not an item");
+  const { sku, price, quantity } = value as Record<string, unknown>;
+  if (typeof sku !== "string" || typeof price !== "number" || typeof quantity !== "number") throw new TypeError("not an item");
+  return { sku, price, quantity };
+}
+${begins}
+const saved: unknown = JSON.parse(${savedText});
+if (!Array.isArray(saved)) throw new TypeError("not an array");
+for (const value of saved) {
+  const item = toItem(value);
+  stock.add(item);
+}
+${ends}`,
+    },
+  },
+  "a class that extends a class of the runtime": {
+    hasUntyped: true,
+    files: {
+      "main.ts": `class HttpError extends Error {
+  status = 500;
+}
+const failure = new HttpError("x");
+const code = failure.status;
+console.log(code);
+`,
+    },
+  },
+  "objects of types that are imported from bun": {
+    hasUntyped: true,
+    files: {
+      "main.ts": `import type { BunRequest } from "bun";
+export function session(request: BunRequest): string | null {
+  return request.cookies.get("sid") ?? request.headers.get("x-session") ?? request.params.id ?? null;
+}
+console.log(session, process.env.PORT);
+`,
+    },
+  },
+  "a server": {
+    hasUntyped: true,
+    files: {
+      "main.ts": `interface Todo {
   id: number;
   title: string;
 }
@@ -44,128 +211,71 @@ const server = Bun.serve({
 console.log(server.url.href);
 server.stop();
 `,
+    },
   },
-  "a class and a loop": {
-    "main.ts": `class Account {
-  constructor(
-    public id: number,
-    public balance: number,
-  ) {}
-}
-function total(accounts: Account[]): number {
-  let sum = 0;
-  for (const account of accounts) sum += account.balance;
-  return sum;
-}
-const accounts: Account[] = [];
-for (let id = 0; id < 10; id++) accounts.push(new Account(id, id % 3));
-console.log(total(accounts));
+  "no property access": {
+    hasTyped: false,
+    hasUntyped: false,
+    files: {
+      "main.ts": `const greeting = "hello";
+export default greeting;
 `,
-  },
-  "an any that reaches a type": {
-    "stock.ts": stock,
-    "main.ts": `import { Stock } from "./stock";
-${begins}
-const saved: any = JSON.parse("[]");
-for (const item of saved) stock.add(item);
-console.log(stock.value());
-`,
-  },
-  "the same with the values checked and built anew": {
-    "stock.ts": stock,
-    "main.ts": `import { Stock, type Item } from "./stock";
-function toItem(value: unknown): Item {
-  if (typeof value !== "object" || value === null) throw new TypeError("not an item");
-  const { sku, price, quantity } = value as Record<string, unknown>;
-  if (typeof sku !== "string" || typeof price !== "number" || typeof quantity !== "number") throw new TypeError("not an item");
-  return { sku, price, quantity };
-}
-${begins}
-const saved: unknown = JSON.parse("[]");
-if (!Array.isArray(saved)) throw new TypeError("not an array");
-for (const value of saved) stock.add(toItem(value));
-console.log(stock.value());
-`,
-  },
-  "data from outside cast to a type": {
-    "stock.ts": stock,
-    "main.ts": `import { Stock, type Item } from "./stock";
-${begins}
-const saved = JSON.parse("[]") as Item[];
-for (const item of saved) stock.add(item);
-console.log(stock.value());
-`,
-  },
-  "properties of an any": {
-    "main.ts": `const body: any = JSON.parse('{"visits":3}');
-console.log(body.visits, body.name);
-`,
-  },
-  "a JavaScript file of the program": {
-    "helper.js": `export function describe(job) {
-  return job.id + ": " + job.state;
-}
-`,
-    "main.ts": `import { describe } from "./helper.js";
-class Job {
-  id = 1;
-  state = "queued";
-}
-console.log(describe(new Job()));
-`,
-  },
-  "objects of types that are imported from bun": {
-    "main.ts": `import type { BunRequest } from "bun";
-export function session(request: BunRequest): string | null {
-  return request.cookies.get("sid") ?? request.headers.get("x-session") ?? request.params.id ?? null;
-}
-console.log(session, process.env.PORT);
-`,
-  },
-  "a class that extends a class of the runtime": {
-    "main.ts": `class HttpError extends Error {
-  status = 500;
-}
-console.log(new HttpError("x").status);
-`,
+    },
   },
 };
 
-async function check(files: Record<string, string>, ...flags: string[]) {
+const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
+const nothingToExplain = "note: Every property access is typed. Nothing to fix.";
+const summaryLine = /^([\d.]+% of property accesses are one load: |Untyped code works, but runs slower\. Run)/;
+const entryLine = /^note: \d+\. [a-z-]+: /;
+const placeInProgram = /^ +at (.*[\\/])?(main\.ts|stock\.ts|helper\.js):\d+:\d+$/;
+const buildTimeout = 300_000;
+
+async function check(files: Files, ...flags: string[]) {
   using dir = tempDirWithBunTypes("aot-summary-line", files);
-  await using proc = Bun.spawn({ cmd: [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"], cwd: String(dir), env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const lines = (stdout + stderr).split("\n");
-  return { summary: lines.filter(line => /^aot: ([\d.]+% typed|--aot-explain shows)/.test(line)), lines, exitCode };
+  const command = [bunExe(), "check", "--aot", "--no-pretty", ...flags, "main.ts"];
+  const { stdout, stderr, exitCode, signal } = await spawned(command, String(dir), { ...bunEnv, NO_COLOR: "1" });
+  const said = exitCode === 0 ? "" : stdout + stderr;
+  expect({ exitCode, signal, said }).toEqual({ exitCode: 0, signal: null, said: "" });
+  const lines = stderr.split("\n");
+  return { stdout, lines, summary: lines.filter(line => summaryLine.test(line)) };
 }
 
-const hint = "aot: --aot-explain shows what is not typed and how to fix it";
+async function numbersOf(files: Files): Promise<ExplainNumbers> {
+  return parseExplainLines((await check(files, "--explain=json")).stdout).numbers;
+}
 
-describe.concurrent("the share of typed property accesses counts what the program's own types cover", () => {
-  test.each([
-    ["a server that only reads its own type and what Bun provides", ["aot: 100% typed"]],
-    ["a class and a loop", ["aot: 100% typed"]],
-    ["an any that reaches a type", ["aot: 75.0% typed (6 of 8 property accesses)", hint]],
-    ["the same with the values checked and built anew", ["aot: 100% typed"]],
-    ["data from outside cast to a type", ["aot: 75.0% typed (6 of 8 property accesses)", hint]],
-    ["properties of an any", ["aot: 0.0% typed (0 of 2 property accesses)", hint]],
-    ["a JavaScript file of the program", ["aot: 50.0% typed (2 of 4 property accesses)", hint]],
-    ["objects of types that are imported from bun", ["aot: 100% typed"]],
-    ["a class that extends a class of the runtime", ["aot: 100% typed"]],
-  ])("%s", async (name, summary) => {
-    expect(await check(programs[name])).toMatchObject({ summary, exitCode: 0 });
-  }, 60_000);
+const count = (number: number) => number.toLocaleString("en-US");
 
-  test.each(["a class and a loop", "a class that extends a class of the runtime"])("%s: --aot-explain has no entry either", async name => {
-    const { lines, summary } = await check(programs[name], "--aot-explain");
-    expect(lines.filter(line => /^ +\d+\. /.test(line))).toBeEmpty();
-    expect(lines).toContain("aot: every property access is typed: there is nothing to explain");
-    expect(summary).toEqual(["aot: 100% typed"]);
-  }, 60_000);
+function summaryOf({ accesses }: ExplainNumbers, hasTextReport: boolean) {
+  const [typed, total] = [accesses.free, countAccesses(accesses)];
+  if (total === 0) return [];
+  const tenths = Math.max(Math.floor((typed * 1000) / total), typed > 0 ? 1 : 0);
+  const columns = `${count(accesses.free)} free, ${count(accesses.tested)} tested, ${count(accesses.byName)} by name`;
+  const line = `${tenths / 10}% of property accesses are one load: ${columns} (${count(total)})`;
+  return tenths < 950 && !hasTextReport ? [hint, line] : [line];
+}
 
-  test.each(["an any that reaches a type", "data from outside cast to a type", "properties of an any", "a JavaScript file of the program"])("%s: --aot-explain names a place in the program, and the hint is gone", async name => {
-    const { lines, summary } = await check(programs[name], "--aot-explain");
-    expect(lines.filter(line => /^ +\d+\. [a-z-]+ (main\.ts|stock\.ts|helper\.js)(:\d+:\d+)?: /.test(line))).not.toBeEmpty();
-    expect(summary).not.toContain(hint);
-  }, 60_000);
+describe.concurrent("typed percentage", () => {
+  test.each(Object.keys(programs))(
+    "%s",
+    name =>
+      slot(async () => {
+        const { files, ...expected } = programs[name]!;
+        const numbers = await numbersOf(files);
+        const typed = numbers.accesses.free;
+        expect({ hasTyped: typed > 0, hasUntyped: typed < countAccesses(numbers.accesses) }).toMatchObject(expected);
+        expect(countAccesses(numbers.dependencyAccesses)).toBe(0);
+        expect((await check(files)).summary).toEqual(summaryOf(numbers, false));
+
+        const { lines, summary } = await check(files, "--explain");
+        expect(summary).toEqual(summaryOf(numbers, true));
+        expect(lines.includes(nothingToExplain)).toBe(!expected.hasUntyped);
+        expect({
+          hasEntry: lines.some(line => entryLine.test(line)),
+          hasEntryInProgram: lines.some(line => placeInProgram.test(line)),
+        }).toEqual({ hasEntry: expected.hasUntyped, hasEntryInProgram: expected.hasUntyped });
+      }),
+    buildTimeout,
+  );
 });

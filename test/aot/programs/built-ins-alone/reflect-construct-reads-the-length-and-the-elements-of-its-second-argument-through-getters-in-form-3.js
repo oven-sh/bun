@@ -1,0 +1,51 @@
+let calls = 0;
+class Item {
+  constructor(size) {
+    this.size = size;
+  }
+  double() {
+    return this.size * 2;
+  }
+}
+const item = new Item(1.5);
+const probe = {
+  count: 0,
+  get length() {
+    calls++;
+    this.count++;
+    console.log("length");
+    return 3;
+  },
+  get 0() {
+    calls++;
+    this.count++;
+    console.log("element 0");
+    return 1.5;
+  },
+  get 1() {
+    calls++;
+    this.count++;
+    console.log("element 1");
+    return item;
+  },
+  get 2() {
+    calls++;
+    this.count++;
+    console.log("element 2");
+    return "two";
+  },
+};
+function callback(firstValue, secondValue, thirdValue) {
+  console.log("callback", typeof firstValue, firstValue + 1, typeof secondValue, secondValue, typeof thirdValue);
+  console.log(thirdValue.length, thirdValue, typeof this, arguments.length);
+  return true;
+}
+function otherCallback() {
+  console.log("otherCallback", arguments.length);
+  return true;
+}
+const result = Reflect.construct(callback, probe, otherCallback);
+console.log(typeof result, Object.keys(result).join(), typeof probe, Object.keys(probe).join());
+console.log(typeof probe[0], probe[0] + 1, probe[1].double());
+console.log(typeof probe[2], probe[2].length, probe[2], typeof probe.count, probe.count + 1);
+console.log(calls, probe.count);

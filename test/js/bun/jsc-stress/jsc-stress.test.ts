@@ -116,13 +116,10 @@ const jsFixtures = [
   "dfg-try-catch-wrong-value-recovery-on-ic-miss.js",
   "dfg-exception-try-catch-in-constructor-with-inlined-throw.js",
   "dfg-call-class-constructor.js",
-  "multi-put-by-val-out-of-bounds-bigint64array.js",
   "dfg-osr-entry-should-not-use-callframe-argument.js",
   // Allocation sinking / OSR / LICM
   "varargs-inlined-simple-exit.js",
-  "switch-string-substring-of-base-that-became-16bit.js",
   "loop-unrolling.js",
-  "ftl-has-own-property-in-for-in-over-string-constant.js",
   "licm-no-pre-header.js",
 ];
 

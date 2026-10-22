@@ -28,19 +28,21 @@ test("and bun test --aot", async () => {
   expect(exitCode).toBe(1);
 });
 
-test("a preload without errors runs first, and its values are held to their types", async () => {
+test("a preload without errors runs first, and a value in it that does not fit its type gives what plain Bun gives", async () => {
   const files = {
-    "pre.ts": log + `function double(n: number): number { return n * 2; } const given: any = JSON.parse('"4"'); try { console.log(double(given)); } catch (e) { console.log(String(e).split(" (bun")[0]); }`,
+    "pre.ts": log + `function double(n: number): number { return n * 2; } const given: any = JSON.parse('"4"'); try { console.log(double(given)); } catch (e) { console.log(String(e)); }`,
     "main.ts": log + `console.log("the program ran");`,
   };
+  const plain = await ran(files, "run", "--preload", "./pre.ts", "main.ts");
+  expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: "8\nthe program ran\n", exitCode: 0 });
   const { stdout, exitCode } = await ran(files, "run", "--aot", "--preload", "./pre.ts", "main.ts");
-  expect({ stdout, exitCode }).toEqual({ stdout: `TypeError: expected number, got string "4"\nthe program ran\n`, exitCode: 0 });
+  expect({ stdout, exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });
 
-test("a preload that is not there is reported as plain Bun reports it", async () => {
+test("a preload that is not there ends the run as it ends plain Bun's, with an error that names it", async () => {
   const files = { "main.ts": log + `console.log("the program ran");` };
   const plain = await ran(files, "run", "--preload", "./none.ts", "main.ts");
   const held = await ran(files, "run", "--aot", "--preload", "./none.ts", "main.ts");
   expect({ stdout: held.stdout, exitCode: held.exitCode }).toEqual({ stdout: plain.stdout, exitCode: plain.exitCode });
-  expect(held.stderr).toContain("preload not found");
+  expect(held.stderr).toContain(`"./none.ts" was not found`);
 });

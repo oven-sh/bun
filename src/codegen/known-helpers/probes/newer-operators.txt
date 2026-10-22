@@ -1,0 +1,10 @@
+export function probeOperators(probeValue, probeOther) {
+  probeValue ??= probeOther?.probeField?.[0]?.();
+  probeValue ||= probeOther ** 2;
+  probeValue &&= typeof probeOther === "symbol" || probeOther instanceof Object;
+  try {
+    return probeValue ?? probeOther;
+  } catch {
+    return `${probeValue}`;
+  }
+}

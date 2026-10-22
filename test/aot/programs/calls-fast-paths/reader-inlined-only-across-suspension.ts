@@ -1,8 +1,8 @@
 // A function that only reads the object it is handed is inlined into a caller that suspends where the caller uses the object again after the suspension: then the object is never made, and only what is read again stays alive while the caller waits. Where the object is dead by then, the copy would let go of nothing, and the call stays a call.
-// IR= 1 handsLiteral NewObjectWithShape
-// IR= 1 readsAgainAtOnce NewObjectWithShape
-// IR= 1 madeAfterTheAwait NewObjectWithShape
-// IR= 0 readsAgainLater NewObjectWithShape
+// IR= 1 handsLiteral : =?L[0-9]+ = NewObject 
+// IR= 1 readsAgainAtOnce : =?L[0-9]+ = NewObject 
+// IR= 1 madeAfterTheAwait : =?L[0-9]+ = NewObject 
+// IR= 0 readsAgainLater : =?L[0-9]+ = NewObject 
 interface Box {
   width: number;
   height: number;

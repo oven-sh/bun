@@ -174,7 +174,7 @@ export const profiles = {
     ci: true,
     buildkite: true,
     webkit: "prebuilt",
-    islands: true,
+    trimmable: true,
   },
 } as const satisfies Record<string, PartialConfig>;
 

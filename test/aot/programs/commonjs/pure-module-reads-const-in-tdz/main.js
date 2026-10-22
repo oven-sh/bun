@@ -1,9 +1,9 @@
 // A CommonJS module that only makes values and cannot throw keeps its exports in variables that are never read before they are stored. One that reads a constant ahead of its declaration throws at load: it is none of those.
-// IR+ ^variable \d+ "kSound" module \d+: \S+ never read uninitialized
-// IR+ ^variable \d+ "kEarlyVar" module \d+: \S+ undefined
-// IR- ^variable \d+ "kEarlyVar" module \d+: \S+ never read uninitialized
-// IR- ^variable \d+ "kBroken" module \d+: \S+ never read uninitialized
-// IR- ^variable \d+ "kOfItself" module \d+: \S+ never read uninitialized
+// IR+ ^variable (g\d+) name="kSound" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
+// IR- ^variable (g\d+) name="kSound" [\s\S]* = GetModuleVariable variable=\1\b(?! isKnownInitialized)
+// IR+ ^variable g\d+ name="kEarlyVar" 
+// IR- ^variable (g\d+) name="kBroken" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
+// IR- ^variable (g\d+) name="kOfItself" [\s\S]* = GetModuleVariable variable=\1 isKnownInitialized
 "use strict";
 const lines = [];
 function show(what, value) { lines.push(what + ": " + String(value)); }

@@ -2,7 +2,7 @@
 //! constructor-argument parsing/validation used by both the Postgres and MySQL
 //! query constructors.
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) struct QueryCtorArgs {
     pub query: JSValue,
@@ -26,7 +26,7 @@ impl QueryCtorArgs {
             return Err(global_this.throw(format_args!("query must be a string")));
         }
 
-        if !values.js_type().is_array() {
+        if values.js_type() != JSType::Array {
             return Err(global_this.throw(format_args!("values must be an array")));
         }
 

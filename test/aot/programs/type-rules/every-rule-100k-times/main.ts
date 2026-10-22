@@ -1,4 +1,4 @@
-// Every rule of --aot a hundred thousand times, the answers counted: what a line says the first time it says the last time, whichever tier of the engine runs it.
+// Every rule of --aot runs 100,000 times and the results are counted: a line gives the same result the first time and the last.
 declare const console: { log(...values: unknown[]): void };
 import { rows } from "./sloppy.cjs";
 class Box { label = "b"; size = 1; get(): string { return this.label; } }

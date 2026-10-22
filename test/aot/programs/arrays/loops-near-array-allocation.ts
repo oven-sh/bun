@@ -126,7 +126,7 @@ function bytesOfABufferThatIsTransferredInTheLoop(n: number): string {
     for (let i = 0; i < n; i++) values.push(i);
     values[5] = { valueOf() { bytes.buffer.transfer(); return 77; } };
     let turns = 0;
-    for (let i = 0; i < bytes.length; i++) { bytes[i] = values[i] as number; turns++; }
+    for (let i = 0; i < bytes.length; i++) { bytes[i] = values[i] as any; turns++; }
     return turns + " " + bytes.length + " " + bytes[0];
 }
 
@@ -138,7 +138,7 @@ function bytesOfABufferThatIsResizedInTheLoop(n: number): string {
     values[3] = { valueOf() { buffer.resize(2 * n); return 33; } };
     values[n + 2] = { valueOf() { buffer.resize(n + 4); return 44; } };
     let turns = 0, t = 0;
-    for (let i = 0; i < bytes.length; i++) { bytes[i] = values[i] as number; turns++; }
+    for (let i = 0; i < bytes.length; i++) { bytes[i] = values[i] as any; turns++; }
     for (let i = 0; i < bytes.length; i++) t += bytes[i];
     return turns + " " + bytes.length + " " + t;
 }

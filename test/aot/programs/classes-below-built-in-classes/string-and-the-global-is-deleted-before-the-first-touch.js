@@ -1,0 +1,22 @@
+// Between the definition of a class below String and its first touch the global variable of the built-in class is deleted.
+function tell(what, run) {
+  try {
+    console.log(what, String(run()));
+  } catch (error) {
+    console.log(what, "threw " + error.constructor.name);
+  }
+}
+class Late extends String {
+  method() {
+    return "method of " + this.constructor.name;
+  }
+  static fixed() {
+    return "static of " + this.name;
+  }
+}
+const kept = String;
+delete globalThis.String;
+tell("an instance", () => {
+  const one = new Late("text");
+  return [one.length + one.valueOf(), one instanceof Late, one instanceof kept, one.method(), one.constructor === Late, Object.getPrototypeOf(Late) === kept].join(" ");
+});

@@ -1,5 +1,4 @@
-// `super(executor)` in a class that extends Promise runs compiled code. What a program can see of it stays as the language says.
-// IR+ TryNewPromiseSubclass
+// `super(executor)` in a class that extends Promise: what a program can see of it stays as the language says.
 const log: string[] = [];
 const say = (...parts: unknown[]) => log.push(parts.map(String).join(" "));
 
@@ -104,7 +103,7 @@ async function failures(): Promise<void> {
   say("after resolve", await afterResolve);
   for (const executor of [undefined, null, 1, "text", {}, Symbol.iterator]) {
     try {
-      new Plain<number>(executor as never);
+      new Plain<number>(executor as any);
       say("no error");
     } catch (error) {
       say("not callable", (error as Error).constructor.name, (error as Error).message);
@@ -161,7 +160,7 @@ async function newTargets(): Promise<void> {
     say("new.target throws", (error as Error).constructor.name, (error as Error).message);
   }
   function Primitive() {}
-  Primitive.prototype = 1 as never;
+  Primitive.prototype = 1 as any;
   const fallsBack = Reflect.construct(Plain, [() => {}], Primitive);
   say("primitive prototype", Object.getPrototypeOf(fallsBack) === Promise.prototype);
 }

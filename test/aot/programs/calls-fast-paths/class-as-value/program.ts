@@ -1,8 +1,9 @@
 declare const console: any; declare function memoryUsageStatistics(): any; declare function fullGC(): void;
 const holders: any[] = [];
 const kinds = ["Function", "NativeExecutable", "Structure", "PropertyTable", "GetterSetter", "Object"];
-let before = memoryUsageStatistics().objectTypeCounts;
-function census(label: string): void { fullGC(); fullGC(); const now = memoryUsageStatistics().objectTypeCounts; let line = label + ": "; for (let i = 0; i < kinds.length; i++) line += (i ? ", " : "") + kinds[i] + " " + ((now[kinds[i]] || 0) - (before[kinds[i]] || 0)); if (label) console.log(line); before = now; }
+function count(): number[] { fullGC(); fullGC(); const counts = memoryUsageStatistics().objectTypeCounts; return kinds.map(kind => counts[kind] || 0); }
+let before = count();
+function census(label: string): void { const now = count(); let line = label + ": "; for (let i = 0; i < kinds.length; i++) line += (i ? ", " : "") + kinds[i] + " " + (now[i] - before[i]); if (label) console.log(line); before = now; }
 class C0 { x = 0; m0_of0(a: number): number { return a + this.x + 0; } m1_of0(a: number): number { return a + this.x + 1; } m2_of0(a: number): number { return a + this.x + 2; } m3_of0(a: number): number { return a + this.x + 3; } m4_of0(a: number): number { return a + this.x + 4; } m5_of0(a: number): number { return a + this.x + 5; } get g_of0(): number { return this.x; } static s_of0(): number { return 0; } }
 class C1 { x = 1; m0_of1(a: number): number { return a + this.x + 0; } m1_of1(a: number): number { return a + this.x + 1; } m2_of1(a: number): number { return a + this.x + 2; } m3_of1(a: number): number { return a + this.x + 3; } m4_of1(a: number): number { return a + this.x + 4; } m5_of1(a: number): number { return a + this.x + 5; } get g_of1(): number { return this.x; } static s_of1(): number { return 1; } }
 class C2 { x = 2; m0_of2(a: number): number { return a + this.x + 0; } m1_of2(a: number): number { return a + this.x + 1; } m2_of2(a: number): number { return a + this.x + 2; } m3_of2(a: number): number { return a + this.x + 3; } m4_of2(a: number): number { return a + this.x + 4; } m5_of2(a: number): number { return a + this.x + 5; } get g_of2(): number { return this.x; } static s_of2(): number { return 2; } }

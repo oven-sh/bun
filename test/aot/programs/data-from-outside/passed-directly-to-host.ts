@@ -1,4 +1,4 @@
-// An argument or an options literal that is handed straight to a function of the host is not held to the types of the declaration: the host validates and coerces for itself.
+// A function of the host is declared in this file with types that this file writes. An argument is tested by the function that receives it, and the host's function tests nothing. A literal written as the argument is created as `Options`, so each member enters a field with a written type: a member of another kind throws a TypeError where the literal is made, and so does `e as T` on a primitive of another kind on the way; an object passes the cast. undefined and null pass.
 interface Inner { type: "chrome" | "other"; stderr?: string }
 interface Options { fatal?: boolean; dir?: string; count?: number; backend?: Inner; list?: number[]; on?(n: number): number }
 declare function hostTakes(options?: Options, more?: string): string;
@@ -8,7 +8,7 @@ const show = (v: unknown) => JSON.stringify(v, (_, x) => (x === undefined ? "und
 (globalThis as any).hostTakes = function (options: unknown, more: unknown) { return show([options, more]); };
 (globalThis as any).HostClass = class { said; constructor(label: unknown, options: unknown) { this.said = show([label, options]); } take(options: unknown) { return show(options); } };
 (globalThis as any).hostObject = { take(options: unknown) { return show(options); }, held: undefined };
-const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + (typeof r === "string" ? r : show(r))); };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).constructor.name; } console.log(name + ": " + (typeof r === "string" ? r : show(r))); };
 const falsy: any[] = [0, "", null, undefined, NaN, 0n];
 for (const value of falsy) row("a member of another kind, " + String(value), () => hostTakes({ fatal: value }));
 row("a constant of another kind, through any", () => hostTakes({ dir: 123 as any }));

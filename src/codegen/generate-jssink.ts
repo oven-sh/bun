@@ -1,8 +1,15 @@
 import { mkdirSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
+import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
+import { featureNamed } from "../../scripts/build/trim/features.ts";
+import type { FeatureName } from "../../scripts/build/trim/types.ts";
+import { parseHashTable } from "./builtins/collect-static-tables.ts";
+import { Guards, textOfClassMember } from "./builtins/guards.ts";
 import { createHashTable } from "./create-hash-table.ts";
+import { checkOfDeclaredType } from "./declared-type-checks.ts";
+import { guardedCall, recordedPointer, removableFeatures, tableEntryRecord } from "./removable-entry-points.ts";
 
-const classes = [
+export const classes = [
   "ArrayBufferSink",
   "FileSink",
   "HTTPResponseSink",
@@ -11,6 +18,91 @@ const classes = [
   "FetchRequestBodySink",
   "HTMLRewriterSink",
 ];
+
+const bytesOrNothingBuffered = "number | ArrayBuffer | Uint8Array";
+const bytesWrittenNowOrLater = "number | Promise";
+
+// What `end` and `flush` of each sink return, in the grammar of parseDeclaredType in class-definitions.ts.
+const resultsBySink: Record<string, { end: string; flush: string }> = {
+  ArrayBufferSink: { end: bytesOrNothingBuffered, flush: bytesOrNothingBuffered },
+  FileSink: { end: bytesWrittenNowOrLater, flush: "number | boolean | undefined | Promise" },
+  HTTPResponseSink: { end: bytesWrittenNowOrLater, flush: bytesWrittenNowOrLater },
+  HTTPSResponseSink: { end: bytesWrittenNowOrLater, flush: bytesWrittenNowOrLater },
+  NetworkSink: { end: bytesWrittenNowOrLater, flush: bytesWrittenNowOrLater },
+  FetchRequestBodySink: { end: "number", flush: bytesWrittenNowOrLater },
+  HTMLRewriterSink: { end: "number", flush: bytesWrittenNowOrLater },
+};
+
+interface PrototypeMember {
+  /** The function behind the member is `${sink}__${native}`. */
+  native: string;
+  length: number;
+  /** What the member returns. The function that the prototype's table points to checks it in every build. */
+  returns: string;
+}
+
+/** The one list of what the prototype of a sink has. The table of built-ins takes its rows from here too. */
+export const prototypeMembersOf = (name: string): Record<string, PrototypeMember> => ({
+  close: { native: "doClose", length: 0, returns: "undefined" },
+  flush: { native: "flush", length: 1, returns: resultsBySink[name].flush },
+  end: { native: "end", length: 0, returns: resultsBySink[name].end },
+  start: { native: "start", length: 1, returns: "undefined" },
+  write: { native: "write", length: 1, returns: "number | boolean | Promise" },
+  ref: { native: "ref", length: 0, returns: "undefined" },
+  unref: { native: "unref", length: 0, returns: "undefined" },
+  _getFd: { native: "getFd", length: 0, returns: "number | null | undefined" },
+});
+
+const checkedSymbol = (name: string, member: string) => `${name}__${member}Checked`;
+
+const checkedPrototypeFunctions = (name: string) =>
+  Object.entries(prototypeMembersOf(name))
+    .map(
+      ([member, { native, returns }]) => `
+JSC_DECLARE_HOST_FUNCTION(${checkedSymbol(name, member)});
+JSC_DEFINE_HOST_FUNCTION(${checkedSymbol(name, member)}, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::EncodedJSValue result = ${name}__${native}(lexicalGlobalObject, callFrame);
+    ${checkOfDeclaredType({ className: name, member, type: returns, value: "JSC::JSValue::decode(result)", receiver: "callFrame->thisValue()", mayBeEmpty: true })}
+    return result;
+}
+`,
+    )
+    .join("");
+
+interface EntryGuard {
+  feature: FeatureName;
+  builtin?: number;
+}
+
+const guardOfSink = (guards: Guards, name: string) =>
+  guards.ofPath(textOfClassMember(name, "constructor", null, guards));
+
+const featureGuardOfSink = (guards: Guards, name: string): EntryGuard | null => {
+  const guard = guardOfSink(guards, name);
+  return guard && { feature: guard.feature };
+};
+
+function tableRecords(table: string, guardOf: (key: string) => EntryGuard | null): string {
+  return parseHashTable(lutInput(), table, "JSSink.lut.txt")
+    .flatMap(({ key, value }) => {
+      const guard = guardOf(key);
+      if (guard === null) return [];
+      return [tableEntryRecord(removableFeatures(), `${table}Values`, guard.feature, "Throw", value, guard.builtin)];
+    })
+    .map(record => `\n    ${record}`)
+    .join("");
+}
+
+const prototypeTableRecords = (guards: Guards, name: string) =>
+  tableRecords(
+    `JS${name}PrototypeTable`,
+    key => guards.ofPath(textOfClassMember(name, "proto", key, guards)) ?? featureGuardOfSink(guards, name),
+  );
+
+const controllerPrototypeTableRecords = (guards: Guards, name: string) =>
+  tableRecords(`${names(name).controllerPrototypeName}Table`, () => featureGuardOfSink(guards, name));
 
 function names(name) {
   return {
@@ -272,7 +364,21 @@ void closeSinkControllerWithError(JSC::JSGlobalObject*, JSReadableSinkController
   return templ;
 }
 
-async function implementation() {
+async function implementation(guards: Guards) {
+  const sinkConstructor = (name: string) => {
+    const guard = guardOfSink(guards, name);
+    const symbol = `${name}__construct`;
+    return guard ? recordedPointer(removableFeatures(), guard.feature, "Throw", symbol, guard.builtin) : symbol;
+  };
+
+  const constructSink = (name: string, args: string[]) => {
+    const guard = guardOfSink(guards, name);
+    const symbol = `${name}__construct`;
+    return guard
+      ? guardedCall(removableFeatures(), guard.feature, "Abort", symbol, args)
+      : `${symbol}(${args.join(", ")})`;
+  };
+
   const head = `
 // AUTO-GENERATED FILE. DO NOT EDIT.
 // Generated by 'generate-jssink.ts'
@@ -283,6 +389,7 @@ async function implementation() {
 
 #include "JSSink.h"
 #include "AsyncContextFrame.h"
+#include "DeclaredTypeChecks.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -582,7 +689,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
-
+${checkedPrototypeFunctions(name)}
 
 `;
   }
@@ -735,7 +842,7 @@ void JS${controllerName}::detach(JSC::JSValue reason) {
 
 ${constructor}* ${constructor}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, JSObject* prototype)
 {
-    ${constructor}* ptr = new (NotNull, JSC::allocateCell<${constructor}>(vm)) ${constructor}(vm, structure, ${name}__construct);
+    ${constructor}* ptr = new (NotNull, JSC::allocateCell<${constructor}>(vm)) ${constructor}(vm, structure, ${sinkConstructor(name)});
     ptr->finishCreation(vm, globalObject, prototype);
     return ptr;
 }
@@ -762,7 +869,7 @@ void ${constructor}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, J
 }
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${constructor}::construct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) {
-    return ${name}__construct(globalObject, callFrame);
+    return ${constructSink(name, ["globalObject", "callFrame"])};
 }
 
 
@@ -777,7 +884,7 @@ void ${constructor}::initializeProperties(VM& vm, JSC::JSGlobalObject* globalObj
 void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    Bun::reifyStaticPropertyTable(vm, ${className}::info(), ${className}PrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, ${className}::info(), ${className}PrototypeTableValues, *this);${prototypeTableRecords(guards, name)}
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
@@ -785,7 +892,7 @@ void ${prototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalOb
 void ${controllerPrototypeName}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
-    Bun::reifyStaticPropertyTable(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);
+    Bun::reifyStaticPropertyTable(vm, ${controller}::info(), ${controller}PrototypeTableValues, *this);${controllerPrototypeTableRecords(guards, name)}
     putDirect(vm, JSC::Identifier::fromString(vm, "sinkId"_s), JSC::jsNumber(${className}::Sink), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
     Bun::putToStringTagWithoutTransition(vm, this, info());
 }
@@ -891,30 +998,15 @@ void ${controller}::destroy(JSCell* cell)
 `;
   }
 
-  for (let name of classes) {
-    const { controllerPrototypeName } = names(name);
-    templ += `
-static NEVER_INLINE JSObject* create${name}Prototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    return JS${name}Prototype::create(vm, globalObject, JS${name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-
-static NEVER_INLINE JSObject* create${name}ControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-{
-    return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
-}
-`;
-  }
-
   templ += `
-  NEVER_INLINE JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+  JSObject* createJSSinkPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
   {
       switch (sinkID) {
     `;
   for (let name of classes) {
     templ += `
     case ${name}:
-        return create${name}Prototype(vm, globalObject);
+        return JS${name}Prototype::create(vm, globalObject, JS${name}Prototype::createStructure(vm, globalObject, globalObject->objectPrototype()));
 `;
   }
   templ += `
@@ -924,14 +1016,15 @@ default:
 }`;
 
   templ += `
-NEVER_INLINE JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+JSObject* createJSSinkControllerPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
   `;
   for (let name of classes) {
+    const { controllerPrototypeName } = names(name);
     templ += `
   case ${name}:
-      return create${name}ControllerPrototype(vm, globalObject);
+      return ${controllerPrototypeName}::create(vm, globalObject, ${controllerPrototypeName}::createStructure(vm, globalObject, globalObject->objectPrototype()));
 `;
   }
   templ += `
@@ -941,7 +1034,7 @@ default:
 }`;
 
   templ += `
-NEVER_INLINE Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
+Structure* createJSSinkControllerStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, SinkID sinkID)
 {
     switch (sinkID) {
   `;
@@ -1162,7 +1255,7 @@ ${classes
 // `SYSV_ABI` (= `extern "sysv64"` on win-x64, `"C"` elsewhere) — wrapped in
 // `bun_jsc::jsc_host_abi!`. The remaining `ZIG_DECL` / plain `extern "C"`
 // symbols (finalize/close/updateRef/getInternalFd/memoryCost) stay `extern "C"`.
-function rustSink() {
+function rustSink(guards: Guards) {
   // All sink structs live (or will live) under `crate::webcore`.
   const sinkPaths: Record<string, string> = {
     ArrayBufferSink: "crate::webcore::array_buffer_sink::ArrayBufferSink",
@@ -1206,6 +1299,13 @@ use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
   for (const name of classes) {
     const rustPath = sinkPaths[name] ?? `crate::webcore::streams::${name}`;
     const JSSinkT = `crate::webcore::sink::JSSink::<${name}>`;
+    // JSSink.cpp calls the thunks that are not host functions on a live sink, and there is none once --trim has
+    // removed the sink's feature. Each records itself as a part of that feature, which cuts every call to it.
+    const guard = guardOfSink(guards, name);
+    const feature = guard && featureNamed(removableFeatures(), guard.feature).rustName;
+    const neverInlined = (indent = "") => (feature ? `#[inline(never)]\n${indent}` : "");
+    const definitionRecord = (member: string, indent = "    ") =>
+      feature ? `bun_removable_features::removable_definition!(${feature}, ${name}__${member});\n${indent}` : "";
     templ += `// ════════════════════════════════════════════════════════════════════════════
 // ${name}
 // ════════════════════════════════════════════════════════════════════════════
@@ -1237,8 +1337,8 @@ pub(crate) use ${rustPath} as ${name};
     symbols.push(`${name}__getInternalFd`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
-    ${JSSinkT}::js_get_internal_fd(this)
+${neverInlined()}pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
+    ${definitionRecord("getInternalFd")}${JSSinkT}::js_get_internal_fd(this)
 }
 
 `;
@@ -1248,8 +1348,8 @@ pub extern "C" fn ${name}__getInternalFd(this: &mut ${name}) -> JSValue {
     symbols.push(`${name}__memoryCost`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
-    ${JSSinkT}::js_memory_cost(this)
+${neverInlined()}pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
+    ${definitionRecord("memoryCost")}${JSSinkT}::js_memory_cost(this)
 }
 
 `;
@@ -1261,8 +1361,8 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
-    // SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
+${neverInlined()}pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
+    ${definitionRecord("finalize")}// SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
     unsafe { ${JSSinkT}::js_finalize(this) }
 }
 
@@ -1273,8 +1373,8 @@ pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
     symbols.push(`${name}__controllerFinalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${name}__controllerFinalize(this: *mut ${name}) {
-    // SAFETY: as \`__finalize\`: the controller's live \`m_sinkPtr\`, handed over once.
+${neverInlined()}pub unsafe extern "C" fn ${name}__controllerFinalize(this: *mut ${name}) {
+    ${definitionRecord("controllerFinalize")}// SAFETY: as \`__finalize\`: the controller's live \`m_sinkPtr\`, handed over once.
     unsafe { ${JSSinkT}::js_controller_finalize(this) }
 }
 
@@ -1286,8 +1386,8 @@ pub unsafe extern "C" fn ${name}__controllerFinalize(this: *mut ${name}) {
     symbols.push(`${name}__controllerDetached`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
-    ${JSSinkT}::js_controller_detached(this, controller)
+${neverInlined()}pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JSValue) {
+    ${definitionRecord("controllerDetached")}${JSSinkT}::js_controller_detached(this, controller)
 }
 
 `;
@@ -1298,8 +1398,8 @@ pub extern "C" fn ${name}__controllerDetached(this: &mut ${name}, controller: JS
     symbols.push(`${name}__close`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${name}, reason: JSValue) -> JSValue {
-    // SAFETY: C++ passes its live, null-checked \`m_sinkPtr\`.
+${neverInlined()}pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${name}, reason: JSValue) -> JSValue {
+    ${definitionRecord("close")}// SAFETY: C++ passes its live, null-checked \`m_sinkPtr\`.
     unsafe { ${JSSinkT}::js_close(global, this, reason) }
 }
 
@@ -1312,8 +1412,8 @@ pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${na
     templ += `bun_jsc::jsc_host_abi! {
     #[allow(dead_code, unreachable_pub, unused)]
     #[unsafe(no_mangle)]
-    pub unsafe fn ${name}__endWithSink(this: &mut ${name}, global: &JSGlobalObject) -> JSValue {
-        ${JSSinkT}::js_end_with_sink(this, global)
+    ${neverInlined("    ")}pub unsafe fn ${name}__endWithSink(this: &mut ${name}, global: &JSGlobalObject) -> JSValue {
+        ${definitionRecord("endWithSink", "        ")}${JSSinkT}::js_end_with_sink(this, global)
     }
 }
 
@@ -1324,8 +1424,8 @@ pub unsafe extern "C" fn ${name}__close(global: &JSGlobalObject, this: *mut ${na
     symbols.push(`${name}__updateRef`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
-    ${JSSinkT}::js_update_ref(this, value)
+${neverInlined()}pub extern "C" fn ${name}__updateRef(this: &mut ${name}, value: bool) {
+    ${definitionRecord("updateRef")}${JSSinkT}::js_update_ref(this, value)
 }
 
 `;
@@ -1340,18 +1440,13 @@ function lutInput() {
   for (let name of classes) {
     const { controller, controllerPrototypeName } = names(name);
     const protopad = `${controller}__close`.length;
-    const padding = `${name}__doClose`.length;
+    const rows = Object.entries(prototypeMembersOf(name)).map(
+      ([member, { length }]) => `    ${member}  ${checkedSymbol(name, member)}  ReadOnly|DontDelete|Function ${length}`,
+    );
     templ += `
 /* Source for JS${name}PrototypeTableValues.lut.h
 @begin JS${name}PrototypeTable
-    close      ${`${name}__doClose`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-    flush      ${`${name}__flush`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-    end        ${`${name}__end`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-    start      ${`${name}__start`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-    write      ${`${name}__write`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 1
-    ref        ${`${name}__ref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-    unref      ${`${name}__unref`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
-    _getFd      ${`${name}__getFd`.padEnd(padding + 8)} ReadOnly|DontDelete|Function 0
+${rows.join("\n")}
 @end
 */
 
@@ -1371,16 +1466,23 @@ function lutInput() {
   return templ;
 }
 
-const outDir = resolve(process.argv[2]);
-mkdirSync(outDir, { recursive: true });
+if (import.meta.main) {
+  const builtinUsesFlag = "--builtin-uses=";
+  const builtinUses = process.argv.at(-1)!.startsWith(builtinUsesFlag)
+    ? process.argv.pop()!.slice(builtinUsesFlag.length)
+    : undefined;
+  const guards = new Guards(builtinUses === undefined ? { entries: [] } : readBuiltinUses(builtinUses));
+  const outDir = resolve(process.argv[2]);
+  mkdirSync(outDir, { recursive: true });
 
-writeFileSync(resolve(outDir + "/JSSink.h"), header());
-writeFileSync(resolve(outDir + "/JSSink.cpp"), await implementation());
-writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
-{
-  const { src, symbols } = rustSink();
-  writeFileSync(resolve(outDir + "/generated_jssink.rs"), src);
-  console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
+  writeFileSync(resolve(outDir + "/JSSink.h"), header());
+  writeFileSync(resolve(outDir + "/JSSink.cpp"), await implementation(guards));
+  writeFileSync(resolve(outDir + "/JSSink.lut.txt"), lutInput());
+  {
+    const { src, symbols } = rustSink(guards);
+    writeFileSync(resolve(outDir + "/generated_jssink.rs"), src);
+    console.log(`generated_jssink.rs: ${classes.length} sinks, ${symbols.length} exported symbols`);
+  }
+
+  createHashTable(resolve(outDir + "/JSSink.lut.txt"), join(outDir, "JSSink.lut.h"));
 }
-
-createHashTable(resolve(outDir + "/JSSink.lut.txt"), join(outDir, "JSSink.lut.h"));

@@ -1,4 +1,4 @@
-// process.nextTick() and EventEmitter's on(), once(), prependListener(), off() with what is no function: the error, its code and its words; and with what is one: the order of the ticks and their arguments.
+// process.nextTick() and EventEmitter's on(), once(), prependListener(), off() with what is no function: the error, its code and its words; and with what is one: the order of the ticks and their arguments. One text differs from plain Bun: an ordinary object is described without a look at its constructor, "Received [Object]" for "Received an instance of Object".
 import { EventEmitter } from "node:events";
 
 function attempt(what: string, act: () => unknown): void {
@@ -14,11 +14,11 @@ const values: unknown[] = [undefined, null, 0, "text", {}, [], Symbol("s"), 1n, 
 const emitter = new EventEmitter();
 for (const value of values) {
   const name = typeof value === "symbol" ? "symbol" : typeof value === "bigint" ? "bigint" : JSON.stringify(value) ?? "undefined";
-  attempt("nextTick " + name, () => process.nextTick(value as () => void));
-  attempt("on " + name, () => emitter.on("x", value as () => void));
-  attempt("once " + name, () => emitter.once("x", value as () => void));
-  attempt("prependListener " + name, () => emitter.prependListener("x", value as () => void));
-  attempt("off " + name, () => emitter.off("x", value as () => void));
+  attempt("nextTick " + name, () => process.nextTick(value as any));
+  attempt("on " + name, () => emitter.on("x", value as any));
+  attempt("once " + name, () => emitter.once("x", value as any));
+  attempt("prependListener " + name, () => emitter.prependListener("x", value as any));
+  attempt("off " + name, () => emitter.off("x", value as any));
 }
 console.log(emitter.listenerCount("x"));
 const order: string[] = [];

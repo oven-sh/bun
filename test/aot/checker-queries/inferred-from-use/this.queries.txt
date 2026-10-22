@@ -1,0 +1,10 @@
+# `this` of a function that is neither a method of a class nor an arrow function is what the uses of `this` in it say.
+this.js:3 signature `Counter` = () this unwritten checked { count?: number; } returns unwritten checked void
+this.js:5 signature `add` = (unwritten checked any) this unwritten checked { count?: any; } returns unwritten checked { count?: any; }
+this.js:7 signature `Base` = (unwritten checked any) this unwritten checked { name?: any; } returns unwritten checked void
+this.js:9 signature `Derived` = (unwritten checked any) this unwritten checked { extra?: number; name?: any; } returns unwritten checked void
+this.js:11 signature `Applied` = () this unwritten checked { name?: any; } returns unwritten checked void
+this.js:13 signature `inArrow` = () this unwritten checked { items: any; seen: Function; } returns unwritten checked void
+this.js:15 predicted `size` = number
+this.js:17 predicted `size` = number
+this.js:21 signature `notify` = (unwritten checked any) this unwritten checked any returns unwritten checked never[]

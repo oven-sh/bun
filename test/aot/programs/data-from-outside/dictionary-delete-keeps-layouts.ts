@@ -1,6 +1,6 @@
 // What the program is given is looked for once, and the search goes on by the pairs of types that the checker has compared. A type that only looks like one that data is held to keeps its layout. A `delete` from a dictionary elsewhere in the program has nothing to do with that.
-// IR+ ^shape \d+ Record "Looks"
-// IR+ : number = GetById v\d+ "serial"
+// IR+ ^layout L\d+ .*name="Looks" .* representation=Typed
+// IR+ : number = PropGet v\d+ name="serial"
 interface Row { serial: number; name: string }
 interface Looks { serial: number; name: string }
 const parsed: Row = JSON.parse('{"serial":1,"name":"x"}');

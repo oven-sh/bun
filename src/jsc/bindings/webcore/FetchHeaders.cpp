@@ -79,11 +79,9 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
     return true;
 }
 
-enum class NameIsToken : bool { Unknown, Yes };
-
-static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard, NameIsToken nameIsToken = NameIsToken::Unknown)
+static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
-    if (nameIsToken == NameIsToken::Unknown && !isValidHTTPToken(name))
+    if (!isValidHTTPToken(name))
         return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
@@ -91,66 +89,6 @@ static ExceptionOr<bool> canWriteHeader(const String& name, const String& value,
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
-}
-
-static ALWAYS_INLINE ExceptionOr<void> appendToHeaderMap(HTTPHeaderName headerName, const String& normalizedValue, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
-{
-    String combinedTemp;
-    const String* valueToSet = &normalizedValue;
-    auto index = headers.indexOf(headerName);
-
-    if (headerName != HTTPHeaderName::SetCookie) {
-        if (index.isValid()) {
-            auto existing = headers.getIndex(index);
-            if (headerName == HTTPHeaderName::Cookie) {
-                combinedTemp = makeString(existing, "; "_s, normalizedValue);
-            } else {
-                combinedTemp = makeString(existing, ", "_s, normalizedValue);
-            }
-            valueToSet = &combinedTemp;
-        }
-    }
-
-    auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
-
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
-
-    if (headerName != HTTPHeaderName::SetCookie) {
-        if (!headers.setIndex(index, *valueToSet))
-            headers.set(headerName, *valueToSet);
-    } else {
-        headers.add(headerName, normalizedValue);
-    }
-
-    return {};
-}
-
-static ALWAYS_INLINE ExceptionOr<void> appendUncommonToHeaderMap(const String& name, NameIsToken nameIsToken, const String& normalizedValue, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
-{
-    String combinedTemp;
-    const String* valueToSet = &normalizedValue;
-    auto index = headers.indexOf(name);
-    if (index.isValid()) {
-        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
-        valueToSet = &combinedTemp;
-    }
-    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard, nameIsToken);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
-
-    if (headers.setIndex(index, *valueToSet))
-        return {};
-    if (nameIsToken == NameIsToken::Yes)
-        headers.uncommonHeaders().append(HTTPHeaderMap::UncommonHeader { name, *valueToSet });
-    else
-        headers.set(name, *valueToSet);
-
-    return {};
 }
 
 static ExceptionOr<void> appendToHeaderMap(const String& name, const String& value, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
@@ -161,10 +99,58 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     // or merge with an existing header.
     String trimStorage;
     const String& normalizedValue = trimHTTPSpaceIfNeeded(value, trimStorage);
+    String combinedTemp;
+    const String* valueToSet = &normalizedValue;
     HTTPHeaderName headerName;
-    if (findHTTPHeaderName(name, headerName))
-        return appendToHeaderMap(headerName, normalizedValue, headers, guard);
-    return appendUncommonToHeaderMap(name, NameIsToken::Unknown, normalizedValue, headers, guard);
+    if (findHTTPHeaderName(name, headerName)) {
+        auto index = headers.indexOf(headerName);
+
+        if (headerName != HTTPHeaderName::SetCookie) {
+            if (index.isValid()) {
+                auto existing = headers.getIndex(index);
+                if (headerName == HTTPHeaderName::Cookie) {
+                    combinedTemp = makeString(existing, "; "_s, normalizedValue);
+                } else {
+                    combinedTemp = makeString(existing, ", "_s, normalizedValue);
+                }
+                valueToSet = &combinedTemp;
+            }
+        }
+
+        auto canWriteResult = canWriteHeader(headerName, normalizedValue, *valueToSet, guard);
+
+        if (canWriteResult.hasException())
+            return canWriteResult.releaseException();
+        if (!canWriteResult.releaseReturnValue())
+            return {};
+
+        if (headerName != HTTPHeaderName::SetCookie) {
+            if (!headers.setIndex(index, *valueToSet))
+                headers.set(headerName, *valueToSet);
+        } else {
+            headers.add(headerName, normalizedValue);
+        }
+
+        return {};
+    }
+    auto index = headers.indexOf(name);
+    if (index.isValid()) {
+        combinedTemp = makeString(headers.getIndex(index), ", "_s, normalizedValue);
+        valueToSet = &combinedTemp;
+    }
+    auto canWriteResult = canWriteHeader(name, normalizedValue, *valueToSet, guard);
+    if (canWriteResult.hasException())
+        return canWriteResult.releaseException();
+    if (!canWriteResult.releaseReturnValue())
+        return {};
+
+    if (!headers.setIndex(index, *valueToSet))
+        headers.set(name, *valueToSet);
+
+    // if (guard == FetchHeaders::Guard::RequestNoCors)
+    //     removePrivilegedNoCORSRequestHeaders(headers);
+
+    return {};
 }
 
 static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapConstIterator::KeyValue& header, HTTPHeaderMap& headers, FetchHeaders::Guard guard)
@@ -251,19 +237,6 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
     return appendToHeaderMap(name, value, m_headers.willChange(), m_guard);
 }
 
-ExceptionOr<void> FetchHeaders::append(HTTPHeaderName name, const String& value)
-{
-    String trimStorage;
-    return appendToHeaderMap(name, trimHTTPSpaceIfNeeded(value, trimStorage), m_headers.willChange(), m_guard);
-}
-
-ExceptionOr<void> FetchHeaders::appendUncommonToken(const String& name, const String& value)
-{
-    ASSERT(isValidHTTPToken(name));
-    String trimStorage;
-    return appendUncommonToHeaderMap(name, NameIsToken::Yes, trimHTTPSpaceIfNeeded(value, trimStorage), m_headers.willChange(), m_guard);
-}
-
 // https://fetch.spec.whatwg.org/#dom-headers-delete
 ExceptionOr<void> FetchHeaders::remove(const StringView name)
 {
@@ -336,24 +309,6 @@ ExceptionOr<void> FetchHeaders::set(const String& name, const String& value)
         return {};
 
     m_headers.willChange().set(name, normalizedValue);
-
-    if (m_guard == FetchHeaders::Guard::RequestNoCors)
-        removePrivilegedNoCORSRequestHeaders(m_headers.willChange());
-
-    return {};
-}
-
-ExceptionOr<void> FetchHeaders::setUncommonToken(const String& name, const String& value)
-{
-    ASSERT(isValidHTTPToken(name));
-    String normalizedValue = trimHTTPSpaceIfNeeded(value);
-    auto canWriteResult = canWriteHeader(name, normalizedValue, normalizedValue, m_guard, NameIsToken::Yes);
-    if (canWriteResult.hasException())
-        return canWriteResult.releaseException();
-    if (!canWriteResult.releaseReturnValue())
-        return {};
-
-    m_headers.willChange().setUncommonHeader(name, normalizedValue);
 
     if (m_guard == FetchHeaders::Guard::RequestNoCors)
         removePrivilegedNoCORSRequestHeaders(m_headers.willChange());

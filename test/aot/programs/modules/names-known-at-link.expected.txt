@@ -1,0 +1,42 @@
+plain.cjs runs
+named CommonJS: [ "plain value", "plain other" ]
+default CommonJS: plain value
+namespace CommonJS: [
+  [ "default", "other", "value" ], "plain value", "plain other"
+]
+flagged.cjs runs
+__esModule CommonJS: [ "flagged default", "flagged named", [ "default", "named" ], "flagged default" ]
+JSON: [ 2, "data", [ "count", "default", "title" ], 2 ]
+node: through re-export: [ "b.txt", "function", "string", "function", "function", false ]
+star-left.cjs runs
+star of one CommonJS: [ "left value", "own value", [ "both", "left", "own" ], "both from left" ]
+star-right.cjs runs
+star of two CommonJS: [ "left value", "right value", [ "left", "right" ] ]
+star through second module: [ "right value", "through value", [ "left", "right", "through" ] ]
+cycle-b runs fromA called
+cycle-a runs fromB value
+hoisted function in cycle: fromA called
+requires-esm.cjs starts
+late.cjs runs
+required-esm runs
+requires-esm.cjs ends
+capture-root runs
+require during capture: [ "shared late value", "shared late value" ]
+captured once: [ "first", "first", false, "changed" ]
+imported-back.cjs starts
+imports-back runs
+imported-back.cjs ends
+CommonJS imported back while it runs: [
+  [ "default", "early" ], undefined, "late value"
+]
+running.cjs starts
+running.cjs ends
+CommonJS imported by import() while it runs: [ "default", "early", "imported", "late" ]
+absent-second.cjs runs
+absent-first.cjs runs
+absent name: SyntaxError Export named 'missing' not found in module 'absent-second.cjs'.
+absent name again: SyntaxError Export named 'missing' not found in module 'absent-second.cjs'.
+ambiguous by name: SyntaxError Export named 'both' cannot be resolved due to ambiguous multiple bindings in module 'star-two.mjs'.
+ambiguous in namespace: [ false, undefined ]
+throws.cjs runs
+CommonJS body throws: RangeError thrown by throws.cjs

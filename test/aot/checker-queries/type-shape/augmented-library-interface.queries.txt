@@ -1,0 +1,5 @@
+# A program that adds a member to an interface of the default library does not make it a type of its own: it still names the built-in class.
+augmented-library-interface.ts:4 shape `Request` = Builtin(6.0 View)
+absent: augmented-library-interface.ts:4 shape `Request` = Object
+absent: augmented-library-interface.ts:4 shape `Request` = Object untrusted
+augmented-library-interface.ts:3 shape `User` = Object

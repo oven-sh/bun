@@ -1,5 +1,6 @@
 #include "ErrorCode.h"
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "Secrets.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCJSValue.h>
@@ -351,6 +352,7 @@ void Bun__Secrets__scheduleJob(JSGlobalObject* global, CallFrame* callFrame, Sec
 
 JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsGet);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -371,6 +373,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsGet, (JSGlobalObject * globalObject, CallFrame* 
 
 JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsSet);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -386,6 +389,7 @@ JSC_DEFINE_HOST_FUNCTION(secretsSet, (JSGlobalObject * globalObject, CallFrame* 
 
 JSC_DEFINE_HOST_FUNCTION(secretsDelete, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Secrets, secretsDelete);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 

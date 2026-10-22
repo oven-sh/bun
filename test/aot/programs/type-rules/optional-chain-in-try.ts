@@ -5,7 +5,7 @@ interface Outer { inner: Inner | null; list: number[] | null; call: (() => numbe
 function hide(v: unknown): any { return v; }
 const outside: Inner = hide({ id: 5 });
 function inATry(p: Outer): string {
-  try { return [p.inner?.id, p.inner?.id ?? -1, p.list?.[0], p.list?.length, p.call?.()].join(); } catch (e) { return "caught " + (e as Error).name + ": " + (e as Error).message.replace(/ \(bun --aot[^]*$/, ""); }
+  try { return [p.inner?.id, p.inner?.id ?? -1, p.list?.[0], p.list?.length, p.call?.()].join(); } catch (e) { return "caught " + (e as Error).name + ": " + (e as Error).message.replace(/ \(bun compile[^]*$/, ""); }
 }
 function outsideOfOne(p: Outer): string { return [p.inner?.id, p.inner?.id ?? -1, p.list?.[0], p.list?.length, p.call?.()].join(); }
 function kept(p: Outer): unknown { try { const id = p.inner?.id; return id; } catch (e) { return "caught " + (e as Error).name; } }

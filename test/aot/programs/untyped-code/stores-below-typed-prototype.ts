@@ -8,7 +8,7 @@ let typedSum = 0;
 for (const step of steps) typedSum += step.weight + step.op.length;
 console.log(typedSum);
 const loose: any[] = (function (list: any): any { return list; })(steps);
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTPutByNameAndCache") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTPutByIdAndCache") : 0;
 const heirOf = function (base: any, v: any): any { const made = Object.create(base); made.value = v; made.args = v; made.op = "own"; return made; };
 const show = function (o: any): string { return [Object.keys(o).join(), o.value, o.args, o.op, o.weight].join(" "); };
 const attempt = function (base: any, v: any): string { try { return show(heirOf(base, v)); } catch (error: any) { return error.constructor.name; } };

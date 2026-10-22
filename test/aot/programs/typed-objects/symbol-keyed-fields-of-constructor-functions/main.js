@@ -1,8 +1,8 @@
 // Records made by typed constructor functions have fields keyed by symbols; untyped code sees ordinary own properties.
-// IR+ shape [0-9]+ Record "Response"
-// IR= 0 finish GetByVal
-// IR= 1 finish : number = GetById .*:kState"
-// IR= 0 Response PutByVal
+// IR+ ^layout L[0-9]+ .*name="Response" .* representation=Typed
+// IR= 0 finish ElemGet
+// IR= 1 finish : number = PropGet v[0-9]+ name=UniqueSymbol "[^"]*kState"
+// IR= 0 Response ElemSet
 import { dispatch } from "./typed.ts";
 let total = 0;
 function handler(response) { response.statusCode = 201; response.end(); }

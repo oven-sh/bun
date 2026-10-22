@@ -501,7 +501,7 @@ fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
 /// (the bundler always pushes `.output_file = …` for asset additional-files,
 /// see bundle_v2.rs).
 #[inline]
-pub(crate) fn additional_output_file_index(f: &AdditionalFile) -> usize {
+fn additional_output_file_index(f: &AdditionalFile) -> usize {
     match *f {
         AdditionalFile::OutputFile(i) => i as usize,
         AdditionalFile::SourceIndex(_) => {

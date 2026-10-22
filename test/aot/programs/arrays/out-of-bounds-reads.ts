@@ -1,9 +1,9 @@
 // An array element read that may be out of bounds returns `undefined`, whatever the static type says (as under `noUncheckedIndexedAccess`).
-type Kind = "a" | "b" | "c";
+type Kind = "a" | "b" | "c" | "z";
 interface Config { sort: string; weight: number; on: boolean; inner: { depth: number } }
 const config = (sort: string): Config => ({ sort, weight: 1, on: true, inner: { depth: 1 } });
-const table: Record<Kind, Config> = { a: config("a"), b: config("b"), c: config("c") };
-// A kind that the type does not know of, as it comes out of a file or off the wire.
+const table: Record<Kind, Config> = { a: config("a"), b: config("b"), c: config("c") } as Record<Kind, Config>;
+// A kind that the table does not hold, as it comes out of a file or off the wire.
 const z = JSON.parse('"z"') as Kind;
 const weights: Record<string, number> = { a: 1 }, flags: { [k: string]: boolean } = { a: true }, names: Record<string, string> = { a: "A" };
 const numbers: number[] = [1, 2], booleans: boolean[] = [true], strings: string[] = ["s"], records: Config[] = [];

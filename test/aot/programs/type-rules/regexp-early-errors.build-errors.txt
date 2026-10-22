@@ -1,0 +1,1 @@
+error: TS100057: invalid regular expression literal

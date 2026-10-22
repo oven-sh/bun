@@ -41,6 +41,27 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
+static HAS_WORKING_DIRECTORY_IN_EXECUTABLE: AtomicBool = AtomicBool::new(false);
+static WORKING_DIRECTORY_IN_EXECUTABLE: crate::RwLock<Option<&'static [u8]>> = crate::RwLock::new(None);
+
+/// `process.chdir()` into a folder that only the executable holds, without a separator at its end. The system has no such
+/// directory: its own working directory stays, `top_level_dir()` with it, and children inherit that one.
+pub fn set_working_directory_in_executable(directory: Option<&'static [u8]>) {
+    let mut current = WORKING_DIRECTORY_IN_EXECUTABLE.write();
+    *current = directory;
+    HAS_WORKING_DIRECTORY_IN_EXECUTABLE.store(directory.is_some(), Ordering::Release);
+}
+
+/// Where `process.cwd()`, `path.resolve()` and the path arguments of `node:fs` and `Bun.file()` start, if not in the
+/// system's working directory.
+#[inline]
+pub fn working_directory_in_executable() -> Option<&'static [u8]> {
+    if !HAS_WORKING_DIRECTORY_IN_EXECUTABLE.load(Ordering::Acquire) {
+        return None;
+    }
+    *WORKING_DIRECTORY_IN_EXECUTABLE.read()
+}
+
 /// Set by `bun_crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
@@ -830,6 +851,27 @@ pub struct SyncCStr(pub *const c_char);
 unsafe impl Sync for SyncCStr {}
 #[unsafe(no_mangle)]
 static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+
+/// True if TLS should also trust the system's certificate authorities. `root_certs.cpp` reads this
+/// when it builds the default certificate store.
+#[unsafe(no_mangle)]
+pub static Bun__Node__UseSystemCA: AtomicBool = AtomicBool::new(false);
+
+/// Handles `--use-system-ca`, `--use-openssl-ca` and `--use-bundled-ca`. Exits with an error if
+/// more than one is passed, and falls back to `NODE_USE_SYSTEM_CA` if none is.
+pub fn set_ca_store_from_flags(has_flag: impl Fn(&'static [u8]) -> bool) {
+    let flags: [&'static [u8]; 3] = [b"--use-system-ca", b"--use-openssl-ca", b"--use-bundled-ca"];
+    let passed = flags.map(has_flag);
+    let count = passed.iter().filter(|&&passed| passed).count();
+    if count > 1 {
+        crate::pretty_errorln!(
+            "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
+        );
+        exit(1);
+    }
+    let from_env = count == 0 && crate::env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false);
+    Bun__Node__UseSystemCA.store(passed[0] || from_env, Ordering::Relaxed);
+}
 
 /// Prevent the linker from dead-code-eliminating `#[no_mangle]` symbols that are
 /// only ever called from C/C++ (so rustc sees no Rust caller). Expands to one

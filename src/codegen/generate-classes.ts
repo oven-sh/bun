@@ -3,14 +3,32 @@ import { existsSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import path from "path";
 import { inspect } from "util";
+import { readBuiltinUses } from "../../scripts/build/trim/builtin-uses.ts";
+import { featureNamed } from "../../scripts/build/trim/features.ts";
 import jsclasses from "./../jsc/bindings/js_classes.ts";
-import { InvalidThisBehavior, type ClassDefinition, type Field } from "./class-definitions.ts";
-import { isNeverInlined, writeIfNotChanged } from "./helpers.ts";
+import { Guards, textOfClassMember } from "./builtins/guards.ts";
+import {
+  declaredTypeOf,
+  InvalidThisBehavior,
+  isCheckedAtRuntime,
+  parseDeclaredType,
+  sortFields,
+  typeScriptOf,
+  type ClassDefinition,
+  type Field,
+} from "./class-definitions.ts";
+import { checkOfDeclaredType, nativeInstances, type CheckedValue } from "./declared-type-checks.ts";
+import { writeIfNotChanged } from "./helpers.ts";
+import { guardedCall, recordedPointer, removableFeatures, tableEntryRecord } from "./removable-entry-points.ts";
 
 const require = createRequire(import.meta.url);
 const files = process.argv.slice(2);
+const builtinUsesFlag = "--builtin-uses=";
+const builtinUses = files.at(-1)?.startsWith(builtinUsesFlag) ? files.pop().slice(builtinUsesFlag.length) : undefined;
 const typesDir = files.pop();
 const outBase = files.pop();
+const guards = new Guards(builtinUses === undefined ? { entries: [] } : readBuiltinUses(builtinUses));
+const features = removableFeatures();
 let externs = "";
 const CommonIdentifiers = {
   "name": true,
@@ -33,6 +51,49 @@ function protoSymbolName(typeName, name) {
 
 function classSymbolName(typeName, name) {
   return `${typeName}Class__${name.replaceAll("@@", "")}`;
+}
+
+function cachedValueSetterName(symbol, type) {
+  return `${symbol}${type ? "SetProvenCachedValue" : "SetCachedValue"}`;
+}
+
+function classGuard(typeName) {
+  return guards.ofPath(textOfClassMember(typeName, "constructor", null, guards));
+}
+
+function classFeature(typeName) {
+  return classGuard(typeName)?.feature;
+}
+
+function classFeatureGuard(typeName) {
+  const feature = classFeature(typeName);
+  return feature && { feature };
+}
+
+function memberGuard(typeName, isStatic, name) {
+  const text = textOfClassMember(typeName, isStatic ? "static" : "proto", name, guards);
+  return guards.ofPath(text) ?? classFeatureGuard(typeName);
+}
+
+function callThrowingOnceRemoved(feature, symbol, args) {
+  return feature ? guardedCall(features, feature, "Throw", symbol, args) : `${symbol}(${args.join(", ")})`;
+}
+
+function nativePointer(guard, stub, symbol) {
+  return guard ? recordedPointer(features, guard.feature, stub, symbol, guard.builtin) : symbol;
+}
+
+const recordsOfTable = new Map<string, string[]>();
+
+function recordTableEntry(table, guard, symbol) {
+  if (!guard) return;
+  const records = recordsOfTable.get(table) ?? [];
+  recordsOfTable.set(table, records);
+  records.push(tableEntryRecord(features, table, guard.feature, "Throw", symbol, guard.builtin));
+}
+
+function tableRecords(table) {
+  return (recordsOfTable.get(table) ?? []).map(record => `\n    ${record}`).join("");
 }
 
 function subspaceFor(typeName) {
@@ -78,6 +139,7 @@ function zigExportName(to: Map<string, string>, symbolName: (name: string) => st
   return exportNames;
 }
 function propRow(
+  table: string,
   symbolName: (a: string, b: string) => string,
   typeName: string,
   name: string,
@@ -107,6 +169,7 @@ function propRow(
   }
 
   var symbol = symbolName(typeName, name);
+  const guard = memberGuard(typeName, !isWrapped, name);
 
   if (isWrapped) {
     if (getter) {
@@ -119,14 +182,21 @@ function propRow(
       fn = symbol + "Callback";
     }
   } else {
+    const isChecked = isCheckedAtRuntime(prop);
     if (getter) {
-      getter = symbolName(typeName, getter);
+      getter = isChecked ? symbol + "GetterWrap" : symbolName(typeName, getter);
     }
     if (setter || writable) {
       setter = symbolName(typeName, setter);
     }
     if (fn) {
-      fn = symbolName(typeName, fn);
+      fn = isChecked ? symbol + "Callback" : symbolName(typeName, fn);
+    }
+  }
+
+  if (builtin === undefined) {
+    for (const pointer of fn !== undefined ? [fn] : [getter, setter]) {
+      if (pointer) recordTableEntry(table, guard, pointer);
     }
   }
 
@@ -180,7 +250,18 @@ export function generateHashTable(nameToUse, symbolName, typeName, obj, props = 
     if ("privateSymbol" in props[name] || "internal" in props[name] || "value" in props[name]) continue;
     if (name.startsWith("@@")) continue;
 
-    rows.push(propRow(symbolName, typeName, name, props[name], wrapped, defaultPropertyAttributes, !!obj.forBind));
+    rows.push(
+      propRow(
+        `${nameToUse}TableValues`,
+        symbolName,
+        typeName,
+        name,
+        props[name],
+        wrapped,
+        defaultPropertyAttributes,
+        !!obj.forBind,
+      ),
+    );
   }
 
   if (rows.length === 0) {
@@ -253,10 +334,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       specialSymbols += `
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${privateSymbol}PrivateName(), JSFunction::create(vm, globalObject, ${
       protoFields[name].length || 0
-    }, String("${observable_name}"_s), ${protoSymbolName(
-      typeName,
-      fn,
-    )}Callback, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+    }, String("${observable_name}"_s), ${nativePointer(
+      memberGuard(typeName, false, name),
+      "Throw",
+      protoSymbolName(typeName, fn) + "Callback",
+    )}, ImplementationVisibility::Private), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
       continue;
     }
 
@@ -269,10 +351,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
       specialSymbols += `
     this->putDirect(vm, WebCore::clientData(vm)->builtinNames().${publicSymbol}PublicName(), JSFunction::create(vm, globalObject, ${
       protoFields[name].length || 0
-    }, String("${observable_name}"_s), ${protoSymbolName(
-      typeName,
-      fn,
-    )}Callback, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
+    }, String("${observable_name}"_s), ${nativePointer(
+      memberGuard(typeName, false, name),
+      "Throw",
+      protoSymbolName(typeName, fn) + "Callback",
+    )}, ImplementationVisibility::Public), PropertyAttribute::Function | 0);`;
       continue;
     }
 
@@ -283,10 +366,11 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
     const symbol = name.slice(2);
 
     specialSymbols += `
-    this->putDirect(vm, vm.propertyNames->${symbol}Symbol, JSFunction::create(vm, globalObject, 1, String("${symbol}"_s), ${protoSymbolName(
-      typeName,
-      symbol,
-    )}Callback, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
+    this->putDirect(vm, vm.propertyNames->${symbol}Symbol, JSFunction::create(vm, globalObject, 1, String("${symbol}"_s), ${nativePointer(
+      memberGuard(typeName, false, name),
+      "Throw",
+      protoSymbolName(typeName, symbol) + "Callback",
+    )}, ImplementationVisibility::Public), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | 0);`;
   }
 
   return `
@@ -312,7 +396,7 @@ void ${proto}::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
     ${
       Object.keys(protoFields).length > 0
-        ? `Bun::reifyStaticPropertyTable(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);`
+        ? `Bun::reifyStaticPropertyTable(vm, ${className(typeName)}::info(), ${proto}TableValues, *this);${tableRecords(`${proto}TableValues`)}`
         : ""
     }${specialSymbols}${staticPrototypeValues}
     Bun::putToStringTagWithoutTransition(vm, this, info());
@@ -407,6 +491,7 @@ class ${name} final : public JSC::InternalFunction {
 function generateConstructorImpl(typeName, obj: ClassDefinition) {
   const name = constructorName(typeName);
   const { klass: fields } = obj;
+  const guard = classGuard(typeName);
   const hashTable =
     Object.keys(fields).length > 0 ? generateHashTable(name, classSymbolName, typeName, obj, fields, false) : "";
 
@@ -415,19 +500,20 @@ function generateConstructorImpl(typeName, obj: ClassDefinition) {
   return (
     `
 ${renderStaticDecls(classSymbolName, typeName, fields)}
+${renderCheckedStaticFields(typeName, fields)}
 ${hashTable}
 
 void ${name}::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, ${prototypeName(typeName)}* prototype)
 {
     Base::finishCreation(vm, 0, "${typeName}"_s, PropertyAdditionMode::WithoutStructureTransition);
-    ${hashTableIdentifier.length ? `Bun::reifyStaticPropertyTable(vm, &${name}::s_info, ${hashTableIdentifier}, *this);` : ""}
+    ${hashTableIdentifier.length ? `Bun::reifyStaticPropertyTable(vm, &${name}::s_info, ${hashTableIdentifier}, *this);${tableRecords(hashTableIdentifier)}` : ""}
     putDirectWithoutTransition(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
     ASSERT(inherits(info()));
 }
 
 ${name}::${name}(JSC::VM& vm, JSC::Structure* structure) : Base(vm, structure, ${
-      obj.call ? classSymbolName(typeName, "call") : "call"
-    }, construct) {
+      obj.call ? nativePointer(guard, "Throw", classSymbolName(typeName, "call")) : "call"
+    }, ${nativePointer(guard, "Throw", "construct")}) {
 
   }
 
@@ -547,7 +633,7 @@ const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullpt
 ${
   !obj.noConstructor
     ? `
-  extern JSC_CALLCONV ${isNeverInlined(`${typeName}__getConstructor`) ? "NEVER_INLINE " : ""}JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+  extern JSC_CALLCONV JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
     return generatedClassConstructor(globalObject, Zig::GlobalObject::GeneratedLazyClass${className(typeName)});
   }`
     : ""
@@ -559,12 +645,6 @@ ${
 
 function renderCachedFieldsHeader(typeName, klass, proto, values) {
   const rows: string[] = [];
-  for (const name in klass) {
-    if (("cache" in klass[name] && klass[name].cache === true) || klass[name]?.internal) {
-      rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
-    }
-  }
-
   for (const name in proto) {
     if (proto[name]?.cache === true || klass[name]?.internal) {
       rows.push(`mutable JSC::WriteBarrier<JSC::Unknown> m_${name};`);
@@ -653,26 +733,59 @@ function renderStaticDecls(symbolName, typeName, fields) {
   return rows.join("\n");
 }
 
-function assertType(typeName: string, name: string, type: string | undefined, value: string, mayBeEmpty = false) {
+type CheckedPlace = Pick<CheckedValue, "value" | "receiver" | "mayBeEmpty">;
+
+const cppClassOfGeneratedClass = (name: string) => (classes.some(c => c.name === name) ? className(name) : undefined);
+
+function checkDeclaredType(typeName: string, name: string, field: Field, place: CheckedPlace) {
+  const type = declaredTypeOf(field);
   if (!type) return "";
-  const tests = type.split("|").map(part => {
-    const word = part.trim();
-    const primitive = { string: "isString", number: "isNumber", boolean: "isBoolean", undefined: "isUndefined", null: "isNull" }[word];
-    return primitive ? `${value}.${primitive}()` : `isInstanceOfClassNamed(${value}, ${JSON.stringify(word)}_s)`;
-  });
-  if (mayBeEmpty) tests.unshift(`${value}.isEmpty()`);
-  return `
-    if constexpr (ASSERT_ENABLED || ASAN_ENABLED)
-        RELEASE_ASSERT_WITH_MESSAGE(${tests.join(" || ")}, ${JSON.stringify(`${typeName}.${name} is defined as ${type}`)});`;
+  const check = checkOfDeclaredType({ className: typeName, member: name, type, cppClassOfGeneratedClass, ...place });
+  return isCheckedAtRuntime(field)
+    ? `
+    ${check}`
+    : `
+    if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {
+        ${check}
+    }`;
 }
 
-function writeBarrier(symbolName, typeName, name, cacheName, type?: string) {
+// The Rust thunk of a static member is what the table of the constructor points to. One that is checked has a function in between.
+function renderCheckedStaticFields(typeName: string, fields: ClassDefinition["klass"]) {
+  const rows: string[] = [];
+  for (const name in fields) {
+    const field = fields[name];
+    if (!isCheckedAtRuntime(field)) continue;
+    if ("fn" in field) {
+      rows.push(`
+JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, name)}Callback);
+JSC_DEFINE_HOST_FUNCTION(${classSymbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    [[maybe_unused]] auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::EncodedJSValue result = ${classSymbolName(typeName, field.fn)}(lexicalGlobalObject, callFrame);${checkDeclaredType(typeName, name, field, { value: "JSValue::decode(result)", receiver: "callFrame->thisValue()", mayBeEmpty: true })}
+    return result;
+}`);
+    } else {
+      rows.push(`
+JSC_DECLARE_CUSTOM_GETTER(${classSymbolName(typeName, name)}GetterWrap);
+JSC_DEFINE_CUSTOM_GETTER(${classSymbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
+{
+    [[maybe_unused]] auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSC::EncodedJSValue result = ${classSymbolName(typeName, field.getter)}(lexicalGlobalObject, encodedThisValue, attributeName);${checkDeclaredType(typeName, name, field, { value: "JSValue::decode(result)", receiver: "JSValue::decode(encodedThisValue)", mayBeEmpty: true })}
+    return result;
+}`);
+    }
+  }
+  return rows.join("\n");
+}
+
+function writeBarrier(symbolName, typeName, name, cacheName, field: Field = { internal: true }) {
   return `
 
-extern JSC_CALLCONV void ${symbolName(typeName, name)}SetCachedValue(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
+extern JSC_CALLCONV void ${cachedValueSetterName(symbolName(typeName, name), provenTypeOf(field))}(JSC::EncodedJSValue thisValue, JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value)
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));${assertType(typeName, name, type, "JSValue::decode(value)", true)}
+    auto* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(thisValue));${checkDeclaredType(typeName, name, field, { value: "JSValue::decode(value)", receiver: "JSValue::decode(thisValue)", mayBeEmpty: true })}
     thisObject->${cacheName}.set(vm, thisObject, JSValue::decode(value));
 }
 
@@ -751,7 +864,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
           proto[name].this!! ? " encodedThisValue, " : ""
         } globalObject)
     );
-    RETURN_IF_EXCEPTION(throwScope, {});${assertType(typeName, name, proto[name].type, "result")}
+    RETURN_IF_EXCEPTION(throwScope, {});${checkDeclaredType(typeName, name, proto[name], { value: "result", receiver: "JSValue::decode(encodedThisValue)", mayBeEmpty: false })}
     thisObject->${cacheName}.set(vm, thisObject, result);
 #if ASSERT_ENABLED
     if (!result.isEmpty() && result.isCell()) {
@@ -762,7 +875,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 }`.trim(),
         );
         if (proto[name].writable) {
-          if (proto[name].type) throw new Error(`${typeName}.${name}: anything may be stored to a writable getter, so it has no type`);
+          if (proto[name].type) throw new Error(`${typeName}.${name}: a writable getter can't declare a type, because any value can be assigned to it`);
           rows.push(
             `
 JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, EncodedJSValue encodedValue, PropertyName attributeName))
@@ -781,7 +894,7 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
           );
         }
       }
-      rows.push(writeBarrier(symbolName, typeName, name, cacheName, proto[name].type));
+      rows.push(writeBarrier(symbolName, typeName, name, cacheName, proto[name]));
     } else if ("getter" in proto[name]) {
       rows.push(`
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
@@ -794,7 +907,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
     JSC::EncodedJSValue result = ${symbolName(typeName, proto[name].getter)}(thisObject->wrapped(),${
       !!proto[name].this ? " encodedThisValue, " : ""
     } globalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});${assertType(typeName, name, proto[name].type, "JSValue::decode(result)")}
+    RETURN_IF_EXCEPTION(throwScope, {});${checkDeclaredType(typeName, name, proto[name], { value: "JSValue::decode(result)", receiver: "JSValue::decode(encodedThisValue)", mayBeEmpty: false })}
 #if ASSERT_ENABLED
     JSValue decodedValue = JSValue::decode(result);
     if (!decodedValue.isEmpty() && decodedValue.isCell()) {
@@ -831,6 +944,12 @@ JSC_DEFINE_CUSTOM_SETTER(${symbolName(typeName, name)}SetterWrap, (JSGlobalObjec
     if ("fn" in proto[name]) {
       const fn = proto[name].fn;
       const invalidThisBehavior = proto[name].invalidThisBehavior ?? InvalidThisBehavior.Throw;
+      const nativeCall = `${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""})`;
+      const check = checkDeclaredType(typeName, name, proto[name], {
+        value: "JSValue::decode(result)",
+        receiver: "callFrame->thisValue()",
+        mayBeEmpty: true,
+      });
       rows.push(`
 JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -872,9 +991,10 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
       lastFileName = fileName;
     }
 
-    JSC::EncodedJSValue result = ${symbolName(typeName, fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
+    JSC::EncodedJSValue result = ${nativeCall};
 
     ASSERT_WITH_MESSAGE(!JSValue::decode(result).isEmpty() or DECLARE_TOP_EXCEPTION_SCOPE(vm).exception() != 0, \"${typeName}.${proto[name].fn} returned an empty value without an exception\");
+${check}
 
 #if ASSERT_ENABLED
     JSValue decodedValue = JSValue::decode(result);
@@ -884,9 +1004,14 @@ JSC_DEFINE_HOST_FUNCTION(${symbolName(typeName, name)}Callback, (JSGlobalObject 
 #endif
 
     return result;
+#else
+${
+  check
+    ? `    JSC::EncodedJSValue result = ${nativeCall};${check}
+    return result;`
+    : `    return ${nativeCall};`
+}
 #endif
-
-  return ${symbolName(typeName, proto[name].fn)}(thisObject->wrapped(), lexicalGlobalObject, callFrame${proto[name].passThis ? ", JSValue::encode(thisObject)" : ""});
 }
 
     `);
@@ -937,10 +1062,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
     }
   }
   const DECLARE_VISIT_CHILDREN =
-    values.length ||
-    obj.estimatedSize ||
-    obj.valuesArray ||
-    [...Object.values(klass), ...Object.values(proto)].find(a => a.cache === true)
+    values.length || obj.estimatedSize || obj.valuesArray || Object.values(proto).find(a => a.cache === true)
       ? "DECLARE_VISIT_CHILDREN;\n"
       : "";
 
@@ -1112,9 +1234,8 @@ ${cachedFields.map(({ member, name: n }) => `    { OBJECT_OFFSETOF(${name}, ${me
     : "";
 
   // analyzeHeap reports these as named property edges (see allCachedValues); appendHidden
-  // marks for GC without emitting a duplicate anonymous internal edge. klass caches are
-  // marked but never reported, which is moot: no setter is generated, so they stay empty.
-  const DEFINE_VISIT_CHILDREN_LIST = [...Object.entries(fields), ...Object.entries(proto)]
+  // marks for GC without emitting a duplicate anonymous internal edge.
+  const DEFINE_VISIT_CHILDREN_LIST = Object.entries(proto)
     .filter(([name, { cache = false }]) => cache === true)
     .map(([name]) => `visitor.appendHidden(thisObject->m_${name});`)
     .join("\n");
@@ -1323,6 +1444,11 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
   return object->wrapped();
 }
 
+extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__isInstance(JSC::EncodedJSValue value) {
+  JSC::JSValue decodedValue = JSC::JSValue::decode(value);
+  return !decodedValue.isEmpty() && !!dynamicDowncast<${className(typeName)}>(decodedValue);
+}
+
 extern JSC_CALLCONV bool JSC_HOST_CALL_ATTRIBUTES ${typeName}__dangerouslySetPtr(JSC::EncodedJSValue value, void* ptr) {
   ${className(typeName)}* object = dynamicDowncast<${className(typeName)}>(JSValue::decode(value));
   if (!object)
@@ -1470,56 +1596,12 @@ ${DEFINE_VISIT_CHILDREN}
   return output;
 }
 
-function cachedGetters(classes: ClassDefinition[]) {
-  return classes.flatMap((obj, number) => {
-    if (obj.forBind) return [];
-    const members = [
-      ...Object.keys(obj.klass).filter(name => obj.klass[name].cache === true),
-      ...Object.keys(obj.proto).filter(name => obj.proto[name].cache === true),
-      ...(obj.values ?? []),
-    ];
-    const firstOffset = obj.hasPendingActivity ? 16 : 8;
-    return Object.entries(obj.proto)
-      .filter(([, field]) => "getter" in field && field.cache)
-      .map(([name, field]) => {
-        const member = typeof field.cache === "string" ? field.cache : name;
-        const mayBeRedefined = field.configurable ?? obj.configurable ?? false;
-        return { typeName: obj.name, number, name, member, mayBeRedefined, offset: firstOffset + 8 * members.indexOf(member), type: field.type ?? "" };
-      });
-  });
-}
-
-function generateCachedGetterTable(classes: ClassDefinition[]) {
-  const getters = cachedGetters(classes);
-  const rows = getters.map(
-    ({ typeName, name, member }) =>
-      `    { ${protoSymbolName(typeName, name)}GetterWrap, OBJECT_OFFSETOF(${className(typeName)}, m_${member}) },`,
-  );
-  const assertions = getters.map(
-    ({ typeName, member, offset }) =>
-      `static_assert(OBJECT_OFFSETOF(${className(typeName)}, m_${member}) == sizeof(JSC::JSDestructibleObject) + ${offset});`,
-  );
-  return `
-#if ENABLE(AOT)
-static_assert(${classes.length} <= JSC::AOT::Typed::firstHostClassNumberedByHand);
-${assertions.join("\n")}
-
-static constexpr JSC::AOT::Typed::HostClassCachedGetter generatedClassCachedGetters[] = {
-${rows.join("\n")}
-};
-
-extern "C" void Bun__AOT__setCachedGettersOfGeneratedClasses()
-{
-    JSC::AOT::Typed::setHostClassCachedGetters(generatedClassCachedGetters);
-}
-#endif
-`;
-}
+const inHeader = obj => !(obj.final ?? true) || !!obj.lockedPrototype;
 
 function generateHeader(typeName, obj) {
   const fields = [
     generateClassHeader(typeName, obj).trim() + "\n\n",
-    !(obj.final ?? true) ? generatePrototypeHeader(typeName, false) : null,
+    inHeader(obj) ? generatePrototypeHeader(typeName, obj.final ?? true) : null,
   ].filter(Boolean);
 
   return "\n" + fields.join("\n").trim();
@@ -1528,7 +1610,7 @@ function generateHeader(typeName, obj) {
 function generateImpl(typeName, obj: ClassDefinition) {
   const proto = obj.proto;
   return [
-    (obj.final ?? true) ? generatePrototypeHeader(typeName, true) : null,
+    !inHeader(obj) ? generatePrototypeHeader(typeName, true) : null,
     !obj.noConstructor ? generateConstructorHeader(typeName).trim() + "\n" : null,
     generatePrototype(typeName, obj).trim(),
     !obj.noConstructor ? generateConstructorImpl(typeName, obj).trim() : null,
@@ -1588,7 +1670,7 @@ const rustModuleResolver = (() => {
   // code, so don't descend into it.
   const modRe = /(?:#\[path\s*=\s*"([^"]+)"\]\s*)?(?:#\[[^\]]*\]\s*)*pub(?:\([^)]*\))?\s+mod\s+(\w+)\s*;/g;
   // Index both `pub struct Name` and `pub type Name = …` — several JS classes
-  // (HTTPServer/HTTPSServer/MD4/MD5/…) are generic instantiations exposed as
+  // (HTTPServer/HTTPSServer/…) are generic instantiations exposed as
   // type aliases; the thunks call `Name::method` either way.
   const structRe = /\bpub(?:\([^)]*\))?\s+(?:struct|type)\s+([A-Z]\w*)\b/g;
   // `pub use a::b::{Name, Name as Alias};` — only the *exported* identifier is
@@ -1772,6 +1854,90 @@ function rustIdent(name: string): string {
   return reserved.has(name) ? `r#${name}` : name;
 }
 
+const primitiveReturnKinds = {
+  string: "String",
+  number: "Number",
+  int32: "Int32",
+  boolean: "Boolean",
+  undefined: "Undefined",
+  Promise: "Promise",
+};
+
+function returnKindOfAlternative(typeName, name, alternative) {
+  if (typeof alternative === "string") return `return_kind::${primitiveReturnKinds[alternative]}`;
+  const { instance } = alternative;
+  const rustType = classes.some(c => c.name === instance) ? instance : nativeInstances[instance]?.rustType;
+  if (!rustType) {
+    throw new Error(
+      `${typeName}.${name}: no Rust type proves an instance of ${instance}: give it a rustType in nativeInstances in src/codegen/declared-type-checks.ts, or set checkedAtRuntime`,
+    );
+  }
+  return `return_kind::Instance<${rustType}>`;
+}
+
+function returnKindOf(typeName, name, text) {
+  if (text === undefined) return undefined;
+  const unprovable = new Error(
+    `${typeName}.${name}: '${text}' is not a type that can be proven. Write string, number, int32, boolean, undefined, Promise or a class name, optionally '| null' or '| undefined', set checkedAtRuntime, or leave the type out`,
+  );
+  let alternatives;
+  try {
+    alternatives = parseDeclaredType(text);
+  } catch {
+    throw unprovable;
+  }
+  const absence = alternatives.length === 2 ? alternatives.find(alternative => alternative === "null" || alternative === "undefined") : undefined;
+  const present = alternatives.filter(alternative => alternative !== absence);
+  if (present.length !== 1 || (typeof present[0] === "string" && !(present[0] in primitiveReturnKinds))) throw unprovable;
+  const kind = returnKindOfAlternative(typeName, name, present[0]);
+  if (absence === undefined) return kind;
+  return absence === "null" ? `return_kind::Nullable<${kind}>` : `return_kind::Optional<${kind}>`;
+}
+
+function provenTypeOf(field: Field) {
+  return isCheckedAtRuntime(field) ? undefined : declaredTypeOf(field);
+}
+
+function proven(kind, call) {
+  return kind ? `proven_return::proven_return::<${kind}, _>(${call})` : call;
+}
+
+function checkSharedDeclaredTypes(typeName, fields) {
+  for (const arm of ["getter", "fn"]) {
+    const firstField = new Map();
+    for (const name in fields) {
+      const native = fields[name][arm];
+      if (!native) continue;
+      const first = firstField.get(native);
+      if (first === undefined) {
+        firstField.set(native, name);
+      } else if (provenTypeOf(fields[first]) !== provenTypeOf(fields[name])) {
+        throw new Error(`${typeName}: ${first} and ${name} share ${native}, whose Rust type can't prove different types`);
+      }
+    }
+  }
+}
+
+function checkCachedSlotTypes(typeName, proto) {
+  for (const name in proto) {
+    const { cache, type, writable } = proto[name];
+    if (typeof cache !== "string") continue;
+    const owner = proto[cache];
+    const ownerType = owner && "getter" in owner && owner.cache === true ? owner.type : undefined;
+    if (type === undefined && ownerType === undefined) continue;
+    if (type !== ownerType || isCheckedAtRuntime(proto[name]) !== isCheckedAtRuntime(owner)) {
+      throw new Error(
+        `${typeName}.${name}: 'cache: "${cache}"' shares a typed slot, so '${cache}' must be a getter of the same class with 'cache: true', and both must declare the same type`,
+      );
+    }
+    if (writable) {
+      throw new Error(
+        `${typeName}.${name}: a writable getter can't share the typed slot of '${cache}', because any value can be assigned to it`,
+      );
+    }
+  }
+}
+
 function generateRust(
   typeName,
   {
@@ -1798,13 +1964,25 @@ function generateRust(
     ...Object.fromEntries((values || []).map(a => [a, { internal: true }])),
   }).filter(([name, { cache, internal }]) => (cache && typeof cache !== "string") || internal);
 
+  checkSharedDeclaredTypes(typeName, proto);
+  checkSharedDeclaredTypes(typeName, klass);
+  checkCachedSlotTypes(typeName, proto);
+
   // ── exported #[no_mangle] thunks ─────────────────────────────────────────
   // Direct dispatch: each thunk calls an *inherent* method on the user's real
   // Rust struct (re-exported as `${typeName}` below). No trait, no opaque
   // placeholder, no `unimplemented!()` — a missing method is a compile error.
   const thunks: string[] = [];
   const symbols: string[] = [];
-  function thunk(sym: string, sig: string, body: string) {
+  const featureOfClass = classFeature(typeName);
+  const definitionRecord = (sym: string) =>
+    featureOfClass
+      ? `    bun_removable_features::removable_definition!(${featureNamed(features, featureOfClass).rustName}, ${sym});\n`
+      : "";
+  function thunkOfLiveObject(sym: string, sig: string, body: string) {
+    thunk(sym, sig, definitionRecord(sym) + body, featureOfClass ? "    #[inline(never)]\n" : "");
+  }
+  function thunk(sym: string, sig: string, body: string, attributes = "") {
     symbols.push(sym);
     // Safe-body thunks: every pointer param is typed as `&`/`&mut` directly
     // (ABI-identical to `*const`/`*mut` for non-null inputs, which the C++
@@ -1821,7 +1999,7 @@ function generateRust(
       `bun_jsc::jsc_host_abi! {\n` +
         `    #[allow(dead_code, unreachable_pub, unused)]\n` +
         `    #[unsafe(no_mangle)]\n` +
-        (isNeverInlined(sym) ? `    #[inline(never)]\n` : "") +
+        attributes +
         `    pub unsafe fn ${sym}${sig} {\n` +
         `    ${body}\n` +
         `    }\n` +
@@ -1840,10 +2018,10 @@ function generateRust(
 
   // memoryCost / estimatedSize / ZigStructSize
   if (memoryCost) {
-    thunk(symbolName(typeName, "memoryCost"), `(this: &${T}) -> usize`, `    ${T}::memory_cost(this)`);
+    thunkOfLiveObject(symbolName(typeName, "memoryCost"), `(this: &${T}) -> usize`, `    ${T}::memory_cost(this)`);
   }
   if (estimatedSize) {
-    thunk(symbolName(typeName, "estimatedSize"), `(this: &${T}) -> usize`, `    ${T}::estimated_size(this)`);
+    thunkOfLiveObject(symbolName(typeName, "estimatedSize"), `(this: &${T}) -> usize`, `    ${T}::estimated_size(this)`);
   }
   if (!memoryCost && !estimatedSize) {
     symbols.push(symbolName(typeName, "ZigStructSize"));
@@ -1853,12 +2031,16 @@ function generateRust(
   }
 
   if (hasPendingActivity) {
-    thunk(symbolName(typeName, "hasPendingActivity"), `(this: &${T}) -> bool`, `    ${T}::has_pending_activity(this)`);
+    thunkOfLiveObject(
+      symbolName(typeName, "hasPendingActivity"),
+      `(this: &${T}) -> bool`,
+      `    ${T}::has_pending_activity(this)`,
+    );
   }
 
   if (refCounted) {
     // The wrapper holds one ref: run the `&self` hook, then drop that ref.
-    thunk(
+    thunkOfLiveObject(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T}) -> ()`,
       `    use bun_jsc::JsFinalizeRefCounted as _;\n` +
@@ -1868,7 +2050,7 @@ function generateRust(
   } else if (finalize) {
     // `host_fn_finalize` does the single `Box::from_raw(this)` and hands the
     // user impl an owned `Box<Self>` — genuinely safe (ownership transferred).
-    thunk(
+    thunkOfLiveObject(
       classSymbolName(typeName, "finalize"),
       `(this: *mut ${T}) -> ()`,
       `    use bun_jsc::JsFinalize as _;\n` +
@@ -1910,6 +2092,7 @@ function generateRust(
     for (const name in proto) {
       const { getter, setter, fn, this: thisValue = false, passThis } = proto[name];
       const names = exportNames(name);
+      const kind = returnKindOf(typeName, name, provenTypeOf(proto[name]));
 
       if (thisValue && !sharedThis && (names.getter || names.setter)) {
         throw new Error(`${typeName}.${name}: \`this: true\` accessors require \`sharedThis: true\``);
@@ -1921,8 +2104,8 @@ function generateRust(
           names.getter,
           `(this: ${recv}, ${thisValue ? "this_value: JSValue, " : ""}global: &JSGlobalObject) -> JSValue`,
           thisValue
-            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${T}::${id}(t, v, g))`
-            : `    ${helper("host_fn_getter")}(this, global, |t, g| ${T}::${id}(t, g))`,
+            ? `    host_fn::host_fn_getter_this_shared(this, this_value, global, |t, v, g| ${proven(kind, `${T}::${id}(t, v, g)`)})`
+            : `    ${helper("host_fn_getter")}(this, global, |t, g| ${proven(kind, `${T}::${id}(t, g)`)})`,
         );
       }
 
@@ -1943,8 +2126,8 @@ function generateRust(
           names.fn,
           `(this: ${recv}, global: &JSGlobalObject, callframe: &CallFrame${passThis ? ", js_this_value: JSValue" : ""}) -> JSValue`,
           passThis
-            ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${T}::${id}(t, g, c, v))`
-            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${T}::${id}(t, g, c))`,
+            ? `    ${helper("host_fn_this_value")}(this, global, callframe, js_this_value, |t, g, c, v| ${proven(kind, `${T}::${id}(t, g, c, v)`)})`
+            : `    ${helper("host_fn_this")}(this, global, callframe, |t, g, c| ${proven(kind, `${T}::${id}(t, g, c)`)})`,
         );
       }
     }
@@ -1957,13 +2140,14 @@ function generateRust(
     for (const name in klass) {
       const { getter, setter, fn } = klass[name];
       const names = exportNames(name);
+      const kind = returnKindOf(typeName, name, provenTypeOf(klass[name]));
 
       if (names.getter) {
         const id = rustSnakeIdent(getter);
         thunk(
           names.getter,
           `(global: &JSGlobalObject, this_value: JSValue, prop: PropertyName) -> JSValue`,
-          `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${T}::${id}(g, t, p))`,
+          `    host_fn::host_fn_static_getter(global, this_value, prop, |g, t, p| ${proven(kind, `${T}::${id}(g, t, p)`)})`,
         );
       }
 
@@ -1981,7 +2165,7 @@ function generateRust(
         thunk(
           names.fn,
           `(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue`,
-          `    host_fn::host_fn_static(global, callframe, |g, c| ${T}::${id}(g, c))`,
+          `    host_fn::host_fn_static(global, callframe, |g, c| ${proven(kind, `${T}::${id}(g, c)`)})`,
         );
       }
     }
@@ -1989,7 +2173,7 @@ function generateRust(
 
   // ── structuredClone ──────────────────────────────────────────────────────
   if (structuredClone) {
-    thunk(
+    thunkOfLiveObject(
       symbolName(typeName, "onStructuredCloneSerialize"),
       `(this: ${recv}, global: &JSGlobalObject, ctx: *mut c_void, write_bytes: WriteBytesFn) -> ()`,
       `    ${T}::on_structured_clone_serialize(this, global, ctx, write_bytes)`,
@@ -2019,24 +2203,33 @@ function generateRust(
   // real struct.
   const cachedExterns = gc_fields
     .map(
-      ([name]) =>
-        `        safe fn ${protoSymbolName(typeName, name)}SetCachedValue(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);\n` +
+      ([name, field]) =>
+        `        safe fn ${cachedValueSetterName(protoSymbolName(typeName, name), provenTypeOf(field))}(this_value: JSValue, global: *mut JSGlobalObject, value: JSValue);\n` +
         `        safe fn ${protoSymbolName(typeName, name)}GetCachedValue(this_value: JSValue) -> JSValue;`,
     )
     .join("\n");
 
   const gcAccessors = gc_fields
-    .map(
-      ([name]) => `    /// \`${typeName}.${name}\` cached-value setter (GC-visited via WriteBarrier).
-    #[inline] pub fn ${rustSnakeIdent(name)}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-        ${protoSymbolName(typeName, name)}SetCachedValue(this_value, global.as_mut_ptr(), value)
-    }
+    .map(([name, field]) => {
+      const provenType = provenTypeOf(field);
+      const kind = returnKindOf(typeName, name, provenType);
+      const clearCached = kind
+        ? `
+    /// \`${typeName}.${name}\` cached-value reset: the next read calls the native getter.
+    #[inline] pub fn ${rustSnakeIdent(name)}_clear_cached(this_value: JSValue, global: &JSGlobalObject) {
+        ${cachedValueSetterName(protoSymbolName(typeName, name), provenType)}(this_value, global.as_mut_ptr(), JSValue::ZERO)
+    }`
+        : "";
+      return `    /// \`${typeName}.${name}\` cached-value setter (GC-visited via WriteBarrier).
+    #[inline] pub fn ${rustSnakeIdent(name)}_set_cached(this_value: JSValue, global: &JSGlobalObject, value: ${kind ? `Proven<${kind}>` : "JSValue"}) {
+        ${cachedValueSetterName(protoSymbolName(typeName, name), provenType)}(this_value, global.as_mut_ptr(), ${kind ? "value.value()" : "value"})
+    }${clearCached}
     /// \`${typeName}.${name}\` cached-value getter; \`None\` when never set.
     #[inline] pub fn ${rustSnakeIdent(name)}_get_cached(this_value: JSValue) -> Option<JSValue> {
         let v = ${protoSymbolName(typeName, name)}GetCachedValue(this_value);
         if v.is_empty() { None } else { Some(v) }
-    }`,
-    )
+    }`;
+    })
     .join("\n");
 
   // `safe fn` (Rust 2024) inside `jsc_abi_extern! {}`: the C++ side
@@ -2054,7 +2247,8 @@ pub mod js_${typeName} {
     use super::*;
     bun_jsc::jsc_abi_extern! {
         safe fn ${symbolName(typeName, "fromJS")}(value: JSValue) -> *mut ${typeName};
-        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};${
+        safe fn ${symbolName(typeName, "fromJSDirect")}(value: JSValue) -> *mut ${typeName};
+        safe fn ${symbolName(typeName, "isInstance")}(value: JSValue) -> bool;${
           !noConstructor
             ? `
         safe fn ${symbolName(typeName, "getConstructor")}(global: *mut JSGlobalObject) -> JSValue;`
@@ -2069,6 +2263,10 @@ ${cachedExterns}
     }
     #[inline] pub fn from_js_direct(value: JSValue) -> Option<core::ptr::NonNull<${typeName}>> {
         core::ptr::NonNull::new(${symbolName(typeName, "fromJSDirect")}(value))
+    }
+    /// True also while the wrapper holds no native pointer: detached, or inside a \`constructNeedsThis\` constructor.
+    #[inline] pub fn is_wrapper(value: JSValue) -> bool {
+        ${symbolName(typeName, "isInstance")}(value)
     }
     ${
       !noConstructor
@@ -2131,6 +2329,8 @@ const RUST_GENERATED_CLASSES_HEADER = `// Auto-generated by src/codegen/generate
 use core::ffi::c_void;
 #[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+#[allow(dead_code, unreachable_pub, unused)]
+use bun_jsc::proven_return::{self, return_kind, Proven};
 
 /// \`SYSV_ABI void (*)(CloneSerializer*, const uint8_t*, uint32_t)\`
 #[allow(dead_code, unreachable_pub, unused)]
@@ -2220,13 +2420,17 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 
+#include "DeclaredTypeChecks.h"
+#include "JSAbortSignal.h"
 #include "JSDOMConvertBufferSource.h"
+#include "JSDOMURL.h"
+#include "JSFetchHeaders.h"
+#include "streams/JSReadableStream.h"
 #include "ZigGeneratedClasses.h"
 #include "WebCoreJSBuiltins.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/AOTFunction.h>
 
 #if !OS(WINDOWS)
 #define JSC_CALLCONV "C"
@@ -2245,17 +2449,6 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Zig;
-
-[[maybe_unused]] static bool isInstanceOfClassNamed(JSC::JSValue value, ASCIILiteral name)
-{
-    if (!value.isCell())
-        return false;
-    for (auto* info = value.asCell()->classInfo(); info; info = info->parentClass) {
-        if (info->className == name)
-            return true;
-    }
-    return false;
-}
 
 static NEVER_INLINE JSC::EncodedJSValue generatedClassConstructor(Zig::GlobalObject* globalObject, Zig::GlobalObject::GeneratedLazyClass which)
 {
@@ -2389,17 +2582,6 @@ ALWAYS_INLINE void GlobalObject::initGeneratedLazyClasses() {
             init.setStructure(fns.createStructure(init.vm, init.global, init.prototype));
             if (fns.createConstructor)
                 init.setConstructor(fns.createConstructor(init.vm, init.global, init.prototype));
-#if ENABLE(AOT)
-            JSC::AOT::Typed::didCreateHostClassStructure(globalObject, index, init.structure);
-            if (index == GeneratedLazyClassJSResponse)
-                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::responseHostClass, init.structure);
-            if (index == GeneratedLazyClassJSRequest)
-                JSC::AOT::Typed::didCreateHostClassStructure(globalObject, JSC::AOT::Typed::requestHostClass, init.structure);
-            if (index == GeneratedLazyClassJSRequest || index == GeneratedLazyClassJSResponse || index == GeneratedLazyClassJSBlob)
-                globalObject->lockHostClassPrototype(init.prototype);
-            if (index == GeneratedLazyClassJSResponse)
-                JSC::AOT::Typed::didCreateReplaceableGlobal(init.global, "Response"_s, init.constructor);
-#endif
         });
     }
 }
@@ -2456,13 +2638,29 @@ classes.sort((a, b) => (a.name < b.name ? -1 : 1));
 
 // sort all the prototype keys and klass keys
 for (const obj of classes) {
-  let { klass = {}, proto = {} } = obj;
+  const { klass = {}, proto = {} } = obj;
 
-  klass = Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b)));
-  proto = Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b)));
+  obj.klass = sortFields(klass);
+  obj.proto = sortFields(proto);
+}
 
-  obj.klass = klass;
-  obj.proto = proto;
+function checkFieldAttributes(typeName, name, field, isStatic) {
+  const member = `${typeName}.${name}`;
+  if (field.returns !== undefined && !("fn" in field)) throw new Error(`${member}: 'returns' belongs on a function`);
+  if (field.checkedAtRuntime && declaredTypeOf(field) === undefined) {
+    throw new Error(`${member}: 'checkedAtRuntime' goes with the type that is checked: 'returns' on a function, 'type' on a getter`);
+  }
+  if (isStatic && parseDeclaredType(declaredTypeOf(field) ?? "undefined").includes("this")) {
+    throw new Error(`${member}: 'this' is an instance of the class, which a static member does not have`);
+  }
+  if (field.jsonTextForm !== undefined && (!isStatic || !("fn" in field))) {
+    throw new Error(`${member}: 'jsonTextForm' belongs on a static function`);
+  }
+}
+
+for (const obj of classes) {
+  for (const name in obj.klass) checkFieldAttributes(obj.name, name, obj.klass[name], true);
+  for (const name in obj.proto) checkFieldAttributes(obj.name, name, obj.proto[name], false);
 }
 
 const GENERATED_CLASSES_FOOTER = `
@@ -2520,7 +2718,7 @@ function writeCppSerializers() {
   function fromTagDeserializeForEachClass(klass) {
     return `
     if (tag == ${klass.structuredClone.tag}) {
-      return ${symbolName(klass.name, "onStructuredCloneDeserialize")}(globalObject, (uint8_t**)&ptr, end);
+      return ${callThrowingOnceRemoved(classFeature(klass.name), symbolName(klass.name, "onStructuredCloneDeserialize"), ["globalObject", "(uint8_t**)&ptr", "end"])};
     }
     `;
   }
@@ -2581,7 +2779,6 @@ function writeCppSerializers() {
     externs.trim(),
     GENERATED_CLASSES_IMPL_HEADER_POST,
     allImpls.join("\n"),
-    generateCachedGetterTable(classes),
     writeCppSerializers(classes),
     GENERATED_CLASSES_IMPL_FOOTER,
     jsInheritsCppImpl(),
@@ -2610,21 +2807,6 @@ function writeCppSerializers() {
   );
 
   await writeIfNotChanged(`${typesDir}/ZigGeneratedClasses.d.ts`, [generateBuiltinTypes(classes)]);
-
-  await writeIfNotChanged(
-    path.join(import.meta.dirname, "../aot/build/host-classes.txt"),
-    [
-      ...cachedGetters(classes).filter(getter => !getter.mayBeRedefined),
-      ...classes.flatMap((obj, number) =>
-        Object.entries(obj.proto)
-          .filter(([, field]) => "getter" in field && !field.cache && field.type && !(field.configurable ?? obj.configurable))
-          .map(([name, field]) => ({ typeName: obj.name, number, name, offset: 0, type: field.type })),
-      ),
-    ]
-      .map(({ typeName, number, name, offset, type }) => `${typeName}\t${number}\t${name}\t${offset}\t${type}\n`)
-      .sort()
-      .join(""),
-  );
 }
 
 /**
@@ -2668,10 +2850,11 @@ function getPropertySignatureWithComment(
       .map((_, i) => `arg${i}?: unknown`)
       .concat(...(length > 0 ? ["...args: unknown[]"] : []))
       .join(", ");
-    let returnType = "unknown";
-    if (propDef.async) {
-      returnType = "Promise<unknown>";
-    }
+    const returnType = propDef.returns
+      ? typeScriptOf(propDef.returns)
+      : propDef.async
+        ? "Promise<unknown>"
+        : "unknown";
 
     signature = `${tsPropName}(${args}): ${returnType};`; // Basic method signature
     isMethod = true;
@@ -2686,7 +2869,7 @@ function getPropertySignatureWithComment(
       commentLines.push(`* C++ builtin name: \`${propDef.builtin}\``);
     }
   } else if ("getter" in propDef) {
-    signature = `${tsPropName}: ${propDef.type ?? "unknown"};`; // Getter, possibly with setter
+    signature = `${tsPropName}: ${propDef.type ? typeScriptOf(propDef.type) : "unknown"};`; // Getter, possibly with setter
     isReadOnly = !propDef.writable && !("setter" in propDef); // Mark readonly if only getter or explicitly not writable
     commentLines.push(
       ` Look for a getter like this:

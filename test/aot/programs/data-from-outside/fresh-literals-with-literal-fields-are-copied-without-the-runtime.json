@@ -1,1 +1,1 @@
-{"env":{"JSC_useAOTOperationCounters":"1"}}
+{"env":{"JSC_aotCountsPath":"/dev/null"}}

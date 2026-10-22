@@ -1,0 +1,5 @@
+# A dead return and a dead conditional arm still contribute to live types, but their errors are dropped with the dead code.
+main.ts:0 role `` = Checked
+absent: -:0 diagnostic TS2318 = MissingDeclaration StopsBuild
+absent: main.ts:2 diagnostic TS2318 = MissingDeclaration StopsBuild
+absent: main.ts:3 diagnostic TS2318 = MissingDeclaration StopsBuild

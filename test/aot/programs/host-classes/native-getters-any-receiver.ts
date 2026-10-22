@@ -1,14 +1,14 @@
-// A getter of a native class (Request, Response, Blob) read from every kind of receiver that TypeScript lets pass for an instance: the answers are plain Bun's.
+// A getter of a native class (Request, Response, Blob) read from every kind of receiver that TypeScript lets pass for an instance: the answers are plain Bun's. Request.prototype itself refuses every change.
 import vm from "node:vm";
 
 const lines: string[] = [];
-function say(label: string, work: () => unknown) {
+function say(label: string, work: () => unknown, withMessage = true) {
   let text: string;
   try {
     const value = work();
     text = typeof value === "string" ? JSON.stringify(value) : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : String(value);
   } catch (error) {
-    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+    text = "throws " + (error as Error).constructor.name + (withMessage ? ": " + (error as Error).message : "");
   }
   lines.push(label + ": " + text);
 }
@@ -116,13 +116,13 @@ all("frozen after a read", () => {
 all("not extensible", () => Object.preventExtensions(fresh()));
 
 for (const name of ["url", "method", "headers", "signal", "body", "bodyUsed"]) {
-  say("Request.prototype." + name + " redefined", () => Object.defineProperty(Request.prototype, name, { get: () => "replaced" }) === Request.prototype);
-  say("Request.prototype." + name + " made a value", () => Object.defineProperty(Request.prototype, name, { value: "replaced" }) === Request.prototype);
-  say("Request.prototype." + name + " deleted", () => delete (Request.prototype as any)[name]);
+  say("Request.prototype." + name + " redefined", () => Object.defineProperty(Request.prototype, name, { get: () => "replaced" }) === Request.prototype, false);
+  say("Request.prototype." + name + " made a value", () => Object.defineProperty(Request.prototype, name, { value: "replaced" }) === Request.prototype, false);
+  say("Request.prototype." + name + " deleted", () => delete (Request.prototype as any)[name], false);
   say("Request.prototype." + name + " deleted by Reflect", () => Reflect.deleteProperty(Request.prototype, name));
-  say("Request.prototype." + name + " assigned", () => ((Request.prototype as any)[name] = "replaced"));
+  say("Request.prototype." + name + " assigned", () => ((Request.prototype as any)[name] = "replaced"), false);
   say("Request.prototype." + name + " assigned by Reflect", () => Reflect.set(Request.prototype, name, "replaced"));
-  say("an instance's " + name + " assigned", () => ((fresh() as any)[name] = "replaced"));
+  say("an instance's " + name + " assigned", () => ((fresh() as any)[name] = "replaced"), false);
   say("an instance's " + name + " assigned by Reflect", () => Reflect.set(fresh(), name, "replaced"));
   say("Request.prototype." + name + " described", () => {
     const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(Request.prototype, name)!;
@@ -144,9 +144,7 @@ class HeirWithGetters extends Request {
   }
 }
 class HeirWithFields extends Request {
-  // @ts-expect-error
   override url = "a field";
-  // @ts-expect-error
   override method = "FIELD";
 }
 all("an heir", () => new Heir(address, { method: "PUT" }));

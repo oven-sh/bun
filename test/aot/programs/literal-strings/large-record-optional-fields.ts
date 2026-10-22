@@ -1,4 +1,4 @@
-// A record with many optional fields, few of which are ever set: those of a union of string literals among them, which may be kept apart from the object.
+// A record with many optional fields, few of which are ever set: those of a union of string literals among them, which may be kept apart from the object. Another string passes a cast to the union, and typed code reads what untyped code stored into such a field as it is: a literal type promises the kind, string.
 type Scope = "params" | "typeParams" | "";
 type Side = "left" | "right";
 interface Links {
@@ -59,22 +59,28 @@ function links(id: number): Links {
     return { id };
 }
 function describe(l: Links): string {
-    const scope = l.scope === "params" ? "P" : l.scope === "typeParams" ? "T" : l.scope === "" ? "E" : l.scope === undefined ? "-" : "?" + l.scope;
-    const side = l.side === "left" ? "L" : l.side === "right" ? "R" : l.side === null ? "N" : l.side === undefined ? "-" : "?";
-    return scope + side + (l.last ?? "none") + ("scope" in l ? "+" : "") + (l.n3 ?? "") + (l.s7 ?? "");
+    try {
+        const scope = l.scope === "params" ? "P" : l.scope === "typeParams" ? "T" : l.scope === "" ? "E" : l.scope === undefined ? "-" : "?" + l.scope;
+        const side = l.side === "left" ? "L" : l.side === "right" ? "R" : l.side === null ? "N" : l.side === undefined ? "-" : "?";
+        return scope + side + (l.last ?? "none") + ("scope" in l ? "+" : "") + (l.n3 ?? "") + (l.s7 ?? "");
+    } catch (e) {
+        return (e as Error).constructor.name;
+    }
 }
 function anyRead(o: any): string { return String(o.scope) + "/" + String(o.side) + "/" + String(o.last); }
 function anyWrite(o: any, scope: unknown, side: unknown) { o.scope = scope; o.side = side; }
 const all: Links[] = [];
+let refused = 0;
 for (let i = 0; i < 3000; i++) {
     const l = links(i);
     if (i % 3 === 0) l.scope = i % 2 ? "params" : "typeParams";
     if (i % 5 === 0) l.side = i % 2 ? "left" : i % 4 ? "right" : null;
-    if (i % 7 === 0) l.last = ("made " + i) as Scope;
+    if (i % 7 === 0) try { l.last = ("made " + i) as Scope; } catch (e) { refused++; }
     if (i % 11 === 0) l.scope = "";
     if (i % 13 === 0) { l.n3 = i; l.s7 = "s" + i; }
     all.push(l);
 }
+console.log("casts refused:", refused);
 let garbage = 0;
 for (let i = 0; i < 200000; i++) garbage += ("g" + i).length;
 const seen = new Map<string, number>();

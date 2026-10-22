@@ -86,6 +86,5 @@ Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
 Structure* createJSSQLDatabaseStructure(JSGlobalObject* globalObject);
 
 JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
-JSC_DECLARE_HOST_FUNCTION(jsCreateSQLStatementConstructor);
 
 } // namespace WebCore

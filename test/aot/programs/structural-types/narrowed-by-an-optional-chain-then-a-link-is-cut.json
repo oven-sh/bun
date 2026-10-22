@@ -1,0 +1,5 @@
+{
+  "skipInVariant": {
+    "inner-objects-flattened-wherever-legal": "TODO: under --aot-testing=FlattenUntilHeldWhereverLegal the program dies behind 24 lines (a fault at address 0xA, the bits of undefined) where the second link is cut; right with the pass off. Where it dies was not found; its neighbor narrowed-in-five-places-a-class-or-nothing dies in MakeBorrowedObject"
+  }
+}

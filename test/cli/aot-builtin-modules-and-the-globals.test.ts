@@ -4,6 +4,7 @@ import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { importingByName } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
 
@@ -17,17 +18,17 @@ const withoutADoor: Record<string, string> = {
 };
 
 const loads = `const name = ["node:zlib"][0];\n`;
-const withADoor: Record<string, string> = {
+const withADoor = importingByName("node:zlib", {
   "takes-the-rest-of-process.mjs": `${loads}const { env, ...rest } = process;\nconsole.log(env && typeof rest.getBuiltinModule(name).gzipSync === "function" ? "run" : "");`,
   "takes-the-loader-out-of-process.mjs": `${loads}const { getBuiltinModule } = process;\nconsole.log(typeof getBuiltinModule(name).gzipSync === "function" ? "run" : "");`,
   "takes-process-apart-by-a-computed-name.mjs": `${loads}const { ["get" + "BuiltinModule"]: load } = process;\nconsole.log(typeof load(name).gzipSync === "function" ? "run" : "");`,
   "keeps-process.mjs": `${loads}const kept = process || {};\nconsole.log(typeof kept.getBuiltinModule(name).gzipSync === "function" ? "run" : "");`,
   "keeps-the-global-object.mjs": `${loads}const kept = typeof globalThis !== "undefined" && globalThis;\nconsole.log(typeof kept.process.getBuiltinModule(name).gzipSync === "function" ? "run" : "");`,
-};
+});
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
-test("what only reads written properties of process, or tests a global, does not bring every built-in module into the executable", async () => {
+test("what only reads written properties of process, or tests a global, brings no built-in module into the executable", async () => {
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("builtin-modules-and-the-globals", programs);
   const sizes: Record<string, number> = {};

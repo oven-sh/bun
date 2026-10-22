@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { slot, unsupported } from "../aot/run-programs";
+import { canTrim } from "./compile-trim-features";
 
 const source = readFileSync(join(import.meta.dir, "../../src/runtime/cli/Arguments.rs"), "utf8");
 
@@ -29,19 +30,22 @@ const themselves = (names: string) => Object.fromEntries(names.split(" ").map(na
 
 export const obeyed: Record<string, string[]> = {
   ...themselves("--silent --version -v --revision --bun -b --no-orphans --workspaces --parallel --sequential --no-exit-on-error"),
-  ...themselves("--watch --hot --no-clear-screen --check --smol --aot-huge-heap --debug-aot --aot-crash-if-interpreter-is-used --interactive"),
+  ...themselves("--no-clear-screen --smol --aot-huge-heap --interactive"),
   ...themselves("--if-present --no-install --prefer-offline --prefer-latest --experimental-http2-fetch --experimental-http3-fetch"),
   ...themselves("--insecure-http-parser --experimental-stream-iter --expose-gc --no-deprecation --throw-deprecation --no-warnings"),
   ...themselves("--trace-warnings --trace-deprecation --pending-deprecation --zero-fill-buffers --use-system-ca --use-openssl-ca --use-bundled-ca"),
+  // Native code carries out the first, and nobody does anything for the second.
+  "--stack-trace-limit": ["--stack-trace-limit=3", "--stack-trace-limit 3"],
+  ...themselves("--trace-env-native-stack"),
   ...themselves("--tls-min-v1.0 --tls-min-v1.1 --tls-min-v1.2 --tls-min-v1.3 --tls-max-v1.2 --tls-max-v1.3 --no-addons --no-ffi-cc"),
-  ...themselves("--expose-internals --preserve-symlinks --preserve-symlinks-main --no-macros --jsx-side-effects --ignore-dce-annotations --no-env-file"),
+  ...themselves("--preserve-symlinks --preserve-symlinks-main --no-macros --jsx-side-effects --ignore-dce-annotations --no-env-file"),
   "--elide-lines": ["--elide-lines=3"],
   "--filter": ["--filter=x"],
   "-F": ["-F=x", "-F x"],
   "--shell": ["--shell=bun", "--shell=system"],
   "--watch-kill-signal": ["--watch-kill-signal=SIGTERM"],
-  "--aot-type-errors": ["--aot-type-errors=log", "--aot-type-errors=throw", "--aot-type-errors=nonsense"],
   "--aot-graph-fd": ["--aot-graph-fd=9"],
+  "--aot-checked": ["--aot-checked=-"],
   "--aot-decode-crash-report": ["--aot-decode-crash-report=x"],
   "--inspect": ["--inspect", "--inspect=127.0.0.1:0"],
   "--inspect-wait": ["--inspect-wait=127.0.0.1:0"],
@@ -97,15 +101,23 @@ export const obeyed: Record<string, string[]> = {
 
 const neverEnd = ["--watch", "--hot", "--redis-preconnect"];
 
-export const leftOut: Record<string, string[]> = {
-  ...themselves("--trace-env --trace-env-js-stack --trace-env-native-stack --trace-exit --trace-events-enabled --sql-preconnect --help -h --aot --aot-audit"),
-  "--stack-trace-limit": ["--stack-trace-limit=3", "--stack-trace-limit 3"],
+export const needRemovedFeatures: Record<string, string[]> = themselves("--sql-preconnect");
+export const needTheBunCommandLine: Record<string, string[]> = themselves("--help -h --check --aot --aot-log-type-mismatches --debug-aot --expose-internals");
+const cantBeUsed = "can't be used with this executable";
+const wasLeftOut = /isn't in this executable|was not compiled into this executable/;
+const featureWasRemoved = `${cantBeUsed} because --trim removed the feature it needs`;
+const hasNoCommandLine = `${cantBeUsed} because it doesn't include the Bun command line. Run bun instead`;
+const runsOnlyCompiledCode = `${cantBeUsed} because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code`;
+const hasNoFunctionSource = `${cantBeUsed} because it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag`;
+
+// A module of the library carries these out, and the image has the modules that the program uses. They print or write something for whoever started the program, which does the same without them.
+export const ignoredWithAWarning: Record<string, string[]> = {
+  ...themselves("--trace-env --trace-env-js-stack --trace-exit --trace-events-enabled"),
   "--trace-event-categories": ["--trace-event-categories=node", "--trace-event-categories node"],
   "--trace-event-file-pattern": ["--trace-event-file-pattern=trace.log"],
 };
-const isLeftOut = "cannot be used with this executable: the part of Bun that it needs was left out when it was built";
-
 export const loadCode: Record<string, string[]> = {
+  ...themselves("--watch --hot"),
   "--preload": ["--preload=./preloaded.ts", "--preload ./preloaded.ts"],
   "-r": ["-r=./preloaded.ts", "-r ./preloaded.ts"],
   "--require": ["--require=./preloaded.ts"],
@@ -115,21 +127,23 @@ export const loadCode: Record<string, string[]> = {
   "--print": ["--print=1"],
   "-p": ["-p=1", "-p 1"],
 };
-export const obeyedWhereTheProgramUsesThePart: Record<string, { forms: string[]; program: string }> = {
-  "--fetch-preconnect": { forms: ["--fetch-preconnect=http://127.0.0.1:9", "--fetch-preconnect http://127.0.0.1:9"], program: "names-fetch.ts" },
-  "--redis-preconnect": { forms: ["--redis-preconnect"], program: "names-redis.ts" },
+export const obeyedWhereTheProgramUsesTheFeature: Record<string, { forms: string[]; program: string }> = {
+  "--fetch-preconnect": { forms: ["--fetch-preconnect=http://127.0.0.1:9", "--fetch-preconnect http://127.0.0.1:9"], program: "calls-fetch.ts" },
+  "--redis-preconnect": { forms: ["--redis-preconnect"], program: "constructs-a-redis-client.ts" },
 };
-export const obeyedWhereThePartIsKept: Record<string, { forms: string[]; keep: Bun.Build.TrimFeature }> = {
-  "-i": { forms: ["-i"], keep: "install" },
-  "--install": { forms: ["--install=auto", "--install=force", "--install=fallback", "--install=nonsense"], keep: "install" },
+export const obeyedWhereTheFeatureIsAllowed: Record<string, { forms: string[]; allow: Bun.Build.TrimFeature }> = {
+  "-i": { forms: ["-i"], allow: "install" },
+  "--install": { forms: ["--install=auto", "--install=force", "--install=fallback", "--install=nonsense"], allow: "install" },
 };
+export const nameTheExecutable: Record<string, string[]> = themselves("--aot-build-id");
 
-const loadsCode = "cannot be used with this executable: it was built with --compile-trim-runtime and runs only the code that was compiled into it";
+const longNames: Record<string, string> = { "-r": "--preload", "-e": "--eval", "-p": "--print", "-h": "--help" };
 
 const files = {
   "hello.ts": `console.log("hello world");`,
-  "names-fetch.ts": `console.log("hello world", typeof fetch);`,
-  "names-redis.ts": `console.log("hello world", typeof Bun.RedisClient);`,
+  "calls-fetch.ts": `console.log("hello world", typeof fetch);\nif (process.argv.length > 9) await fetch(process.argv[9]);`,
+  "constructs-a-redis-client.ts": `console.log("hello world", typeof Bun.RedisClient);\nif (process.argv.length > 9) new Bun.RedisClient(process.argv[9]);`,
+  "tsconfig.json": `{ "compilerOptions": { "types": ["bun"] } }`,
   "preloaded.ts": `console.log("preloaded");`,
   "other.env": "FROM_A_FILE=1\n",
   "own.toml": "[console]\ndepth = 1\n",
@@ -137,18 +151,10 @@ const files = {
   "sub/keep": "",
 };
 
-using probe = tempDir("compile-trim-runtime-options-probe", { "hello.ts": files["hello.ts"] });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stdout: "pipe",
-  stderr: "pipe",
-});
-const hasIslands = !probed.stderr.toString().includes("nothing can be left out of this Bun");
+const packageChosenAtRandom = /^( +(?:x|add|remove|update|info|why|create) +)\S+ +/gm;
 
 type Side = "whole" | "trimmed";
-const flagsOf = { whole: [], trimmed: ["--compile-trim-runtime"] };
+const flagsOf = { whole: [], trimmed: ["--trim"] };
 
 function laidOut(root: string, side: Side) {
   const folder = join(root, side);
@@ -162,7 +168,7 @@ function laidOut(root: string, side: Side) {
 async function spawned(cmd: string[], folder: string, env: Record<string, string | undefined>, timeout: number) {
   await using child = Bun.spawn({ cmd, cwd: folder, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  const said = (text: string) => text.replaceAll(folder, "<folder>").replaceAll("program.exe", "program");
+  const said = (text: string) => text.replaceAll(folder, "<folder>").replaceAll("program.exe", "program").replace(packageChosenAtRandom, "$1<package> ");
   return { stdout: said(stdout), stderr: said(stderr), exitCode: child.signalCode ?? exitCode };
 }
 
@@ -170,10 +176,12 @@ const builtInThisTurn = (folder: string, side: Side, flags: string[] = [], progr
   spawned([bunExe(), "build", "--compile", "--aot", ...flagsOf[side], ...flags, program, "--outfile", "program"], folder, bunEnv, 90_000);
 const built = (...build: Parameters<typeof builtInThisTurn>) => slot(() => builtInThisTurn(...build));
 
-const builtKeeping = (folder: string, keep: Bun.Build.TrimFeature, execArgv: string[] = []) =>
-  slot(() => Bun.build({ entrypoints: [join(folder, "hello.ts")], compile: { outfile: join(folder, "program"), aot: true, trim: { keep: [keep] }, execArgv } }));
+const builtAllowing = (folder: string, allow: Bun.Build.TrimFeature, execArgv: string[] = []) =>
+  slot(() => Bun.build({ entrypoints: [join(folder, "hello.ts")], compile: { outfile: join(folder, "program"), aot: true, trim: { allow: [allow] }, execArgv } }));
 
 const eachLineOnce = (text: string) => [...new Set(text.split("\n"))].join("\n");
+
+const printsTheIdOf = (build: { stdout: string }) => ({ stdout: /^ +build id +([0-9a-f]{32})$/m.exec(build.stdout)?.[1] + "\n", stderr: "", exitCode: 0 });
 
 async function started(folder: string, name: string, options?: string, args: string[] = []) {
   const cmd = [join(folder, "program"), ...args];
@@ -183,66 +191,109 @@ async function started(folder: string, name: string, options?: string, args: str
 }
 
 const formsOf = (sorted: Record<string, string[]>) => Object.entries(sorted).flatMap(([name, forms]) => forms.map(form => [name, form] as const));
-const formsByUse = Object.entries(obeyedWhereTheProgramUsesThePart).flatMap(([name, { forms, program }]) => forms.map(form => [name, form, program] as const));
-const formsByKeeping = Object.entries(obeyedWhereThePartIsKept).flatMap(([name, { forms, keep }]) => forms.map(form => [name, form, keep] as const));
+const formsByUse = Object.entries(obeyedWhereTheProgramUsesTheFeature).flatMap(([name, { forms, program }]) => forms.map(form => [name, form, program] as const));
+const formsByAllowing = Object.entries(obeyedWhereTheFeatureIsAllowed).flatMap(([name, { forms, allow }]) => forms.map(form => [name, form, allow] as const));
 
 export function testTheSorting() {
-  test("every option that a compiled executable reads is sorted: obeyed as in the whole executable, or refused", () => {
-    const sorted = [obeyed, obeyedWhereTheProgramUsesThePart, obeyedWhereThePartIsKept, leftOut, loadCode].flatMap(Object.keys).sort();
+  test("every option that a compiled executable reads is in one of the lists: it works like in the untrimmed executable, it is ignored with a warning, or it fails at startup", () => {
+    const sorted = [obeyed, obeyedWhereTheProgramUsesTheFeature, obeyedWhereTheFeatureIsAllowed, nameTheExecutable, needRemovedFeatures, needTheBunCommandLine, ignoredWithAWarning, loadCode].flatMap(Object.keys).sort();
     expect(sorted).toEqual(namesInTheSource);
   });
 }
 
 export function testBunOptions() {
-  if (!hasIslands || unsupported) return test.skip("BUN_OPTIONS, in an executable built with --compile-trim-runtime", () => {});
+  if (!canTrim || unsupported) return test.skip("BUN_OPTIONS, in an executable built with --trim", () => {});
 
-  describe.concurrent("BUN_OPTIONS, in an executable built with --compile-trim-runtime", () => {
+  describe.concurrent("BUN_OPTIONS, in an executable built with --trim", () => {
     const dir = tempDir("compile-trim-runtime-options", {});
     afterAll(() => dir[Symbol.dispose]());
     const root = realpathSync(String(dir));
     const whole = laidOut(root, "whole");
     const trimmed = laidOut(root, "trimmed");
+    const withoutFunctionSource = { whole: laidOut(join(root, "without-function-source"), "whole"), trimmed: laidOut(join(root, "without-function-source"), "trimmed") };
     let folders = 0;
+    let finished: Awaited<ReturnType<typeof built>>[] = [];
 
     beforeAll(async () => {
-      expect(await Promise.all([built(whole, "whole"), built(trimmed, "trimmed")])).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+      const builds = [
+        built(whole, "whole"),
+        built(trimmed, "trimmed"),
+        built(withoutFunctionSource.whole, "whole", ["--no-compile-function-source"]),
+        built(withoutFunctionSource.trimmed, "trimmed", ["--no-compile-function-source"]),
+      ];
+      finished = await Promise.all(builds);
+      expect(finished).toMatchObject(builds.map(() => ({ exitCode: 0 })));
     });
 
-    test.each(formsOf(obeyed))("%s is obeyed: %s", async (name, form) => {
+    test.each(formsOf(obeyed))("%s works like in the untrimmed executable: %s", async (name, form) => {
       expect(await started(trimmed, name, form)).toEqual(await started(whole, name, form));
     });
 
-    test.each(formsOf(leftOut))("%s is refused: %s", async (name, form) => {
-      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
+    test.each(formsOf(nameTheExecutable))("%s prints what the build of that executable printed, which isn't what the untrimmed one prints: %s", async (name, form) => {
+      const printed = [await started(whole, name, form), await started(trimmed, name, form)];
+      expect(printed).toEqual([printsTheIdOf(finished[0]), printsTheIdOf(finished[1])]);
+      expect(printed[1].stdout).not.toBe(printed[0].stdout);
     });
 
-    test.each(formsOf(loadCode))("%s is refused: %s", async (name, form) => {
-      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${loadsCode}\n`, exitCode: 1 });
+    test.each(formsOf(needRemovedFeatures))("%s fails at startup: %s", async (name, form) => {
+      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${longNames[name] ?? name} ${featureWasRemoved}\n`, exitCode: 1 });
     });
 
-    test.each(formsByUse)("%s is refused where the program does not use what it connects for: %s", async (name, form) => {
-      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
+    test.each(formsOf(needTheBunCommandLine))("%s fails at startup, with and without --trim, because no executable built with --aot includes the Bun command line: %s", async (name, form) => {
+      const failure = { stdout: "", stderr: `error: ${longNames[name] ?? name} ${hasNoCommandLine}\n`, exitCode: 1 };
+      expect(await started(trimmed, name, form)).toEqual(failure);
+      expect(await started(whole, name, form)).toEqual(failure);
     });
 
-    test.each(formsByUse)("%s is obeyed where it does: %s, %s", async (name, form, program) => {
+    test.each(formsOf(ignoredWithAWarning))("%s is ignored with a warning, with and without --trim, and the program runs: %s", async (name, form) => {
+      const ran = (reason: string) => ({ stdout: "hello world\n", stderr: `warn: ${name} is ignored by this executable because ${reason}\n`, exitCode: 0 });
+      const ofDefaultBuild = ran("it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code");
+      expect(await started(trimmed, name, form)).toEqual(ofDefaultBuild);
+      expect(await started(whole, name, form)).toEqual(ofDefaultBuild);
+      const withoutSource = ran("it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag");
+      expect(await started(withoutFunctionSource.trimmed, name, form)).toEqual(withoutSource);
+      expect(await started(withoutFunctionSource.whole, name, form)).toEqual(withoutSource);
+    });
+
+    test.each(formsOf(loadCode))("%s fails at startup, with and without --trim, because the executable only runs code that was compiled into it: %s", async (name, form) => {
+      const failure = { stdout: "", stderr: `error: ${longNames[name] ?? name} ${runsOnlyCompiledCode}\n`, exitCode: 1 };
+      expect(await started(trimmed, name, form)).toEqual(failure);
+      expect(await started(whole, name, form)).toEqual(failure);
+    });
+
+    test.each(formsOf(loadCode))("%s fails at startup in an executable built with --no-compile-function-source, with and without --trim: %s", async (name, form) => {
+      const failure = { stdout: "", stderr: `error: ${longNames[name] ?? name} ${hasNoFunctionSource}\n`, exitCode: 1 };
+      expect(await started(withoutFunctionSource.trimmed, name, form)).toEqual(failure);
+      expect(await started(withoutFunctionSource.whole, name, form)).toEqual(failure);
+    });
+
+    test.each(formsByUse)("%s fails at startup where the program doesn't use the client that it connects: %s", async (name, form) => {
+      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${featureWasRemoved}\n`, exitCode: 1 });
+    });
+
+    test.each(formsByUse)("%s works where the program uses that client: %s, %s", async (name, form, program) => {
       const folder = join(root, String(folders++));
       const sides = [laidOut(folder, "whole"), laidOut(folder, "trimmed")];
       expect(await Promise.all([built(sides[0], "whole", [], program), built(sides[1], "trimmed", [], program)])).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
       expect(await started(sides[1], name, form)).toEqual(await started(sides[0], name, form));
     });
 
-    test.each(formsByKeeping)("%s is refused where the part that it needs is left out: %s", async (name, form) => {
-      expect(await started(trimmed, name, form)).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
+    test.each(formsByAllowing)("%s fails at startup, with and without --trim, because the feature that it needs is part of the Bun command line: %s", async (name, form) => {
+      const failure = { stdout: "", stderr: `error: ${name} ${hasNoCommandLine}\n`, exitCode: 1 };
+      expect(await started(trimmed, name, form)).toEqual(failure);
+      expect(await started(whole, name, form)).toEqual(failure);
     });
 
-    test.each(formsByKeeping)("%s is obeyed where compile.trim keeps that part: %s, %s", async (name, form, keep) => {
+    test.each(formsByAllowing)("%s is read where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
       const folder = laidOut(join(root, String(folders++)), "trimmed");
-      await builtKeeping(folder, keep);
-      expect(await started(folder, name, form)).toEqual(await started(whole, name, form));
+      await builtAllowing(folder, allow);
+      const ran = await started(folder, name, form);
+      if (form.endsWith("=nonsense")) expect(ran).toMatchObject({ stdout: "", stderr: expect.stringContaining(`error: Invalid value for ${name}: "nonsense".`), exitCode: 1 });
+      else expect(ran).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
 
-    test("behind the name of the executable they all belong to the program", async () => {
-      const args = [...[obeyed, leftOut, loadCode].flatMap(formsOf), ...formsByUse, ...formsByKeeping].flatMap(([, form]) => form.split(" "));
+    test("as arguments of the executable they all belong to the program", async () => {
+      const args = [...[obeyed, nameTheExecutable, needRemovedFeatures, needTheBunCommandLine, ignoredWithAWarning, loadCode].flatMap(formsOf), ...formsByUse, ...formsByAllowing].flatMap(([, form]) => form.split(" "));
       expect(await started(trimmed, "", undefined, args)).toEqual({ stdout: "hello world\n", stderr: "", exitCode: 0 });
     });
   });
@@ -251,9 +302,9 @@ export function testBunOptions() {
 export function testExecArgv(part: number, parts: number) {
   const inThisPart = <T>(forms: T[]) => forms.filter((_, index) => index % parts === part - 1);
 
-  if (!hasIslands || unsupported) return test.skip("--compile-exec-argv with --compile-trim-runtime", () => {});
+  if (!canTrim || unsupported) return test.skip("--compile-exec-argv with --trim", () => {});
 
-  describe.concurrent("--compile-exec-argv with --compile-trim-runtime", () => {
+  describe.concurrent("--compile-exec-argv with --trim", () => {
     const dir = tempDir("compile-trim-runtime-exec-argv", {});
     afterAll(() => dir[Symbol.dispose]());
     const root = realpathSync(String(dir));
@@ -267,28 +318,31 @@ export function testExecArgv(part: number, parts: number) {
     const builtBothWaysWith = (form: string, program?: string) =>
       slot(async () => [await builtWith("whole", form, program, builtInThisTurn), await builtWith("trimmed", form, program, builtInThisTurn)] as const);
 
-    test.each(inThisPart(formsOf(obeyed)))("%s is obeyed: %s", async (name, form) => {
+    async function worksLikeInTheUntrimmedExecutable(name: string, form: string, program?: string) {
+      const both = await builtBothWaysWith(form, program);
+      using whole = both[0];
+      using trimmed = both[1];
+      expect([whole.build, trimmed.build]).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
+      const ran = await started(whole.folder, name);
+      expect(ran.stderr).not.toMatch(wasLeftOut);
+      expect(await started(trimmed.folder, name)).toEqual(ran);
+    }
+
+    test.each(inThisPart(formsOf(obeyed)))("%s works like in the untrimmed executable: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
+
+    test.each(inThisPart(formsOf(nameTheExecutable)))("%s prints what the build of that executable printed: %s", async (name, form) => {
       const both = await builtBothWaysWith(form);
       using whole = both[0];
       using trimmed = both[1];
       expect([whole.build, trimmed.build]).toMatchObject([{ exitCode: 0 }, { exitCode: 0 }]);
-      expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
+      expect([await started(whole.folder, name), await started(trimmed.folder, name)]).toEqual([printsTheIdOf(whole.build), printsTheIdOf(trimmed.build)]);
     });
 
-    test.each(inThisPart(formsOf(leftOut)))("%s is refused by the build: %s", async (name, form) => {
-      using trimmed = await builtWith("trimmed", form);
-      expect(trimmed.build).toEqual({ stdout: "", stderr: `error: ${name} ${isLeftOut}\n`, exitCode: 1 });
-      expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
-    });
+    test.each(inThisPart([needRemovedFeatures, needTheBunCommandLine].flatMap(formsOf)))("%s works, because the build keeps the feature that it needs: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
 
-    test.each(inThisPart(formsByUse))("%s is refused by the build where the program does not use what it connects for: %s", async (name, form) => {
-      using trimmed = await builtWith("trimmed", form);
-      expect(trimmed.build.stderr).toEndWith(`error: ${name} ${isLeftOut}\n`);
-      expect(trimmed.build.exitCode).toBe(1);
-      expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
-    });
+    test.each(inThisPart(formsByUse))("%s works even if the program never uses the client, because the build keeps it: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
 
-    test.each(inThisPart(formsByUse))("%s is obeyed where it does: %s, %s", async (name, form, program) => {
+    test.each(inThisPart(formsByUse))("%s works where the program uses that client: %s, %s", async (name, form, program) => {
       const both = await builtBothWaysWith(form, program);
       using whole = both[0];
       using trimmed = both[1];
@@ -296,26 +350,23 @@ export function testExecArgv(part: number, parts: number) {
       expect(await started(trimmed.folder, name)).toEqual(await started(whole.folder, name));
     });
 
-    test.each(inThisPart(formsByKeeping))("%s is refused by the build where the part that it needs is left out: %s", async (name, form) => {
-      using trimmed = await builtWith("trimmed", form);
-      expect(trimmed.build.stderr).toEndWith(`error: ${name} ${isLeftOut}\n`);
-      expect(trimmed.build.exitCode).toBe(1);
-      expect(await Bun.file(join(trimmed.folder, isWindows ? "program.exe" : "program")).exists()).toBe(false);
-    });
+    test.each(inThisPart(formsByAllowing))("%s works, because the build keeps the feature that it needs: %s", (name, form) => worksLikeInTheUntrimmedExecutable(name, form));
 
-    test.each(inThisPart(formsByKeeping))("%s is obeyed where compile.trim keeps that part: %s, %s", async (name, form, keep) => {
+    test.each(inThisPart(formsByAllowing))("%s works where compile.trim.allow lists that feature: %s, %s", async (name, form, allow) => {
       using whole = await builtWith("whole", form);
       expect(whole.build).toMatchObject({ exitCode: 0 });
       const folder = laidOut(join(root, String(folders++)), "trimmed");
-      await builtKeeping(folder, keep, [form]);
+      await builtAllowing(folder, allow, [form]);
       expect(await started(folder, name)).toEqual(await started(whole.folder, name));
       rmSync(folder, { recursive: true, force: true });
     });
 
-    test.each(inThisPart(formsOf(loadCode)))("%s is refused when the executable starts: %s", async (name, form) => {
-      using trimmed = await builtWith("trimmed", form);
-      expect(trimmed.build).toMatchObject({ exitCode: 0 });
-      expect(await started(trimmed.folder, name)).toEqual({ stdout: "", stderr: `error: ${name} ${loadsCode}\n`, exitCode: 1 });
+    test.each(inThisPart([ignoredWithAWarning, loadCode].flatMap(formsOf)))("%s fails the build, with and without --trim, because the executable only runs code that was compiled into it: %s", async (name, form) => {
+      const both = await builtBothWaysWith(form);
+      using whole = both[0];
+      using trimmed = both[1];
+      const failure = { stderr: expect.stringContaining(`error: --aot does not support ${longNames[name] ?? name} in --compile-exec-argv because the executable only runs code that was compiled into it`), exitCode: 1 };
+      expect([whole.build, trimmed.build]).toMatchObject([failure, failure]);
     });
   });
 }

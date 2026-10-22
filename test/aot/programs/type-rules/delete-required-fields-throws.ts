@@ -1,4 +1,4 @@
-// `delete` of required fields through a receiver of type `any`: by name it works as in JavaScript; by a computed key, and on an instance of a class, it throws.
+// `delete` of required fields through a receiver of type `any`, by name and by a computed key, on literals and on an instance of a class, works as in JavaScript.
 function normalize(given: any) {
   const params = given
   if (!params) return {}

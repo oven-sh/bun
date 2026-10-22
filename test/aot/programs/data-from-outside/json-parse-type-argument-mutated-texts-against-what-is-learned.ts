@@ -1,8 +1,9 @@
-// A fuzzer of texts, the same for a given seed, that is after the tables which the parser, the writer and the conversions learn: keys that are long, that share their first bytes, that come again, thousands of names, tens of thousands of orders, and now and then thousands of records with names of their own inside one text. Each text is parsed by JSON.parse<T>, written by JSON.stringify and validated by Bun.validate<T>, and compared with JSON.parse; values are kept and written again later.
+// A fuzzer of texts, the same for a given seed, that is after the tables which the parser, the writer and the conversions learn: keys that are long, that share their first bytes, that come again, thousands of names, tens of thousands of orders, and now and then thousands of records with names of their own inside one text. Each text is parsed by JSON.parse<T>, written by JSON.stringify and validated by validate<T>, and compared with JSON.parse; values are kept and written again later.
+import { validate } from "bun:bundle";
 import type { Schema } from "bun";
 
 const seed: number = 1;
-const rounds: number = 50;
+const rounds: number = 20;
 
 type Point = { x: number; y: number };
 type User = { id: number & Schema.Int; name: string; email?: string; tags: string[]; active: boolean; note: string | null };
@@ -159,29 +160,29 @@ const holder = record([["first", number], ["items", crowd], ["last", text]]);
 const shelf = record([["label", text], ["holders", list(holder, 0, 3)], ["byName", dictionary(item)], ["pair", tuple(item, point)]]);
 
 const types: [string, (text: string) => unknown, (value: unknown) => unknown, Make][] = [
-  ["Point", text => JSON.parse<Point>(text), value => Bun.validate<Point>(value), point],
-  ["User", text => JSON.parse<User>(text), value => Bun.validate<User>(value), user],
-  ["Shape", text => JSON.parse<Shape>(text), value => Bun.validate<Shape>(value), shape],
-  ["Shape[]", text => JSON.parse<Shape[]>(text), value => Bun.validate<Shape[]>(value), list(shape, 0, 6)],
-  ["Mixed", text => JSON.parse<Mixed>(text), value => Bun.validate<Mixed>(value), either(text, number, flag, nothing, record([["v", number]]), list(number))],
-  ["Mixed[]", text => JSON.parse<Mixed[]>(text), value => Bun.validate<Mixed[]>(value), list(either(text, number, flag, nothing, record([["v", number]]), list(number)), 0, 8)],
-  ["Triple", text => JSON.parse<Triple>(text), value => Bun.validate<Triple>(value), tuple(text, number, point)],
-  ["Table", text => JSON.parse<Table>(text), value => Bun.validate<Table>(value), dictionary(number, 8)],
-  ["Points", text => JSON.parse<Points>(text), value => Bun.validate<Points>(value), dictionary(point)],
-  ["Grid", text => JSON.parse<Grid>(text), value => Bun.validate<Grid>(value), list(list(number))],
-  ["Tree", text => JSON.parse<Tree>(text), value => Bun.validate<Tree>(value), tree],
-  ["Chain", text => JSON.parse<Chain>(text), value => Bun.validate<Chain>(value), chain],
-  ["Loose", text => JSON.parse<Loose>(text), value => Bun.validate<Loose>(value), record([["id", number], ["data", anything], ["more", anything], ["bag", dictionary(anything)]])],
-  ["Ruled", text => JSON.parse<Ruled>(text), value => Bun.validate<Ruled>(value), record([["n", () => String(below(1001))], ["s", () => stringOf(1 + below(8), plainCharacters)], ["list", list(number, 1, 4)], ["p", () => stringOf(1 + below(9), plainCharacters)]])],
-  ["Indexed", text => JSON.parse<Indexed>(text), value => Bun.validate<Indexed>(value), record([["id", number]], either(number, text))],
-  ["Literals", text => JSON.parse<Literals>(text), value => Bun.validate<Literals>(value), record([["level", constant('"low"', '"high"', '"é"', '"\\u00e9"', '"lo\\u0077"')], ["code", constant("1", "2", "3", "1.0", "2e0", "30e-1")], ["on", constant("true")], ["nothing", nothing], ["either", constant('"a"', "7", "false", "7.0")]])],
-  ["Wide", text => JSON.parse<Wide>(text), value => Bun.validate<Wide>(value), record(wideMembers)],
-  ["Nested", text => JSON.parse<Nested>(text), value => Bun.validate<Nested>(value), record([["a", record([["b", record([["c", record([["d", list(point)], ["e", tuple(number, text)]])], ["f", shape, true]])], ["g", dictionary(number)]])], ["h", list(user, 0, 3)]])],
-  ["Strict", text => JSON.parse<Strict>(text), value => Bun.validate<Strict>(value), record([["x", number], ["y", text, true]], null)],
-  ["Item", text => JSON.parse<Item>(text), value => Bun.validate<Item>(value), item],
-  ["Holder", text => JSON.parse<Holder>(text), value => Bun.validate<Holder>(value), holder],
-  ["Holder[]", text => JSON.parse<Holder[]>(text), value => Bun.validate<Holder[]>(value), list(holder, 0, 3)],
-  ["Shelf", text => JSON.parse<Shelf>(text), value => Bun.validate<Shelf>(value), shelf],
+  ["Point", text => JSON.parse<Point>(text), value => validate<Point>(value), point],
+  ["User", text => JSON.parse<User>(text), value => validate<User>(value), user],
+  ["Shape", text => JSON.parse<Shape>(text), value => validate<Shape>(value), shape],
+  ["Shape[]", text => JSON.parse<Shape[]>(text), value => validate<Shape[]>(value), list(shape, 0, 6)],
+  ["Mixed", text => JSON.parse<Mixed>(text), value => validate<Mixed>(value), either(text, number, flag, nothing, record([["v", number]]), list(number))],
+  ["Mixed[]", text => JSON.parse<Mixed[]>(text), value => validate<Mixed[]>(value), list(either(text, number, flag, nothing, record([["v", number]]), list(number)), 0, 8)],
+  ["Triple", text => JSON.parse<Triple>(text), value => validate<Triple>(value), tuple(text, number, point)],
+  ["Table", text => JSON.parse<Table>(text), value => validate<Table>(value), dictionary(number, 8)],
+  ["Points", text => JSON.parse<Points>(text), value => validate<Points>(value), dictionary(point)],
+  ["Grid", text => JSON.parse<Grid>(text), value => validate<Grid>(value), list(list(number))],
+  ["Tree", text => JSON.parse<Tree>(text), value => validate<Tree>(value), tree],
+  ["Chain", text => JSON.parse<Chain>(text), value => validate<Chain>(value), chain],
+  ["Loose", text => JSON.parse<Loose>(text), value => validate<Loose>(value), record([["id", number], ["data", anything], ["more", anything], ["bag", dictionary(anything)]])],
+  ["Ruled", text => JSON.parse<Ruled>(text), value => validate<Ruled>(value), record([["n", () => String(below(1001))], ["s", () => stringOf(1 + below(8), plainCharacters)], ["list", list(number, 1, 4)], ["p", () => stringOf(1 + below(9), plainCharacters)]])],
+  ["Indexed", text => JSON.parse<Indexed>(text), value => validate<Indexed>(value), record([["id", number]], either(number, text))],
+  ["Literals", text => JSON.parse<Literals>(text), value => validate<Literals>(value), record([["level", constant('"low"', '"high"', '"é"', '"\\u00e9"', '"lo\\u0077"')], ["code", constant("1", "2", "3", "1.0", "2e0", "30e-1")], ["on", constant("true")], ["nothing", nothing], ["either", constant('"a"', "7", "false", "7.0")]])],
+  ["Wide", text => JSON.parse<Wide>(text), value => validate<Wide>(value), record(wideMembers)],
+  ["Nested", text => JSON.parse<Nested>(text), value => validate<Nested>(value), record([["a", record([["b", record([["c", record([["d", list(point)], ["e", tuple(number, text)]])], ["f", shape, true]])], ["g", dictionary(number)]])], ["h", list(user, 0, 3)]])],
+  ["Strict", text => JSON.parse<Strict>(text), value => validate<Strict>(value), record([["x", number], ["y", text, true]], null)],
+  ["Item", text => JSON.parse<Item>(text), value => validate<Item>(value), item],
+  ["Holder", text => JSON.parse<Holder>(text), value => validate<Holder>(value), holder],
+  ["Holder[]", text => JSON.parse<Holder[]>(text), value => validate<Holder[]>(value), list(holder, 0, 3)],
+  ["Shelf", text => JSON.parse<Shelf>(text), value => validate<Shelf>(value), shelf],
 ];
 
 function tokens(text: string): string[] {

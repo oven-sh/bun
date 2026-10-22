@@ -31,7 +31,7 @@ function setFixed(x: any, value: unknown): void { x.fixed = value; }
 function setFailing(x: any, value: unknown): void { x.failing = value; }
 function look(x: any): string { return [x.flags, x.length, x.more, x.extra, x.fixed].join(); }
 globalThis.kept = [setMore, setSize, setFixed, setFailing, look];
-const asked = (): number => Number(count("operationAOTPutByNameAndCache")) || 0;
+const asked = (): number => Number(count("operationAOTPutByIdAndCache")) || 0;
 const receivers: any[] = [new State(), new Wider(), new Widest()];
 let most = 0;
 for (const store of [setMore, setSize]) {

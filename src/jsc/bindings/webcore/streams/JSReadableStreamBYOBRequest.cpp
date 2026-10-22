@@ -160,7 +160,7 @@ JSObject* JSReadableStreamBYOBRequest::prototype(VM& vm, JSDOMGlobalObject& glob
     return getDOMPrototype<JSReadableStreamBYOBRequest>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSReadableStreamBYOBRequest::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSReadableStreamBYOBRequest::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSReadableStreamBYOBRequestConstructor, DOMConstructorID::ReadableStreamBYOBRequest>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

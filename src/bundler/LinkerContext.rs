@@ -103,9 +103,6 @@ pub struct LinkerContext<'a> {
 
     pub(crate) options: LinkerOptions,
 
-    /// `BundleOptions::analyze`
-    pub(crate) facts: Option<bun_ast::type_tags::ProgramFacts>,
-
     pub(crate) r#loop: EventLoop,
 
     /// string buffer containing pre-formatted unique keys
@@ -170,7 +167,6 @@ impl<'a> Default for LinkerContext<'a> {
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
-            facts: None,
             r#loop: None,
             unique_key_buf: Box::default(),
             unique_key_prefix: Box::default(),
@@ -1250,9 +1246,7 @@ impl<'a> LinkerContext<'a> {
                 // Note: the relative path lives in a local owned buffer
                 // (drops at scope exit).
                 let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() && self.options.preserve_source_paths {
-                    path.text
-                } else if path.is_file() {
+                let pretty: &[u8] = if path.is_file() {
                     rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
@@ -1279,9 +1273,7 @@ impl<'a> LinkerContext<'a> {
                 let path = &sources[index as usize].path;
 
                 let rel_path_storage;
-                let pretty: &[u8] = if path.is_file() && self.options.preserve_source_paths {
-                    path.text
-                } else if path.is_file() {
+                let pretty: &[u8] = if path.is_file() {
                     rel_path_storage = Self::source_map_relative_path(chunk_abs_dir, path.text)?;
                     &rel_path_storage
                 } else {
@@ -1435,8 +1427,6 @@ pub struct LinkerOptions {
     pub(crate) target_builtins: Option<std::sync::Arc<[u8]>>,
     pub(crate) bytecode_depth: u32,
     pub(crate) optimize_bytecode: bool,
-    pub(crate) aot: bool,
-    pub(crate) preserve_source_paths: bool,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
     pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
     pub(crate) output_format: Format,
@@ -1490,8 +1480,6 @@ impl Default for LinkerOptions {
             target_builtins: None,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
-            aot: false,
-            preserve_source_paths: false,
             bytecode_order: None,
             output_format: Format::Esm,
             ignore_dce_annotations: false,

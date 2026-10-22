@@ -1,6 +1,6 @@
 // The array for `...xs: number[]` and a literal that goes to a number[] hold whatever the call passes: numbers of every kind, and what an element read past the end yields.
 // An array that leaves the function is made as an array of numbers; one that is only read is never made: a read at an index that is not known chooses among the arguments.
-// IR= 1 keptOfThree ~undefined\|null\|Array<number> = NewArray
+// IR= 1 keptOfThree : Array<number>\S* = NewArray 
 // IR= 0 restOfThree NewArray
 // IR= 1 restOfThree Switch v[0-9]+ \[0: b[0-9]+\(v[0-9]+\), 1: b[0-9]+\(v[0-9]+\), 2: b[0-9]+\(v[0-9]+\)\]
 const lines: string[] = [];

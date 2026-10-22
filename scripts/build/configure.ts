@@ -30,7 +30,7 @@ import {
   resolveConfig,
 } from "./config.ts";
 import { BuildError } from "./error.ts";
-import { islandsPlanPath, orderFilePath, usesOrderFile } from "./flags.ts";
+import { orderFilePath, usesOrderFile } from "./flags.ts";
 import { mkdirAll, writeIfChanged } from "./fs.ts";
 import { ensureMacosSdk } from "./macos-sdk.ts";
 import { ensureNinja } from "./ninja-release.ts";
@@ -162,13 +162,13 @@ export interface ConfigureResult {
  * an existing one to import it).
  *
  * Excludes scripts that only run as ninja subprocesses (ci.ts, stream.ts,
- * npm-ci.ts) — changes to those don't affect the build graph. fetch-cli.ts
- * and download.ts count: configure computes fetch URLs and checks source
- * staleness through them.
+ * npm-ci.ts) or only print paths (aot-paths.ts) — changes to those don't
+ * affect the build graph. fetch-cli.ts and download.ts count: configure
+ * computes fetch URLs and checks source staleness through them.
  */
 function configureInputs(cwd: string): string[] {
   const buildDir = resolve(cwd, "scripts", "build");
-  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts"]);
+  const excluded = new Set(["ci.ts", "stream.ts", "npm-ci.ts", "aot-paths.ts"]);
 
   const scripts = globSync("*.ts", { cwd: buildDir })
     .filter(f => !excluded.has(f))
@@ -177,6 +177,8 @@ function configureInputs(cwd: string): string[] {
   // rust/: units.ts/emit.ts/plan.ts shape the per-crate edges and manifests at configure time (run.ts is build-time
   // only, but one glob keeps the rule simple).
   const rust = globSync("rust/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
+  // trim/: libraries.ts writes libraries.json at configure time (the rest is build-time only; one glob, as for rust/).
+  const trim = globSync("trim/*.ts", { cwd: buildDir }).map(f => resolve(buildDir, f));
 
   // Versions the build uses (LLVM, Node.js, the sysroots) are written here.
   const pins = resolve(buildDir, "ci-images", "spec.ts");
@@ -185,6 +187,7 @@ function configureInputs(cwd: string): string[] {
     ...scripts,
     ...deps,
     ...rust,
+    ...trim,
     pins,
     resolve(cwd, "scripts", "glob-sources.ts"),
     resolve(cwd, "package.json"),
@@ -284,6 +287,7 @@ function ccacheEnv(cfg: Config): Record<string, string> {
     CCACHE_NOHASHDIR: "1",
     // Copy-on-write for cache entries — near-free on btrfs/APFS/ReFS.
     CCACHE_FILECLONE: "1",
+    CCACHE_PCH_EXTERNAL_CHECKSUM: "1",
     CCACHE_STATSLOG: resolve(cfg.buildDir, "ccache.log"),
   };
   if (!cfg.ci) {
@@ -380,7 +384,8 @@ export interface CodegenConfigureResult<N extends string | undefined = string> {
  * configure() for `mode: "codegen"`: a graph of the code generators alone, whose default target is `codegen`.
  * Looks for bun, the root install's esbuild and perl, and for no compiler, linker, cmake or cargo; writes no
  * `.cargo/config.toml` and fetches no SDK or sysroot. It has a build directory of its own (`build/debug-codegen`);
- * the type declarations go to `cfg.typesDir`, which every build directory shares.
+ * the type declarations go to `cfg.typesDir`, which every build directory shares. The steps that read the engine's
+ * files (aot.ts: the IR schema, the table of built-ins, the archive of Bun's own sources) are not in this graph.
  */
 export function configureCodegen(input: ConfigureInput): Promise<CodegenConfigureResult> {
   return generateCodegen(input, ensureNinja);
@@ -559,7 +564,6 @@ async function generate<N extends string | undefined>(
   if (usesOrderFile(cfg) && !existsSync(orderFilePath(cfg))) {
     writeIfChanged(orderFilePath(cfg), "# no order file yet — an empty file is a no-op for the linker\n");
   }
-  if (cfg.islands && !existsSync(islandsPlanPath(cfg))) writeIfChanged(islandsPlanPath(cfg), "no plan yet\n");
   mark("orderFile");
 
   const ninjaFile = ninjaPath;

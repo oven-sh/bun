@@ -1,4 +1,4 @@
-// An element read from a variable that is annotated with a type from a declaration file: the object belongs to the embedder, and so do its contents, whatever the index signature says.
+// An element read from a variable that is annotated with a type from a declaration file: the object belongs to the embedder, and so do its contents, whatever the index signature says. A cast that the program writes behind such a read is tested like any cast.
 import type { Counts, Headers } from "./host";
 const given: any = { ":status": 200, "x-list": ["a"], "content-type": 5, "x-s": "s" };
 const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + JSON.stringify(r)); };

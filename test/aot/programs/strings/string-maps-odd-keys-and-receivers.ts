@@ -157,9 +157,17 @@ function write(map: Map<string, number>, key: string, value: number): Map<string
   show("more and fewer arguments", (loose.get as Function)("a", "b"), (loose.get as Function)(), (loose.has as Function)(), (loose.set as Function)("only").get("only"), loose.has("only"), (loose.set as Function)().has(undefined), map.size);
 }
 
-// With frozen prototypes.
-Object.freeze(Map.prototype);
-Object.freeze(Set.prototype);
+// With frozen prototypes. Object.freeze succeeds in a compiled program too: it only tightens what is fixed from the start. Nothing is printed unless it throws.
+try {
+  Object.freeze(Map.prototype);
+} catch (error) {
+  show("freeze Map.prototype", (error as Error).constructor.name);
+}
+try {
+  Object.freeze(Set.prototype);
+} catch (error) {
+  show("freeze Set.prototype", (error as Error).constructor.name);
+}
 {
   const map = new Map<string, number>();
   for (let i = 0; i < 20; i++) map.set("k" + i, i);

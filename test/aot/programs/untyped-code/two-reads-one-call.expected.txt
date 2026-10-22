@@ -1,0 +1,716 @@
+literal chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+literal chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+literal chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+literal chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+literal sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+literal sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+literal twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+literal twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+literal twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+literal truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+literal equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+outOfLine chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+outOfLine chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+outOfLine chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+outOfLine chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+outOfLine sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+outOfLine sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+outOfLine twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+outOfLine twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+outOfLine twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+outOfLine truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+outOfLine equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+inherited chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+inherited chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+inherited chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+inherited chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+inherited sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inherited sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inherited twoReceivers [-0, undefined] | [1, undefined] | [-1, undefined] | [1.5, undefined] | [NaN, undefined] | [2147483648, undefined] | ["s", undefined] | ["", undefined] | [true, undefined] | [null, undefined] | [undefined, undefined] | [10, undefined] | [Symbol(Symbol.iterator), undefined] | [object, undefined] | [0, undefined] | [-0, undefined] | [1, undefined]
+inherited twoReceiversOnTwoLines [-0, undefined] | [1, undefined] | [-1, undefined] | [1.5, undefined] | [NaN, undefined] | [2147483648, undefined] | ["s", undefined] | ["", undefined] | [true, undefined] | [null, undefined] | [undefined, undefined] | [10, undefined] | [Symbol(Symbol.iterator), undefined] | [object, undefined] | [0, undefined] | [-0, undefined] | [1, undefined]
+inherited twoReceiversInLoop [-0, undefined, -0, undefined] | [1, undefined, 1, undefined] | [-1, undefined, -1, undefined] | [1.5, undefined, 1.5, undefined] | [NaN, undefined, NaN, undefined] | [2147483648, undefined, 2147483648, undefined] | ["s", undefined, "s", undefined] | ["", undefined, "", undefined] | [true, undefined, true, undefined] | [null, undefined, null, undefined] | [undefined, undefined, undefined, undefined] | [10, undefined, 10, undefined] | [Symbol(Symbol.iterator), undefined, Symbol(Symbol.iterator), undefined] | [object, undefined, object, undefined] | [0, undefined, 0, undefined] | [-0, undefined, -0, undefined] | [1, undefined, 1, undefined]
+inherited truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+inherited equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+inheritedOutOfLine chain undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined
+inheritedOutOfLine chainOnTwoLines undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined
+inheritedOutOfLine chainKeepingFirst [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined] | [object, undefined]
+inheritedOutOfLine chainInLoop undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined | undefined
+inheritedOutOfLine sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inheritedOutOfLine sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inheritedOutOfLine twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inheritedOutOfLine twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+inheritedOutOfLine twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+inheritedOutOfLine truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+inheritedOutOfLine equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+absent chain TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17 | TypeError c at chain:13:17
+absent chainOnTwoLines TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7 | TypeError c at chainOnTwoLines:15:7
+absent chainKeepingFirst TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15 | TypeError c at chainKeepingFirst:19:15
+absent chainInLoop TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42 | TypeError c at chainInLoop:24:42
+absent sameReceiver [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined]
+absent sameReceiverOnTwoLines [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined] | [undefined, undefined]
+absent twoReceivers [undefined, 1] | [undefined, -1] | [undefined, 1.5] | [undefined, NaN] | [undefined, 2147483648] | [undefined, "s"] | [undefined, ""] | [undefined, true] | [undefined, null] | [undefined, undefined] | [undefined, 10] | [undefined, Symbol(Symbol.iterator)] | [undefined, object] | [undefined, 0] | [undefined, -0] | [undefined, 1] | [undefined, -1]
+absent twoReceiversOnTwoLines [undefined, 1] | [undefined, -1] | [undefined, 1.5] | [undefined, NaN] | [undefined, 2147483648] | [undefined, "s"] | [undefined, ""] | [undefined, true] | [undefined, null] | [undefined, undefined] | [undefined, 10] | [undefined, Symbol(Symbol.iterator)] | [undefined, object] | [undefined, 0] | [undefined, -0] | [undefined, 1] | [undefined, -1]
+absent twoReceiversInLoop [undefined, 1, undefined, 1] | [undefined, -1, undefined, -1] | [undefined, 1.5, undefined, 1.5] | [undefined, NaN, undefined, NaN] | [undefined, 2147483648, undefined, 2147483648] | [undefined, "s", undefined, "s"] | [undefined, "", undefined, ""] | [undefined, true, undefined, true] | [undefined, null, undefined, null] | [undefined, undefined, undefined, undefined] | [undefined, 10, undefined, 10] | [undefined, Symbol(Symbol.iterator), undefined, Symbol(Symbol.iterator)] | [undefined, object, undefined, object] | [undefined, 0, undefined, 0] | [undefined, -0, undefined, -0] | [undefined, 1, undefined, 1] | [undefined, -1, undefined, -1]
+absent truthy "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear" | "clear"
+absent equalsLeaf "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other"
+fields chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+fields chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+fields chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+fields chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+fields sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+fields sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+fields twoReceivers [-0, 0.5] | [1, 1.5] | [-1, 2.5] | [1.5, 3.5] | [NaN, 4.5] | [2147483648, 5.5] | ["s", 6.5] | ["", 7.5] | [true, 8.5] | [null, 9.5] | [undefined, 10.5] | [10, 11.5] | [Symbol(Symbol.iterator), 12.5] | [object, 13.5] | [0, 14.5] | [-0, 15.5] | [1, 16.5]
+fields twoReceiversOnTwoLines [-0, 0.5] | [1, 1.5] | [-1, 2.5] | [1.5, 3.5] | [NaN, 4.5] | [2147483648, 5.5] | ["s", 6.5] | ["", 7.5] | [true, 8.5] | [null, 9.5] | [undefined, 10.5] | [10, 11.5] | [Symbol(Symbol.iterator), 12.5] | [object, 13.5] | [0, 14.5] | [-0, 15.5] | [1, 16.5]
+fields twoReceiversInLoop [-0, 0.5, -0, 0.5] | [1, 1.5, 1, 1.5] | [-1, 2.5, -1, 2.5] | [1.5, 3.5, 1.5, 3.5] | [NaN, 4.5, NaN, 4.5] | [2147483648, 5.5, 2147483648, 5.5] | ["s", 6.5, "s", 6.5] | ["", 7.5, "", 7.5] | [true, 8.5, true, 8.5] | [null, 9.5, null, 9.5] | [undefined, 10.5, undefined, 10.5] | [10, 11.5, 10, 11.5] | [Symbol(Symbol.iterator), 12.5, Symbol(Symbol.iterator), 12.5] | [object, 13.5, object, 13.5] | [0, 14.5, 0, 14.5] | [-0, 15.5, -0, 15.5] | [1, 16.5, 1, 16.5]
+fields truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+fields equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+derived chain "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree"
+derived chainOnTwoLines "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree"
+derived chainKeepingFirst [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"] | [object, "tree"]
+derived chainInLoop "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree" | "tree"
+derived sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+derived sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+derived twoReceivers [-0, 1] after y | [1, -1] after y | [-1, 1.5] after y | [1.5, NaN] after y | [NaN, 2147483648] after y | [2147483648, "s"] after y | ["s", ""] after y | ["", true] after y | [true, null] after y | [null, undefined] after y | [undefined, 10] after y | [10, Symbol(Symbol.iterator)] after y | [Symbol(Symbol.iterator), object] after y | [object, 0] after y | [0, -0] after y | [-0, 1] after y | [1, -1] after y
+derived twoReceiversOnTwoLines [-0, 1] after y | [1, -1] after y | [-1, 1.5] after y | [1.5, NaN] after y | [NaN, 2147483648] after y | [2147483648, "s"] after y | ["s", ""] after y | ["", true] after y | [true, null] after y | [null, undefined] after y | [undefined, 10] after y | [10, Symbol(Symbol.iterator)] after y | [Symbol(Symbol.iterator), object] after y | [object, 0] after y | [0, -0] after y | [-0, 1] after y | [1, -1] after y
+derived twoReceiversInLoop [-0, 1, -0, 1] after y,y | [1, -1, 1, -1] after y,y | [-1, 1.5, -1, 1.5] after y,y | [1.5, NaN, 1.5, NaN] after y,y | [NaN, 2147483648, NaN, 2147483648] after y,y | [2147483648, "s", 2147483648, "s"] after y,y | ["s", "", "s", ""] after y,y | ["", true, "", true] after y,y | [true, null, true, null] after y,y | [null, undefined, null, undefined] after y,y | [undefined, 10, undefined, 10] after y,y | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] after y,y | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] after y,y | [object, 0, object, 0] after y,y | [0, -0, 0, -0] after y,y | [-0, 1, -0, 1] after y,y | [1, -1, 1, -1] after y,y
+derived truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+derived equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+tree chain 0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32
+tree chainOnTwoLines 0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32
+tree chainKeepingFirst [object, 0] | [object, 2] | [object, 4] | [object, 6] | [object, 8] | [object, 10] | [object, 12] | [object, 14] | [object, 16] | [object, 18] | [object, 20] | [object, 22] | [object, 24] | [object, 26] | [object, 28] | [object, 30] | [object, 32]
+tree chainInLoop 0 | 2 | 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 | 20 | 22 | 24 | 26 | 28 | 30 | 32
+tree sameReceiver [0, 0.5] | [1, 1.5] | [2, 2.5] | [3, 3.5] | [4, 4.5] | [5, 5.5] | [6, 6.5] | [7, 7.5] | [8, 8.5] | [9, 9.5] | [10, 10.5] | [11, 11.5] | [12, 12.5] | [13, 13.5] | [14, 14.5] | [15, 15.5] | [16, 16.5]
+tree sameReceiverOnTwoLines [0, 0.5] | [1, 1.5] | [2, 2.5] | [3, 3.5] | [4, 4.5] | [5, 5.5] | [6, 6.5] | [7, 7.5] | [8, 8.5] | [9, 9.5] | [10, 10.5] | [11, 11.5] | [12, 12.5] | [13, 13.5] | [14, 14.5] | [15, 15.5] | [16, 16.5]
+tree twoReceivers [0, 1] after y | [1, -1] after y | [2, 1.5] after y | [3, NaN] after y | [4, 2147483648] after y | [5, "s"] after y | [6, ""] after y | [7, true] after y | [8, null] after y | [9, undefined] after y | [10, 10] after y | [11, Symbol(Symbol.iterator)] after y | [12, object] after y | [13, 0] after y | [14, -0] after y | [15, 1] after y | [16, -1] after y
+tree twoReceiversOnTwoLines [0, 1] after y | [1, -1] after y | [2, 1.5] after y | [3, NaN] after y | [4, 2147483648] after y | [5, "s"] after y | [6, ""] after y | [7, true] after y | [8, null] after y | [9, undefined] after y | [10, 10] after y | [11, Symbol(Symbol.iterator)] after y | [12, object] after y | [13, 0] after y | [14, -0] after y | [15, 1] after y | [16, -1] after y
+tree twoReceiversInLoop [0, 1, 0, 1] after y,y | [1, -1, 1, -1] after y,y | [2, 1.5, 2, 1.5] after y,y | [3, NaN, 3, NaN] after y,y | [4, 2147483648, 4, 2147483648] after y,y | [5, "s", 5, "s"] after y,y | [6, "", 6, ""] after y,y | [7, true, 7, true] after y,y | [8, null, 8, null] after y,y | [9, undefined, 9, undefined] after y,y | [10, 10, 10, 10] after y,y | [11, Symbol(Symbol.iterator), 11, Symbol(Symbol.iterator)] after y,y | [12, object, 12, object] after y,y | [13, 0, 13, 0] after y,y | [14, -0, 14, -0] after y,y | [15, 1, 15, 1] after y,y | [16, -1, 16, -1] after y,y
+tree truthy "set" | "clear" | "set" | "clear" | "set" | "clear" | "set" | "clear" | "set" | "clear" | "set" | "clear" | "set" | "clear" | "set" | "clear" | "set"
+tree equalsLeaf "other" | "leaf" | "leaf" | "other" | "leaf" | "leaf" | "other" | "leaf" | "leaf" | "other" | "leaf" | "leaf" | "other" | "leaf" | "leaf" | "other" | "leaf"
+ownGetters chain 0 after b,c | -0 after b,c | 1 after b,c | -1 after b,c | 1.5 after b,c | NaN after b,c | 2147483648 after b,c | "s" after b,c | "" after b,c | true after b,c | null after b,c | undefined after b,c | 10 after b,c | Symbol(Symbol.iterator) after b,c | object after b,c | 0 after b,c | -0 after b,c
+ownGetters chainOnTwoLines 0 after b,c | -0 after b,c | 1 after b,c | -1 after b,c | 1.5 after b,c | NaN after b,c | 2147483648 after b,c | "s" after b,c | "" after b,c | true after b,c | null after b,c | undefined after b,c | 10 after b,c | Symbol(Symbol.iterator) after b,c | object after b,c | 0 after b,c | -0 after b,c
+ownGetters chainKeepingFirst [object, 0] after b,c | [object, -0] after b,c | [object, 1] after b,c | [object, -1] after b,c | [object, 1.5] after b,c | [object, NaN] after b,c | [object, 2147483648] after b,c | [object, "s"] after b,c | [object, ""] after b,c | [object, true] after b,c | [object, null] after b,c | [object, undefined] after b,c | [object, 10] after b,c | [object, Symbol(Symbol.iterator)] after b,c | [object, object] after b,c | [object, 0] after b,c | [object, -0] after b,c
+ownGetters chainInLoop 0 after b,c,b,c | -0 after b,c,b,c | 1 after b,c,b,c | -1 after b,c,b,c | 1.5 after b,c,b,c | NaN after b,c,b,c | 2147483648 after b,c,b,c | "s" after b,c,b,c | "" after b,c,b,c | true after b,c,b,c | null after b,c,b,c | undefined after b,c,b,c | 10 after b,c,b,c | Symbol(Symbol.iterator) after b,c,b,c | object after b,c,b,c | 0 after b,c,b,c | -0 after b,c,b,c
+ownGetters sameReceiver [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+ownGetters sameReceiverOnTwoLines [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+ownGetters twoReceivers [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+ownGetters twoReceiversOnTwoLines [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+ownGetters twoReceiversInLoop [-0, 1, -0, 1] after x,y,x,y | [1, -1, 1, -1] after x,y,x,y | [-1, 1.5, -1, 1.5] after x,y,x,y | [1.5, NaN, 1.5, NaN] after x,y,x,y | [NaN, 2147483648, NaN, 2147483648] after x,y,x,y | [2147483648, "s", 2147483648, "s"] after x,y,x,y | ["s", "", "s", ""] after x,y,x,y | ["", true, "", true] after x,y,x,y | [true, null, true, null] after x,y,x,y | [null, undefined, null, undefined] after x,y,x,y | [undefined, 10, undefined, 10] after x,y,x,y | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] after x,y,x,y | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] after x,y,x,y | [object, 0, object, 0] after x,y,x,y | [0, -0, 0, -0] after x,y,x,y | [-0, 1, -0, 1] after x,y,x,y | [1, -1, 1, -1] after x,y,x,y
+ownGetters truthy "set" after flag | "clear" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "set" after flag | "set" after flag | "set" after flag
+ownGetters equalsLeaf "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind
+classGetters chain 0 after b,c | -0 after b,c | 1 after b,c | -1 after b,c | 1.5 after b,c | NaN after b,c | 2147483648 after b,c | "s" after b,c | "" after b,c | true after b,c | null after b,c | undefined after b,c | 10 after b,c | Symbol(Symbol.iterator) after b,c | object after b,c | 0 after b,c | -0 after b,c
+classGetters chainOnTwoLines 0 after b,c | -0 after b,c | 1 after b,c | -1 after b,c | 1.5 after b,c | NaN after b,c | 2147483648 after b,c | "s" after b,c | "" after b,c | true after b,c | null after b,c | undefined after b,c | 10 after b,c | Symbol(Symbol.iterator) after b,c | object after b,c | 0 after b,c | -0 after b,c
+classGetters chainKeepingFirst [object, 0] after b,c | [object, -0] after b,c | [object, 1] after b,c | [object, -1] after b,c | [object, 1.5] after b,c | [object, NaN] after b,c | [object, 2147483648] after b,c | [object, "s"] after b,c | [object, ""] after b,c | [object, true] after b,c | [object, null] after b,c | [object, undefined] after b,c | [object, 10] after b,c | [object, Symbol(Symbol.iterator)] after b,c | [object, object] after b,c | [object, 0] after b,c | [object, -0] after b,c
+classGetters chainInLoop 0 after b,c,b,c | -0 after b,c,b,c | 1 after b,c,b,c | -1 after b,c,b,c | 1.5 after b,c,b,c | NaN after b,c,b,c | 2147483648 after b,c,b,c | "s" after b,c,b,c | "" after b,c,b,c | true after b,c,b,c | null after b,c,b,c | undefined after b,c,b,c | 10 after b,c,b,c | Symbol(Symbol.iterator) after b,c,b,c | object after b,c,b,c | 0 after b,c,b,c | -0 after b,c,b,c
+classGetters sameReceiver [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+classGetters sameReceiverOnTwoLines [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+classGetters twoReceivers [-0, 1] after x | [1, -1] after x | [-1, 1.5] after x | [1.5, NaN] after x | [NaN, 2147483648] after x | [2147483648, "s"] after x | ["s", ""] after x | ["", true] after x | [true, null] after x | [null, undefined] after x | [undefined, 10] after x | [10, Symbol(Symbol.iterator)] after x | [Symbol(Symbol.iterator), object] after x | [object, 0] after x | [0, -0] after x | [-0, 1] after x | [1, -1] after x
+classGetters twoReceiversOnTwoLines [-0, 1] after x | [1, -1] after x | [-1, 1.5] after x | [1.5, NaN] after x | [NaN, 2147483648] after x | [2147483648, "s"] after x | ["s", ""] after x | ["", true] after x | [true, null] after x | [null, undefined] after x | [undefined, 10] after x | [10, Symbol(Symbol.iterator)] after x | [Symbol(Symbol.iterator), object] after x | [object, 0] after x | [0, -0] after x | [-0, 1] after x | [1, -1] after x
+classGetters twoReceiversInLoop [-0, 1, -0, 1] after x,x | [1, -1, 1, -1] after x,x | [-1, 1.5, -1, 1.5] after x,x | [1.5, NaN, 1.5, NaN] after x,x | [NaN, 2147483648, NaN, 2147483648] after x,x | [2147483648, "s", 2147483648, "s"] after x,x | ["s", "", "s", ""] after x,x | ["", true, "", true] after x,x | [true, null, true, null] after x,x | [null, undefined, null, undefined] after x,x | [undefined, 10, undefined, 10] after x,x | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] after x,x | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] after x,x | [object, 0, object, 0] after x,x | [0, -0, 0, -0] after x,x | [-0, 1, -0, 1] after x,x | [1, -1, 1, -1] after x,x
+classGetters truthy "set" after flag | "clear" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "set" after flag | "set" after flag | "set" after flag
+classGetters equalsLeaf "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind
+proxy chain 0 after b | -0 after b | 1 after b | -1 after b | 1.5 after b | NaN after b | 2147483648 after b | "s" after b | "" after b | true after b | null after b | undefined after b | 10 after b | Symbol(Symbol.iterator) after b | object after b | 0 after b | -0 after b
+proxy chainOnTwoLines 0 after b | -0 after b | 1 after b | -1 after b | 1.5 after b | NaN after b | 2147483648 after b | "s" after b | "" after b | true after b | null after b | undefined after b | 10 after b | Symbol(Symbol.iterator) after b | object after b | 0 after b | -0 after b
+proxy chainKeepingFirst [function, 0] after b | [function, -0] after b | [function, 1] after b | [function, -1] after b | [function, 1.5] after b | [function, NaN] after b | [function, 2147483648] after b | [function, "s"] after b | [function, ""] after b | [function, true] after b | [function, null] after b | [function, undefined] after b | [function, 10] after b | [function, Symbol(Symbol.iterator)] after b | [function, object] after b | [function, 0] after b | [function, -0] after b
+proxy chainInLoop 0 after b,b | -0 after b,b | 1 after b,b | -1 after b,b | 1.5 after b,b | NaN after b,b | 2147483648 after b,b | "s" after b,b | "" after b,b | true after b,b | null after b,b | undefined after b,b | 10 after b,b | Symbol(Symbol.iterator) after b,b | object after b,b | 0 after b,b | -0 after b,b
+proxy sameReceiver [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+proxy sameReceiverOnTwoLines [-0, 1] after x,y | [1, -1] after x,y | [-1, 1.5] after x,y | [1.5, NaN] after x,y | [NaN, 2147483648] after x,y | [2147483648, "s"] after x,y | ["s", ""] after x,y | ["", true] after x,y | [true, null] after x,y | [null, undefined] after x,y | [undefined, 10] after x,y | [10, Symbol(Symbol.iterator)] after x,y | [Symbol(Symbol.iterator), object] after x,y | [object, 0] after x,y | [0, -0] after x,y | [-0, 1] after x,y | [1, -1] after x,y
+proxy twoReceivers [-0, 1] after x | [1, -1] after x | [-1, 1.5] after x | [1.5, NaN] after x | [NaN, 2147483648] after x | [2147483648, "s"] after x | ["s", ""] after x | ["", true] after x | [true, null] after x | [null, undefined] after x | [undefined, 10] after x | [10, Symbol(Symbol.iterator)] after x | [Symbol(Symbol.iterator), object] after x | [object, 0] after x | [0, -0] after x | [-0, 1] after x | [1, -1] after x
+proxy twoReceiversOnTwoLines [-0, 1] after x | [1, -1] after x | [-1, 1.5] after x | [1.5, NaN] after x | [NaN, 2147483648] after x | [2147483648, "s"] after x | ["s", ""] after x | ["", true] after x | [true, null] after x | [null, undefined] after x | [undefined, 10] after x | [10, Symbol(Symbol.iterator)] after x | [Symbol(Symbol.iterator), object] after x | [object, 0] after x | [0, -0] after x | [-0, 1] after x | [1, -1] after x
+proxy twoReceiversInLoop [-0, 1, -0, 1] after x,x | [1, -1, 1, -1] after x,x | [-1, 1.5, -1, 1.5] after x,x | [1.5, NaN, 1.5, NaN] after x,x | [NaN, 2147483648, NaN, 2147483648] after x,x | [2147483648, "s", 2147483648, "s"] after x,x | ["s", "", "s", ""] after x,x | ["", true, "", true] after x,x | [true, null, true, null] after x,x | [null, undefined, null, undefined] after x,x | [undefined, 10, undefined, 10] after x,x | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] after x,x | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] after x,x | [object, 0, object, 0] after x,x | [0, -0, 0, -0] after x,x | [-0, 1, -0, 1] after x,x | [1, -1, 1, -1] after x,x
+proxy truthy "set" after flag | "clear" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "clear" after flag | "clear" after flag | "set" after flag | "set" after flag | "clear" after flag | "set" after flag | "set" after flag | "set" after flag
+proxy equalsLeaf "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "other" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "leaf" after kind | "other" after kind
+function chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+function chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+function chainKeepingFirst [[], 0] | [[], -0] | [[], 1] | [[], -1] | [[], 1.5] | [[], NaN] | [[], 2147483648] | [[], "s"] | [[], ""] | [[], true] | [[], null] | [[], undefined] | [[], 10] | [[], Symbol(Symbol.iterator)] | [[], object] | [[], 0] | [[], -0]
+function chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+function sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+function sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+function twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+function twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+function twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+function truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+function equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+array chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+array chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+array chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+array chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+array sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+array sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+array twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+array twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+array twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+array truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+array equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+nullPrototype chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+nullPrototype chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+nullPrototype chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+nullPrototype chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+nullPrototype sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+nullPrototype sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+nullPrototype twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+nullPrototype twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+nullPrototype twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+nullPrototype truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+nullPrototype equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+frozen chain 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+frozen chainOnTwoLines 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+frozen chainKeepingFirst [object, 0] | [object, -0] | [object, 1] | [object, -1] | [object, 1.5] | [object, NaN] | [object, 2147483648] | [object, "s"] | [object, ""] | [object, true] | [object, null] | [object, undefined] | [object, 10] | [object, Symbol(Symbol.iterator)] | [object, object] | [object, 0] | [object, -0]
+frozen chainInLoop 0 | -0 | 1 | -1 | 1.5 | NaN | 2147483648 | "s" | "" | true | null | undefined | 10 | Symbol(Symbol.iterator) | object | 0 | -0
+frozen sameReceiver [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+frozen sameReceiverOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+frozen twoReceivers [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+frozen twoReceiversOnTwoLines [-0, 1] | [1, -1] | [-1, 1.5] | [1.5, NaN] | [NaN, 2147483648] | [2147483648, "s"] | ["s", ""] | ["", true] | [true, null] | [null, undefined] | [undefined, 10] | [10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object] | [object, 0] | [0, -0] | [-0, 1] | [1, -1]
+frozen twoReceiversInLoop [-0, 1, -0, 1] | [1, -1, 1, -1] | [-1, 1.5, -1, 1.5] | [1.5, NaN, 1.5, NaN] | [NaN, 2147483648, NaN, 2147483648] | [2147483648, "s", 2147483648, "s"] | ["s", "", "s", ""] | ["", true, "", true] | [true, null, true, null] | [null, undefined, null, undefined] | [undefined, 10, undefined, 10] | [10, Symbol(Symbol.iterator), 10, Symbol(Symbol.iterator)] | [Symbol(Symbol.iterator), object, Symbol(Symbol.iterator), object] | [object, 0, object, 0] | [0, -0, 0, -0] | [-0, 1, -0, 1] | [1, -1, 1, -1]
+frozen truthy "set" | "clear" | "clear" | "clear" | "set" | "set" | "clear" | "clear" | "set" | "clear" | "clear" | "set" | "set" | "clear" | "set" | "set" | "set"
+frozen equalsLeaf "leaf" | "leaf" | "leaf" | "leaf" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "other" | "leaf" | "leaf" | "leaf" | "leaf" | "other"
+ownGetters throws on b chain RangeError getter of b at chain:13:15 after b
+ownGetters throws on b chainOnTwoLines RangeError getter of b at chainOnTwoLines:15:5 after b
+ownGetters throws on b chainKeepingFirst RangeError getter of b at chainKeepingFirst:18:15 after b
+ownGetters throws on b chainInLoop RangeError getter of b at chainInLoop:24:40 after b
+ownGetters throws on b sameReceiver [-1, 1.5] after x,y
+ownGetters throws on b sameReceiverOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on b twoReceivers [-1, 1.5] after x,y
+ownGetters throws on b twoReceiversOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on b twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+ownGetters throws on b truthy "clear" after flag
+ownGetters throws on b equalsLeaf "leaf" after kind
+ownGetters throws on c chain RangeError getter of c at chain:13:17 after b,c
+ownGetters throws on c chainOnTwoLines RangeError getter of c at chainOnTwoLines:15:7 after b,c
+ownGetters throws on c chainKeepingFirst RangeError getter of c at chainKeepingFirst:19:15 after b,c
+ownGetters throws on c chainInLoop RangeError getter of c at chainInLoop:24:42 after b,c
+ownGetters throws on c sameReceiver [-1, 1.5] after x,y
+ownGetters throws on c sameReceiverOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on c twoReceivers [-1, 1.5] after x,y
+ownGetters throws on c twoReceiversOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on c twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+ownGetters throws on c truthy "clear" after flag
+ownGetters throws on c equalsLeaf "leaf" after kind
+ownGetters throws on x chain 1 after b,c
+ownGetters throws on x chainOnTwoLines 1 after b,c
+ownGetters throws on x chainKeepingFirst [object, 1] after b,c
+ownGetters throws on x chainInLoop 1 after b,c,b,c
+ownGetters throws on x sameReceiver RangeError getter of x at sameReceiver:27:23 after x
+ownGetters throws on x sameReceiverOnTwoLines RangeError getter of x at sameReceiverOnTwoLines:29:15 after x
+ownGetters throws on x twoReceivers RangeError getter of x at twoReceivers:33:28 after x
+ownGetters throws on x twoReceiversOnTwoLines RangeError getter of x at twoReceiversOnTwoLines:35:15 after x
+ownGetters throws on x twoReceiversInLoop RangeError getter of x at twoReceiversInLoop:41:43 after x
+ownGetters throws on x truthy "clear" after flag
+ownGetters throws on x equalsLeaf "leaf" after kind
+ownGetters throws on y chain 1 after b,c
+ownGetters throws on y chainOnTwoLines 1 after b,c
+ownGetters throws on y chainKeepingFirst [object, 1] after b,c
+ownGetters throws on y chainInLoop 1 after b,c,b,c
+ownGetters throws on y sameReceiver RangeError getter of y at sameReceiver:27:28 after x,y
+ownGetters throws on y sameReceiverOnTwoLines RangeError getter of y at sameReceiverOnTwoLines:30:15 after x,y
+ownGetters throws on y twoReceivers RangeError getter of y at twoReceivers:33:33 after x,y
+ownGetters throws on y twoReceiversOnTwoLines RangeError getter of y at twoReceiversOnTwoLines:36:15 after x,y
+ownGetters throws on y twoReceiversInLoop RangeError getter of y at twoReceiversInLoop:41:48 after x,y
+ownGetters throws on y truthy "clear" after flag
+ownGetters throws on y equalsLeaf "leaf" after kind
+ownGetters throws on flag chain 1 after b,c
+ownGetters throws on flag chainOnTwoLines 1 after b,c
+ownGetters throws on flag chainKeepingFirst [object, 1] after b,c
+ownGetters throws on flag chainInLoop 1 after b,c,b,c
+ownGetters throws on flag sameReceiver [-1, 1.5] after x,y
+ownGetters throws on flag sameReceiverOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on flag twoReceivers [-1, 1.5] after x,y
+ownGetters throws on flag twoReceiversOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on flag twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+ownGetters throws on flag truthy RangeError getter of flag at truthy:45:9 after flag
+ownGetters throws on flag equalsLeaf "leaf" after kind
+ownGetters throws on kind chain 1 after b,c
+ownGetters throws on kind chainOnTwoLines 1 after b,c
+ownGetters throws on kind chainKeepingFirst [object, 1] after b,c
+ownGetters throws on kind chainInLoop 1 after b,c,b,c
+ownGetters throws on kind sameReceiver [-1, 1.5] after x,y
+ownGetters throws on kind sameReceiverOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on kind twoReceivers [-1, 1.5] after x,y
+ownGetters throws on kind twoReceiversOnTwoLines [-1, 1.5] after x,y
+ownGetters throws on kind twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+ownGetters throws on kind truthy "clear" after flag
+ownGetters throws on kind equalsLeaf RangeError getter of kind at equalsLeaf:48:21 after kind
+classGetters throws on b chain RangeError getter of b at chain:13:15 after b
+classGetters throws on b chainOnTwoLines RangeError getter of b at chainOnTwoLines:15:5 after b
+classGetters throws on b chainKeepingFirst RangeError getter of b at chainKeepingFirst:18:15 after b
+classGetters throws on b chainInLoop RangeError getter of b at chainInLoop:24:40 after b
+classGetters throws on b sameReceiver [-1, 1.5] after x,y
+classGetters throws on b sameReceiverOnTwoLines [-1, 1.5] after x,y
+classGetters throws on b twoReceivers [-1, 1.5] after x,y
+classGetters throws on b twoReceiversOnTwoLines [-1, 1.5] after x,y
+classGetters throws on b twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+classGetters throws on b truthy "clear" after flag
+classGetters throws on b equalsLeaf "leaf" after kind
+classGetters throws on c chain RangeError getter of c at chain:13:17 after b,c
+classGetters throws on c chainOnTwoLines RangeError getter of c at chainOnTwoLines:15:7 after b,c
+classGetters throws on c chainKeepingFirst RangeError getter of c at chainKeepingFirst:19:15 after b,c
+classGetters throws on c chainInLoop RangeError getter of c at chainInLoop:24:42 after b,c
+classGetters throws on c sameReceiver [-1, 1.5] after x,y
+classGetters throws on c sameReceiverOnTwoLines [-1, 1.5] after x,y
+classGetters throws on c twoReceivers [-1, 1.5] after x,y
+classGetters throws on c twoReceiversOnTwoLines [-1, 1.5] after x,y
+classGetters throws on c twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+classGetters throws on c truthy "clear" after flag
+classGetters throws on c equalsLeaf "leaf" after kind
+classGetters throws on x chain 1 after b,c
+classGetters throws on x chainOnTwoLines 1 after b,c
+classGetters throws on x chainKeepingFirst [object, 1] after b,c
+classGetters throws on x chainInLoop 1 after b,c,b,c
+classGetters throws on x sameReceiver RangeError getter of x at sameReceiver:27:23 after x
+classGetters throws on x sameReceiverOnTwoLines RangeError getter of x at sameReceiverOnTwoLines:29:15 after x
+classGetters throws on x twoReceivers RangeError getter of x at twoReceivers:33:28 after x
+classGetters throws on x twoReceiversOnTwoLines RangeError getter of x at twoReceiversOnTwoLines:35:15 after x
+classGetters throws on x twoReceiversInLoop RangeError getter of x at twoReceiversInLoop:41:43 after x
+classGetters throws on x truthy "clear" after flag
+classGetters throws on x equalsLeaf "leaf" after kind
+classGetters throws on y chain 1 after b,c
+classGetters throws on y chainOnTwoLines 1 after b,c
+classGetters throws on y chainKeepingFirst [object, 1] after b,c
+classGetters throws on y chainInLoop 1 after b,c,b,c
+classGetters throws on y sameReceiver RangeError getter of y at sameReceiver:27:28 after x,y
+classGetters throws on y sameReceiverOnTwoLines RangeError getter of y at sameReceiverOnTwoLines:30:15 after x,y
+classGetters throws on y twoReceivers RangeError getter of y at twoReceivers:33:33 after x,y
+classGetters throws on y twoReceiversOnTwoLines RangeError getter of y at twoReceiversOnTwoLines:36:15 after x,y
+classGetters throws on y twoReceiversInLoop RangeError getter of y at twoReceiversInLoop:41:48 after x,y
+classGetters throws on y truthy "clear" after flag
+classGetters throws on y equalsLeaf "leaf" after kind
+classGetters throws on flag chain 1 after b,c
+classGetters throws on flag chainOnTwoLines 1 after b,c
+classGetters throws on flag chainKeepingFirst [object, 1] after b,c
+classGetters throws on flag chainInLoop 1 after b,c,b,c
+classGetters throws on flag sameReceiver [-1, 1.5] after x,y
+classGetters throws on flag sameReceiverOnTwoLines [-1, 1.5] after x,y
+classGetters throws on flag twoReceivers [-1, 1.5] after x,y
+classGetters throws on flag twoReceiversOnTwoLines [-1, 1.5] after x,y
+classGetters throws on flag twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+classGetters throws on flag truthy RangeError getter of flag at truthy:45:9 after flag
+classGetters throws on flag equalsLeaf "leaf" after kind
+classGetters throws on kind chain 1 after b,c
+classGetters throws on kind chainOnTwoLines 1 after b,c
+classGetters throws on kind chainKeepingFirst [object, 1] after b,c
+classGetters throws on kind chainInLoop 1 after b,c,b,c
+classGetters throws on kind sameReceiver [-1, 1.5] after x,y
+classGetters throws on kind sameReceiverOnTwoLines [-1, 1.5] after x,y
+classGetters throws on kind twoReceivers [-1, 1.5] after x,y
+classGetters throws on kind twoReceiversOnTwoLines [-1, 1.5] after x,y
+classGetters throws on kind twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+classGetters throws on kind truthy "clear" after flag
+classGetters throws on kind equalsLeaf RangeError getter of kind at equalsLeaf:48:21 after kind
+proxy throws on b chain RangeError getter of b at chain:13:15 after b
+proxy throws on b chainOnTwoLines RangeError getter of b at chainOnTwoLines:15:5 after b
+proxy throws on b chainKeepingFirst RangeError getter of b at chainKeepingFirst:18:15 after b
+proxy throws on b chainInLoop RangeError getter of b at chainInLoop:24:40 after b
+proxy throws on b sameReceiver [-1, 1.5] after x,y
+proxy throws on b sameReceiverOnTwoLines [-1, 1.5] after x,y
+proxy throws on b twoReceivers [-1, 1.5] after x,y
+proxy throws on b twoReceiversOnTwoLines [-1, 1.5] after x,y
+proxy throws on b twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+proxy throws on b truthy "clear" after flag
+proxy throws on b equalsLeaf "leaf" after kind
+proxy throws on c chain RangeError getter of c at chain:13:17 after b,c
+proxy throws on c chainOnTwoLines RangeError getter of c at chainOnTwoLines:15:7 after b,c
+proxy throws on c chainKeepingFirst RangeError getter of c at chainKeepingFirst:19:15 after b,c
+proxy throws on c chainInLoop RangeError getter of c at chainInLoop:24:42 after b,c
+proxy throws on c sameReceiver [-1, 1.5] after x,y
+proxy throws on c sameReceiverOnTwoLines [-1, 1.5] after x,y
+proxy throws on c twoReceivers [-1, 1.5] after x,y
+proxy throws on c twoReceiversOnTwoLines [-1, 1.5] after x,y
+proxy throws on c twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+proxy throws on c truthy "clear" after flag
+proxy throws on c equalsLeaf "leaf" after kind
+proxy throws on x chain 1 after b,c
+proxy throws on x chainOnTwoLines 1 after b,c
+proxy throws on x chainKeepingFirst [object, 1] after b,c
+proxy throws on x chainInLoop 1 after b,c,b,c
+proxy throws on x sameReceiver RangeError getter of x at sameReceiver:27:23 after x
+proxy throws on x sameReceiverOnTwoLines RangeError getter of x at sameReceiverOnTwoLines:29:15 after x
+proxy throws on x twoReceivers RangeError getter of x at twoReceivers:33:28 after x
+proxy throws on x twoReceiversOnTwoLines RangeError getter of x at twoReceiversOnTwoLines:35:15 after x
+proxy throws on x twoReceiversInLoop RangeError getter of x at twoReceiversInLoop:41:43 after x
+proxy throws on x truthy "clear" after flag
+proxy throws on x equalsLeaf "leaf" after kind
+proxy throws on y chain 1 after b,c
+proxy throws on y chainOnTwoLines 1 after b,c
+proxy throws on y chainKeepingFirst [object, 1] after b,c
+proxy throws on y chainInLoop 1 after b,c,b,c
+proxy throws on y sameReceiver RangeError getter of y at sameReceiver:27:28 after x,y
+proxy throws on y sameReceiverOnTwoLines RangeError getter of y at sameReceiverOnTwoLines:30:15 after x,y
+proxy throws on y twoReceivers RangeError getter of y at twoReceivers:33:33 after x,y
+proxy throws on y twoReceiversOnTwoLines RangeError getter of y at twoReceiversOnTwoLines:36:15 after x,y
+proxy throws on y twoReceiversInLoop RangeError getter of y at twoReceiversInLoop:41:48 after x,y
+proxy throws on y truthy "clear" after flag
+proxy throws on y equalsLeaf "leaf" after kind
+proxy throws on flag chain 1 after b,c
+proxy throws on flag chainOnTwoLines 1 after b,c
+proxy throws on flag chainKeepingFirst [object, 1] after b,c
+proxy throws on flag chainInLoop 1 after b,c,b,c
+proxy throws on flag sameReceiver [-1, 1.5] after x,y
+proxy throws on flag sameReceiverOnTwoLines [-1, 1.5] after x,y
+proxy throws on flag twoReceivers [-1, 1.5] after x,y
+proxy throws on flag twoReceiversOnTwoLines [-1, 1.5] after x,y
+proxy throws on flag twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+proxy throws on flag truthy RangeError getter of flag at truthy:45:9 after flag
+proxy throws on flag equalsLeaf "leaf" after kind
+proxy throws on kind chain 1 after b,c
+proxy throws on kind chainOnTwoLines 1 after b,c
+proxy throws on kind chainKeepingFirst [object, 1] after b,c
+proxy throws on kind chainInLoop 1 after b,c,b,c
+proxy throws on kind sameReceiver [-1, 1.5] after x,y
+proxy throws on kind sameReceiverOnTwoLines [-1, 1.5] after x,y
+proxy throws on kind twoReceivers [-1, 1.5] after x,y
+proxy throws on kind twoReceiversOnTwoLines [-1, 1.5] after x,y
+proxy throws on kind twoReceiversInLoop [-1, 1.5, -1, 1.5] after x,y,x,y
+proxy throws on kind truthy "clear" after flag
+proxy throws on kind equalsLeaf RangeError getter of kind at equalsLeaf:48:21 after kind
+first receiver is undefined chain TypeError b at chain:13:15
+second receiver is undefined after literal chain TypeError c at chain:13:17
+second receiver is undefined after outOfLine chain TypeError c at chain:13:17
+second receiver is undefined after inherited chain TypeError c at chain:13:17
+second receiver is undefined after fields chain TypeError c at chain:13:17
+second receiver is undefined after ownGetters chain TypeError c at chain:13:17 after b
+second receiver is undefined after classGetters chain TypeError c at chain:13:17 after b
+second receiver is undefined after proxy chain TypeError c at chain:13:17 after b
+first receiver is undefined chainOnTwoLines TypeError b at chainOnTwoLines:15:5
+second receiver is undefined after literal chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is undefined after outOfLine chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is undefined after inherited chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is undefined after fields chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is undefined after ownGetters chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+second receiver is undefined after classGetters chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+second receiver is undefined after proxy chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+first receiver is undefined chainKeepingFirst TypeError b at chainKeepingFirst:18:15
+second receiver is undefined after literal chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is undefined after outOfLine chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is undefined after inherited chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is undefined after fields chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is undefined after ownGetters chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+second receiver is undefined after classGetters chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+second receiver is undefined after proxy chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+first receiver is undefined chainInLoop TypeError b at chainInLoop:24:40
+second receiver is undefined after literal chainInLoop TypeError c at chainInLoop:24:42
+second receiver is undefined after outOfLine chainInLoop TypeError c at chainInLoop:24:42
+second receiver is undefined after inherited chainInLoop TypeError c at chainInLoop:24:42
+second receiver is undefined after fields chainInLoop TypeError c at chainInLoop:24:42
+second receiver is undefined after ownGetters chainInLoop TypeError c at chainInLoop:24:42 after b
+second receiver is undefined after classGetters chainInLoop TypeError c at chainInLoop:24:42 after b
+second receiver is undefined after proxy chainInLoop TypeError c at chainInLoop:24:42 after b
+first receiver is undefined sameReceiver TypeError x at sameReceiver:27:23
+second receiver is undefined after literal sameReceiver [-1, 1.5]
+second receiver is undefined after outOfLine sameReceiver [-1, 1.5]
+second receiver is undefined after inherited sameReceiver [-1, 1.5]
+second receiver is undefined after fields sameReceiver [-1, 1.5]
+second receiver is undefined after ownGetters sameReceiver [-1, 1.5] after x,y
+second receiver is undefined after classGetters sameReceiver [-1, 1.5] after x,y
+second receiver is undefined after proxy sameReceiver [-1, 1.5] after x,y
+first receiver is undefined sameReceiverOnTwoLines TypeError x at sameReceiverOnTwoLines:29:15
+second receiver is undefined after literal sameReceiverOnTwoLines [-1, 1.5]
+second receiver is undefined after outOfLine sameReceiverOnTwoLines [-1, 1.5]
+second receiver is undefined after inherited sameReceiverOnTwoLines [-1, 1.5]
+second receiver is undefined after fields sameReceiverOnTwoLines [-1, 1.5]
+second receiver is undefined after ownGetters sameReceiverOnTwoLines [-1, 1.5] after x,y
+second receiver is undefined after classGetters sameReceiverOnTwoLines [-1, 1.5] after x,y
+second receiver is undefined after proxy sameReceiverOnTwoLines [-1, 1.5] after x,y
+first receiver is undefined twoReceivers TypeError x at twoReceivers:33:28
+second receiver is undefined after literal twoReceivers TypeError y at twoReceivers:33:33
+second receiver is undefined after outOfLine twoReceivers TypeError y at twoReceivers:33:33
+second receiver is undefined after inherited twoReceivers TypeError y at twoReceivers:33:33
+second receiver is undefined after fields twoReceivers TypeError y at twoReceivers:33:33
+second receiver is undefined after ownGetters twoReceivers TypeError y at twoReceivers:33:33 after x
+second receiver is undefined after classGetters twoReceivers TypeError y at twoReceivers:33:33 after x
+second receiver is undefined after proxy twoReceivers TypeError y at twoReceivers:33:33 after x
+first receiver is undefined twoReceiversOnTwoLines TypeError x at twoReceiversOnTwoLines:35:15
+second receiver is undefined after literal twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is undefined after outOfLine twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is undefined after inherited twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is undefined after fields twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is undefined after ownGetters twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+second receiver is undefined after classGetters twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+second receiver is undefined after proxy twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+first receiver is undefined twoReceiversInLoop TypeError x at twoReceiversInLoop:41:43
+second receiver is undefined after literal twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is undefined after outOfLine twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is undefined after inherited twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is undefined after fields twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is undefined after ownGetters twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+second receiver is undefined after classGetters twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+second receiver is undefined after proxy twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+first receiver is undefined truthy TypeError flag at truthy:45:9
+second receiver is undefined after literal truthy "clear"
+second receiver is undefined after outOfLine truthy "clear"
+second receiver is undefined after inherited truthy "clear"
+second receiver is undefined after fields truthy "clear"
+second receiver is undefined after ownGetters truthy "clear" after flag
+second receiver is undefined after classGetters truthy "clear" after flag
+second receiver is undefined after proxy truthy "clear" after flag
+first receiver is undefined equalsLeaf TypeError kind at equalsLeaf:48:21
+second receiver is undefined after literal equalsLeaf "leaf"
+second receiver is undefined after outOfLine equalsLeaf "leaf"
+second receiver is undefined after inherited equalsLeaf "leaf"
+second receiver is undefined after fields equalsLeaf "leaf"
+second receiver is undefined after ownGetters equalsLeaf "leaf" after kind
+second receiver is undefined after classGetters equalsLeaf "leaf" after kind
+second receiver is undefined after proxy equalsLeaf "leaf" after kind
+first receiver is null chain TypeError b at chain:13:15
+second receiver is null after literal chain TypeError c at chain:13:17
+second receiver is null after outOfLine chain TypeError c at chain:13:17
+second receiver is null after inherited chain TypeError c at chain:13:17
+second receiver is null after fields chain TypeError c at chain:13:17
+second receiver is null after ownGetters chain TypeError c at chain:13:17 after b
+second receiver is null after classGetters chain TypeError c at chain:13:17 after b
+second receiver is null after proxy chain TypeError c at chain:13:17 after b
+first receiver is null chainOnTwoLines TypeError b at chainOnTwoLines:15:5
+second receiver is null after literal chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is null after outOfLine chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is null after inherited chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is null after fields chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is null after ownGetters chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+second receiver is null after classGetters chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+second receiver is null after proxy chainOnTwoLines TypeError c at chainOnTwoLines:15:7 after b
+first receiver is null chainKeepingFirst TypeError b at chainKeepingFirst:18:15
+second receiver is null after literal chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is null after outOfLine chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is null after inherited chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is null after fields chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is null after ownGetters chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+second receiver is null after classGetters chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+second receiver is null after proxy chainKeepingFirst TypeError c at chainKeepingFirst:19:15 after b
+first receiver is null chainInLoop TypeError b at chainInLoop:24:40
+second receiver is null after literal chainInLoop TypeError c at chainInLoop:24:42
+second receiver is null after outOfLine chainInLoop TypeError c at chainInLoop:24:42
+second receiver is null after inherited chainInLoop TypeError c at chainInLoop:24:42
+second receiver is null after fields chainInLoop TypeError c at chainInLoop:24:42
+second receiver is null after ownGetters chainInLoop TypeError c at chainInLoop:24:42 after b
+second receiver is null after classGetters chainInLoop TypeError c at chainInLoop:24:42 after b
+second receiver is null after proxy chainInLoop TypeError c at chainInLoop:24:42 after b
+first receiver is null sameReceiver TypeError x at sameReceiver:27:23
+second receiver is null after literal sameReceiver [-1, 1.5]
+second receiver is null after outOfLine sameReceiver [-1, 1.5]
+second receiver is null after inherited sameReceiver [-1, 1.5]
+second receiver is null after fields sameReceiver [-1, 1.5]
+second receiver is null after ownGetters sameReceiver [-1, 1.5] after x,y
+second receiver is null after classGetters sameReceiver [-1, 1.5] after x,y
+second receiver is null after proxy sameReceiver [-1, 1.5] after x,y
+first receiver is null sameReceiverOnTwoLines TypeError x at sameReceiverOnTwoLines:29:15
+second receiver is null after literal sameReceiverOnTwoLines [-1, 1.5]
+second receiver is null after outOfLine sameReceiverOnTwoLines [-1, 1.5]
+second receiver is null after inherited sameReceiverOnTwoLines [-1, 1.5]
+second receiver is null after fields sameReceiverOnTwoLines [-1, 1.5]
+second receiver is null after ownGetters sameReceiverOnTwoLines [-1, 1.5] after x,y
+second receiver is null after classGetters sameReceiverOnTwoLines [-1, 1.5] after x,y
+second receiver is null after proxy sameReceiverOnTwoLines [-1, 1.5] after x,y
+first receiver is null twoReceivers TypeError x at twoReceivers:33:28
+second receiver is null after literal twoReceivers TypeError y at twoReceivers:33:33
+second receiver is null after outOfLine twoReceivers TypeError y at twoReceivers:33:33
+second receiver is null after inherited twoReceivers TypeError y at twoReceivers:33:33
+second receiver is null after fields twoReceivers TypeError y at twoReceivers:33:33
+second receiver is null after ownGetters twoReceivers TypeError y at twoReceivers:33:33 after x
+second receiver is null after classGetters twoReceivers TypeError y at twoReceivers:33:33 after x
+second receiver is null after proxy twoReceivers TypeError y at twoReceivers:33:33 after x
+first receiver is null twoReceiversOnTwoLines TypeError x at twoReceiversOnTwoLines:35:15
+second receiver is null after literal twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is null after outOfLine twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is null after inherited twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is null after fields twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15
+second receiver is null after ownGetters twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+second receiver is null after classGetters twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+second receiver is null after proxy twoReceiversOnTwoLines TypeError y at twoReceiversOnTwoLines:36:15 after x
+first receiver is null twoReceiversInLoop TypeError x at twoReceiversInLoop:41:43
+second receiver is null after literal twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is null after outOfLine twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is null after inherited twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is null after fields twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48
+second receiver is null after ownGetters twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+second receiver is null after classGetters twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+second receiver is null after proxy twoReceiversInLoop TypeError y at twoReceiversInLoop:41:48 after x
+first receiver is null truthy TypeError flag at truthy:45:9
+second receiver is null after literal truthy "clear"
+second receiver is null after outOfLine truthy "clear"
+second receiver is null after inherited truthy "clear"
+second receiver is null after fields truthy "clear"
+second receiver is null after ownGetters truthy "clear" after flag
+second receiver is null after classGetters truthy "clear" after flag
+second receiver is null after proxy truthy "clear" after flag
+first receiver is null equalsLeaf TypeError kind at equalsLeaf:48:21
+second receiver is null after literal equalsLeaf "leaf"
+second receiver is null after outOfLine equalsLeaf "leaf"
+second receiver is null after inherited equalsLeaf "leaf"
+second receiver is null after fields equalsLeaf "leaf"
+second receiver is null after ownGetters equalsLeaf "leaf" after kind
+second receiver is null after classGetters equalsLeaf "leaf" after kind
+second receiver is null after proxy equalsLeaf "leaf" after kind
+first receiver is a string chain TypeError c at chain:13:17
+second receiver is a string chain undefined
+first receiver is a string chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a string chainOnTwoLines undefined
+first receiver is a string chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a string chainKeepingFirst ["text", undefined]
+first receiver is a string chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a string chainInLoop undefined
+first receiver is a string sameReceiver [undefined, undefined]
+second receiver is a string sameReceiver [-1, 1.5]
+first receiver is a string sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a string sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a string twoReceivers [undefined, undefined]
+second receiver is a string twoReceivers [-1, undefined]
+first receiver is a string twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a string twoReceiversOnTwoLines [-1, undefined]
+first receiver is a string twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a string twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a string truthy "clear"
+second receiver is a string truthy "clear"
+first receiver is a string equalsLeaf "other"
+second receiver is a string equalsLeaf "leaf"
+first receiver is a number chain TypeError c at chain:13:17
+second receiver is a number chain undefined
+first receiver is a number chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a number chainOnTwoLines undefined
+first receiver is a number chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a number chainKeepingFirst [7, undefined]
+first receiver is a number chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a number chainInLoop undefined
+first receiver is a number sameReceiver [undefined, undefined]
+second receiver is a number sameReceiver [-1, 1.5]
+first receiver is a number sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a number sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a number twoReceivers [undefined, undefined]
+second receiver is a number twoReceivers [-1, undefined]
+first receiver is a number twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a number twoReceiversOnTwoLines [-1, undefined]
+first receiver is a number twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a number twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a number truthy "clear"
+second receiver is a number truthy "clear"
+first receiver is a number equalsLeaf "other"
+second receiver is a number equalsLeaf "leaf"
+first receiver is a number chain TypeError c at chain:13:17
+second receiver is a number chain undefined
+first receiver is a number chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a number chainOnTwoLines undefined
+first receiver is a number chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a number chainKeepingFirst [1.5, undefined]
+first receiver is a number chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a number chainInLoop undefined
+first receiver is a number sameReceiver [undefined, undefined]
+second receiver is a number sameReceiver [-1, 1.5]
+first receiver is a number sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a number sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a number twoReceivers [undefined, undefined]
+second receiver is a number twoReceivers [-1, undefined]
+first receiver is a number twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a number twoReceiversOnTwoLines [-1, undefined]
+first receiver is a number twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a number twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a number truthy "clear"
+second receiver is a number truthy "clear"
+first receiver is a number equalsLeaf "other"
+second receiver is a number equalsLeaf "leaf"
+first receiver is a boolean chain TypeError c at chain:13:17
+second receiver is a boolean chain undefined
+first receiver is a boolean chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a boolean chainOnTwoLines undefined
+first receiver is a boolean chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a boolean chainKeepingFirst [true, undefined]
+first receiver is a boolean chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a boolean chainInLoop undefined
+first receiver is a boolean sameReceiver [undefined, undefined]
+second receiver is a boolean sameReceiver [-1, 1.5]
+first receiver is a boolean sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a boolean sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a boolean twoReceivers [undefined, undefined]
+second receiver is a boolean twoReceivers [-1, undefined]
+first receiver is a boolean twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a boolean twoReceiversOnTwoLines [-1, undefined]
+first receiver is a boolean twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a boolean twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a boolean truthy "clear"
+second receiver is a boolean truthy "clear"
+first receiver is a boolean equalsLeaf "other"
+second receiver is a boolean equalsLeaf "leaf"
+first receiver is a bigint chain TypeError c at chain:13:17
+second receiver is a bigint chain undefined
+first receiver is a bigint chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a bigint chainOnTwoLines undefined
+first receiver is a bigint chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a bigint chainKeepingFirst [10, undefined]
+first receiver is a bigint chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a bigint chainInLoop undefined
+first receiver is a bigint sameReceiver [undefined, undefined]
+second receiver is a bigint sameReceiver [-1, 1.5]
+first receiver is a bigint sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a bigint sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a bigint twoReceivers [undefined, undefined]
+second receiver is a bigint twoReceivers [-1, undefined]
+first receiver is a bigint twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a bigint twoReceiversOnTwoLines [-1, undefined]
+first receiver is a bigint twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a bigint twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a bigint truthy "clear"
+second receiver is a bigint truthy "clear"
+first receiver is a bigint equalsLeaf "other"
+second receiver is a bigint equalsLeaf "leaf"
+first receiver is a symbol chain TypeError c at chain:13:17
+second receiver is a symbol chain undefined
+first receiver is a symbol chainOnTwoLines TypeError c at chainOnTwoLines:15:7
+second receiver is a symbol chainOnTwoLines undefined
+first receiver is a symbol chainKeepingFirst TypeError c at chainKeepingFirst:19:15
+second receiver is a symbol chainKeepingFirst [Symbol(Symbol.iterator), undefined]
+first receiver is a symbol chainInLoop TypeError c at chainInLoop:24:42
+second receiver is a symbol chainInLoop undefined
+first receiver is a symbol sameReceiver [undefined, undefined]
+second receiver is a symbol sameReceiver [-1, 1.5]
+first receiver is a symbol sameReceiverOnTwoLines [undefined, undefined]
+second receiver is a symbol sameReceiverOnTwoLines [-1, 1.5]
+first receiver is a symbol twoReceivers [undefined, undefined]
+second receiver is a symbol twoReceivers [-1, undefined]
+first receiver is a symbol twoReceiversOnTwoLines [undefined, undefined]
+second receiver is a symbol twoReceiversOnTwoLines [-1, undefined]
+first receiver is a symbol twoReceiversInLoop [undefined, undefined, undefined, undefined]
+second receiver is a symbol twoReceiversInLoop [-1, undefined, -1, undefined]
+first receiver is a symbol truthy "clear"
+second receiver is a symbol truthy "clear"
+first receiver is a symbol equalsLeaf "other"
+second receiver is a symbol equalsLeaf "leaf"
+deletesSecond 0 ["x", undefined] ["x", undefined] ["x", undefined] ["x", "y", "x", "y"]
+deletesSecond 1 ["x", undefined] ["x", undefined] ["x", undefined] ["x", "y", "x", "y"]
+deletesSecond 2 ["x", undefined] ["x", undefined] ["x", undefined] ["x", "y", "x", "y"]
+addsSecond 0 ["x", "added"] ["x", "added"] ["x", "added"] ["x", undefined, "x", undefined]
+addsSecond 1 ["x", "added"] ["x", "added"] ["x", "added"] ["x", undefined, "x", undefined]
+addsSecond 2 ["x", "added"] ["x", "added"] ["x", "added"] ["x", undefined, "x", undefined]
+redefinesSecond 0 ["x", "computed"] ["x", "computed"] ["x", "computed"] ["x", "y", "x", "y"]
+redefinesSecond 1 ["x", "computed"] ["x", "computed"] ["x", "computed"] ["x", "y", "x", "y"]
+redefinesSecond 2 ["x", "computed"] ["x", "computed"] ["x", "computed"] ["x", "y", "x", "y"]
+replacesPrototype 0 ["x", "new prototype"] ["x", "new prototype"] ["x", "new prototype"] ["x", "old prototype", "x", "old prototype"]
+replacesPrototype 1 ["x", "new prototype"] ["x", "new prototype"] ["x", "new prototype"] ["x", "old prototype", "x", "old prototype"]
+replacesPrototype 2 ["x", "new prototype"] ["x", "new prototype"] ["x", "new prototype"] ["x", "old prototype", "x", "old prototype"]
+growsReceiver 0 ["x", "y"] ["x", "y"] ["x", "y"] ["x", "y", "x", "y"]
+growsReceiver 1 ["x", "y"] ["x", "y"] ["x", "y"] ["x", "y", "x", "y"]
+growsReceiver 2 ["x", "y"] ["x", "y"] ["x", "y"] ["x", "y", "x", "y"]
+rotating 0 0 [object, -0] -1
+rotating 1 undefined [object, NaN] "tree"
+rotating 2 "" after c [object, true] after c undefined after c
+rotating 3 10 [object, Symbol(Symbol.iterator)] 0
+rotating 4 -0 [object, 1] undefined
+rotating 5 NaN [object, 2147483648] "" after c
+rotating 6 true after c [object, null] after c 10
+rotating 7 Symbol(Symbol.iterator) [object, object] -0
+rotating 8 1 [object, -1] NaN
+rotating 9 2147483648 [object, "tree"] true after c,c
+rotating 10 null after c [function, undefined] Symbol(Symbol.iterator)
+rotating 11 object [object, 0] 1
+rotating 12 -1 [object, undefined] 2147483648
+rotating 13 "tree" [object, ""] after c null after c,c
+rotating 14 undefined [[], 10] object
+rotating 15 0 [object, -0] -1
+rotating 16 undefined [object, NaN] "tree"
+rotating 17 "" after c [object, true] after c undefined after c
+rotating 18 10 [object, Symbol(Symbol.iterator)] 0
+rotating 19 -0 [object, 1] undefined
+rotating 20 NaN [object, 2147483648] "" after c
+rotating 21 true after c [object, null] after c 10
+rotating 22 Symbol(Symbol.iterator) [object, object] -0
+rotating 23 1 [object, -1] NaN
+rotating 24 2147483648 [object, "tree"] true after c,c
+rotating 25 null after c [function, undefined] Symbol(Symbol.iterator)
+rotating 26 object [object, 0] 1
+rotating 27 -1 [object, undefined] 2147483648
+rotating 28 "tree" [object, ""] after c null after c,c
+rotating 29 undefined [[], 10] object

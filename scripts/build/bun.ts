@@ -14,15 +14,16 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
+import { cutProfilesStamp, emitCutProfileCheck } from "./aot.ts";
 import { binaryExpectations, exportList, shimExpectations } from "./binary-expectations.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { cc, cxx, link, pch } from "./compile.ts";
+import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { jscPrograms } from "./deps/webkit.ts";
+import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -41,6 +42,7 @@ import { quote, slash } from "./shell.ts";
 import { emitShims, machoPostlinkCommand, machoPostlinkImplicitInputs } from "./shims.ts";
 import { resolveDep, type Dependency, type DepName, type ResolvedDep } from "./source.ts";
 import { streamPath } from "./stream.ts";
+import { writeLibrariesFile } from "./trim/libraries.ts";
 import { generateUnifiedSources } from "./unified.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -77,7 +79,7 @@ function systemLibs(cfg: Config): string[] {
     // Linux local WebKit: link system ICU (prebuilt bundles its own).
     // Assumes system ICU is in default lib paths — true on most distros.
     // Android: no system ICU; the local WebKit build must bundle it.
-    if (cfg.webkit === "local" && cfg.abi !== "android") {
+    if (cfg.webkit === "local" && cfg.abi !== "android" && linuxIcuRoot(cfg) === undefined) {
       libs.push("-licudata", "-licui18n", "-licuuc");
     }
   }
@@ -159,7 +161,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // ─── Step 1: codegen + rust ───
   // Emitted before the deps: ninja breaks scheduling ties by emission order, and the Rust crate chain is the critical path (see the compile pool in compile.ts).
-  const codegen = emitCodegen(n, cfg, sources);
+  const codegen = emitCodegen(n, cfg, sources, webkitEngineSources(cfg));
   const depsByName = new Map<DepName, ResolvedDep>();
 
   // Each Rust crate produces an rlib the link takes beside the C/C++
@@ -354,8 +356,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   }
 
   const cxxObjects: string[] = [];
-  let compilersObject: string | undefined;
-  let regExpCompilerOnlyObject: string | undefined;
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
@@ -372,15 +372,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.implicitInputs = depHeaderSignal;
       opts.orderOnlyInputs = codegenOrderOnly;
     }
-    const object = cxx(n, cfg, src, opts);
-    if (slash(relSrc) === "src/jsc/bindings/BunCompilersRegExpOnly.cpp") {
-      regExpCompilerOnlyObject = object;
-      continue;
-    }
-    if (slash(relSrc) === "src/jsc/bindings/BunCompilers.cpp") compilersObject = object;
-    cxxObjects.push(object);
+    cxxObjects.push(cxx(n, cfg, src, opts));
   }
-  assert(compilersObject !== undefined && regExpCompilerOnlyObject !== undefined, "BunCompilers*.cpp not found");
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
@@ -407,6 +400,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       implicitInputs: [codegen.internalModulesBin],
     }),
   );
+  if (codegen.builtinSourcesArchive !== undefined) {
+    cObjects.push(
+      cc(n, cfg, resolve(cfg.cwd, "src", "builtin_sources", "archive.S"), {
+        flags: cFlagsFull,
+        implicitInputs: [codegen.builtinSourcesArchive],
+      }),
+    );
+  }
 
   // Deps that contribute source files for bun to compile directly (via
   // provides.sources) instead of building a lib. Compile them here with
@@ -445,11 +446,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
+    implicitInputs: [
+      ...linkImplicitInputs(cfg),
+      ...shimInputs,
+      ...(cfg.trimmable ? [writeLibrariesFile(cfg, deps)] : []),
+    ],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),
-    islands: true,
+    trimmable: true,
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
@@ -464,19 +469,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     ...depLibs,
   ]);
 
-  if (strippedExe !== undefined && !cfg.windows) {
-    const slimName = "bun-slim-profile";
-    const renamed = (path: string) => path.replaceAll(`${exeName}.`, `${slimName}.`);
-    const slimExe = link(n, cfg, slimName, [regExpCompilerOnlyObject, ...linkObjects.filter(o => o !== compilersObject)], {
-      libs: depLibs,
-      lazyObjects: depLink.lazy,
-      flags: ldflags.map(renamed),
-      implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
-      linkerMapOutputs: linkerMapOutputs(cfg).map(renamed),
-    });
-    emitStrip(n, cfg, slimExe, flags.stripflags, "bun-slim");
-  }
-
   return { exe, strippedExe, dsym, deps, codegen, objects: allObjects };
 }
 
@@ -489,9 +481,24 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 function emitJscPrograms(n: Ninja, cfg: Config, deps: ReadonlyMap<DepName, ResolvedDep>, headersReady: string): void {
   for (const program of jscPrograms(cfg)) {
     n.comment(`─── ${program.name} (JSC standalone program) ───`);
-    const objects = program.sources.map(src =>
-      cxx(n, cfg, src, { flags: program.cxxflags, orderOnlyInputs: [headersReady] }),
-    );
+    const prefixes: Array<{ prefix: PrecompiledHeader; files: RegExp | undefined }> = [];
+    for (const { header, files } of program.pch ?? []) {
+      const base = prefixes[0]?.prefix;
+      const prefix = pch(n, cfg, header, {
+        flags: program.cxxflags,
+        orderOnlyInputs: [headersReady],
+        ...(base !== undefined && { base }),
+      });
+      prefixes.unshift({ prefix, files });
+    }
+    const objects = program.sources.map(src => {
+      const prefix = prefixes.find(({ files }) => files === undefined || files.test(slash(src)))?.prefix;
+      return cxx(n, cfg, src, {
+        flags: program.cxxflags,
+        orderOnlyInputs: [headersReady],
+        ...(prefix !== undefined && { pch: prefix.pch, pchHeader: prefix.wrapperHeader, pchBases: prefix.bases }),
+      });
+    });
     const from = (["WebKit", "mimalloc"] as const).map(name => deps.get(name)!);
     const depLink = lazyDepObjects(
       cfg,
@@ -557,7 +564,6 @@ export function emitPostLink(
   let strippedExe: string | undefined;
   let dsym: string | undefined;
   if (shouldStrip(cfg)) {
-    registerStripRule(n, cfg);
     strippedExe = emitStrip(n, cfg, exe, stripflags);
     // darwin: extract debug symbols from the UNSTRIPPED exe into a .dSYM
     // bundle. dsymutil reads DWARF from bun-profile, writes
@@ -583,10 +589,17 @@ export function emitPostLink(
   // The smoke test and the static scans: validations of the link
   // edge (they run whenever the executable is relinked, see postLinkChecks)
   // and, for running them by name, the `check` phony.
+  const runtimeBeingWritten = strippedExe !== undefined && isRunningRuntime(strippedExe) ? strippedExe : undefined;
   n.phony("check", [
-    ...emitSmokeTest(n, cfg, exe, exeName, strippedExe),
-    ...emitBinaryVerify(n, cfg, exe, exeName, strippedExe),
-    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, strippedExe),
+    ...emitSmokeTest(n, cfg, exe, exeName, runtimeBeingWritten),
+    ...emitBinaryVerify(n, cfg, exe, exeName, runtimeBeingWritten),
+    ...emitDuplicateSymbolCheck(n, cfg, exeName, linkInputs, runtimeBeingWritten),
+    ...emitCutProfileCheck(n, cfg, {
+      exe,
+      exeName,
+      strippedExe: runtimeBeingWritten,
+      warnOnly: binaryChecksWarnOnly(cfg),
+    }),
   ]);
 
   return { strippedExe, dsym };
@@ -610,6 +623,14 @@ function duplicateSymbolsStamp(cfg: Config, exeName: string): string | undefined
     : undefined;
 }
 
+function isRunningRuntime(path: string): boolean {
+  try {
+    return realpathSync(path) === realpathSync(process.execPath);
+  } catch {
+    return false;
+  }
+}
+
 function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump: string; cxxfilt: string } | undefined {
   const { nm, readobj, objdump, cxxfilt } = cfg;
   return nm !== undefined && readobj !== undefined && objdump !== undefined && cxxfilt !== undefined
@@ -623,12 +644,16 @@ function binaryVerifyTools(cfg: Config): { nm: string; readobj: string; objdump:
  * that relinks it) runs them, without making them inputs of anything.
  */
 export function postLinkChecks(cfg: Config, exeName: string): string[] {
-  return [smokeTestStamp(cfg, exeName), binaryVerifyStamp(cfg, exeName), duplicateSymbolsStamp(cfg, exeName)].filter(
-    (p): p is string => p !== undefined,
-  );
+  return [
+    smokeTestStamp(cfg, exeName),
+    binaryVerifyStamp(cfg, exeName),
+    duplicateSymbolsStamp(cfg, exeName),
+    cutProfilesStamp(cfg, exeName),
+  ].filter((p): p is string => p !== undefined);
 }
 
 const verifyBinaryPath = resolve(import.meta.dirname, "verify-binary.ts");
+const closeElfGapsPath = resolve(import.meta.dirname, "close-elf-gaps.ts");
 
 /**
  * verify-binary.ts' static scans of the linked executable — exported
@@ -802,21 +827,9 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
  * Input (bun-profile) is NOT modified — strip writes a new file via `-o`.
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
-function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[], name = "bun"): string {
-  const out = resolve(cfg.buildDir, name + cfg.exeSuffix);
-  const postlinkInputs = machoPostlinkImplicitInputs(cfg);
-  const node = {
-    outputs: [out],
-    inputs: [inputExe],
-    ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
-  };
-  if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
-  else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
+function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
+  const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
 
-  return out;
-}
-
-function registerStripRule(n: Ninja, cfg: Config): void {
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command
   // follows the HOST shell (cmd natively, cp when cross-compiling).
@@ -832,10 +845,21 @@ function registerStripRule(n: Ninja, cfg: Config): void {
     // embedded — so the stripped `bun` needs its own postlink pass.
     // (machoPostlinkCommand is "" everywhere else.)
     n.rule("strip", {
-      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}`,
+      command: `${quote(cfg.strip, false)} $stripflags $in -o $out${machoPostlinkCommand(cfg)}${cfg.hardened ? ` && ${cfg.jsRuntime} ${quote(closeElfGapsPath, false)} $out` : ""}`,
       description: "strip $out",
     });
   }
+
+  const postlinkInputs = [...machoPostlinkImplicitInputs(cfg), ...(cfg.hardened ? [closeElfGapsPath] : [])];
+  const node = {
+    outputs: [out],
+    inputs: [inputExe],
+    ...(postlinkInputs.length > 0 ? { implicitInputs: postlinkInputs } : {}),
+  };
+  if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
+  else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
+
+  return out;
 }
 
 /**

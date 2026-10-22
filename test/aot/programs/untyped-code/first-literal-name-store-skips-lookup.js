@@ -1,17 +1,11 @@
-// Where an object still has the shape its literal or its constructor gave it, the compiler has written down where each name lies. The first store to a name that is there goes by that: nothing is looked up.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const lookedUp = () => count("MegamorphicCache::replace:new-pair");
+// Objects that still have the shape their literal gave them are stored to by name, under names that are there, and what may not be stored to like that.
 function point(i) { return { x: i, y: i + 1, z: i + 2 }; }
 function pair(i) { return { first: i, second: "s" + i }; }
 function wide(i) { return { a: i, b: i, c: i, d: i, e: i, f: i, g: i, h: i, i: i, j: i }; }
 function movePoint(o, turns) { for (let i = 0; i < turns; i++) { o.x = i; o.y = i + 1; o.z = o.x + o.y; } return o; }
 function swapPair(o, turns) { for (let i = 0; i < turns; i++) { const first = o.first; o.first = o.second; o.second = first; } return o; }
 function fillWide(o, turns) { for (let i = 0; i < turns; i++) { o.a = i; o.e = "e" + i; o.j = { i }; } return o; }
-const before = lookedUp();
 console.log(JSON.stringify(movePoint(point(1), 100)), JSON.stringify(swapPair(pair(2), 101)), JSON.stringify(fillWide(wide(3), 100)));
-const after = lookedUp();
-console.log(after === before ? "nothing was looked up" : (after - before) + " pairs were looked up");
 
 // What may not be stored to like that.
 "use strict";

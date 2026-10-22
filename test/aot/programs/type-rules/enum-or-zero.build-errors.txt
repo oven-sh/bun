@@ -1,5 +1,0 @@
-error: TS100013: This always throws a TypeError under --aot: the property `flags` expects 'integer -2147483648..2147483647' and always gets -0.
-error: TS100013: This always throws a TypeError under --aot: the property `flags` expects 'integer -2147483648..2147483647' and always gets 1.5.
-error: TS100013: This always throws a TypeError under --aot: the property `flags` expects 'integer -2147483648..2147483647' and always gets 1099511627776.
-error: TS100013: This always throws a TypeError under --aot: `either` expects 'integer -2147483648..2147483647' and always gets -0.
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `pass` expects 'integer -2147483648..2147483647' and always gets -0.

@@ -213,7 +213,7 @@ JSObject* JSCountQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObj
     return getDOMPrototype<JSCountQueuingStrategy>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSCountQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSCountQueuingStrategy::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSCountQueuingStrategyConstructor, DOMConstructorID::CountQueuingStrategy>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

@@ -1,6 +1,6 @@
 // An order of declared keys that was seen before is laid on the new object by the compiled parser itself: the engine is not called.
-// IR+ JSONPushKey
-// IR+ JSONApplyKeyOrder
+// IR+ ^ .*JSONKeyOrderAppend
+// IR+ ^ .*JSONKeyOrderApply
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }
 interface Segment { id: number; from: Point; to: Point; tags: string[] }
@@ -10,9 +10,9 @@ const counted = typeof aotOperationCount === "function" ? aotOperationCount : nu
 const count = (name: string) => (counted ? counted(name) : 0);
 function measure(what: string, texts: string[], parse: (text: string) => unknown, callsExpected: number): void {
   for (let i = 0; i < 8; i++) for (const text of texts) parse(text);
-  const [called, readAgain] = [count("operationAOTTypedJSONApplyKeyOrder"), count("operationAOTTypedJSONDecodeSource")];
+  const [called, readAgain] = [count("operationAOTJSONKeyOrderApply"), count("operationAOTJSONSourceAbandon")];
   for (const text of texts) parse(text);
-  console.log(what, counted ? count("operationAOTTypedJSONApplyKeyOrder") - called === callsExpected && count("operationAOTTypedJSONDecodeSource") === readAgain : true);
+  console.log(what, counted ? count("operationAOTJSONKeyOrderApply") - called === callsExpected && count("operationAOTJSONSourceAbandon") === readAgain : true);
 }
 const segment = (text: string) => JSON.parse<Segment>(text);
 measure("declared order", ['{"id":1,"from":{"x":1,"y":2},"to":{"x":1,"y":2},"tags":[]}'], segment, 0);

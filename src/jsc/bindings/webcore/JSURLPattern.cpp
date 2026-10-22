@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSURLPattern.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"
@@ -184,6 +185,7 @@ static inline EncodedJSValue constructJSURLPattern2(JSGlobalObject* lexicalGloba
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSURLPatternDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(UrlPattern, JSURLPatternDOMConstructor::construct);
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
@@ -269,7 +271,7 @@ JSObject* JSURLPattern::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSURLPattern>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSURLPattern::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSURLPatternDOMConstructor, DOMConstructorID::URLPattern>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

@@ -1,7 +1,7 @@
 // A function too large to inline that returns a fresh record returns its fields in registers. Fields that no caller reads are not returned, and the code that only computed them is removed.
 // IR= 0 make string = Add
 // IR= 0 make Div
-// IR- ResultAt v\d+ [23]$
+// IR- ResultAt v\d+ index=[23]\b
 type Point = { x: number; y: number; z: number; label: string };
 function make(i: number, n: number): Point {
   let a = 0;

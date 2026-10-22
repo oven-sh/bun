@@ -1,4 +1,3 @@
-// @ts-nocheck
 // Most of this test was copied from
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/test/parallel/test-aborted-util.js#L1-L60
 // and then translated to bun:test using Claude.

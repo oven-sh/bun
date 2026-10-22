@@ -1,0 +1,6 @@
+a function that reads two fields: collected, 664
+a function that tests the object and reads two fields: collected, 664
+a function that reads a field of an instance: collected, 752
+called before and after the await: collected, 816
+a function that keeps the object: kept, 664
+a function that reads the body: collected, 632

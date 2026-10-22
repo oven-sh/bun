@@ -14,7 +14,7 @@ use bun_uws as uws;
 use crate::bun_string_jsc;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
-use crate::module_loader as ModuleLoader;
+use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
@@ -131,6 +131,28 @@ impl Default for InitOptions {
     }
 }
 
+/// What the VM runs as the program.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MainEntryPoint {
+    /// The user's file, through the `bun:main` wrapper.
+    File,
+    Compiled,
+    /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
+    Html,
+    /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
+    /// entry module, so `main` is `None`.
+    Bake,
+}
+
+/// The built-in module that `Bun__loadBuiltinEntryPoint` runs. Mirrors
+/// `Bun::BuiltinEntryPoint` in `BuiltinEntryPoint.cpp`.
+#[repr(u8)]
+#[derive(Clone, Copy)]
+pub enum BuiltinEntryPoint {
+    Html = 0,
+    Bake = 1,
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -146,22 +168,32 @@ pub struct VirtualMachine {
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
-    /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
+    /// Path of the entry module: the user's module that runs first. `None` when there is none, as
+    /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
+    /// borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
     /// graph, or (for workers) the owning `WebWorker.unresolved_specifier`; in
     /// every case the storage outlives this VM but is not Rust-`'static`.
     /// `RawSlice` carries the BACKREF outlives-holder invariant — read via
     /// `main()`.
-    main: bun_ptr::RawSlice<u8>,
-    pub main_is_html_entrypoint: bool,
-    /// The entry point was compiled ahead of time, together with what `bun:main` does after it.
-    pub main_is_compiled: bool,
-    pub starts_server_natively: bool,
+    main: Option<bun_ptr::RawSlice<u8>>,
+    pub main_entry_point: MainEntryPoint,
     pub did_look_for_server: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
     pub overridden_main: crate::strong::Optional,
+    /// `bun bake`: the plugins of `bake.config.ts`, a JS array. The dev server loads them after the
+    /// `[serve.static] plugins` of bunfig.toml.
+    pub bake_config_plugins: crate::strong::Optional,
+    /// The names of `bake_config_plugins`.
+    pub bake_config_plugin_names: Box<[Box<[u8]>]>,
+    /// `bun bake`: the next `Bun.serve()` (its own) adds the routers of a framework: the one in
+    /// `bake_framework`, or the default React framework. That call clears it.
+    pub bake_pages: bool,
+    /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
+    /// `Bun.serve()`. Empty for the default React framework.
+    pub bake_framework: crate::strong::Optional,
     pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
     // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
@@ -468,7 +500,8 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__retireForTestIsolation(global: &JSGlobalObject);
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
-    safe fn Bun__hasWorker() -> bool;
+    safe fn Bun__AOT__dumpObjectCensusIfRequested(global: &JSGlobalObject);
+    safe fn Bun__AOT__answerObjectCensusRequest(global: &JSGlobalObject);
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
 }
 
@@ -534,30 +567,10 @@ pub unsafe extern "C" fn Bun__standaloneModuleKey(
     }
     match standalone_module_graph().and_then(|graph| graph.find_assume_standalone_path(name)) {
         Some(canonical) => {
+            let canonical = crate::compiled_program::entry_module_key(canonical);
             // SAFETY: `out_len` is the caller's writable out-parameter.
             unsafe { *out_len = canonical.len() };
             canonical.as_ptr()
-        }
-        None => core::ptr::null(),
-    }
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneModuleSourcePath(
-    name: *const u8,
-    len: usize,
-    out_len: *mut usize,
-) -> *const u8 {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
-    if !bun_options_types::standalone_path::is_bun_standalone_file_path(name) {
-        return core::ptr::null();
-    }
-    match standalone_module_graph().and_then(|graph| graph.source_path(name)) {
-        Some(source_path) => {
-            // SAFETY: `out_len` is the caller's writable out-parameter.
-            unsafe { *out_len = source_path.len() };
-            source_path.as_ptr()
         }
         None => core::ptr::null(),
     }
@@ -609,28 +622,6 @@ pub unsafe extern "C" fn Bun__standalonePrelinkedModuleIndex(name: *const u8, le
         return u32::MAX;
     }
     standalone_module_graph().map_or(u32::MAX, |graph| graph.prelinked_module_index(name))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: usize) -> bool {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
-    standalone_module_graph().is_some_and(|graph| graph.is_compiled_module(name))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneCompiledProgramSources(out_len: *mut usize) -> *const u8 {
-    let paths = standalone_module_graph().map_or(&[][..], |graph| graph.compiled_program_sources());
-    // SAFETY: `out_len` is the caller's writable out-parameter.
-    unsafe { *out_len = paths.len() };
-    paths.as_ptr()
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn Bun__standaloneModuleIsInternal(name: *const u8, len: usize) -> bool {
-    // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
-    let name = unsafe { bun_core::ffi::slice(name, len) };
-    standalone_module_graph().is_some_and(|graph| graph.is_internal_module(name))
 }
 
 /// The module key (canonical embedded name) of graph module `index`; null if out of range.
@@ -820,16 +811,21 @@ impl ExitHandler {
     pub(crate) extern "C" fn Bun__VM__entryRootKey(
         vm: &VirtualMachine,
     ) -> bun_core::StringView<'_> {
-        if !vm.transpiler.options.disable_transpilation && !vm.main_is_html_entrypoint && !vm.main_is_compiled && !vm.starts_server_natively {
+        if !vm.transpiler.options.disable_transpilation
+            && vm.main_entry_point == MainEntryPoint::File
+        {
             bun_core::StringView::static_(MAIN_FILE_NAME)
         } else {
-            bun_core::StringView::borrow_utf8(vm.main())
+            // With no entry module there is no root, and no key matches.
+            bun_core::StringView::borrow_utf8(vm.main().unwrap_or_default())
         }
     }
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__VM__shouldLookForServer(vm: &VirtualMachine) -> bool {
-        vm.starts_server_natively && !vm.did_look_for_server
+        vm.main_entry_point == MainEntryPoint::Compiled
+            && !vm.did_look_for_server
+            && !vm.transpiler.options.disable_transpilation
     }
 
     #[unsafe(no_mangle)]
@@ -1531,23 +1527,6 @@ impl VirtualMachine {
         unsafe { Bun__DecoderStringTable__install(self.jsc_vm, table.as_ptr(), table.len()) };
     }
 
-    fn use_aot_image(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
-        unsafe extern "C" {
-            fn Bun__AOT__useImage(bytes: *const u8, len: usize, fd: i32, offset_in_file: i64);
-        }
-        static ONCE: std::sync::Once = std::sync::Once::new();
-        ONCE.call_once(|| {
-            let image = graph.aot_image();
-            if image.is_empty() {
-                return;
-            }
-            let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
-            // SAFETY: `image` is a part of the `'static` graph, which is never unmapped.
-            unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
-            bun_analytics::features::aot.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        });
-    }
-
     /// Safe `&VM` accessor for the JSC VM owned by this Bun VM. Set once in
     /// `init()` and live for the VM lifetime.
     #[inline(always)]
@@ -2156,7 +2135,7 @@ impl VirtualMachine {
     /// otherwise only occur using Workers.
     pub(crate) fn should_destruct_main_thread_on_exit(&self) -> bool {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
-            && Bun__hasWorker()
+            && !bun_removable_features::is_removed(bun_removable_features::Feature::Worker)
     }
 
     pub fn uncaught_exception(
@@ -2403,6 +2382,10 @@ impl VirtualMachine {
         }
     }
 
+    pub(crate) fn answer_object_census_request(&self) {
+        Bun__AOT__answerObjectCensusRequest(self.global());
+    }
+
     pub fn global_exit(&mut self) -> ! {
         debug_assert!(self.is_shutting_down());
         // FIXME: we should be doing this, but we're not, but unfortunately
@@ -2413,6 +2396,7 @@ impl VirtualMachine {
             // SAFETY: main-thread VM on the main thread; exit handlers have run.
             unsafe { Self::teardown(core::ptr::from_mut(self), Teardown::MainThreadExit) };
         } else {
+            Bun__AOT__dumpObjectCensusIfRequested(self.global());
             self.close_sqlite_databases_for_exit();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
@@ -2458,8 +2442,18 @@ impl VirtualMachine {
     /// live objects on another thread; its WAL is recovered on next open, as
     /// after any abrupt exit (and as in Node).
     fn close_sqlite_databases_for_exit(&self) {
-        Bun__closeAllSQLiteDatabasesForTermination(self.global());
-        Bun__closeAllNodeSqliteDatabasesForTermination(self.global());
+        bun_removable_features::call_removable!(
+            Sqlite,
+            ReturnDefault,
+            Bun__closeAllSQLiteDatabasesForTermination,
+            self.global()
+        );
+        bun_removable_features::call_removable!(
+            Sqlite,
+            ReturnDefault,
+            Bun__closeAllNodeSqliteDatabasesForTermination,
+            self.global()
+        );
     }
 
     /// Tear down this thread's VM: the one sequence both a finished worker
@@ -3180,10 +3174,11 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
-    safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
-    safe fn Bun__AOT__isCompiledEntryPoint(module: u32) -> bool;
+    safe fn Bun__loadBuiltinEntryPoint(
+        global: &JSGlobalObject,
+        entry_point: BuiltinEntryPoint,
+    ) -> *mut JSInternalPromise;
     fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
-    safe fn Bun__isCompiledProgramFile(global: &JSGlobalObject, path: &bun_core::String) -> bool;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3287,9 +3282,12 @@ impl VirtualMachine {
             addr_of_mut!((*vm).console).write(console);
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(NonNull::new(log));
-            addr_of_mut!((*vm).main).write(bun_ptr::RawSlice::EMPTY);
+            addr_of_mut!((*vm).main).write(None);
             addr_of_mut!((*vm).main_hash).write(0);
+            addr_of_mut!((*vm).main_entry_point).write(MainEntryPoint::File);
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::EMPTY);
+            addr_of_mut!((*vm).bake_config_plugin_names).write(Box::default());
+            addr_of_mut!((*vm).bake_pages).write(false);
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
             // Left at the
@@ -3347,7 +3345,7 @@ impl VirtualMachine {
                 let _ = STANDALONE_MODULE_GRAPH.set(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
-            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.has_entry_point_paths()));
+            addr_of_mut!((*vm).finds_entry_points_by_path).write(opts.graph.is_some_and(|graph| graph.compiled_program().is_some_and(|program| !program.entry_points.is_empty())));
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
@@ -3395,7 +3393,7 @@ impl VirtualMachine {
         unsafe { (*vm).regular_event_loop.ensure_waker() };
         if opts.is_main_thread {
             if let Some(graph) = standalone_module_graph() {
-                Self::use_aot_image(graph);
+                crate::compiled_program::use_image(graph);
             }
         }
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
@@ -3464,24 +3462,31 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Read the entry-point path (see `main` field doc).
+    /// The path of the entry module, `None` when there is none (see `main` field doc).
     ///
     /// # Safety (callers)
     /// The slice borrows storage that outlives this VM (process-argv,
     /// resolver string store, standalone graph, or the owning `WebWorker`);
     /// see the field doc. Never freed by the VM.
     #[inline]
-    pub fn main(&self) -> &[u8] {
+    pub fn main(&self) -> Option<&[u8]> {
         // `main` is a `RawSlice` whose storage outlives this VM (BACKREF — see
         // field doc); the invariant is encapsulated in `RawSlice::slice`.
-        self.main.slice()
+        self.main.as_ref().map(|main| main.slice())
     }
 
-    /// Set the entry-point path. Caller guarantees `path`'s storage outlives
-    /// this VM (BACKREF — see `main` field doc).
+    /// Set the entry-point path, or `None` for no entry module. Caller guarantees `path`'s storage
+    /// outlives this VM (BACKREF — see `main` field doc).
     #[inline]
-    pub fn set_main(&mut self, path: &[u8]) {
-        self.main = bun_ptr::RawSlice::new(path);
+    pub fn set_main(&mut self, path: Option<&[u8]>) {
+        self.main = path.map(bun_ptr::RawSlice::new);
+        self.main_hash = path.map_or(0, bun_watcher::Watcher::get_hash);
+    }
+
+    pub fn entry_point_is_commonjs(&self) -> bool {
+        self.entry_point_result.evaluated_as_cjs
+            || (self.main_entry_point == MainEntryPoint::Compiled
+                && crate::compiled_program::entry_point_is_commonjs(self.global()))
     }
 
     /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
@@ -3525,14 +3530,15 @@ impl VirtualMachine {
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
+    /// `entry_path` is `None` for a built-in entry point with no entry module (`bun bake`).
     pub(crate) fn reload_entry_point(
         &mut self,
-        entry_path: &[u8],
+        entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
+        let entry_path = entry_path.map(crate::compiled_program::entry_module_key);
         self.has_loaded = false;
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         let hooks = runtime_hooks();
@@ -3552,9 +3558,18 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         use bun_core::is_bootstrap_flag;
-        let arguments_of_the_program = if self.is_main_thread && self.standalone_module_graph.is_some() { self.argv.len() } else { 0 };
+        let main_thread_vm = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
+        let program_argument_count = if self.standalone_module_graph.is_none() || main_thread_vm.is_null() {
+            0
+        } else if self.is_main_thread {
+            self.argv.len()
+        } else {
+            // SAFETY: the main thread's VM outlives a worker's, and writes `argv` only before it loads its entry point.
+            let program_arguments = unsafe { &(*main_thread_vm).argv };
+            program_arguments.len()
+        };
         let argv = bun_core::argv();
-        let needs_pre_execution = argv.iter().take(argv.len().saturating_sub(arguments_of_the_program)).any(is_bootstrap_flag)
+        let needs_pre_execution = argv.iter().take(argv.len().saturating_sub(program_argument_count)).any(is_bootstrap_flag)
             || self
                 .worker_ref()
                 .and_then(crate::web_worker::WebWorker::exec_argv)
@@ -3568,24 +3583,30 @@ impl VirtualMachine {
                             && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
                     })
                 });
-        if needs_pre_execution {
+        if needs_pre_execution && crate::compiled_program::can_load_unused_library_modules() {
             // The C++ side catches and reports any JS exception thrown while
             // evaluating `internal/process/pre_execution`.
             crate::cpp::Bun__preExecutionBootstrap(self.global());
+        } else if needs_pre_execution {
+            crate::cpp::Bun__applyStackTraceLimitOption(self.global());
         }
 
-        let is_compiled = self.is_compiled_entry_point(entry_path);
-        self.has_loaded = is_compiled && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
-        self.main_is_compiled = is_compiled;
-        self.starts_server_natively = !is_compiled
-            && !self.main_is_html_entrypoint
-            && !self.transpiler.options.disable_transpilation
-            && self.preload.is_empty()
-            && self.standalone_module_graph.is_some()
-            && Bun__isCompiledProgramFile(self.global(), &bun_core::String::from_bytes(entry_path));
+        if matches!(
+            self.main_entry_point,
+            MainEntryPoint::File | MainEntryPoint::Compiled
+        ) {
+            let is_compiled = entry_path.is_some_and(crate::compiled_program::is_compiled_module);
+            self.main_entry_point = if is_compiled {
+                MainEntryPoint::Compiled
+            } else {
+                MainEntryPoint::File
+            };
+        }
+        self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
+            && crate::compiled_program::runs_in_place();
         self.did_look_for_server = false;
 
-        if !self.main_is_html_entrypoint && !self.main_is_compiled && !self.starts_server_natively {
+        if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point, entry_path) {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -3606,11 +3627,20 @@ impl VirtualMachine {
                 }
 
                 // Check if Module.runMain was patched.
-                if self.has_patched_run_main {
+                if self.has_patched_run_main
+                    && matches!(
+                        self.main_entry_point,
+                        MainEntryPoint::File | MainEntryPoint::Compiled
+                    )
+                {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
-                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, if self.main_is_compiled { self.main() } else { MAIN_FILE_NAME })?;
+                    let run_main_path = match (self.main_entry_point, self.main()) {
+                        (MainEntryPoint::Compiled, Some(main)) => main,
+                        _ => MAIN_FILE_NAME,
+                    };
+                    let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
                     let promise: *mut JSInternalPromise =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
@@ -3647,58 +3677,66 @@ impl VirtualMachine {
                     return Ok(promise);
                 }
             }
-
-            // Preloads (evaluated above, synchronously) are not the entry: only
-            // module evaluations from here on mark the entry graph as executing.
-            self.entry_evaluation_started = false;
-            // Note: reshaped for borrowck — capture raw ptr before &self call.
-            let global = self.global;
-            let global_ref = self.global();
-            let promise = if self.main_is_compiled || self.starts_server_natively {
-                let main_str = bun_core::String::from_bytes(self.main());
-                let promise = jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
-                if self.starts_server_natively {
-                    // SAFETY: `promise` is a live JSC heap cell.
-                    unsafe { Bun__lookForServerAfterEvaluation(global_ref, promise) };
-                }
-                promise
-            } else if !self.main_is_html_entrypoint {
-                let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
-            } else {
-                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
-                    Bun__loadHTMLEntryPoint(global_ref)
-                })?;
-                if p.is_null() {
-                    return Err(crate::CrateError::JSError);
-                }
-                p
-            };
-
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
-        } else {
-            self.entry_evaluation_started = false;
-            let global = self.global;
-            let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
-            self.set_pending_internal_promise(Some(promise));
-            Ok(promise)
         }
+
+        // Preloads (evaluated above, synchronously) are not the entry: only
+        // module evaluations from here on mark the entry graph as executing.
+        self.entry_evaluation_started = false;
+        let builtin = match self.main_entry_point {
+            MainEntryPoint::File | MainEntryPoint::Compiled => None,
+            MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
+            MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
+        };
+        // Note: reshaped for borrowck — capture raw ptr before &self call.
+        let global = self.global;
+        let promise = if let Some(builtin) = builtin {
+            // The built-in module is the main module, so what it imports loads as the imports of a
+            // main module do (`has_loaded`): a file of an unknown type is a file, not a script.
+            if !self.transpiler.options.disable_transpilation {
+                self.has_loaded = true;
+            }
+            let global_ref = self.global();
+            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                Bun__loadBuiltinEntryPoint(global_ref, builtin)
+            })?;
+            if p.is_null() {
+                return Err(crate::CrateError::JSError);
+            }
+            p
+        } else if self.main_entry_point == MainEntryPoint::Compiled
+            && !self.transpiler.options.disable_transpilation
+        {
+            // The path is the key of the module in the image: there is nothing to resolve.
+            let main = (self.main()).expect("a compiled entry point has a path");
+            let main_str = bun_core::String::from_bytes(main);
+            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?;
+            // SAFETY: `promise` is a live JSC heap cell.
+            unsafe { Bun__lookForServerAfterEvaluation(self.global(), promise) };
+            promise
+        } else if !self.transpiler.options.disable_transpilation {
+            let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
+        } else {
+            let main = (self.main()).expect("a file entry point has a path");
+            let main_str = bun_core::String::from_bytes(main);
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
+                .map(NonNull::as_ptr)
+                .ok_or(crate::CrateError::JSError)?
+        };
+
+        self.set_pending_internal_promise(Some(promise));
+        Ok(promise)
     }
 
     /// `loadEntryPoint(entry_path)` — `reload_entry_point` + spin until the
     /// returned promise settles.
     pub fn load_entry_point(
         &mut self,
-        entry_path: &[u8],
+        entry_path: Option<&[u8]>,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
 
@@ -4219,21 +4257,6 @@ pub fn collect_macro_vm_garbage() {
     vm_ref.jsc_vm().run_gc(true);
 }
 
-fn path_from_build_folder(frame_url: &bun_core::String) -> Option<bun_core::String> {
-    let url = frame_url.to_utf8();
-    let mut rest = url.slice().strip_prefix(b"/$bunfs/root/")?;
-    if standalone_module_graph().is_some_and(|graph| graph.find_assume_standalone_path(url.slice()).is_some()) {
-        return None;
-    }
-    let mut path = Vec::new();
-    while let Some(inner) = rest.strip_prefix(b"_.._/") {
-        path.extend_from_slice(b"../");
-        rest = inner;
-    }
-    path.extend_from_slice(rest);
-    Some(bun_core::String::clone_utf8(&path))
-}
-
 fn normalize_source(source: &[u8]) -> &[u8] {
     if let Some(rest) = source.strip_prefix(b"file://") {
         return rest;
@@ -4294,9 +4317,10 @@ impl VirtualMachine {
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
-    #[unsafe(export_name = "Bun__isInterpreterRemovedByName")]
-    pub(crate) extern "C" fn is_interpreter_removed_by_name_for_cpp() -> bool {
-        bun_core::is_interpreter_removed_by_name()
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByCompiledProgram")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_compiled_program_for_cpp() -> bool {
+        bun_core::is_code_generation_disallowed_by_compiled_program()
+            && bun_core::code_generation_from_strings_by_flags() == bun_core::CodeGenerationFromStrings::Allowed
     }
 
     /// Whether `bun:ffi` `cc()` is allowed (`--no-ffi-cc` and `--no-addons` disable it).
@@ -4672,7 +4696,9 @@ impl VirtualMachine {
 
     /// Adds the main entry point to the file watcher when watch mode is enabled.
     pub fn add_main_to_watcher_if_needed(&mut self) {
-        self.add_to_watcher_if_needed(self.main());
+        if let Some(main) = self.main() {
+            self.add_to_watcher_if_needed(main);
+        }
     }
 
     /// Adds a file that the module loader has not loaded to the file watcher when watch mode is
@@ -4754,23 +4780,31 @@ impl VirtualMachine {
         }
     }
 
+    /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
+    /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
+    /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and
+    /// `may_return` is true; the error is printed.
+    pub fn restart_process(&mut self, may_return: bool) {
+        crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
+        let should_clear_terminal = !self
+            .env_loader()
+            .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
+        // execve will not reach on_exit; flush the compile cache here like
+        // node's child does via AtExit(FlushCompileCache) on every restart.
+        crate::node_compile_cache::persist_now();
+        bun_core::Output::flush();
+        bun_removable_features::removable_body!(HotReload, Abort, {
+            bun_core::reload_process(should_clear_terminal, may_return);
+        });
+    }
+
     /// Performs a hot reload: re-evaluates the entry point once any pending entry-point load settles.
     pub(crate) fn reload(&mut self, _: Option<&mut crate::hot_reloader::HotReloadTask>) {
-        bun_ast::audited::forget_json_parse_schemas();
         if self.hot_reload == HotReload::Watch {
             // Watch reload replaces the process: never defer on a pending
-            // entry promise (node restarts regardless of child state), and
-            // emit the --watch-kill-signal JS handlers first, like node.
-            crate::posix_signal_handle::emit_watch_kill_signal_before_reload(self.global());
-            let should_clear_terminal =
-                !self.env_loader().has_set_no_clear_terminal_on_reload(
-                    !bun_core::Output::enable_ansi_colors_stdout(),
-                );
-            // execve will not reach on_exit; flush the compile cache here like
-            // node's child does via AtExit(FlushCompileCache) on every restart.
-            crate::node_compile_cache::persist_now();
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            // entry promise (node restarts regardless of child state).
+            self.restart_process(false);
+            unreachable!("reload_process returns only when may_return is true");
         }
 
         if let Some(p) = self.pending_internal_promise() {
@@ -4815,7 +4849,10 @@ impl VirtualMachine {
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
-        if self.reload_entry_point(main.slice()).is_err() {
+        if self
+            .reload_entry_point(main.as_ref().map(|main| main.slice()))
+            .is_err()
+        {
             panic!("Failed to reload");
         }
     }
@@ -4889,7 +4926,6 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
-        vm_ref.dns_result_order = opts.dns_result_order;
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);
@@ -5101,11 +5137,18 @@ impl VirtualMachine {
         self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_)
     }
 
-    fn read_source_for_preview(
+    // Note: `flags` is a runtime arg —
+    // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
+    // owning module) to be a const generic; the only branches are cheap
+    // equality tests so the runtime form is fine.
+    #[inline(never)]
+    pub(crate) fn fetch_without_on_load_plugins(
         jsc_vm: &mut VirtualMachine,
         global_object: &JSGlobalObject,
         specifier: &bun_core::String,
+        referrer: &bun_core::String,
         log: &mut bun_ast::Log,
+        flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
         debug_assert!(VirtualMachine::is_loaded());
 
@@ -5116,6 +5159,7 @@ impl VirtualMachine {
         }
 
         let specifier_clone = specifier.to_utf8();
+        let referrer_clone = referrer.to_utf8();
 
         let mut virtual_source_to_use: Option<bun_ast::Source> = None;
         // The blob crosses
@@ -5150,6 +5194,10 @@ impl VirtualMachine {
             Ok(lr) => lr,
             Err(_) => return Err(crate::CrateError::ModuleNotFound),
         };
+        let module_type = lr
+            .package_json
+            .map(|pkg| pkg.module_type)
+            .unwrap_or(bun_bundler::options::ModuleType::Unknown);
 
         // A drop-guard so both the normal and error paths reset the arena on
         // the right edge.
@@ -5163,7 +5211,7 @@ impl VirtualMachine {
                 }
             }
         }
-        let mut guard = ArenaReset(jsc_vm, false);
+        let mut guard = ArenaReset(jsc_vm, flags != FetchFlags::PrintSource);
 
         let printer = SOURCE_CODE_PRINTER
             .get()
@@ -5175,7 +5223,7 @@ impl VirtualMachine {
         let mut extra = ModuleLoader::TranspileExtra {
             // SAFETY: `lr.path` borrows from `specifier_clone` (and the VM's
             // resolver caches), both of which outlive the synchronous
-            // `__bun_read_source_code` call below; `TranspileExtra` declares
+            // `transpile_source_code` call below; `TranspileExtra` declares
             // `'static` only because it crosses the §Dispatch boundary as
             // `*mut c_void` — the hook never retains the borrow.
             path: unsafe { lr.path.into_static() },
@@ -5184,24 +5232,25 @@ impl VirtualMachine {
             } else {
                 bun_ast::Loader::File
             }),
-            module_type: bun_bundler::options::ModuleType::Unknown,
+            module_type,
             source_code_printer: printer.as_ptr(),
+            // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
-            function_sources: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
-            referrer: b"",
+            referrer: referrer_clone.slice(),
             input_specifier: specifier,
             log: std::ptr::from_mut::<bun_ast::Log>(log),
             virtual_source: lr.virtual_source,
             global_object,
+            flags,
             extra: &raw mut extra,
         };
         // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
         // the live `extra` above.
-        let result = unsafe { ModuleLoader::__bun_read_source_code(guard.0, &args) };
-        if result.is_err() {
+        let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
+        if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer
         }
         // `blob_to_deinit` drop guard fires here.
@@ -5311,7 +5360,6 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let mut may_retry_from_source_path = is_a_file_path && !is_special_source;
         let mut may_retry_from_root = self.finds_entry_points_by_path && !is_special_source;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
@@ -5328,17 +5376,6 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if core::mem::take(&mut may_retry_from_source_path) {
-                        if let Some(source_path) = self
-                            .standalone_module_graph
-                            .and_then(|graph| graph.source_path(source))
-                        {
-                            source_to_use =
-                                bun_resolver::fs::PathName::init(source_path).dir_with_trailing_slash();
-                            retry_on_not_found = true;
-                            continue;
-                        }
-                    }
                     if core::mem::take(&mut may_retry_from_root)
                         && let Some(root) = self.standalone_module_graph.map(|graph| graph.base_public_path_with_default_suffix()).filter(|root| !source_to_use.starts_with(root))
                     {
@@ -5417,9 +5454,9 @@ impl VirtualMachine {
         // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         if self.finds_entry_points_by_path
-            && let Some(name) = self.standalone_module_graph.and_then(|graph| graph.find_by_source_path(ret.path))
+            && let Some(entry) = crate::compiled_program::find_entry_point_by_source_path(ret.path)
         {
-            ret.path = name;
+            ret.path = crate::compiled_program::module_key(entry);
         }
 
         Ok(())
@@ -5535,11 +5572,6 @@ impl VirtualMachine {
                 bun_ast::Target::Bun,
                 Default::default(),
             ) {
-                if let Some(error) =
-                    ModuleLoader::error_if_removed_by_name(global, hardcoded.path.as_bytes())
-                {
-                    return Ok(Err(error));
-                }
                 return Ok(Ok(
                     if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                         specifier.clone()
@@ -5558,11 +5590,6 @@ impl VirtualMachine {
             bun_ast::Target::Bun,
             Default::default(),
         ) {
-            if let Some(error) =
-                ModuleLoader::error_if_removed_by_name(global, hardcoded.path.as_bytes())
-            {
-                return Ok(Err(error));
-            }
             return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
                     specifier.clone()
@@ -5765,6 +5792,9 @@ impl VirtualMachine {
         drop(core::mem::take(&mut self.main_resolved_path));
 
         self.overridden_main.deinit();
+        self.bake_config_plugins.deinit();
+        drop(core::mem::take(&mut self.bake_config_plugin_names));
+        self.bake_framework.deinit();
         self.pending_internal_promise.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
@@ -5803,7 +5833,7 @@ impl VirtualMachine {
 
     /// Deletes the synthetic main-entry module from the module registry.
     pub fn clear_entry_point(&mut self) -> JsResult<()> {
-        if self.main().is_empty() {
+        if self.main().is_none() {
             return Ok(());
         }
         let str = bun_core::EncodedSlice::latin1(MAIN_FILE_NAME);
@@ -5819,20 +5849,14 @@ impl VirtualMachine {
     }
 
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
-    fn is_compiled_entry_point(&self, entry_path: &[u8]) -> bool {
-        (self.standalone_module_graph)
-            .and_then(|graph| graph.program_data_index(entry_path))
-            .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module))
-    }
-
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = self.is_compiled_entry_point(entry_path) && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
-        self.set_main(entry_path);
+        let entry_path = crate::compiled_program::entry_module_key(entry_path);
+        self.has_loaded = crate::compiled_program::runs_in_place() && crate::compiled_program::is_compiled_module(entry_path);
+        self.set_main(Some(entry_path));
         self.main_resolved_path = bun_core::String::EMPTY;
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         self.event_loop_mut().ensure_waker();
@@ -5852,7 +5876,8 @@ impl VirtualMachine {
 
         // Note: reshaped for borrowck.
         let global = self.global;
-        let main_str = bun_core::String::from_bytes(self.main());
+        let main = (self.main()).expect("set to the test file above");
+        let main_str = bun_core::String::from_bytes(main);
         let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
             global, &main_str,
         ) {
@@ -5880,7 +5905,7 @@ impl VirtualMachine {
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        let promise = self.reload_entry_point(entry_path)?;
+        let promise = self.reload_entry_point(Some(entry_path))?;
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -6109,8 +6134,7 @@ impl VirtualMachine {
         self.entry_point_result.evaluated_as_cjs = false;
         self.set_pending_internal_promise(None);
         self.has_patched_run_main = false;
-        self.set_main(b"");
-        self.main_hash = 0;
+        self.set_main(None);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.unhandled_error_counter = 0;
 
@@ -6673,12 +6697,11 @@ impl VirtualMachine {
             f.source_url.eq_ascii(b"bun:wrap") || f.function_name.eq_ascii(b"::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
-            url.is_empty() || url.eq_ascii(b"[unknown]") || url.starts_with_ascii(b"[source:")
-        }
-        fn is_noisy_frame(f: &crate::ZigStackFrame) -> bool {
-            is_noisy_builtin(&f.function_name)
-                && (is_unknown_source(&f.source_url)
-                    || f.source_url.eq_ascii(b"internal:process/next_tick_queue"))
+            url.is_empty()
+                || url.eq_ascii(b"[unknown]")
+                || url.starts_with_ascii(b"[source:")
+                // processTicksAndRejections lives there.
+                || url.eq_ascii(b"internal:process/tick_ring")
         }
 
         let mut frames_len = exception.stack.frames_len as usize;
@@ -6696,7 +6719,7 @@ impl VirtualMachine {
                 }
                 // Workaround for being unable to hide that specific frame
                 // without also hiding the frame before it.
-                if is_noisy_frame(frame) {
+                if is_unknown_source(&frame.source_url) && is_noisy_builtin(&frame.function_name) {
                     start_index = Some(0);
                     break;
                 }
@@ -6708,7 +6731,9 @@ impl VirtualMachine {
                     if is_hidden_frame(frame) {
                         continue;
                     }
-                    if is_noisy_frame(frame) {
+                    if is_unknown_source(&frame.source_url)
+                        && is_noisy_builtin(&frame.function_name)
+                    {
                         continue;
                     }
                     // Swap rather than overwrite: the discarded tail past `j`
@@ -6822,13 +6847,28 @@ impl VirtualMachine {
                     // Avoid printing "export default 'native'"
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
+                // What lies on the disk under the name of a module that is compiled into an executable is not what runs. A program
+                // that runs in place runs that file, and holds no text of it.
+                let top_path = frames[top].source_url.to_utf8();
+                if crate::compiled_program::is_compiled_module(top_path.slice()) {
+                    if !crate::compiled_program::runs_in_place() {
+                        break 'code bun_core::Utf8Bytes::EMPTY;
+                    }
+                    let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), top_path.slice());
+                    break 'code bun_core::Utf8Bytes::Owned(text.unwrap_or_default());
+                }
                 let mut log = bun_ast::Log::default();
-                let on_disk = path_from_build_folder(&frames[top].source_url);
-                let Ok(original_source) = Self::read_source_for_preview(
+                let Ok(original_source) = bun_removable_features::call_removable_or!(
+                    RuntimeTranspiler,
+                    ReturnDefault,
+                    { break 'code bun_core::Utf8Bytes::EMPTY },
+                    VirtualMachine::fetch_without_on_load_plugins,
                     self,
                     global,
-                    on_disk.as_ref().unwrap_or(&frames[top].source_url),
+                    &frames[top].source_url,
+                    &bun_core::String::EMPTY,
                     &mut log,
+                    FetchFlags::PrintSource,
                 ) else {
                     // Source is gone; the frames still get remapped below.
                     break 'code bun_core::Utf8Bytes::EMPTY;
@@ -6959,7 +6999,7 @@ impl VirtualMachine {
         // carries the union of all
         // branches' locals (every `pretty_write!` expands to two `write!`s).
         // More importantly, `remap_zig_exception` below calls
-        // `read_source_for_preview` for the source-line
+        // `fetch_without_on_load_plugins` → the transpiler for source-line
         // preview, and on Windows that call tree stack-allocates `PathBuffer`s
         // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
         // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
@@ -6970,7 +7010,7 @@ impl VirtualMachine {
         // the caller (`format2` / `Bun.inspect`).
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
-            // `remap_zig_exception` → `read_source_for_preview` chain on the
+            // `remap_zig_exception` → `transpile_source_code` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
             bun_paths::MAX_PATH_BYTES * 3
         } else {

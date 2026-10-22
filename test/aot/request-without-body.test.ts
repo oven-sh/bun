@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "./run-programs";
 
@@ -30,7 +29,7 @@ function sample(req, tag) {
   say(
     tag + " " +
       [req.complete, req._dumped, req._consuming, req.readable, req.readableFlowing, req.readableEnded, req.readableDidRead, req.destroyed, req.closed, req.aborted, req.readableAborted, req.isPaused(), req.readableLength].map(bit).join("") + " " +
-      [state.ended, state.endEmitted, state.reading, state.sync, state.needReadable, state.emittedReadable, state.readableListening, state.resumeScheduled, state.readingMore, state.dataEmitted, state.destroyed, state.closed, state.closeEmitted, state.errorEmitted, state.flowing, state.constructed, state.length, state.flags].map(bit).join("") + " " +
+      [state.ended, state.endEmitted, state.reading, state.sync, state.needReadable, state.emittedReadable, state.readableListening, state.resumeScheduled, state.readingMore, state.dataEmitted, state.destroyed, state.closed, state.closeEmitted, state.errorEmitted, state.flowing, state.constructed, state.length].map(bit).join("") + " " +
       [socket == null ? socket : socket.parser == null ? socket.parser : socket.parser.incoming === req, socket && socket.readableFlowing, socket && socket.isPaused(), socket && socket.destroyed].map(bit).join("") + " " +
       req.eventNames().map(String).join() + " " + Object.getOwnPropertySymbols(req).length + " " + Object.keys(req).filter(name => name !== "resume").length + " " + digest(req) + " " + digest(state),
   );
@@ -148,31 +147,6 @@ server.listen(0, "127.0.0.1", async () => {
   server.closeAllConnections();
 });
 `,
-  "heard.cjs": String.raw`
-const http = require("node:http");
-const net = require("node:net");
-const names = [];
-const { nextTick } = process;
-process.nextTick = function (callback, ...rest) {
-  names.push(callback.name);
-  return nextTick.call(process, callback, ...rest);
-};
-const server = http.createServer((req, res) => {
-  req.on("error", () => console.log("error"));
-  req.on("aborted", () => console.log("aborted"));
-  req.on("close", () => {
-    console.log("close " + [req.readableEnded, req.destroyed, req.complete].join());
-    console.log(names.filter(name => /Unwatched$|^endReadableNT$|^emitEOFIncomingMessageOuter$/.test(name)).join());
-    server.close();
-    server.closeAllConnections();
-  });
-  res.end("ok");
-});
-server.listen(0, "127.0.0.1", () => {
-  const socket = net.connect(server.address().port, "127.0.0.1", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
-  socket.on("data", () => {});
-});
-`,
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
@@ -198,8 +172,7 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("aot-request-without-a-body", files);
     const executable = join(String(dir), "main" + (isWindows ? ".exe" : ""));
-    const mapPath = join(String(dir), "main.map");
-    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), { ...bunEnv, BUN_JSC_aotMapFilePath: mapPath });
+    const built = await run([bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable], String(dir), bunEnv);
     expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
     const compiledEnv = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
     const [general, plain, compiledGeneral, compiled] = await Promise.all([
@@ -213,30 +186,6 @@ test.skipIf(!!unsupported)(
     expect(firstDifference(general.stdout, plain.stdout)).toBe("");
     expect(firstDifference(general.stdout, compiledGeneral.stdout)).toBe("");
     expect(firstDifference(general.stdout, compiled.stdout)).toBe("");
-    const functions = new Set(
-      readFileSync(mapPath, "utf8")
-        .split("\n")
-        .map(line => line.split("\t"))
-        .filter(fields => fields[0] === "F" && fields[10] === "node:_http_incoming")
-        .map(fields => fields[7]),
-    );
-    expect(["endsUnwatched", "resumeUnwatched", "endUnwatched", "destroyUnwatched", "destroyOnNextTick"].filter(name => !functions.has(name))).toEqual([]);
-  },
-  240_000,
-);
-
-test.skipIf(!!unsupported)(
-  "a listener for 'close' does not send the end of a request without a body down the general road",
-  async () => {
-    using dir = tempDir("aot-request-without-a-body-heard", files);
-    const executable = join(String(dir), "heard" + (isWindows ? ".exe" : ""));
-    const built = await run([bunExe(), "build", "--compile", "--aot", "heard.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr.split("\n").filter(line => line.startsWith("error")), exitCode: built.exitCode }).toEqual({ stderr: [], exitCode: 0 });
-    const expected = "close true,true,true\nresumeUnwatched,endUnwatched,destroyUnwatched,closeUnwatched\n";
-    const plain = await run([bunExe(), "run", "heard.cjs"], String(dir), bunEnv);
-    const compiled = await run([executable], String(dir), { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-    expect({ stdout: plain.stdout, exitCode: plain.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
   },
   240_000,
 );

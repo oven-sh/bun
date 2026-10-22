@@ -901,7 +901,9 @@ mod lib_util {
 }
 
 #[cfg(unix)]
+#[inline(never)]
 fn get_open_pty_fn() -> Option<OpenPtyFn> {
+    bun_removable_features::removable_definition!(Terminal, get_open_pty_fn);
     // openpty is linked directly on macOS (libc) and FreeBSD (libutil, see
     // scripts/build/bun.ts).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -1333,9 +1335,8 @@ enum TermiosField {
 
 impl Terminal {
     /// Check if terminal is closed
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_closed(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.flags.get().contains(Flags::CLOSED))
+    pub(crate) fn get_closed(&self, _global: &JSGlobalObject) -> bool {
+        self.flags.get().contains(Flags::CLOSED)
     }
 
     fn get_termios_flag<const FIELD: TermiosField>(&self) -> JSValue {
@@ -2042,13 +2043,19 @@ impl BufferedReaderParent for Terminal {
         chunk: bun_io::Chunk<'_>,
         has_more: ReadState,
     ) -> bool {
-        Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_read_chunk(&chunk, has_more)
+        })
     }
     unsafe fn on_reader_done(this: *mut Self) {
-        Self::from_parent_ptr(this).on_reader_done();
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_reader_done();
+        })
     }
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_reader_error(&err);
+        bun_removable_features::removable_body!(Terminal, Abort, {
+            Self::from_parent_ptr(this).on_reader_error(&err);
+        })
     }
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:

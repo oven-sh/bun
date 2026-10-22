@@ -610,9 +610,8 @@ impl SocketAddress {
     }
 
     /// `sockaddr.addrfamily`
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_addr_family(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.family().int()))
+    pub(crate) fn get_addr_family(this: &Self, _global: &JSGlobalObject) -> i32 {
+        i32::from(this.family().int())
     }
 
     /// NOTE: this returns whatever address-family value the system uses,
@@ -630,9 +629,8 @@ impl SocketAddress {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.port()))
+    pub(crate) fn get_port(this: &Self, _global: &JSGlobalObject) -> u16 {
+        this.port()
     }
 
     /// Get the port number in host byte order.
@@ -641,9 +639,8 @@ impl SocketAddress {
         u16::from_be(self._addr.port_raw())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_flow_label(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.flow_label().unwrap_or(0)))
+    pub(crate) fn get_flow_label(this: &Self, _global: &JSGlobalObject) -> u32 {
+        this.flow_label().unwrap_or(0)
     }
 
     /// Returns `None` for non-IPv6 addresses.

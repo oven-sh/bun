@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";

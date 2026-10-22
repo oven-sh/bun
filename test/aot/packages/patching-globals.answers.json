@@ -1,92 +1,14 @@
 {
-  "date-math-patch-sloppy.import.mjs": {
-    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
-  },
-  "date-math-patch-sloppy.require.cjs": {
-    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
-  },
-  "date-math-patch-strict.import.mjs": {
-    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
-  },
-  "date-math-patch-strict.require.cjs": {
-    "output": "ok [\"TypeError\",\"TypeError\",\"TypeError\"]\n"
-  },
-  "define-same-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\n"
-  },
-  "define-same-sloppy.require.cjs": {
-    "output": "ok THROWS TypeError [--aot: Cannot change 'includes' of Array.prototype: built-ins are locked in a program compiled with --aot]\n"
-  },
-  "define-same-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\n"
-  },
-  "define-same-strict.require.cjs": {
-    "output": "ok THROWS TypeError [--aot: Cannot change 'includes' of Array.prototype: built-ins are locked in a program compiled with --aot]\n"
-  },
-  "descriptors-of-builtins-sloppy.import.mjs": {
-    "output": "ok [\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"true,false,true\",\"true,true,true\",\"true,true,true\",false,true,true,true,false]\n"
-  },
-  "descriptors-of-builtins-sloppy.require.cjs": {
-    "output": "ok [\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"true,false,true\",\"true,true,true\",\"true,true,true\",false,true,true,true,false]\n"
-  },
-  "descriptors-of-builtins-strict.import.mjs": {
-    "output": "ok [\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"true,false,true\",\"true,true,true\",\"true,true,true\",false,true,true,true,false]\n"
-  },
-  "descriptors-of-builtins-strict.require.cjs": {
-    "output": "ok [\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"false,false,false\",\"true,false,true\",\"true,true,true\",\"true,true,true\",false,true,true,true,false]\n"
-  },
   "guarded-by-try-sloppy.import.mjs": {
-    "output": "ok [\"fell back\",\"fell back\"]\n"
+    "output": "ok [\"defined\",\"fell back\"]\n"
   },
   "guarded-by-try-sloppy.require.cjs": {
-    "output": "ok [\"fell back\",\"fell back\"]\n"
+    "output": "ok [\"defined\",\"fell back\"]\n"
   },
   "guarded-by-try-strict.import.mjs": {
-    "output": "ok [\"fell back\",\"fell back\"]\n"
+    "output": "ok [\"defined\",\"fell back\"]\n"
   },
   "guarded-by-try-strict.require.cjs": {
-    "output": "ok [\"fell back\",\"fell back\"]\n"
-  },
-  "hidden-require-sloppy.import.mjs": "compiled",
-  "hidden-require-sloppy.require.cjs": "compiled",
-  "hidden-require-strict.import.mjs": "compiled",
-  "hidden-require-strict.require.cjs": "compiled",
-  "new-proto-define-sloppy.import.mjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "new-proto-define-sloppy.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "new-proto-define-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `Object.defineProperty(Array.prototype, ..)` throws: built-in prototypes are frozen.\n"
-  },
-  "new-proto-define-strict.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "new-proto-method-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `String.prototype.shout` is assigned: built-in prototypes are frozen.\n"
-  },
-  "new-proto-method-sloppy.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "new-proto-method-strict.import.mjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "new-proto-method-strict.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "replace-promise-sloppy.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: built-ins cannot be replaced.\n"
-  },
-  "replace-promise-sloppy.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "replace-promise-strict.import.mjs": {
-    "errors": "error: TS100014: This always fails under --aot: `globalThis.Promise` is assigned: built-ins cannot be replaced.\n"
-  },
-  "replace-promise-strict.require.cjs": {
-    "output": "ok \"TypeError\"\n"
-  },
-  "typeof-checks-sloppy.require.cjs": "compiled",
-  "typeof-checks-strict.require.cjs": "compiled"
+    "output": "ok [\"defined\",\"fell back\"]\n"
+  }
 }

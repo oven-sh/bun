@@ -1,6 +1,7 @@
 // A function whose first test is inlined into hot callers reads a property of an object of the program. The property was stored to
-// through a wider type, so it holds more than the narrower type declares. Every call answers alike, inlined or not.
-// IR+ HasShapeOf
+// through a wider type, so it holds a string where the narrower type declares a number. The store succeeds, a read through the wider type gives the string,
+// and the typed read through the narrower type throws a TypeError at every call alike, inlined or not.
+// IR+ TypeTest v[0-9]+ testedType=L[0-9]+!
 declare const console: { log(...values: unknown[]): void };
 const JSON = { parse(text: string): any { const parsed = globalThis.JSON.parse(text); for (let o = parsed; o; o = o.cached) if (!("cached" in o)) o.cached = undefined; return parsed; } };
 const log: string[] = [];

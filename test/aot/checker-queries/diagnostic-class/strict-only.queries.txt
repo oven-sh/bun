@@ -1,0 +1,12 @@
+# `with` and `delete` of a name are EarlyError in an ES module and are not reported in sloppy CommonJS. A legacy octal literal is EarlyError in neither: `bun run` prints its value.
+strict-only-strict.mjs:3 diagnostic TS1101 = EarlyError StopsBuild
+strict-only-strict.mjs:4 diagnostic TS1102 = EarlyError StopsBuild
+
+absent: strict-only-strict.mjs:5 diagnostic TS1121 = EarlyError StopsBuild
+absent: strict-only-strict.mjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:3 diagnostic TS1101 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:4 diagnostic TS1102 = TypeScriptGrammar StopsBuild
+absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = EarlyError StopsBuild
+absent: strict-only-sloppy.cjs:5 diagnostic TS1121 = TypeScriptGrammar StopsBuild

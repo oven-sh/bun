@@ -1,12 +1,4 @@
-// A header name that is a parameter is compared with the constants that the program's calls pass there; each constant's number was looked up when the program was built. Not for a read: a request that is still only parsed is searched by the name's text whatever is known of it.
-// IR= 3 header StrictEq v\d+, v\d+$
-// IR= 1 header = Integer 527$
-// IR= 1 header = Integer 600$
-// IR= 1 header = Integer 766$
-// IR= 1 header = Integer 767$
-// IR= 0 readHeader = Integer 14$
-// IR= 1 readHeader = Integer 255$
-// IR= 0 neverGivenAConstant StrictEq
+// set, get and has on `x.headers` whose header name is a parameter of a method. The calls pass well-known names, other names, names created at run time, invalid names and values that are not strings, also in a server.
 class Context {
   constructor(response, request) {
     this.response = response;

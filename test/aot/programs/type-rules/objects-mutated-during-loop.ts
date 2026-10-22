@@ -1,4 +1,4 @@
-// Attempts to change the kind of a typed object's fields in the middle of a loop over it throw where they are made, and the loop goes on.
+// A typed object is changed in the middle of a loop over it: every change succeeds, as in plain Bun. A field that holds a value of another kind afterwards throws a TypeError at its next typed read.
 interface Cell { v: number; w: number; tag?: string }
 type Act = (c: Cell, i: number) => void
 function cell(): Cell { return { v: 1, w: 2 } }
@@ -30,8 +30,7 @@ function reparent(r: Runner): number { Object.setPrototypeOf(r, { go() { return 
 const r1 = new Runner()
 try { console.log(r1.go(reparent(r1))); console.log("another prototype for an instance (rule 4): no error") } catch (e) { console.log("another prototype for an instance (rule 4):", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(r1.go(0), r1.size, Object.keys(r1).join())
-// An element is replaced with an object that is not plain data: `any` enters an element of a `Cell[]`, which is checked against Cell like any store to
-// an annotated slot; an object that inherits its fields is not copied. So the store throws, in the first call of the callback, before anything is added.
+// An element is replaced with an object that inherits its fields: any object passes the type Cell, and the fields are read through the prototype.
 const cells: Cell[] = [cell(), cell(), cell()]
 let seen = 0
 try { cells.forEach((c, i, all) => { if (i === 0) all[2] = Object.create({ v: 0.5, w: 0.25 }); seen += c.v }); console.log("element under Object.create: no error") } catch (e) { console.log("element under Object.create:", e instanceof TypeError ? "TypeError" : "other " + e) }

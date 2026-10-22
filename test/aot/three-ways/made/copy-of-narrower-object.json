@@ -38,5 +38,5 @@
  "b13_null_and_undefined_sources": "all agree",
  "b14_the_copy_is_its_own_object": "all agree",
  "b15_many_copies_under_the_collector": "all agree",
- "c01_jsx_classic": "alone: the build fails"
+ "c01_jsx_classic": "all agree"
 }

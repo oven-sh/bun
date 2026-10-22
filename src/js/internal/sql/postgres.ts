@@ -1,4 +1,3 @@
-// @ts-check
 import type { NativeCreateConnection, NativeCreateQuery } from "./pool";
 import type { Query } from "./query";
 import type { ArrayType, SQLStatementDescription, TransactionCommands } from "./shared";
@@ -14,10 +13,10 @@ const {
   createPooledConnectionHandle,
   sameSettings,
   tryOtherPassword,
-} = require("internal/sql/pool");
+  // The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+} = require("internal/sql/pool") as typeof import("./pool").default;
 const {
-  QueryState,
-  stateOf,
+  symbols: { _results, _handle, _copy },
 } = require("internal/sql/query");
 
 const { PostgresError } = require("internal/sql/errors");
@@ -162,7 +161,7 @@ class SQLJSONParameter {
   /// JSON.stringify() calls one toJSON(): this one, not that of a Date or a URL in `value`.
   toJSON(key: string) {
     const value = this.value;
-    const toJSON = (value as { toJSON?: unknown } | null | undefined)?.toJSON;
+    const toJSON = (value as { toJSON?: (this: unknown, key: string) => unknown } | null | undefined)?.toJSON;
     return $isCallable(toJSON) ? toJSON.$call(value, key) : value;
   }
 }
@@ -194,12 +193,12 @@ function getArrayType(typeNameOrID: number | ArrayType | undefined): ArrayType |
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, is_last, statement) {
     if (is_last) {
-      query.resolve(stateOf(query).results);
+      query.resolve(query[_results]);
       return;
     }
     $assert(result instanceof SQLResultArray, "Invalid result array");
     // prepare for next query
-    stateOf(query).handle.setPendingValue(new SQLResultArray());
+    query[_handle].setPendingValue(new SQLResultArray());
 
     count ||= 0;
     if (typeof commandTag === "string") {
@@ -213,7 +212,7 @@ initPostgres(
     }
 
     result.count = count;
-    SQLResultArray.describe(result, stateOf(query).handle, statement);
+    SQLResultArray.describe(result, query[_handle], statement);
     addResult(query, result);
   },
   onRejectQuery,
@@ -388,8 +387,11 @@ function invoke<T>(callback: (arg?: T) => void, arg?: T) {
 class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
+  [_results] = null;
+  [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
+
   constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
-    QueryState.attach(this, handle);
+    this[_handle] = handle;
   }
 
   static run(conn: ListenHandle, sql: string): Promise<void> {
@@ -597,7 +599,7 @@ class ListenConnection {
               resolve(conn);
               this.#clearSweep();
               this.#sweep();
-              adapter.runUserCallback(adapter.connectionInfo.onconnect, null);
+              adapter.runUserCallback($getByIdDirect(adapter.connectionInfo, "onconnect"), null);
             }),
             adapter.ownerCallback(err => {
               err ??= adapter.connectionClosedError();
@@ -611,7 +613,7 @@ class ListenConnection {
                 for (const entry of this.#channels.values()) entry.ready = null;
                 this.#scheduleSweep();
               }
-              adapter.runUserCallback(adapter.connectionInfo.onclose, err);
+              adapter.runUserCallback($getByIdDirect(adapter.connectionInfo, "onclose"), err);
             }),
             undefined,
             login,
@@ -702,7 +704,7 @@ class CopySource {
 
   constructor(query: Query<any, any>) {
     this.query = query;
-    stateOf(query).copy = this;
+    query[_copy] = this;
   }
 
   attach(handle: CopyHandle) {
@@ -777,7 +779,7 @@ class CopySink {
 
   constructor(query: Query<any, any>) {
     this.query = query;
-    stateOf(query).copy = this;
+    query[_copy] = this;
   }
 
   attach(handle: CopyHandle) {
@@ -800,7 +802,7 @@ class CopySink {
     return waiting;
   }
 
-  write(chunk: unknown) {
+  write(chunk: string | ArrayBufferView | ArrayBufferLike) {
     try {
       if (this.handle!.copyWrite(chunk)) {
         return;

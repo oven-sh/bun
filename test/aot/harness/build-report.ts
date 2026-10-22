@@ -1,0 +1,193 @@
+import { readFileSync } from "node:fs";
+
+export const levels = ["unknown", "guarded", "proven"] as const;
+export type Level = (typeof levels)[number];
+export type LevelCounts = Record<Level, number>;
+
+/** What the code of a property access does where it stands. The three add up to every access. */
+export const accessColumns = ["byName", "tested", "free"] as const;
+export type AccessColumn = (typeof accessColumns)[number];
+export const accessCountKeys = [...accessColumns, "testedSlotOnly", "provenWithoutAnyTest"] as const;
+/** testedSlotOnly: the tested accesses whose receiver is known. provenWithoutAnyTest: those that no test anywhere stands behind. */
+export type AccessCounts = Record<(typeof accessCountKeys)[number], number>;
+export type AccessCost = "byName" | "testsReceiver" | "testsSlot" | "free";
+
+export const allocationOutcomes = ["heap", "slim", "deferred", "frame", "removed"] as const;
+export type AllocationOutcome = (typeof allocationOutcomes)[number];
+
+export type AccessKind = "read" | "store" | "define" | "has" | "delete" | "call" | "construct";
+
+export type AllocationKind =
+  | "object"
+  | "array"
+  | "closure"
+  | "environment"
+  | "arguments"
+  | "rest"
+  | "iteratorResult"
+  | "generator"
+  | "promise"
+  | "boundFunction"
+  | "stringRange"
+  | "collection"
+  | "other";
+
+export type SubjectKind =
+  | "value"
+  | "allocationSite"
+  | "callSite"
+  | "binding"
+  | "object"
+  | "holderAndName"
+  | "field"
+  | "function"
+  | "file"
+  | "module"
+  | "build";
+
+export interface SourcePosition {
+  file: string;
+  line: number;
+  column: number;
+}
+
+export interface LossRecord {
+  stage: string;
+  reason: string;
+  limit: string | null;
+  subjectKind: SubjectKind;
+  subject: SourcePosition | null;
+  witness: SourcePosition | null;
+  count: number;
+}
+
+export interface AccessSite extends SourcePosition {
+  kind: AccessKind;
+  level: Level;
+  cost: AccessCost;
+  loss: number | null;
+  function: number | null;
+}
+
+export interface AllocationSite extends SourcePosition {
+  kind: AllocationKind;
+  outcome: AllocationOutcome;
+  loss: number | null;
+  function: number | null;
+}
+
+export interface TypeTestSite extends SourcePosition {
+  canThrow: boolean;
+  function: number | null;
+}
+
+export interface FunctionRecord extends SourcePosition {
+  endLine: number;
+  name: string;
+  role: string;
+  isInDependency: boolean;
+  codeBytes: number;
+  /** How many values the function had when the front end sent it. `null`: the engine made the function. */
+  valuesAsRead: number | null;
+  accesses: AccessCounts;
+  calls: LevelCounts;
+  operations: Record<string, number>;
+}
+
+export interface PassRecord {
+  name: string;
+  runs: number;
+  changes: number;
+  nanoseconds: number;
+  wallNanoseconds: number;
+}
+
+export interface StageRecord {
+  name: string;
+  nanoseconds: number;
+}
+
+export interface LimitRecord {
+  name: string;
+  value: number;
+  hits: number;
+}
+
+export interface UnseenCodeRecord {
+  cause: string;
+  builtin: string | null;
+  location: SourcePosition | null;
+}
+
+export interface ReportSummary {
+  accesses: AccessCounts;
+  dependencyAccesses: AccessCounts;
+  calls: LevelCounts;
+  closures: Record<AllocationOutcome, number>;
+  environments: { heap: number; frame: number };
+  typeTests: number;
+  sitesWithoutOrigin: number;
+  sourceLines: number;
+  codeBytes: number;
+  dataBytes: number;
+  functions: number;
+}
+
+export interface BuildReport {
+  schemaHash: string;
+  buildId: string | null;
+  summary: ReportSummary;
+  statistics: Record<string, number>;
+  limits: LimitRecord[];
+  losses: LossRecord[];
+  passes: PassRecord[];
+  stages: StageRecord[];
+  retainedFeatures: string[] | null;
+  unseenCode: UnseenCodeRecord[];
+  functions: FunctionRecord[] | null;
+  accessSites: AccessSite[] | null;
+  allocationSites: AllocationSite[] | null;
+  typeTestSites: TypeTestSite[] | null;
+}
+
+export function readBuildReport(path: string): BuildReport {
+  return JSON.parse(readFileSync(path, "utf8"));
+}
+
+export const levelRank = (level: Level) => levels.indexOf(level);
+export const outcomeRank = (outcome: AllocationOutcome) => allocationOutcomes.indexOf(outcome);
+
+export const emptyLevelCounts = (): LevelCounts => ({ unknown: 0, guarded: 0, proven: 0 });
+export const emptyAccessCounts = (): AccessCounts => ({ byName: 0, tested: 0, free: 0, testedSlotOnly: 0, provenWithoutAnyTest: 0 });
+
+export function addLevelCounts(total: LevelCounts, counts: LevelCounts): LevelCounts {
+  for (const level of levels) total[level] += counts[level];
+  return total;
+}
+
+export function addAccessCounts(total: AccessCounts, counts: AccessCounts): AccessCounts {
+  for (const key of accessCountKeys) total[key] += counts[key];
+  return total;
+}
+
+export const countAll = (counts: LevelCounts) => levels.reduce((sum, level) => sum + counts[level], 0);
+export const countAccesses = (counts: AccessCounts) => accessColumns.reduce((sum, column) => sum + counts[column], 0);
+
+export function countAtLeast(counts: LevelCounts, level: Level): number {
+  return levels.slice(levelRank(level)).reduce((sum, each) => sum + counts[each], 0);
+}
+
+export function shareOf(counts: LevelCounts, level: Level): number {
+  const all = countAll(counts);
+  return all === 0 ? 0 : counts[level] / all;
+}
+
+export const positionKey = ({ file, line, column }: SourcePosition) => `${file}:${line}:${column}`;
+
+export function functionsNamed(report: BuildReport, name: string): FunctionRecord[] {
+  return (report.functions ?? []).filter(record => record.name === name);
+}
+
+export function countOperations(records: FunctionRecord[], operations: readonly string[]): number {
+  return records.reduce((sum, record) => sum + operations.reduce((count, operation) => count + (record.operations[operation] ?? 0), 0), 0);
+}

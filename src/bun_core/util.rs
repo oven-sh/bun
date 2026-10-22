@@ -3925,8 +3925,18 @@ impl OptionsEnvArg for Box<ZStr> {
 }
 
 pub fn is_bootstrap_flag(argument: &[u8]) -> bool {
-    let traced = argument.strip_prefix(b"--trace-e");
-    traced.is_some_and(|what| what.starts_with(b"vent") || what.starts_with(b"nv") || what.starts_with(b"xit")) || argument.starts_with(b"--stack-trace-limit")
+    const PREFIXES: [&[u8]; 4] = [
+        b"--trace-event",
+        b"--trace-env",
+        b"--trace-exit",
+        b"--stack-trace-limit",
+    ];
+    PREFIXES.iter().any(|prefix| argument.starts_with(prefix))
+}
+
+/// The bootstrap flag that native code carries out where `internal/process/pre_execution` cannot be loaded.
+pub fn is_stack_trace_limit_flag(argument: &[u8]) -> bool {
+    argument.starts_with(b"--stack-trace-limit")
 }
 
 /// Parse a `BUN_OPTIONS`-style string
@@ -4335,15 +4345,17 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-static BEFORE_RELOAD: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
-static KEEP_OPEN_ACROSS_RELOAD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+static RESTART_ARGUMENTS: Once<Vec<ZBox>> = Once::new();
 
-pub fn before_reload(hook: fn()) {
-    let _ = BEFORE_RELOAD.set(hook);
-}
-
-pub fn keep_open_across_reload(fd: i32) {
-    KEEP_OPEN_ACROSS_RELOAD.store(fd, AOrdering::SeqCst);
+/// `reload_process` starts the process with the arguments it was started with, except those that `replace` gives
+/// another text for.
+pub fn replace_restart_arguments(replace: impl Fn(&[u8]) -> Option<&'static [u8]>) {
+    RESTART_ARGUMENTS.get_or_init(|| {
+        let arguments = argv_storage().iter().map(|argument| argument.as_bytes());
+        arguments
+            .map(|argument| ZBox::from_bytes(replace(argument).unwrap_or(argument)))
+            .collect()
+    });
 }
 
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
@@ -4405,45 +4417,6 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    {
-        let dupe_argv: Vec<ZBox> = argv_storage()
-            .iter()
-            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
-            .collect();
-        if let Some(hook) = BEFORE_RELOAD.get() {
-            hook();
-        }
-        let kept_open = KEEP_OPEN_ACROSS_RELOAD.load(AOrdering::SeqCst);
-        let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)), true);
-        if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
-            return;
-        }
-        panic!("Unexpected error while reloading: errno {}", errno);
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = (clear_terminal, may_return);
-        compile_error!("unsupported platform for reload_process");
-    }
-}
-
-#[cfg(unix)]
-pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
-    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
-    argv.push(ZBox::from_bytes(
-        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
-    ));
-    argv.extend(args.iter().map(ZBox::from_bytes));
-    execve_self(&argv, keep_open, false)
-}
-
-#[cfg(unix)]
-fn execve_self(argv: &[ZBox], keep_open: Option<Fd>, close_inherited_fds: bool) -> i32 {
     // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
     // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
@@ -4451,16 +4424,17 @@ fn execve_self(argv: &[ZBox], keep_open: Option<Fd>, close_inherited_fds: bool) 
             unsafe extern "C" {
                 safe fn on_before_reload_process_posix(close_inherited_fds: bool);
             }
-            on_before_reload_process_posix(close_inherited_fds);
-        }
-        if let Some(fd) = keep_open {
-            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
-            if flags >= 0 {
-                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
-            }
+            on_before_reload_process_posix(true);
         }
 
-        let mut newargv: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
+        // We clone argv so that the memory address isn't the same as the libc one.
+        let args = RESTART_ARGUMENTS.get().map_or_else(argv_storage, Vec::as_slice);
+        let dupe_argv: Vec<ZBox> = args
+            .iter()
+            .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
+            .collect();
+        let mut newargv: Vec<*const core::ffi::c_char> =
+            dupe_argv.iter().map(|z| z.as_ptr()).collect();
         newargv.push(core::ptr::null());
 
         // We clone envp so that the memory address of environment variables isn't
@@ -4480,8 +4454,54 @@ fn execve_self(argv: &[ZBox], keep_open: Option<Fd>, close_inherited_fds: bool) 
 
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
-        std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
+        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        if may_return {
+            crate::output::pretty_errorln(format_args!(
+                "error: Failed to reload process: errno {}",
+                errno
+            ));
+            return;
+        }
+        panic!("Unexpected error while reloading: errno {}", errno);
     }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        // Bun only targets POSIX + Windows; any other target
+        // is a build-time error, not a runtime panic.
+        let _ = (clear_terminal, may_return);
+        compile_error!("unsupported platform for reload_process");
+    }
+}
+
+/// Replaces this process with Bun run with `args`. File descriptors this process inherited, and `keep_open`, stay open.
+/// Returns the errno of `execve`.
+#[cfg(unix)]
+pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+    unsafe extern "C" {
+        safe fn on_before_reload_process_posix(close_inherited_fds: bool);
+    }
+    let mut argv: Vec<ZBox> = Vec::with_capacity(args.len() + 1);
+    argv.push(ZBox::from_bytes(
+        argv_storage().first().map_or(&b"bun"[..], ZBox::as_bytes),
+    ));
+    argv.extend(args.iter().map(ZBox::from_bytes));
+    let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
+    pointers.push(core::ptr::null());
+    let exec_path = self_exe_path().expect("unreachable").as_ptr();
+    on_before_reload_process_posix(false);
+    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
+    // process's own, and `fcntl` takes no pointer.
+    unsafe {
+        if let Some(fd) = keep_open {
+            let flags = libc::fcntl(fd.native(), libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
+            }
+        }
+        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+    }
+    std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }
 
 // ── spawn_sync_inherit ────────────────────────────────────────────────────

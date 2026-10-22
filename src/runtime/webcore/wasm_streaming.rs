@@ -86,7 +86,7 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    if response.get_body_used(this).to_boolean() {
+    if response.get_body_used(this) {
         return Err(this
             .err(
                 ErrorCode::WEBASSEMBLY_RESPONSE,

@@ -1,6 +1,6 @@
 {
  "escape-a-cycle-through-the-user": "all agree",
- "escape-a-failure-half-way": "as bun run",
+ "escape-a-failure-half-way": "alone: exit code 1: error",
  "escape-by-the-cache": "as the bundle",
  "escape-control": "all agree",
  "escape-es-importers": "all agree",
@@ -15,15 +15,15 @@
  "escape-then-stored-to": "all agree",
  "escape-then-swapped": "all agree",
  "escape-then-the-prototype-replaced-and-deleted": "all agree",
- "escape-top-level-await-on-the-road": "as the bundle",
+ "escape-top-level-await-on-the-road": "as bun run",
  "escape-two-packages-share-the-symbols": "all agree",
  "keys-at-the-stacks-end": "as bun run",
  "keys-control": "all agree",
- "keys-imported-by-es-modules": "as the bundle",
+ "keys-imported-by-es-modules": "as bun run",
  "keys-lazy-at-the-bottom-of-a-recursion": "as bun run",
- "keys-through-the-parents-children": "as the bundle",
+ "keys-through-the-parents-children": "as bun run",
  "keys-trap-a-setter-on-module-cache": "as the bundle",
  "keys-trap-a-setter-on-module-prototype-exports": "all agree",
  "keys-trap-a-setter-on-module-prototype-loaded": "all agree",
- "keys-trap-children-push-throws": "as the bundle"
+ "keys-trap-children-push-throws": "alone: no throw\nkept undefined early symbol again symbol"
 }

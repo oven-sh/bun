@@ -1,4 +1,4 @@
-// A missing value from a typed array, a destructuring pattern or a dictionary throws where it enters a variable of type `number`.
+// A missing value from a typed array, a destructuring pattern or a dictionary is undefined, and undefined passes where it enters a variable or a parameter of type `number`.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label + ": no error", String(f())) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) }
 }

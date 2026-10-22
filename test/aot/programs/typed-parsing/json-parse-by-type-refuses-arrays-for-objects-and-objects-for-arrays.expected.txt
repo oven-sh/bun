@@ -1,0 +1,25 @@
+an object with a length: documented value, got value {"length": 2}
+a list where a length is declared: documented TypeError, got TypeError
+a text where a length is declared: documented TypeError, got TypeError
+an object with an index: documented value, got value {"0": 1}
+a list where an index is declared: documented TypeError, got TypeError
+a table: documented value, got value {"0": 1, "1": 2}
+a list for a table: documented TypeError, got TypeError
+an empty list for a table: documented TypeError, got TypeError
+an empty list for an empty object type: documented TypeError, got TypeError
+a number for an empty object type: documented TypeError, got TypeError
+an empty object for an empty object type: documented value, got value {}
+a list for object: documented value, got value [1]
+null for object: documented TypeError, got TypeError
+a text for object: documented TypeError, got TypeError
+an object with indexes and a length for a list: documented TypeError, got TypeError
+an empty object for a list: documented TypeError, got TypeError
+an object for a pair: documented TypeError, got TypeError
+null for a list: documented TypeError, got TypeError
+a text for a list of texts: documented TypeError, got TypeError
+a list in a list of numbers: documented TypeError, got TypeError
+a number in a list of lists: documented TypeError, got TypeError
+null in a list of numbers: documented TypeError, got TypeError
+the last of many is a text: documented TypeError, got TypeError
+a list of objects holds a list: documented TypeError, got TypeError
+a list of objects holds null: documented TypeError, got TypeError

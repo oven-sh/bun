@@ -1,8 +1,8 @@
 // `declare namespace` around an interface says nothing about the interface: its objects are made by this program and have a layout.
 // A namespace that also declares a value describes what the host provides, and so does `declare global`.
-// IR+ ^shape .*"WithContent"
-// IR+ ^shape .*"Deep"
-// IR- ^shape .*"OfTheHost"
+// IR+ ^layout L\d+ .*name="WithContent" .* representation=Typed
+// IR+ ^layout L\d+ .*name="Deep" .* representation=Typed
+// IR- ^layout L\d+ .*name="OfTheHost" .* representation=Typed
 export interface Options {
   readonly status?: number
 }

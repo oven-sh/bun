@@ -1,6 +1,7 @@
 // The compiled JSON.stringify writes a large 16-bit result straight into the string it returns, with no second copy of it.
 // Peak RSS over the baseline, in units of the length of the result, measured on Linux x64: 4.9 so, 6.9 with the second copy.
 import { expect } from "bun:test";
+import { built } from "./run-programs";
 import { test } from "./supported";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "node:path";
@@ -33,7 +34,7 @@ test.skipIf(isASAN || isDebug)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
+    built({ stderr: await build.stderr.text(), exitCode: await build.exited });
     const measure = async (mode: string) => {
       await using ran = Bun.spawn({
         cmd: [executable, mode],

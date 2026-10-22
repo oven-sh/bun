@@ -1,8 +1,8 @@
 // A `declare` field is left out of the layout of its class where the name of a method is computed and could be the field's own. A key read through `import * as` from a module that exports it as a const with a constant value is known, so the field keeps its place. A key that is reassigned, or is read from a TypeScript namespace, is not known.
-// IR+ ^  field "payload"
-// IR+ ^  field "reasons"
-// IR- ^  field "hidden"
-// IR- ^  field "viaNamespace"
+// IR+ ^layout L[0-9]+ .*\{name="payload" declared=
+// IR+ ^layout L[0-9]+ .*\{name="reasons" declared=
+// IR- ^layout L[0-9]+ .*\{name="hidden" declared=
+// IR- ^layout L[0-9]+ .*\{name="viaNamespace" declared=
 import * as Keys from "./keys.ts";
 import { inspectKey } from "./keys.ts";
 declare const console: { log(...values: unknown[]): void };

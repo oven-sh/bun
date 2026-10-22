@@ -21,7 +21,7 @@
  "r-a-class-static": "all agree",
  "r-a-closure-that-returns-it": "all agree",
  "r-a-computed-key": "all agree",
- "r-a-constructor-that-returns-a-literal": "alone: inferred: threw TypeError\nannotated: threw TypeError\nan argument: threw TypeError\ninferred: threw TypeError\nand 5 lines more",
+ "r-a-constructor-that-returns-a-literal": "all agree",
  "r-a-field-of-an-instance": "all agree",
  "r-a-finally": "all agree",
  "r-a-for-of-variable": "all agree",

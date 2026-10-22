@@ -1,4 +1,0 @@
-a string stored to a private number field: TypeError
-m1 7 m7
-the same, frozen: TypeError
-9 m9

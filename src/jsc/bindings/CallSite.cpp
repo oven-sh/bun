@@ -49,17 +49,21 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
 
     bool isStrictFrame = encounteredStrictFrame;
     JSC::JSCell* callee = stackFrame.callee();
-    const JSC::StackFrame& frame = stackFrame.stackFrame();
-    bool isCompiled = frame.isTypedAOTFrame();
-    bool isCompiledHostFunction = frame.representsHostFunction();
-    bool isHiddenBuiltin = isCompiled ? !isCompiledHostFunction && frame.isBuiltinFunction() : !stackFrame.codeBlock() && frame.codeBlockIfExists();
-    if (!isStrictFrame && !isHiddenBuiltin && !isCompiledHostFunction) {
-        if (auto* executable = frame.ownerExecutable()) {
-            isStrictFrame = executable->isInStrictContext();
-        } else if (isCompiled) {
-            isStrictFrame = !frame.isSloppyTypedAOTFrame();
+    JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
+    if (!isStrictFrame) {
+        if (codeBlock) {
+            isStrictFrame = codeBlock->ownerExecutable()->isInStrictContext();
         }
     }
+
+    const JSC::StackFrame& frame = stackFrame.stackFrame();
+    bool isCompiled = frame.isCompiledFrame();
+    bool isCompiledHostFunction = isCompiled && frame.representsHostFunction();
+    bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
+#if ENABLE(AOT)
+    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction)
+        isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
+#endif
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
@@ -98,7 +102,7 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     if (stackFrame.isConstructor()) {
         m_flags |= static_cast<unsigned int>(Flags::IsConstructor);
     }
-    if (isHiddenBuiltin || !frame.hasLineAndColumnInfo()) {
+    if (isCompiled ? isCompiledHiddenBuiltin || !frame.hasLineAndColumnInfo() : !stackFrame.codeBlock()) {
         m_flags |= static_cast<unsigned int>(Flags::IsNative);
     }
     if (stackFrame.isAsync()) {

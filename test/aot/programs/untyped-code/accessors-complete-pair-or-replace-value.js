@@ -22,8 +22,7 @@ const frozenSource = Object.freeze({ locals: 1 }); lines.push(show(overSpread(fr
 const options = { addCookieHeader: false, clientAddress: undefined, locals: "given", routeData: undefined };
 const kept = [];
 for (let i = 0; i < 300; i++) { pair(state); reversed(state); apart(state); overSpread(options, state); overMember(state); }
-const names = ["operationAOTTypedDefineGetterByKey", "operationAOTTypedDefineSetterByKey", "language-operation:DefineGetter", "language-operation:DefineSetter"];
-const asked = () => names.reduce((sum, name) => sum + count(name), 0);
+const asked = () => count("operationAOTDefineAccessor");
 const before = asked();
 let check = 0;
 for (let i = 0; i < 3000; i++) {

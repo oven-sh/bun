@@ -1,11 +1,4 @@
 // A concatenation that nothing but one `new Response(text, { .. })` can reach is written as UTF-8 for the body without being flattened into a string. Whatever else may hold the text keeps today's road.
-// IR= 1 direct takes unshared string = CallBuiltin NewResponse#
-// IR= 1 page takes unshared string = CallBuiltin NewResponse#
-// IR= 1 chosen takes unshared string = CallBuiltin NewResponse#
-// IR= 0 readAfterwards takes unshared string
-// IR= 0 keptInAMap takes unshared string
-// IR= 0 inALoop takes unshared string
-// IR= 0 open takes unshared string
 const filler = "0123456789abcdef".repeat(20);
 const init = (kind: string) => ({ "Content-Type": kind });
 function direct(title: string, text: string): Response {

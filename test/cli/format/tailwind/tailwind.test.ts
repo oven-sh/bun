@@ -548,7 +548,7 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     for (const allows of [false, true]) {
       using dir = tempDir("bun-format-tailwind", files);
       const flags = allows ? ["--allow-unsupported", "."] : ["."];
-      const lists: { files: string[]; stdout: string; stderr: string; exitCode: number }[] = [];
+      const lists = [];
       for (let run = 0; run < 3; run++) {
         const list = ["--log-level=log", "--list-different", ...flags];
         const { stdout, stderr, exitCode } = await formatIn(String(dir), [], list);

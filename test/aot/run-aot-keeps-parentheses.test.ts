@@ -49,4 +49,5 @@ test("an expression that is held to a type keeps the parentheses it needs", asyn
     return { stdout, stderr: stderr.split("\n").filter(line => /error/i.test(line)).slice(0, 5), exitCode };
   }
   expect(await ran("--aot")).toEqual(await ran());
-});
+  expect(await ran("--debug-aot")).toEqual(await ran());
+}, 120_000);

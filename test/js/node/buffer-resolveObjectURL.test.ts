@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { Blob, resolveObjectURL } from "buffer";
 import { expect, test } from "bun:test";
 import { URL } from "url";

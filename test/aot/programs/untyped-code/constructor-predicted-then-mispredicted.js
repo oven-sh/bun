@@ -21,12 +21,12 @@ Object.defineProperty(Object.getPrototypeOf(new Server(0)), name, { get() { retu
 function describe(object) { return object.constructor.name + " " + Object.keys(object).map(key => key + "=" + JSON.stringify(object[key])).join() + " " + object.guarded; }
 
 const said = new Set();
-const before = count("operationAOTTypedTryPutProperties");
+const before = count("operationAOTTryPutProperties");
 for (let i = 0; i < 3000; i++) {
   said.add(describe(new Client(1)));
   said.add(describe(new Server(2)));
 }
-const asked = count("operationAOTTypedTryPutProperties") - before;
+const asked = count("operationAOTTryPutProperties") - before;
 console.log([...said].join("\n"));
 console.log(calls, asked <= 100 ? "the run time worked it out at most 100 times" : "the run time worked it out " + asked + " times");
 

@@ -12,9 +12,9 @@ function round(tag, most) {
   for (const [what, f, value] of cases) {
     let last;
     for (let i = 0; i < 50; i++) last = f(value);
-    const before = count("operationAOTGetByNameAndCache");
+    const before = count("operationAOTGetByIdAndCache");
     for (let i = 0; i < 1000; i++) last = f(value);
-    const asked = count("operationAOTGetByNameAndCache") - before;
+    const asked = count("operationAOTGetByIdAndCache") - before;
     lines.push(tag + " " + what + ": " + String(last) + (asked <= most(what) ? "" : ": THE RUN TIME WAS ASKED " + asked + " TIMES"));
   }
 }

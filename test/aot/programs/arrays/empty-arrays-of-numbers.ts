@@ -1,6 +1,6 @@
 // `[]` of number[] is one call with nothing behind it, whether or not the compiler sees how much room it will need, and also once an accessor for an index on a prototype of arrays has made every array slow.
-// CALLS+ none NewEmptyArrayWithDouble
-// CALLS- none operationAOTTypedNewArrayWithIndexingType
+// CALLS+ none NewEmptyArray\.DoubleDefaultCapacity
+// CALLS- none CallOperation
 // SIZE< none 24
 function none(): number[] { return []; }
 function one(value: number): number[] { const made: number[] = []; made.push(value); return made; }

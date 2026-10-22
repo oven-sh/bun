@@ -1,0 +1,7 @@
+imported
+a copy: through a copy of require
+a comma: MODULE_NOT_FOUND Cannot load 'lib.ts': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point.
+createRequire: through createRequire
+module.require: through module.require
+import(): ERR_MODULE_NOT_FOUND Cannot load 'lib.ts': this executable can't load a module from a dynamic path. Pass the file to bun compile as another entry point.
+imported

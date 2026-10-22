@@ -155,11 +155,11 @@ test("a debugger attached to an executable built without --aot gets no notice an
   }
 });
 
-describe("the inspector on an executable built with --aot", () => {
+describe("the inspector on an executable built with --aot --compile-inspector", () => {
   let session: Session;
 
   beforeAll(async () => {
-    session = await inspected(["--aot"]);
+    session = await inspected(["--aot", "--compile-inspector"]);
   }, 60_000);
   afterAll(() => session.close());
 
@@ -168,7 +168,7 @@ describe("the inspector on an executable built with --aot", () => {
     const warnings = session.events.filter(isWarningAboutCompiledCode);
     expect(warnings).toHaveLength(1);
     expect(warnings[0].params.message.text).toContain("Breakpoints, stepping, pausing and `debugger` statements have no effect in compiled code");
-    expect(warnings[0].params.message.text).toContain("without --aot");
+    expect(warnings[0].params.message.text).toContain("To debug the program, run it from source with bun run.");
   });
 
   test("the preview of an object of a compiled class lists its fields", async () => {

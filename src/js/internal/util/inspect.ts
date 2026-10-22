@@ -1,4 +1,3 @@
-// @ts-check
 // **TODO: delete this file**
 // It is too much JavaScript. We should just fix the native implementation.
 //
@@ -31,8 +30,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
 
-let BufferModule;
-
+const primordials = require("internal/primordials");
 const {
   MapPrototypeGetSize,
   SafeMap,
@@ -40,14 +38,15 @@ const {
   SetPrototypeGetSize,
   TypedArrayPrototypeGetLength,
   TypedArrayPrototypeGetSymbolToStringTag,
-} = require("internal/primordials");
+} = primordials;
 
 const ArrayFrom = Array.from;
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeFlat = Array.prototype.flat;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypeIncludes = Array.prototype.includes;
-const ArrayPrototypeIndexOf = Array.prototype.indexOf;
+const ArrayPrototypeIndexOf: (this: ArrayLike<unknown>, searchElement?: unknown, fromIndex?: number) => number =
+  Array.prototype.indexOf;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeMap = Array.prototype.map;
 const ArrayPrototypePop = Array.prototype.pop;
@@ -55,7 +54,6 @@ const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
 const ArrayPrototypeSort = Array.prototype.sort;
-const ArrayPrototypeUnshift = Array.prototype.unshift;
 const BigIntPrototypeValueOf = BigInt.prototype.valueOf;
 const BooleanPrototypeValueOf = Boolean.prototype.valueOf;
 const DatePrototypeGetTime = Date.prototype.getTime;
@@ -84,7 +82,7 @@ const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
 const ObjectGetOwnPropertySymbols = Object.getOwnPropertySymbols;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
-const ObjectHasOwn = Object.hasOwn;
+const ObjectIs = Object.is;
 const ObjectKeys = Object.keys;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectPrototypePropertyIsEnumerable = Object.prototype.propertyIsEnumerable;
@@ -93,16 +91,16 @@ const ObjectSeal = Object.seal;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ReflectOwnKeys = Reflect.ownKeys;
 const RegExpPrototypeExec = RegExp.prototype.exec;
-const RegExpPrototypeSymbolReplace: (
+const RegExpPrototypeSymbolReplace = RegExp.prototype[Symbol.replace] as (
   this: RegExp,
   string: string,
-  replaceValue: string | ((substring: string, ...args: any[]) => string),
-) => string = RegExp.prototype[Symbol.replace] as any;
+  replaceValue?: string | ((substring: string, ...args: unknown[]) => string),
+) => string;
 const RegExpPrototypeSymbolSplit = RegExp.prototype[Symbol.split];
 const RegExpPrototypeToString = RegExp.prototype.toString;
 const SetPrototypeEntries = Set.prototype.entries;
 const SetPrototypeValues = Set.prototype.values;
-const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt as (this: string, index?: number) => number;
 const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeIndexOf = String.prototype.indexOf;
 const StringPrototypeLastIndexOf = String.prototype.lastIndexOf;
@@ -136,22 +134,16 @@ const ONLY_ENUMERABLE = 2;
  * Fast path for {@link extractedSplitNewLines} for ASCII/Latin1 strings.
  * @returns `value` split on newlines (newline included at end), or `undefined`
  * if non-ascii UTF8/UTF16.
- *
- * Passing this a non-string will cause a panic.
- *
- * @type {(value: string) => string[] | undefined}
  */
-const extractedSplitNewLinesFastPathStringsOnly = $newRustFunction(
-  "node_util_binding.rs",
+const extractedSplitNewLinesFastPathStringsOnly: (value: string) => string[] | undefined = $bindgen(
+  "node_util_binding.bind.ts",
   "extractedSplitNewLinesFastPathStringsOnly",
-  1,
 );
 
-const isAsyncFunction = (v: unknown): boolean =>
+const isAsyncFunction = (v: unknown) =>
   typeof v === "function" && StringPrototypeStartsWith.$call(FunctionPrototypeToString.$call(v), "async");
-const generatorFunctionRegExp = /^(async\s+)?function *\*/;
-const isGeneratorFunction = (v: unknown): boolean =>
-  typeof v === "function" && StringPrototypeMatch.$call(FunctionPrototypeToString.$call(v), generatorFunctionRegExp) !== null;
+const isGeneratorFunction = (v: unknown) =>
+  typeof v === "function" && StringPrototypeMatch.$call(FunctionPrototypeToString.$call(v), /^(async\s+)?function *\*/);
 
 const {
   //! The native versions of the commented out functions are currently buggy, so we use the polyfills above for now.
@@ -165,38 +157,48 @@ const {
   isBoxedPrimitive,
   isDataView,
   isExternal,
+  isMap,
   isModuleNamespaceObject,
   isNativeError,
   isNumberObject,
+  isPromise,
+  isSet,
   isStringObject,
   isWeakMap,
   isWeakSet,
+  isRegExp,
   isDate,
+  isTypedArray,
 } = require("node:util/types");
 
 // previewEntries() reads internal fields of whatever these two accept, so a script must not be able to replace them.
 const isMapIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator", 1);
 const isSetIterator = $newCppFunction("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator", 1);
-const isBufferClassMade = $newCppFunction("UtilInspect.cpp", "jsFunctionIsBufferClassMade", 0);
 
-function assert(p: unknown, message?: string): void {
-  if (!p) throw new (require("internal/errors").AssertionError)(message);
+// We need this duplicate here to avoid a circular dependency between node:assert and node:util.
+class AssertionError extends Error {
+  declare operator: string;
+  declare generatedMessage: boolean;
+  declare actual: unknown;
+  declare expected: unknown;
+
+  constructor(message?: string, isForced = false) {
+    super(message);
+    this.name = "AssertionError";
+    this.code = "ERR_ASSERTION";
+    this.operator = "==";
+    this.generatedMessage = !isForced;
+    this.actual = isForced && undefined;
+    this.expected = !isForced || undefined;
+  }
+}
+function assert(p: unknown, message?: string) {
+  if (!p) throw new AssertionError(message);
 }
 
-const SymbolToPrimitive = Symbol.toPrimitive;
+const { validateObject, kValidateObjectAllowArray } = require("internal/validators");
 
-const ObjectConstructor = Object;
-const ArrayConstructor = Array;
-const FunctionConstructor = Function;
-const MapConstructor = Map;
-const SetConstructor = Set;
-const ArrayBufferConstructor = ArrayBuffer;
-const ObjectPrototype: object = Object.prototype;
-const ArrayPrototype: object = Array.prototype;
-const FunctionPrototype: object = Function.prototype;
-const MapPrototype: object = Map.prototype;
-const SetPrototype: object = Set.prototype;
-const ArrayBufferPrototype: object = ArrayBuffer.prototype;
+const SymbolToPrimitive = Symbol.toPrimitive;
 
 // Node.js computes this from `globalThis` at bootstrap, before any host globals
 // (Buffer, URL, ...) are installed. Bun's globalThis already has them when this
@@ -214,7 +216,7 @@ const builtInObjects = new SafeSet([
 ]);
 
 // https://tc39.es/ecma262/#sec-IsHTMLDDA-internal-slot
-const isUndetectableObject = (v: unknown): boolean => typeof v === "undefined" && v !== undefined;
+const isUndetectableObject = (v: unknown) => typeof v === "undefined" && v !== undefined;
 
 // This is used for detecting stack overflows during inspection.
 // It will probably never need to be changed, but it's here just in case JSC does change the message.
@@ -222,7 +224,7 @@ const ERROR_STACK_OVERFLOW_MSG = "Maximum call stack size exceeded.";
 
 // These options must stay in sync with `getUserOptions`. So if any option will
 // be added or removed, `getUserOptions` must also be updated accordingly.
-const inspectDefaultOptions: Record<string, unknown> = {
+const inspectDefaultOptions = ObjectSeal({
   showHidden: false,
   depth: 2,
   colors: false,
@@ -235,14 +237,58 @@ const inspectDefaultOptions: Record<string, unknown> = {
   sorted: false,
   getters: false,
   numericSeparator: false,
-};
-ObjectSeal(inspectDefaultOptions);
-const inspectReplDefaults: Record<string, unknown> = {
+});
+const inspectReplDefaults = ObjectSeal({
   ...inspectDefaultOptions,
   colors: Bun.enableANSIColors,
   showProxy: true,
-};
-ObjectSeal(inspectReplDefaults);
+});
+
+type Stylize = (str: string, styleType: string) => string;
+
+interface InspectOptions {
+  stylize?: Stylize;
+  showHidden?: boolean;
+  depth?: number | null;
+  colors?: boolean;
+  customInspect?: boolean;
+  showProxy?: boolean;
+  maxArrayLength?: number | null;
+  maxStringLength?: number | null;
+  breakLength?: number;
+  compact?: number | boolean;
+  sorted?: boolean | ((a: string, b: string) => number);
+  getters?: boolean | "get" | "set";
+  numericSeparator?: boolean;
+}
+
+interface Context {
+  budget: Record<number, number>;
+  indentationLvl: number;
+  seen: unknown[];
+  currentDepth: number;
+  stylize: Stylize;
+  showHidden: boolean;
+  depth: number | null;
+  colors: boolean;
+  customInspect: boolean;
+  showProxy: boolean;
+  maxArrayLength: number;
+  maxStringLength: number;
+  breakLength: number;
+  compact: number | boolean;
+  sorted: boolean | ((a: string, b: string) => number);
+  getters: boolean | "get" | "set";
+  numericSeparator: boolean;
+  userOptions?: object;
+  circular?: Map<unknown, number>;
+  seenRefs?: Set<number>;
+}
+
+type Key = string | symbol;
+type Braces = [open: string, close: string];
+type Formatter = (ctx: Context, value: object, recurseTimes: number) => string[];
+type CustomInspect = (this: unknown, depth: number | null, options: InspectOptions, inspect: unknown) => unknown;
 
 const kObjectType = 0;
 const kArrayType = 1;
@@ -257,13 +303,18 @@ const strEscapeSequencesRegExpSingle =
 const strEscapeSequencesReplacerSingle =
   /[\x00-\x1f\x5c\x7f-\x9f]|[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 const extractedNewLineRe = /(?<=\n)/;
-const extractedSplitNewLines = (value: string): string[] =>
-  extractedSplitNewLinesFastPathStringsOnly(value) || RegExpPrototypeSymbolSplit.$call(extractedNewLineRe, value);
+const extractedSplitNewLinesSlow = (value: string) => RegExpPrototypeSymbolSplit.$call(extractedNewLineRe, value);
+
+const extractedSplitNewLines = (value: string) => {
+  if (typeof value === "string") {
+    return extractedSplitNewLinesFastPathStringsOnly(value) || extractedSplitNewLinesSlow(value);
+  }
+  return extractedSplitNewLinesSlow(value);
+};
 
 const keyStrRegExp = /^[a-zA-Z_][a-zA-Z_0-9]*$/;
 const numberRegExp = /^(0|[1-9][0-9]*)$/;
 
-const errorPrefixRegExp = /^Error: /;
 const coreModuleRegExp = /^ {4}at (?:[^/\\(]+ \(|)node:(.+):\d+:\d+\)?$/;
 const nodeModulesRegExp = /[/\\]node_modules[/\\](.+?)(?=[/\\])/g;
 
@@ -279,7 +330,7 @@ const kMapEntries = 2;
 
 // Escaped control characters (plus the single quote and the backslash). Use
 // empty strings to fill up unused entries.
-const meta: string[] = [
+const meta = [
   "\\x00",
   "\\x01",
   "\\x02",
@@ -442,129 +493,8 @@ const meta: string[] = [
   "\\x9F", // x9F
 ];
 
-interface Context {
-  budget: number[] | undefined;
-  indentationLvl: number;
-  seen: unknown[] | undefined;
-  currentDepth: number;
-  stylize: unknown;
-  showHidden: unknown;
-  depth: unknown;
-  colors: unknown;
-  customInspect: unknown;
-  showProxy: unknown;
-  maxArrayLength: unknown;
-  maxStringLength: unknown;
-  breakLength: unknown;
-  compact: unknown;
-  sorted: unknown;
-  getters: unknown;
-  numericSeparator: unknown;
-  userOptions: unknown;
-  circular: Map<unknown, number> | undefined;
-  seenRefs: Set<number> | undefined;
-  isPlain: boolean;
-  userContext: Record<string, any> | undefined;
-}
-
-function getUserContext(ctx: Context): Record<string, any> {
-  let object = ctx.userContext;
-  if (object === undefined) {
-    const created: Record<string, any> = {
-      budget: {},
-      indentationLvl: 0,
-      seen: [],
-      currentDepth: 0,
-      stylize: undefined,
-      showHidden: undefined,
-      depth: undefined,
-      colors: undefined,
-      customInspect: undefined,
-      showProxy: undefined,
-      maxArrayLength: undefined,
-      maxStringLength: undefined,
-      breakLength: undefined,
-      compact: undefined,
-      sorted: undefined,
-      getters: undefined,
-      numericSeparator: undefined,
-    };
-    object = ctx.userContext = created;
-  }
-  const budget = ctx.budget;
-  if (budget !== undefined) {
-    for (let i = 0; i < budget.length; i++) {
-      if (budget[i]) object.budget[i] = budget[i];
-    }
-  }
-  object.indentationLvl = ctx.indentationLvl;
-  const seen = ctx.seen;
-  object.seen.length = 0;
-  if (seen !== undefined) {
-    for (let i = 0; i < seen.length; i++) object.seen[i] = seen[i];
-  }
-  object.currentDepth = ctx.currentDepth;
-  object.stylize = ctx.stylize;
-  object.showHidden = ctx.showHidden;
-  object.depth = ctx.depth;
-  object.colors = ctx.colors;
-  object.customInspect = ctx.customInspect;
-  object.showProxy = ctx.showProxy;
-  object.maxArrayLength = ctx.maxArrayLength;
-  object.maxStringLength = ctx.maxStringLength;
-  object.breakLength = ctx.breakLength;
-  object.compact = ctx.compact;
-  object.sorted = ctx.sorted;
-  object.getters = ctx.getters;
-  object.numericSeparator = ctx.numericSeparator;
-  const userOptions = ctx.userOptions;
-  if (userOptions !== undefined) object.userOptions = userOptions;
-  const circular = ctx.circular;
-  if (circular !== undefined) object.circular = circular;
-  const seenRefs = ctx.seenRefs;
-  if (seenRefs !== undefined) object.seenRefs = seenRefs;
-  return object;
-}
-
-function stylizeByUser(ctx: Context, str: unknown, styleType: string): unknown {
-  const object = getUserContext(ctx);
-  const result = (ctx.stylize as any).$call(object, str, styleType);
-  const indentationLvl = object.indentationLvl;
-  if (typeof indentationLvl === "number") ctx.indentationLvl = indentationLvl;
-  const currentDepth = object.currentDepth;
-  if (typeof currentDepth === "number") ctx.currentDepth = currentDepth;
-  ctx.stylize = object.stylize;
-  ctx.isPlain = object.stylize === stylizeNoColor;
-  ctx.showHidden = object.showHidden;
-  ctx.depth = object.depth;
-  ctx.colors = object.colors;
-  ctx.customInspect = object.customInspect;
-  ctx.showProxy = object.showProxy;
-  ctx.maxArrayLength = object.maxArrayLength;
-  ctx.maxStringLength = object.maxStringLength;
-  ctx.breakLength = object.breakLength;
-  ctx.compact = object.compact;
-  ctx.sorted = object.sorted;
-  ctx.getters = object.getters;
-  ctx.numericSeparator = object.numericSeparator;
-  return result;
-}
-
-function stylize(ctx: Context, str: unknown, styleType: string): unknown {
-  if (ctx.isPlain) return str;
-  if (ctx.stylize === stylizeWithColor) return stylizeWithColor(str, styleType);
-  return stylizeByUser(ctx, str, styleType);
-}
-
-let withoutLineBreak = "";
-let outputWithoutLineBreak: unknown[] | undefined;
-
-function isWithoutLineBreak(str: unknown): boolean {
-  return typeof str === "string" && str === withoutLineBreak;
-}
-
-function getUserOptions(ctx: Context, isCrossContext: boolean): Record<string, unknown> {
-  const ret: Record<string, unknown> = {
+function getUserOptions(ctx: Context, isCrossContext: boolean) {
+  const ret = {
     stylize: ctx.stylize,
     showHidden: ctx.showHidden,
     depth: ctx.depth,
@@ -578,7 +508,7 @@ function getUserOptions(ctx: Context, isCrossContext: boolean): Record<string, u
     sorted: ctx.sorted,
     getters: ctx.getters,
     numericSeparator: ctx.numericSeparator,
-    ...(ctx.userOptions as any),
+    ...ctx.userOptions,
   };
 
   // Typically, the target value will be an instance of `Object`. If that is
@@ -593,10 +523,10 @@ function getUserOptions(ctx: Context, isCrossContext: boolean): Record<string, u
         delete ret[key];
       }
     }
-    ret.stylize = ObjectSetPrototypeOf((value, flavour) => {
-      let stylized: unknown;
+    ret.stylize = ObjectSetPrototypeOf((value: string, flavour: string) => {
+      let stylized: string | undefined;
       try {
-        stylized = `${stylize(ctx, value, flavour)}`;
+        stylized = `${ctx.stylize(value, flavour)}`;
       } catch {
         // Continue regardless of error.
       }
@@ -617,38 +547,12 @@ function getUserOptions(ctx: Context, isCrossContext: boolean): Record<string, u
  * @param {object} opts Optional options object that alters the output.
  */
 /* Legacy: value, showHidden, depth, colors */
-function inspect(value?: unknown, opts?: unknown, legacyDepth: unknown = undefined, legacyColors: unknown = undefined): any {
-  if (
-    opts === undefined &&
-    ((typeof value !== "object" && typeof value !== "function") || value === null) &&
-    legacyDepth === undefined &&
-    legacyColors === undefined &&
-    !inspectDefaultOptions.colors &&
-    !isUndetectableObject(value)
-  ) {
-    if (typeof value === "number") return numberToString(value, inspectDefaultOptions.numericSeparator);
-    if (typeof value === "string") {
-      const maxStringLength = inspectDefaultOptions.maxStringLength;
-      const result = formatString(
-        stylizeNoColor,
-        value,
-        maxStringLength === null ? Infinity : maxStringLength,
-        inspectDefaultOptions.compact,
-        inspectDefaultOptions.breakLength,
-        0,
-      );
-      withoutLineBreak = "";
-      return result;
-    }
-    if (typeof value === "bigint") return bigIntToString(value, inspectDefaultOptions.numericSeparator);
-    if (typeof value === "symbol") return SymbolPrototypeToString.$call(value);
-    return `${value}`;
-  }
+function inspect(value: unknown, opts?: boolean | InspectOptions | null) {
   // Default options
   const ctx: Context = {
-    budget: undefined,
+    budget: {},
     indentationLvl: 0,
-    seen: undefined,
+    seen: [],
     currentDepth: 0,
     stylize: stylizeNoColor,
     showHidden: inspectDefaultOptions.showHidden,
@@ -663,122 +567,80 @@ function inspect(value?: unknown, opts?: unknown, legacyDepth: unknown = undefin
     sorted: inspectDefaultOptions.sorted,
     getters: inspectDefaultOptions.getters,
     numericSeparator: inspectDefaultOptions.numericSeparator,
-    userOptions: undefined,
-    circular: undefined,
-    seenRefs: undefined,
-    isPlain: true,
-    userContext: undefined,
   };
-  // Legacy...
-  if (legacyDepth !== undefined) {
-    ctx.depth = legacyDepth;
-  }
-  if (legacyColors !== undefined) {
-    ctx.colors = legacyColors;
-  }
-  // Set user-specified options
-  if (typeof opts === "boolean") {
-    ctx.showHidden = opts;
-  } else if (opts) {
-    setUserOptions(ctx, opts);
-  }
-  if (ctx.colors) ctx.stylize = stylizeWithColor;
-  ctx.isPlain = ctx.stylize === stylizeNoColor;
-  if (ctx.maxArrayLength === null) ctx.maxArrayLength = Infinity;
-  if (ctx.maxStringLength === null) ctx.maxStringLength = Infinity;
-  const result = formatValue(ctx, value, 0);
-  withoutLineBreak = "";
-  outputWithoutLineBreak = undefined;
-  return result;
-}
-
-function setUserOptions(ctx: Context, opts: any): void {
-  const optKeys = ObjectKeys(opts);
-  for (let i = 0; i < optKeys.length; ++i) {
-    // TODO(BridgeAR): Find a solution what to do about stylize. Either make
-    // this function public or add a new API with a similar or better
-    // functionality.
-    switch (optKeys[i]) {
-      case "depth":
-        ctx.depth = opts.depth;
-        break;
-      case "colors":
-        ctx.colors = opts.colors;
-        break;
-      case "compact":
-        ctx.compact = opts.compact;
-        break;
-      case "breakLength":
-        ctx.breakLength = opts.breakLength;
-        break;
-      case "showHidden":
-        ctx.showHidden = opts.showHidden;
-        break;
-      case "customInspect":
-        ctx.customInspect = opts.customInspect;
-        break;
-      case "showProxy":
-        ctx.showProxy = opts.showProxy;
-        break;
-      case "maxArrayLength":
-        ctx.maxArrayLength = opts.maxArrayLength;
-        break;
-      case "maxStringLength":
-        ctx.maxStringLength = opts.maxStringLength;
-        break;
-      case "sorted":
-        ctx.sorted = opts.sorted;
-        break;
-      case "getters":
-        ctx.getters = opts.getters;
-        break;
-      case "numericSeparator":
-        ctx.numericSeparator = opts.numericSeparator;
-        break;
-      case "stylize":
-        ctx.stylize = opts.stylize;
-        break;
-      default:
-        // This is required to pass through the actual user input.
-        if (ctx.userOptions === undefined) ctx.userOptions = opts;
+  const argc = arguments.length;
+  if (argc > 1) {
+    // Legacy...
+    if (argc > 2) {
+      if (arguments[2] !== undefined) {
+        ctx.depth = arguments[2];
+      }
+      if (argc > 3 && arguments[3] !== undefined) {
+        ctx.colors = arguments[3];
+      }
+    }
+    // Set user-specified options
+    if (typeof opts === "boolean") {
+      ctx.showHidden = opts;
+    } else if (opts) {
+      const optKeys = ObjectKeys(opts);
+      for (let i = 0; i < optKeys.length; ++i) {
+        const key = optKeys[i];
+        // TODO(BridgeAR): Find a solution what to do about stylize. Either make
+        // this function public or add a new API with a similar or better
+        // functionality.
+        if (ObjectPrototypeHasOwnProperty.$call(inspectDefaultOptions, key) || key === "stylize") {
+          ctx[key] = opts[key];
+        } else if (ctx.userOptions === undefined) {
+          // This is required to pass through the actual user input.
+          ctx.userOptions = opts;
+        }
+      }
     }
   }
+  if (ctx.colors) ctx.stylize = stylizeWithColor;
+  if (ctx.maxArrayLength === null) ctx.maxArrayLength = Infinity;
+  if (ctx.maxStringLength === null) ctx.maxStringLength = Infinity;
+  return formatValue(ctx, value, 0);
 }
-const inspectAsObject: any = inspect;
-inspectAsObject.custom = customInspectSymbol;
+inspect.custom = customInspectSymbol;
 
-const defaultOptionsDescriptor: Record<string, unknown> = {
+/** The two accessors defined below. */
+declare namespace inspect {
+  let defaultOptions: typeof inspectDefaultOptions;
+  let replDefaults: typeof inspectReplDefaults;
+}
+
+ObjectDefineProperty(inspect, "defaultOptions", {
   __proto__: null,
   get() {
     return inspectDefaultOptions;
   },
   set(options) {
-    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    validateObject(options, "options");
     return ObjectAssign(inspectDefaultOptions, options);
   },
-};
-ObjectDefineProperty(inspect, "defaultOptions", defaultOptionsDescriptor);
-const replDefaultsDescriptor: Record<string, unknown> = {
+});
+ObjectDefineProperty(inspect, "replDefaults", {
   __proto__: null,
   get() {
     return inspectReplDefaults;
   },
   set(options) {
-    if (typeof options !== "object" || options === null || $isArray(options)) throw $ERR_INVALID_ARG_TYPE("options", "object", options);
+    validateObject(options, "options");
     return ObjectAssign(inspectReplDefaults, options);
   },
   // node:repl re-defines this property with its own writer-backed accessor
   // (see REPLServer constructor); keep it configurable so that works.
   configurable: true,
-};
-ObjectDefineProperty(inspect, "replDefaults", replDefaultsDescriptor);
+});
 
 // Set Graphics Rendition https://en.wikipedia.org/wiki/ANSI_escape_code#graphics
 // Each color consists of an array with the color code as first entry and the
 // reset code as second entry.
 const defaultFG = 39;
 const defaultBG = 49;
-const colors: Record<string, any> = {
+inspect.colors = {
   __proto__: null,
   reset: [0, 0],
   bold: [1, 22],
@@ -826,40 +688,19 @@ const colors: Record<string, any> = {
   bgCyanBright: [106, defaultBG],
   bgWhiteBright: [107, defaultBG],
 };
-inspectAsObject.colors = colors;
 
-function readAliasedColor(holder: any, target: string): unknown {
-  switch (target) {
-    case "gray":
-      return holder.gray;
-    case "bgGray":
-      return holder.bgGray;
-    case "dim":
-      return holder.dim;
-    case "strikethrough":
-      return holder.strikethrough;
-    case "hidden":
-      return holder.hidden;
-    case "inverse":
-      return holder.inverse;
-    default:
-      return holder.doubleunderline;
-  }
-}
-
-function defineColorAlias(target: string, alias: string): void {
-  const descriptor: Record<string, unknown> = {
+function defineColorAlias(target: string, alias: string) {
+  ObjectDefineProperty(inspect.colors, alias, {
     __proto__: null,
-    get(this: any) {
-      return readAliasedColor(this, target);
+    get() {
+      return this[target];
     },
-    set(this: any, value) {
+    set(value) {
       this[target] = value;
     },
     configurable: true,
     enumerable: false,
-  };
-  ObjectDefineProperty(colors, alias, descriptor);
+  });
 }
 
 defineColorAlias("gray", "grey");
@@ -877,7 +718,7 @@ defineColorAlias("doubleunderline", "doubleUnderline");
 
 // TODO(BridgeAR): Add function style support for more complex styles.
 // Don't use 'blue' not visible on cmd.exe
-const styles: Record<string, any> = {
+inspect.styles = {
   __proto__: null,
   special: "cyan",
   number: "yellow",
@@ -892,15 +733,13 @@ const styles: Record<string, any> = {
   regexp: highlightRegExp,
   module: "underline",
 };
-inspectAsObject.styles = styles;
 
 // Define the palette for RegExp group depth highlighting. Can be changed by users.
-const highlightRegExpAsObject: any = highlightRegExp;
-highlightRegExpAsObject.colors = ["green", "red", "yellow", "cyan", "magenta"];
+inspect.styles.regexp.colors = ["green", "red", "yellow", "cyan", "magenta"];
 
-const highlightRegExpColors: string[] = ["green", "red", "yellow", "cyan", "magenta"];
+const highlightRegExpColors = inspect.styles.regexp.colors.slice();
 
-function addQuotes(str: string, quotes: number): string {
+function addQuotes(str: string, quotes: number) {
   if (quotes === -1) {
     return `"${str}"`;
   }
@@ -910,45 +749,14 @@ function addQuotes(str: string, quotes: number): string {
   return `'${str}'`;
 }
 
-function escapeFn(str: string): string {
-  const charCode = StringPrototypeCharCodeAt.$call(str, 0);
+function escapeFn(str: string) {
+  const charCode = StringPrototypeCharCodeAt.$call(str);
   return meta.length > charCode ? meta[charCode] : `\\u${NumberPrototypeToString.$call(charCode, 16)}`;
 }
 
 // Escape control characters, single quotes and the backslash.
 // This is similar to JSON stringify escaping.
-function isPlainString(str: string): boolean {
-  for (let i = 0; i < str.length; i++) {
-    const point = StringPrototypeCharCodeAt.$call(str, i);
-    if (point < 32 || point === 39 || point === 92 || (point > 126 && (point < 160 || (point >= 0xd800 && point <= 0xdfff)))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function isIdentifier(str: string): boolean {
-  const length = str.length;
-  if (length === 0) return false;
-  for (let i = 0; i < length; i++) {
-    const point = StringPrototypeCharCodeAt.$call(str, i);
-    if (
-      !(
-        (point >= 97 && point <= 122) ||
-        (point >= 65 && point <= 90) ||
-        point === 95 ||
-        (point >= 48 && point <= 57 && i !== 0)
-      )
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function strEscape(str: string): string {
-  if (str.length < 64 && isPlainString(str)) return `'${str}'`;
-
+function strEscape(str: string) {
   let escapeTest = strEscapeSequencesRegExp;
   let escapeReplace = strEscapeSequencesReplacer;
   let singleQuote = 39;
@@ -1008,23 +816,28 @@ function strEscape(str: string): string {
   return addQuotes(result, singleQuote);
 }
 
-function highlightRegExp(regexpString) {
-  const length: any = regexpString.length;
+declare namespace highlightRegExp {
+  /** The palette for group depth. Users may replace it. */
+  let colors: string[];
+}
+
+function highlightRegExp(regexpString: string) {
+  const length = regexpString.length;
   let out = "";
   let i = 0;
   let depth = 0;
   let inClass = false;
 
   // Verify palette and update cache if user changed colors
-  const paletteNames: any = highlightRegExpAsObject.colors?.length > 0 ? highlightRegExpAsObject.colors : highlightRegExpColors;
+  const paletteNames = highlightRegExp.colors?.length > 0 ? highlightRegExp.colors : highlightRegExpColors;
 
-  const palette: string[][] = [];
+  const palette: [open: string, close: string][] = [];
   for (const name of paletteNames) {
-    const color = inspectAsObject.colors[name];
+    const color = inspect.colors[name];
     if (color) palette.push([`\u001b[${color[0]}m`, `\u001b[${color[1]}m`]);
   }
 
-  function writeGroup(start, end, decreaseDepth = 1): void {
+  function writeGroup(start: string, end: string, decreaseDepth = 1) {
     let seq = "";
     i++;
     // Only checking for the closing delimiter is a fast heuristic for regular
@@ -1046,14 +859,14 @@ function highlightRegExp(regexpString) {
     }
   }
 
-  function write(str): void {
+  function write(str: string) {
     const idx = depth % palette.length;
     // Safeguard against bugs in the implementation.
     const color = palette[idx] ?? palette[0];
     out += color[0] + str + color[1];
   }
 
-  function writeDepth(str, incDepth: number, incI: number): void {
+  function writeDepth(str: string, incDepth: number, incI: number) {
     depth += incDepth;
     write(str);
     depth -= incDepth;
@@ -1236,32 +1049,28 @@ function highlightRegExp(regexpString) {
   return out;
 }
 
-const ownStyle = IS_BUN_AOT
-  ? function ownStyle(table, styleType) {
-      const own = ObjectGetOwnPropertyDescriptor(table, styleType);
-      if (own === undefined) return undefined;
-      return own.get === undefined ? own.value : own.get.$call(table);
-    }
-  : undefined;
-
-function stylizeWithColor(str, styleType) {
-  const table = inspectAsObject.styles;
-  const style = IS_BUN_AOT ? ownStyle!(table, styleType) : table[styleType];
+function stylizeWithColor(str: string, styleType: string) {
+  const style: string | ((str: string) => string) | undefined = inspect.styles[styleType];
   if (style !== undefined) {
     // Checked first: a function style (regexp) would otherwise be stringified
     // into a property key on every lookup.
     if (typeof style === "function") return style(str);
-    const color = inspectAsObject.colors[style];
+    const color = inspect.colors[style];
     if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
   }
   return str;
 }
 
-function stylizeNoColor(str) {
+function stylizeNoColor(str: string) {
   return str;
 }
 
-function isInstanceof(object: unknown, proto: any): boolean {
+// Return a new empty array to push in the results of the default formatter.
+function getEmptyFormatArray(): string[] {
+  return [];
+}
+
+function isInstanceof(object: unknown, proto) {
   try {
     return object instanceof proto;
   } catch {
@@ -1270,53 +1079,37 @@ function isInstanceof(object: unknown, proto: any): boolean {
 }
 
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
-function getWellKnownPrototypeName(obj: unknown): string | undefined {
-  if (obj === ObjectPrototype) return "Object";
-  if (obj === ArrayPrototype) return "Array";
-  if (obj === FunctionPrototype) return "Function";
-  if (obj === MapPrototype) return "Map";
-  if (obj === SetPrototype) return "Set";
-  if (obj === ArrayBufferPrototype) return "ArrayBuffer";
-  return undefined;
+let wellKnownPrototypes: Map<unknown, { name: string; constructor: new (...args: never[]) => unknown }> | undefined;
+function initializeWellKnownPrototypes() {
+  wellKnownPrototypes = new SafeMap();
+  wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
+  wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
+  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: Function });
+  wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
+  wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
+  wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
+  // wellKnownPrototypes.set(TypedArray.prototype, { name: "TypedArray", constructor: TypedArray });
 }
 
-function getWellKnownConstructor(name: string): any {
-  switch (name) {
-    case "Object":
-      return ObjectConstructor;
-    case "Array":
-      return ArrayConstructor;
-    case "Function":
-      return FunctionConstructor;
-    case "Map":
-      return MapConstructor;
-    case "Set":
-      return SetConstructor;
-    default:
-      return ArrayBufferConstructor;
-  }
-}
-
-function getConstructorName(obj: any, ctx: Context, recurseTimes: number, protoProps: unknown[] | undefined): string | null {
-  let firstProto: any;
+function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?: string[]): string | null {
+  let firstProto;
   const tmp = obj;
+  if (!wellKnownPrototypes) initializeWellKnownPrototypes();
   while (obj || isUndetectableObject(obj)) {
-    const name = getWellKnownPrototypeName(obj);
-    if (name !== undefined) {
-      if (tmp instanceof getWellKnownConstructor(name)) {
+    const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes!.get(obj);
+    if (wellKnownPrototypeNameAndConstructor != null) {
+      const { name, constructor } = wellKnownPrototypeNameAndConstructor;
+      if (tmp instanceof constructor) {
         if (protoProps !== undefined && firstProto !== obj) {
           addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
         }
         return name;
       }
     }
-    const descriptor =
-      $isProxyObject(obj) || ObjectHasOwn(obj, "constructor")
-        ? ObjectGetOwnPropertyDescriptor(obj, "constructor")
-        : undefined;
-    const descriptorValue: unknown = descriptor !== undefined ? descriptor.value : undefined;
+    const descriptor = ObjectGetOwnPropertyDescriptor(obj, "constructor");
+    const descriptorValue = descriptor !== undefined ? descriptor.value : undefined;
     if (typeof descriptorValue === "function") {
-      const descriptorValueName: unknown = descriptorValue.name;
+      const descriptorValueName = descriptorValue.name;
       if (descriptorValueName !== "" && isInstanceof(tmp, descriptorValue)) {
         if (protoProps !== undefined && (firstProto !== obj || !builtInObjects.has(descriptorValueName))) {
           addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
@@ -1337,7 +1130,7 @@ function getConstructorName(obj: any, ctx: Context, recurseTimes: number, protoP
 
   const res = internalGetConstructorName(tmp);
 
-  if (isBeyondDepth(ctx, recurseTimes)) {
+  if (recurseTimes > ctx.depth! && ctx.depth !== null) {
     return `${res} <Complex prototype>`;
   }
 
@@ -1345,7 +1138,7 @@ function getConstructorName(obj: any, ctx: Context, recurseTimes: number, protoP
 
   if (protoConstr === null) {
     return `${res} <${inspect(firstProto, {
-      ...getUserContext(ctx),
+      ...ctx,
       customInspect: false,
       depth: -1,
     })}>`;
@@ -1354,33 +1147,13 @@ function getConstructorName(obj: any, ctx: Context, recurseTimes: number, protoP
   return `${res} <${protoConstr}>`;
 }
 
-function pushSeen(ctx: Context, value: unknown): void {
-  const seen = ctx.seen;
-  if (seen === undefined) ctx.seen = [value];
-  else ArrayPrototypePush.$call(seen, value);
-}
-
-function addToBudget(ctx: Context, length: number): number {
-  let budget = ctx.budget;
-  if (budget === undefined) budget = ctx.budget = [0, 0, 0, 0, 0, 0, 0, 0];
-  const indentationLvl = ctx.indentationLvl;
-  const newLength = (budget[indentationLvl] || 0) + length;
-  budget[indentationLvl] = newLength;
-  return newLength;
-}
-
-function isBeyondDepth(ctx: Context, recurseTimes: number): boolean {
-  const depth = ctx.depth;
-  return typeof depth === "number" ? recurseTimes > depth : recurseTimes > (depth as any) && depth !== null;
-}
-
 // This function has the side effect of adding prototype properties to the
 // `output` argument (which is an array). This is intended to highlight user
 // defined prototype properties.
-function addPrototypeProperties(ctx: Context, main: any, obj: any, recurseTimes: number, output: unknown[]): void {
+function addPrototypeProperties(ctx: Context, main, obj, recurseTimes: number, output: string[]) {
   let depth = 0;
-  let keys: any;
-  let keySet: any;
+  let keys!: Key[];
+  let keySet!: Set<Key>;
   do {
     if (depth !== 0 || main === obj) {
       obj = ObjectGetPrototypeOf(obj);
@@ -1402,17 +1175,17 @@ function addPrototypeProperties(ctx: Context, main: any, obj: any, recurseTimes:
     if (depth === 0) {
       keySet = new SafeSet();
     } else {
-      ArrayPrototypeForEach.$call(keys, key => keySet.add(key));
+      ArrayPrototypeForEach.$call(keys, (key: Key) => keySet.add(key));
     }
     // Get all own property names and symbols.
     keys = ReflectOwnKeys(obj);
-    pushSeen(ctx, main);
+    ArrayPrototypePush.$call(ctx.seen, main);
     for (const key of keys) {
       // Ignore the `constructor` property and keys that exist on layers above.
-      if (key === "constructor" || ObjectHasOwn(main, key) || (depth !== 0 && keySet.has(key))) {
+      if (key === "constructor" || ObjectPrototypeHasOwnProperty.$call(main, key) || (depth !== 0 && keySet.has(key))) {
         continue;
       }
-      const desc: any = ObjectGetOwnPropertyDescriptor(obj, key);
+      const desc = ObjectGetOwnPropertyDescriptor(obj, key)!;
       if (typeof desc.value === "function") {
         continue;
       }
@@ -1424,14 +1197,14 @@ function addPrototypeProperties(ctx: Context, main: any, obj: any, recurseTimes:
         ArrayPrototypePush.$call(output, value);
       }
     }
-    ArrayPrototypePop.$call(ctx.seen!);
+    ArrayPrototypePop.$call(ctx.seen);
     // Limit the inspection to up to three prototype layers. Using `recurseTimes`
     // is not a good choice here, because it's as if the properties are declared
     // on the current object from the users perspective.
   } while (++depth !== 3);
 }
 
-function getPrefix(constructor: string | null, tag: string, fallback: unknown, size = ""): string {
+function getPrefix(constructor: string | null, tag: string, fallback: string, size = "") {
   if (constructor === null) {
     if (tag !== "" && fallback !== tag) {
       return `[${fallback}${size}: null prototype] [${tag}] `;
@@ -1446,8 +1219,8 @@ function getPrefix(constructor: string | null, tag: string, fallback: unknown, s
 }
 
 // Look up the keys of the object.
-function getKeys(value: any, showHidden: unknown): PropertyKey[] {
-  let keys: PropertyKey[];
+function getKeys(value, showHidden: boolean) {
+  let keys: Key[];
   const symbols = ObjectGetOwnPropertySymbols(value);
   if (showHidden) {
     keys = ObjectGetOwnPropertyNames(value);
@@ -1460,20 +1233,20 @@ function getKeys(value: any, showHidden: unknown): PropertyKey[] {
     // and modify this logic as needed.
     try {
       keys = ObjectKeys(value);
-    } catch (err: any) {
+    } catch (err) {
       assert(isNativeError(err) && err.name === "ReferenceError" && isModuleNamespaceObject(value));
       keys = ObjectGetOwnPropertyNames(value);
     }
     if (symbols.length !== 0) {
-      const filter = (key: symbol): boolean => ObjectPrototypePropertyIsEnumerable.$call(value, key);
+      const filter = (key: symbol) => ObjectPrototypePropertyIsEnumerable.$call(value, key);
       ArrayPrototypePush.$apply(keys, ArrayPrototypeFilter.$call(symbols, filter));
     }
   }
   return keys;
 }
 
-function getCtxStyle(value: unknown, constructor: string | null, tag: string): string {
-  let fallback: unknown = "";
+function getCtxStyle(value, constructor: string | null, tag: string) {
+  let fallback = "";
   if (constructor === null) {
     fallback = internalGetConstructorName(value);
     if (fallback === tag) {
@@ -1483,9 +1256,9 @@ function getCtxStyle(value: unknown, constructor: string | null, tag: string): s
   return getPrefix(constructor, tag, fallback);
 }
 
-function formatProxy(ctx: Context, proxy: unknown[], recurseTimes: number): unknown {
-  if (isBeyondDepth(ctx, recurseTimes)) {
-    return stylize(ctx, "Proxy [Array]", "special");
+function formatProxy(ctx: Context, proxy: unknown[], recurseTimes: number) {
+  if (recurseTimes > ctx.depth! && ctx.depth !== null) {
+    return ctx.stylize("Proxy [Array]", "special");
   }
   recurseTimes += 1;
   ctx.indentationLvl += 2;
@@ -1497,26 +1270,23 @@ function formatProxy(ctx: Context, proxy: unknown[], recurseTimes: number): unkn
 // Note: using `formatValue` directly requires the indentation level to be
 // corrected by setting `ctx.indentationLvL += diff` and then to decrease the
 // value afterwards again.
-function formatValue(ctx: Context, value: any, recurseTimes: number, typedArray?: unknown): unknown {
+function formatValue(ctx: Context, value, recurseTimes: number, typedArray?: boolean): string {
   // Primitive types cannot have properties.
   if (typeof value !== "object" && typeof value !== "function" && !isUndetectableObject(value)) {
     return formatPrimitive(ctx.stylize, value, ctx);
   }
   if (value === null) {
-    if (ctx.isPlain) return (withoutLineBreak = "null");
-    return stylize(ctx, "null", "null");
+    return ctx.stylize("null", "null");
   }
 
   // Memorize the context for custom inspection on proxies.
   const context = value;
   // Always check for proxies to prevent side effects and to prevent triggering
   // any proxy handlers.
-  let proxy: any;
-  const object: unknown = value;
-  if ($isProxyObject(object)) {
-    proxy = getProxyDetails(value, !!ctx.showProxy);
+  const proxy = getProxyDetails(value, !!ctx.showProxy);
+  if (proxy !== undefined) {
     if (proxy === null || proxy[0] === null) {
-      return stylize(ctx, "<Revoked Proxy>", "special");
+      return ctx.stylize("<Revoked Proxy>", "special");
     }
     if (ctx.showProxy) {
       return formatProxy(ctx, proxy, recurseTimes);
@@ -1537,9 +1307,9 @@ function formatValue(ctx: Context, value: any, recurseTimes: number, typedArray?
     ) {
       // This makes sure the recurseTimes are reported as before while using
       // a counter internally.
-      const depth = ctx.depth === null ? null : (ctx.depth as any) - recurseTimes;
+      const depth = ctx.depth === null ? null : ctx.depth - recurseTimes;
       const isCrossContext = proxy !== undefined || !(context instanceof Object);
-      const ret = maybeCustom.$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
+      const ret = (maybeCustom as CustomInspect).$call(context, depth, getUserOptions(ctx, isCrossContext), inspect);
       // If the custom inspection method returned `this`, don't go into infinite recursion.
       if (ret !== context) {
         if (typeof ret !== "string") {
@@ -1552,49 +1322,28 @@ function formatValue(ctx: Context, value: any, recurseTimes: number, typedArray?
 
   // Using an array here is actually better for the average case than using
   // a Set. `seen` will only check for the depth and will never grow too large.
-  const seen = ctx.seen;
-  if (seen !== undefined) {
-    for (let i = 0; i < seen.length; i++) {
-      if (seen[i] === value) return formatCircular(ctx, value);
+  if (ctx.seen.includes(value)) {
+    let index: number | undefined = 1;
+    if (ctx.circular === undefined) {
+      ctx.circular = new SafeMap();
+      ctx.circular.set(value, index);
+    } else {
+      index = ctx.circular.get(value);
+      if (index === undefined) {
+        index = ctx.circular.size + 1;
+        ctx.circular.set(value, index);
+      }
     }
+    return ctx.stylize(`[Circular *${index}]`, "special");
   }
 
   return formatRaw(ctx, value, recurseTimes, typedArray);
 }
 
-function formatCircular(ctx: Context, value: unknown): unknown {
-  let index: number | undefined = 1;
-  if (ctx.circular === undefined) {
-    const circular = new SafeMap();
-    ctx.circular = circular;
-    circular.set(value, index);
-  } else {
-    index = ctx.circular.get(value);
-    if (index === undefined) {
-      index = ctx.circular.size + 1;
-      ctx.circular.set(value, index);
-    }
-  }
-  return stylize(ctx, `[Circular *${index}]`, "special");
-}
-
-const kFormatEmpty = 0;
-const kFormatArray = 1;
-const kFormatSet = 2;
-const kFormatMap = 3;
-const kFormatTypedArray = 4;
-const kFormatIterator = 5;
-const kFormatArrayBuffer = 6;
-const kFormatPromise = 7;
-const kFormatWeakSet = 8;
-const kFormatWeakMap = 9;
-const kFormatWeakCollection = 10;
-const kFormatNamespaceObject = 11;
-
-function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: unknown): unknown {
-  let keys!: PropertyKey[];
-  let protoProps: unknown[] | undefined;
-  if (ctx.showHidden && (recurseTimes <= (ctx.depth as any) || ctx.depth === null)) {
+function formatRaw(ctx: Context, value, recurseTimes: number, typedArray?: boolean): string {
+  let keys!: Key[];
+  let protoProps: string[] | undefined;
+  if (ctx.showHidden && (recurseTimes <= ctx.depth! || ctx.depth === null)) {
     protoProps = [];
   }
 
@@ -1604,81 +1353,83 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
     protoProps = undefined;
   }
 
-  let tag = "";
-  const maybeTag: unknown = value[SymbolToStringTag];
+  let tag = value[SymbolToStringTag];
   // Only list the tag in case it's non-enumerable / not an own property.
   // Otherwise we'd print this twice.
   if (
-    typeof maybeTag === "string" &&
-    maybeTag !== "" &&
-    !(ctx.showHidden
-      ? ObjectHasOwn(value, SymbolToStringTag)
-      : ObjectPrototypePropertyIsEnumerable.$call(value, SymbolToStringTag))
+    typeof tag !== "string" ||
+    (tag !== "" &&
+      (ctx.showHidden ? ObjectPrototypeHasOwnProperty : ObjectPrototypePropertyIsEnumerable).$call(
+        value,
+        SymbolToStringTag,
+      ))
   ) {
-    tag = maybeTag;
+    tag = "";
   }
-  let base: unknown = "";
-  let formatter = kFormatEmpty;
-  let bound: any;
-  let boundSize: any;
-  let braces!: string[];
+  let base = "";
+  let formatter: Formatter = getEmptyFormatArray;
+  let braces!: Braces;
   let extraKeys: string[] | undefined;
   let noIterator = true;
   let i = 0;
   const filter = ctx.showHidden ? ALL_PROPERTIES : ONLY_ENUMERABLE;
 
   let extrasType = kObjectType;
-  const object: unknown = value;
 
   // Iterators and the rest are split to reduce checks.
   // We have to check all values in case the constructor is set to null.
   // Otherwise it would not possible to identify all types properly.
   if (SymbolIterator in value || constructor === null) {
     noIterator = false;
-    if ($isJSArray(object)) {
+    if ($isJSArray(value)) {
       // Only set the constructor for non ordinary ("Array [...]") arrays.
       const prefix =
         constructor !== "Array" || tag !== "" ? getPrefix(constructor, tag, "Array", `(${value.length})`) : "";
       keys = getOwnNonIndexProperties(value, filter);
       braces = [`${prefix}[`, "]"];
-      if (value.length === 0 && keys.length === 0 && protoProps === undefined) {
-        return prefix === "" ? (withoutLineBreak = "[]") : `${braces[0]}]`;
-      }
+      if (value.length === 0 && keys.length === 0 && protoProps === undefined) return `${braces[0]}]`;
       extrasType = kArrayExtrasType;
-      formatter = kFormatArray;
-    } else if ($isSet(object)) {
+      formatter = formatArray;
+    } else if (isSet(value)) {
       const size = SetPrototypeGetSize(value);
       const prefix = getPrefix(constructor, tag, "Set", `(${size})`);
       keys = getKeys(value, ctx.showHidden);
-      formatter = kFormatSet;
-      bound = constructor !== null ? value : SetPrototypeValues.$call(value);
+      const entries = constructor !== null ? value : SetPrototypeValues.$call(value);
+      formatter = (ctx, ignored, recurseTimes) => {
+        const output = formatSet(entries, ctx, ignored, recurseTimes);
+        return output;
+      };
       if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
       braces = [`${prefix}{`, "}"];
-    } else if ($isMap(object)) {
+    } else if (isMap(value)) {
       const size = MapPrototypeGetSize(value);
       const prefix = getPrefix(constructor, tag, "Map", `(${size})`);
       keys = getKeys(value, ctx.showHidden);
-      formatter = kFormatMap;
-      bound = constructor !== null ? value : MapPrototypeEntries.$call(value);
+      const entries = constructor !== null ? value : MapPrototypeEntries.$call(value);
+      formatter = (ctx, ignored, recurseTimes) => {
+        const output = formatMap(entries, ctx, ignored, recurseTimes);
+        return output;
+      };
       if (size === 0 && keys.length === 0 && protoProps === undefined) return `${prefix}{}`;
       braces = [`${prefix}{`, "}"];
-    } else if ($isTypedArrayView(object)) {
+    } else if (isTypedArray(value)) {
       keys = getOwnNonIndexProperties(value, filter);
-      bound = value;
-      let fallback: unknown = "";
+      let fallback = "";
       if (constructor === null) {
         fallback = TypedArrayPrototypeGetSymbolToStringTag(value);
-        // Reconstruct the array information.
-        bound = new ($newCppFunction("UtilInspect.cpp", "jsFunctionIntrinsicTypedArrayConstructor", 1)(value))(value);
       }
+      // Reconstruct the array information.
+      const bound = constructor === null ? copyTypedArray(fallback, value) : value;
       const size = TypedArrayPrototypeGetLength(value);
       const prefix = getPrefix(constructor, tag, fallback, `(${size})`);
       braces = [`${prefix}[`, "]"];
       if (value.length === 0 && keys.length === 0 && !ctx.showHidden) return `${braces[0]}]`;
       // Special handle the value. The original value is required below. The
-      // bound function is required to reconstruct missing information.
-      formatter = kFormatTypedArray;
-      boundSize = size;
+      // copy is required to reconstruct missing information.
+      formatter = (ctx, ignored, recurseTimes) => {
+        const output = formatTypedArray(bound, size, ctx, ignored, recurseTimes);
+        return output;
+      };
       extrasType = kArrayExtrasType;
 
       if (ctx.showHidden) {
@@ -1687,12 +1438,20 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       }
     } else if (isMapIterator(value)) {
       keys = getKeys(value, ctx.showHidden);
-      braces = getIteratorBraces("Map", tag);
-      formatter = kFormatIterator;
+      const iteratorBraces = (braces = getIteratorBraces("Map", tag));
+      // Add braces to the formatter parameters.
+      formatter = (ctx, value, recurseTimes) => {
+        const output = formatIterator(iteratorBraces, ctx, value, recurseTimes);
+        return output;
+      };
     } else if (isSetIterator(value)) {
       keys = getKeys(value, ctx.showHidden);
-      braces = getIteratorBraces("Set", tag);
-      formatter = kFormatIterator;
+      const iteratorBraces = (braces = getIteratorBraces("Set", tag));
+      // Add braces to the formatter parameters.
+      formatter = (ctx, value, recurseTimes) => {
+        const output = formatIterator(iteratorBraces, ctx, value, recurseTimes);
+        return output;
+      };
     } else {
       noIterator = true;
     }
@@ -1702,7 +1461,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
     braces = ["{", "}"];
     if (typeof value === "function") {
       base = getFunctionBase(ctx, value, constructor, tag);
-      if (keys.length === 0 && protoProps === undefined) return stylize(ctx, base, "special");
+      if (keys.length === 0 && protoProps === undefined) return ctx.stylize(base, "special");
     } else if (constructor === "Object") {
       if (isArgumentsObject(value)) {
         braces[0] = "[Arguments] {";
@@ -1710,23 +1469,25 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
         braces[0] = `${getPrefix(constructor, tag, "Object")}{`;
       }
       if (keys.length === 0 && protoProps === undefined) {
-        return braces[0].length === 1 ? (withoutLineBreak = "{}") : `${braces[0]}}`;
+        return `${braces[0]}}`;
       }
-    } else if ($isRegExpObject(object)) {
+    } else if (isRegExp(value)) {
       // Make RegExps say that they are RegExps
       base = RegExpPrototypeToString.$call(constructor !== null ? value : new RegExp(value));
       const prefix = getPrefix(constructor, tag, "RegExp");
       if (prefix !== "RegExp ") base = `${prefix}${base}`;
-      if ((keys.length === 0 && protoProps === undefined) || isBeyondDepth(ctx, recurseTimes)) {
-        return stylize(ctx, base, "regexp");
+      if ((keys.length === 0 && protoProps === undefined) || (recurseTimes > ctx.depth! && ctx.depth !== null)) {
+        return ctx.stylize(base, "regexp");
       }
     } else if (isDate(value)) {
       // Make dates with properties first say the date
-      base = NumberIsNaN(DatePrototypeGetTime.$call(value)) ? DatePrototypeToString.$call(value) : DatePrototypeToISOString.$call(value);
+      base = NumberIsNaN(DatePrototypeGetTime.$call(value))
+        ? DatePrototypeToString.$call(value)
+        : DatePrototypeToISOString.$call(value);
       const prefix = getPrefix(constructor, tag, "Date");
       if (prefix !== "Date ") base = `${prefix}${base}`;
       if (keys.length === 0 && protoProps === undefined) {
-        return stylize(ctx, base, "date");
+        return ctx.stylize(base, "date");
       }
     } else if (isNativeError(value) || value instanceof Error) {
       base = formatError(value, constructor, tag, ctx, keys);
@@ -1738,7 +1499,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       const arrayType = isArrayBuffer(value) ? "ArrayBuffer" : "SharedArrayBuffer";
       const prefix = getPrefix(constructor, tag, arrayType);
       if (typedArray === undefined) {
-        formatter = kFormatArrayBuffer;
+        formatter = formatArrayBuffer;
       } else if (keys.length === 0 && protoProps === undefined) {
         return prefix + `{ [byteLength]: ${formatNumber(ctx.stylize, value.byteLength, false)} }`;
       }
@@ -1748,19 +1509,23 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       braces[0] = `${getPrefix(constructor, tag, "DataView")}{`;
       // .buffer goes last, it's not a primitive like the others.
       extraKeys = ["byteLength", "byteOffset", "buffer"];
-    } else if ($isPromise(object)) {
+    } else if (isPromise(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Promise")}{`;
-      formatter = kFormatPromise;
+      formatter = formatPromise;
     } else if (isWeakSet(value)) {
       braces[0] = `${getPrefix(constructor, tag, "WeakSet")}{`;
-      formatter = ctx.showHidden ? kFormatWeakSet : kFormatWeakCollection;
+      formatter = ctx.showHidden ? formatWeakSet : formatWeakCollection;
     } else if (isWeakMap(value)) {
       braces[0] = `${getPrefix(constructor, tag, "WeakMap")}{`;
-      formatter = ctx.showHidden ? kFormatWeakMap : kFormatWeakCollection;
+      formatter = ctx.showHidden ? formatWeakMap : formatWeakCollection;
     } else if (isModuleNamespaceObject(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Module")}{`;
       // Special handle keys for namespace objects.
-      formatter = kFormatNamespaceObject;
+      const namespaceKeys = keys;
+      formatter = (ctx, value, recurseTimes) => {
+        const output = formatNamespaceObject(namespaceKeys, ctx, value, recurseTimes);
+        return output;
+      };
     } else if (isBoxedPrimitive(value)) {
       base = getBoxedBase(value, ctx, keys, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) {
@@ -1770,7 +1535,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       if (keys.length === 0 && protoProps === undefined) {
         if (isExternal(value)) {
           const address = "0"; //getExternalValue(value).toString(16);
-          return stylize(ctx, `[External: ${address}]`, "special");
+          return ctx.stylize(`[External: ${address}]`, "special");
         }
         return `${getCtxStyle(value, constructor, tag)}{}`;
       }
@@ -1778,91 +1543,50 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
     }
   }
 
-  if (isBeyondDepth(ctx, recurseTimes)) {
+  if (recurseTimes > ctx.depth! && ctx.depth !== null) {
     let constructorName = StringPrototypeSlice.$call(getCtxStyle(value, constructor, tag), 0, -1);
     if (constructor !== null) constructorName = `[${constructorName}]`;
-    return stylize(ctx, constructorName, "special");
+    return ctx.stylize(constructorName, "special");
   }
   recurseTimes += 1;
 
-  pushSeen(ctx, value);
+  ctx.seen.push(value);
   ctx.currentDepth = recurseTimes;
-  let output: unknown[];
-  let isSingleLine: boolean;
+  let output: string[];
   const indentationLvl = ctx.indentationLvl;
   try {
     // JSC stack is too powerful it must be stopped manually
     if (ctx.currentDepth > 1000) throw new RangeError(ERROR_STACK_OVERFLOW_MSG);
-    switch (formatter) {
-      case kFormatEmpty:
-        output = [];
-        break;
-      case kFormatArray:
-        output = formatArray(ctx, value, recurseTimes);
-        break;
-      case kFormatSet:
-        output = formatSet(bound, ctx, recurseTimes);
-        break;
-      case kFormatMap:
-        output = formatMap(bound, ctx, recurseTimes);
-        break;
-      case kFormatTypedArray:
-        output = formatTypedArray(bound, boundSize, ctx);
-        break;
-      case kFormatIterator:
-        output = formatIterator(braces, ctx, value, recurseTimes);
-        break;
-      case kFormatArrayBuffer:
-        output = formatArrayBuffer(ctx, value);
-        break;
-      case kFormatPromise:
-        output = formatPromise(ctx, value, recurseTimes);
-        break;
-      case kFormatWeakSet:
-        output = formatWeakSet(ctx, value, recurseTimes);
-        break;
-      case kFormatWeakMap:
-        output = formatWeakMap(ctx, value, recurseTimes);
-        break;
-      case kFormatWeakCollection:
-        output = formatWeakCollection(ctx);
-        break;
-      default:
-        output = formatNamespaceObject(keys, ctx, value, recurseTimes);
-    }
-    isSingleLine =
-      (formatter === kFormatEmpty || output === outputWithoutLineBreak) && extraKeys === undefined && protoProps === undefined;
+    output = formatter(ctx, value, recurseTimes);
     if (extraKeys !== undefined) {
       for (i = 0; i < extraKeys.length; i++) {
-        let formatted: unknown;
+        let formatted: string;
         try {
           formatted = formatExtraProperties(ctx, value, recurseTimes, extraKeys[i], typedArray);
         } catch {
-          const tempValue = { [extraKeys[i]]: readExtraProperty(value.buffer, extraKeys[i]) };
+          const tempValue = { [extraKeys[i]]: value.buffer[extraKeys[i]] };
           formatted = formatExtraProperties(ctx, tempValue, recurseTimes, extraKeys[i], typedArray);
         }
         ArrayPrototypePush.$call(output, formatted);
       }
     }
     for (i = 0; i < keys.length; i++) {
-      const property = formatProperty(ctx, value, recurseTimes, keys[i], extrasType);
-      if (isSingleLine && !isWithoutLineBreak(property)) isSingleLine = false;
-      ArrayPrototypePush.$call(output, property);
+      ArrayPrototypePush.$call(output, formatProperty(ctx, value, recurseTimes, keys[i], extrasType));
     }
     if (protoProps !== undefined) {
       ArrayPrototypePush.$apply(output, protoProps);
     }
-  } catch (err: any) {
+  } catch (err) {
     if (err instanceof RangeError && err.message === ERROR_STACK_OVERFLOW_MSG) {
       const constructorName = StringPrototypeSlice.$call(getCtxStyle(value, constructor, tag), 0, -1);
-      ArrayPrototypePop.$call(ctx.seen!);
+      ctx.seen.pop();
       ctx.indentationLvl = indentationLvl;
-      return stylize(ctx, 
+      return ctx.stylize(
         `[${constructorName}: Inspection interrupted prematurely. Maximum call stack size exceeded.]`,
         "special",
       );
     }
-    throw new (require("internal/errors").AssertionError)("handleMaxCallStackSize assertion failed: " + String(err), true);
+    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
   }
   const circular = ctx.circular;
   if (circular !== undefined) {
@@ -1872,7 +1596,7 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
       const SEEN = ctx.seenRefs.has(index);
       if (!SEEN) {
         ctx.seenRefs.add(index);
-        const reference = stylize(ctx, `<ref *${index}>`, "special");
+        const reference = ctx.stylize(`<ref *${index}>`, "special");
         // Add reference always to the very beginning of the output.
         if (ctx.compact !== true) {
           base = base === "" ? reference : `${reference} ${base}`;
@@ -1883,31 +1607,33 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
         //! this is a non-standard behavior compared to Node's implementation
         //  it optimizes the output by also collapsing indirect circular references
         //  this is not known to cause any issues so far but this note is left here just in case
-        const reference = stylize(ctx, `[Circular *${index}]`, "special");
+        const reference = ctx.stylize(`[Circular *${index}]`, "special");
         //ctx.seen.pop(); //? uncommenting this line would allow more accurate display semantics but causes a ~2x slowdown
         return reference;
       }
     }
   }
-  ArrayPrototypePop.$call(ctx.seen!);
+  ctx.seen.pop();
 
   const ctxSorted = ctx.sorted;
   if (ctxSorted) {
-    const comparator: any = ctxSorted === true ? undefined : ctxSorted;
+    const comparator = ctxSorted === true ? undefined : ctxSorted;
     if (extrasType === kObjectType) {
       ArrayPrototypeSort.$call(output, comparator);
     } else {
       const keysLength = keys.length;
       if (keysLength > 1) {
-        const sorted: any[] = ArrayPrototypeSort.$call(ArrayPrototypeSlice.$call(output, output.length - keysLength), comparator);
-        ArrayPrototypeUnshift.$call(sorted, output.length - keysLength, keysLength);
-        ArrayPrototypeSplice.$apply(output, sorted as [number, number, ...unknown[]]);
+        const start = output.length - keysLength;
+        const sorted = ArrayPrototypeSort.$call(ArrayPrototypeSlice.$call(output, start), comparator);
+        for (i = 0; i < keysLength; i++) output[start + i] = sorted[i];
       }
     }
   }
 
-  const res = reduceToSingleString(ctx, output, base, braces, extrasType, recurseTimes, value, isSingleLine);
-  const newLength = addToBudget(ctx, res.length);
+  const res = reduceToSingleString(ctx, output, base, braces, extrasType, recurseTimes, value);
+  const budget = ctx.budget[ctx.indentationLvl] || 0;
+  const newLength = budget + res.length;
+  ctx.budget[ctx.indentationLvl] = newLength;
   // If any indentationLvl exceeds this limit, limit further inspecting to the
   // minimum. Otherwise the recursive algorithm might continue inspecting the
   // object even though the maximum string size (~2 ** 28 on 32 bit systems and
@@ -1915,13 +1641,42 @@ function formatRaw(ctx: Context, value: any, recurseTimes: number, typedArray: u
   // exactly 2 ** 27 but a bit higher. This depends on the object shape.
   // This limit also makes sure that huge objects don't block the event loop
   // significantly.
-  if (newLength > 134217728) {
+  if (newLength > 2 ** 27) {
     ctx.depth = -1;
   }
   return res;
 }
 
-function getIteratorBraces(type: string, tag: string): string[] {
+function copyTypedArray(name: string, value) {
+  switch (name) {
+    case "Uint8Array":
+      return new primordials.Uint8Array(value);
+    case "Uint8ClampedArray":
+      return new primordials.Uint8ClampedArray(value);
+    case "Uint16Array":
+      return new primordials.Uint16Array(value);
+    case "Uint32Array":
+      return new primordials.Uint32Array(value);
+    case "Int8Array":
+      return new primordials.Int8Array(value);
+    case "Int16Array":
+      return new primordials.Int16Array(value);
+    case "Int32Array":
+      return new primordials.Int32Array(value);
+    case "Float16Array":
+      return new primordials.Float16Array(value);
+    case "Float32Array":
+      return new primordials.Float32Array(value);
+    case "Float64Array":
+      return new primordials.Float64Array(value);
+    case "BigUint64Array":
+      return new primordials.BigUint64Array(value);
+    case "BigInt64Array":
+      return new primordials.BigInt64Array(value);
+  }
+}
+
+function getIteratorBraces(type: string, tag: string): Braces {
   if (tag !== `${type} Iterator`) {
     if (tag !== "") tag += "] [";
     tag += `${type} Iterator`;
@@ -1929,8 +1684,8 @@ function getIteratorBraces(type: string, tag: string): string[] {
   return [`[${tag}] {`, "}"];
 }
 
-function getBoxedBase(value: any, ctx: Context, keys: PropertyKey[], constructor: string | null, tag: string): unknown {
-  let fn: any;
+function getBoxedBase(value, ctx: Context, keys: Key[], constructor: string | null, tag: string) {
+  let fn: () => string | number | bigint | boolean | symbol;
   let type: string;
   if (isNumberObject(value)) {
     fn = NumberPrototypeValueOf;
@@ -1964,12 +1719,12 @@ function getBoxedBase(value: any, ctx: Context, keys: PropertyKey[], constructor
   if (tag !== "" && tag !== constructor) {
     base += ` [${tag}]`;
   }
-  if (keys.length !== 0 || ctx.isPlain) return base;
-  return stylize(ctx, base, StringPrototypeToLowerCase.$call(type));
+  if (keys.length !== 0 || ctx.stylize === stylizeNoColor) return base;
+  return ctx.stylize(base, StringPrototypeToLowerCase.$call(type));
 }
 
-function getClassBase(value: any, constructor: string | null, tag: string): string {
-  const hasName = ObjectHasOwn(value, "name");
+function getClassBase(value, constructor: string | null, tag: string) {
+  const hasName = ObjectPrototypeHasOwnProperty.$call(value, "name");
   const name = (hasName && value.name) || "(anonymous)";
   let base = `class ${name}`;
   if (constructor !== "Function" && constructor !== null) {
@@ -1989,7 +1744,7 @@ function getClassBase(value: any, constructor: string | null, tag: string): stri
   return `[${base}]`;
 }
 
-function getFunctionBase(ctx: Context, value: any, constructor: string | null, tag: string): string {
+function getFunctionBase(ctx: Context, value, constructor: string | null, tag: string) {
   const stringified = FunctionPrototypeToString.$call(value);
   if (StringPrototypeStartsWith.$call(stringified, "class") && stringified[stringified.length - 1] === "}") {
     const slice = StringPrototypeSlice.$call(stringified, 5, -1);
@@ -1998,7 +1753,7 @@ function getFunctionBase(ctx: Context, value: any, constructor: string | null, t
       bracketIndex !== -1 &&
       (!StringPrototypeIncludes.$call(StringPrototypeSlice.$call(slice, 0, bracketIndex), "(") ||
         // Slow path to guarantee that it's indeed a class.
-        RegExpPrototypeExec.$call(classRegExp, RegExpPrototypeSymbolReplace.$call(stripCommentsRegExp, slice, undefined as any)) !== null)
+        RegExpPrototypeExec.$call(classRegExp, RegExpPrototypeSymbolReplace.$call(stripCommentsRegExp, slice)) !== null)
     ) {
       return getClassBase(value, constructor, tag);
     }
@@ -2017,7 +1772,7 @@ function getFunctionBase(ctx: Context, value: any, constructor: string | null, t
   if (value.name === "") {
     base += " (anonymous)";
   } else {
-    base += `: ${typeof value.name === "string" ? value.name : formatValue(ctx, value.name, NaN)}`;
+    base += `: ${typeof value.name === "string" ? value.name : (formatValue as (ctx: Context, value: unknown) => string)(ctx, value.name)}`;
   }
   base += "]";
   if (constructor !== type && constructor !== null) {
@@ -2029,10 +1784,11 @@ function getFunctionBase(ctx: Context, value: any, constructor: string | null, t
   return base;
 }
 
-function identicalSequenceRange(a: string[], b: string[]): { len: number; offset: number } {
+function identicalSequenceRange(a: string[], b: string[]) {
   for (let i = 0; i < a.length - 3; i++) {
     // Find the first entry of b that matches the current entry of a.
-    const pos = ArrayPrototypeIndexOf.$call(a[i] as any, undefined);
+    // TODO: this looks for `undefined` in a[i] and never finds it. Node looks for a[i] in b.
+    const pos = ArrayPrototypeIndexOf.$call(a[i]);
     if (pos !== -1) {
       const rest = b.length - pos;
       if (rest > 3) {
@@ -2052,12 +1808,14 @@ function identicalSequenceRange(a: string[], b: string[]): { len: number; offset
   return { len: 0, offset: 0 };
 }
 
-function getStackString(error: any): string {
+function getStackString(error: Error): string {
   return error.stack ? String(error.stack) : ErrorPrototypeToString.$call(error);
 }
 
-function getStackFrames(ctx: Context, err: any, stack: string): unknown[] | undefined {
-  let cause: any;
+function getStackFrames(ctx: Context, err: Error, stack: string) {
+  const frames: string[] = StringPrototypeSplit.$call(stack, "\n");
+
+  let cause: unknown;
   try {
     ({ cause } = err);
   } catch {
@@ -2066,24 +1824,22 @@ function getStackFrames(ctx: Context, err: any, stack: string): unknown[] | unde
 
   // Remove stack frames identical to frames in cause.
   if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
-    const frames: unknown[] = StringPrototypeSplit.$call(stack, "\n");
     const causeStack = getStackString(cause);
     const causeStackStart = StringPrototypeIndexOf.$call(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit.$call(StringPrototypeSlice.$call(causeStack, causeStackStart + 1), "\n");
-      const { len, offset } = identicalSequenceRange(frames as string[], causeFrames);
+      const { len, offset } = identicalSequenceRange(frames, causeFrames);
       if (len > 0) {
         const skipped = len - 2;
         const msg = `    ... ${skipped} lines matching cause stack trace ...`;
-        frames.splice(offset + 1, skipped, stylize(ctx, msg, "undefined"));
+        frames.splice(offset + 1, skipped, ctx.stylize(msg, "undefined"));
       }
     }
-    return frames;
   }
-  return undefined;
+  return frames;
 }
 
-function improveStack(stack: string, constructor: string | null, name: string, tag: string): string {
+function improveStack(stack: string, constructor: string | null, name: string, tag: string) {
   // A stack trace may contain arbitrary data. Only manipulate the output
   // for "regular errors" (errors that "look normal") for now.
   let len = name.length;
@@ -2119,26 +1875,26 @@ function improveStack(stack: string, constructor: string | null, name: string, t
   return stack;
 }
 
-function removeDuplicateErrorKeys(ctx: Context, keys: PropertyKey[], err: any, stack: string): void {
+function removeDuplicateErrorKeys(ctx: Context, keys: Key[], err: Error, stack: string) {
   if (!ctx.showHidden && keys.length !== 0) {
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf.$call(keys, name);
       // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes.$call(stack, name === "name" ? err.name : name === "message" ? err.message : err.stack)) {
+      if (index !== -1 && StringPrototypeIncludes.$call(stack, err[name])) {
         ArrayPrototypeSplice.$call(keys, index, 1);
       }
     }
   }
 }
 
-function markNodeModules(ctx: Context, line: string): string {
+function markNodeModules(ctx: Context, line: string) {
   let tempLine = "";
   let nodeModule: RegExpExecArray | null;
   let pos = 0;
   while ((nodeModule = nodeModulesRegExp.exec(line)) !== null) {
     // '/node_modules/'.length === 14
     tempLine += StringPrototypeSlice.$call(line, pos, nodeModule.index + 14);
-    tempLine += stylize(ctx, nodeModule[1], "module");
+    tempLine += ctx.stylize(nodeModule[1], "module");
     pos = nodeModule.index + nodeModule[0].length;
   }
   if (pos !== 0) {
@@ -2147,7 +1903,7 @@ function markNodeModules(ctx: Context, line: string): string {
   return line;
 }
 
-function markCwd(ctx: Context, line: string, workingDirectory: string): string {
+function markCwd(ctx: Context, line: string, workingDirectory: string) {
   let cwdStartPos = StringPrototypeIndexOf.$call(line, workingDirectory);
   let tempLine = "";
   let cwdLength = workingDirectory.length;
@@ -2162,10 +1918,10 @@ function markCwd(ctx: Context, line: string, workingDirectory: string): string {
     const cwdSlice = StringPrototypeSlice.$call(line, start, workingDirectoryEndPos);
 
     tempLine += StringPrototypeSlice.$call(line, 0, start);
-    tempLine += stylize(ctx, cwdSlice, "undefined");
+    tempLine += ctx.stylize(cwdSlice, "undefined");
     tempLine += StringPrototypeSlice.$call(line, workingDirectoryEndPos, end);
     if (end === -1) {
-      tempLine += stylize(ctx, ")", "undefined");
+      tempLine += ctx.stylize(")", "undefined");
     }
   } else {
     tempLine += line;
@@ -2173,7 +1929,7 @@ function markCwd(ctx: Context, line: string, workingDirectory: string): string {
   return tempLine;
 }
 
-function safeGetCWD(): string | undefined {
+function safeGetCWD() {
   let workingDirectory: string;
   try {
     workingDirectory = process.cwd();
@@ -2183,17 +1939,12 @@ function safeGetCWD(): string | undefined {
   return workingDirectory;
 }
 
-function formatError(err: any, constructor: string | null, tag: string, ctx: Context, keys: PropertyKey[]): string {
+function formatError(err, constructor: string | null, tag: string, ctx: Context, keys: Key[]) {
   const name = err.name != null ? String(err.name) : "Error";
   let stack = getStackString(err);
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  const prefix = `${name}${err.message ? ": " : ""}`;
-  if (StringPrototypeStartsWith.$call(stack, "Error: ")) {
-    stack = StringPrototypeIncludes.$call(prefix, "$")
-      ? stack.replace(errorPrefixRegExp, prefix)
-      : prefix + StringPrototypeSlice.$call(stack, 7);
-  }
+  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
@@ -2209,7 +1960,7 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos: any = (err.message && StringPrototypeIndexOf.$call(stack, err.message)) || -1;
+  let pos = (err.message && StringPrototypeIndexOf.$call(stack, err.message)) || -1;
   if (pos !== -1) pos += err.message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf.$call(stack, "\n    at", pos);
@@ -2223,14 +1974,14 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
       // Highlight userland code and node modules.
       const workingDirectory = safeGetCWD();
       let esmWorkingDirectory: string | undefined;
-      for (let line of (lines ?? StringPrototypeSplit.$call(stackFramePart, "\n")) as any[]) {
+      for (let line of lines) {
         const core = RegExpPrototypeExec.$call(coreModuleRegExp, line);
         if (
           core !== null &&
           (StringPrototypeStartsWith.$call(core[1], "internal/") ||
-            ArrayPrototypeIncludes.$call($cpp("NodeModuleModule.cpp", "builtinModulesOfNodeModule"), core[1]))
+            ArrayPrototypeIncludes.$call(require("node:module").builtinModules, core[1]))
         ) {
-          newStack += `\n${stylize(ctx, line, "undefined")}`;
+          newStack += `\n${ctx.stylize(line, "undefined")}`;
         } else {
           newStack += "\n";
 
@@ -2238,8 +1989,8 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
           if (workingDirectory !== undefined) {
             let newLine = markCwd(ctx, line, workingDirectory);
             if (newLine === line) {
-              esmWorkingDirectory ??= require("internal/path_to_file_url")(workingDirectory).href as string;
-              newLine = markCwd(ctx, line, esmWorkingDirectory);
+              esmWorkingDirectory ??= require("node:url").pathToFileURL(workingDirectory).href;
+              newLine = markCwd(ctx, line, esmWorkingDirectory!);
             }
             line = newLine;
           }
@@ -2248,7 +1999,7 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
         }
       }
     } else {
-      newStack += lines === undefined ? `\n${stackFramePart}` : `\n${ArrayPrototypeJoin.$call(lines, "\n")}`;
+      newStack += `\n${ArrayPrototypeJoin.$call(lines, "\n")}`;
     }
     stack = newStack;
   }
@@ -2261,140 +2012,12 @@ function formatError(err: any, constructor: string | null, tag: string, ctx: Con
   return stack;
 }
 
-const kSpaces = "                                                                                                                                ";
-
-function padStart(str: string, maxLength: number): string {
-  const count = maxLength - str.length;
-  if (count <= 0) return str;
-  if (count > 128) return StringPrototypePadStart.$call(str, maxLength, " ");
-  return StringPrototypeSlice.$call(kSpaces, 0, count) + str;
-}
-
-function padEnd(str: string, maxLength: number): string {
-  const count = maxLength - str.length;
-  if (count <= 0) return str;
-  if (count > 128) return StringPrototypePadEnd.$call(str, maxLength, " ");
-  return str + StringPrototypeSlice.$call(kSpaces, 0, count);
-}
-
-function groupArrayElements(ctx: Context, output: unknown[], value: any): unknown[] {
-  const maxArrayLength = ctx.maxArrayLength;
-  const breakLength = ctx.breakLength;
-  const compact = ctx.compact;
-  if (typeof maxArrayLength !== "number" || typeof breakLength !== "number" || typeof compact !== "number") {
-    return groupArrayElementsUntyped(ctx, output, value);
-  }
+function groupArrayElements(ctx: Context, output: string[], value) {
   let totalLength = 0;
   let maxLength = 0;
   let i = 0;
   let outputLength = output.length;
-  if (maxArrayLength < output.length) {
-    // This makes sure the "... n more items" part is not taken into account.
-    outputLength--;
-  }
-  const separatorSpace = 2; // Add 1 for the space and 1 for the separator.
-  const dataLen = new Array<number>(outputLength);
-  const colors = ctx.colors;
-  // Calculate the total length of all output entries and the individual max
-  // entries length of all output entries. We have to remove colors first,
-  // otherwise the length would not be calculated properly.
-  for (; i < outputLength; i++) {
-    const entry = output[i];
-    if (typeof entry !== "string") return groupArrayElementsUntyped(ctx, output, value);
-    const len = getStringWidth(entry, colors);
-    dataLen[i] = len;
-    totalLength += len + separatorSpace;
-    if (maxLength < len) maxLength = len;
-  }
-  // Add two to `maxLength` as we add a single whitespace character plus a comma
-  // in-between two entries.
-  const actualMax = maxLength + separatorSpace;
-  // Check if at least three entries fit next to each other and prevent grouping
-  // of arrays that contains entries of very different length (i.e., if a single
-  // entry is longer than 1/5 of all other entries combined). Otherwise the
-  // space in-between small entries would be enormous.
-  const indentationLvl = ctx.indentationLvl;
-  if (actualMax * 3 + indentationLvl < breakLength && (totalLength / actualMax > 5 || maxLength <= 6)) {
-    const approxCharHeights = 2.5;
-    const averageBias = MathSqrt(actualMax - totalLength / output.length);
-    const biasedMax = MathMax(actualMax - 3 - averageBias, 1);
-    // Dynamically check how many columns seem possible.
-    const columns = $min(
-      $min(
-        // Ideally a square should be drawn. We expect a character to be about 2.5
-        // times as high as wide. This is the area formula to calculate a square
-        // which contains n rectangles of size `actualMax * approxCharHeights`.
-        // Divide that by `actualMax` to receive the correct number of columns.
-        // The added bias increases the columns for short entries.
-        MathRound(MathSqrt(approxCharHeights * biasedMax * outputLength) / biasedMax),
-        // Do not exceed the breakLength.
-        MathFloor((breakLength - indentationLvl) / actualMax),
-      ),
-      // Limit array grouping for small `compact` modes as the user requested
-      // minimal grouping.
-      // Limit the columns to a maximum of fifteen.
-      $min(compact * 4, 15),
-    );
-    // Return with the original output if no grouping should happen.
-    if (columns <= 1) {
-      return output;
-    }
-    const tmp: unknown[] = [];
-    const maxLineLength: number[] = [];
-    for (let i = 0; i < columns; i++) {
-      let lineMaxLength = 0;
-      for (let j = i; j < outputLength; j += columns) {
-        if (dataLen[j] > lineMaxLength) lineMaxLength = dataLen[j];
-      }
-      lineMaxLength += separatorSpace;
-      maxLineLength[i] = lineMaxLength;
-    }
-    let isPadStart = true;
-    if (value !== undefined) {
-      for (let i = 0; i < output.length; i++) {
-        if (typeof value[i] !== "number" && typeof value[i] !== "bigint") {
-          isPadStart = false;
-          break;
-        }
-      }
-    }
-    // Each iteration creates a single line of grouped entries.
-    for (let i = 0; i < outputLength; i += columns) {
-      // The last lines may contain less entries than columns.
-      const max = $min(i + columns, outputLength);
-      let str = "";
-      let j = i;
-      for (; j < max - 1; j++) {
-        // Calculate extra color padding in case it's active. This has to be
-        // done line by line as some lines might contain more colors than
-        // others.
-        const entry = output[j] as string;
-        const padding = maxLineLength[j - i] + entry.length - dataLen[j];
-        str += isPadStart ? padStart(`${entry}, `, padding) : padEnd(`${entry}, `, padding);
-      }
-      const entry = output[j] as string;
-      if (isPadStart) {
-        const padding = maxLineLength[j - i] + entry.length - dataLen[j] - separatorSpace;
-        str += padStart(entry, padding);
-      } else {
-        str += entry;
-      }
-      ArrayPrototypePush.$call(tmp, str);
-    }
-    if (maxArrayLength < output.length) {
-      ArrayPrototypePush.$call(tmp, output[outputLength]);
-    }
-    output = tmp;
-  }
-  return output;
-}
-
-function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unknown[] {
-  let totalLength = 0;
-  let maxLength = 0;
-  let i = 0;
-  let outputLength = output.length;
-  if ((ctx.maxArrayLength as any) < output.length) {
+  if (ctx.maxArrayLength < output.length) {
     // This makes sure the "... n more items" part is not taken into account.
     outputLength--;
   }
@@ -2417,14 +2040,13 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
   // entry is longer than 1/5 of all other entries combined). Otherwise the
   // space in-between small entries would be enormous.
   const indentationLvl = ctx.indentationLvl;
-  const breakLength: any = ctx.breakLength;
+  const breakLength = ctx.breakLength;
   if (actualMax * 3 + indentationLvl < breakLength && (totalLength / actualMax > 5 || maxLength <= 6)) {
     const approxCharHeights = 2.5;
     const averageBias = MathSqrt(actualMax - totalLength / output.length);
     const biasedMax = MathMax(actualMax - 3 - averageBias, 1);
     // Dynamically check how many columns seem possible.
     const columns = $min(
-      $min(
       // Ideally a square should be drawn. We expect a character to be about 2.5
       // times as high as wide. This is the area formula to calculate a square
       // which contains n rectangles of size `actualMax * approxCharHeights`.
@@ -2433,17 +2055,17 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
       MathRound(MathSqrt(approxCharHeights * biasedMax * outputLength) / biasedMax),
       // Do not exceed the breakLength.
       MathFloor((breakLength - indentationLvl) / actualMax),
-      ),
       // Limit array grouping for small `compact` modes as the user requested
       // minimal grouping.
+      (ctx.compact as number) * 4,
       // Limit the columns to a maximum of fifteen.
-      $min((ctx.compact as any) * 4, 15),
+      15,
     );
     // Return with the original output if no grouping should happen.
     if (columns <= 1) {
       return output;
     }
-    const tmp: unknown[] = [];
+    const tmp: string[] = [];
     const maxLineLength: number[] = [];
     for (let i = 0; i < columns; i++) {
       let lineMaxLength = 0;
@@ -2453,11 +2075,11 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
       lineMaxLength += separatorSpace;
       maxLineLength[i] = lineMaxLength;
     }
-    let padStart = true;
+    let order = StringPrototypePadStart;
     if (value !== undefined) {
       for (let i = 0; i < output.length; i++) {
         if (typeof value[i] !== "number" && typeof value[i] !== "bigint") {
-          padStart = false;
+          order = StringPrototypePadEnd;
           break;
         }
       }
@@ -2473,10 +2095,9 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
         // done line by line as some lines might contain more colors than
         // others.
         const padding = maxLineLength[j - i] + output[j].length - dataLen[j];
-        const entry = `${output[j]}, `;
-        str += padStart ? StringPrototypePadStart.$call(entry, padding, " ") : StringPrototypePadEnd.$call(entry, padding, " ");
+        str += order.$call(`${output[j]}, `, padding, " ");
       }
-      if (padStart) {
+      if (order === StringPrototypePadStart) {
         const padding = maxLineLength[j - i] + output[j].length - dataLen[j] - separatorSpace;
         str += StringPrototypePadStart.$call(output[j], padding, " ");
       } else {
@@ -2484,7 +2105,7 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
       }
       ArrayPrototypePush.$call(tmp, str);
     }
-    if ((ctx.maxArrayLength as any) < output.length) {
+    if (ctx.maxArrayLength < output.length) {
       ArrayPrototypePush.$call(tmp, output[outputLength]);
     }
     output = tmp;
@@ -2492,7 +2113,7 @@ function groupArrayElementsUntyped(ctx: Context, output: any[], value: any): unk
   return output;
 }
 
-function addNumericSeparator(integerString: string): string {
+function addNumericSeparator(integerString: string) {
   let result = "";
   let i = integerString.length;
   const start = integerString[0] === "-" ? 1 : 0;
@@ -2502,7 +2123,7 @@ function addNumericSeparator(integerString: string): string {
   return i === integerString.length ? integerString : `${StringPrototypeSlice.$call(integerString, 0, i)}${result}`;
 }
 
-function addNumericSeparatorEnd(integerString: string): string {
+function addNumericSeparatorEnd(integerString: string) {
   let result = "";
   let i = 0;
   for (; i < integerString.length - 3; i += 3) {
@@ -2511,135 +2132,94 @@ function addNumericSeparatorEnd(integerString: string): string {
   return i === 0 ? integerString : `${result}${StringPrototypeSlice.$call(integerString, i)}`;
 }
 
-const remainingText = (remaining: number): string => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
+const remainingText = (remaining: number) => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
 
-function numberToString(number: number, numericSeparator: unknown): string {
+function formatNumber(fn: Stylize, number: number, numericSeparator: boolean) {
   if (!numericSeparator) {
     // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
-    if (number === 0 && 1 / number < 0) {
-      return "-0";
+    if (ObjectIs(number, -0)) {
+      return fn("-0", "number");
     }
-    return `${number}`;
+    return fn(`${number}`, "number");
   }
   const integer = MathTrunc(number);
   const string = String(integer);
   if (integer === number) {
     if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(string, "e")) {
-      return string;
+      return fn(string, "number");
     }
-    return addNumericSeparator(string);
+    return fn(`${addNumericSeparator(string)}`, "number");
   }
   if (NumberIsNaN(number)) {
-    return string;
+    return fn(string, "number");
   }
-  return `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`;
+  return fn(
+    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`,
+    "number",
+  );
 }
 
-function notANumberToString(number: any, numericSeparator: unknown): string {
-  if (!numericSeparator) {
-    return `${number}`;
-  }
-  const integer = MathTrunc(number);
-  const string = String(integer);
-  if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(string, "e")) {
-      return string;
-    }
-    return addNumericSeparator(string);
-  }
-  if (NumberIsNaN(number)) {
-    return string;
-  }
-  return `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`;
-}
-
-function formatNumber(fn: any, number: unknown, numericSeparator: unknown): unknown {
-  if (typeof number !== "number") return fn(notANumberToString(number, numericSeparator), "number");
-  const string = numberToString(number, numericSeparator);
-  return fn === stylizeNoColor ? (withoutLineBreak = string) : fn(string, "number");
-}
-
-function bigIntToString(bigint: unknown, numericSeparator: unknown): string {
+function formatBigInt(fn: Stylize, bigint: bigint, numericSeparator: boolean) {
   const string = String(bigint);
   if (!numericSeparator) {
-    return `${string}n`;
+    return fn(`${string}n`, "bigint");
   }
-  return `${addNumericSeparator(string)}n`;
+  return fn(`${addNumericSeparator(string)}n`, "bigint");
 }
 
-function formatBigInt(fn: any, bigint: unknown, numericSeparator: unknown): unknown {
-  const string = bigIntToString(bigint, numericSeparator);
-  return fn === stylizeNoColor && typeof bigint === "bigint" ? (withoutLineBreak = string) : fn(string, "bigint");
-}
-
-function formatPrimitive(fn: any, value: unknown, ctx: Context): unknown {
+function formatPrimitive(fn: Stylize, value: string | number | bigint | boolean | symbol | undefined, ctx: Context) {
   if (typeof value === "string") {
-    return formatString(fn, value, ctx.maxStringLength, ctx.compact, ctx.breakLength, ctx.indentationLvl);
+    let trailer = "";
+    const maxStringLength = ctx.maxStringLength;
+    let valueLength = value.length;
+    if (valueLength > maxStringLength) {
+      const remaining = valueLength - maxStringLength;
+      value = StringPrototypeSlice.$call(value, 0, maxStringLength) as string;
+      valueLength = value.length;
+      trailer = `... ${remaining} more character${remaining > 1 ? "s" : ""}`;
+    }
+    const indentationLvl = ctx.indentationLvl;
+    if (
+      ctx.compact !== true &&
+      // We do not support handling unicode characters width with
+      // the readline getStringWidth function as there are
+      // performance implications.
+      valueLength > kMinLineLength &&
+      valueLength > ctx.breakLength - indentationLvl - 4
+    ) {
+      return (
+        ArrayPrototypeJoin.$call(
+          ArrayPrototypeMap.$call(extractedSplitNewLines(value), (line: string) => fn(strEscape(line), "string")),
+          ` +\n${StringPrototypeRepeat.$call(" ", indentationLvl + 2)}`,
+        ) + trailer
+      );
+    }
+    return fn(strEscape(value), "string") + trailer;
   }
   if (typeof value === "number") return formatNumber(fn, value, ctx.numericSeparator);
   if (typeof value === "bigint") return formatBigInt(fn, value, ctx.numericSeparator);
-  if (typeof value === "boolean") {
-    return fn === stylizeNoColor ? (withoutLineBreak = value ? "true" : "false") : fn(`${value}`, "boolean");
-  }
-  if (typeof value === "undefined") {
-    return fn === stylizeNoColor ? (withoutLineBreak = "undefined") : fn("undefined", "undefined");
-  }
+  if (typeof value === "boolean") return fn(`${value}`, "boolean");
+  if (typeof value === "undefined") return fn("undefined", "undefined");
   // es6 symbol primitive
-  return fn(SymbolPrototypeToString.$call(value as any), "symbol");
+  return fn(SymbolPrototypeToString.$call(value), "symbol");
 }
 
-function formatString(
-  fn: any,
-  value: string,
-  maxStringLength: any,
-  compact: unknown,
-  breakLength: unknown,
-  indentationLvl: number,
-): unknown {
-  let trailer = "";
-  let valueLength = value.length;
-  if (valueLength > maxStringLength) {
-    const remaining = valueLength - maxStringLength;
-    value = StringPrototypeSlice.$call(value, 0, maxStringLength);
-    valueLength = value.length;
-    trailer = `... ${remaining} more character${remaining > 1 ? "s" : ""}`;
-  }
-  if (
-    compact !== true &&
-    // We do not support handling unicode characters width with
-    // the readline getStringWidth function as there are
-    // performance implications.
-    valueLength > kMinLineLength &&
-    valueLength > (breakLength as any) - indentationLvl - 4
-  ) {
-    return (
-      ArrayPrototypeJoin.$call(
-        ArrayPrototypeMap.$call(extractedSplitNewLines(value), line => fn(strEscape(line), "string")),
-        ` +\n${StringPrototypeRepeat.$call(" ", indentationLvl + 2)}`,
-      ) + trailer
-    );
-  }
-  const escaped = strEscape(value);
-  if (fn === stylizeNoColor) return (withoutLineBreak = trailer === "" ? escaped : escaped + trailer);
-  return fn(escaped, "string") + trailer;
-}
-
-function formatNamespaceObject(keys: PropertyKey[], ctx: Context, value: any, recurseTimes: number): unknown[] {
-  const output = new Array<any>(keys.length);
+function formatNamespaceObject(keys: Key[], ctx: Context, value, recurseTimes: number) {
+  const output = new Array<string>(keys.length);
   for (let i = 0; i < keys.length; i++) {
     try {
       output[i] = formatProperty(ctx, value, recurseTimes, keys[i], kObjectType);
-    } catch (err: any) {
+    } catch (err) {
       assert(isNativeError(err) && err.name === "ReferenceError");
       // Use the existing functionality. This makes sure the indentation and
       // line breaks are always correct. Otherwise it is very difficult to keep
       // this aligned, even though this is a hacky way of dealing with this.
-      const tmp: Record<PropertyKey, unknown> = { [keys[i]]: "" };
+      const tmp = { [keys[i]]: "" };
       output[i] = formatProperty(ctx, tmp, recurseTimes, keys[i], kObjectType);
       const pos = StringPrototypeLastIndexOf.$call(output[i], " ");
       // We have to find the last whitespace and have to replace that value as
       // it will be visualized as a regular string.
-      output[i] = StringPrototypeSlice.$call(output[i], 0, pos + 1) + stylize(ctx, "<uninitialized>", "special");
+      output[i] = StringPrototypeSlice.$call(output[i], 0, pos + 1) + ctx.stylize("<uninitialized>", "special");
     }
   }
   // Reset the keys to an empty array. This prevents duplicated inspection.
@@ -2648,14 +2228,14 @@ function formatNamespaceObject(keys: PropertyKey[], ctx: Context, value: any, re
 }
 
 // The array is sparse and/or has extra keys
-function formatSpecialArray(ctx: Context, value: any, recurseTimes: number, maxLength: number, output: unknown[], i: number): unknown[] {
+function formatSpecialArray(ctx: Context, value, recurseTimes: number, maxLength: number, output: string[], i: number) {
   const keys = ObjectKeys(value);
   let index = i;
   for (; i < keys.length && output.length < maxLength; i++) {
     const key = keys[i];
     const tmp = +key;
     // Arrays can only have up to 2^32 - 1 entries
-    if (tmp > 4294967294) {
+    if (tmp > 2 ** 32 - 2) {
       break;
     }
     if (`${index}` !== key) {
@@ -2665,7 +2245,7 @@ function formatSpecialArray(ctx: Context, value: any, recurseTimes: number, maxL
       const emptyItems = tmp - index;
       const ending = emptyItems > 1 ? "s" : "";
       const message = `<${emptyItems} empty item${ending}>`;
-      ArrayPrototypePush.$call(output, stylize(ctx, message, "undefined"));
+      ArrayPrototypePush.$call(output, ctx.stylize(message, "undefined"));
       index = tmp;
       if (output.length === maxLength) {
         break;
@@ -2679,7 +2259,7 @@ function formatSpecialArray(ctx: Context, value: any, recurseTimes: number, maxL
     if (remaining > 0) {
       const ending = remaining > 1 ? "s" : "";
       const message = `<${remaining} empty item${ending}>`;
-      ArrayPrototypePush.$call(output, stylize(ctx, message, "undefined"));
+      ArrayPrototypePush.$call(output, ctx.stylize(message, "undefined"));
     }
   } else if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
@@ -2687,66 +2267,63 @@ function formatSpecialArray(ctx: Context, value: any, recurseTimes: number, maxL
   return output;
 }
 
-function hexSlice(buf: Uint8Array, start: number, end: number): string {
+function hexSlice(buf: Uint8Array, start = 0, end?: number) {
   return ArrayPrototypeJoin.$call(
-    ArrayPrototypeMap.$call(buf.slice(start, end) as any, (x: number) => ("00" + x.toString(16)).slice(-2)),
+    ArrayPrototypeMap.$call(buf.slice(start, end), (x: number) => ("00" + x.toString(16)).slice(-2)),
     "",
   );
 }
 
-function formatArrayBuffer(ctx: Context, value: any): unknown[] {
+function formatArrayBuffer(ctx: Context, value) {
   let buffer: Uint8Array;
   try {
     buffer = new Uint8Array(value);
   } catch {
-    return [stylize(ctx, "(detached)", "special")];
+    return [ctx.stylize("(detached)", "special")];
   }
   let str = StringPrototypeTrim.$call(
-    RegExpPrototypeSymbolReplace.$call(/(.{2})/g, hexSlice(buffer, 0, $min(ctx.maxArrayLength as any, buffer.length)), "$1 "),
+    RegExpPrototypeSymbolReplace.$call(/(.{2})/g, hexSlice(buffer, 0, $min(ctx.maxArrayLength, buffer.length)), "$1 "),
   );
-  const remaining = buffer.length - (ctx.maxArrayLength as any);
+  const remaining = buffer.length - ctx.maxArrayLength;
   if (remaining > 0) str += ` ... ${remaining} more byte${remaining > 1 ? "s" : ""}`;
-  return [`${stylize(ctx, "[Uint8Contents]", "special")}: <${str}>`];
+  return [`${ctx.stylize("[Uint8Contents]", "special")}: <${str}>`];
 }
 
-function formatArray(ctx: Context, value: any, recurseTimes: number): unknown[] {
-  const valLen: number = value.length;
-  const len = $min(MathMax(0, ctx.maxArrayLength as any), valLen);
+function formatArray(ctx: Context, value, recurseTimes: number) {
+  const valLen = value.length;
+  const len = $min(MathMax(0, ctx.maxArrayLength), valLen);
 
   const remaining = valLen - len;
-  const output: unknown[] = [];
-  let isSingleLine = true;
+  const output: string[] = [];
   for (let i = 0; i < len; i++) {
     // Special handle sparse arrays.
-    const desc = ObjectGetOwnPropertyDescriptor(value, i);
-    if (desc === undefined) {
+    if (!ObjectPrototypeHasOwnProperty.$call(value, i)) {
       return formatSpecialArray(ctx, value, recurseTimes, len, output, i);
     }
-    const property = formatProperty(ctx, value, recurseTimes, i, kArrayType, desc);
-    if (isSingleLine && !isWithoutLineBreak(property)) isSingleLine = false;
-    ArrayPrototypePush.$call(output, property);
+    ArrayPrototypePush.$call(output, formatProperty(ctx, value, recurseTimes, i, kArrayType));
   }
   if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
   }
-  if (isSingleLine) outputWithoutLineBreak = output;
   return output;
 }
 
-function formatTypedArray(value: any, length: any, ctx: Context): unknown[] {
-  if (isBufferClassMade() && Buffer.isBuffer(value)) {
-    BufferModule ??= require("node:buffer");
-    const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
-    ctx.maxArrayLength = $min(ctx.maxArrayLength as any, INSPECT_MAX_BYTES);
+function formatTypedArray(value, length: number, ctx: Context, _ignored: object, _recurseTimes: number) {
+  if (Buffer.isBuffer(value)) {
+    const INSPECT_MAX_BYTES =
+      $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? require("node:buffer").INSPECT_MAX_BYTES;
+    ctx.maxArrayLength = $min(ctx.maxArrayLength, INSPECT_MAX_BYTES);
   }
-  const maxLength = $min(MathMax(0, ctx.maxArrayLength as any), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = value.length - maxLength;
-  const output = new Array<unknown>(maxLength);
-  const isNumber = value.length > 0 && typeof value[0] === "number";
+  const output = new Array<string>(maxLength);
+  const elementFormatter = (value.length > 0 && typeof value[0] === "number" ? formatNumber : formatBigInt) as (
+    fn: Stylize,
+    value: number | bigint,
+    numericSeparator: boolean,
+  ) => string;
   for (let i = 0; i < maxLength; ++i) {
-    output[i] = isNumber
-      ? formatNumber(ctx.stylize, value[i], ctx.numericSeparator)
-      : formatBigInt(ctx.stylize, value[i], ctx.numericSeparator);
+    output[i] = elementFormatter(ctx.stylize, value[i], ctx.numericSeparator);
   }
   if (remaining > 0) {
     output[maxLength] = remainingText(remaining);
@@ -2754,61 +2331,48 @@ function formatTypedArray(value: any, length: any, ctx: Context): unknown[] {
   return output;
 }
 
-function formatSet(value: any, ctx: Context, recurseTimes: number): unknown[] {
+function formatSet(value, ctx: Context, ignored: object, recurseTimes: number) {
   const length = value.size;
-  const maxLength = $min(MathMax(0, ctx.maxArrayLength as any), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
-  const output: unknown[] = [];
+  const output: string[] = [];
   ctx.indentationLvl += 2;
   let i = 0;
-  let isSingleLine = true;
   for (const v of value) {
     if (i >= maxLength) break;
-    const str = formatValue(ctx, v, recurseTimes);
-    if (isSingleLine && !isWithoutLineBreak(str)) isSingleLine = false;
-    ArrayPrototypePush.$call(output, str);
+    ArrayPrototypePush.$call(output, formatValue(ctx, v, recurseTimes));
     i++;
   }
   if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
   }
   ctx.indentationLvl -= 2;
-  if (isSingleLine) outputWithoutLineBreak = output;
   return output;
 }
 
-function formatMap(value: any, ctx: Context, recurseTimes: number): unknown[] {
+function formatMap(value, ctx: Context, ignored: object, recurseTimes: number) {
   const length = value.size;
-  const maxLength = $min(MathMax(0, ctx.maxArrayLength as any), length);
+  const maxLength = $min(MathMax(0, ctx.maxArrayLength), length);
   const remaining = length - maxLength;
-  const output: unknown[] = [];
+  const output: string[] = [];
   ctx.indentationLvl += 2;
   let i = 0;
-  let isSingleLine = true;
-  for (const entry of value) {
-    const k = entry[0];
-    const v = entry[1];
+  for (const { 0: k, 1: v } of value) {
     if (i >= maxLength) break;
-    const key = formatValue(ctx, k, recurseTimes);
-    if (isSingleLine && !isWithoutLineBreak(key)) isSingleLine = false;
-    const keyString = `${key}`;
-    const str = formatValue(ctx, v, recurseTimes);
-    if (isSingleLine && !isWithoutLineBreak(str)) isSingleLine = false;
-    ArrayPrototypePush.$call(output, `${keyString} => ${str}`);
+    ArrayPrototypePush.$call(output, `${formatValue(ctx, k, recurseTimes)} => ${formatValue(ctx, v, recurseTimes)}`);
     i++;
   }
   if (remaining > 0) {
     ArrayPrototypePush.$call(output, remainingText(remaining));
   }
   ctx.indentationLvl -= 2;
-  if (isSingleLine) outputWithoutLineBreak = output;
   return output;
 }
 
-function formatSetIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number): unknown[] {
-  const maxArrayLength = MathMax(ctx.maxArrayLength as any, 0);
+function formatSetIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number) {
+  const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
   const maxLength = $min(maxArrayLength, entries.length);
-  const output = new Array<unknown>(maxLength);
+  const output = new Array<string>(maxLength);
   ctx.indentationLvl += 2;
   for (let i = 0; i < maxLength; i++) {
     output[i] = formatValue(ctx, entries[i], recurseTimes);
@@ -2827,13 +2391,13 @@ function formatSetIterInner(ctx: Context, recurseTimes: number, entries: unknown
   return output;
 }
 
-function formatMapIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number): unknown[] {
-  const maxArrayLength = MathMax(ctx.maxArrayLength as any, 0);
+function formatMapIterInner(ctx: Context, recurseTimes: number, entries: unknown[], state: number) {
+  const maxArrayLength = MathMax(ctx.maxArrayLength, 0);
   // Entries exist as [key1, val1, key2, val2, ...]
   const len = entries.length / 2;
   const remaining = len - maxArrayLength;
   const maxLength = $min(maxArrayLength, len);
-  const output = new Array<unknown>(maxLength);
+  const output = new Array<string>(maxLength);
   let i = 0;
   ctx.indentationLvl += 2;
   if (state === kWeak) {
@@ -2863,24 +2427,22 @@ function formatMapIterInner(ctx: Context, recurseTimes: number, entries: unknown
   return output;
 }
 
-function formatWeakCollection(ctx: Context): unknown[] {
-  return [stylize(ctx, "<items unknown>", "special")];
+function formatWeakCollection(ctx: Context) {
+  return [ctx.stylize("<items unknown>", "special")];
 }
 
-function formatWeakSet(ctx: Context, value: unknown, recurseTimes: number): unknown[] {
+function formatWeakSet(ctx: Context, value: object, recurseTimes: number) {
   const entries = previewEntries(value);
   return formatSetIterInner(ctx, recurseTimes, entries, kWeak);
 }
 
-function formatWeakMap(ctx: Context, value: unknown, recurseTimes: number): unknown[] {
+function formatWeakMap(ctx: Context, value: object, recurseTimes: number) {
   const entries = previewEntries(value);
   return formatMapIterInner(ctx, recurseTimes, entries, kWeak);
 }
 
-function formatIterator(braces: string[], ctx: Context, value: unknown, recurseTimes: number): unknown[] {
-  const preview = previewEntries(value, true);
-  const entries = preview[0];
-  const isKeyValue = preview[1];
+function formatIterator(braces: Braces, ctx: Context, value: object, recurseTimes: number) {
+  const { 0: entries, 1: isKeyValue } = previewEntries(value, true);
   if (isKeyValue) {
     // TODO(bun): JSC can also differ between the keys and values iterator, maybe we should also distinguish those in the future?
     // Mark entry iterators as such.
@@ -2891,75 +2453,55 @@ function formatIterator(braces: string[], ctx: Context, value: unknown, recurseT
   return formatSetIterInner(ctx, recurseTimes, entries, kIterator);
 }
 
-function formatPromise(ctx: Context, value: any, recurseTimes: number): unknown[] {
-  let output: unknown[];
-  const details = getPromiseDetails(value);
-  const state = details[0];
-  const result = details[1];
+function formatPromise(ctx: Context, value, recurseTimes: number) {
+  let output: string[];
+  const { 0: state, 1: result } = getPromiseDetails(value);
   if (state === kPending) {
-    output = [stylize(ctx, "<pending>", "special")];
+    output = [ctx.stylize("<pending>", "special")];
   } else {
     ctx.indentationLvl += 2;
     const str = formatValue(ctx, result, recurseTimes);
     ctx.indentationLvl -= 2;
-    output = [state === kRejected ? `${stylize(ctx, "<rejected>", "special")} ${str}` : str];
+    output = [state === kRejected ? `${ctx.stylize("<rejected>", "special")} ${str}` : str];
   }
   return output;
 }
 
-function readExtraProperty(value: any, key: string): unknown {
-  switch (key) {
-    case "BYTES_PER_ELEMENT":
-      return value.BYTES_PER_ELEMENT;
-    case "length":
-      return value.length;
-    case "byteLength":
-      return value.byteLength;
-    case "byteOffset":
-      return value.byteOffset;
-    default:
-      return value.buffer;
-  }
-}
-
-function formatExtraProperties(ctx: Context, value: any, recurseTimes: number, key: string, typedArray: unknown): string {
+function formatExtraProperties(ctx: Context, value, recurseTimes: number, key: string, typedArray?: boolean) {
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, readExtraProperty(value, key), recurseTimes, typedArray);
+  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?
-  const name = stylize(ctx, `[${key}]`, "string");
+  const name = ctx.stylize(`[${key}]`, "string");
   return `${name}: ${str}`;
 }
 
 function formatProperty(
   ctx: Context,
-  value: any,
+  value,
   recurseTimes: number,
-  key: PropertyKey,
+  key,
   type: number,
-  desc?: any,
-  original: any = value,
-): unknown {
-  let name: unknown, str: unknown;
+  desc?: PropertyDescriptor,
+  original = value,
+) {
+  let name: string, str: string;
   let extra = " ";
-  let isSingleLine = false;
-  desc ||= ObjectGetOwnPropertyDescriptor(value, key) || missingPropertyDescriptor(value, key);
+  desc ||= ObjectGetOwnPropertyDescriptor(value, key) || { value: value[key], enumerable: true };
   const descValue = desc.value;
-  let descGet: any;
+  let descGet: PropertyDescriptor["get"];
   if (descValue !== undefined) {
     const diff = ctx.compact !== true || type !== kObjectType ? 2 : 3;
     ctx.indentationLvl += diff;
     str = formatValue(ctx, descValue, recurseTimes);
-    isSingleLine = isWithoutLineBreak(str);
-    if (diff === 3 && (ctx.breakLength as any) < getStringWidth(str, ctx.colors)) {
+    if (diff === 3 && ctx.breakLength < getStringWidth(str, ctx.colors)) {
       extra = `\n${StringPrototypeRepeat.$call(" ", ctx.indentationLvl)}`;
-      isSingleLine = false;
     }
     ctx.indentationLvl -= diff;
   } else if ((descGet = desc.get) !== undefined) {
     const label = desc.set !== undefined ? "Getter/Setter" : "Getter";
-    const s: any = ctx.stylize;
+    const s = ctx.stylize;
     const sp = "special";
     if (
       ctx.getters &&
@@ -2979,106 +2521,70 @@ function formatProperty(
           str = `${s(`[${label}:`, sp)} ${primitive}${s("]", sp)}`;
         }
         ctx.indentationLvl -= 2;
-      } catch (err: any) {
-        const message = `<Inspection threw (${err.message})>`;
+      } catch (err) {
+        const message = `<Inspection threw (${(err as Error).message})>`;
         str = `${s(`[${label}:`, sp)} ${message}${s("]", sp)}`;
       }
     } else {
-      str = stylize(ctx, `[${label}]`, sp);
+      str = ctx.stylize(`[${label}]`, sp);
     }
   } else if (desc.set !== undefined) {
-    str = stylize(ctx, "[Setter]", "special");
-  } else if (ctx.isPlain) {
-    str = withoutLineBreak = "undefined";
-    isSingleLine = true;
+    str = ctx.stylize("[Setter]", "special");
   } else {
-    str = stylize(ctx, "undefined", "undefined");
+    str = ctx.stylize("undefined", "undefined");
   }
   if (type === kArrayType) return str;
   if (typeof key === "symbol") {
-    const tmp = RegExpPrototypeSymbolReplace.$call(strEscapeSequencesReplacer, SymbolPrototypeToString.$call(key), escapeFn);
-    name = stylize(ctx, tmp, "symbol");
-  } else if (typeof key === "string" ? isIdentifier(key) : RegExpPrototypeExec.$call(keyStrRegExp, key as any) !== null) {
-    name = key === "__proto__" ? "['__proto__']" : stylize(ctx, key, "name");
+    const tmp = RegExpPrototypeSymbolReplace.$call(
+      strEscapeSequencesReplacer,
+      SymbolPrototypeToString.$call(key),
+      escapeFn,
+    );
+    name = ctx.stylize(tmp, "symbol");
+  } else if (RegExpPrototypeExec.$call(keyStrRegExp, key) !== null) {
+    name = key === "__proto__" ? "['__proto__']" : ctx.stylize(key, "name");
   } else {
-    name = stylize(ctx, strEscape(key as string), "string");
+    name = ctx.stylize(strEscape(key), "string");
   }
 
   if (desc.enumerable === false) {
     name = `[${name}]`;
   }
-  const property = `${name}:${extra}${str}`;
-  if (isSingleLine && ctx.isPlain) withoutLineBreak = property;
-  return property;
+  return `${name}:${extra}${str}`;
 }
 
-function missingPropertyDescriptor(value: any, key: PropertyKey): Record<string, unknown> {
-  return { value: value[key], enumerable: true };
-}
-
-function isBelowBreakLength(ctx: Context, output: unknown[], start: unknown, base: unknown): boolean {
+function isBelowBreakLength(ctx: Context, output: string[], start: number, base: string) {
   // Each entry is separated by at least a comma. Thus, we start with a total
   // length of at least `output.length`. In addition, some cases have a
   // whitespace in-between each other that is added to the total as well.
   // TODO(BridgeAR): Add unicode support. Use the readline getStringWidth
   // function. Check the performance overhead and make it an opt-in in case it's
   // significant.
-  const breakLength = ctx.breakLength;
-  if (typeof start !== "number" || typeof breakLength !== "number" || ctx.colors) {
-    return isBelowBreakLengthUntyped(ctx, output, start, base);
-  }
   let totalLength = output.length + start;
-  if (totalLength + output.length > breakLength) return false;
-  for (let i = 0; i < output.length; i++) {
-    const entry = output[i];
-    if (typeof entry !== "string") return isBelowBreakLengthUntyped(ctx, output, start, base);
-    totalLength += entry.length;
-    if (totalLength > breakLength) {
-      return false;
-    }
-  }
-  // Do not line up properties on the same line if `base` contains line breaks.
-  return base === "" || !StringPrototypeIncludes.$call(base as any, "\n");
-}
-
-function isBelowBreakLengthUntyped(ctx: Context, output: any[], start: any, base: unknown): boolean {
-  let totalLength = output.length + start;
-  if (totalLength + output.length > (ctx.breakLength as any)) return false;
+  if (totalLength + output.length > ctx.breakLength) return false;
   for (let i = 0; i < output.length; i++) {
     if (ctx.colors) {
       totalLength += StringPrototypeReplaceAll.$call(output[i], /\u001B\[\d\d?m/g, "").length; // remove colors
     } else {
       totalLength += output[i].length;
     }
-    if (totalLength > (ctx.breakLength as any)) {
+    if (totalLength > ctx.breakLength) {
       return false;
     }
   }
-  return base === "" || !StringPrototypeIncludes.$call(base as any, "\n");
-}
-
-function joinOutput(output: unknown[], separator: string): string {
-  const length = output.length;
-  if (length === 0 || length > 16) return ArrayPrototypeJoin.$call(output, separator);
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    const entry = output[i];
-    if (typeof entry !== "string") return ArrayPrototypeJoin.$call(output, separator);
-    result = i === 0 ? entry : result + separator + entry;
-  }
-  return result;
+  // Do not line up properties on the same line if `base` contains line breaks.
+  return base === "" || !StringPrototypeIncludes.$call(base, "\n");
 }
 
 function reduceToSingleString(
   ctx: Context,
-  output: unknown[],
-  base: unknown,
-  braces: string[],
+  output: string[],
+  base: string,
+  braces: Braces,
   extrasType: number,
   recurseTimes: number,
-  value?: unknown,
-  isSingleLine = false,
-): string {
+  value?,
+) {
   const compact = ctx.compact;
   if (compact !== true) {
     if (typeof compact === "number" && compact >= 1) {
@@ -3109,13 +2615,11 @@ function reduceToSingleString(
         // Line up all entries on a single line in case the entries do not
         // exceed `breakLength`. Add 10 as constant to start next to all other
         // factors that may reduce `breakLength`.
-        const start = outputLength + ctx.indentationLvl + braces[0].length + (base as any).length + 10;
+        const start = outputLength + ctx.indentationLvl + braces[0].length + base.length + 10;
         if (isBelowBreakLength(ctx, output, start, base)) {
-          const joinedOutput = joinOutput(output, ", ");
-          if (isSingleLine || !StringPrototypeIncludes.$call(joinedOutput, "\n")) {
-            const res = `${base ? `${base} ` : ""}${braces[0]} ${joinedOutput}` + ` ${braces[1]}`;
-            if (braces[0].length === 1 && typeof base === "string") withoutLineBreak = res;
-            return res;
+          const joinedOutput = ArrayPrototypeJoin.$call(output, ", ");
+          if (!StringPrototypeIncludes.$call(joinedOutput, "\n")) {
+            return `${base ? `${base} ` : ""}${braces[0]} ${joinedOutput}` + ` ${braces[1]}`;
           }
         }
       }
@@ -3124,7 +2628,7 @@ function reduceToSingleString(
     const indentation = `\n${StringPrototypeRepeat.$call(" ", ctx.indentationLvl)}`;
     return (
       `${base ? `${base} ` : ""}${braces[0]}${indentation}  ` +
-      `${joinOutput(output, `,${indentation}  `)}${indentation}${braces[1]}`
+      `${ArrayPrototypeJoin.$call(output, `,${indentation}  `)}${indentation}${braces[1]}`
     );
   }
   // Line up all entries on a single line in case the entries do not exceed
@@ -3141,7 +2645,11 @@ function reduceToSingleString(
   return `${braces[0]}${ln}${ArrayPrototypeJoin.$call(output, `,\n${indentation}  `)} ${braces[1]}`;
 }
 
-function hasBuiltInToString(value: any): boolean {
+function returnFalse() {
+  return false;
+}
+
+function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
   const getFullProxy = false;
   const proxyTarget = getProxyDetails(value, getFullProxy);
@@ -3152,22 +2660,22 @@ function hasBuiltInToString(value: any): boolean {
     return hasBuiltInToString(proxyTarget);
   }
 
-  let hasOwnToString = true;
-  let hasOwnToPrimitive = true;
+  let hasOwnToString = ObjectPrototypeHasOwnProperty;
+  let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
   // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
   if (typeof value.toString !== "function") {
     if (typeof value[SymbolToPrimitive] !== "function") {
       return true;
-    } else if (ObjectHasOwn(value, SymbolToPrimitive)) {
+    } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {
       return false;
     }
-    hasOwnToString = false;
-  } else if (ObjectHasOwn(value, "toString")) {
+    hasOwnToString = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty.$call(value, "toString")) {
     return false;
   } else if (typeof value[SymbolToPrimitive] !== "function") {
-    hasOwnToPrimitive = false;
-  } else if (ObjectHasOwn(value, SymbolToPrimitive)) {
+    hasOwnToPrimitive = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty.$call(value, SymbolToPrimitive)) {
     return false;
   }
 
@@ -3176,10 +2684,7 @@ function hasBuiltInToString(value: any): boolean {
   let pointer = value;
   do {
     pointer = ObjectGetPrototypeOf(pointer);
-  } while (
-    !(hasOwnToString && ObjectPrototypeHasOwnProperty.$call(pointer, "toString")) &&
-    !(hasOwnToPrimitive && ObjectPrototypeHasOwnProperty.$call(pointer, SymbolToPrimitive))
-  );
+  } while (!hasOwnToString.$call(pointer, "toString") && !hasOwnToPrimitive.$call(pointer, SymbolToPrimitive));
 
   // Check closer if the object is a built-in.
   const descriptor = ObjectGetOwnPropertyDescriptor(pointer, "constructor");
@@ -3188,233 +2693,182 @@ function hasBuiltInToString(value: any): boolean {
   );
 }
 
-const firstErrorLine = (error: any): string => StringPrototypeSplit.$call(error.message, "\n", 1)[0];
+const firstErrorLine = (error: Error) => StringPrototypeSplit.$call(error.message, "\n", 1)[0];
 let CIRCULAR_ERROR_MESSAGE: string | undefined;
-function tryStringify(arg: unknown): string | undefined {
+function tryStringify(arg: unknown) {
   try {
     return JSONStringify(arg);
-  } catch (err: any) {
+  } catch (err) {
     // Populate the circular error message lazily
     if (!CIRCULAR_ERROR_MESSAGE) {
       try {
-        const a: Record<string, unknown> = {};
+        const a: { a?: unknown } = {};
         a.a = a;
         JSONStringify(a);
       } catch (circularError) {
-        CIRCULAR_ERROR_MESSAGE = firstErrorLine(circularError);
+        CIRCULAR_ERROR_MESSAGE = firstErrorLine(circularError as Error);
       }
     }
-    if (err.name === "TypeError" && firstErrorLine(err) === CIRCULAR_ERROR_MESSAGE) {
+    if ((err as Error).name === "TypeError" && firstErrorLine(err as Error) === CIRCULAR_ERROR_MESSAGE) {
       return "[Circular]";
     }
     throw err;
   }
 }
 
-function format(...args: unknown[]): string {
-  if (args.length === 1) {
-    const first = args[0];
-    if (typeof first === "string") return first;
-  }
+function format(...args) {
   return formatWithOptionsInternal(undefined, args);
 }
 
-function formatWithOptions(inspectOptions: unknown, ...args: unknown[]): string {
-  if (typeof inspectOptions !== "object" || inspectOptions === null) throw $ERR_INVALID_ARG_TYPE("inspectOptions", "object", inspectOptions);
+function formatWithOptions(inspectOptions: InspectOptions, ...args) {
+  validateObject(inspectOptions, "inspectOptions", kValidateObjectAllowArray);
   return formatWithOptionsInternal(inspectOptions, args);
 }
 
-function formatNumberNoColor(number: number, options: any): string {
-  return numberToString(number, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
+function formatNumberNoColor(number: number, options: InspectOptions | undefined) {
+  return formatNumber(stylizeNoColor, number, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
 }
 
-function formatBigIntNoColor(bigint: bigint, options: any): string {
-  return bigIntToString(bigint, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
+function formatBigIntNoColor(bigint: bigint, options: InspectOptions | undefined) {
+  return formatBigInt(stylizeNoColor, bigint, options?.numericSeparator ?? inspectDefaultOptions.numericSeparator);
 }
 
-function toAppendedString(value: unknown): string {
-  return typeof value === "string" ? value : "" + (value as any);
-}
-
-function parseIntFromNumber(number: number): number {
-  const abs = number < 0 ? -number : number;
-  if (abs >= 1e-6 && abs < 1e21) return MathTrunc(number);
-  return number === 0 ? 0 : NumberParseInt(number as any);
-}
-
-function formatWithOptionsInternal(inspectOptions: any, args: unknown[]): string {
+function formatWithOptionsInternal(inspectOptions: InspectOptions | undefined, args) {
   const first = args[0];
+  let a = 0;
+  let str = "";
+  let join = "";
+
   if (typeof first === "string") {
     if (args.length === 1) {
       return first;
     }
-    return formatWithFormatString(inspectOptions, first, args);
-  }
-  return appendArguments(inspectOptions, args, 0, "", "");
-}
+    let tempStr: string;
+    let lastPos = 0;
 
-function formatWithFormatString(inspectOptions: any, first: string, args: unknown[]): string {
-  let a = 0;
-  let str = "";
-  let tempStr: string;
-  let lastPos = 0;
-  const argsLength = args.length;
-  const end = first.length - 1;
-
-  for (let i = 0; i < end; i++) {
-    while (StringPrototypeCharCodeAt.$call(first, i) !== 37 && ++i < end);
-    if (i < end) {
-      // '%'
-      const nextChar = StringPrototypeCharCodeAt.$call(first, ++i);
-      if (a + 1 !== argsLength) {
-        switch (nextChar) {
-          case 115: {
-            // 's'
-            const tempArg = args[++a];
-            if (typeof tempArg === "string") {
-              tempStr = tempArg;
-            } else if (typeof tempArg === "number") {
-              tempStr = formatNumberNoColor(tempArg, inspectOptions);
-            } else if (typeof tempArg === "bigint") {
-              tempStr = formatBigIntNoColor(tempArg, inspectOptions);
-            } else if (typeof tempArg !== "object" || tempArg === null || !hasBuiltInToString(tempArg)) {
-              tempStr = String(tempArg);
-            } else {
-              tempStr = toAppendedString(
-                inspect(tempArg, {
+    for (let i = 0; i < first.length - 1; i++) {
+      if (StringPrototypeCharCodeAt.$call(first, i) === 37) {
+        // '%'
+        const nextChar = StringPrototypeCharCodeAt.$call(first, ++i);
+        if (a + 1 !== args.length) {
+          switch (nextChar) {
+            case 115: {
+              // 's'
+              const tempArg = args[++a];
+              if (typeof tempArg === "number") {
+                tempStr = formatNumberNoColor(tempArg, inspectOptions);
+              } else if (typeof tempArg === "bigint") {
+                tempStr = formatBigIntNoColor(tempArg, inspectOptions);
+              } else if (typeof tempArg !== "object" || tempArg === null || !hasBuiltInToString(tempArg)) {
+                tempStr = String(tempArg);
+              } else {
+                tempStr = inspect(tempArg, {
                   ...inspectOptions,
                   compact: 3,
                   colors: false,
                   depth: 0,
-                }),
-              );
+                });
+              }
+              break;
             }
-            break;
-          }
-          case 106: {
-            // 'j'
-            const tempJSON = args[++a];
-            if (typeof tempJSON === "number") {
-              tempStr = NumberIsFinite(tempJSON) ? `${tempJSON}` : "null";
-            } else {
-              const json = tryStringify(tempJSON);
-              tempStr = json === undefined ? "undefined" : json;
+            case 106: // 'j'
+              tempStr = tryStringify(args[++a]);
+              break;
+            case 100: {
+              // 'd'
+              const tempNum = args[++a];
+              if (typeof tempNum === "bigint") {
+                tempStr = formatBigIntNoColor(tempNum, inspectOptions);
+              } else if (typeof tempNum === "symbol") {
+                tempStr = "NaN";
+              } else {
+                tempStr = formatNumberNoColor(Number(tempNum), inspectOptions);
+              }
+              break;
             }
-            break;
-          }
-          case 100: {
-            // 'd'
-            const tempNum = args[++a];
-            if (typeof tempNum === "number") {
-              tempStr = formatNumberNoColor(tempNum, inspectOptions);
-            } else if (typeof tempNum === "bigint") {
-              tempStr = formatBigIntNoColor(tempNum, inspectOptions);
-            } else if (typeof tempNum === "symbol") {
-              tempStr = "NaN";
-            } else {
-              tempStr = formatNumberNoColor(Number(tempNum), inspectOptions);
-            }
-            break;
-          }
-          case 79: // 'O'
-            tempStr = toAppendedString(inspect(args[++a], inspectOptions));
-            break;
-          case 111: // 'o'
-            tempStr = toAppendedString(
-              inspect(args[++a], {
+            case 79: // 'O'
+              tempStr = inspect(args[++a], inspectOptions);
+              break;
+            case 111: // 'o'
+              tempStr = inspect(args[++a], {
                 ...inspectOptions,
                 showHidden: true,
                 showProxy: true,
                 depth: 4,
-              }),
-            );
-            break;
-          case 105: {
-            // 'i'
-            const tempInteger = args[++a];
-            if (typeof tempInteger === "number") {
-              tempStr = formatNumberNoColor(parseIntFromNumber(tempInteger), inspectOptions);
-            } else if (typeof tempInteger === "bigint") {
-              tempStr = formatBigIntNoColor(tempInteger, inspectOptions);
-            } else if (typeof tempInteger === "symbol") {
-              tempStr = "NaN";
-            } else {
-              tempStr = formatNumberNoColor(NumberParseInt(tempInteger as any), inspectOptions);
+              });
+              break;
+            case 105: {
+              // 'i'
+              const tempInteger = args[++a];
+              if (typeof tempInteger === "bigint") {
+                tempStr = formatBigIntNoColor(tempInteger, inspectOptions);
+              } else if (typeof tempInteger === "symbol") {
+                tempStr = "NaN";
+              } else {
+                tempStr = formatNumberNoColor(NumberParseInt(tempInteger), inspectOptions);
+              }
+              break;
             }
-            break;
-          }
-          case 102: {
-            // 'f'
-            const tempFloat = args[++a];
-            if (typeof tempFloat === "number") {
-              tempStr = formatNumberNoColor(tempFloat === 0 ? 0 : tempFloat, inspectOptions);
-            } else if (typeof tempFloat === "symbol") {
-              tempStr = "NaN";
-            } else {
-              tempStr = formatNumberNoColor(NumberParseFloat(tempFloat as any), inspectOptions);
+            case 102: {
+              // 'f'
+              const tempFloat = args[++a];
+              if (typeof tempFloat === "symbol") {
+                tempStr = "NaN";
+              } else {
+                tempStr = formatNumberNoColor(NumberParseFloat(tempFloat), inspectOptions);
+              }
+              break;
             }
-            break;
+            case 99: // 'c'
+              a += 1;
+              tempStr = "";
+              break;
+            case 37: // '%'
+              str += StringPrototypeSlice.$call(first, lastPos, i);
+              lastPos = i + 1;
+              continue;
+            default: // Any other character is not a correct placeholder
+              continue;
           }
-          case 99: // 'c'
-            a += 1;
-            tempStr = "";
-            break;
-          case 37: // '%'
-            str += StringPrototypeSlice.$call(first, lastPos, i);
-            lastPos = i + 1;
-            continue;
-          default: // Any other character is not a correct placeholder
-            continue;
+          if (lastPos !== i - 1) {
+            str += StringPrototypeSlice.$call(first, lastPos, i - 1);
+          }
+          str += tempStr;
+          lastPos = i + 1;
+        } else if (nextChar === 37) {
+          str += StringPrototypeSlice.$call(first, lastPos, i);
+          lastPos = i + 1;
         }
-        if (lastPos !== i - 1) {
-          str += StringPrototypeSlice.$call(first, lastPos, i - 1);
-        }
-        str += tempStr;
-        lastPos = i + 1;
-      } else if (nextChar === 37) {
-        str += StringPrototypeSlice.$call(first, lastPos, i);
-        lastPos = i + 1;
+      }
+    }
+    if (lastPos !== 0) {
+      a++;
+      join = " ";
+      if (lastPos < first.length) {
+        str += StringPrototypeSlice.$call(first, lastPos);
       }
     }
   }
-  if (lastPos === 0) {
-    return appendArguments(inspectOptions, args, 0, "", "");
-  }
-  if (lastPos < first.length) {
-    str += StringPrototypeSlice.$call(first, lastPos);
-  }
-  return appendArguments(inspectOptions, args, a + 1, str, " ");
-}
 
-function appendArguments(inspectOptions: any, args: unknown[], a: number, str: string, join: string): string {
   while (a < args.length) {
     const value = args[a];
     str += join;
-    str += typeof value !== "string" ? toAppendedString(inspect(value, inspectOptions)) : value;
+    str += typeof value !== "string" ? inspect(value, inspectOptions) : value;
     join = " ";
     a++;
   }
   return str;
 }
-function isPrintableASCII(str: string): boolean {
-  for (let i = 0; i < str.length; i++) {
-    const point = StringPrototypeCharCodeAt.$call(str, i);
-    if (point < 32 || point > 126) return false;
-  }
-  return true;
-}
-
-const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
+const internalGetStringWidth: (
+  str: string,
+  options?: { __proto__?: null; perCodePoint?: boolean; countAnsiEscapeCodes?: boolean },
+) => number = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 /**
  * Returns the number of columns required to display the given string.
  */
-const kPerCodePointWidthOptions: Record<string, unknown> = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
+const kPerCodePointWidthOptions = { __proto__: null, perCodePoint: true, countAnsiEscapeCodes: true };
 
-function getStringWidth(str: any, removeControlChars: unknown = true): number {
-  if (typeof str === "string") {
-    const length = str.length;
-    if (length <= 32 && isPrintableASCII(str)) return length;
-  }
+function getStringWidth(str: string, removeControlChars = true) {
   if (removeControlChars) str = stripVTControlCharacters(str);
   str = StringPrototypeNormalize.$call(str, "NFC");
   // node measures per code point, not grapheme clusters; ANSI was already stripped above.
@@ -3426,7 +2880,7 @@ function getStringWidth(str: any, removeControlChars: unknown = true): number {
 // Bun.stripANSI also eats bare/invalid ESC/CSI prefixes, which node keeps.
 // https://github.com/nodejs/node/blob/main/lib/internal/util/inspect.js
 let ansi: RegExp | undefined;
-function getAnsiRegExp(): RegExp {
+function getAnsiRegExp() {
   return (ansi ??= new RegExp(
     "[\\u001B\\u009B][[\\]()#;?]*" +
       "(?:(?:(?:(?:;[-a-zA-Z\\d\\/\\#&.:=?%@~_]+)*" +
@@ -3438,7 +2892,7 @@ function getAnsiRegExp(): RegExp {
   ));
 }
 
-function stripVTControlCharacters(str: unknown): string {
+function stripVTControlCharacters(str: string) {
   if (typeof str !== "string") throw $ERR_INVALID_ARG_TYPE("str", "string", str);
   // All ANSI escape sequences start with ESC (7-bit) or CSI (8-bit).
   if (StringPrototypeIndexOf.$call(str, "\u001B") === -1 && StringPrototypeIndexOf.$call(str, "\u009B") === -1) {
@@ -3448,26 +2902,30 @@ function stripVTControlCharacters(str: unknown): string {
 }
 
 // utils
-const getOwnNonIndexProperties = $newCppFunction("UtilInspect.cpp", "jsFunctionGetOwnNonIndexProperties", 2);
-function getPromiseDetails(promise: any): unknown[] {
+const getOwnNonIndexProperties: (value: object, filter: number) => Key[] = $newCppFunction(
+  "UtilInspect.cpp",
+  "jsFunctionGetOwnNonIndexProperties",
+  2,
+);
+function getPromiseDetails(promise: Promise<unknown>): [state: symbol, result: unknown] {
   const state = $peekPromiseStatus(promise);
   if (state !== 0) {
     return [state === 2 ? kRejected : kFulfilled, $peekPromiseSettledValue(promise)];
   }
   return [kPending, undefined];
 }
-function getProxyDetails(proxy: any, withHandler = true): any {
+function getProxyDetails(proxy: unknown, withHandler = true) {
   const isProxy = $isProxyObject(proxy);
   if (!isProxy) return undefined;
-  // @ts-ignore
   const handler = $getProxyInternalField(proxy, $proxyFieldHandler);
   // if handler is null, the proxy is revoked
-  // @ts-ignore
   const target = handler === null ? null : $getProxyInternalField(proxy, $proxyFieldTarget);
   if (withHandler) return [target, handler];
   else return target;
 }
-function previewEntries(val: any, isIterator = false): any {
+function previewEntries(val: object): unknown[];
+function previewEntries(val: object, isIterator: true): [entries: unknown[], isKeyValue: boolean];
+function previewEntries(val, isIterator = false) {
   if (isIterator) {
     // the Map or Set instance this iterator belongs to
     const iteratedObject = $getInternalField(val, 1 /*iteratorFieldIteratedObject*/);
@@ -3494,7 +2952,7 @@ function previewEntries(val: any, isIterator = false): any {
   if (isWeakSet(val)) return [];
   else throw new Error("previewEntries(): Invalid object received");
 }
-function internalGetConstructorName(val: any): any {
+function internalGetConstructorName(val): string {
   if (!val || typeof val !== "object") throw new Error("Invalid object");
   const ctorName = val.constructor?.name;
   if (ctorName) return ctorName;
@@ -3509,5 +2967,4 @@ export default {
   formatWithOptions,
   getStringWidth,
   stripVTControlCharacters,
-  stylizeWithColor,
 };

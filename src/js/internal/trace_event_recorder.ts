@@ -1,4 +1,3 @@
-// @ts-check
 // What an emitter of trace events needs: which categories are enabled, and the buffer of events.
 // Who enables categories, instruments other modules and writes the file is internal/trace_events.
 //

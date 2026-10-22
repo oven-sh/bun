@@ -17,7 +17,7 @@ function listings(o: object): string {
   return [forIn.join(), Object.getOwnPropertyNames(o).join(), Object.entries(o).map(e => e[0]).join(), own({ ...o }), own(Object.assign({}, o)), own(Object.getOwnPropertyDescriptors(o))].join(" | ")
 }
 console.log(listings(rec))
-// An indexed property of a compiled object that is not writable, or an accessor: refused.
+// An indexed property that is not writable, or an accessor, is defined as in plain Bun.
 const hidden: Named = { alpha: 1, beta: "b" }
 try { Object.defineProperty(hidden, 3, { value: 3, enumerable: false, configurable: true }); console.log("index, not writable, not enumerable: no error") } catch (e) { console.log("index, not writable, not enumerable:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { Object.defineProperty(hidden, 1, { value: 1, enumerable: true, configurable: true }); console.log("index, not writable: no error") } catch (e) { console.log("index, not writable:", e instanceof TypeError ? "TypeError" : "other " + e) }

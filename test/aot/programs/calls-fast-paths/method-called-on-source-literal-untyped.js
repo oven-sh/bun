@@ -1,8 +1,8 @@
-// In a file without types too a method called on the array literal that it was read off is called by name as one that expects an array: the code in place is taken while the array has its original structure, also where the read has been folded to the function itself.
-// IR= 0 lists IsBuiltinFunction
-// IR= 2 lists CallMethod v[0-9]+, v[0-9]+ "push" .* expects Array
-// IR= 0 prepended IsBuiltinFunction
-// IR= 1 prepended CallMethod v[0-9]+, v[0-9]+ "unshift" .* expects Array
+// In a file without types too a method called on the array literal that it was read off is resolved by the class of the literal: the code in place is taken while the array has its original structure, also where an argument is a call, so that the method is read first.
+// IR= 0 lists TypeTest v[0-9]+ testedType=builtin\(
+// IR= 2 lists CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypePush/
+// IR= 0 prepended TypeTest v[0-9]+ testedType=builtin\(
+// IR= 1 prepended CallBuiltin v[0-9]+ \(v[0-9]+\) overload=ArrayPrototypeUnshift/
 function name(text) {
   return text + "!";
 }

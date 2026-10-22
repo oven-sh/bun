@@ -10,8 +10,6 @@
 #include "JavaScriptCore/PropertyNameArray.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/IdentifierInlines.h"
-#include "JavaScriptCore/JSGlobalObjectInlines.h"
-#include "JavaScriptCore/TypedArrayType.h"
 
 namespace Bun {
 
@@ -68,19 +66,6 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__callCustomInspectFunction(
     auto inspectRet = JSC::profiledCall(globalObject, ProfilingReason::API, functionToCall, callData, thisValue, arguments);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(inspectRet));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionIntrinsicTypedArrayConstructor, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    JSValue value = callFrame->argument(0);
-    if (!value.isCell() || !isTypedArrayType(value.asCell()->type()))
-        return JSValue::encode(jsUndefined());
-    return JSValue::encode(globalObject->typedArrayConstructor(typedArrayType(value.asCell()->type())));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionIsBufferClassMade, (JSGlobalObject * globalObject, CallFrame*))
-{
-    return JSValue::encode(jsBoolean(!!defaultGlobalObject(globalObject)->m_JSBufferClassStructure.getConcurrently()));
 }
 
 // Port of V8's `internalBinding('util').getOwnNonIndexProperties(object, filter)` used by

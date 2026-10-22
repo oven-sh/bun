@@ -1,11 +1,12 @@
-// `proxy.name` at the kinds of sites that keep a slot of their own: code that runs once, and reads of several names of one object side
-// by side. The trap of a plain handler is called straight from compiled code there too, and what the language demands of its answer holds.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-function counted() { return count("operationAOTGetByNameAndCache") > 0; }
-function direct() { return count("read of a proxy:the trap is called from the stub"); }
+// `proxy.name` in code that runs once, and where several names of one object are read side by side. Side by side, the trap of a plain handler is
+// called straight from compiled code. What the language demands of the trap's answer holds in both.
+// Only the jsc shell can count. Elsewhere the program checks the answers alone.
+const counts = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetByIdAndCache") !== null;
+const count = counts ? aotOperationCount : () => 0;
+function trapLookups() { return count("operationAOTPrepareProxyGet"); }
+function genericReads() { return count("operationAOTGetByIdAndCache"); }
 var seen = [];
 var atTop = new Proxy({ held: 1 }, { get(t, key, receiver) { seen.push(key + (receiver === atTop ? "" : " with another receiver") + (this.get ? "" : " with another this")); return "top " + key; } });
-var before;
 var tops = [atTop.first, atTop.second, atTop.third, atTop.held, atTop.constructor];
 console.log(tops.join(" | "), "|", seen.join(" "));
 
@@ -15,10 +16,12 @@ function inLoop(list) { var text = ""; for (var i = 0; i < list.length; i++) { v
 var plain = { alpha: "a", beta: "b", gamma: "c", delta: "d", epsilon: "e" };
 for (var i = 0; i < 50; i++) { several(plain); destructured(plain); inLoop([plain, plain]); }
 var trapped = new Proxy(plain, { get(t, key) { return "<" + t[key] + ">"; } });
-before = direct();
+var lookupsBefore = trapLookups(), genericReadsBefore = genericReads();
 var answers = [];
 for (var i = 0; i < 50; i++) answers = [several(trapped), destructured(trapped), inLoop([trapped, plain, trapped])];
-console.log(answers.join(" | "), "|", !counted() || direct() - before === 50 * (5 + 3 + 6));
+// The stub looks up the trap at each read of the proxy and calls it. It would pass a read on to the generic operation, which a few reads of other objects enter too.
+var lookups = trapLookups() - lookupsBefore, passedOn = genericReads() - genericReadsBefore;
+console.log(answers.join(" | "), "|", !counts || (lookups === 50 * (5 + 3 + 6) && passedOn <= 10));
 
 function attempt(label, work) { var answer; try { answer = String(work()); } catch (error) { answer = "threw " + error.constructor.name + ": " + error.message; } console.log(label + ": " + answer); }
 var fixed = Object.freeze({ alpha: 1, beta: 2, gamma: 3, delta: 4, epsilon: 5 });
@@ -34,7 +37,7 @@ attempt("another name for a function", function () { function f(a, b) {} var p =
 attempt("another prototype for a class", function () { class C {} var p = new Proxy(C, { get(t, key) { return "other"; } }); return p.name + " " + p.prototype; });
 attempt("another prototype for a function", function () { function f() {} var p = new Proxy(f, { get(t, key) { return "other"; } }); return String(p.prototype); });
 function place(error) {
-  var lines = String(error.stack).split("\n").filter(function (line) { return /a-proxy-read-where/.test(line); });
+  var lines = String(error.stack).split("\n").filter(function (line) { return /proxy-read-run-once-or-multi-name/.test(line); });
   return lines.slice(0, 3).map(function (line) { var found = /(\d+:\d+)\)?$/.exec(line); return found ? found[1] : "?"; }).join(" < ");
 }
 try { several(new Proxy(plain, { get(t, key) { if (key === "delta") throw new Error("thrown by the trap"); return 1; } })); } catch (error) { console.log(error.message, "at", place(error)); }

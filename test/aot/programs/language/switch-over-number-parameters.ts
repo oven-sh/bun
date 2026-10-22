@@ -1,6 +1,6 @@
 // A switch (or a chain of `===` joined by `||`) over a `number` parameter compares integers, not doubles, also where the parameter may be undefined because the function is used as a value too. A chain used as a value leads to one block that yields `true`, so the back end sees one target.
-// IR= 1 isSmallRange Boolean true
-// IR= 1 isVowelCode Boolean true
+// IR= 1 isSmallRange Boolean boolean=true
+// IR= 1 isVowelCode Boolean boolean=true
 // SIZE< isDeclarationKind 150
 // SIZE< isVowelCode 150
 // SIZE< classOfCode 250

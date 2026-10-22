@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { unsupported } from "../../aot/run-programs";
 
 async function run(cwd: string, cmd: string[]) {
   await using proc = Bun.spawn({ cmd, cwd, env: { ...bunEnv, NO_COLOR: "1" }, stdout: "pipe", stderr: "pipe" });
@@ -12,9 +11,24 @@ async function run(cwd: string, cmd: string[]) {
 
 const bun = (cwd: string, ...args: string[]) => run(cwd, [bunExe(), ...args]);
 const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
-const filesIn = (folder: string) => (readdirSync(folder, { recursive: true, withFileTypes: true }).filter(entry => entry.isFile())).map(entry => join(entry.parentPath, entry.name).slice(folder.length + 1).replaceAll("\\", "/")).sort();
+const filesIn = (folder: string) =>
+  readdirSync(folder, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile())
+    .map(entry => join(entry.parentPath, entry.name).slice(folder.length + 1).replaceAll("\\", "/"))
+    .sort();
 
-const tsconfig = JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "esnext", types: [], lib: ["esnext"], skipLibCheck: false, noEmit: true } });
+const tsconfig = JSON.stringify({
+  compilerOptions: {
+    strict: true,
+    module: "esnext",
+    moduleResolution: "bundler",
+    target: "esnext",
+    types: [],
+    lib: ["esnext"],
+    skipLibCheck: false,
+    noEmit: true,
+  },
+});
 
 const sources = {
   "tsconfig.json": tsconfig,
@@ -73,19 +87,29 @@ const packageJson = {
   publishConfig: { access: "public" },
 };
 
-const conditions = (stem: string) => ({ types: `./${stem}.d.ts`, "bun-aot": `./${stem}.aot.ts`, default: `./${stem}.js` });
+const conditions = (stem: string) => ({ types: `./${stem}.d.ts`, default: `./${stem}.js` });
 
 describe.concurrent("bun compile --library", () => {
-  test("writes JavaScript, declaration files, the typed JavaScript and a package.json into dist", async () => {
-    using dir = tempDir("library", { ...sources, "package.json": JSON.stringify(packageJson), "README.md": "# Shapes\n", "LICENSE": "MIT\n", "NOTES.md": "" });
+  test("writes JavaScript, declaration files and a package.json into dist", async () => {
+    using dir = tempDir("library", {
+      ...sources,
+      "package.json": JSON.stringify(packageJson),
+      "README.md": "# Shapes\n",
+      "LICENSE": "MIT\n",
+      "NOTES.md": "",
+    });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const dist = join(String(dir), "dist");
-    expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "index.aot.ts", "index.d.ts", "index.js", "package.json"]);
+    expect(filesIn(dist)).toEqual(["LICENSE", "README.md", "area.d.ts", "index.d.ts", "index.js", "package.json"]);
     const table = built.stdout.split("\n").filter(line => / \(.+\)$/.test(line));
     expect(table.map(line => line.trim().split(" ")[0]).sort()).toEqual(filesIn(dist));
     expect([...new Set(table.map(line => line.search(/\d/)))]).toHaveLength(1);
+    expect(table.filter(line => line.endsWith("(declaration)")).map(line => line.trim().split(" ")[0])).toEqual([
+      "area.d.ts",
+      "index.d.ts",
+    ]);
     expect(json(join(dist, "package.json"))).toEqual({
       name: "@acme/shapes",
       version: "1.2.3",
@@ -99,7 +123,7 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["LICENSE", "README.md", "index.aot.ts", "index.d.ts", "index.js"],
+      files: ["LICENSE", "README.md", "area.d.ts", "index.d.ts", "index.js"],
       sideEffects: false,
       engines: { node: ">=18" },
       dependencies: { "left-pad": "^1.3.0" },
@@ -107,7 +131,7 @@ describe.concurrent("bun compile --library", () => {
       peerDependenciesMeta: { react: { optional: true } },
       publishConfig: { access: "public" },
     });
-    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["types", "bun-aot", "default"]);
+    expect(Object.keys(json(join(dist, "package.json")).exports["."])).toEqual(["types", "default"]);
     expect(json(join(String(dir), "package.json"))).toEqual(packageJson);
     expect(readFileSync(join(dist, "package.json"), "utf8")).toStartWith('{\n  "name": "@acme/shapes",\n');
     expect(readFileSync(join(dist, "package.json"), "utf8")).toEndWith("}\n");
@@ -130,19 +154,39 @@ describe.concurrent("bun compile --library", () => {
       module: "./index.js",
       types: "./index.d.ts",
       exports: { ".": conditions("index"), "./package.json": "./package.json" },
-      files: ["index.aot.ts", "index.d.ts", "index.js"],
+      files: ["area.d.ts", "index.d.ts", "index.js"],
     });
     expect(existsSync(join(project, "package.json"))).toBe(false);
   });
 
   test("one entry in exports for each entry point", async () => {
-    using dir = tempDir("library-entry-points", { ...sources, "src/tools/index.ts": `export const tool: string = "hammer";\n`, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }) });
-    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/extra.ts", "src/tools/index.ts");
+    using dir = tempDir("library-entry-points", {
+      ...sources,
+      "src/tools/index.ts": `export const tool: string = "hammer";\n`,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+    });
+    const built = await bun(
+      String(dir),
+      "compile",
+      "--library",
+      "src/index.ts",
+      "src/extra.ts",
+      "src/tools/index.ts",
+    );
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const written = json(join(String(dir), "dist/package.json"));
-    expect(written.exports).toEqual({ ".": conditions("index"), "./extra": conditions("extra"), "./tools": conditions("tools/index"), "./package.json": "./package.json" });
-    expect({ main: written.main, module: written.module, types: written.types }).toEqual({ main: "./index.js", module: "./index.js", types: "./index.d.ts" });
+    expect(written.exports).toEqual({
+      ".": conditions("index"),
+      "./extra": conditions("extra"),
+      "./tools": conditions("tools/index"),
+      "./package.json": "./package.json",
+    });
+    expect({ main: written.main, module: written.module, types: written.types }).toEqual({
+      main: "./index.js",
+      module: "./index.js",
+      types: "./index.d.ts",
+    });
   });
 
   const where = {
@@ -158,9 +202,18 @@ describe.concurrent("bun compile --library", () => {
         name: "shapes",
         version: "1.0.0",
         exports: {
-          ".": { bun: "./src/index.ts", types: "./dist/index.d.ts", import: "./dist/index.js", require: "./dist/index.cjs" },
+          ".": {
+            bun: "./src/index.ts",
+            types: "./dist/index.d.ts",
+            import: "./dist/index.js",
+            require: "./dist/index.cjs",
+          },
           "./more": "./src/extra.ts",
-          "./where": { browser: "./src/where/browser.ts", worker: { import: "./lib/worker.mjs", require: "./lib/worker.cjs" }, default: "./src/where/server.ts" },
+          "./where": {
+            browser: "./src/where/browser.ts",
+            worker: { import: "./lib/worker.mjs", require: "./lib/worker.cjs" },
+            default: "./src/where/server.ts",
+          },
           "./package.json": "./package.json",
         },
       }),
@@ -168,8 +221,8 @@ describe.concurrent("bun compile --library", () => {
     });
     const built = await bun(String(dir), "compile", "--library");
     expect(built.stderr.split("\n").filter(line => line !== "")).toEqual([
-      `warn: "require" of "." in "exports" of package.json is left out of dist/package.json: this build does not write ./dist/index.cjs`,
-      `warn: 2 conditions of "./where" in "exports" of package.json are left out of dist/package.json, the first "worker" > "import": this build does not write ./lib/worker.mjs`,
+      `warn: dist/package.json has no "require" condition for ".", because this build doesn't write ./dist/index.cjs`,
+      `warn: dist/package.json is missing 2 conditions for "./where" (the first is "worker" > "import"), because this build doesn't write ./lib/worker.mjs`,
     ]);
     expect(built.exitCode).toBe(0);
     const written = json(join(String(dir), "dist/package.json"));
@@ -179,18 +232,32 @@ describe.concurrent("bun compile --library", () => {
       "./where": { browser: conditions("where/browser"), default: conditions("where/server") },
       "./package.json": "./package.json",
     });
-    expect({ main: written.main, module: written.module, types: written.types }).toEqual({ main: "./index.js", module: "./index.js", types: "./index.d.ts" });
+    expect({ main: written.main, module: written.module, types: written.types }).toEqual({
+      main: "./index.js",
+      module: "./index.js",
+      types: "./index.d.ts",
+    });
     cpSync(join(String(dir), "dist"), join(String(dir), "app/node_modules/shapes"), { recursive: true });
     expect(await bun(join(String(dir), "app"), "app.mjs")).toEqual({ stdout: "server 8\n", stderr: "", exitCode: 0 });
-    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({ stdout: "browser 8\n", stderr: "", exitCode: 0 });
+    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({
+      stdout: "browser 8\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("exports that is one path", async () => {
-    using dir = tempDir("library-exports-is-a-path", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", exports: "./src/extra.ts" }) });
+    using dir = tempDir("library-exports-is-a-path", {
+      ...sources,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", exports: "./src/extra.ts" }),
+    });
     const built = await bun(String(dir), "compile", "--library");
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
-    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({ ".": conditions("extra"), "./package.json": "./package.json" });
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
+      ".": conditions("extra"),
+      "./package.json": "./package.json",
+    });
   });
 
   test("--no-bundle: a package that imports itself by name finds the file that its own conditions choose", async () => {
@@ -201,7 +268,10 @@ describe.concurrent("bun compile --library", () => {
       "package.json": JSON.stringify({
         name: "shapes",
         version: "1.0.0",
-        exports: { ".": "./src/index.ts", "./where": { browser: "./src/where/browser.ts", default: "./src/where/server.ts" } },
+        exports: {
+          ".": "./src/index.ts",
+          "./where": { browser: "./src/where/browser.ts", default: "./src/where/server.ts" },
+        },
       }),
       "app/app.mjs": `import { place } from "shapes";\nconsole.log(place);\n`,
     });
@@ -214,28 +284,93 @@ describe.concurrent("bun compile --library", () => {
       "./package.json": "./package.json",
     });
     cpSync(join(String(dir), "dist"), join(String(dir), "app/node_modules/shapes"), { recursive: true });
-    expect(await bun(join(String(dir), "app"), "app.mjs")).toEqual({ stdout: "on the server\n", stderr: "", exitCode: 0 });
-    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({ stdout: "on the browser\n", stderr: "", exitCode: 0 });
+    expect(await bun(join(String(dir), "app"), "app.mjs")).toEqual({
+      stdout: "on the server\n",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await bun(join(String(dir), "app"), "--conditions=browser", "app.mjs")).toEqual({
+      stdout: "on the browser\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("--no-bundle: every file is an entry point", async () => {
-    using dir = tempDir("library-no-bundle", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }) });
-    const built = await bun(String(dir), "compile", "--library", "--no-bundle", "src/index.ts", "src/area.ts", "src/extra.ts");
+    using dir = tempDir("library-no-bundle", {
+      ...sources,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+    });
+    const built = await bun(
+      String(dir),
+      "compile",
+      "--library",
+      "--no-bundle",
+      "src/index.ts",
+      "src/area.ts",
+      "src/extra.ts",
+    );
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
+    expect(filesIn(join(String(dir), "dist"))).toEqual([
+      "area.d.ts",
+      "area.js",
+      "extra.d.ts",
+      "extra.js",
+      "index.d.ts",
+      "index.js",
+      "package.json",
+    ]);
     const written = json(join(String(dir), "dist/package.json"));
-    expect(written.exports).toEqual({ ".": conditions("index"), "./area": conditions("area"), "./extra": conditions("extra"), "./package.json": "./package.json" });
+    expect(written.exports).toEqual({
+      ".": conditions("index"),
+      "./area": conditions("area"),
+      "./extra": conditions("extra"),
+      "./package.json": "./package.json",
+    });
     expect(written.main).toBe("./index.js");
+  });
+
+  test("a source outside the root directory has no place for its declaration file", async () => {
+    using dir = tempDir("library-outside-the-root", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+      "src/index.ts": `export { shared } from "../shared/value";\n`,
+      "shared/value.ts": `export const shared: number = 1;\n`,
+    });
+    const refused = await bun(String(dir), "compile", "--library", "src/index.ts");
+    expect(refused.stderr).toBe(
+      `error: cannot write a declaration file for ${join(String(dir), "shared/value.ts")} because it is outside the root directory ${join(String(dir), "src")}. Pass --root to change it\n`,
+    );
+    expect(refused.exitCode).toBe(1);
+    const built = await bun(String(dir), "compile", "--library", "src/index.ts", "--root", ".");
+    expect(built.stderr).toBe("");
+    expect(built.exitCode).toBe(0);
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
+      ".": conditions("src/index"),
+      "./package.json": "./package.json",
+    });
+    expect(existsSync(join(String(dir), "dist/shared/value.d.ts"))).toBe(true);
   });
 
   test("dependencies and peerDependencies stay imports, devDependencies are bundled", async () => {
     using dir = tempDir("library-externals", {
       "tsconfig.json": tsconfig,
-      "package.json": JSON.stringify({ name: "uses", version: "1.0.0", dependencies: { dep: "1" }, peerDependencies: { peer: "1" }, optionalDependencies: { optional: "1" }, devDependencies: { dev: "1" } }),
+      "package.json": JSON.stringify({
+        name: "uses",
+        version: "1.0.0",
+        dependencies: { dep: "1" },
+        peerDependencies: { peer: "1" },
+        optionalDependencies: { optional: "1" },
+        devDependencies: { dev: "1" },
+      }),
       "index.ts": `import { dep } from "dep";\nimport { inner } from "dep/inner";\nimport { peer } from "peer";\nimport { optional } from "optional";\nimport { dev } from "dev";\nexport const all: string[] = [dep, inner, peer, optional, dev];\n`,
       ...Object.fromEntries(
         ["dep", "peer", "optional", "dev"].flatMap(name => [
-          [`node_modules/${name}/package.json`, JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" })],
+          [
+            `node_modules/${name}/package.json`,
+            JSON.stringify({ name, version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
+          ],
           [`node_modules/${name}/index.js`, `export const ${name} = "from ${name}";\n`],
           [`node_modules/${name}/index.d.ts`, `export declare const ${name}: string;\n`],
         ]),
@@ -247,16 +382,30 @@ describe.concurrent("bun compile --library", () => {
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     const javascript = readFileSync(join(String(dir), "dist/index.js"), "utf8");
-    expect([...javascript.matchAll(/from "([^"]+)"/g)].map(match => match[1]).sort()).toEqual(["dep", "dep/inner", "optional", "peer"]);
+    expect([...javascript.matchAll(/from "([^"]+)"/g)].map(match => match[1]).sort()).toEqual([
+      "dep",
+      "dep/inner",
+      "optional",
+      "peer",
+    ]);
     expect(javascript).toContain(`"from dev"`);
   });
 
   test("process.env.NODE_ENV and JSX are left for whoever uses the package", async () => {
     using dir = tempDir("library-neutral", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" } }),
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "react-jsx" },
+      }),
       "package.json": JSON.stringify({ name: "neutral", version: "1.0.0", peerDependencies: { react: "*" } }),
       "index.tsx": `declare const process: { env: Record<string, string | undefined> };\nexport const mode = process.env.NODE_ENV;\nexport const element = <div />;\n`,
-      "node_modules/react/package.json": JSON.stringify({ name: "react", version: "19.0.0", exports: { "./jsx-runtime": { types: "./jsx-runtime.d.ts", default: "./jsx-runtime.js" }, "./jsx-dev-runtime": { types: "./jsx-runtime.d.ts", default: "./jsx-runtime.js" } } }),
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "19.0.0",
+        exports: {
+          "./jsx-runtime": { types: "./jsx-runtime.d.ts", default: "./jsx-runtime.js" },
+          "./jsx-dev-runtime": { types: "./jsx-runtime.d.ts", default: "./jsx-runtime.js" },
+        },
+      }),
       "node_modules/react/jsx-runtime.js": `export const jsx = () => null, jsxs = jsx, jsxDEV = jsx, Fragment = null;\n`,
       "node_modules/react/jsx-runtime.d.ts": `export declare function jsx(type: unknown, props: unknown): null;\nexport declare const jsxs: typeof jsx, jsxDEV: typeof jsx, Fragment: null;\nexport declare namespace JSX { type Element = null; interface IntrinsicElements { div: {} } }\n`,
     });
@@ -274,10 +423,16 @@ describe.concurrent("bun compile --library", () => {
     using dir = tempDir("library-bin", {
       ...sources,
       "src/cli.ts": `#!/usr/bin/env node\ndeclare const console: { log(...values: unknown[]): void };\nconsole.log("cli");\n`,
-      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", bin: { shapes: "./src/cli.ts", built: "dist/cli.js", other: "./bin/other.js" } }),
+      "package.json": JSON.stringify({
+        name: "shapes",
+        version: "1.0.0",
+        bin: { shapes: "./src/cli.ts", built: "dist/cli.js", other: "./bin/other.js" },
+      }),
     });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts", "src/cli.ts");
-    expect(built.stderr).toBe(`warn: "other" in "bin" of package.json is left out of dist/package.json: ./bin/other.js is not an entry point of this build\n`);
+    expect(built.stderr).toBe(
+      `warn: dist/package.json has no "other" bin, because ./bin/other.js is not an entry point\n`,
+    );
     expect(built.exitCode).toBe(0);
     expect(json(join(String(dir), "dist/package.json")).bin).toEqual({ shapes: "./cli.js", built: "./cli.js" });
   });
@@ -290,56 +445,97 @@ describe.concurrent("bun compile --library", () => {
         name: "shapes",
         version: "1.0.0",
         bin: "./src/cli.ts",
-        exports: { ".": "./src/index.ts", "./extra": "./src/extra.ts", "./style.css": "./style.css", "./package.json": "./package.json" },
+        exports: {
+          ".": "./src/index.ts",
+          "./extra": "./src/extra.ts",
+          "./style.css": "./style.css",
+          "./package.json": "./package.json",
+        },
       }),
     });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built.stderr.split("\n").filter(line => line !== "")).toEqual([
-      `warn: "./extra" in "exports" of package.json is left out of dist/package.json: no entry point of this build is written there`,
-      `warn: "./style.css" in "exports" of package.json is left out of dist/package.json: no entry point of this build is written there`,
-      `warn: "shapes" in "bin" of package.json is left out of dist/package.json: ./src/cli.ts is not an entry point of this build`,
+      `warn: dist/package.json has no "./extra" export, because no entry point builds it`,
+      `warn: dist/package.json has no "./style.css" export, because no entry point builds it`,
+      `warn: dist/package.json has no "shapes" bin, because ./src/cli.ts is not an entry point`,
     ]);
     expect(built.exitCode).toBe(0);
     expect(Object.keys(json(join(String(dir), "dist/package.json")).exports)).toEqual([".", "./package.json"]);
   });
 
   test("--outdir . without an entry point is refused for what it is", async () => {
-    using dir = tempDir("library-outdir-is-the-project", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }) });
+    using dir = tempDir("library-outdir-is-the-project", {
+      ...sources,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0" }),
+    });
     expect(await bun(String(dir), "compile", "--library", "--outdir", ".")).toEqual({
       stdout: "",
-      stderr: `error: --library writes a package.json into --outdir, and ${String(dir)} is the project's own folder. Choose a folder inside it, such as --outdir=dist\n`,
+      stderr: `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${String(dir)}). Use a folder inside it, such as --outdir=dist\n`,
       exitCode: 1,
     });
   });
 
   test.each([
-    ["module", { module: "lib/start.ts" }, { "lib/start.ts": "export const from: string = 'module';\n", "index.ts": "export {};\n" }, "start"],
-    ["index.ts", { main: "dist/index.js" }, { "index.ts": "export const from: string = 'index';\n", "dist/index.js": "export {};\n" }, "index"],
+    [
+      "module",
+      { module: "lib/start.ts" },
+      { "lib/start.ts": "export const from: string = 'module';\n", "index.ts": "export {};\n" },
+      "start",
+    ],
+    [
+      "index.ts",
+      { main: "dist/index.js" },
+      { "index.ts": "export const from: string = 'index';\n", "dist/index.js": "export {};\n" },
+      "index",
+    ],
     ["src/index.ts", { main: "dist/index.js" }, { "src/index.ts": "export const from: string = 'src';\n" }, "index"],
   ])("without an entry point: %s", async (_, fields, files, stem) => {
-    using dir = tempDir("library-finds", { "tsconfig.json": tsconfig, "package.json": JSON.stringify({ name: "finds", version: "1.0.0", ...fields }), ...files });
+    using dir = tempDir("library-finds", {
+      "tsconfig.json": tsconfig,
+      "package.json": JSON.stringify({ name: "finds", version: "1.0.0", ...fields }),
+      ...files,
+    });
     const built = await bun(String(dir), "compile", "--library");
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     expect(readFileSync(join(String(dir), `dist/${stem}.js`), "utf8")).toContain("var from = ");
-    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({ ".": conditions(stem), "./package.json": "./package.json" });
+    expect(json(join(String(dir), "dist/package.json")).exports).toEqual({
+      ".": conditions(stem),
+      "./package.json": "./package.json",
+    });
   });
 
   test.each([
-    [["--outdir", "."], (dir: string) => `error: --library writes a package.json into --outdir, and ${dir} is the project's own folder. Choose a folder inside it, such as --outdir=dist\n`],
-    [["--outdir", "src"], () => "error: the entry point src/index.ts is inside --outdir, where it would be overwritten. Choose another --outdir\n"],
+    [
+      ["--outdir", "."],
+      (dir: string) =>
+        `error: --library writes a package.json into --outdir, so --outdir can't be the project folder (${dir}). Use a folder inside it, such as --outdir=dist\n`,
+    ],
+    [
+      ["--outdir", "src"],
+      () =>
+        "error: the entry point src/index.ts is inside --outdir, where it would be overwritten. Choose another --outdir\n",
+    ],
     [["--outfile", "out.js"], () => "error: --library writes a folder. Use --outdir instead of --outfile\n"],
     [["--compile"], () => "error: --library cannot be used with --compile\n"],
     [["--aot"], () => "error: --library cannot be used with --aot\n"],
+    [["--trim"], () => "error: --library cannot be used with --trim\n"],
     [["--format=iife"], () => "error: --library only supports --format=esm and --format=cjs\n"],
   ])("%j is refused", async (flags, stderr) => {
     using dir = tempDir("library-refused", { ...sources, "package.json": JSON.stringify(packageJson) });
-    expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({ stdout: "", stderr: stderr(String(dir)), exitCode: 1 });
+    expect(await bun(String(dir), "compile", "--library", "src/index.ts", ...flags)).toEqual({
+      stdout: "",
+      stderr: stderr(String(dir)),
+      exitCode: 1,
+    });
     expect(json(join(String(dir), "package.json"))).toEqual(packageJson);
   });
 
   test("is the command in a project that has a compile script", async () => {
-    using dir = tempDir("library-script", { ...sources, "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", scripts: { compile: "echo the script" } }) });
+    using dir = tempDir("library-script", {
+      ...sources,
+      "package.json": JSON.stringify({ name: "shapes", version: "1.0.0", scripts: { compile: "echo the script" } }),
+    });
     const built = await bun(String(dir), "compile", "--library", "src/index.ts");
     expect(built.stdout).not.toContain("the script");
     expect(built.exitCode).toBe(0);
@@ -347,81 +543,39 @@ describe.concurrent("bun compile --library", () => {
   });
 
   test("a type error fails the build", async () => {
-    using dir = tempDir("library-type-error", { "tsconfig.json": tsconfig, "index.ts": `export const count: number = "one";\n` });
+    using dir = tempDir("library-type-error", {
+      "tsconfig.json": tsconfig,
+      "index.ts": `export const count: number = "one";\n`,
+    });
     const built = await bun(String(dir), "compile", "--library");
     expect(built.stderr).toContain("TS2322");
     expect(built.exitCode).toBe(1);
     expect(existsSync(join(String(dir), "dist"))).toBe(false);
   });
 
-  test("a helper of Bun's own that calls itself does not cost the typed JavaScript", async () => {
-    using dir = tempDirWithBunTypes("library-with-a-helper", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, types: ["bun"], skipLibCheck: true } }),
-      "package.json": JSON.stringify({ name: "loader", version: "1.0.0" }),
-      "index.ts": `export interface Config {\n  port: number | string;\n}\nexport function load(value: unknown): Config {\n  return Bun.validate<Config>(value);\n}\n`,
+  test("an export that a declaration file can't describe fails the build", async () => {
+    using dir = tempDir("library-declaration-error", {
+      "tsconfig.json": tsconfig,
+      "index.ts": `export const Shape = class {\n  private size = 1;\n};\n`,
     });
     const built = await bun(String(dir), "compile", "--library");
-    expect(built.stderr).toBe("");
-    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
-    expect(built.exitCode).toBe(0);
-  });
-
-  test("a file of the project that only adds to a module's types, and that nothing imports, goes into the typed JavaScript", async () => {
-    using dir = tempDir("library-augments", {
-      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
-      "package.json": JSON.stringify({ name: "inner", version: "1.0.0", dependencies: { outer: "1.0.0" } }),
-      "node_modules/outer/package.json": JSON.stringify({ name: "outer", version: "1.0.0", type: "module", main: "index.js", types: "index.d.ts" }),
-      "node_modules/outer/index.js": `export const state = {};\n`,
-      "node_modules/outer/index.d.ts": `export interface State {\n  known?: number;\n}\nexport declare const state: State;\n`,
-      "src/augment.ts": `import type { State } from "outer";\ndeclare module "outer" {\n  interface State {\n    added?: State;\n  }\n}\n`,
-      "src/index.ts": `import { state } from "outer";\nexport function added(): boolean {\n  return state.added !== undefined;\n}\n`,
-    });
-    const built = await bun(String(dir), "compile", "--library");
-    expect(built.stderr).toBe("");
-    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
-    expect(readFileSync(join(String(dir), "dist/index.aot.ts"), "utf8")).toContain(`declare module "outer" {`);
-    expect(built.exitCode).toBe(0);
-  });
-
-  test("what the sources declare globally is not met twice when the typed JavaScript is judged", async () => {
-    using dir = tempDir("library-declares-globals", {
-      "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["src"] }),
-      "package.json": JSON.stringify({ name: "router", version: "1.0.0" }),
-      "src/global.ts": `import type { AnyRouter } from "./router";\ndeclare global {\n  interface Routers {\n    current?: AnyRouter;\n  }\n  var routers: Routers;\n}\nexport {};\n`,
-      "src/router.ts": `export class Router {\n  #started: boolean = false;\n  start(): void {\n    this.#started = true;\n    routers.current = this;\n  }\n}\nexport type AnyRouter = Router;\n`,
-      "src/index.ts": `export * from "./global";\nexport { Router } from "./router";\nexport type { AnyRouter } from "./router";\n`,
-    });
-    const built = await bun(String(dir), "compile", "--library");
-    expect(built.stderr).toBe("");
-    expect(filesIn(join(String(dir), "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
-    expect(built.exitCode).toBe(0);
-  });
-
-  test("the typed JavaScript is judged with the newest lib too, which a project that installs the package may have", async () => {
-    const olderLib = JSON.parse(tsconfig);
-    olderLib.compilerOptions.lib = ["es2022"];
-    const bag = `export class Bag<K, V> extends Map<K, V> {\n  override keys(): KEYS<K> {\n    return super.keys();\n  }\n}\n`;
-    using dir = tempDir("library-older-lib", {
-      "refused/tsconfig.json": JSON.stringify(olderLib),
-      "refused/index.ts": bag.replace("KEYS", "IterableIterator"),
-      "accepted/tsconfig.json": JSON.stringify(olderLib),
-      "accepted/index.ts": bag.replace("KEYS", "MapIterator"),
-    });
-    const refused = await bun(join(String(dir), "refused"), "compile", "--library");
-    expect(refused.stderr).toStartWith('warn: the typed JavaScript that --aot compiles a package from is left out: with its types put back it has type errors under "lib": ["esnext"], which a project that installs the package may have, the first at index.aot.ts:3:12: TS2416: ');
-    expect(filesIn(join(String(dir), "refused", "dist"))).toEqual(["index.d.ts", "index.js", "package.json"]);
-    expect(json(join(String(dir), "refused", "dist", "package.json")).exports["."]).toEqual({ types: "./index.d.ts", default: "./index.js" });
-    expect(refused.exitCode).toBe(0);
-    const accepted = await bun(join(String(dir), "accepted"), "compile", "--library");
-    expect(accepted.stderr).toBe("");
-    expect(filesIn(join(String(dir), "accepted", "dist"))).toEqual(["index.aot.ts", "index.d.ts", "index.js", "package.json"]);
-    expect(accepted.exitCode).toBe(0);
+    expect(built.stderr).toContain("TS4094");
+    expect(built.exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "dist"))).toBe(false);
   });
 });
 
 describe.concurrent("a package built with bun compile --library", () => {
   async function install(dir: string) {
-    const built = await bun(join(dir, "library"), "compile", "--library", "src/index.ts", "src/extra.ts", "--outdir", "../app/node_modules/@acme/shapes");
+    const built = await bun(
+      join(dir, "library"),
+      "compile",
+      "--library",
+      "src/index.ts",
+      "src/extra.ts",
+      "--outdir",
+      "../app/node_modules/@acme/shapes",
+    );
     expect(built.stderr).toBe("");
     expect(built.exitCode).toBe(0);
     return join(dir, "app");
@@ -446,16 +600,19 @@ console.log(new Canvas().add(square).add(square).total(), double(2));
     const app = await install(String(dir));
     const tsc = require.resolve("typescript/bin/tsc");
     for (const check of [["check"], [tsc]]) {
-      expect(await bun(app, ...check, "-p", "tsconfig.json").then(({ stdout, stderr, exitCode }) => ({ said: (stdout + stderr).match(/TS\d+/g), exitCode: exitCode !== 0 }))).toEqual({
+      const { stdout, stderr, exitCode } = await bun(app, ...check, "-p", "tsconfig.json");
+      expect({ said: (stdout + stderr).match(/TS\d+/g), failed: exitCode !== 0 }).toEqual({
         said: ["TS2322"],
-        exitCode: true,
+        failed: true,
       });
     }
     writeFileSync(join(app, "wrong.ts"), "export {};\n");
     for (const check of [["check"], [tsc]]) {
-      expect(await bun(app, ...check, "-p", "tsconfig.json").then(({ stdout, stderr, exitCode }) => ({ said: (stdout + stderr).match(/TS\d+/g), exitCode }))).toEqual({ said: null, exitCode: 0 });
+      const { stdout, stderr, exitCode } = await bun(app, ...check, "-p", "tsconfig.json");
+      expect({ said: (stdout + stderr).match(/TS\d+/g), exitCode }).toEqual({ said: null, exitCode: 0 });
     }
-  });
+    // tsc runs twice.
+  }, 60_000);
 
   test("runs in Bun, and in Node.js where it is installed", async () => {
     using dir = tempDir("library-runs", project);
@@ -463,45 +620,10 @@ console.log(new Canvas().add(square).add(square).total(), double(2));
     expect(await bun(app, "app.ts")).toEqual({ stdout: "18 8\n", stderr: "", exitCode: 0 });
     const node = Bun.which("node");
     if (!node) return;
-    writeFileSync(join(app, "app.mjs"), `import { Canvas } from "@acme/shapes";\nimport { double } from "@acme/shapes/extra";\nconsole.log(new Canvas().add({ kind: "square", size: 3 }).total(), double(2));\n`);
+    writeFileSync(
+      join(app, "app.mjs"),
+      `import { Canvas } from "@acme/shapes";\nimport { double } from "@acme/shapes/extra";\nconsole.log(new Canvas().add({ kind: "square", size: 3 }).total(), double(2));\n`,
+    );
     expect(await run(app, [node, "app.mjs"])).toEqual({ stdout: "9 8\n", stderr: "", exitCode: 0 });
-  });
-
-  const said = (output: { stdout: string; stderr: string }) => (output.stdout + output.stderr).split("\n").filter(line => /^(note|warn|error)/.test(line));
-  const program = (app: string) => join(app, isWindows ? "app.exe" : "app");
-
-  test.skipIf(!!unsupported)("is compiled from its typed JavaScript by bun compile", async () => {
-    using dir = tempDir("library-compiled", project);
-    const app = await install(String(dir));
-    const compiled = await bun(app, "compile", "app.ts");
-    expect({ said: said(compiled), exitCode: compiled.exitCode }).toEqual({ said: [`note: "@acme/shapes" 1.2.3 is compiled from its typed version in node_modules/@acme/shapes`], exitCode: 0 });
-    expect(await run(app, [program(app)])).toEqual({ stdout: "18 8\n", stderr: "", exitCode: 0 });
-  });
-
-  test.skipIf(!!unsupported)("is compiled from its typed JavaScript where the project's own package.json is published, with dist in it", async () => {
-    using dir = tempDir("library-published-from-the-root", project);
-    const app = join(String(dir), "app");
-    const installed = join(app, "node_modules/@acme/shapes");
-    const built = await bun(join(String(dir), "library"), "compile", "--library", "src/index.ts", "src/extra.ts", "--outdir", join(installed, "dist"));
-    expect(built.stderr).toBe("");
-    expect(built.exitCode).toBe(0);
-    const entry = (stem: string) => ({ types: `./dist/${stem}.d.ts`, default: `./dist/${stem}.js` });
-    writeFileSync(join(installed, "package.json"), JSON.stringify({ name: "@acme/shapes", version: "1.2.3", type: "module", files: ["dist"], exports: { ".": entry("index"), "./extra": entry("extra") } }));
-    const compiled = await bun(app, "compile", "app.ts");
-    expect({ said: said(compiled), exitCode: compiled.exitCode }).toEqual({ said: [`note: "@acme/shapes" 1.2.3 is compiled from its typed version in node_modules/@acme/shapes/dist`], exitCode: 0 });
-    expect(await run(app, [program(app)])).toEqual({ stdout: "18 8\n", stderr: "", exitCode: 0 });
-  });
-
-  test.skipIf(!!unsupported)("is compiled from its JavaScript, with a warning, where the typed JavaScript says something else", async () => {
-    using dir = tempDir("library-tampered", project);
-    const app = await install(String(dir));
-    const typed = join(app, "node_modules/@acme/shapes/extra.aot.ts");
-    writeFileSync(typed, readFileSync(typed, "utf8").replace("return 2 *", "return 3 *"));
-    const compiled = await bun(app, "compile", "app.ts");
-    expect({ said: said(compiled), exitCode: compiled.exitCode }).toEqual({
-      said: [`warn: the typed version of "@acme/shapes" in node_modules/@acme/shapes is not used: extra.aot.ts without its types is not extra.js (was the package patched?): the package is compiled untyped`],
-      exitCode: 0,
-    });
-    expect(await run(app, [program(app)])).toEqual({ stdout: "18 8\n", stderr: "", exitCode: 0 });
   });
 });

@@ -138,7 +138,7 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
 pub mod encoded_slice;
-pub use encoded_slice::EncodedSliceJsc;
+pub use encoded_slice::{CompiledJsonParser, EncodedSliceJsc};
 #[path = "Exception.rs"]
 pub mod exception;
 #[path = "JSArray.rs"]
@@ -425,10 +425,13 @@ pub mod virtual_machine_exports;
 
 #[rustfmt::skip]
 #[path = "host_fn.rs"] pub mod host_fn;
+#[path = "proven_return.rs"]
+pub mod proven_return;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
 #[path = "BytecodeOrderRecorder.rs"]
 pub mod bytecode_order_recorder;
+pub mod compiled_program;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DOMFormData.rs"]
@@ -492,14 +495,10 @@ pub struct InitializeOptions {
     pub one_shot: bool,
     /// `bun test --isolate`/`--parallel`: each file gets a fresh global and per-global JIT code is discarded with it.
     pub short_lived_globals: bool,
-    pub use_aot: bool,
-    pub crash_if_interpreter_is_used: bool,
-}
-
-static COMPILES_WITH_WIDE_REFERENCES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
-pub fn compile_with_wide_references() {
-    COMPILES_WITH_WIDE_REFERENCES.store(true, core::sync::atomic::Ordering::Relaxed);
+    pub runs_compiled_code: bool,
+    pub locks_builtins: bool,
+    /// This process is `bun compile`: a release build of Bun takes no B3, Air or macro assembler option from `BUN_JSC_*`.
+    pub is_compiler: bool,
 }
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
@@ -519,13 +518,11 @@ pub fn initialize(options: InitializeOptions) {
             options.eval_mode,
             options.one_shot,
             options.short_lived_globals,
-            options.use_aot,
-            options.crash_if_interpreter_is_used,
+            options.runs_compiled_code,
+            options.locks_builtins,
+            options.is_compiler,
         )
     };
-    if COMPILES_WITH_WIDE_REFERENCES.swap(false, core::sync::atomic::Ordering::Relaxed) {
-        Bun__AOT__useWideReferences();
-    }
 }
 
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
@@ -866,6 +863,13 @@ pub mod resolved_source_tag {
             INTERNAL_MODULE_TAG.get(name).copied()
         }
 
+        pub fn feature(self) -> Option<bun_removable_features::Feature> {
+            if self.0 & (1 << 9) == 0 {
+                return None;
+            }
+            INTERNAL_MODULE_FEATURE.get((self.0 & !(1 << 9)) as usize).copied().flatten()
+        }
+
         /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
         /// callers feed only `HardcodedModule` strum values, so a miss means a
         /// `HardcodedModule` variant has no matching entry in the generated
@@ -900,6 +904,20 @@ pub mod resolved_source_tag {
         env!("BUN_CODEGEN_DIR"),
         "/generated_resolved_source_tag.rs"
     ));
+}
+
+#[cfg(test)]
+mod resolved_source_tag_tests {
+    use super::resolved_source_tag::ResolvedSourceTag;
+    use bun_removable_features::Feature;
+
+    #[test]
+    fn tag_feature() {
+        assert_eq!(ResolvedSourceTag::Esm.feature(), None);
+        assert_eq!(ResolvedSourceTag(u32::MAX).feature(), None);
+        assert_eq!(ResolvedSourceTag::try_from_name(b"bun:sqlite").unwrap().feature(), Some(Feature::Sqlite));
+        assert_eq!(ResolvedSourceTag::try_from_name(b"node:path").unwrap().feature(), None);
+    }
 }
 
 /// Index into the codegen'd `BuiltinModuleKeys.h` table for a canonical builtin key (`node:fs`, `bun:sqlite`, `bun`...).
@@ -1466,11 +1484,14 @@ pub use self::resolve_message::ResolveMessage;
 pub use self::zig_exception::ZigException;
 
 /// Trait implemented by `#[bun_jsc::JsClass]`-derived types. The proc-macro
-/// emits `to_js`/`from_js`/`from_js_direct` per type; this is the trait shape.
+/// emits `to_js`/`from_js`/`from_js_direct`/`is_wrapper` per type; this is the trait shape.
 pub trait JsClass: Sized {
     fn to_js(self, global: &JSGlobalObject) -> JSValue;
     fn from_js(value: JSValue) -> Option<*mut Self>;
     fn from_js_direct(value: JSValue) -> Option<*mut Self>;
+
+    /// `value` is this class's own wrapper cell or a subclass of it, with or without a native pointer (`${T}__isInstance`).
+    fn is_wrapper(value: JSValue) -> bool;
 
     /// Fetch the JSC constructor object for this class
     /// (`${TypeName}__getConstructor(global)` — generate-classes.ts:2449/2539).
@@ -1585,11 +1606,11 @@ unsafe extern "C" {
         eval_mode: bool,
         one_shot_startup: bool,
         short_lived_globals: bool,
-        use_aot: bool,
-        crash_if_interpreter_is_used: bool,
+        runs_compiled_code: bool,
+        locks_builtins: bool,
+        is_compiler: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
-    safe fn Bun__AOT__useWideReferences();
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

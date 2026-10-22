@@ -1,14 +1,14 @@
 // A module is imported by import(), and its namespace object goes through then, catch and finally into handlers that read members by constant names and do nothing else with it. An export that nobody calls, names or reads is not in the program.
-// IR+ ^variable \d+ "hookOfAHandler" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfAPatternInTheHandler" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfTheHandlerReturnsIt" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfBehindCatch" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfBehindFinally" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfAnAsyncHandler" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfTwoHandlers" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfAFunctionByName" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfFirstOfAll" .* only f\d+ proven$
-// IR+ ^variable \d+ "hookOfSecondOfAll" .* only f\d+ proven$
+// IR+ ^variable g\d+ name="hookOfAHandler" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfAPatternInTheHandler" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfTheHandlerReturnsIt" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfBehindCatch" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfBehindFinally" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfAnAsyncHandler" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfTwoHandlers" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfAFunctionByName" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfFirstOfAll" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="hookOfSecondOfAll" .*declared=f\d+( |$)
 import { callHook as call0 } from "./aHandler.ts";
 import { callHook as call1 } from "./aPatternInTheHandler.ts";
 import { callHook as call2 } from "./theHandlerReturnsIt.ts";

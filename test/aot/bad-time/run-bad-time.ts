@@ -4,28 +4,28 @@
 //
 // All programs take three quarters of an hour of one processor, so they are dealt out to eight files. ../shell/tools.ts says what
 // it needs. A sanitizer or debug build takes a tenth of each file's programs.
-//   JSC=.. SEMA=.. PLAIN=.. python3 test/aot/shell/bad-time.py arrays/holes     one program
+//   JSC=.. TESTAOT=.. FRONT_END=.. PLAIN=.. python3 test/aot/shell/bad-time.py arrays/holes     one program
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { isASAN, isDebug } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { unsupported } from "../run-programs";
-import { jsc, python, sema, whyNoScriptRuns } from "../shell/tools";
+import { partInShare, unsupported } from "../run-programs";
+import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 
 export function badTime(part: number, parts: number) {
-  if (whyNoScriptRuns && !unsupported) console.error(`SKIPPED: test/aot/bad-time/bad-time-${part}.test.ts: ${whyNoScriptRuns}`);
+  if (scriptSkipReason && !unsupported) console.error(`SKIPPED: test/aot/bad-time/bad-time-${part}.test.ts: ${scriptSkipReason}`);
 
-  test.skipIf(!!whyNoScriptRuns)(
+  test.skipIf(!!scriptSkipReason)(
     `no program ends with a bad time unless it means it (part ${part} of ${parts})`,
     async () => {
-      await using asked = Bun.spawn({
-        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", `${part}/${isASAN || isDebug ? parts * 10 : parts}`, "all"],
-        env: { ...bunEnv, JSC: jsc!, SEMA: sema!, PLAIN: bunExe() },
+      await using script = Bun.spawn({
+        cmd: [python!, join(import.meta.dir, "..", "shell", "bad-time.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), "--part", isASAN || isDebug ? `${part}/${parts * 10}` : partInShare(part, parts, 10), "all"],
+        env: scriptEnvironment(),
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([asked.stdout.text(), asked.stderr.text(), asked.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs reach their end, /);

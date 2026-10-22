@@ -1,4 +1,4 @@
-// Bun: plain Bun calls the getter or the Proxy's trap in every row that says TypeError here, and prints 9, g or 14 with [get] or [trap]. With --aot an array type means an ordinary array, so reading such an element throws.
+// Reads and stores of array elements that are accessors, own or inherited, or that reach a Proxy on the prototype chain. The getter, setter or trap runs as in plain Bun, whatever the declared array type.
 declare const console: { log(...values: unknown[]): void };
 function readAt(a: number[], i: number): number { return a[i]; }
 function storeAt(a: number[], i: number, x: number): void { a[i] = x; }

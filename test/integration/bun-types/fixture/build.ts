@@ -24,12 +24,23 @@ Bun.build({
 
 Bun.build({
   entrypoints: ["hey"],
-  compile: { aot: true, aotTypeErrors: "log", aotExplain: ["throws", "throws-all-json"] },
+  compile: { aot: true, aotTypeErrors: "log", aotExplain: ["throws", "throws-json"] },
 });
 
 Bun.build({
   entrypoints: ["hey"],
   compile: { aot: true, aotTypeErrors: "throw", aotExplain: "throws-json" },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  compile: { aot: true, aotExplain: ["declines", "throws"] },
+});
+
+Bun.build({
+  entrypoints: ["hey"],
+  // @ts-expect-error
+  compile: { aot: true, aotExplain: "decline" },
 });
 
 Bun.build({

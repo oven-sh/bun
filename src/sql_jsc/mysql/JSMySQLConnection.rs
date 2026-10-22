@@ -416,8 +416,8 @@ impl JSMySQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(self.connection.get().is_in_transaction())
+    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> bool {
+        self.connection.get().is_in_transaction()
     }
 
     pub(crate) fn check_server_identity_callback(&self) -> Option<JSValue> {

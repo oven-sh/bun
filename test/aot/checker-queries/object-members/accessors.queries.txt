@@ -1,0 +1,7 @@
+# Accessors are one member each, by what they declare; a getter and a setter with different types are unwritten, and the checked type is what a read gives.
+accessors.ts:9 has `A` = g Getter number checked number readonly
+accessors.ts:9 has `A` = s Setter string checked string
+accessors.ts:9 has `A` = p GetterAndSetter number checked number
+accessors.ts:9 has `A` = x GetterAndSetter boolean checked boolean
+accessors.ts:14 has `B` = d GetterAndSetter unwritten checked string
+accessors.ts:16 has `I` = d GetterAndSetter unwritten checked string

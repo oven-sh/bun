@@ -111,12 +111,12 @@ async function said(cmd: string[], cwd: string, env: Record<string, string | und
 
 export class Bench {
   #built = new Map<string, Promise<string>>();
-  #closedWorlds = new Set<string>();
   #servers: Bun.Server<undefined>[] = [];
   #reports = new Map<string, string[]>();
   #building = 0;
   #waitingToBuild: (() => void)[] = [];
   buildsAtOnce = 4;
+  trimWithout: string[] = [];
   constructor(
     readonly bun: string,
     readonly folder: string,
@@ -124,7 +124,7 @@ export class Bench {
     readonly tls: { cert: string; key: string },
   ) {
     mkdirSync(join(folder, "source"), { recursive: true });
-    writeFileSync(join(folder, "source", "tsconfig.json"), `{ "compilerOptions": { "noImplicitAny": false } }`);
+    writeFileSync(join(folder, "source", "tsconfig.json"), JSON.stringify({ compilerOptions: { noImplicitAny: false, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"], skipLibCheck: true } }));
     for (const [name, text] of Object.entries(programs)) writeFileSync(join(folder, "source", name + ".ts"), text);
   }
 
@@ -134,14 +134,13 @@ export class Bench {
     if (!built) {
       const outfile = join(this.folder, "built", String(this.#built.size), how, "app");
       mkdirSync(dirname(outfile), { recursive: true });
-      const trim = how === "trimmed" ? ["--compile-trim-runtime", "--aot-explain=runtime-use"] : [];
+      const trim = how === "trimmed" ? ["--trim", ...(this.trimWithout.length > 0 ? ["--trim-without=" + this.trimWithout.join(",")] : [])] : [];
       built = (async () => {
         if (this.#building >= this.buildsAtOnce) await new Promise<void>(resolve => this.#waitingToBuild.push(resolve));
         else this.#building++;
         try {
           const build = await said([this.bun, "build", "--compile", "--aot", ...trim, ...flags, program + ".ts", "--outfile", outfile], join(this.folder, "source"), this.env);
           if (build.exitCode !== 0) throw new Error(`${key}: the build failed: ${build.stderr}`);
-          if (/^aot: runtime use: closed$/m.test(build.stderr)) this.#closedWorlds.add(key);
           return outfile;
         } finally {
           const next = this.#waitingToBuild.shift();
@@ -152,11 +151,6 @@ export class Bench {
       this.#built.set(key, built);
     }
     return built;
-  }
-
-  async hasClosedWorld(program: Program, flags: string[] = []): Promise<boolean> {
-    await this.executable(program, "trimmed", flags);
-    return this.#closedWorlds.has([program, "trimmed", ...flags].join(" "));
   }
 
   servers() {
@@ -185,6 +179,8 @@ export class Bench {
       .replace(/\((node|bun):\d+\)/g, "($1:<pid>)")
       .replace(/\b(CPU|Heap)\.[\d.]+(?=\.(cpuprofile|heapprofile|md)\b)/g, "$1.<when>")
       .replace(/\bpid[ =:]+\d+/gi, "pid <pid>")
+      // Each executable has an id of its own, which a crash report names.
+      .replace(/^Build ID: [0-9a-f]{32}$/gm, "Build ID: <id>")
       .replace(/\b0x[0-9a-fA-F]+/g, "<address>")
       .replace(/(https:\/\/bun\.report\/[^\/\s]+\/|\/report\/\d+\/[^\/\s]+\/)\S+/g, "$1<trace>")
       .replace(/\b\d+(\.\d+)?\s?(ns|us|µs|ms|s|B|KB|KiB|MB|MiB|GB|GiB|TB)\b/g, "<amount>");

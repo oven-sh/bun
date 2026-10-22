@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSDOMFormData.h"
 
 #include "DOMClientIsoSubspaces.h"
@@ -155,6 +156,7 @@ using JSDOMFormDataDOMConstructor = JSDOMConstructor<JSDOMFormData>;
 
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMFormDataDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(FormData, JSDOMFormDataDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSDOMFormDataDOMConstructor>(callFrame->jsCallee());
@@ -246,7 +248,7 @@ JSObject* JSDOMFormData::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSDOMFormData>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSDOMFormData::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSDOMFormData::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSDOMFormDataDOMConstructor, DOMConstructorID::DOMFormData>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -702,12 +704,12 @@ void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMFormData>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<DOMFormData>&& impl)
 {
     return createWrapper<DOMFormData>(globalObject, WTF::move(impl));
 }
 
-NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData& impl)
+JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, DOMFormData& impl)
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }

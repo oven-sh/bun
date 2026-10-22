@@ -1,7 +1,0 @@
-an object as an array: TypeError []
-square2
-own property named like a method: no error
-circle2
-own property named like a method: no error
-square2
-own property named like a method: no error

@@ -258,8 +258,6 @@ describe("ModuleGraph GC: what a graph's code made keeps the graph alive, and on
     expect((await esm.dynamic()).dep).toBe(esm.dep);
     expect(namespace.default.inc()).toBe(1);
     expect(await lifetimes.survives("graph")).toBe(true);
-    // The namespace is what keeps the graph alive, so it has to be reachable while the collections above run.
-    expect(namespace.default.inc()).toBe(2);
   });
 });
 

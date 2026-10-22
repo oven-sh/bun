@@ -49,7 +49,7 @@ console.log(show(picked), picked.title.length, picked.id + 1, show(pickedUser), 
 
 console.log(show(withDefaults<User>({ login: "given" }, { id: 0, login: "default", admin: false })), show(withDefaults<Product>({}, product)), show(withDefaults<User>(pick(admin, "admin", "id"), user)))
 console.log(show(update(bare, { id: 50 })), bare.id, show(update(user, { admin: undefined, login: "patched" })), "admin" in user, update(order, { lines: [9] }).total(), update(product, {}) === product)
-// clone(order): see type-rules/object-create-class-prototype-not-instance.
+// clone(order): see type-rules/object-create-class-prototype-passes-for-the-class.
 console.log(show(clone(admin)), clone(admin) === admin, show(clone(parsed)))
 console.log(show(create(id => ({ id, fresh: true }), 1)), create(id => new Order(id), 2).id, create<User>(id => ({ login: "made", id }), 3).login)
 

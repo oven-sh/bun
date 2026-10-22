@@ -1,6 +1,6 @@
 // `o[key] = value` on a plain object either replaces a property or adds one; which of the two is remembered for a shape and a key in one table. What is remembered for a replacement never answers for a definition under that key (`{ [key]: value }` gives the property its default attributes anew), a change above the object is seen by the stores that add, and neither kind of store takes work anew once it is known.
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTPutByKeyGeneric") + counted("operationAOTPutByValAndCache") + counted("operationAOTPutByValAndCacheSloppy") : 0;
+const entered = () => counted ? counted("operationAOTPutByValGeneric") + counted("operationAOTPutByValAndCache") + counted("operationAOTPutByValAndCacheSloppy") : 0;
 const lines = [];
 const show = o => Reflect.ownKeys(o).map(k => { const d = Object.getOwnPropertyDescriptor(o, k); return String(k) + ":" + ("value" in d ? String(d.value) : "accessor") + (d.writable ? "w" : "") + (d.enumerable ? "e" : "") + (d.configurable ? "c" : ""); }).join(",");
 const attempt = f => { try { return String(f()); } catch (e) { return e.constructor.name; } };

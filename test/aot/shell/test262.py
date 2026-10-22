@@ -1,45 +1,47 @@
 #!/usr/bin/env python3
 """Runs test262, the conformance suite of ECMAScript, through the ahead-of-time compiler.
 
-    JSC=<jsc> SEMA=<bun-sema> python3 test/aot/shell/test262.py <test262> [options] <folder under test262/test>...
+    JSC=<jsc> TESTAOT=<testaot> FRONT_END=<bun-aot> python3 test/aot/shell/test262.py <test262> [options] <folder under test262/test>...
     python3 test/aot/shell/test262.py <test262> --bun <bun> [options] built-ins language
 
     <test262>       a checkout of https://github.com/tc39/test262 (WebKit has one in JSTests/test262)
-    --bun <bun>     build each batch with `bun build --compile --aot` and run the executable, and not in the `jsc` shell
-    --plain         run the same programs in the plain engine (`jsc`, or `bun run` with --bun): what fails there is not the compiler's doing
+    --bun <bun>     build each batch with `bun build --compile --aot` and run the executable, instead of using the three tools
+    --plain         run the same programs in the plain engine (`jsc`, or `bun run` with --bun): a failure there is not the compiler's fault
     --jobs <n>      batches at a time (default 6)
     --batch <n>     tests in a batch (default 40)
-    --limit <n>     take only so many tests, spread evenly
+    --limit <n>     take only n tests, spread evenly
     --out <file>    write the result of every test that does not pass as JSON: { <test>: [<status>, <detail>] }
     --known <file>  what --out wrote in an earlier run (test262-known.json beside this script): print only what has changed, and exit with 1
                     if a test that passed no longer does
 
-The top of quick.py says how to build `jsc` and `bun-sema`. All of built-ins and language takes three minutes on four cores in the shell.
+toolchain.py's docstring says how to build the tools. All of built-ins and language takes three minutes on four cores in the shell.
 
 Many tests are compiled as ONE program, because the front end takes about a second to start: the harness files at the top level, and
 each test as the body of a function that is called with `this` = globalThis inside try | catch. A batch that does not compile,
-crashes or runs out of time is split in two and tried again, down to single tests.
+crashes or times out is split in two and tried again, down to single tests.
 
 Everything runs as module code, so only tests that may run in strict mode are taken. Not taken, and counted by reason: the flags
 raw, noStrict, module and async; negative tests of the parse and resolution phases, which test the parser; tests whose text uses
 eval, Function(), `with` or the host object $262; tests that need one of a dozen harness files that do such things.
-One change is made to the harness: verifyProperty() always puts back the property that it has verified, because the tests of a batch
-share their built-ins.
+One change is made to the harness: verifyProperty() always restores the property it verified, because the tests of a batch share their
+built-ins.
 
 The statuses: pass . fail (the detail is what was thrown) . locked (it failed because built-ins cannot be changed) . frontend, engine,
-build (a single test that is not compiled, and why) . run (it was compiled and crashed or did not end).
+build (a single test that is not compiled, and why) . run (it was compiled and crashed or timed out).
 """
-import argparse, concurrent.futures, hashlib, json, os, re, subprocess, sys, tempfile, time
+import argparse, concurrent.futures, hashlib, json, os, re, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-WORK = os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-test262"))
-ENV = dict(os.environ, NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0")
-ENV.setdefault("BUN_SEMA_TS_LIB", os.path.realpath(HERE + "/../../../node_modules/typescript/lib"))
+sys.path.insert(0, HERE)
+import toolchain
+
+WORK = os.path.abspath(os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-test262")))
+ENV = dict(os.environ)
 UNUSABLE_HARNESS = {
     "nativeFunctionMatcher.js", "wellKnownIntrinsicObjects.js", "fnGlobalObject.js", "agent.js", "atomicsHelper.js", "detachArrayBuffer.js", "hidden-constructors.js",
     "tcoHelper.js", "asyncHelpers.js", "doneprintHandle.js", "timer.js", "resizableArrayBufferUtils.js",
 }
-REFUSAL = r"(?:not compiled yet:|--aot does not support|compile\.aot does not support) (.*)"
+UNSUPPORTED_FEATURE = r"(?:not compiled yet:|bun compile does not support|--aot does not support|compile\.aot does not support) (.*)"
 PRELUDE = """
 if (typeof print === "undefined") globalThis.print = function (text) { console.log(text); };
 function __run(name, negative, body) {
@@ -73,7 +75,7 @@ def metadata(text):
     return meta
 
 
-def why_not_taken(text, meta):
+def skip_reason(text, meta):
     for flag in ("raw", "noStrict", "module", "async"):
         if flag in meta["flags"]:
             return flag
@@ -116,35 +118,26 @@ def program(tests):
     return "\n".join(parts + ['print("END");'])
 
 
-def run(command, seconds, cwd=HERE):
-    """Returns (exit code, stdout and stderr together). The exit code is negative for a signal and None for a timeout."""
-    try:
-        done = subprocess.run(command, cwd=cwd, env=ENV, timeout=seconds, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        return done.returncode, done.stdout.decode(errors="replace")
-    except subprocess.TimeoutExpired:
-        return None, ""
-
-
-def how_it_ended(code, said):
+def describe_exit(code, said):
     return "timeout" if code is None else f"signal {-code}" if code < 0 else said[:160]
 
 
-def why_not_built(code, said):
-    refused = re.search(REFUSAL, said)
-    return how_it_ended(code, refused.group(1) if refused else (re.search(r"error[^\n]*", said) or [said[:120] or "no output"])[0])
+def describe_build_failure(code, said):
+    unsupported = re.search(UNSUPPORTED_FEATURE, said)
+    return describe_exit(code, unsupported.group(1) if unsupported else (re.search(r"error[^\n]*", said) or [said[:120] or "no output"])[0])
 
 
 def results_of(code, said):
     lines = said.split("\n")
     if "END" not in lines:
-        return None, "run", how_it_ended(code, said.strip().split("\n")[-1])
+        return None, "run", describe_exit(code, said.strip().split("\n")[-1])
     results = {}
     for line in lines:
         if line.startswith("PASS "):
             results[line[5:]] = ("pass", "")
         elif line.startswith("FAIL "):
             name, _, detail = line[5:].partition(" :: ")
-            results[name] = ("locked" if "built-ins are locked" in detail else "fail", detail)
+            results[name] = ("locked" if "because built-in objects are read" in detail else "fail", detail)
     return results, None, None
 
 
@@ -155,19 +148,21 @@ def attempt(tests):
     open(source, "w").write(program(tests))
     try:
         if OPTIONS.plain:
-            return results_of(*run([OPTIONS.bun, "run", source] if OPTIONS.bun else [JSC, "--useDollarVM=1", "prelude.js", "-m", source], 120))
+            return results_of(*toolchain.run([OPTIONS.bun, "run", source] if OPTIONS.bun else [JSC, "--useDollarVM=1", "prelude.js", "-m", source], HERE, 120, ENV))
         if OPTIONS.bun:
-            code, said = run([OPTIONS.bun, "build", "--compile", "--aot", source, "--outfile", executable], 240, WORK)
+            code, said = toolchain.run([OPTIONS.bun, "build", "--compile", "--aot", source, "--outfile", executable], WORK, 240, ENV)
             if not os.path.exists(executable):
-                return None, "build", why_not_built(code, said)
-            return results_of(*run([executable], 120, WORK))
-        code, said = run([SEMA, "cli", source, "--allowJs", "--resolveJsonModule", "--no-builtin-modules", "--aot", "--aot-out=" + ir], 120)
-        if not os.path.exists(ir):
-            return None, "frontend", why_not_built(code, said)
-        code, said = run([JSC, "--useDollarVM=1", "image.js", "--", ir, image, "stub.js"], 240)
-        if not os.path.exists(image):
-            return None, "engine", how_it_ended(code, said.strip().split("\n")[0])
-        return results_of(*run([JSC, "--aotImagePath=" + image, "prelude.js", "-m", "stub.js"], 120))
+                return None, "build", describe_build_failure(code, said)
+            return results_of(*toolchain.run([executable], WORK, 120, ENV))
+        try:
+            toolchain.front_end(source, ir, cwd=HERE, seconds=120, env=ENV)
+        except toolchain.ToolFailed as failed:
+            return None, "frontend", describe_build_failure(failed.code, failed.said)
+        try:
+            entries = toolchain.compile_image(ir, image, cwd=HERE, seconds=240, env=ENV)
+        except toolchain.ToolFailed as failed:
+            return None, "engine", describe_exit(failed.code, failed.said.strip().split("\n")[0])
+        return results_of(*toolchain.run_image(image, entries[0], ENV, cwd=HERE))
     finally:
         for file in (source, ir, image, executable):
             if os.path.exists(file):
@@ -191,12 +186,6 @@ def counted(values):
     return ", ".join(f"{key} {count[key]}" for key in sorted(count))
 
 
-def tool(name):
-    if not os.access(os.environ.get(name, ""), os.X_OK):
-        sys.exit(f"{name} is not set to an executable file.\n{__doc__}")
-    return os.environ[name]
-
-
 parser = argparse.ArgumentParser(usage=__doc__)
 parser.add_argument("root")
 parser.add_argument("folders", nargs="+")
@@ -210,8 +199,10 @@ parser.add_argument("--known")
 OPTIONS = parser.parse_args()
 ROOT = os.path.abspath(OPTIONS.root)
 if not OPTIONS.bun:
-    JSC = tool("JSC")
-    SEMA = None if OPTIONS.plain else tool("SEMA")
+    JSC = toolchain.tool("JSC")
+    if not OPTIONS.plain:
+        toolchain.tool("TESTAOT")
+        toolchain.tool("FRONT_END")
 os.makedirs(WORK, exist_ok=True)
 
 files = []
@@ -228,7 +219,7 @@ taken, skipped = [], {}
 for file in files:
     text = open(file, errors="replace").read()
     meta, name = metadata(text), file[len(ROOT) + 6 :]
-    reason = why_not_taken(text, meta)
+    reason = skip_reason(text, meta)
     if reason:
         skipped[name] = reason
     else:

@@ -1,6 +1,4 @@
-// Under --aot the prototype of a class of the program is fixed, but for the changes that the compiler sees in the program's text.
-// `--aot-type-errors=log` must name every change that the default mode refuses: when the program ran in place (`bun run --aot`, `bun test --aot`) it neither refused nor reported them, so a suite that
-// failed by default passed in log mode with an empty log.
+// The prototype of a class of the program can be changed under --aot as without it, whether the compiler sees the change in the program's text or not.
 import { expect } from "bun:test";
 import { test } from "./supported";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -45,7 +43,7 @@ for (const [name, attempt] of attempts) {
     const result = attempt();
     console.log(name + ":", typeof result === "object" || typeof result === "function" ? "done" : String(result));
   } catch (error) {
-    console.log(name + ":", (error as Error).message.replace(/ \\(bun --aot.*/, ""));
+    console.log(name + ":", (error as Error).message.replace(/ \\(bun compile.*/, ""));
   }
 }
 `;
@@ -53,33 +51,16 @@ const files = {
   "program.ts": program,
   "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", moduleResolution: "bundler", types: [] } }),
 };
-const refusedLines = [13, 14, 16, 17, 19, 20, 21, 22, 24];
 
 async function run(cwd: string, args: string[]) {
   await using ran = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
-  const lines = (stdout + stderr).split("\n").filter(Boolean);
-  return {
-    said: lines.filter(line => !line.startsWith("[aot]")),
-    records: [...new Set(lines.filter(line => line.startsWith("[aot] type-error")).map(line => line.split(" ").slice(3, 5).join(" ").replace(/:\d+$/, "")))],
-    exitCode,
-  };
+  return { said: (stdout + stderr).split("\n").filter(Boolean), exitCode };
 }
 
-test("bun run --aot --aot-type-errors=log reports every change to a class's prototype that the default mode refuses", async () => {
+test("bun run --aot prints what bun run prints of every change to a class's prototype", async () => {
   using dir = tempDir("class-prototype-writes", files);
   const plain = await run(String(dir), ["run", "./program.ts"]);
-  const logged = await run(String(dir), ["run", "--aot", "--aot-type-errors=log", "./program.ts"]);
-  expect(logged.said).toEqual(plain.said);
-  expect(logged.records.sort()).toEqual(refusedLines.map(line => `class-prototype-write program.ts:${line}`).sort());
-  expect(logged.exitCode).toBe(0);
-});
-
-test("bun run --aot names the class in what it refuses, before the class has an instance", async () => {
-  using dir = tempDir("class-prototype-writes", files);
-  const { said } = await run(String(dir), ["run", "--aot", "./program.ts"]);
-  expect(said).toContain("Object.defineProperty, a new symbol: Cannot change [Symbol.iterator] of Store.prototype: classes are fixed in a program compiled with --aot");
-  expect(said).toContain("replace a method: done");
-  expect(said.slice(-4)).toEqual(["assignment, seen: 1", "Object.defineProperty, a new name, seen: done", "Object.assign, seen: done", "replace a method, seen: done"]);
-  expect(said.join("\n")).not.toContain("built-ins are locked");
+  expect(plain.said).toHaveLength(16);
+  expect(await run(String(dir), ["run", "--aot", "./program.ts"])).toEqual({ said: plain.said, exitCode: 0 });
 });

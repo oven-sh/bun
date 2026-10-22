@@ -146,15 +146,15 @@ say("old objects", () => {
   return [text, old[5].twice(), old[59].self() === old[59]];
 });
 say("made and not read", () => {
-  const closures = "Heap::didAllocate:block:AOTClosure:32";
-  const names = ["operationAOTPutById", "operationAOTTypedCreateThisAt", "operationAOTTypedPutLazyClosure", "operationAOTGetByNameAndCache"];
-  const before = names.map(count), bytesBefore = count(closures);
+  const closures = "operationAOTMaterializeDeferredClosure";
+  const names = ["operationAOTPutById", "operationAOTPutByIdAndCache", "operationAOTCreateThis", "operationAOTGetByIdAndCache"];
+  const before = names.map(count), closuresBefore = count(closures);
   let sum = 0;
   for (let i = 0; i < 20000; ++i) sum += behind(i).base;
-  const asked = names.map((name, at) => count(name) - before[at]), bytes = count(closures) - bytesBefore;
+  const asked = names.map((name, at) => count(name) - before[at]), created = count(closures) - closuresBefore;
   return [
     sum,
-    bytes <= 20000 * 64 ? "at most two closures over `this` an object" : bytes + " bytes of closures over `this`",
+    created <= 20000 * 2 ? "at most two closures over `this` an object" : created + " closures over `this`",
     asked.every(times => times <= 300) ? "the run time was asked at most 300 times each" : names.map((name, at) => name + " " + asked[at]).join(),
   ];
 });

@@ -1,8 +1,0 @@
-a getter in a literal held to a type with that field: 15 w,h,area {"w":5,"h":3,"area":15}
-accessors of a class: 100 212 c true false 0
-the accessor's descriptor: function function false false
-a getter that replaces itself by a value: 7 7 1 calls
-a getter inherited through Object.create: 212 100
-a setter only: 4 undefined
-a getter that throws: THROWS RangeError: no
-super in an accessor: 33 0

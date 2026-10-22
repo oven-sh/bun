@@ -1,4 +1,4 @@
-// The parts of the union differ only in what hangs below them. An untyped object that holds an object of the program is of the part that takes that object, and both stay the objects they were. One road a program: another road in the same program may open the types to it.
+// The parts of the union differ only in what hangs below them. An untyped object that holds an object of the program passes as the union, and both stay the objects they were. Each program of this family has one way into the type.
 type Cat = { name: string; lives: number }; type Dog = { name: string; tricks: string }; type Bird = { name: string; wings: number }; type Fish = { name: string; fins: number }; type Ant = { name: string; legs: number };
 type CatBox = { pet: Cat }; type DogBox = { pet: Dog }; type BirdBox = { pet: Bird }; type FishBox = { pet: Fish }; type AntBox = { pet: Ant };
 type Box = CatBox | DogBox | BirdBox | FishBox | AntBox;

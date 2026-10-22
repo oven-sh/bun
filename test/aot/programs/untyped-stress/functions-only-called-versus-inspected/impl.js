@@ -5,8 +5,8 @@ function check(actual, expected, what) {
 
 let leaked;
 class Catcher { static [Symbol.hasInstance](value) { leaked = value; return true; } }
-const isSealed = !Object.isExtensible(Function.prototype);
-const builtinsAreFixed = Object.isFrozen(Array.prototype);
+const builtinsAreFixed = !Object.isExtensible(Object.prototype);
+const isSealed = builtinsAreFixed;
 let shadowsMethod = false;
 if (!isSealed) {
     Object.defineProperty(Function.prototype, "me", { get() { return this; } });

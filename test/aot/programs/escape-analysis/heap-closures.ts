@@ -14,11 +14,11 @@ function handedToReturner(n: number): number { //! heap
 }
 function handedToLooker(n: number): number { //! heap
   let total = n;
-  return looksInto(x => { total += x; return total; }); //! built at 2 places
+  return looksInto(x => { total += x; return total; }); //! allocated at 2 sites
 }
 function handedToCapturer(n: number): number { //! heap
   let total = n;
-  return captures(x => { total += x; return total; })(); //! built at 2 places
+  return captures(x => { total += x; return total; })(); //! allocated at 2 sites
 }
 function calls(f: () => unknown): unknown { if (kept.length > 1e9) return calls(f); return f(); }
 function namesItself(n: number): boolean {

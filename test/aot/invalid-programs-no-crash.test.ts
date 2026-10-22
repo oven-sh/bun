@@ -15,7 +15,19 @@ const programs: Record<string, string> = {
   "a namespace import without a module": "import * as a\n",
   "a default import that ends at `from`": "import a from\n",
   "`import` in front of a function's body": "function f(d: number): number import { const a = d; return a }\nf(1);\n",
+  "`class` at the end of the file": "console.log(1);\nclass ",
+  "`class` as the name of a constant": "const class = 1;\nconsole.log(2);\n",
+  "a class declaration without a name": "class {}\nclass extends Object {}\n",
+  "`class` at the end of a function": "function f() { class }\nf();\n",
+  "class declarations without a name in a block, a namespace and a function": "{ class {} }\nnamespace N { class {} }\nfunction f() { class {} }\nf();\n",
+  "an abstract class without a name": "abstract class {}\n",
+  "a private method asked of `super` in a class expression below a name that nothing declares": "var C = class extends B {\n  #x() {}\n  method() { super.#x(); }\n};\n",
+  "a class with a field below a name that nothing declares, made and handed on in a try block":
+    "function print(text) { console.log(text); }\nfunction str(v) {}\nconst Readable = require(\"node:stream\");\n\nclass B extends Middle {\n  text = \"ok\";\n  m() {\n    return \"B.m \" + this.text;\n  }\n}\nfunction report(label, x) {\n  print(label + \" $.m(): \" + str(x.m()));\n  print(label + \" $.text: \" + str(x.text));\n  printlabel + \" values: \" + Object.values(x).map.join;\n}\ntry {\n  report();\n} catch (e) {}\ntry {\n  report(\"o\", new B);\n} catch (e) {}\ntry {} catch (e) {}\n",
 };
+
+// In a TypeScript file the checker's errors stop these before the compiler looks at them.
+const isJavaScript = new Set(["a class with a field below a name that nothing declares, made and handed on in a try block"]);
 
 for (const [name, text] of Object.entries(programs)) {
   for (const words of [["check", "--aot"], ["build", "--compile", "--aot", "--outfile", "program"]]) {
@@ -23,7 +35,7 @@ for (const [name, text] of Object.entries(programs)) {
       `${name}: bun ${words[0]}`,
       async () => {
         using folder = tempDir("aot-wrong-programs", {});
-        const entryPoint = join(String(folder), "main.ts");
+        const entryPoint = join(String(folder), isJavaScript.has(name) ? "main.js" : "main.ts");
         writeFileSync(entryPoint, text);
         await using spawned = Bun.spawn({ cmd: [bunExe(), ...words, entryPoint], cwd: String(folder), env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
         const [stdout, stderr] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);

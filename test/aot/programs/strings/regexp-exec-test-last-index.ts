@@ -1,5 +1,6 @@
+// `exec` and `test` with the `g` and `y` flags: where the search starts for every kind of `lastIndex`, and what `lastIndex` is afterwards.
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
-const names = ["operationAOTTypedRegExpTest", "operationAOTTypedRegExpTestBoxed", "operationAOTTypedRegExpExec", "operationAOTTypedRegExpExecFound"];
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec"];
 const entries = () => names.reduce((sum, name) => sum + count(name), 0);
 function legacy() {
   return [RegExp.lastMatch, RegExp.$1, RegExp.leftContext.length, RegExp.rightContext.length].join("|");

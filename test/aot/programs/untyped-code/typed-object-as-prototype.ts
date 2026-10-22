@@ -8,7 +8,7 @@ const steps: Step[] = [makeStep("add", 1.5), makeStep("sub", 2.5)];
 let typedSum = 0;
 for (const step of steps) typedSum += step.weight + step.whole + step.op.length + step.inner.a + step.run(1) + (step.on ? 1 : 0);
 console.log(typedSum);
-const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTGetByNameAndCache") : 0;
+const entered = (): number => typeof aotOperationCount === "function" ? aotOperationCount("operationAOTGetByIdAndCache") : 0;
 const reads: Record<string, (o: any) => any> = {
   op: function (o: any): any { return o.op; }, weight: function (o: any): any { return o.weight; }, whole: function (o: any): any { return o.whole; }, on: function (o: any): any { return o.on; },
   inner: function (o: any): any { return o.inner; }, nothing: function (o: any): any { return o.nothing; }, either: function (o: any): any { return o.either; }, note: function (o: any): any { return o.note; },

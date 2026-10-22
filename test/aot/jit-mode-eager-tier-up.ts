@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join, relative } from "path";
-import { slot, spawned, told, unsupported, wanted } from "./run-programs";
+import { inShare, slot, spawned, told, unsupported, wanted } from "./run-programs";
 
 const root = join(import.meta.dir, "programs");
 
@@ -47,6 +47,7 @@ export function eagerTierUpSweep(part: number, parts: number) {
   const chosen = all
     .filter(path => /[\\/]/.test(relative(root, path)))
     .filter(path => (wanted === "" || wanted === "quick" ? (hash(path) >> 8n) % 10n === 0n : relative(root, path).includes(wanted)))
+    .filter(path => inShare("eager tier-up " + relative(root, path), 10))
     .filter(path => Number((hash(path) >> 16n) % BigInt(parts)) === part - 1)
     .filter(path => !isASAN || (hash(path) >> 32n) % 3n === 0n)
     .filter(path => !existsSync(withoutExtension(path) + ".build-errors.txt") && !existsSync(withoutExtension(path) + ".todo.txt"));

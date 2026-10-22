@@ -106,6 +106,20 @@ it("after the tick queue went idle, a promise reaction does not run inside proce
   expect(exitCode).toBe(0);
 });
 
+it("an uncaught error out of a tick is printed without the frame of the tick pass", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `process.nextTick(function thrower() { throw new Error("out of a tick"); });`],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("error: out of a tick");
+  expect(stderr).toContain("at thrower");
+  expect(stderr).not.toContain("processTicksAndRejections");
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
 it("process.nextTick", async () => {
   // You can verify this test is correct by copy pasting this into a browser's console and checking it doesn't throw an error.
   var run = 0;

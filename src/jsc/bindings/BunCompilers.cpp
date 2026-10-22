@@ -1,18 +1,8 @@
 #include "root.h"
-#include <JavaScriptCore/InitializeThreading.h>
 
-extern "C" NEVER_INLINE void Bun__installCompilers()
-{
-    JSC::installCompilers();
-}
+#include "BunAOTCompile.h"
 
-extern "C" NEVER_INLINE bool Bun__AOT__hasCompiler()
+extern "C" bool Bun__AOT__hasCompiler()
 {
-#if ENABLE(AOT)
-    uint32_t hasCompiler = 3;
-#else
-    uint32_t hasCompiler = 0;
-#endif
-    asm volatile("" : "+r"(hasCompiler));
-    return hasCompiler;
+    return !JSC::isFeatureRemoved(JSC::RemovableFeature::ImageCompiler);
 }

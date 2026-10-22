@@ -4,13 +4,14 @@ import { tls } from "harness";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const [bun, folder, out, which = "curated", list] = process.argv.slice(2);
 if (!out) {
-  console.error("usage: bun sweep.ts <a Bun that was linked with islands> <an empty folder> <out.tsv> [curated | options | others | variables | jsc]");
+  console.error("usage: bun sweep.ts <a Bun that can trim> <an empty folder> <out.tsv> [curated | options | others | variables | jsc]");
   process.exit(1);
 }
-const env = { PATH: "/usr/bin:/bin", HOME: folder + "/home", TMPDIR: folder + "/tmp", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1", WTF_numberOfProcessorCores: "8", BUN_TRIM_RUNTIME_WITHOUT: process.env.WITHOUT };
+const env = { PATH: "/usr/bin:/bin", HOME: folder + "/home", TMPDIR: folder + "/tmp", BUN_ENABLE_CRASH_REPORTING: "0", DO_NOT_TRACK: "1", WTF_numberOfProcessorCores: "8" };
 Bun.spawnSync({ cmd: ["mkdir", "-p", folder + "/home", folder + "/tmp"] });
 const bench = new Bench(bun, folder, env, tls);
 bench.buildsAtOnce = Number(process.env.BUILDS ?? 1);
+bench.trimWithout = (process.env.WITHOUT ?? "").split(",").filter(Boolean);
 let chosen: Case[] = cases;
 if (which === "options") {
   const help = Bun.spawnSync({ cmd: [bun, "run", "--help"], env: { ...env, NO_COLOR: "1" } }).stdout.toString();

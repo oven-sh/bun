@@ -1,3 +1,4 @@
+use bun_jsc::proven_return::ProvenString;
 use crate::webcore::EncodingLabel;
 use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
@@ -85,19 +86,16 @@ impl TextDecoder {
         Box::new(init)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_ignore_bom(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(self.ignore_bom)
+    pub(crate) fn get_ignore_bom(&self, _global: &JSGlobalObject) -> bool {
+        self.ignore_bom
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_fatal(&self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_boolean(self.fatal)
+    pub(crate) fn get_fatal(&self, _global: &JSGlobalObject) -> bool {
+        self.fatal
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.encoding.to_js(global_this)
+    pub(crate) fn get_encoding(&self, global_this: &JSGlobalObject) -> ProvenString {
+        ProvenString::expect(self.encoding.to_js(global_this))
     }
 
     #[inline(always)]

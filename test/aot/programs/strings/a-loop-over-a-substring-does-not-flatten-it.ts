@@ -1,6 +1,6 @@
 // What slice, substring and substr return shares the characters of the string it was cut from. A loop over its characters reads them where they
 // lie: it does not ask the runtime for a flat copy of the string's header first. A string put together with + is still flattened once.
-// Only the jsc shell with --useAOTOperationCounters=1 can count. Elsewhere the program checks the answers alone.
+// Only the jsc shell with --aotCountsPath=<path> can count. Elsewhere the program checks the answers alone.
 declare const aotOperationCount: undefined | ((name: string) => number)
 const count = typeof aotOperationCount === 'function' ? aotOperationCount : () => 0
 
@@ -34,7 +34,7 @@ for (let i = 0; i < 64; i++) urls.push('http://localhost:' + (3000 + i) + '/user
 for (const url of urls) sum(url)
 
 let clean = 0, total = 0
-const before = count('operationAOTTypedFlatten')
+const before = count('operationAOTFlatten')
 for (let turn = 0; turn < 50; turn++) {
   for (const url of urls) {
     const path = url.slice(url.indexOf('/', 8))
@@ -42,7 +42,7 @@ for (let turn = 0; turn < 50; turn++) {
     total += sum(path.substring(1, 9)) + sumGuarded(path.substr(2, 12))
   }
 }
-const flattened = count('operationAOTTypedFlatten') - before
+const flattened = count('operationAOTFlatten') - before
 console.log(clean, total, flattened < 3300 ? 'substrings were read in place' : 'flattened ' + flattened + ' times')
 
 const wide = 'préfixe/Zoë/Müller/日本語/конец'

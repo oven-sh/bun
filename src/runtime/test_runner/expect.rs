@@ -486,21 +486,6 @@ impl Expect {
         Ok(())
     }
 
-    fn has_settled_before_timeout(global_this: &JSGlobalObject, promise: bun_jsc::AnyPromise) -> JsResult<bool> {
-        let vm = global_this.bun_vm().as_mut();
-        let is_under_aot = crate::cli::aot_audit::is_enforcing() || vm.standalone_module_graph.is_some();
-        let running = if is_under_aot { bun_test::clone_active_strong() } else { None };
-        vm.event_loop_mut()
-            .wait_for_promise_unless(promise, || {
-                running.as_ref().is_some_and(|buntest| buntest.get().execution.has_timed_out_entry())
-            })
-            .map_err(|stopped| stopped.throw(global_this))
-    }
-
-    fn throw_promise_not_settled(global_this: &JSGlobalObject) -> JsError {
-        global_this.throw(format_args!("The promise had not settled when the test timed out"))
-    }
-
     /// Processes the async flags (resolves/rejects), waiting for the async value if needed.
     /// If no flags, returns the original value
     /// If either flag is set, waits for the result, and returns either it as a JSValue, or null if the expectation failed (in which case if silent is false, also throws a js exception)
@@ -521,12 +506,12 @@ impl Expect {
 
                     Self::call_then_if_pending(global_this, value, promise)?;
 
-                    if !Self::has_settled_before_timeout(global_this, promise)? {
-                        if silent {
-                            return Err(JsError::Thrown);
-                        }
-                        return Err(Self::throw_promise_not_settled(global_this));
-                    }
+                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
+            global_this
+                .bun_vm()
+                .as_mut()
+                .wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -905,11 +890,9 @@ impl Expect {
                 scope.apply(vm);
                 return Err(err);
             }
-            let waited = Self::has_settled_before_timeout(global_this, promise);
+            let waited = vm.wait_for_promise(promise);
             scope.apply(vm);
-            if !waited? {
-                return Err(Self::throw_promise_not_settled(global_this));
-            }
+            waited.map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -1162,7 +1145,7 @@ impl Expect {
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
-        mut value: JSValue,
+        value: JSValue,
         property_matchers: Option<JSValue>,
         pretty_value: &mut impl bun_io::Write,
         fn_name: &'static str,
@@ -1173,8 +1156,7 @@ impl Expect {
                 return throw!(self, global_this, signature, "\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n").map(drop);
             }
 
-            let prop_matchers = _prop_matchers.jest_copy_along_property_matchers(value, global_this)?;
-            value = value.jest_copy_along_property_matchers(prop_matchers, global_this)?;
+            let prop_matchers = _prop_matchers;
 
             if !value.jest_deep_match(prop_matchers, global_this, true)? {
                 // TODO: print diff with properties from propertyMatchers
@@ -1481,9 +1463,12 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            if !Self::has_settled_before_timeout(global_this, promise)? {
-                return Err(Self::throw_promise_not_settled(global_this));
-            }
+            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
+            global_this
+                .bun_vm()
+                .as_mut()
+                .wait_for_promise(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
 
             result = promise.result(vm);
             result.ensure_still_alive();
@@ -2723,9 +2708,8 @@ impl ExpectMatcherContext {
         unsafe { ExpectMatcherUtils__getSingleton(global_this) }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_is_not(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.flags.not())
+    pub(crate) fn get_is_not(this: &Self, _global: &JSGlobalObject) -> bool {
+        this.flags.not()
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -2737,10 +2721,9 @@ impl ExpectMatcherContext {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_expand(_this: &Self, _global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_expand(_this: &Self, _global_this: &JSGlobalObject) -> bool {
         // TODO: this should return whether running tests in verbose mode or not (jest flag --expand), but bun currently doesn't have this switch
-        JSValue::FALSE
+        false
     }
 
     #[bun_jsc::host_fn(method)]

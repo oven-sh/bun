@@ -1,4 +1,0 @@
-m1,m2 2,3 l1,l2
-model,depth label,wide
-other 1
-swapped label,wide

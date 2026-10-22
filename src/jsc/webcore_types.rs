@@ -192,6 +192,9 @@ const _: () = {
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             JSBlob::from_js_direct(value)
         }
+        fn is_wrapper(value: JSValue) -> bool {
+            JSBlob::is_wrapper(value)
+        }
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
             // ownership to the codegen wrapper. The S3File fast-path (different

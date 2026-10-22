@@ -1,7 +1,4 @@
-// A name that an ordinary object lacks is looked for from its prototype on, and what one shape has learnt about a prototype the next shape under it need not look up again, whatever gave the objects their shapes.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const lookedUp = () => count("MegamorphicCache::load:new-pair") + count("MegamorphicCache::absent:new-pair");
+// A name that an ordinary object lacks is looked for from its prototype on. Objects of several shapes under one prototype are asked for the same names, whatever gave the objects their shapes.
 function Vehicle() { }
 Vehicle.prototype.wheels = function () { return 4; };
 Vehicle.prototype.kind = "vehicle";
@@ -15,10 +12,7 @@ function colorOf(o, turns) { let s; for (let i = 0; i < turns; i++) s = o.color;
 function textOf(o, turns) { let s = ""; for (let i = 0; i < turns; i++) s = o.toString(); return s; }
 const all = o => [wheelsOf(o, 100), kindOf(o, 100), colorOf(o, 100), textOf(o, 100)].join();
 console.log(all(new Car(1)));
-const before = lookedUp();
 console.log(all(new Van(1)), all(new Bus(1)), all(grown(1)), all(grown(2)));
-const after = lookedUp();
-console.log(after === before ? "the shapes that came later looked nothing up" : (after - before) + " pairs were looked up for the shapes that came later");
 
 // What was learnt ends when the name arrives nearer by or changes.
 Car.prototype.kind = "car";

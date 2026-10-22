@@ -82,6 +82,7 @@ pub mod ServerComponentParseTask;
 pub mod HTMLImportManifest;
 
 pub mod HTMLScanner;
+pub mod aot;
 pub mod cache;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
@@ -93,7 +94,6 @@ pub(crate) mod AstBuilder;
 pub mod analyze_transpiled_module;
 pub mod bundled_ast;
 pub mod bytecode_order;
-pub mod compiled_source_index;
 pub mod prelinked_module_graph;
 pub use bundled_ast::BundledAst;
 pub mod barrel_imports;
@@ -290,10 +290,6 @@ pub mod options {
         /// in it (`OutputFile::bytecode_entry_offset`).
         #[strum(serialize = "bytecode-payload")]
         BytecodePayload,
-        #[strum(serialize = "aot-image")]
-        AotImage,
-        #[strum(serialize = "runtime-use")]
-        RuntimeUse,
         /// The string table every chunk's `ModuleInfo` body indexes (`ModuleInfoStringTable::serialize`).
         #[strum(serialize = "module-info-string-table")]
         ModuleInfoStringTable,
@@ -305,10 +301,6 @@ pub mod options {
         MetafileJson,
         #[strum(serialize = "metafile-markdown")]
         MetafileMarkdown,
-        #[strum(serialize = "declaration")]
-        Declaration,
-        #[strum(serialize = "sound")]
-        Sound,
     }
 
     impl OutputKind {
@@ -321,14 +313,10 @@ pub mod options {
                     | OutputKind::BuiltinBytecode
                     | OutputKind::BytecodeStringTable
                     | OutputKind::BytecodePayload
-                    | OutputKind::AotImage
-                    | OutputKind::RuntimeUse
                     | OutputKind::ModuleInfoStringTable
                     | OutputKind::PrelinkedModuleGraph
                     | OutputKind::MetafileJson
                     | OutputKind::MetafileMarkdown
-                    | OutputKind::Declaration
-                    | OutputKind::Sound
             )
         }
     }
@@ -397,7 +385,9 @@ bun_dispatch::link_interface! {
         fn origin_path() -> &'static [u8];
         fn loaders() -> *const bun_collections::StringArrayHashMap<bun_ast::Loader>;
         fn eval_source() -> Option<*const bun_ast::Source>;
-        fn main() -> &'static [u8];
+        // The path of the entry module, `None` when there is none (`bun bake`).
+        fn main() -> Option<&'static [u8]>;
+        fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;

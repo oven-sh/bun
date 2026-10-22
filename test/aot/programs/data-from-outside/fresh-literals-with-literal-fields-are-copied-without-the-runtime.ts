@@ -1,5 +1,5 @@
 declare const aotOperationCount: (name: string) => number;
-// An object literal typed any that nothing else holds is copied into the record type of the parameter it is passed to. The record has fields whose types are unions of string literals. After the first literal of a shape the copy is made without the runtime, whichever texts the fields hold.
+// An object literal typed any is passed to a parameter of a record type that has fields whose types are unions of string literals: any object passes, and a member that typed code never reads is never tested. Literals that fit do not enter the runtime's type check once per object, whichever texts the fields hold.
 type Author = { login: string };
 type Hit = { id: number; state: "open" | "closed"; level: "low" | "high"; author: Author; note?: string };
 
@@ -21,13 +21,13 @@ console.log(JSON.stringify(stamp(typedHit(), 1)), weigh(typedHit()));
 const author = makeAuthor("u");
 let last: Hit = typedHit();
 let sum = 0;
-const before = aotOperationCount("operationAOTTypedCoerce");
+const before = aotOperationCount("operationAOTEnforceType");
 for (let i = 0; i < 400; i++) {
   const hit: any = { id: i, state: i % 2 ? "open" : "closed", level: i % 4 < 2 ? "low" : "high", author };
   last = stamp(hit, 1);
   sum += weigh(last);
 }
-const slow = aotOperationCount("operationAOTTypedCoerce") - before;
+const slow = aotOperationCount("operationAOTEnforceType") - before;
 console.log(sum, slow < 20 ? "without the runtime" : "through the runtime: " + slow);
 console.log(JSON.stringify(last), Object.keys(last).join(), last.author === author, last.note);
 last.note = "late";
@@ -37,6 +37,6 @@ for (const [state, level] of [["other", "low"], ["open", "middle"], [5, "low"], 
     const hit: any = { id: 1, state, level, author };
     console.log(JSON.stringify(stamp(hit, 1)));
   } catch (e) {
-    console.log(e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(e));
+    console.log(e instanceof Error ? e.name + ": " + e.message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "") : String(e));
   }
 }

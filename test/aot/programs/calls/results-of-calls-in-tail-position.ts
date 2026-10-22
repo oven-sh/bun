@@ -1,4 +1,4 @@
-// The result of a call in tail position, under a declared return type or an `as`, is not checked or converted by the function that returns it: its frame is gone. Who receives the result as a type checks it; who takes any value gets it as it is, as in plain Bun. The same however hot the functions are.
+// The result of a call in tail position, under a declared return type or an `as`, is tested like any other result: a primitive of another kind throws a TypeError (under an `as` an object passes), whoever receives it and whatever the receiver does with it, and nothing is converted. A cycle of tail calls whose results fit runs in constant stack space.
 function attempt(what: () => unknown): string { try { const got = what(); return typeof got + " " + String(got); } catch (e) { return (e as Error).constructor.name; } }
 const g: any = globalThis;
 function num(f: (x: number) => number, x: number): number { return f(x); }

@@ -1,4 +1,4 @@
-// The same writes to a locked host prototype and to Array.prototype, from sloppy and from strict code: a host prototype answers each write as a built-in prototype of the language does.
+// The same writes to a host prototype, to Array.prototype and to Map.prototype, from sloppy and from strict code. Sloppy code gets the TypeError that strict code gets. All of them keep their members, their prototype and their missing index keys, with the same answers. A name of the program's own is taken by Array.prototype and Map.prototype as in plain Bun, and refused by a host prototype, which takes no new key at all.
 // @ts-ignore
 import { attempts as sloppy } from "./sloppy.cjs";
 // @ts-ignore
@@ -20,7 +20,7 @@ const lines: string[] = [];
 let count = 0;
 for (const [mode, attempts] of [["sloppy", sloppy], ["strict", strict]] as [string, Attempt[]][]) {
   for (const [label, work] of attempts) {
-    const answers = holders.map(([name, prototype, method]) => {
+    const answers = holders.map(([, prototype, method]) => {
       const before = (prototype as Record<string, unknown>)[method];
       const descriptor = getOwnPropertyDescriptor(prototype, method)!;
       const parent = getPrototypeOf(prototype);
@@ -28,7 +28,7 @@ for (const [mode, attempts] of [["sloppy", sloppy], ["strict", strict]] as [stri
       try {
         answer = String(work(prototype, method));
       } catch (error) {
-        answer = "throws " + (error as Error).constructor.name + ": " + (error as Error).message.replaceAll(name, "<class>").replaceAll("'" + method + "'", "<method>");
+        answer = "throws " + (error as Error).constructor.name;
       }
       const unchanged = (prototype as Record<string, unknown>)[method] === before && !("added" in prototype) && getPrototypeOf(prototype) === parent;
       if (!unchanged) {
@@ -41,8 +41,7 @@ for (const [mode, attempts] of [["sloppy", sloppy], ["strict", strict]] as [stri
     const language = answers[0];
     lines[count++] = `${mode}: ${label}: Array.prototype: ${language}`;
     holders.forEach(([name], i) => {
-      const withoutAdvice = answers[i].replace(". Use a subclass of <class> or a wrapper function instead", "");
-      if (i > 0) lines[count++] = `${mode}: ${label}: ${name}.prototype: ${withoutAdvice === language ? "the same" : answers[i]}`;
+      if (i > 0) lines[count++] = `${mode}: ${label}: ${name}.prototype: ${answers[i] === language ? "the same" : answers[i]}`;
     });
   }
 }

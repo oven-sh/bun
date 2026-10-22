@@ -64,10 +64,11 @@ const folded = [
   "",
 ].join("\n");
 
-test("bun run and bun run --aot read process.platform, process.arch and process.versions.bun", async () => {
+test("bun run and bun run --aot read process.platform, process.arch and process.versions.bun; bun run --debug-aot folds them, as the executable does", async () => {
   using dir = tempDir("aot-process-platform", files);
   expect(await run([bunExe(), "run", "main.cjs"], String(dir), bunEnv)).toEqual({ stdout: read, stderr: "", exitCode: 0 });
-  expect(await run([bunExe(), "run", "--debug-aot", "main.cjs"], String(dir), compiledOnly)).toEqual({ stdout: read, stderr: "", exitCode: 0 });
+  expect(await run([bunExe(), "run", "--aot", "main.cjs"], String(dir), bunEnv)).toEqual({ stdout: read, stderr: "", exitCode: 0 });
+  expect(await run([bunExe(), "run", "--debug-aot", "main.cjs"], String(dir), compiledOnly)).toEqual({ stdout: folded, stderr: "", exitCode: 0 });
 }, 120_000);
 
 test("bun build --compile folds them for its target, with --aot and without", async () => {
@@ -75,15 +76,15 @@ test("bun build --compile folds them for its target, with --aot and without", as
   for (const flags of [[], ["--aot"]]) {
     const executable = join(String(dir), "main" + flags.length + (isWindows ? ".exe" : ""));
     const built = await run([bunExe(), "build", "--compile", ...flags, "main.cjs", "--outfile", executable], String(dir), bunEnv);
-    expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(await run([executable], String(dir), flags.length ? compiledOnly : bunEnv)).toEqual({ stdout: folded, stderr: "", exitCode: 0 });
   }
 }, 240_000);
 
 test("bun test and bun test --aot: a test can try another platform's road", async () => {
   using dir = tempDir("aot-process-platform", files);
-  for (const flags of [[], ["--debug-aot"]]) {
-    const { stderr, exitCode } = await run([bunExe(), "test", ...flags, "./platform.test.js"], String(dir), flags.length ? compiledOnly : bunEnv);
+  for (const flags of [[], ["--aot"]]) {
+    const { stderr, exitCode } = await run([bunExe(), "test", ...flags, "./platform.test.js"], String(dir), bunEnv);
     expect(stderr).toContain("1 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

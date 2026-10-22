@@ -1,11 +1,10 @@
 // `A.twice(n)`: the static method is read before the arguments are evaluated, so an argument that replaces the method does not change what is called.
 // IR= 1 declared  = Call v
-// IR= 1 declared  = IsClassObjectUnmodified
-// IR= 1 declared  = GetById v[0-9]+ "twice"
+// IR= 1 declared  = IsClassUnmodified 
+// IR= 1 declared  = PropGet v[0-9]+ name="twice"
 // IR= 1 inherited  = Call v
 // IR= 1 looksAtThis  = Call v
 // IR= 1 constants  = Call v
-// IR= 1 declared  = FunctionReference f
 // IR= 2 seen  = Call v
 declare const console: any;
 class A { static twice(n: number): number { return n + n } static other(n: number): number { return n } static scale = 3; static scaled(n: number): number { return n * this.scale } static pair(a: number, b: string): string { return b + a } }

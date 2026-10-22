@@ -39,17 +39,17 @@ kept.push(wrap(null, () => 0));
 let warm = 0;
 for (const make of learnt) warm += sumOf(make, 100);
 for (let i = 0; i < 100; i++) warm += wrap({ i }, function (n) { return this.i + n; })(1, 2);
-const before = count("operationAOTPutByNameAndCache");
+const before = count("operationAOTPutByIdAndCache");
 let total = 0;
 for (const make of learnt) total += sumOf(make, 1500);
 for (let i = 0; i < 1500; i++) { const wrapped = wrap({ i }, function (n) { return this.i + n; }); total += wrapped(1, 2) + (wrapped() === undefined ? 1 : 0) + (typeof wrapped.listener === "function" ? 1 : 0); }
-const entries = count("operationAOTPutByNameAndCache") - before;
+const entries = count("operationAOTPutByIdAndCache") - before;
 lines.push(warm + " " + total + " " + kept.length);
 lines.push(entries <= 200 ? "the run time was asked at most 200 times" : "the run time was asked " + entries + " times");
 for (const make of [...learnt, ...others]) lines.push(make.name + " " + sumOf(make, 300) + " " + show(make(7)));
-const beforeTheSecondCount = count("operationAOTPutByNameAndCache");
+const beforeTheSecondCount = count("operationAOTPutByIdAndCache");
 for (const make of learnt) total += sumOf(make, 1500);
-const entriesBehindBoundFunctions = count("operationAOTPutByNameAndCache") - beforeTheSecondCount;
+const entriesBehindBoundFunctions = count("operationAOTPutByIdAndCache") - beforeTheSecondCount;
 lines.push(entriesBehindBoundFunctions <= 200 ? "and behind bound functions at most 200 times" : "and behind bound functions " + entriesBehindBoundFunctions + " times", String(total));
 lines.push(show(wrap(null, arrow(1))) + " " + wrap(null, arrow(1)).name + " " + wrap(null, arrow(1)).length + " " + ("prototype" in wrap(null, arrow(1))));
 

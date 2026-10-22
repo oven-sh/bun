@@ -1,53 +1,23 @@
 {
-  "dev-prod.x.default.mjs": "compiled",
-  "dev-prod.x.default.ts": "compiled",
-  "dev-prod.x.dynamic-import.mjs": "compiled",
-  "dev-prod.x.dynamic-import.ts": "compiled",
-  "dev-prod.x.names.mjs": "compiled",
-  "dev-prod.x.names.ts": "compiled",
-  "dev-prod.x.namespace.mjs": "compiled",
-  "dev-prod.x.namespace.ts": "compiled",
-  "dev-prod.x.require-destructured.cjs": "compiled",
-  "dev-prod.x.require.cjs": "compiled",
-  "import-only.x.require-destructured.cjs": {
-    "errors": "error: Could not resolve: \"c_import_only\". Maybe you need to \"bun install\"?\n"
-  },
-  "import-only.x.require.cjs": {
-    "errors": "error: Could not resolve: \"c_import_only\". Maybe you need to \"bun install\"?\n"
-  },
-  "main-and-module.x.default.mjs": "compiled",
-  "main-and-module.x.default.ts": "compiled",
-  "main-and-module.x.dynamic-import.mjs": "compiled",
-  "main-and-module.x.dynamic-import.ts": "compiled",
-  "main-and-module.x.names.mjs": "compiled",
-  "main-and-module.x.names.ts": "compiled",
-  "main-and-module.x.namespace.mjs": "compiled",
-  "main-and-module.x.namespace.ts": "compiled",
   "require-only.x.default.mjs": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.default.ts": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
-  },
-  "require-only.x.dynamic-import.mjs": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
-  },
-  "require-only.x.dynamic-import.ts": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.later.mjs": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.names.mjs": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.names.ts": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.namespace.mjs": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   },
   "require-only.x.namespace.ts": {
-    "errors": "error: Could not resolve: \"c_require_only\". Maybe you need to \"bun install\"?\n"
+    "errors": "error: TS100153: The path \"c_require_only\" is not exported by its package\n"
   }
 }

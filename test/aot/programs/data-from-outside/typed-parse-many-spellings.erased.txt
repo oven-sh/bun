@@ -1,0 +1,169 @@
+product {"id":12345,"name":"Widget","price":19.99,"tag":"tools","active":true}
+product {"id":-0,"name":"","price":1000,"tag":"a\nbé\ud83d\"\\/","active":false}
+product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
+product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
+product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
+product {"active":true,"tag":"tools","price":19.99,"name":"Widget","id":12345}
+product {"id":2,"name":"x","price":2.5,"tag":"t","active":true}
+product {"id":2,"name":"x","price":2.5,"tag":"t","active":true}
+product TypeError "id: expected number, received string"
+product {"id":1,"extra":{"a":[1,2,{"b":null}]},"name":"x","price":2.5,"tag":"t","active":true,"__proto__":{"x":1}}
+product TypeError "active: expected boolean, received undefined"
+product TypeError "id: expected number, received string"
+product SyntaxError "JSON Parse error: Property name must be a string literal"
+product SyntaxError "JSON Parse error: Unable to parse JSON string"
+product SyntaxError "JSON Parse error: Expected '}'"
+product SyntaxError "JSON Parse error: Invalid digits after decimal point"
+product SyntaxError "JSON Parse error: Unexpected token '.'"
+product SyntaxError "JSON Parse error: Unrecognized token '+'"
+product SyntaxError "JSON Parse error: Expected '}'"
+product SyntaxError "JSON Parse error: Invalid number"
+product TypeError "id: expected number, received infinity"
+product {"id":-0,"name":"x","price":5e-324,"tag":"t","active":true}
+product {"id":1.2345678901234568e+29,"name":"x","price":0.12345678901234568,"tag":"t","active":true}
+product {"id":9007199254740992,"name":"x","price":999999999999999.9,"tag":"t","active":true}
+product {"id":100,"name":"x","price":0.015,"tag":"t","active":true}
+product {"id":1,"name":"x","price":2.5,"tag":"t","active":true}
+product SyntaxError "JSON Parse error: Unterminated string"
+product SyntaxError "JSON Parse error: Invalid escape character x"
+product SyntaxError "JSON Parse error: \"\\u12\",\" is not a valid unicode escape"
+product {"id":1,"name":"éÿ","price":2.5,"tag":"Ā😀","active":true}
+product {"id":1,"name":"x","price":2.5,"tag":"\ud83d","active":true}
+product SyntaxError "JSON Parse error: Unrecognized token '﻿'"
+product SyntaxError "JSON Parse error: Unrecognized token '\u0000'"
+product SyntaxError "JSON Parse error: Unexpected identifier \"tru\""
+product SyntaxError "JSON Parse error: Expected '}'"
+product TypeError "active: expected boolean, received null"
+product SyntaxError "JSON Parse error: Unexpected EOF"
+product SyntaxError "JSON Parse error: Unexpected EOF"
+product SyntaxError "JSON Parse error: Expected '}'"
+product TypeError "id: expected number, received undefined (and 4 more)"
+product TypeError "expected object, received array"
+product TypeError "expected object, received null"
+product TypeError "expected object, received number"
+product TypeError "expected object, received string"
+product SyntaxError "JSON Parse error: Expected '}'"
+product SyntaxError "JSON Parse error: Expected ':' before value in object property definition"
+product SyntaxError "JSON Parse error: Unexpected token '}'"
+product SyntaxError "JSON Parse error: Expected '}'"
+product SyntaxError "JSON Parse error: Property name must be a string literal"
+product SyntaxError "JSON Parse error: Expected '}'"
+person {"name":"n","age":3,"address":{"city":"c","zip":"z"},"tags":["x","y"],"kind":"a","note":null,"pair":[1,"one"]}
+person {"name":"n","address":{"city":"c","zip":"z"},"tags":[],"kind":"b","note":"said","pair":[1,"one"]}
+person TypeError "age: expected undefined | number, received null"
+person TypeError "age: expected undefined | number, received object"
+person {"name":"n","age":4,"address":{"zip":"z","city":"c","more":1},"tags":["x","y"],"kind":"a","note":"said","pair":[1,"one"]}
+person TypeError "age: expected undefined | number, received string"
+person TypeError "address.zip: expected string, received undefined"
+person TypeError "tags[0]: expected string, received number"
+person TypeError "kind: expected \"a\" | \"b\", received string"
+person TypeError "note: expected null | string, received number"
+person TypeError "pair: expected tuple, received array"
+person TypeError "pair: expected tuple, received array"
+person SyntaxError "JSON Parse error: Unexpected comma at the end of array expression"
+person TypeError "address: expected object, received array (and 1 more)"
+tagged {"count":1,"code":"ab","list":[],"size":7}
+tagged {"count":10,"code":"abc","list":[1,2,3],"size":1}
+tagged {"count":10,"code":"ab","list":[1],"size":7}
+tagged TypeError "count: expected number to be >=1"
+tagged TypeError "count: expected number to be <=10"
+tagged TypeError "count: expected int, received number"
+tagged TypeError "code: expected string to have >=2 characters"
+tagged TypeError "code: must match pattern /^[a-z]+$/"
+tagged TypeError "list: expected array to have <=3 items"
+tagged TypeError "size: expected undefined | number, received string"
+whole {"any":0,"least":0}
+whole {"any":-0,"least":-0}
+whole {"any":-5,"least":5}
+whole {"any":1,"least":100}
+whole {"any":1,"least":25}
+whole TypeError "any: expected int, received number"
+whole TypeError "least: expected int, received number"
+whole {"any":9007199254740991,"least":9007199254740992}
+whole {"any":-9007199254740992,"least":9007199254740992}
+whole {"any":9007199254740994,"least":1}
+whole {"any":1e+300,"least":12345678901234567000}
+whole {"any":123456789012345,"least":1234567890123456}
+whole TypeError "any: expected number, received infinity"
+whole SyntaxError "JSON Parse error: Expected '}'"
+whole TypeError "least: expected number to be >=0"
+whole TypeError "any: expected number, received string"
+whole TypeError "some: expected int, received number"
+whole {"any":1,"least":1,"some":-3}
+whole {"least":7,"any":-7,"some":0}
+whole TypeError "any: expected int, received number"
+whole {"any":2,"least":1}
+drawing {"shapes":[{"kind":"circle","radius":1},{"kind":"square","side":2},{"kind":"none"}]}
+drawing {"shapes":[{"radius":1,"kind":"circle"},{"kind":"square","side":2}],"first":{"kind":"none","more":1}}
+drawing {"shapes":[{"kind":"none","radius":1}]}
+drawing {"shapes":[{"kind":"circle","radius":1}]}
+drawing TypeError "shapes[0].radius: expected number, received undefined"
+drawing {"shapes":[{"kind":"circle","radius":1}]}
+drawing TypeError "first.radius: expected number, received undefined"
+drawing {"shapes":[],"first":{"kind":"circle","radius":3}}
+drawing TypeError "shapes[0].kind: expected \"circle\" | \"square\" | \"none\", received \"line\""
+drawing TypeError "shapes[0]: expected { kind, radius } | { kind, side } | { kind }, received null"
+open {"id":1}
+open {"0":"zero","b":1,"id":1,"a":[{"x":null}],"__proto__":{"p":1},"toString":1}
+open {"a":2,"id":2}
+open {"id":3,"z":1}
+open TypeError "id: expected number, received undefined"
+counts {"id":1,"a":2,"b":3}
+counts TypeError "a: expected number, received string"
+counts {"id":1,"a":2}
+counts {"2":3,"10":2,"a":1,"id":4}
+record {}
+record {"a":[1],"b":[]}
+record {"a":[2]}
+record {"a":[2]}
+record TypeError "a: expected array, received number"
+record {"0":[3],"1":[2],"__proto__":[1]}
+record TypeError "expected object, received array"
+closed {"id":1,"inner":{"a":true}}
+closed TypeError "unrecognized key \"more\""
+closed {"id":1,"inner":{"a":true,"more":1}}
+closed {"inner":{"a":false},"id":1}
+loose {"anything":{"a":[1,"é"]},"maybe":1,"object":[]}
+loose TypeError "anything: expected unknown, received undefined (and 1 more)"
+loose TypeError "maybe: expected undefined | number, received undefined"
+loose TypeError "maybe: expected undefined | number, received string"
+loose TypeError "maybe: expected undefined | number, received undefined (and 1 more)"
+named {"constructor":"c","toString":"s"}
+named {"constructor":"c"}
+named TypeError "constructor: expected string, received undefined"
+roots []
+roots [1,2.5,-300]
+roots [1,2]
+roots SyntaxError "JSON Parse error: Unexpected comma at the end of array expression"
+roots SyntaxError "JSON Parse error: Unexpected token ','"
+roots SyntaxError "JSON Parse error: Expected ']'"
+roots TypeError "[0]: expected number, received string"
+roots TypeError "[0]: expected number, received array"
+roots TypeError "expected array, received number"
+roots "text"
+roots "A"
+roots TypeError "expected string, received number"
+roots SyntaxError "JSON Parse error: Unterminated string"
+roots SyntaxError "JSON Parse error: Unable to parse JSON string"
+roots 1
+roots null
+roots -0
+roots SyntaxError "JSON Parse error: Unexpected identifier \"nul\""
+roots TypeError "expected null | number, received boolean"
+roots SyntaxError "JSON Parse error: Unable to parse JSON string"
+roots true
+roots false
+roots true
+roots SyntaxError "JSON Parse error: Unable to parse JSON string"
+roots TypeError "expected boolean, received number"
+tree 1 1 1
+tree 2 2 2
+tree 50 50 50
+tree 400 400 400
+tree TypeError "next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next.next: expected undefined | null | Tree, received string"
+tree TypeError "children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0].children[0]: expected object, received number"
+tree SyntaxError "JSON Parse error: Expected '}'"
+text that ends early 248 0
+a rope {"name":"né","age":31,"address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"]} 16 bits {"name":"né","age":31,"address":{"city":"c\n","zip":"z"},"tags":["x","yy"],"kind":"a","note":null,"pair":[15,"one"]}
+no text 5
+long 100000 70000 x

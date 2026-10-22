@@ -1,2 +1,0 @@
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `num` expects 'Function' and always gets 5.
-error: TS100013: This always throws a TypeError under --aot: argument 1 of `num` expects 'Function' and always gets "f".

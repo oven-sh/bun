@@ -186,8 +186,8 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
   // All upgradeTLS-created wrappers should be collectable now. We created
   // 5 × 2 = 10 TLSSocket wrappers; if the Strong release on close is missed,
   // they all pin and the count stays ≥ baseline + 10.
-  const count = await gcUntilCountAtMost("TLSSocket", baseline + 3);
-  expect(count).toBeLessThanOrEqual(baseline + 3);
+  const count = await gcUntilCountAtMost("TLSSocket", baseline + 2);
+  expect(count).toBeLessThanOrEqual(baseline + 2);
 });
 
 test("tls.connect over a Duplex roots the origin and listener thunks through the wrapper, not as Strong handles", async () => {

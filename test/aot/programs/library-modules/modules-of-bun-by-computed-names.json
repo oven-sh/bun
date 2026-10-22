@@ -1,0 +1,1 @@
+{ "env": { "NAMES": "bun,bun:jsc,bun:sqlite" }, "skipInShell": "it asks for modules of Bun" }

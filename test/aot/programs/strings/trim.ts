@@ -1,9 +1,9 @@
 // `trim`, `trimStart`, `trimEnd`, `trimLeft` and `trimRight`.
-// CALLS+ trim_ operationAOTTypedSubstring|StringTrim(;|$)
-// CALLS+ trimStart_ operationAOTTypedSubstring|StringTrim(Start)?(;|$)
-// CALLS+ trimEnd_ operationAOTTypedSubstring|StringTrim(End)?(;|$)
+// CALLS+ trim_ operationAOTSubstring|StringTrim(;|$)
+// CALLS+ trimStart_ operationAOTSubstring|StringTrim(Start)?(;|$)
+// CALLS+ trimEnd_ operationAOTSubstring|StringTrim(End)?(;|$)
 // CALLS- trim_ CallValue|OperationValueWithInstance
-// CALLS+ trimOfAnything CallHostFunction|CallValue|Call0|CallMethod0|operationAOTTypedCall
+// CALLS+ trimOfAnything CallHostFunction|CallValue|Call0|CallMethod0
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

@@ -74,12 +74,6 @@ unsafe extern "C" {
         arg1: JSValue,
     ) -> *mut FetchHeaders;
 
-    fn WebCore__FetchHeaders__createFromNamesAndValues(
-        global: &JSGlobalObject,
-        count: u32,
-        names_and_values: *const JSValue,
-    ) -> *mut FetchHeaders;
-
     safe fn WebCore__FetchHeaders__put(
         this: &FetchHeaders,
         name_: HTTPHeaderName,
@@ -114,19 +108,6 @@ impl FetchHeaders {
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
-        })
-    }
-
-    /// # Safety
-    /// `names_and_values` must point to `2 * count` values; each even one is the number of an `HTTPHeaderName` or a string that is a token and not one of those names.
-    pub unsafe fn create_from_names_and_values(
-        global: &JSGlobalObject,
-        count: u32,
-        names_and_values: *const JSValue,
-    ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        host_fn::from_js_host_call_generic(global, || {
-            // SAFETY: the caller upholds the contract above.
-            NonNull::new(unsafe { WebCore__FetchHeaders__createFromNamesAndValues(global, count, names_and_values) })
         })
     }
 

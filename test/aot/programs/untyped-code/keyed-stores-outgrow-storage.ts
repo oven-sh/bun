@@ -35,7 +35,7 @@ console.log("closed", (() => { try { put(closed, names[4], 1); return "stored"; 
 const heir = fill(Object.create(fill(JSON.parse(six), names, 0, 9, 4)), names, 0, 9, 5);
 console.log("an heir", (() => { let n = 0; for (let k = 0; k < 9; k++) if (get(heir, names[k]) !== kinds(5, k)) n++; return n; })(), Object.keys(heir).length);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const entered = () => counted("operationAOTPutByKeyGeneric:added-and-offered-to-the-table") + counted("operationAOTPutByKeyGeneric:added-by-the-only-transition-and-offered-to-the-table") + counted("operationAOTPutByValAndCache") + counted("operationAOTPutByValAndCacheSloppy");
+const entered = () => counted("operationAOTPutByValGeneric") + counted("operationAOTPutByValAndCache") + counted("operationAOTPutByValAndCacheSloppy");
 const before = entered();
 let total = 0;
 for (let i = 0; i < 2000; i++) total += wrong(fill(JSON.parse(six), symbols, 0, 17, i), symbols, 17, i);

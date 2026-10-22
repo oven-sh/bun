@@ -1,4 +1,4 @@
-// A double cast from `B` to `A` somewhere in the program makes fields of type `A` accept a `B` everywhere.
+// A `B` reaches a field of type `A` through a double cast and through `any`: any object passes an object type, and a member it does not have reads undefined.
 interface A { a: number; shared?: string; o: number[] }
 interface B { b: string; shared?: string; n: number }
 interface Holder { item: A }

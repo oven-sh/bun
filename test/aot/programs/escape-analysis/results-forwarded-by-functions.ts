@@ -1,13 +1,13 @@
 // A function that returns what another function returns hands a fresh object on in registers, as the function that makes it does.
 // IR= 2 readsEitherOfTwo ResultAt
-// IR= 0 readsEitherOfTwo GetById|NewObjectWithShape
+// IR= 0 readsEitherOfTwo PropGet|: =?L[0-9]+ = NewObject 
 // IR= 2 readsForwardedOrMade ResultAt
-// IR= 0 readsForwardedOrMade GetById|NewObjectWithShape
+// IR= 0 readsForwardedOrMade PropGet|: =?L[0-9]+ = NewObject 
 // IR= 1 readsThroughThree ResultAt
-// IR= 0 readsThroughThree GetById|NewObjectWithShape
-// IR= 0 readsThroughOne GetById|NewObjectWithShape
-// IR= 0 readsThroughTwo GetById|NewObjectWithShape
-// IR= 0 readsPair NewArray|GetByVal
+// IR= 0 readsThroughThree PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 readsThroughOne PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 readsThroughTwo PropGet|: =?L[0-9]+ = NewObject 
+// IR= 0 readsPair NewArray|ElemGet
 type P = { x: number; y: number };
 let noise = 0;
 function pad(k: number): void { for (let i = 0; i < 3; i++) noise = (noise * 31 + k + i) % 1000003; }

@@ -22,7 +22,7 @@ class Fixed extends Savings {
 function fees(account: any, turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) sum += account.fee(); return sum; }
 function labels(account: any, turns: number): string { let text = ""; for (let i = 0; i < turns; i++) text = account.label(); return text; }
 function grows(account: any, turns: number): number { let last = 0; for (let i = 0; i < turns; i++) last = account.grow(); return last; }
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 const accounts: any[] = [new Account("a", 1), new Savings("s", 2), new Fixed("f", 3)];
 let most = 0;
 const results: unknown[] = [];

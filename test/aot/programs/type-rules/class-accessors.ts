@@ -32,7 +32,7 @@ try { Object.defineProperty(Bag.prototype, "size", { value: 12, writable: true, 
 console.log(before.size, grow(before), Object.keys(before).join(), new Bag().size, new Half().size, flush())
 try { delete (Half.prototype as any).size; console.log("accessor deleted from the prototype: no error") } catch (e) { console.log("accessor deleted from the prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 console.log(new Half().size, attempt(() => grow(new Half())), attempt(() => grow(new Both())), flush())
-// A subclass overrides only the setter: the property it defines has no getter, so a read gives `undefined`, which is not a number. TypeScript gives the read the type `number`.
+// A subclass overrides only the setter: the property it defines has no getter, so a read gives `undefined`, which passes every written type. TypeScript gives the read the type `number`.
 class Cup { n = 1; get size(): number { return this.n } set size(v: number) { this.n = v } }
 class SetterOnly extends Cup { override set size(v: number) { super.size = v + 1 } }
 function sizeOf(c: Cup): number { return c.size }

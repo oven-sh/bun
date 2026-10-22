@@ -1,4 +1,4 @@
-// TypeScript lets a program break a type in a few known ways. --aot then throws a TypeError at the typed store or read. Where that happens in the initializer of a top-level constant, the error is thrown while the module is loaded, not when the constant is first read.
+// TypeScript lets a program break a type in a few known ways. Where a field then holds another kind, --aot throws a TypeError at the typed read; null, undefined and a missing member pass. Where it throws in the initializer of a top-level constant, the error is thrown while the module is loaded, not when the constant is first read.
 async function load(name: string, importing: () => Promise<{ made: unknown }>): Promise<void> {
   let loaded = false;
   try {

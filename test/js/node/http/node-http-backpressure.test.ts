@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * All new tests in this file should also run in Node.js.
  *

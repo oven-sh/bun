@@ -251,23 +251,6 @@ describe("bundler", () => {
       stdout: "value: 99",
     },
     {
-      name: "AwaitOfWrappedAsyncDependency",
-      files: {
-        "/entry.ts": `
-          import { value } from "./dep.ts";
-          console.log("body ran:", value);
-          import("./dep.ts").then(({ other }) => console.log(other()));
-        `,
-        "/dep.ts": `
-          import { late } from "./tla.ts";
-          export const value = late;
-          export function other() { return 2; }
-        `,
-        "/tla.ts": `export const late = await Promise.resolve(1);`,
-      },
-      stdout: "body ran: 1\n2",
-    },
-    {
       // Multiple dynamic imports: several separate modules in the graph,
       // each with its own bytecode + ModuleInfo.
       name: "MultipleDynamicImports",

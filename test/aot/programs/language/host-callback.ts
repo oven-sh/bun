@@ -1,4 +1,4 @@
-// A declaration without a body says what a callback is called with; where it is wrong, the program gets slower but no TypeError is thrown.
+// A declaration without a body says what a callback is called with; where it is wrong, the program gets slower but no TypeError is thrown. A type that the program itself writes on a parameter of the callback is tested on entry.
 declare global {
   function callHost(callback: (count: number, item: { name: string }) => string): string
   function callWithThis(callback: (this: { id: number }, flag: boolean) => string): string
@@ -33,11 +33,11 @@ console.log(callHost((count, item) => count + 1 + item.name + item.name.length))
 // JavaScriptCore implements these: facts.
 console.log([3, 1, 2].sort((a, b) => a - b).map(n => n * 2).join())
 
-// Annotated by the program, called by the host: still a prediction. The host supplies the value, and a prediction never throws.
+// Annotated by the program, called by the host: the parameter with the written type is tested on entry, whoever calls. The one beside it without a written type is not.
 g.callHost = (callback: any): any => callback("seven", 7)
 try { console.log(callHost((count: number, item) => typeof count + " " + typeof item)) } catch (e) { console.log((e as Error).constructor.name) }
 
-// Annotated by the program, called by the program: a fact. A value of another kind is refused where it enters.
+// Annotated by the program, called by the program: the same test.
 const describe = (count: number) => typeof count
 const values: any[] = ["seven"]
 try { console.log(describe(values[0])) } catch (e) { console.log((e as Error).constructor.name) }

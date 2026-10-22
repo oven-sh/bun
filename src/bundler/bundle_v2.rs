@@ -105,11 +105,6 @@ pub struct BundleV2<'a> {
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
-    pub(crate) visited_packages: bun_collections::HashMap<Box<[u8]>, ()>,
-    pub(crate) laid: FileMap,
-    pub(crate) declaration_files: options::DeclarationFiles,
-    pub(crate) module_types: Option<Box<dyn core::any::Any + Send>>,
-    pub(crate) shipped_as_typescript: bun_collections::HashMap<Box<[u8]>, ()>,
     pub(crate) source_code_length: usize,
 
     /// There is a race condition where an onResolve plugin may schedule a task
@@ -123,13 +118,6 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub(crate) unique_key: u64,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
-    /// The files the compiled program refers to by path, which nothing in the bundle imports once its entry point is empty.
-    pub(crate) assets_of_compiled_program: Vec<Index>,
-    pub(crate) early_source_paths: Option<std::sync::mpsc::Sender<(Vec<u8>, Option<&'static [u8]>)>>,
-    pub(crate) plugin_loads_in_flight: u32,
-    pub(crate) plugin_resolve_importers: Vec<IndexInt>,
-    pub(crate) early_start_awaits_importer: Option<IndexInt>,
-    pub(crate) started_early_sources: Option<std::sync::Arc<options::EarlySources>>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
@@ -159,60 +147,6 @@ pub struct BundleV2<'a> {
 
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
-
-fn native_separators(mut path: Vec<u8>) -> Vec<u8> {
-    if cfg!(windows) {
-        bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut path);
-    }
-    path
-}
-
-fn held_name(folder: &[u8], path: &[u8]) -> Box<[u8]> {
-    let mut name = [folder, path].concat();
-    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut name);
-    name.into_boxed_slice()
-}
-
-fn index_resolutions(lines: &[u8]) -> Vec<u8> {
-    fn package_of(specifier: &[u8]) -> &[u8] {
-        let mut slashes = specifier.iter().enumerate().filter(|(_, c)| **c == b'/').map(|(at, _)| at);
-        let end = if specifier.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() };
-        &specifier[..end.unwrap_or(specifier.len())]
-    }
-    let mut written: std::collections::BTreeMap<&[u8], &[u8]> = Default::default();
-    for line in bun_core::strings::split(lines, b"\n") {
-        let Some(line) = line.strip_suffix(&[0]) else { continue };
-        let Some(at) = bun_core::strings::last_index_of_char(line, 0) else { continue };
-        written.insert(&line[..at], &line[at + 1..]);
-    }
-    let mut packages: std::collections::BTreeMap<Vec<u8>, &[u8]> = Default::default();
-    for (&key, &path) in &written {
-        let Some(end_of_folder) = bun_core::strings::index_of_char_usize(key, 0) else { continue };
-        let asked = &key[end_of_folder + 1..];
-        let specifier = &asked[..asked.len().saturating_sub(2)];
-        if specifier.is_empty() || matches!(specifier[0], b'.' | b'/') || bun_paths::is_absolute(specifier) {
-            continue;
-        }
-        let inside = native_separators([b"/node_modules/".as_slice(), package_of(specifier), b"/"].concat());
-        let Some(at) = bun_core::strings::last_index_of(path, &inside) else { continue };
-        packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
-        let is_requested_by_application = !bun_core::strings::contains(&key[..end_of_folder], &native_separators(b"/node_modules/".to_vec()));
-        for store in [&b"/node_modules/.bun/"[..], b"/node_modules/.pnpm/"] {
-            if is_requested_by_application && let Some(at) = bun_core::strings::index_of(path, &native_separators(store.to_vec())) {
-                packages.entry([&[1][..], &path[..at], b"\0", asked].concat()).or_insert(path);
-            }
-        }
-    }
-    let mut sorted = Vec::with_capacity(lines.len());
-    for (key, path) in packages.iter().map(|(key, path)| (&key[..], *path)).chain(written.iter().map(|(key, path)| (*key, *path))) {
-        for part in [key, path] {
-            sorted.extend_from_slice(part);
-            sorted.push(0);
-        }
-        sorted.push(b'\n');
-    }
-    sorted
-}
 
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
@@ -540,6 +474,10 @@ pub mod bv2_impl {
             /// Mirrors `Framework.is_built_in_react` — read by
             /// `linker_context::generateChunksInParallel` to gate `BakeExtra`.
             pub(crate) is_built_in_react: bool,
+            /// The absolute folders of the routers with `clientPages`. In the browser build, the
+            /// files under them lose the page data functions (`getServerSideProps`, ...), which
+            /// run on the server only, and the imports that only those use.
+            pub(crate) client_page_dirs: Vec<Box<[u8]>>,
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
@@ -551,13 +489,24 @@ pub mod bv2_impl {
                 server_components: Option<ServerComponents>,
                 react_fast_refresh: Option<ReactFastRefresh>,
                 is_built_in_react: bool,
+                client_page_dirs: Vec<Box<[u8]>>,
             ) -> Self {
                 Self {
                     built_in_modules,
                     server_components,
                     react_fast_refresh,
                     is_built_in_react,
+                    client_page_dirs,
                 }
+            }
+
+            /// Whether `path` is under a router folder with `clientPages`.
+            pub(crate) fn is_client_page_file(&self, path: &[u8]) -> bool {
+                self.client_page_dirs.iter().any(|dir| {
+                    path.len() > dir.len()
+                        && path.starts_with(dir)
+                        && bun_core::path_sep::is_sep_any(path[dir.len()])
+                })
             }
         }
         /// `Framework.ServerComponents` — full string
@@ -1174,6 +1123,12 @@ pub mod bv2_impl {
                 }
             }
 
+            #[derive(Copy, Clone)]
+            pub enum RequestOwner {
+                Bundle,
+                Waiter(core::ptr::NonNull<crate::aot::plugins::PluginWaiter>),
+            }
+
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
@@ -1181,6 +1136,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
+                pub owner: RequestOwner,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
@@ -1190,6 +1146,7 @@ pub mod bv2_impl {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1240,6 +1197,7 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1323,6 +1281,7 @@ pub mod bv2_impl {
                 pub path: Box<[u8]>,
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
+                pub owner: RequestOwner,
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
@@ -1349,6 +1308,7 @@ pub mod bv2_impl {
                     source_index: parse.source_index,
                     default_loader,
                     value: LoadValue::Pending,
+                    owner: RequestOwner::Bundle,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     called_defer: false,
@@ -1476,7 +1436,9 @@ pub mod bv2_impl {
                 }
             }
             impl LoadDeferred {
+                #[inline(never)]
                 pub fn run(&mut self) {
+                    bun_removable_features::removable_definition!(Bundler, Self::run);
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
                     BundleV2::on_notify_defer(&mut self.0, bv2);
@@ -1578,17 +1540,12 @@ pub mod bv2_impl {
                 table: core::ptr::NonNull<EncoderStringTable>,
                 hot_strings: &[u64],
             ) -> Box<[u8]>;
-            safe fn __bun_jsc_build_program_data(
-                strings: &[u8],
-                original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
-            ) -> Vec<u8>;
             safe fn __bun_jsc_bytecode_link_encoder_new(
                 external_strings: core::ptr::NonNull<EncoderStringTable>,
                 hot_functions: &[u64],
                 known_functions: &[u64],
                 evaluated_modules: &[u64],
                 not_evaluated_modules: &[u64],
-                compile_ahead_of_time: bool,
             ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
             safe fn __bun_jsc_bytecode_link_encoder_destroy(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1617,30 +1574,10 @@ pub mod bv2_impl {
                 depth: u32,
                 names: &crate::bytecode_order::CodeNamesRef<'_>,
             ) -> bool;
-            safe fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
-                blob: &[u8],
-                string_slots: &[u32],
-                graph_module_indices: &[u32],
-            );
-            safe fn __bun_jsc_bytecode_link_encoder_set_typed_program(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
-                program: &[u8],
-                modules: &[u32],
-                replaced_strings: &[u8],
-            ) -> bool;
-            safe fn __bun_jsc_bytecode_link_encoder_set_prepared_typed_program(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
-                prepared: usize,
-                modules: &[u32],
-            ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_finish(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 module_count: usize,
             ) -> Option<crate::bytecode_order::LinkedPayload>;
-            safe fn __bun_jsc_bytecode_link_encoder_take_build_errors(
-                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
-            ) -> Vec<crate::bytecode_order::AotBuildError>;
             /// The runtime-resolvable slot for one module-info string (`EncoderStringTable::slot_for_wtf8`).
             safe fn __bun_jsc_encoder_string_table_slot(
                 table: core::ptr::NonNull<EncoderStringTable>,
@@ -1648,16 +1585,6 @@ pub mod bv2_impl {
             ) -> u32;
             /// `WTF::StringImpl::hash()` of the string with these WTF-8 contents.
             safe fn __bun_jsc_wtf_string_hash(wtf8: &[u8]) -> u32;
-            safe fn __bun_jsc_check_module_syntax(
-                path: &[u8],
-                ascii_text: &[u8],
-                is_module: bool,
-            ) -> Option<(Vec<u8>, u32)>;
-        }
-
-        #[inline]
-        pub(crate) fn check_module_syntax(path: &[u8], ascii_text: &[u8], is_module: bool) -> Option<(Vec<u8>, u32)> {
-            __bun_jsc_check_module_syntax(path, ascii_text, is_module)
         }
 
         /// `WTF::StringImpl::hash()` of a WTF-8 string, as JSC hashes the atom it becomes at runtime.
@@ -1751,14 +1678,6 @@ pub mod bv2_impl {
             }
         }
 
-        #[inline]
-        pub(crate) fn build_program_data(
-            strings: &[u8],
-            original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
-        ) -> Vec<u8> {
-            __bun_jsc_build_program_data(strings, original_position)
-        }
-
         /// Owns a `JSC::BytecodeLinkEncoder`. Lives and dies on the thread that created it (it uses that thread's bytecode VM).
         pub(crate) struct BytecodeLinkEncoderHandle {
             encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1769,7 +1688,6 @@ pub mod bv2_impl {
             pub(crate) fn new(
                 external_strings: core::ptr::NonNull<EncoderStringTable>,
                 order: &crate::bytecode_order::BytecodeOrder,
-                compile_ahead_of_time: bool,
             ) -> Self {
                 Self {
                     encoder: __bun_jsc_bytecode_link_encoder_new(
@@ -1778,7 +1696,6 @@ pub mod bv2_impl {
                         &order.known_functions,
                         &order.evaluated_modules,
                         &order.not_evaluated_modules,
-                        compile_ahead_of_time,
                     ),
                     module_count: 0,
                 }
@@ -1843,32 +1760,8 @@ pub mod bv2_impl {
                 self.module_count += ok as usize;
                 ok
             }
-            /// `replaced_strings`: pairs of a string of the program and what to put in its place, each a length in four bytes and the bytes.
-            pub(crate) fn set_typed_program(&mut self, program: &[u8], modules: &[u32], replaced_strings: &[u8]) -> bool {
-                __bun_jsc_bytecode_link_encoder_set_typed_program(self.encoder, program, modules, replaced_strings)
-            }
-            pub(crate) fn set_prepared_typed_program(&mut self, prepared: usize, modules: &[u32]) -> bool {
-                __bun_jsc_bytecode_link_encoder_set_prepared_typed_program(self.encoder, prepared, modules)
-            }
-            pub(crate) fn finish_linked(
-                &mut self,
-                graph: &[u8],
-                string_slots: &[u32],
-                graph_module_indices: &[u32],
-            ) -> Option<crate::bytecode_order::LinkedPayload> {
-                __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
-                    self.encoder,
-                    graph,
-                    string_slots,
-                    graph_module_indices,
-                );
-                self.finish()
-            }
             pub(crate) fn finish(&mut self) -> Option<crate::bytecode_order::LinkedPayload> {
                 __bun_jsc_bytecode_link_encoder_finish(self.encoder, self.module_count)
-            }
-            pub(crate) fn take_build_errors(&mut self) -> Vec<crate::bytecode_order::AotBuildError> {
-                __bun_jsc_bytecode_link_encoder_take_build_errors(self.encoder)
             }
         }
 
@@ -2520,9 +2413,6 @@ pub mod bv2_impl {
                     visitor.visit::<false>(entry_point, false);
                 }
             }
-            for asset in self.assets_of_compiled_program.iter().copied() {
-                visitor.visit::<false>(asset, false);
-            }
 
             if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
@@ -2636,99 +2526,8 @@ pub mod bv2_impl {
             );
         }
 
-        fn is_waiting_for_plugins_only(&self) -> bool {
-            let plugin_calls_in_flight = self.plugin_loads_in_flight + self.plugin_resolve_importers.len() as u32;
-            plugin_calls_in_flight > 0
-                && self.graph.pending_items + self.graph.deferred_pending == plugin_calls_in_flight
-                && self.early_start_awaits_importer.is_none_or(|importer| !self.plugin_resolve_importers.contains(&importer))
-        }
-
-        fn early_importer_awaiting_plugin_resolve(&self) -> Option<IndexInt> {
-            let flags = self.graph.input_files.items_flags();
-            let import_records = self.graph.ast.items_import_records();
-            let mut is_awaiting = vec![false; flags.len()];
-            for &importer in &self.plugin_resolve_importers {
-                match is_awaiting.get_mut(importer as usize) {
-                    Some(is_awaiting) => *is_awaiting = true,
-                    None => return Some(importer),
-                }
-            }
-            let mut is_visited = vec![false; flags.len()];
-            let mut stack: Vec<usize> = self.graph.entry_points.iter().map(|it| it.get() as usize).collect();
-            while let Some(index) = stack.pop().filter(|_| !self.plugin_resolve_importers.is_empty()) {
-                if std::mem::replace(&mut is_visited[index], true) || flags[index].contains(crate::Graph::InputFileFlags::MATCHES_ON_LOAD_PLUGIN) {
-                    continue;
-                }
-                if is_awaiting[index] {
-                    return Some(index as IndexInt);
-                }
-                let imported = import_records[index].as_slice().iter().map(|record| record.source_index);
-                stack.extend(imported.filter(|imported| imported.is_valid()).map(|imported| imported.get() as usize));
-            }
-            None
-        }
-
-        fn wait_for_parse_starting_analysis(&mut self, early_analysis: Option<&options::EarlyAnalysis>) {
-            unsafe extern "Rust" {
-                safe fn __bun_runtime_analyze_early_sources(
-                    early_analysis: &options::EarlyAnalysis,
-                    sources: std::sync::Arc<options::EarlySources>,
-                    printed_react_compiler_outputs: options::PrintedReactCompilerOutputs,
-                    preserve_source_paths: bool,
-                ) -> bool;
-            }
-            let Some(early_analysis) = early_analysis else {
-                return self.wait_for_parse();
-            };
-            let self_ptr: *mut Self = self;
-            let any_loop = self.r#loop().expect("event loop not initialized for waitForParse").as_ptr();
-            loop {
-                // SAFETY: as in `wait_for_parse`.
-                unsafe {
-                    bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
-                        let this = &mut *ctx.cast::<BundleV2<'static>>();
-                        this.is_done() || this.is_waiting_for_plugins_only()
-                    });
-                }
-                if !self.is_waiting_for_plugins_only() || self.graph.cancelled || self.transpiler.log().has_errors() || self.graph.entry_points.is_empty() {
-                    return self.wait_for_parse();
-                }
-                self.early_start_awaits_importer = self.early_importer_awaiting_plugin_resolve();
-                if self.early_start_awaits_importer.is_none() {
-                    break;
-                }
-            }
-            self.scan_for_secondary_paths();
-            let (message_count, error_count, warning_count) = {
-                let log = self.transpiler.log();
-                (log.msgs.len(), log.errors, log.warnings)
-            };
-            let mut gathered = None;
-            let is_collected = self.type_check_or_gather(None, Some(&mut gathered)).is_ok() && self.transpiler.log().msgs.len() == message_count;
-            let log = self.transpiler.log_mut();
-            log.msgs.truncate(message_count);
-            (log.errors, log.warnings) = (error_count, warning_count);
-            let Some((early_sources, mut candidates)) = gathered.filter(|gathered: &(options::EarlySources, Vec<_>)| is_collected && gathered.0.has_deferred_sources) else {
-                return self.wait_for_parse();
-            };
-            let early_sources = std::sync::Arc::new(early_sources);
-            let (printed, printed_react_compiler_outputs) = std::sync::mpsc::channel();
-            if !__bun_runtime_analyze_early_sources(early_analysis, std::sync::Arc::clone(&early_sources), printed_react_compiler_outputs, self.transpiler.options.preserve_source_paths) {
-                return self.wait_for_parse();
-            }
-            self.started_early_sources = Some(early_sources);
-            let count = candidates.len();
-            // SAFETY: the printing tasks read what `print_react_compiler_outputs_while` copies for them before it calls back, and use the
-            // bundle as the parse tasks that run beside them do.
-            let this: &Self = unsafe { &*self_ptr };
-            this.print_react_compiler_outputs_while(&mut candidates, count, [printed.clone(), printed], || {
-                // SAFETY: this is the bundle thread, which alone changes the bundle.
-                unsafe { (*self_ptr).wait_for_parse() }
-            });
-        }
-
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
-        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+        pub(crate) fn fail_if_no_entry_points(&self) -> Result<(), Error> {
             if !self.graph.entry_points.is_empty() {
                 return Ok(());
             }
@@ -2740,180 +2539,12 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
-        /// The compiler lowers JSX, fields and decorators by one tsconfig.json, that of the first entry point. The bundler goes by the
-        /// one around each file, over what the command line, `Bun.build()` or bunfig.toml say of JSX. Where the two say otherwise of JSX: `TypeChecked::jsx`, by index of the source: factory, fragment, source of the import, and whether it is the
-        /// classic transform. Where of fields or decorators: `TypeChecked::classes`.
-        fn other_tsconfigs(&mut self) -> (Vec<(usize, [Vec<u8>; 3], bool, bool)>, Vec<(usize, [bool; 3])>) {
-            type Settings = ([Vec<u8>; 3], crate::options::jsx::Runtime, [bool; 3]);
-            let Some(first) = self.graph.entry_points.first().map(|it| it.get() as usize) else {
-                return Default::default();
-            };
-            let (sources, loaders) = (self.graph.input_files.items_source(), self.graph.input_files.items_loader());
-            let all_jsx_pragmas = self.graph.ast.items_jsx_pragmas();
-            let (unmerged, said_nowhere) = (self.transpiler.options.jsx.clone(), crate::options::jsx::Pragma::default());
-            let resolver = &mut self.transpiler.resolver;
-            let mut by_directory: bun_collections::StringHashMap<Settings> = Default::default();
-            let mut enclosing_settings = |source: &bun_ast::Source, is_for_bundler: bool| -> Settings {
-                let directory = source.path.name().dir;
-                if let Some(known) = by_directory.get(directory).filter(|_| is_for_bundler) {
-                    return known.clone();
-                }
-                let unmerged = if is_for_bundler { &unmerged } else { &said_nowhere };
-                let around = resolver.read_dir_info_ignore_error(directory).and_then(|info| resolver.enclosing_tsconfig_json(&info));
-                let jsx = around.as_ref().map_or_else(|| unmerged.clone(), |tsconfig| tsconfig.merge_jsx(unmerged.clone()));
-                let joined = |list: &crate::options::jsx::MemberList| list.iter().collect::<Vec<_>>().join(&b"."[..]);
-                let others = around.as_ref().map_or([true, false, false], |tsconfig| {
-                    [tsconfig.use_define_for_class_fields.unwrap_or(true), tsconfig.experimental_decorators, tsconfig.emit_decorator_metadata]
-                });
-                let import_source = jsx.import_source.production.strip_suffix(b"/jsx-runtime").unwrap_or(&jsx.package_name).to_vec();
-                let settings = ([joined(&jsx.factory), joined(&jsx.fragment), import_source], jsx.runtime, others);
-                if is_for_bundler {
-                    let _ = by_directory.put(directory, settings.clone());
-                }
-                settings
-            };
-            let expected = enclosing_settings(&sources[first], false);
-            let mut classes_with_other_lowering = Vec::new();
-            let mut other_lowering = Vec::new();
-            for (index, (source, loader)) in sources.iter().zip(loaders).enumerate() {
-                let pragmas = all_jsx_pragmas.get(index).and_then(|found| found.as_deref());
-                let is_jsx = matches!(source.path.name().ext, b".tsx" | b".jsx") || pragmas.is_some();
-                if !source.path.is_file() || !(loader.is_typescript() || is_jsx && loader.is_jsx()) {
-                    continue;
-                }
-                if self.graph.input_files.items_flags()[index].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST) {
-                    continue;
-                }
-                let mut found = enclosing_settings(source, true);
-                if let Some(pragmas) = pragmas {
-                    for (setting, text) in found.0.iter_mut().zip([pragmas.factory, pragmas.fragment]) {
-                        let members: Vec<&[u8]> = strings::tokenize(text.slice(), b".").collect();
-                        if !members.is_empty() {
-                            *setting = members.join(&b"."[..]);
-                        }
-                    }
-                    if pragmas.import_source.len() > 0 {
-                        found.0[2] = pragmas.import_source.slice().to_vec();
-                    }
-                    if let Some(runtime) = crate::options::jsx::RUNTIME_MAP.get(pragmas.runtime.slice()) {
-                        found.1 = runtime.runtime;
-                    }
-                }
-                let classic = crate::options::jsx::Runtime::Classic;
-                // The factories count for the classic transform, the source of the import for the automatic one.
-                let counts = [found.1 == classic, found.1 == classic, found.1 != classic];
-                let classes = if self.laid.contains(source.path.text) { [true, false, false] } else { found.2 };
-                if loader.is_typescript() && classes != expected.2 {
-                    classes_with_other_lowering.push((index, classes));
-                }
-                if is_jsx && (pragmas.is_some() || found.1 != expected.1 || (0..3).any(|at| counts[at] && found.0[at] != expected.0[at])) {
-                    other_lowering.push((index, found.0, found.1 == classic, pragmas.is_some()));
-                }
-            }
-            (other_lowering, classes_with_other_lowering)
-        }
-
-        fn start_early_analysis(&mut self) -> Option<options::EarlyAnalysis> {
-            unsafe extern "Rust" {
-                safe fn __bun_runtime_start_early_analysis(
-                    cwd: &[u8],
-                    tsconfig: Option<&[u8]>,
-                    conditions: &[Box<[u8]>],
-                    loaders: &bun_ast::LoaderHashTable,
-                    entry_points: &[&[u8]],
-                ) -> (options::EarlyAnalysis, std::sync::mpsc::Sender<(Vec<u8>, Option<&'static [u8]>)>);
-            }
-            if self.transpiler.options.analyze.is_none() || !self.linker.options.aot || self.transpiler.options.rewrite_jest_for_tests {
-                return None;
-            }
-            let (sources, loaders) = (self.graph.input_files.items_source(), self.graph.input_files.items_loader());
-            let entry_points: Vec<&[u8]> = (self.graph.entry_points.iter().map(|it| it.get() as usize))
-                .filter(|&index| loaders[index].is_javascript_like() && sources[index].path.is_file())
-                .map(|index| sources[index].path.text)
-                .collect();
-            if entry_points.is_empty() {
-                return None;
-            }
-            let (early_analysis, early_source_paths) = __bun_runtime_start_early_analysis(
-                self.transpiler.fs().top_level_dir,
-                self.transpiler.options.tsconfig_override.as_deref(),
-                &self.transpiler.options.custom_conditions,
-                &self.transpiler.options.loaders,
-                &entry_points,
-            );
-            for entry_point in &entry_points {
-                let _ = early_source_paths.send((entry_point.to_vec(), None));
-            }
-            self.early_source_paths = Some(early_source_paths);
-            Some(early_analysis)
-        }
-
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
         /// each file is in the graph.
-        fn type_check(&mut self, early_analysis: Option<options::EarlyAnalysis>) -> Result<(), Error> {
-            self.type_check_or_gather(early_analysis, None)
-        }
-
-        fn type_check_or_gather(
-            &mut self,
-            early_analysis: Option<options::EarlyAnalysis>,
-            gathered: Option<&mut Option<(options::EarlySources, Vec<(usize, (options::jsx::Pragma, bool, bool, bool))>)>>,
-        ) -> Result<(), Error> {
-            let bundle: *mut Self = self;
-            let started_early_sources = self.started_early_sources.take();
-            if gathered.is_none() {
-                self.early_source_paths = None;
-            }
-            // The analysis is for the compiler: without it the program would be left out of the bundle and nothing put in its place.
-            let (type_check, analyze) =
-                (self.transpiler.options.type_check, self.transpiler.options.analyze.filter(|_| self.linker.options.aot));
-            let emit_declarations = self.transpiler.options.emit_declarations;
-            if type_check.is_none() && analyze.is_none() && emit_declarations.is_none() {
+        fn type_check(&self) -> Result<(), Error> {
+            let Some(type_check) = self.transpiler.options.type_check else {
                 return Ok(());
-            }
-            let is_resolved_by_host: Vec<bool> =
-                self.graph.input_files.items_flags().iter().map(|flags| flags.contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)).collect();
-            if is_resolved_by_host.contains(&true) {
-                for records in self.graph.ast.items_import_records_mut().iter_mut() {
-                    for record in records.as_mut_slice().iter_mut() {
-                        if is_resolved_by_host.get(record.source_index.get() as usize).copied().unwrap_or(false) {
-                            record.source_index = Index::INVALID;
-                        }
-                    }
-                }
-            }
-            if analyze.is_some() && gathered.is_none() {
-                for (source, records) in self.graph.input_files.items_source().iter().zip(self.graph.ast.items_import_records()) {
-                    for record in records.as_slice().iter().filter(|record| record.path.namespace == bun_js_parser::Macro::NAMESPACE) {
-                        self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support macros"));
-                    }
-                }
-                let is_bun_table = (self.transpiler.options.loaders.iter())
-                    .all(|(extension, &loader)| (loader == Loader::Napi) == (&extension[..] == b".node") && loader != Loader::SqliteEmbedded);
-                let keys = self.graph.input_files.items_unique_key_for_additional_file();
-                let loaders = self.graph.input_files.items_loader();
-                for ((source, key), &loader) in self.graph.input_files.items_source().iter().zip(keys).zip(loaders) {
-                    let is_such = matches!(loader, Loader::Napi | Loader::SqliteEmbedded) || source.path.text.ends_with(b".node");
-                    if !is_bun_table && !key.is_empty() && is_such {
-                        self.transpiler.log_mut().add_range_error_fmt(Some(source), bun_ast::Range::NONE, format_args!("--aot does not support --loader for native addons or embedded databases"));
-                    }
-                }
-                if self.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-            }
-            let mut react_compiler_candidates = if analyze.is_some() { self.react_compiler_candidates() } else { Vec::new() };
-            let (printed_react_compiler_outputs, react_compiler_outputs) = std::sync::mpsc::channel();
-            let keeps_function_sources = analyze.is_some() && self.transpiler.options.compile_function_source && !self.transpiler.options.preserve_source_paths;
-            let mut function_sources_to_print = analyze.is_some().then(|| self.function_sources_to_print());
-            let kinds_as_run = match &mut function_sources_to_print {
-                Some((as_run, lists)) => self.kinds_as_run(as_run.as_deref_mut(), lists),
-                None => Vec::new(),
             };
-            let (printed_function_texts, function_sources) = std::sync::mpsc::channel::<options::FileFunctionSources>();
-            let function_sources = (function_sources_to_print.as_ref().filter(|_| keeps_function_sources))
-                .map(|(_, lists)| options::DeferredFunctionSources { printed: function_sources, list_count: lists.len() });
-            let (other_lowering, classes_with_other_lowering) = if analyze.is_some() { self.other_tsconfigs() } else { Default::default() };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
@@ -2921,81 +2552,6 @@ pub mod bv2_impl {
             let is_loaded_by_plugin = |index: usize| {
                 flags[index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
             };
-            let redirects = self.graph.ast.items_redirect_import_record_index();
-            let after_redirects = move |imported: Index| -> Index {
-                let mut at = imported;
-                for _ in 0..ReachableFileVisitor::MAX_REDIRECTS {
-                    let Some(redirect) = get_redirect_id(redirects[at.get() as usize]) else { break };
-                    let to = import_records[at.get() as usize].as_slice()[redirect as usize].source_index;
-                    if !to.is_valid() {
-                        break;
-                    }
-                    at = to;
-                }
-                at
-            };
-            let matches_on_load_plugin = |index: usize| flags[index].contains(crate::Graph::InputFileFlags::MATCHES_ON_LOAD_PLUGIN);
-            let first_plugin_module = move |imported: Index| -> Option<usize> {
-                let mut at = imported;
-                for _ in 0..ReachableFileVisitor::MAX_REDIRECTS {
-                    if matches_on_load_plugin(at.get() as usize) {
-                        break;
-                    }
-                    let Some(redirect) = get_redirect_id(redirects[at.get() as usize]) else { break };
-                    let to = import_records[at.get() as usize].as_slice()[redirect as usize].source_index;
-                    if !to.is_valid() {
-                        break;
-                    }
-                    at = to;
-                }
-                matches_on_load_plugin(at.get() as usize).then_some(at.get() as usize)
-            };
-            let has_deferred_sources = analyze.is_some()
-                && (0..sources.len()).any(matches_on_load_plugin)
-                && !self.graph.entry_points.iter().any(|it| first_plugin_module(*it).is_some());
-            let (stable_order, early_source_count): (Vec<usize>, usize) = {
-                let mut is_visited = vec![false; sources.len()];
-                let mut order = Vec::with_capacity(sources.len());
-                let mut visit_from = |mut stack: Vec<(usize, bool)>, order: &mut Vec<usize>, skips_plugin_modules: bool| {
-                    while let Some((index, is_left)) = stack.pop() {
-                        if is_left {
-                            order.push(index);
-                            continue;
-                        }
-                        if std::mem::replace(&mut is_visited[index], true) {
-                            continue;
-                        }
-                        stack.push((index, true));
-                        let records = import_records[index].as_slice().iter().rev();
-                        stack.extend(
-                            (records.map(|record| record.source_index))
-                                .filter(|imported| imported.is_valid() && !(skips_plugin_modules && first_plugin_module(*imported).is_some()))
-                                .map(|imported| (after_redirects(imported).get() as usize, false)),
-                        );
-                    }
-                };
-                visit_from(self.graph.entry_points.iter().rev().map(|it| (after_redirects(*it).get() as usize, false)).collect(), &mut order, has_deferred_sources);
-                let early_source_count = if has_deferred_sources { order.len() } else { sources.len() };
-                for at in 0..if has_deferred_sources { early_source_count } else { 0 } {
-                    let records = import_records[order[at]].as_slice().iter().rev();
-                    let imported = records.map(|record| record.source_index).filter(|imported| imported.is_valid());
-                    visit_from(imported.map(|imported| (after_redirects(imported).get() as usize, false)).collect(), &mut order, false);
-                }
-                let mut unreached: Vec<usize> = (0..sources.len()).filter(|&index| !is_visited[index]).collect();
-                unreached.sort_by(|&a, &b| (sources[a].path.namespace, sources[a].path.text).cmp(&(sources[b].path.namespace, sources[b].path.text)));
-                order.extend(unreached);
-                (order, early_source_count)
-            };
-            let mut is_early = vec![false; sources.len()];
-            for &index in &stable_order[..early_source_count] {
-                is_early[index] = true;
-            }
-            let is_early = &is_early;
-            let mut stable_position = vec![0usize; sources.len()];
-            for (position, &index) in stable_order.iter().enumerate() {
-                stable_position[index] = position;
-            }
-            react_compiler_candidates.sort_by_key(|candidate| stable_position[candidate.0]);
             // What cannot be named stands for what it imports: a page, and what only a plugin can
             // read, like `App.svelte`. What a plugin makes of that imports the plugin's own runtime,
             // which is not of the project.
@@ -3004,1144 +2560,52 @@ pub mod bv2_impl {
             // A page that a server imports is in the graph like one that is an entry point.
             let pages = (0..sources.len()).filter(|&index| loaders[index] == Loader::Html);
             let entry_points = self.graph.entry_points.iter();
-            let all_pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
+            let mut pending: Vec<usize> = (entry_points.map(|it| it.get() as usize))
                 .chain(pages)
                 .collect();
-            let mut early_named_count = 0;
-            let mut deferred_pending: Vec<usize> = all_pending.iter().copied().filter(|&index| !is_early[index]).collect();
-            for only_early in [true, false] {
-                let mut pending: Vec<usize> = match only_early {
-                    true => all_pending.iter().copied().filter(|&index| is_early[index]).collect(),
-                    false => std::mem::take(&mut deferred_pending),
-                };
-                pending.reverse();
-                while let Some(index) = pending.pop() {
-                    if std::mem::replace(&mut is_named[index], true) {
-                        continue;
-                    }
-                    named.push(index);
-                    if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
-                        let imported = || {
-                            (import_records[index].as_slice().iter().map(|record| record.source_index))
-                                .filter(|imported| imported.is_valid())
-                                .map(|imported| imported.get() as usize)
-                                .filter(|&imported| !sources[imported].path.is_node_module())
-                        };
-                        pending.extend(imported().rev().filter(|&imported| !only_early || is_early[imported]));
-                        if only_early {
-                            deferred_pending.extend(imported().filter(|&imported| !is_early[imported]));
-                        }
-                    }
+            pending.reverse();
+            while let Some(index) = pending.pop() {
+                if std::mem::replace(&mut is_named[index], true) {
+                    continue;
                 }
-                if only_early {
-                    early_named_count = named.len();
+                named.push(index);
+                if loaders[index] == Loader::Html || is_loaded_by_plugin(index) {
+                    let records = import_records[index].as_slice().iter().rev();
+                    pending.extend(
+                        (records.map(|record| record.source_index))
+                            .filter(|imported| imported.is_valid())
+                            .map(|imported| imported.get() as usize)
+                            .filter(|&imported| !sources[imported].path.is_node_module()),
+                    );
                 }
             }
-            let is_entry_point_source = |index: &usize| loaders[*index].is_javascript_like() && sources[*index].path.is_file();
-            let early_entry_points: Vec<Box<[u8]>> = if analyze.is_some() {
-                named[..early_named_count].iter().filter(|index| is_entry_point_source(index)).map(|&index| sources[index].path.text.into()).collect()
-            } else {
-                Vec::new()
-            };
-            let mut entry_points = (named[if analyze.is_some() { early_named_count } else { 0 }..].iter().copied())
-                .filter(|index| is_entry_point_source(index))
-                .map(|index| sources[index].path.text);
-            let mut own_entry_points = (self.graph.entry_points.iter().map(|it| it.get() as usize))
-                .filter(|&index| loaders[index].is_javascript_like() && sources[index].path.is_file())
-                .map(|index| sources[index].path.text);
-            // What is compiled includes the modules that only a plugin provides, which are not files. Each gets a path to go by.
-            // What is loaded as a constant (data, a text, the path a file ends up at) is compiled as the JSON text of that constant.
-            let parts = self.graph.ast.items_parts();
-            let json_texts: Vec<Option<Box<[u8]>>> = (sources.iter().zip(loaders))
-                .map(|(source, loader)| {
-                    use bun_ast::ExprData;
-                    let is_json_by_name = *loader == Loader::Json && source.path.text.ends_with(b".json");
-                    if analyze.is_none() || loader.is_javascript_like() || is_json_by_name || source.path.text.ends_with(b".module.css") {
-                        return None;
-                    }
-                    let stmt = *parts[source.index.get() as usize].as_slice().get(1)?.stmts.first()?;
-                    let bun_ast::StmtData::SLazyExport(root) = stmt.data else { return None };
-                    let root = match *root {
-                        // In an executable: `require` of the text, which is embedded.
-                        ExprData::ECall(_) if *loader == Loader::Text => {
-                            bun_ast::Expr::init(bun_ast::E::String { data: source.contents().into(), ..Default::default() }, stmt.loc).data
-                        }
-                        root @ (ExprData::EString(_)
-                        | ExprData::EObject(_)
-                        | ExprData::EArray(_)
-                        | ExprData::EObjectJSON(_)
-                        | ExprData::EArrayJSON(_)
-                        | ExprData::ENumber(_)
-                        | ExprData::EBoolean(_)
-                        | ExprData::ENull(_)) => root,
-                        _ => return None,
-                    };
-                    let mut work = vec![root];
-                    while let Some(data) = work.pop() {
-                        match data {
-                            ExprData::EObject(object) => {
-                                for property in object.properties.slice() {
-                                    let (bun_ast::G::PropertyKind::Normal, Some(bun_ast::Expr { data: ExprData::EString(_), .. }), Some(value)) = (property.kind, property.key, property.value) else {
-                                        return None;
-                                    };
-                                    work.push(value.data);
-                                }
-                            }
-                            ExprData::EArray(array) => work.extend(array.items.slice().iter().map(|item| item.data)),
-                            ExprData::EString(string) if string.toml_datetime.is_some() => return None,
-                            ExprData::ENumber(number) if !number.value().is_finite() => return None,
-                            ExprData::EString(_)
-                            | ExprData::EObjectJSON(_)
-                            | ExprData::EArrayJSON(_)
-                            | ExprData::ENumber(_)
-                            | ExprData::EBoolean(_)
-                            | ExprData::ENull(_) => {}
-                            _ => return None,
-                        }
-                    }
-                    let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                    let options = bun_js_printer::PrintJsonOptions { minify_whitespace: true, ..Default::default() };
-                    bun_js_printer::print_json(&mut printer, bun_ast::Expr { data: root, loc: stmt.loc }, source, options).ok()?;
-                    Some(printer.ctx.written_without_trailing_zero().into())
+            let mut entry_points = (named.iter().copied())
+                .filter(|&index| {
+                    loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
-                .collect();
-            let json_texts = &json_texts;
-            let virtual_paths: Vec<Option<Box<[u8]>>> = (sources.iter().zip(loaders).zip(json_texts))
-                .map(|((source, loader), json_text)| {
-                    if analyze.is_none() || source.index.is_runtime() {
-                        return None;
-                    }
-                    // One file may be loaded in two ways.
-                    let extension = json_text.as_ref().map(|_| format!(".{loader:?}.json").to_ascii_lowercase()).unwrap_or_default();
-                    if source.path.is_file() {
-                        return json_text.is_some().then(|| [source.path.text, extension.as_bytes()].concat().into_boxed_slice());
-                    }
-                    Some([b"/$virtual/", source.path.namespace, b"/", source.path.text, extension.as_bytes()].concat().into_boxed_slice())
-                })
-                .collect();
-            let virtual_paths = &virtual_paths;
-            let path_of = move |source: &'_ bun_ast::Source| -> Option<&[u8]> {
-                if source.path.is_file() && json_texts[source.index.get() as usize].is_none() {
-                    // SAFETY-free: the text lives as long as the graph.
-                    return Some(source.path.text);
-                }
-                virtual_paths.get(source.index.get() as usize)?.as_deref()
-            };
+                .map(|index| sources[index].path.text);
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
-            let checked_source = move |&index: &usize| {
-                let (source, loader, flags) = (&sources[index], loaders[index], flags[index]);
-                let is_checked = (loader.is_javascript_like() || loader == Loader::Json || json_texts[index].is_some())
-                    && !flags.contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)
-                    // What is compiled is what runs.
-                    && !(analyze.is_none()
-                        && flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
-                        && bun_sys::exists(source.path.text));
-                let text = json_texts[index].as_deref().unwrap_or_else(|| source.contents());
-                Some((path_of(source).filter(|_| is_checked)?, text, loader))
-            };
-            let (early_order, deferred_order) = stable_order.split_at(if analyze.is_some() { early_source_count } else { 0 });
-            let mut sources = deferred_order.iter().filter_map(checked_source);
-            let all_sources = self.graph.input_files.items_source();
-            /// As it is written. An import that is not written, like that of the JSX runtime, has no range.
-            fn specifier_of<'a>(source: &'a bun_ast::Source, record: &'a bun_ast::ImportRecord) -> Option<&'a [u8]> {
-                if !record.original_path.is_empty() {
-                    return Some(record.original_path);
-                }
-                // The range is that of the string literal.
-                let (start, len) = (record.range.loc.start, record.range.len);
-                let (start, len) = (usize::try_from(start).ok()?, usize::try_from(len).ok()?);
-                Some(match source.contents().get(start..start + len)? {
-                    [b'"' | b'\'' | b'`', spec @ .., b'"' | b'\'' | b'`'] => spec,
-                    spec => spec,
+            let mut sources = (sources.iter().zip(loaders).zip(flags))
+                .filter(|((source, loader), flags)| {
+                    loader.is_javascript_like_or_json()
+                        && source.path.is_file()
+                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                            && bun_sys::exists(source.path.text))
                 })
-            }
-            let mut require_resolutions: bun_collections::HashMap<(u32, u32), Box<[u8]>> = Default::default();
-            if analyze.is_some() {
-                let is_required = |record: &bun_ast::ImportRecord| matches!(record.kind, ImportKind::Require | ImportKind::RequireResolve);
-                for ((source, records), loader) in all_sources.iter().zip(import_records).zip(loaders) {
-                    if !loader.is_javascript_like() || records.as_slice().len() < 2 {
-                        continue;
-                    }
-                    let mut stands_for: [bun_collections::HashMap<&[u8], u32>; 2] = Default::default();
-                    for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
-                        let Some(specifier) = specifier_of(source, record) else { continue };
-                        let to = after_redirects(record.source_index).get();
-                        if *stands_for[is_required(record) as usize].entry(specifier).or_insert_with(|| to) != to {
-                            self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support an import specifier that resolves to two different files within one module"));
-                        }
-                    }
-                    for (at, record) in records.as_slice().iter().enumerate().filter(|(_, record)| record.source_index.is_valid() && is_required(record)) {
-                        let Some(specifier) = specifier_of(source, record) else { continue };
-                        if stands_for[0].get(&specifier).is_some_and(|&imported| imported != after_redirects(record.source_index).get()) {
-                            require_resolutions.insert((source.index.get(), at as u32), [b"\0require ".as_slice(), specifier].concat().into_boxed_slice());
-                        }
-                    }
-                }
-                if self.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-            }
-            let require_resolutions = &require_resolutions;
-            let is_deferred = |index: usize| analyze.is_none() || !is_early[index];
-            let early_candidate_count = react_compiler_candidates.iter().filter(|candidate| !is_deferred(candidate.0)).count();
-            let (printed_early_react_compiler_outputs, early_react_compiler_outputs) = std::sync::mpsc::channel();
-            let early_sources = analyze.is_some().then(|| {
-                let mut constant_imports: Vec<[Box<[u8]>; 3]> = Vec::new();
-                let mut deferred_imports: Vec<[Box<[u8]>; 2]> = Vec::new();
-                let mut deferred_paths: Vec<Box<[u8]>> = Vec::new();
-                let mut is_deferred_path = vec![false; all_sources.len()];
-                let is_constant: Vec<bool> = virtual_paths.iter().map(|path| path.as_deref().is_some_and(|path| path.ends_with(b".text.json") || path.ends_with(b".file.json"))).collect();
-                for &index in early_order {
-                    let source = &all_sources[index];
-                    let Some(path) = path_of(source) else { continue };
-                    for (at, record) in import_records[index].as_slice().iter().enumerate().filter(|(_, record)| record.source_index.is_valid()) {
-                        let plugin_module = first_plugin_module(record.source_index).filter(|_| has_deferred_sources);
-                        let imported = after_redirects(record.source_index).get() as usize;
-                        if plugin_module.is_none() && !is_constant[imported] {
-                            continue;
-                        }
-                        let specifier = match require_resolutions.get(&(source.index.get(), at as u32)) {
-                            Some(marked) => &**marked,
-                            None => match specifier_of(source, record) {
-                                Some(specifier) => specifier,
-                                None => continue,
-                            },
-                        };
-                        if let Some(plugin_module) = plugin_module {
-                            deferred_imports.push([path.into(), specifier.into()]);
-                            if all_sources[plugin_module].path.is_file() && !std::mem::replace(&mut is_deferred_path[plugin_module], true) {
-                                deferred_paths.push(all_sources[plugin_module].path.text.into());
-                            }
-                        } else if let Some(to) = path_of(&all_sources[imported]) {
-                            constant_imports.push([path.into(), specifier.into(), to.into()]);
-                        }
-                    }
-                }
-                options::EarlySources {
-                    has_deferred_sources,
-                    entry_points: early_entry_points,
-                    own_entry_points: own_entry_points.by_ref().map(Box::from).collect(),
-                    sources: (early_order.iter().filter_map(|index| Some((checked_source(index)?, json_texts[*index].is_some()))))
-                        .map(|((path, text, loader), is_json_text)| {
-                            if is_json_text {
-                                return options::EarlySource { path: path.into(), text: std::borrow::Cow::Owned(text.to_vec()), loader };
-                            }
-                            // SAFETY: the graph keeps the contents of a source in place and unchanged until the analysis, which alone
-                            // reads them, has returned or has been dropped.
-                            let text: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(text) };
-                            options::EarlySource { path: path.into(), text: std::borrow::Cow::Borrowed(text), loader }
-                        })
-                        .collect(),
-                    constant_imports,
-                    deferred_imports,
-                    deferred_paths,
-                    kinds: kinds_as_run.iter().filter(|kind| !is_deferred(kind.0)).filter_map(|&(index, is_commonjs)| Some((path_of(&all_sources[index])?.into(), is_commonjs))).collect(),
-                    jsx: (other_lowering.iter().filter(|it| !is_deferred(it.0)))
-                        .map(|(index, [factory, fragment, import_source], is_classic, overrides_pragmas)| {
-                            let of_file = options::OwnedFileJsxOptions {
-                                is_classic: *is_classic,
-                                factory: (&**factory).into(),
-                                fragment: (&**fragment).into(),
-                                import_source: (&**import_source).into(),
-                                overrides_pragmas: *overrides_pragmas,
-                            };
-                            (all_sources[*index].path.text.into(), of_file)
-                        })
-                        .collect(),
-                    classes: (classes_with_other_lowering.iter().filter(|it| !is_deferred(it.0)))
-                        .map(|&(index, [use_define_for_class_fields, experimental_decorators, emit_decorator_metadata])| {
-                            (all_sources[index].path.text.into(), options::FileClassOptions { use_define_for_class_fields, experimental_decorators, emit_decorator_metadata })
-                        })
-                        .collect(),
-                    react_compiler_paths: react_compiler_candidates[..early_candidate_count].iter().map(|candidate| all_sources[candidate.0].path.text.into()).collect(),
-                }
-            });
-            if let Some(gathered) = gathered {
-                react_compiler_candidates.truncate(early_candidate_count);
-                *gathered = early_sources.map(|early_sources| (early_sources, react_compiler_candidates));
-                return Ok(());
-            }
-            let is_early_start_confirmed = match (started_early_sources, &early_sources) {
-                (Some(started), Some(early_sources)) => *started == *early_sources,
-                _ => false,
-            };
-            let early_sources = early_sources.filter(|_| !is_early_start_confirmed).map(|early_sources| (std::sync::Arc::new(early_sources), early_react_compiler_outputs));
-            let printed_candidates_from = if is_early_start_confirmed { early_candidate_count } else { 0 };
-            // Here, because what is compiled has no import records any more when the files of the executable are gathered.
-            if self.transpiler.options.preserve_source_paths {
-                let mut resolutions: Vec<u8> = Vec::new();
-                let program_paths: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = all_sources.iter().filter(|source| source.path.is_file()).map(|source| source.path.text).collect();
-                let mut resolved_as_opposite_kind: bun_collections::hashbrown::HashSet<(&[u8], &[u8], bool), bun_wyhash::BuildHasher> = Default::default();
-                for (source, records) in all_sources.iter().zip(import_records).filter(|(source, _)| source.path.is_file()) {
-                    let folder = &source.path.text[..bun_core::strings::last_index_of_char(source.path.text, bun_paths::SEP).unwrap_or(0)];
-                    for record in records.as_slice().iter().filter(|record| record.source_index.is_valid()) {
-                        let Some(specifier) = specifier_of(source, record) else { continue };
-                        let to = &all_sources[after_redirects(record.source_index).get() as usize];
-                        if !to.path.is_file() {
-                            continue;
-                        }
-                        let how: &[u8] = if matches!(record.kind, ImportKind::Require | ImportKind::RequireResolve) { b"r" } else { b"i" };
-                        for part in [folder, specifier, how, to.path.text] {
-                            resolutions.extend_from_slice(part);
-                            resolutions.push(0);
-                        }
-                        resolutions.push(b'\n');
-                        // The name of a package, the other way too: an application imports its driver, and the library that computes the name requires it.
-                        let is_required = how == b"r";
-                        if matches!(specifier.first(), Some(b'.' | b'/') | None) || bun_paths::is_absolute(specifier) || !resolved_as_opposite_kind.insert((folder, specifier, !is_required)) {
-                            continue;
-                        }
-                        let opposite_kind = if is_required { ImportKind::Stmt } else { ImportKind::Require };
-                        if let Ok(found) = self.transpiler.resolver.resolve(folder, specifier, opposite_kind)
-                            && let Some(path) = found.path_const()
-                            && let Some(&path) = program_paths.get(path.text)
-                        {
-                            let how: &[u8] = if is_required { b"i" } else { b"r" };
-                            for part in [folder, specifier, how, path] {
-                                resolutions.extend_from_slice(part);
-                                resolutions.push(0);
-                            }
-                            resolutions.push(b'\n');
-                        }
-                    }
-                }
-                self.graph.program_resolutions = super::index_resolutions(&resolutions);
-            } else if self.transpiler.options.compiles_ahead_of_time() && self.graph.entry_points.as_slice().len() > 1 {
-                let entry_point_paths = || self.graph.entry_points.as_slice().iter().map(|index| &all_sources[index.get() as usize]).filter(|source| source.path.is_file()).map(|source| source.path.text);
-                let entry_points: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = entry_point_paths().collect();
-                let application_dir = entry_point_paths().next().map_or(&b""[..], |path| &path[..bun_core::strings::last_index_of_char(path, bun_paths::SEP).unwrap_or(0)]);
-                let mut asked: std::collections::BTreeSet<(&[u8], Box<[u8]>)> = Default::default();
-                let installed = [bun_paths::SEP_STR.as_bytes(), b"node_modules", bun_paths::SEP_STR.as_bytes()].concat();
-                for &path in &entry_points {
-                    let Some(at) = bun_core::strings::last_index_of(path, &installed) else { continue };
-                    let inside = &path[at + installed.len()..];
-                    let mut slashes = inside.iter().enumerate().filter(|(_, c)| **c == bun_paths::SEP).map(|(at, _)| at);
-                    let Some(end) = (if inside.first() == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { continue };
-                    asked.insert((&path[..at], super::held_name(b"", &inside[..end])));
-                    asked.insert((application_dir, super::held_name(b"", &inside[..end])));
-                }
-                let mut resolutions: Vec<u8> = Vec::new();
-                for (folder, package) in &asked {
-                    let (folder, package) = (*folder, &package[..]);
-                    for (kind, how) in [(ImportKind::Require, &b"r"[..]), (ImportKind::Stmt, &b"i"[..])] {
-                        if let Ok(found) = self.transpiler.resolver.resolve(folder, package, kind)
-                            && let Some(path) = found.path_const()
-                            && let Some(&path) = entry_points.get(path.text)
-                        {
-                            for part in [folder, package, how, path] {
-                                resolutions.extend_from_slice(part);
-                                resolutions.push(0);
-                            }
-                            resolutions.push(b'\n');
-                        }
-                    }
-                }
-                self.graph.program_resolutions = super::index_resolutions(&resolutions);
-            }
-            let mut imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
-                records.as_slice().iter().enumerate().filter_map(move |(at, record)| {
-                    if !record.source_index.is_valid() {
-                        return None;
-                    }
-                    let to = &all_sources[after_redirects(record.source_index).get() as usize];
-                    let specifier = match require_resolutions.get(&(source.index.get(), at as u32)) {
-                        Some(marked) => &**marked,
-                        None => specifier_of(source, record)?,
-                    };
-                    Some((path_of(source)?, specifier, path_of(to)?))
-                })
-            });
-            let side_effects = self.graph.input_files.items_side_effects();
-            let drops_side_effect_free_imports = !self.transpiler.options.preserve_source_paths && !self.transpiler.options.ignore_dce_annotations;
-            let (named_imports_of_files, symbols_of_files) = (self.graph.ast.items_named_imports(), self.graph.ast.items_symbols());
-            let mut dropped_imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
-                use bun_ast::import_record::Flags;
-                let imports_only_unused_names = |record: &bun_ast::ImportRecord| {
-                    let Some(at) = records.as_slice().iter().position(|other| std::ptr::eq(other, record)) else { return false };
-                    let (names, symbols) = (&named_imports_of_files[source.index.get() as usize], &symbols_of_files[source.index.get() as usize]);
-                    let mut brought = names.keys().iter().zip(names.values()).filter(|(_, import)| import.import_record_index as usize == at).peekable();
-                    brought.peek().is_some()
-                        && brought.all(|(name, import)| !import.is_exported && symbols.get(name.inner_index() as usize).is_some_and(|symbol| symbol.use_count_estimate == 0))
-                };
-                let is_dropped = |record: &&bun_ast::ImportRecord| {
-                    record.flags.intersects(Flags::IS_UNUSED | Flags::IS_BARREL_DEFERRED)
-                        || (drops_side_effect_free_imports
-                            && record.kind == ImportKind::Stmt
-                            && (record.flags.contains(Flags::WAS_ORIGINALLY_BARE_IMPORT) || imports_only_unused_names(*record))
-                            && record.source_index.is_valid()
-                            && {
-                                let behind = after_redirects(record.source_index).get() as usize;
-                                get_redirect_id(redirects[behind]).is_none() && side_effects[behind] != bun_ast::SideEffects::HasSideEffects
-                            })
-                };
-                let records = records.as_slice();
-                let Some(path) = path_of(source).filter(|_| records.iter().any(|record| is_dropped(&record))) else {
-                    return Vec::new();
-                };
-                // `import type { A } from "a"; import { b } from "a"`: the module is imported.
-                let kept: Vec<&[u8]> = (records.iter().filter(|record| !is_dropped(record))).filter_map(|record| specifier_of(source, record)).collect();
-                (records.iter().filter(is_dropped))
-                    .filter_map(|record| specifier_of(source, record))
-                    .filter(|specifier| !kept.contains(specifier))
-                    .map(|specifier| (path, specifier))
-                    .collect()
-            });
-            let respects_package_side_effects = !self.transpiler.options.ignore_dce_annotations;
-            let mut side_effect_free_files = (all_sources.iter().zip(side_effects))
-                .filter(|(_, verdict)| respects_package_side_effects && **verdict != bun_ast::SideEffects::HasSideEffects)
-                .filter_map(|(source, _)| path_of(source));
-            let mut stays_lifted: Vec<bool> = (self.graph.ast.items_flags().iter().zip(self.graph.ast.items_exports_kind()))
-                .map(|(flags, kind)| {
-                    analyze.is_some()
-                        && !self.transpiler.options.preserve_source_paths
-                        && flags.contains(crate::bundled_ast::Flags::COMMONJS_LIFTED_TO_ESM)
-                        && matches!(kind, bun_ast::ExportsKind::Esm | bun_ast::ExportsKind::EsmWithDynamicFallback | bun_ast::ExportsKind::EsmWithDynamicFallbackFromCjs)
-                })
-                .collect();
-            if stays_lifted.contains(&true) {
-                let (named_imports, named_exports) = (self.graph.ast.items_named_imports(), self.graph.ast.items_named_exports());
-                let (module_types, symbols) = (self.graph.ast.items_module_type(), self.graph.ast.items_symbols());
-                let export_stars = self.graph.ast.items_export_star_import_records();
-                for (id, records) in import_records.iter().enumerate() {
-                    if get_redirect_id(redirects[id]).is_some() {
-                        continue;
-                    }
-                    let records = records.as_slice();
-                    for (import_ref, import) in named_imports[id].keys().iter().zip(named_imports[id].values()) {
-                        let Some(record) = records.get(import.import_record_index as usize) else { continue };
-                        let is_default_kept = record.kind == ImportKind::Stmt
-                            && record.source_index.is_valid()
-                            && !import.alias_is_star
-                            && import.alias.is_some_and(|alias| alias.slice() == b"default")
-                            && symbols[id].get(import_ref.inner_index() as usize).is_some_and(|symbol| {
-                                symbol.import_item_status != bun_ast::ImportItemStatus::Generated && (import.is_exported || symbol.import_used_as_value())
-                            });
-                        if is_default_kept {
-                            stays_lifted[after_redirects(record.source_index).get() as usize] = false;
-                        }
-                    }
-                    for record in records.iter().filter(|record| record.source_index.is_valid()) {
-                        let imported = after_redirects(record.source_index).get() as usize;
-                        let needs_wrapper = match record.kind {
-                            ImportKind::Require | ImportKind::Dynamic => true,
-                            ImportKind::Stmt => {
-                                record.flags.contains(bun_ast::import_record::Flags::CONTAINS_DEFAULT_ALIAS)
-                                    && crate::LinkerContext::lifted_default_import_needs_wrapper(module_types[id], &named_exports[imported])
-                            }
-                            _ => false,
-                        };
-                        if needs_wrapper {
-                            stays_lifted[imported] = false;
-                        }
-                    }
-                    if !export_stars[id].is_empty() {
-                        stays_lifted[id] = false;
-                    }
-                }
-            }
-            let mut lifted_commonjs = (all_sources.iter().zip(&stays_lifted)).filter(|(_, stays)| **stays).filter_map(|(source, _)| path_of(source));
-            let mut kinds = kinds_as_run.iter().filter(|kind| is_deferred(kind.0)).filter_map(|&(index, is_commonjs)| Some((path_of(&all_sources[index])?, is_commonjs)));
-            let mut statements = (all_sources.iter().zip(self.graph.ast.items_parts())).flat_map(|(source, parts)| {
-                let path = path_of(source);
-                parts.as_slice().iter().flat_map(move |part| {
-                    let verdict = part.can_be_removed_if_unused;
-                    part.stmts.slice().iter().filter_map(move |stmt| Some((path?, u32::try_from(stmt.loc.start).ok()?, verdict)))
-                })
-            });
-            let mut texts = (all_sources.iter().zip(loaders))
-                .filter(|(source, loader)| **loader == Loader::Text && source.path.is_file() && json_texts[source.index.get() as usize].is_none())
-                .map(|(source, _)| (source.path.text, source.contents()));
-            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
-            let assets = (all_sources.iter().zip(unique_keys))
-                .zip(loaders)
-                .filter(|((source, key), loader)| !key.is_empty() && **loader != Loader::Text && json_texts[source.index.get() as usize].is_none())
-                .filter_map(|((source, key), _)| Some((path_of(source)?, &key[..])));
-            let manifests: Vec<(&[u8], Vec<u8>)> = (self.graph.html_imports.server_source_indices.slice().iter().enumerate())
-                .map(|(index, &source)| {
-                    let key = crate::chunk::UniqueKey { prefix: self.unique_key, kind: crate::chunk::QueryKind::HtmlImport, index: index as u32 };
-                    (all_sources[source as usize].path.text, format!("{key}").into_bytes())
-                })
-                .collect();
-            let mut assets = assets.chain(manifests.iter().map(|(path, key)| (*path, &key[..])));
-            let has_late_strings = !manifests.is_empty() || unique_keys.iter().any(|key| !key.is_empty());
-            let flags = self.transpiler.options.bundler_feature_flags.as_deref();
-            let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
-            let is_all_code_compiled = (self.graph.entry_points.iter().map(|it| it.get() as usize))
-                .all(|index| !loaders[index].is_javascript_like() || (all_sources[index].path.is_file() && !is_resolved_by_host[index]));
-            let mut release_asts = move || {
-                if is_all_code_compiled {
-                    // SAFETY: the analysis calls it when it has exhausted the iterators below, which alone read the syntax trees. This
-                    // thread waits for the analysis, and the tasks that print beside it parse anew.
-                    unsafe { (*bundle).release_scan_arenas() };
-                }
-            };
-            let function_source_printing: std::sync::Arc<bun_threading::thread_pool::DeferredStart> = Default::default();
+                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
-                release_asts: &mut release_asts,
-                defines: &self.transpiler.options.define.user_inputs,
-                features: &mut features,
                 cwd: self.transpiler.fs().top_level_dir,
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
-                own_entry_points: &mut own_entry_points,
                 sources: &mut sources,
-                imports: &mut imports,
-                dropped_imports: &mut dropped_imports,
-                side_effect_free_files: &mut side_effect_free_files,
-                lifted_commonjs: &mut lifted_commonjs,
-                kinds: &mut kinds,
-                statements: &mut statements,
-                texts: &mut texts,
-                assets: &mut assets,
-                has_late_strings,
-                has_native_addon: loaders.contains(&Loader::Napi),
-                rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
-                ignore_dce_annotations: self.transpiler.options.ignore_dce_annotations,
-                jsx_side_effects: self.transpiler.options.jsx.side_effects,
-                minify_syntax: self.transpiler.options.minify_syntax,
-                minifies_identifiers: self.transpiler.options.minify_identifiers && !self.transpiler.options.keep_names,
-                preserve_source_paths: self.transpiler.options.preserve_source_paths,
-                react_compiler_outputs: options::DeferredReactCompilerOutputs {
-                    printed: react_compiler_outputs,
-                    paths: react_compiler_candidates[early_candidate_count..].iter().map(|candidate| all_sources[candidate.0].path.text).collect(),
-                },
-                jsx: &mut other_lowering.iter().filter(|it| is_deferred(it.0)).map(|(index, [factory, fragment, import_source], is_classic, overrides_pragmas)| {
-                    (all_sources[*index].path.text, options::FileJsxOptions { is_classic: *is_classic, factory, fragment, import_source, overrides_pragmas: *overrides_pragmas })
-                }),
-                classes: &mut classes_with_other_lowering.iter().filter(|it| is_deferred(it.0)).map(|&(index, [use_define_for_class_fields, experimental_decorators, emit_decorator_metadata])| {
-                    (all_sources[index].path.text, options::FileClassOptions { use_define_for_class_fields, experimental_decorators, emit_decorator_metadata })
-                }),
-                function_sources,
-                function_source_printing: std::sync::Arc::clone(&function_source_printing),
-                explain: &self.transpiler.options.aot_explain,
-                explain_to_log: self.transpiler.options.aot_explain_to_log,
-                rules: &self.transpiler.options.aot_rules,
-                logs_type_errors: self.transpiler.options.aot_logs_type_errors,
-                early_analysis,
-                early_sources,
             };
-            // The analysis starts with the check that `type_check` is, which so runs once.
-            if let Some(analyze) = analyze {
-                let mut facts = None;
-                self.print_react_compiler_outputs_while(&mut react_compiler_candidates[printed_candidates_from..], early_candidate_count - printed_candidates_from, [printed_early_react_compiler_outputs, printed_react_compiler_outputs], || {
-                    facts = match &mut function_sources_to_print {
-                        Some((as_run, lists)) => {
-                            let mut facts = None;
-                            let syntax_errors = self.print_function_sources_while(as_run.as_deref(), lists, keeps_function_sources.then_some(printed_function_texts), &function_source_printing, || {
-                                facts = analyze(checked, self.transpiler.log_mut())
-                            });
-                            self.add_syntax_errors(syntax_errors);
-                            facts
-                        }
-                        None => analyze(checked, self.transpiler.log_mut()),
-                    };
-                });
-                let is_compiled = facts.as_ref().is_some_and(|facts| facts.typed.is_some());
-                if !is_compiled && !self.transpiler.log().has_errors() {
-                    self.transpiler.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("nothing can be compiled ahead of time: no entry point is JavaScript or TypeScript"),
-                    );
-                }
-                self.linker.facts = facts;
-                if is_compiled {
-                    self.empty_compiled_entry_points()?;
-                    // What is left are entry points that are no code. A helper of the runtime that they share would be a chunk of nothing else.
-                    self.transpiler.options.code_splitting = false;
-                }
-                return match self.transpiler.log().has_errors() {
-                    true => Err(crate::Error::BuildFailed),
-                    false => Ok(()),
-                };
-            }
-            if let Some(emit_declarations) = emit_declarations {
-                let declarations = emit_declarations(checked, self.transpiler.log_mut()).ok_or(crate::Error::BuildFailed)?;
-                (self.declaration_files, self.module_types) = (declarations.files, declarations.module_types);
-                return Ok(());
-            }
-            if type_check.is_some_and(|type_check| type_check(checked, self.transpiler.log_mut())) {
+            if type_check(checked, self.transpiler.log_mut()) {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)
-        }
-
-        fn react_compiler_candidates(&mut self) -> Vec<(usize, (options::jsx::Pragma, bool, bool, bool))> {
-            let is_react_compiler_enabled = self.transpiler.options.react_compiler.is_enabled();
-            let named_imports = self.graph.ast.items_named_imports();
-            let has_decorator = |index: usize| {
-                named_imports[index].values().iter().any(|import| import.alias.is_some_and(|alias| matches!(alias.slice(), b"__legacyDecorateClassTS" | b"__decoratorStart" | b"__privateAdd")))
-            };
-            let import_records = self.graph.ast.items_import_records();
-            let has_memo_cache = |index: usize| {
-                import_records[index].as_slice().iter().any(|record| {
-                    let written = if record.original_path.is_empty() { record.path.text } else { record.original_path };
-                    written == b"react/compiler-runtime"
-                })
-            };
-            let candidates: Vec<usize> = (self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()).enumerate())
-                .filter(|(index, (source, loader))| {
-                    source.path.is_file()
-                        && (is_react_compiler_enabled && loader.is_jsx() && !source.path.is_node_module() && has_memo_cache(*index) || loader.is_javascript_like() && has_decorator(*index))
-                })
-                .map(|(index, _)| index)
-                .collect();
-            if candidates.is_empty() {
-                return Vec::new();
-            }
-            let mut settings = Vec::with_capacity(candidates.len());
-            for &index in &candidates {
-                let path = self.graph.input_files.items_source()[index].path;
-                let target = self.graph.ast.items_target()[index];
-                let transpiler = self.transpiler_for_target(target);
-                let own_log = transpiler.log;
-                let mut log = bun_ast::Log::init();
-                transpiler.set_log(&raw mut log);
-                // As the resolver says it for the parse of the bundle.
-                let enclosing_tsconfig = (transpiler.resolver.read_dir_info(path.name().dir).ok().flatten())
-                    .and_then(|dir| transpiler.resolver.enclosing_tsconfig_json(&dir));
-                let jsx = transpiler.options.jsx.clone();
-                let mut jsx = match &enclosing_tsconfig {
-                    Some(tsconfig) => tsconfig.merge_jsx(jsx),
-                    None => jsx,
-                };
-                jsx.development = transpiler.options.forced_jsx_development();
-                settings.push((
-                    jsx,
-                    enclosing_tsconfig.as_ref().is_some_and(|tsconfig| tsconfig.emit_decorator_metadata),
-                    enclosing_tsconfig.as_ref().is_some_and(|tsconfig| tsconfig.experimental_decorators),
-                    enclosing_tsconfig.as_ref().and_then(|tsconfig| tsconfig.use_define_for_class_fields).unwrap_or(true),
-                ));
-                transpiler.set_log(own_log);
-            }
-            candidates.into_iter().zip(settings).collect()
-        }
-
-        fn print_react_compiler_output(
-            &self,
-            mut source: bun_ast::Source,
-            loader: Loader,
-            target: Target,
-            (jsx, emit_decorator_metadata, experimental_decorators, use_define_for_class_fields): &(options::jsx::Pragma, bool, bool, bool),
-        ) -> Option<Box<[u8]>> {
-            let mut printed: Option<Box<[u8]>> = None;
-            // It is printed by itself: its symbols are in the one list there is then.
-            source.index = bun_ast::Index(0);
-            let worker = crate::Worker::get(self);
-            {
-                let arena = ThreadLocalArena::new();
-                let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-                let _ast_scope = ast_memory_allocator.enter();
-                // SAFETY: `arena` outlives the parse and the print, and the transpiler gets its own back before it is dropped.
-                let arena_ref: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-                let transpiler = worker.transpiler_for_target(target);
-                let (own_arena, own_log) = (transpiler.arena, transpiler.log);
-                // What there is to say about the file has been said when it was parsed for the bundle.
-                let mut log = bun_ast::Log::init();
-                transpiler.set_arena(arena_ref);
-                transpiler.set_log(&raw mut log);
-                let parsed = transpiler.parse(
-                    crate::transpiler::ParseOptions {
-                        arena: arena_ref,
-                        dirname_fd: bun_sys::Fd::INVALID,
-                        file_descriptor: None,
-                        file_fd_ptr: None,
-                        path: source.path,
-                        loader,
-                        jsx: jsx.clone(),
-                        macro_remappings: Default::default(),
-                        macro_js_ctx: Default::default(),
-                        virtual_source: Some(&source),
-                        replace_exports: Default::default(),
-                        inject_jest_globals: false,
-                        set_breakpoint_on_first_line: false,
-                        emit_decorator_metadata: *emit_decorator_metadata,
-                        experimental_decorators: *experimental_decorators,
-                        use_define_for_class_fields: *use_define_for_class_fields,
-                        remove_cjs_module_wrapper: false,
-                        dont_bundle_twice: false,
-                        allow_commonjs: false,
-                        module_type: Default::default(),
-                        runtime_transpiler_cache: None,
-                        keep_json_and_toml_as_one_statement: false,
-                        allow_bytecode_cache: false,
-                    },
-                    None,
-                );
-                let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                let is_printed = parsed.is_some_and(|parsed| transpiler.print(arena_ref, parsed, &mut printer, bun_js_printer::Format::Esm).is_ok());
-                transpiler.set_arena(own_arena);
-                transpiler.set_log(own_log);
-                let javascript = printer.ctx.written();
-                if is_printed {
-                    printed = Some(javascript.into());
-                }
-            }
-            worker.unget();
-            printed
-        }
-
-        fn print_react_compiler_outputs_while(
-            &self,
-            candidates: &mut [(usize, (options::jsx::Pragma, bool, bool, bool))],
-            early_candidate_count: usize,
-            printed: [std::sync::mpsc::Sender<(usize, Option<Box<[u8]>>)>; 2],
-            on_calling_thread: impl FnOnce(),
-        ) {
-            struct Shared<'f, 'a> {
-                bundle: &'f BundleV2<'a>,
-                early_candidate_count: usize,
-                printed: [std::sync::mpsc::Sender<(usize, Option<Box<[u8]>>)>; 2],
-            }
-            // SAFETY: while the tasks run, the bundle and the settings are only read, but for the pool's map of workers, which has its own lock, and each task works with the worker of its own thread.
-            unsafe impl Sync for Shared<'_, '_> {}
-            type Input = (Option<bun_ast::Source>, Loader, Target, (options::jsx::Pragma, bool, bool, bool));
-            let mut inputs: Vec<Input> = (candidates.iter())
-                .map(|(index, settings)| (Some(self.graph.input_files.items_source()[*index].clone()), self.graph.input_files.items_loader()[*index], self.graph.ast.items_target()[*index], settings.clone()))
-                .collect();
-            self.graph.pool().worker_pool().each_ptr_while(
-                Shared { bundle: self, early_candidate_count, printed },
-                |shared: &Shared<'_, '_>, input: *mut Input, number: usize| {
-                    // SAFETY: `each_ptr_while` hands each element of `inputs` to one task alone.
-                    let (source, loader, target, settings) = unsafe { &mut *input };
-                    let Some(source) = source.take() else { return };
-                    let printed = shared.bundle.print_react_compiler_output(source, *loader, *target, settings);
-                    let _ = match number.checked_sub(shared.early_candidate_count) {
-                        None => shared.printed[0].send((number, printed)),
-                        Some(number) => shared.printed[1].send((number, printed)),
-                    };
-                },
-                &mut inputs,
-                on_calling_thread,
-            );
-        }
-
-        fn function_sources_to_print(&mut self) -> (Option<Box<Transpiler<'a>>>, Vec<Vec<(usize, options::ModuleType)>>) {
-            use bun_options_types::schema::api;
-            let log: &'a mut bun_ast::Log = self.arena_create(bun_ast::Log::init());
-            let mut args = (*self.transpiler.options.transform_options).clone();
-            args.write = Some(false);
-            args.target = Some(api::Target::Bun);
-            let Ok(as_run) = Transpiler::init(self.transpiler.arena, &raw mut *log, args, None) else {
-                return (None, Vec::new());
-            };
-            let mut as_run = Box::new(as_run);
-            as_run.options.emit_dce_annotations = false;
-            as_run.resolver.prefer_module_field = false;
-            as_run.configure_linker();
-            as_run.options.minify_identifiers = self.transpiler.options.minify_identifiers;
-            as_run.options.minify_whitespace = self.transpiler.options.minify_whitespace;
-            as_run.options.ignore_dce_annotations = self.transpiler.options.ignore_dce_annotations;
-            as_run.options.no_macros = true;
-            as_run.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
-            if as_run.configure_defines().is_err() {
-                return (None, Vec::new());
-            }
-            let mut candidates: Vec<(usize, options::ModuleType)> = Vec::new();
-            for (index, (source, loader)) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()).enumerate() {
-                if !loader.is_javascript_like() || !source.path.is_file() || source.index.is_runtime() {
-                    continue;
-                }
-                let name = source.path.name();
-                let module_type = match name.ext {
-                    b".cjs" | b".cts" => options::ModuleType::Cjs,
-                    b".mjs" | b".mts" => options::ModuleType::Esm,
-                    b".js" | b".ts" => (as_run.resolver.read_dir_info(name.dir).ok().flatten())
-                        .and_then(|dir| dir.package_json().or(dir.enclosing_package_json).map(|package_json| package_json.module_type))
-                        .unwrap_or(options::ModuleType::Unknown),
-                    _ => options::ModuleType::Unknown,
-                };
-                candidates.push((index, module_type));
-            }
-            (Some(as_run), candidates.chunks(32).map(<[_]>::to_vec).collect())
-        }
-
-        fn kinds_as_run(&self, as_run: Option<&mut Transpiler<'a>>, lists: &mut [Vec<(usize, options::ModuleType)>]) -> Vec<(usize, bool)> {
-            let Some(as_run) = as_run else { return Vec::new() };
-            let sources = self.graph.input_files.items_source();
-            let mut uses_concurrent_transpiler = vec![false; sources.len()];
-            for records in self.graph.ast.items_import_records() {
-                for record in records.as_slice() {
-                    if matches!(record.kind, ImportKind::Stmt | ImportKind::Dynamic) && record.source_index.is_valid() && !record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED) {
-                        uses_concurrent_transpiler[record.source_index.get() as usize] = true;
-                    }
-                }
-            }
-            for entry_point in self.graph.entry_points.iter() {
-                uses_concurrent_transpiler[entry_point.get() as usize] = false;
-            }
-            let flags = self.graph.ast.items_flags();
-            for (index, module_type) in lists.iter_mut().flatten() {
-                let name = sources[*index].path.name();
-                if uses_concurrent_transpiler[*index] && !flags[*index].contains(crate::bundled_ast::Flags::ES_MODULE_BY_ITS_OWN_SYNTAX) && matches!(name.ext, b".cjs" | b".cts" | b".mjs" | b".mts") {
-                    *module_type = (as_run.resolver.read_dir_info(name.dir).ok().flatten())
-                        .and_then(|dir| dir.package_json().or(dir.enclosing_package_json).map(|package_json| package_json.module_type))
-                        .unwrap_or(options::ModuleType::Unknown);
-                }
-            }
-            let as_run: &Transpiler<'a> = as_run;
-            struct Shared<'f, 'a, 't> {
-                bundle: &'f BundleV2<'a>,
-                as_run: &'f Transpiler<'t>,
-                found: &'f bun_threading::Guarded<Vec<(usize, bool)>>,
-            }
-            // SAFETY: the workers only read the bundle and `as_run`, and the `&self` of this
-            // function keeps both unchanged until `each_ptr_while` returns.
-            unsafe impl Sync for Shared<'_, '_, '_> {}
-            let mut found = bun_threading::Guarded::new(Vec::new());
-            self.graph.pool().worker_pool().each_ptr_while(
-                Shared { bundle: self, as_run, found: &found },
-                |shared: &Shared<'_, '_, '_>, list: *mut Vec<(usize, options::ModuleType)>, _: usize| {
-                    // SAFETY: `each_ptr_while` hands each element of `lists` to exactly one call.
-                    let files = unsafe { &*list };
-                    let mut kinds: Vec<(usize, bool)> = Vec::with_capacity(files.len());
-                    let this = shared.bundle;
-                    let flags = this.graph.ast.items_flags();
-                    let worker = crate::Worker::get(this);
-                    {
-                        let own_arena = ThreadLocalArena::new();
-                        // SAFETY: only `transpiler` holds it, and that is dropped ahead of the
-                        // arena at the end of this block.
-                        let own_arena: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&own_arena) };
-                        let mut log = bun_ast::Log::init();
-                        // SAFETY: `as_run` is borrowed until `each_ptr_while` returns, and `log` is
-                        // dropped behind `transpiler`.
-                        let mut transpiler = Box::new(unsafe { Transpiler::for_worker(shared.as_run, own_arena, &raw mut log) });
-                        transpiler.wire_after_move();
-                        for &(index, module_type) in files.iter() {
-                            if flags[index].contains(crate::bundled_ast::Flags::ES_MODULE_BY_ITS_OWN_SYNTAX) {
-                                kinds.push((index, false));
-                                continue;
-                            }
-                            let mut source = this.graph.input_files.items_source()[index].clone();
-                            source.index = bun_ast::Index(0);
-                            let arena = ThreadLocalArena::new();
-                            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-                            let _ast_scope = ast_memory_allocator.enter();
-                            // SAFETY: what is allocated in it is used in this iteration only, and
-                            // `set_arena(own_arena)` below takes it from the transpiler again.
-                            let arena_ref: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-                            transpiler.set_arena(arena_ref);
-                            let parsed = transpiler.parse(
-                                crate::transpiler::ParseOptions {
-                                    arena: arena_ref,
-                                    dirname_fd: bun_sys::Fd::INVALID,
-                                    file_descriptor: None,
-                                    file_fd_ptr: None,
-                                    path: source.path,
-                                    loader: this.graph.input_files.items_loader()[index],
-                                    jsx: transpiler.options.jsx.clone(),
-                                    macro_remappings: Default::default(),
-                                    macro_js_ctx: Default::default(),
-                                    virtual_source: Some(&source),
-                                    replace_exports: Default::default(),
-                                    inject_jest_globals: false,
-                                    set_breakpoint_on_first_line: false,
-                                    emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
-                                    experimental_decorators: transpiler.options.experimental_decorators,
-                                    use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
-                                    remove_cjs_module_wrapper: false,
-                                    dont_bundle_twice: true,
-                                    allow_commonjs: true,
-                                    module_type,
-                                    runtime_transpiler_cache: None,
-                                    keep_json_and_toml_as_one_statement: true,
-                                    allow_bytecode_cache: false,
-                                },
-                                None,
-                            );
-                            if let Some(parsed) = parsed {
-                                kinds.push((index, parsed.ast.has_commonjs_export_names || parsed.ast.exports_kind == bun_ast::ExportsKind::Cjs));
-                            }
-                            log.msgs.clear();
-                            log.errors = 0;
-                            transpiler.set_arena(own_arena);
-                        }
-                        if let Some(context) = transpiler.macro_context.take() {
-                            context.deinit();
-                        }
-                    }
-                    worker.unget();
-                    shared.found.lock().append(&mut kinds);
-                },
-                lists,
-                || {},
-            );
-            let mut found = core::mem::take(found.get_mut());
-            found.sort_unstable();
-            found
-        }
-
-        fn print_function_sources_while(
-            &self,
-            as_run: Option<&Transpiler<'a>>,
-            lists: &mut [Vec<(usize, options::ModuleType)>],
-            printed: Option<std::sync::mpsc::Sender<options::FileFunctionSources>>,
-            deferred: &bun_threading::thread_pool::DeferredStart,
-            on_calling_thread: impl FnOnce(),
-        ) -> Vec<(usize, Vec<u8>, Option<(i32, i32)>)> {
-            let Some(as_run) = as_run else {
-                on_calling_thread();
-                return Vec::new();
-            };
-            struct Shared<'f, 'a, 't> {
-                bundle: &'f BundleV2<'a>,
-                as_run: &'f Transpiler<'t>,
-                printed: Option<std::sync::mpsc::Sender<options::FileFunctionSources>>,
-                syntax_errors: &'f bun_threading::Guarded<Vec<(usize, Vec<u8>, Option<(i32, i32)>)>>,
-            }
-            // SAFETY: the workers only read the bundle and `as_run`, and the `&self` of this
-            // function keeps both unchanged until `each_ptr_while` returns.
-            unsafe impl Sync for Shared<'_, '_, '_> {}
-            struct ChunkCollector(Option<bun_sourcemap::Chunk>);
-            impl bun_js_printer::OnSourceMapChunk for ChunkCollector {
-                fn on_source_map_chunk(&mut self, chunk: bun_sourcemap::Chunk, _: &bun_ast::Source) -> bun_js_printer::Result<()> {
-                    self.0 = Some(chunk);
-                    Ok(())
-                }
-            }
-            let mut syntax_errors = bun_threading::Guarded::new(Vec::new());
-            self.graph.pool().worker_pool().each_ptr_deferred(
-                Shared { bundle: self, as_run, printed, syntax_errors: &syntax_errors },
-                |shared: &Shared<'_, '_, '_>, list: *mut Vec<(usize, options::ModuleType)>, _: usize| {
-                    // SAFETY: `each_ptr_while` hands each element of `lists` to exactly one call.
-                    let files = unsafe { &*list };
-                    let mut printed: options::FileFunctionSources = Vec::new();
-                    let this = shared.bundle;
-                    let worker = crate::Worker::get(this);
-                    {
-                        let own_arena = ThreadLocalArena::new();
-                        // SAFETY: only `transpiler` holds it, and that is dropped ahead of the
-                        // arena at the end of this block.
-                        let own_arena: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&own_arena) };
-                        let mut log = bun_ast::Log::init();
-                        // SAFETY: `as_run` is borrowed until `each_ptr_while` returns, and `log` is
-                        // dropped behind `transpiler`.
-                        let mut transpiler = Box::new(unsafe { Transpiler::for_worker(shared.as_run, own_arena, &raw mut log) });
-                        transpiler.wire_after_move();
-                        let minifies_identifiers = transpiler.options.minify_identifiers;
-                        for &(index, module_type) in files.iter() {
-                            let arena = ThreadLocalArena::new();
-                            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-                            let _ast_scope = ast_memory_allocator.enter();
-                            // SAFETY: what is allocated in it is used in this iteration only, and
-                            // `set_arena(own_arena)` below takes it from the transpiler again.
-                            let arena_ref: &'static ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
-                            let mut source = this.graph.input_files.items_source()[index].clone();
-                            source.index = bun_ast::Index(0);
-                            transpiler.set_arena(arena_ref);
-                            let mut reported: Option<(Vec<u8>, u32)> = None;
-                            let mut is_checked = false;
-                            loop {
-                                transpiler.options.minify_identifiers = minifies_identifiers && is_checked;
-                                let parsed = transpiler.parse(
-                                    crate::transpiler::ParseOptions {
-                                        arena: arena_ref,
-                                        dirname_fd: bun_sys::Fd::INVALID,
-                                        file_descriptor: None,
-                                        file_fd_ptr: None,
-                                        path: source.path,
-                                        loader: this.graph.input_files.items_loader()[index],
-                                        jsx: transpiler.options.jsx.clone(),
-                                        macro_remappings: Default::default(),
-                                        macro_js_ctx: Default::default(),
-                                        virtual_source: Some(&source),
-                                        replace_exports: Default::default(),
-                                        inject_jest_globals: false,
-                                        set_breakpoint_on_first_line: false,
-                                        emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
-                                        experimental_decorators: transpiler.options.experimental_decorators,
-                                        use_define_for_class_fields: transpiler.options.use_define_for_class_fields,
-                                        remove_cjs_module_wrapper: false,
-                                        dont_bundle_twice: true,
-                                        allow_commonjs: true,
-                                        module_type,
-                                        runtime_transpiler_cache: None,
-                                        keep_json_and_toml_as_one_statement: true,
-                                        allow_bytecode_cache: false,
-                                    },
-                                    None,
-                                );
-                                let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
-                                let mut ranges = Vec::new();
-                                let mut source_map = ChunkCollector(None);
-                                let mut is_module = true;
-                                let is_printed = parsed.is_some_and(|mut parsed| {
-                                    is_module = !parsed.ast.has_commonjs_export_names && parsed.ast.exports_kind != bun_ast::ExportsKind::Cjs;
-                                    let origin = bun_url::URL::default();
-                                    transpiler.linker.link::<false, true>(&source.path, &mut parsed, &origin, options::ImportPathFormat::AbsolutePath).is_ok()
-                                        && match reported {
-                                            None => transpiler.print_recording_function_sources(arena_ref, parsed, &mut printer, &mut ranges).is_ok(),
-                                            Some(_) => {
-                                                let handler = bun_js_printer::SourceMapHandler::for_(&mut source_map);
-                                                transpiler.print_with_source_map(arena_ref, parsed, &mut printer, bun_js_printer::Format::EsmAscii, handler, None).is_ok()
-                                            }
-                                        }
-                                }) && !log.has_errors();
-                                log.msgs.clear();
-                                log.errors = 0;
-                                let text = printer.ctx.get_written();
-                                if let Some((message, offset)) = reported.take() {
-                                    let position = source_map.0.filter(|_| is_printed).and_then(|chunk| {
-                                        let before = text.get(..offset as usize)?;
-                                        let line = bun_core::strings::count_char(before, b'\n');
-                                        let column = before.len() - bun_core::strings::last_index_of_char(before, b'\n').map_or(0, |at| at + 1);
-                                        if chunk.buffer.list.is_empty() {
-                                            return None;
-                                        }
-                                        let mapping = bun_sourcemap::InternalSourceMap { data: chunk.buffer.list.as_ptr() }
-                                            .find(bun_sourcemap::Ordinal::from_zero_based(line as i32), bun_sourcemap::Ordinal::from_zero_based(column as i32))?;
-                                        Some((mapping.original.lines.one_based(), mapping.original.columns.one_based()))
-                                    });
-                                    shared.syntax_errors.lock().push((index, message, position));
-                                    break;
-                                }
-                                if !is_printed {
-                                    break;
-                                }
-                                if !is_checked {
-                                    reported = crate::bundle_v2::dispatch::check_module_syntax(source.path.text, text, is_module);
-                                    if reported.is_some() {
-                                        continue;
-                                    }
-                                    is_checked = true;
-                                    if minifies_identifiers && shared.printed.is_some() {
-                                        continue;
-                                    }
-                                }
-                                if shared.printed.is_some() {
-                                    bun_js_printer::finish_function_sources(text, &mut ranges);
-                                    printed.push((source.path.text.into(), text.into(), ranges));
-                                }
-                                break;
-                            }
-                            transpiler.set_arena(own_arena);
-                        }
-                        if let Some(context) = transpiler.macro_context.take() {
-                            context.deinit();
-                        }
-                    }
-                    worker.unget();
-                    if let Some(sender) = &shared.printed {
-                        let _ = sender.send(printed);
-                    }
-                },
-                lists,
-                deferred,
-                on_calling_thread,
-            );
-            core::mem::take(syntax_errors.get_mut())
-        }
-
-        fn add_syntax_errors(&self, mut errors: Vec<(usize, Vec<u8>, Option<(i32, i32)>)>) {
-            if errors.is_empty() {
-                return;
-            }
-            let log = self.transpiler.log_mut();
-            log.msgs.retain(|msg| msg.kind != bun_ast::Kind::Err);
-            log.errors = 0;
-            errors.sort_by_key(|error| error.0);
-            for (index, message, position) in errors {
-                let (line, column) = position.unwrap_or((-1, -1));
-                log.errors += 1;
-                log.add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Err,
-                    data: bun_ast::Data {
-                        text: std::borrow::Cow::Owned([&b"SyntaxError: "[..], &message[..]].concat()),
-                        location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(self.graph.input_files.items_source()[index].path.text.to_vec()),
-                            line,
-                            column,
-                            ..Default::default()
-                        }),
-                    },
-                    ..Default::default()
-                });
-            }
-        }
-
-        fn release_scan_arenas(&mut self) {
-            let heap = self.graph.heap;
-            let workers: Vec<*mut crate::Worker> = self.graph.pool().workers_assignments.lock().values().to_vec();
-            let scan_heaps: Vec<*const ThreadLocalArena> = workers
-                .iter()
-                .filter_map(|&worker| {
-                    // SAFETY: the map holds live workers, and a `scan_heap` is made while files are parsed, which has ended.
-                    let scan_heap = unsafe { (*worker).scan_heap.as_ref() };
-                    scan_heap.map(core::ptr::from_ref)
-                })
-                .collect();
-            for index in 0..self.graph.ast.len() {
-                if scan_heaps.contains(&core::ptr::from_ref(*self.graph.ast.items_parts()[index].allocator())) {
-                    let mut empty = JSAst::empty_in(heap);
-                    empty.target = self.graph.ast.items_target()[index];
-                    self.graph.ast.set(index, empty);
-                }
-            }
-            for &worker in &workers {
-                // SAFETY: as above, and no entry of the graph points into a `scan_heap` any more.
-                unsafe { crate::Worker::release_scan_arena_soon(worker) };
-            }
-            self.graph.pool().wake_for_idle_events();
-        }
-
-        /// The compiled program is all that runs once one of its entry points is run, so those files become empty modules, and what
-        /// only they import is not in the bundle. The engine puts an entry function of the program in the place of the code of each.
-        fn empty_compiled_entry_points(&mut self) -> Result<(), Error> {
-            let compiled = self.linker.facts.as_ref().map_or(&[][..], |facts| &facts.entry_points);
-            let sources = self.graph.input_files.items_source();
-            let indices: Vec<usize> = (self.graph.entry_points.iter().map(|it| it.get() as usize))
-                .filter(|&index| compiled.iter().any(|path| **path == *sources[index].path.text))
-                .collect();
-            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
-            let mut assets: Vec<Index> = (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
-            assets.sort_by(|a, b| sources[a.get() as usize].path.text.cmp(sources[b.get() as usize].path.text));
-            self.assets_of_compiled_program = assets;
-            for index in indices {
-                self.empty_entry_point(index)?;
-            }
-            Ok(())
-        }
-
-        fn empty_entry_point(&mut self, index: usize) -> Result<(), Error> {
-            let heap = self.graph.heap;
-            let target = self.graph.ast.items_target()[index];
-            let path = self.graph.input_files.items_source()[index].path;
-            let source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
-                path,
-                index: bun_ast::Index(index as u32),
-                contents: std::borrow::Cow::Borrowed(&b""[..]),
-                ..Default::default()
-            });
-            let mut options = bun_js_parser::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Js);
-            options.bundle = true;
-            let (define, log): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
-                let transpiler = self.transpiler_for_target(target);
-                (&raw mut *transpiler.options.define, transpiler.log)
-            };
-            let mut ast = JSAst::init(
-                bun_js_parser::new_lazy_export_ast(
-                    heap,
-                    // SAFETY: `define` and `log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define },
-                    options,
-                    // SAFETY: as above.
-                    unsafe { &mut *log },
-                    Expr::init(E::Undefined {}, bun_ast::Loc::EMPTY),
-                    source,
-                    b"",
-                )?
-                .ok_or(Error::ParserError)?,
-            );
-            ast.target = target;
-            // By its name alone an empty `.cjs` file is a CommonJS module, which the linker wraps in a function: code that is not of the compiled program.
-            ast.exports_kind = ExportsKind::None;
-            self.graph.input_files.items_source_mut()[index] = source.clone();
-            self.graph.ast.set(index, ast);
-            Ok(())
         }
 
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
@@ -4213,52 +2677,6 @@ pub mod bv2_impl {
             }
         }
 
-        fn visit_package_of(&mut self, path: &[u8]) {
-            let Some(typed_package) = self.transpiler.options.typed_package.filter(|_| self.linker.options.aot) else {
-                return;
-            };
-            let installed: &[u8] = if cfg!(windows) { b"\\node_modules\\" } else { b"/node_modules/" };
-            let Some(at) = bun_core::strings::last_index_of(path, installed) else {
-                return;
-            };
-            let at = at + installed.len();
-            let mut parts = path[at..].split(|&byte| byte == std::path::MAIN_SEPARATOR as u8);
-            let Some(first) = parts.next() else {
-                return;
-            };
-            let length = match (first.starts_with(b"@"), parts.next()) {
-                (true, Some(second)) => first.len() + 1 + second.len(),
-                _ => first.len(),
-            };
-            let (directory, name) = (&path[..at + length], &path[at..at + length]);
-            if self.visited_packages.contains_key(directory) {
-                return;
-            }
-            self.visited_packages.insert(directory.into(), ());
-            let (files, said) = typed_package(self.transpiler.fs().top_level_dir, &self.transpiler.options.define.user_inputs, directory, name);
-            let is_used = !files.is_empty();
-            for (path, text, is_typescript) in files {
-                self.laid.map.put(&path, text).expect("oom");
-                if is_typescript {
-                    #[cfg(windows)]
-                    self.shipped_as_typescript.insert(super::native_separators(path.to_vec()).into_boxed_slice(), ());
-                    self.shipped_as_typescript.insert(path, ());
-                }
-            }
-            match said.filter(|_| !self.transpiler.options.preserve_source_paths) {
-                Some(said) if is_used => self.transpiler.log_mut().add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Note,
-                    data: bun_ast::Data {
-                        text: std::borrow::Cow::Owned(said.into_boxed_bytes().into_vec()),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-                Some(said) => self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{said}")),
-                None => {}
-            }
-        }
-
         /// This runs on the Bundle Thread.
         pub(crate) fn run_resolver(
             &mut self,
@@ -4277,12 +2695,12 @@ pub mod bv2_impl {
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
             // Check the FileMap first for in-memory files
-            {
-                let in_memory = self
-                    .file_map
-                    .and_then(|file_map| file_map.resolve(self.arena(), &import_record.source_file, &import_record.specifier))
-                    .or_else(|| self.laid.resolve(self.arena(), &import_record.source_file, &import_record.specifier));
-                if let Some(_file_map_result) = in_memory {
+            if let Some(file_map) = self.file_map {
+                if let Some(_file_map_result) = file_map.resolve(
+                    self.arena(),
+                    &import_record.source_file,
+                    &import_record.specifier,
+                ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
@@ -4526,7 +2944,6 @@ pub mod bv2_impl {
             if resolve_result.flags.is_external() {
                 return;
             }
-            self.visit_package_of(path.text);
 
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
@@ -4756,11 +3173,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let is_main_file_with_unknown_loader = is_entry_point
-                && loader.is_none()
-                && self.transpiler.options.aot
-                && path.loader(&self.transpiler.options.loaders).is_none();
-            let loader = if is_main_file_with_unknown_loader { Loader::Js } else { self.requested_file_loader(&path, loader) };
+            let loader = self.requested_file_loader(&path, loader);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -4846,6 +3259,30 @@ pub mod bv2_impl {
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
+            alloc: &bun_alloc::Arena,
+            event_loop: EventLoop,
+            cli_watch_flag: bool,
+            thread_pool: Option<NonNull<ThreadPoolLib>>,
+            heap: &'a ThreadLocalArena,
+        ) -> Result<Box<BundleV2<'a>>, Error> {
+            let this = Self::init_without_starting_threads(
+                transpiler,
+                bake_options,
+                alloc,
+                event_loop,
+                cli_watch_flag,
+                thread_pool,
+                heap,
+            )?;
+            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
+            this.graph.pool().start();
+            Ok(this)
+        }
+
+        /// Like `init`, for a bundle that may have nothing to parse: the pool starts each thread when there is a task for it.
+        pub fn init_without_starting_threads(
+            transpiler: &'a mut Transpiler<'a>,
+            bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
             cli_watch_flag: bool,
@@ -4857,7 +3294,6 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            bun_resolver::resolver::read_side_effects_from_now_on();
             transpiler.options.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =
@@ -4894,23 +3330,12 @@ pub mod bv2_impl {
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
-                visited_packages: Default::default(),
-                laid: Default::default(),
-                declaration_files: Vec::new(),
-                module_types: None,
-                shipped_as_typescript: Default::default(),
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
                 resolve_tasks_waiting_for_import_source_index: ArrayHashMap::new(),
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
-                assets_of_compiled_program: Vec::new(),
-                early_source_paths: None,
-                plugin_loads_in_flight: 0,
-                plugin_resolve_importers: Vec::new(),
-                early_start_awaits_importer: None,
-                started_early_sources: None,
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
@@ -5028,18 +3453,6 @@ pub mod bv2_impl {
                 };
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
-            this.linker.options.aot = this.transpiler.options.compiles_ahead_of_time();
-            if this.transpiler.options.compile_mode.is_executable() {
-                for name in crate::options::ineffective_aot_env_vars() {
-                    this.transpiler.log_mut().add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!("{} is set and has no effect", bstr::BStr::new(name)),
-                    );
-                }
-            }
-            this.linker.options.preserve_source_paths =
-                this.transpiler.options.preserve_source_paths;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
             // is parsed, not after the link.
             if this.transpiler.options.bytecode
@@ -5064,12 +3477,7 @@ pub mod bv2_impl {
                                 ),
                             );
                         }
-                        this.linker.options.bytecode_order = order.or_else(|| {
-                            this.linker
-                                .options
-                                .aot
-                                .then(|| crate::bytecode_order::BytecodeOrder::merge(&[]))
-                        });
+                        this.linker.options.bytecode_order = order;
                     }
                     Err((path, err)) => {
                         this.transpiler.log_mut().add_error_fmt(
@@ -5108,8 +3516,6 @@ pub mod bv2_impl {
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
-            this.graph.pool().start();
             Ok(this)
         }
 
@@ -5156,7 +3562,9 @@ pub mod bv2_impl {
             self.on_after_decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_after_decrement_scan_counter(&mut self) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_after_decrement_scan_counter);
             if self.asynchronous && self.is_done() {
                 let dev = self
                     .dev_server
@@ -5416,7 +3824,7 @@ pub mod bv2_impl {
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
             // Add the runtime
-            let rt = ParseTask::get_runtime_source(self.transpiler.options.target, false);
+            let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,
@@ -5429,15 +3837,10 @@ pub mod bv2_impl {
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
-            self.schedule_runtime_parse_task(rt.parse_task);
-            Ok(())
-        }
-
-        fn schedule_runtime_parse_task(&mut self, parse_task: ParseTask) {
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
             // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
             // `arena()` ends before we take `&mut self` below.
-            let runtime_parse_task: *mut ParseTask = self.arena().alloc(parse_task);
+            let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
             // SAFETY: freshly arena-allocated above; no other references exist yet.
             unsafe {
                 // BACKREF — lifetime erased per ParseTask::ctx convention.
@@ -5445,12 +3848,14 @@ pub mod bv2_impl {
                     std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
                 );
                 (*runtime_parse_task).ctx = Some(ctx_mut);
+                (*runtime_parse_task).loader = Some(Loader::Js);
             }
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
+            Ok(())
         }
 
-        fn clone_ast(&mut self) -> Result<(), Error> {
+        pub(crate) fn clone_ast(&mut self) -> Result<(), Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             self.linker.graph.ast = self.graph.ast.clone()?;
 
@@ -5764,11 +4169,6 @@ pub mod bv2_impl {
             task.task.node.next = core::ptr::null_mut();
             task.io_task.node.next = core::ptr::null_mut();
             task.known_target = known_target;
-            if let Some(contents) = self.laid.get(task.path.text) {
-                // SAFETY: `laid` keeps each text in a box of its own, puts a path once and removes
-                // none, so the bytes stay in place for the bundle pass.
-                task.contents_or_fd = parse_task::ContentsOrFd::Contents(unsafe { interned_slice(contents) });
-            }
 
             self.increment_scan_counter();
 
@@ -6093,10 +4493,9 @@ pub mod bv2_impl {
                 // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
                 // sidestep for the `&mut self` overlap.
                 this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
-                let early_analysis = this.start_early_analysis();
 
                 // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
-                this.wait_for_parse_starting_analysis(early_analysis.as_ref());
+                this.wait_for_parse();
                 this.dump_pool_stats("parse");
 
                 *minify_duration = (((bun_core::time::nano_timestamp() as i64)
@@ -6108,9 +4507,9 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
-                this.scan_for_secondary_paths();
+                this.type_check()?;
 
-                this.type_check(early_analysis)?;
+                this.scan_for_secondary_paths();
 
                 this.process_server_component_manifest_files()?;
 
@@ -6157,13 +4556,11 @@ pub mod bv2_impl {
                     });
                 }
 
-                let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                     &mut this.linker,
                     &mut chunks,
                 )?;
                 this.dump_pool_stats("print");
-                this.add_sound_files(&mut output_files)?;
-                this.add_declaration_files(&mut output_files)?;
 
                 // Generate metafile if requested (the CLI build command writes the files)
                 let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
@@ -6531,132 +4928,17 @@ pub mod bv2_impl {
 
                 self.graph.additional_output_files = additional_output_files;
             }
-            if self.transpiler.options.preserve_source_paths {
-                let mut paths: Vec<u8> = Vec::new();
-                let flags = self.graph.input_files.items_flags();
-                let is_compiled = |source: &&bun_ast::Source| {
-                    source.path.is_file() && !flags[source.index.get() as usize].contains(crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST)
-                };
-                let mut sorted_paths: Vec<&[u8]> = self.graph.input_files.items_source().iter().filter(is_compiled).map(|source| source.path.text).collect();
-                sorted_paths.sort_unstable();
-                sorted_paths.dedup();
-                for path in sorted_paths {
-                    paths.extend_from_slice(path);
-                    paths.push(b'\n');
-                }
-                // A JSON module is read by the host when it is asked for. The executable holds its text for the module loader alone
-                // (`StandaloneModuleGraph::find_module_source`): to node:fs the file is what lies on the disk, which the program may write.
-                let mut data_files: Vec<options::OutputFile> = Vec::new();
-                for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
-                    if !matches!(loader, Loader::Json | Loader::Jsonc) || !source.path.is_file() {
-                        continue;
-                    }
-                    data_files.push(options::OutputFile::init(crate::output_file::Options {
-                        data: crate::output_file::OptionsData::Buffer { data: Box::from(source.contents()) },
-                        output_path: super::held_name(b".modules-of-the-program", source.path.text),
-                        input_loader: Loader::File,
-                        output_kind: crate::options::OutputKind::Asset,
-                        loader: Loader::File,
-                        side: Some(crate::options::Side::Server),
-                        ..Default::default()
-                    }));
-                }
-                for (source, loader) in self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()) {
-                    if *loader != Loader::Napi || !source.path.is_file() {
-                        continue;
-                    }
-                    let Ok(addon) = bun_sys::File::read_from(bun_core::Fd::cwd(), source.path.text) else { continue };
-                    data_files.push(options::OutputFile::init(crate::output_file::Options {
-                        data: crate::output_file::OptionsData::Buffer { data: addon.into_boxed_slice() },
-                        output_path: super::held_name(b".held", source.path.text),
-                        input_loader: Loader::File,
-                        output_kind: crate::options::OutputKind::Asset,
-                        loader: Loader::File,
-                        side: Some(crate::options::Side::Server),
-                        ..Default::default()
-                    }));
-                }
-                {
-                    let mut package_dirs: std::collections::BTreeSet<&[u8]> = Default::default();
-                    for source in self.graph.input_files.items_source().iter().filter(is_compiled) {
-                        let path = source.path.text;
-                        let mut from = 0;
-                        while let Some(at) = bun_core::strings::index_of(&path[from..], &super::native_separators(b"/node_modules/".to_vec())) {
-                            from += at + 14;
-                            let mut slashes = path[from..].iter().enumerate().filter(|(_, c)| **c == bun_paths::SEP).map(|(at, _)| at);
-                            let Some(end) = (if path.get(from) == Some(&b'@') { slashes.nth(1) } else { slashes.next() }) else { break };
-                            package_dirs.insert(&path[..from + end]);
-                        }
-                    }
-                    for folder in package_dirs {
-                        let path = [folder, bun_paths::SEP_STR.as_bytes(), b"package.json"].concat();
-                        let Ok(text) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) else { continue };
-                        data_files.push(options::OutputFile::init(crate::output_file::Options {
-                            data: crate::output_file::OptionsData::Buffer { data: text.into_boxed_slice() },
-                            output_path: super::held_name(b".held", &path),
-                            input_loader: Loader::File,
-                            output_kind: crate::options::OutputKind::Asset,
-                            loader: Loader::File,
-                            side: Some(crate::options::Side::Server),
-                            ..Default::default()
-                        }));
-                    }
-                }
-                self.graph.additional_output_files.append(&mut data_files);
-                let resolutions = core::mem::take(&mut self.graph.program_resolutions);
-                self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                    data: crate::output_file::OptionsData::Buffer { data: resolutions.into_boxed_slice() },
-                    output_path: Box::from(&b"resolutions-of-the-compiled-program"[..]),
-                    input_loader: Loader::File,
-                    output_kind: crate::options::OutputKind::Asset,
-                    loader: Loader::File,
-                    side: Some(crate::options::Side::Server),
-                    ..Default::default()
-                }));
-                let json_modules: bun_collections::hashbrown::HashSet<&[u8], bun_wyhash::BuildHasher> = self
-                    .graph
-                    .input_files
-                    .items_source()
-                    .iter()
-                    .zip(self.graph.input_files.items_loader())
-                    .filter(|(source, loader)| matches!(loader, Loader::Json | Loader::Jsonc) && source.path.is_file())
-                    .map(|(source, _)| source.path.text)
-                    .collect();
-                let source_index = crate::compiled_source_index::build(&paths, |path| json_modules.contains(path));
-                self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                    data: crate::output_file::OptionsData::Buffer { data: source_index.into_boxed_slice() },
-                    output_path: Box::from(crate::compiled_source_index::FILE_NAME.as_bytes()),
-                    input_loader: Loader::File,
-                    output_kind: crate::options::OutputKind::Asset,
-                    loader: Loader::File,
-                    side: Some(crate::options::Side::Server),
-                    ..Default::default()
-                }));
-                self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                    data: crate::output_file::OptionsData::Buffer { data: paths.into_boxed_slice() },
-                    output_path: Box::from(&b"sources-of-the-compiled-program"[..]),
-                    input_loader: Loader::File,
-                    output_kind: crate::options::OutputKind::Asset,
-                    loader: Loader::File,
-                    side: Some(crate::options::Side::Server),
-                    ..Default::default()
-                }));
-            } else if !self.graph.program_resolutions.is_empty() {
-                let resolutions = core::mem::take(&mut self.graph.program_resolutions);
-                self.graph.additional_output_files.push(options::OutputFile::init(crate::output_file::Options {
-                    data: crate::output_file::OptionsData::Buffer { data: resolutions.into_boxed_slice() },
-                    output_path: Box::from(&b"resolutions-of-the-compiled-program"[..]),
-                    input_loader: Loader::File,
-                    output_kind: crate::options::OutputKind::Asset,
-                    loader: Loader::File,
-                    side: Some(crate::options::Side::Server),
-                    ..Default::default()
-                }));
-            }
             Ok(())
         }
 
         pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = load.owner {
+                let value = load.value.consume();
+                // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
+                // for this call, the one answer of the request.
+                unsafe { waiter.as_ref() }.answer_load(value);
+                return;
+            }
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
@@ -6693,6 +4975,12 @@ pub mod bv2_impl {
         }
 
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = resolve.owner {
+                let value = resolve.value.consume();
+                // SAFETY: as in `on_load_async`.
+                unsafe { waiter.as_ref() }.answer_resolve(value);
+                return;
+            }
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
@@ -6739,8 +5027,10 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        #[inline(never)]
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            this.plugin_loads_in_flight = this.plugin_loads_in_flight.saturating_sub(1);
+            bun_removable_features::removable_definition!(Bundler, Self::on_load);
+            debug_assert!(matches!(load.owner, jsc_api::JSBundler::RequestOwner::Bundle));
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -6952,13 +5242,13 @@ pub mod bv2_impl {
             self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
         }
 
+        #[inline(never)]
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
+            debug_assert!(matches!(resolve.owner, jsc_api::JSBundler::RequestOwner::Bundle));
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
-            if let Some(at) = this.plugin_resolve_importers.iter().position(|&importer| importer == resolve.import_record.importer_source_index) {
-                this.plugin_resolve_importers.swap_remove(at);
-            }
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
             impl Drop for ResolveDeinitGuard {
@@ -7427,10 +5717,9 @@ pub mod bv2_impl {
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             self.enqueue_entry_points_normal(entry_points)?;
-            let early_analysis = self.start_early_analysis();
 
             // We must wait for all the parse tasks to complete, even if there are errors.
-            self.wait_for_parse_starting_analysis(early_analysis.as_ref());
+            self.wait_for_parse();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -7438,9 +5727,9 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
-            self.scan_for_secondary_paths();
+            self.type_check()?;
 
-            self.type_check(early_analysis)?;
+            self.scan_for_secondary_paths();
 
             self.process_server_component_manifest_files()?;
 
@@ -7479,8 +5768,6 @@ pub mod bv2_impl {
                 &mut self.linker,
                 &mut chunks,
             )?;
-            self.add_sound_files(&mut output_files)?;
-            self.add_declaration_files(&mut output_files)?;
 
             // Generate metafile if requested
             let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
@@ -7606,139 +5893,6 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        fn add_sound_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
-            use bun_paths::resolve_path::{join_abs_string, platform::Auto};
-            if let Some(option) = self.transpiler.options.skips_sound_files_for {
-                self.transpiler.log_mut().add_warning_fmt(None, bun_ast::Loc::EMPTY, format_args!("{}: it does not support {option} yet", options::SKIPPED_SOUND_FILES));
-            }
-            let Some(write_sound_files) = self.transpiler.options.write_sound_files else {
-                return Ok(());
-            };
-            let cwd = self.transpiler.fs().top_level_dir;
-            let relative_outdir: Box<[u8]> = self.linker.resolver().opts.output_dir.clone();
-            let outdir: Vec<u8> = join_abs_string::<Auto>(cwd, &[&relative_outdir]).to_vec();
-            if self.transpiler.options.drops_source_maps {
-                for file in output_files.iter_mut().filter(|file| file.source_map_index != u32::MAX) {
-                    let options::OutputFileValue::Buffer { bytes } = &mut file.value else { continue };
-                    const COMMENT: &[u8] = b"\n//# debugId=";
-                    let Some(at) = bun_core::strings::last_index_of(&bytes[..], COMMENT) else { continue };
-                    if bun_core::strings::count_char(&bytes[at + 1..], b'\n') == 1 && bytes.ends_with(b"\n") {
-                        *bytes = Box::from(&bytes[..at]);
-                        (file.size, file.size_without_sourcemap) = (at, at);
-                    }
-                }
-            }
-            let text_of = |file: &options::OutputFile| match &file.value {
-                options::OutputFileValue::Buffer { bytes } => Some(bytes.to_vec()),
-                options::OutputFileValue::Saved(_) => bun_sys::File::read_from(bun_core::Fd::cwd(), join_abs_string::<Auto>(&outdir, &[&file.dest_path])).ok(),
-                _ => None,
-            };
-            let mut texts: Vec<(Vec<u8>, Vec<u8>, Vec<u8>, Option<&[u8]>)> = Vec::new();
-            for file in output_files.iter() {
-                if !matches!(file.output_kind, options::OutputKind::EntryPoint | options::OutputKind::Chunk) || !file.loader.is_javascript_like() {
-                    continue;
-                }
-                let source_map = output_files.get(file.source_map_index as usize).and_then(text_of);
-                let (Some(text), Some(source_map)) = (text_of(file), source_map) else {
-                    continue;
-                };
-                let entry_point = (file.output_kind == options::OutputKind::EntryPoint).then_some(file.src_path.text);
-                texts.push((join_abs_string::<Auto>(&outdir, &[&file.dest_path]).to_vec(), text, source_map, entry_point));
-            }
-            let written: Vec<options::WrittenJavaScript<'_>> =
-                texts.iter().map(|(path, text, source_map, entry_point)| options::WrittenJavaScript { path, text, source_map, entry_point: *entry_point }).collect();
-            let request = options::SoundFilesRequest {
-                cwd,
-                tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
-                conditions: &self.transpiler.options.custom_conditions,
-                loaders: &self.transpiler.options.loaders,
-                outdir: &outdir,
-                written: &written,
-                module_types: self.module_types.as_deref(),
-                rolls_up_declarations: self.transpiler.options.rolls_up_declarations,
-                keeps_modules_apart: false,
-            };
-            let typed = write_sound_files(&request, self.transpiler.log_mut());
-            drop(written);
-            drop(texts);
-            if self.transpiler.options.drops_source_maps {
-                let mut kept = 0;
-                let moved: Vec<u32> = (output_files.iter())
-                    .map(|file| match file.output_kind {
-                        options::OutputKind::Sourcemap => u32::MAX,
-                        _ => {
-                            kept += 1;
-                            kept - 1
-                        }
-                    })
-                    .collect();
-                for file in output_files.iter_mut() {
-                    for index in [&mut file.source_map_index, &mut file.bytecode_index, &mut file.module_info_index] {
-                        *index = moved.get(*index as usize).copied().unwrap_or(u32::MAX);
-                    }
-                }
-                output_files.retain(|file| file.output_kind != options::OutputKind::Sourcemap);
-            }
-            if !typed.declaration_files.is_empty() {
-                self.declaration_files.clear();
-            }
-            let inside_outdir = |path: &[u8]| options::OutputFile::path_inside(&outdir, path);
-            for file in typed.sound_files {
-                output_files.push(options::OutputFile::sound(&file.path, inside_outdir(&file.path), file.text, false));
-            }
-            output_files.extend(typed.declaration_files.into_iter().map(|(path, text)| options::OutputFile::declaration(&path, inside_outdir(&path), text, false)));
-            if !relative_outdir.is_empty() {
-                let directory = self.open_output_directory(&relative_outdir)?;
-                for file in output_files.iter_mut().filter(|file| !matches!(file.value, options::OutputFileValue::Saved(_) | options::OutputFileValue::Noop)) {
-                    file.write_to_disk(directory.fd)?;
-                    file.value = options::OutputFileValue::Saved(Default::default());
-                }
-            }
-            match self.transpiler.log().has_errors() {
-                true => Err(crate::Error::BuildFailed),
-                false => Ok(()),
-            }
-        }
-
-        fn open_output_directory(&mut self, path: &[u8]) -> Result<bun_sys::Dir, Error> {
-            bun_sys::Dir::cwd().make_open_path(path, Default::default()).map_err(|error| {
-                self.transpiler.log_mut().add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("Failed to create output directory {} {}", bstr::BStr::new(error.name()), bun_core::fmt::quote(path)),
-                );
-                error.into()
-            })
-        }
-
-        fn add_declaration_files(&mut self, output_files: &mut Vec<options::OutputFile>) -> Result<(), Error> {
-            let outdir: Box<[u8]> = self.linker.resolver().opts.output_dir.clone();
-            for (source, text) in std::mem::take(&mut self.declaration_files) {
-                let Some(path) = options::OutputFile::declaration_path(&self.transpiler.options.root_dir, &source) else {
-                    self.transpiler.log_mut().add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "cannot write a declaration file for {}: it is outside the root directory {} (pass --root)",
-                            bstr::BStr::new(&source),
-                            bstr::BStr::new(&self.transpiler.options.root_dir)
-                        ),
-                    );
-                    return Err(crate::Error::BuildFailed);
-                };
-                let file = options::OutputFile::declaration(&source, path, text, false);
-                if outdir.is_empty() {
-                    output_files.push(file);
-                    continue;
-                }
-                let directory = self.open_output_directory(&outdir)?;
-                file.write_to_disk(directory.fd)?;
-                let options::OutputFileValue::Buffer { bytes } = file.value else { unreachable!() };
-                output_files.push(options::OutputFile::declaration(&source, file.dest_path, bytes, true));
-            }
-            Ok(())
-        }
-
         fn should_add_watcher_plugin(&self, namespace: &[u8], path: &[u8]) -> bool {
             namespace == b"file" && bun_paths::is_absolute(path) && self.should_add_watcher(path)
         }
@@ -8143,7 +6297,6 @@ pub mod bv2_impl {
                         bstr::BStr::new(&import_record.path.text)
                     );
                     self.increment_scan_counter();
-                    self.plugin_resolve_importers.push(source_index);
 
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Resolve` until the JS thread calls
@@ -8262,9 +6415,6 @@ pub mod bv2_impl {
         ) -> bool {
             if let Some(plugins) = self.plugins_ref() {
                 if plugins.has_any_matches(&parse.path, true) {
-                    if let Some(flags) = self.graph.input_files.items_flags_mut().get_mut(parse.source_index.get() as usize) {
-                        flags.insert(crate::Graph::InputFileFlags::MATCHES_ON_LOAD_PLUGIN);
-                    }
                     // This is where onLoad plugins are enqueued
                     bun_core::scoped_log!(
                         Bundle,
@@ -8277,7 +6427,6 @@ pub mod bv2_impl {
                     let load_val = jsc_api::JSBundler::Load::init(self, parse);
                     // SAFETY: arena outlives the bundle pass.
                     let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
-                    self.plugin_loads_in_flight += 1;
                     load.dispatch();
                     return true;
                 }
@@ -8564,7 +6713,10 @@ pub mod bv2_impl {
                 }
 
                 if let Some(fw) = &self.framework {
-                    if fw.server_components.is_some() {
+                    // In the dev server, the HMR runtime provides `bun:bake/client` and
+                    // `bun:bake/server` to every framework. A production build has their data only
+                    // with server components.
+                    if fw.server_components.is_some() || self.dev_server.is_some() {
                         let is_server = ctx.target.is_server_side();
                         let src = if is_server {
                             &bake::SERVER_VIRTUAL_SOURCE
@@ -8607,20 +6759,6 @@ pub mod bv2_impl {
                             rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
                         },
                     ) {
-                        let removed = (self.transpiler.options.modules_removed_by_trim.iter())
-                            .find(|(module, _)| module == replacement.path.as_bytes())
-                            .map(|(_, name)| name.clone());
-                        if let Some(name) = removed {
-                            self.transpiler.log_mut().add_range_warning_fmt(
-                                Some(source),
-                                import_record.range,
-                                format_args!(
-                                    "compile.trim removes \"{}\": this import of \"{}\" will throw",
-                                    bstr::BStr::new(&name),
-                                    bstr::BStr::new(replacement.path.as_bytes()),
-                                ),
-                            );
-                        }
                         // When bundling node builtins, remove the "node:" prefix.
                         // This supports special use cases where the bundle is put
                         // into a non-node module resolver that doesn't support
@@ -8731,26 +6869,11 @@ pub mod bv2_impl {
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
                 let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
-                let explicit_query: &'static [u8] = match strings::index_of_char(import_record.path.text, b'?') {
-                    Some(at)
-                        if self.transpiler.options.preserve_source_paths
-                            && self.transpiler.options.compiles_ahead_of_time()
-                            && matches!(import_record.kind, ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic)
-                            && !bun_core::strings::contains_char(&import_record.path.text[at as usize..], b'/') =>
-                    {
-                        &import_record.path.text[at as usize..]
-                    }
-                    _ => b"",
-                };
-
                 // Check the FileMap first for in-memory files
-                {
-                    let in_memory = self
-                        .file_map
-                        .and_then(|file_map| file_map.resolve(self.arena(), source.path.text, import_record.path.text))
-                        .or_else(|| self.laid.resolve(self.arena(), source.path.text, import_record.path.text))
-                        .filter(|_| explicit_query.is_empty());
-                    if let Some(_file_map_result) = in_memory {
+                if let Some(file_map) = self.file_map {
+                    if let Some(_file_map_result) =
+                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
+                    {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
@@ -8758,7 +6881,6 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
-                        let import_record_loader = if self.shipped_as_typescript.contains_key(path_primary.text) { Loader::Ts } else { import_record_loader };
                         import_record.loader = Some(import_record_loader);
 
                         if let Some(id) =
@@ -8805,10 +6927,7 @@ pub mod bv2_impl {
                         resolve_task.jsx = transpiler.options.jsx.clone();
                         resolve_task.jsx.development = transpiler.options.forced_jsx_development();
                         resolve_task.loader = Some(import_record_loader);
-                        resolve_task.side_effects = match self.laid.contains(resolve_task.path.text) {
-                            true => self.graph.input_files.items_side_effects()[source.index.get() as usize],
-                            false => bun_ast::SideEffects::HasSideEffects,
-                        };
+                        resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
                         continue;
                     }
@@ -8817,12 +6936,8 @@ pub mod bv2_impl {
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(
-                        if import_record.kind == ImportKind::EntryPointRun {
-                            Fs::FileSystem::instance().top_level_dir
-                        } else {
-                            source_dir
-                        },
-                        &import_record.path.text[..import_record.path.text.len() - explicit_query.len()],
+                        source_dir,
+                        import_record.path.text,
                         import_record.kind,
                     ) {
                         Ok(r) => break r,
@@ -9043,22 +7158,6 @@ pub mod bv2_impl {
                     );
                     continue;
                 }
-                self.visit_package_of(path.text);
-
-                if self.transpiler.options.preserve_source_paths
-                    && import_record.loader.is_none()
-                    && path.loader(&transpiler.options.loaders).is_none()
-                    && matches!(
-                        import_record.kind,
-                        ImportKind::Stmt | ImportKind::Require | ImportKind::RequireResolve | ImportKind::Dynamic
-                    )
-                {
-                    if import_record.kind != ImportKind::Require {
-                        import_record.path = path_as_static(&resolve_result.path_pair.primary);
-                        continue;
-                    }
-                    import_record.loader = Some(Loader::Js);
-                }
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
@@ -9161,29 +7260,6 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
-
-                if !explicit_query.is_empty() {
-                    let with_query = [path.text, explicit_query].concat();
-                    let text = match self.laid.contains(&with_query) {
-                        true => None,
-                        false => bun_sys::File::read_from(bun_core::Fd::cwd(), path.text).ok(),
-                    };
-                    if !import_record_loader.is_javascript_like() || (text.is_none() && !self.laid.contains(&with_query)) {
-                        import_record.loader = None;
-                        import_record.path.is_disabled = true;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
-                        continue;
-                    }
-                    if let Some(text) = text {
-                        let mut key = with_query.clone();
-                        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut key);
-                        self.laid.map.put(&key, text.into_boxed_slice()).expect("oom");
-                    }
-                    // SAFETY: the arena outlives the bundle pass.
-                    path.text = unsafe { interned_slice(self.arena().alloc_slice_copy(&with_query)) };
-                }
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
@@ -9288,8 +7364,6 @@ pub mod bv2_impl {
                         .loader(&self.transpiler.options.loaders)
                         .unwrap_or(Loader::File)
                 });
-                let loader = if self.shipped_as_typescript.contains_key(value.path.text) { Loader::Ts } else { loader };
-                value.loader = Some(loader);
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
@@ -9332,11 +7406,6 @@ pub mod bv2_impl {
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
-                    if let Some(contents) = self.laid.get(new_task.path.text) {
-                        // SAFETY: as where the entry points get their tasks: `laid` keeps the bytes
-                        // in place for the bundle pass.
-                        new_task.contents_or_fd = parse_task::ContentsOrFd::Contents(unsafe { interned_slice(contents) });
-                    }
                     // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
                     // intervening insert into that map has occurred since get_or_put.
                     unsafe {
@@ -9344,11 +7413,6 @@ pub mod bv2_impl {
                     }
 
                     diff += 1;
-                    if let Some(early_source_paths) = &self.early_source_paths
-                        && new_task.path.is_file()
-                    {
-                        let _ = early_source_paths.send((new_task.path.text.to_vec(), None));
-                    }
 
                     self.graph
                         .input_files
@@ -9592,16 +7656,19 @@ pub mod bv2_impl {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            debug_assert!(matches!(load.owner, jsc_api::JSBundler::RequestOwner::Bundle));
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
             this.decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_parse_task_complete(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
         ) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_parse_task_complete);
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
@@ -9690,7 +7757,6 @@ pub mod bv2_impl {
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
-                    this.graph.validates_by_type |= result.ast.flags.contains(crate::bundled_ast::Flags::VALIDATES_BY_TYPE);
 
                     // Warning: `input_files` and `ast` arrays may resize in this function call
                     // It is not safe to cache slices from them.
@@ -9784,18 +7850,6 @@ pub mod bv2_impl {
                         result.ast.target,
                         result_source_index as IndexInt,
                     );
-                    if let Some(early_source_paths) = &this.early_source_paths
-                        && result.loader.is_javascript_like()
-                        && this.graph.input_files.items_source()[result_source_index].path.is_file()
-                        && !this.graph.input_files.items_flags()[result_source_index].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
-                    {
-                        let contents: &[u8] = &this.graph.input_files.items_source()[result_source_index].contents;
-                        // SAFETY: the graph keeps a source's contents in place, unchanged, until the bundle is torn down. Only the early
-                        // analysis reads what is sent. It has read for the last time when it answers, and the drop of an `EarlyAnalysis`
-                        // that was not asked waits for its thread to end: one of the two comes before the teardown.
-                        let contents: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(contents) };
-                        let _ = early_source_paths.send((source_path_text.to_vec(), Some(contents)));
-                    }
 
                     let result_heap = *result.ast.import_records.allocator();
                     let mut import_records = core::mem::replace(
@@ -9870,13 +7924,6 @@ pub mod bv2_impl {
                         result_source_index,
                         core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
                     );
-
-                    this.graph.is_runtime_parsed |= result_source_index == Index::RUNTIME.get() as usize;
-                    if this.graph.validates_by_type && this.graph.is_runtime_parsed && !this.graph.runtime_has_validation_helper {
-                        this.graph.runtime_has_validation_helper = true;
-                        let target = this.transpiler.options.target;
-                        this.schedule_runtime_parse_task(ParseTask::get_runtime_source(target, true).parse_task);
-                    }
 
                     // Barrel optimization: eagerly record import requests and
                     // un-defer barrel records that are now needed.
@@ -10014,12 +8061,6 @@ pub mod bv2_impl {
                                     std::ptr::from_mut(this),
                                 )
                                 .expect("oom");
-                        } else if this.linker.options.aot
-                            && this.transpiler.options.preserve_source_paths
-                            && !this.graph.entry_points.iter().any(|entry_point| entry_point.get() == err.source_index.get())
-                        {
-                            this.graph.input_files.items_flags_mut()[err.source_index.get() as usize] |=
-                                crate::Graph::InputFileFlags::IS_LEFT_TO_THE_HOST;
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log

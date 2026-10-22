@@ -1,4 +1,4 @@
-// Every direct call between compiled functions goes through a veneer, as if its target were out of range.
+// Every direct call from one compiled function to another goes through a veneer, as a call across a very large program does.
 import { variant } from "./run-programs";
 
-variant("veneers", { BUN_JSC_forceAOTVeneers: "1" }, {}, 1, 3);
+variant("veneers", ["--aot-limit=function-call-reach:0"], {}, 1, 3);

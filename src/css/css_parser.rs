@@ -3059,10 +3059,13 @@ impl<'a> Parser<'a> {
     }
 
     // TODO: dedupe import records??
+    /// `start_position..end_position` is the whole token, such as `url("./a.png")`: the range that
+    /// an error about the import underlines.
     pub(crate) fn add_import_record(
         &mut self,
         url: &[u8],
         start_position: usize,
+        end_position: usize,
         kind: ImportKind,
     ) -> CssResult<u32> {
         if let Some(ptr) = self.import_records {
@@ -3081,8 +3084,7 @@ impl<'a> Parser<'a> {
                     loc: bun_ast::Loc {
                         start: i32::try_from(start_position).expect("int cast"),
                     },
-                    // TODO: technically this is not correct because the url could be escaped
-                    len: i32::try_from(url.len()).expect("int cast"),
+                    len: i32::try_from(end_position - start_position).expect("int cast"),
                 },
                 tag: Default::default(),
                 loader: None,

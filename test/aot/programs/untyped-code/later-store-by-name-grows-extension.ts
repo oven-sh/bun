@@ -64,10 +64,10 @@ const orders = [ascending, [...ascending].reverse(), [0, 6, 11], [11, 6, 0], [1,
 for (const order of orders) {
   const kept: any[] = [];
   run(order, 300, kept);
-  const before = count("operationAOTPutByNameAndCache");
+  const before = count("operationAOTPutByIdAndCache");
   run(order, 3000, kept);
   (globalThis as any).Bun?.gc?.(true);
-  console.log(order.join(" "), kept.length, show(kept[kept.length - 1]), kept.every((reply, i) => i < 4 || reply.url.startsWith("/")), count("operationAOTPutByNameAndCache") - before < 300);
+  console.log(order.join(" "), kept.length, show(kept[kept.length - 1]), kept.every((reply, i) => i < 4 || reply.url.startsWith("/")), count("operationAOTPutByIdAndCache") - before < 300);
 }
 const old = make("/old");
 for (let i = 0; i < 20000; i++) make("/" + i);

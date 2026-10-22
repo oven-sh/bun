@@ -1,6 +1,6 @@
 // `new C(..)` where C comes out of a table does not go through the runtime's general construction: for classes of the engine and for a function that asks new.target. The program counts the entries.
 declare const aotOperationCount: (name: string) => number;
-function entered(): number { return aotOperationCount("operationAOTTypedConstruct"); }
+function entered(): number { return aotOperationCount("operationAOTConstruct"); }
 const lines: string[] = [];
 function measure(label: string, constructions: number, run: () => number): void {
     const before = entered();

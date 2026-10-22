@@ -555,7 +555,7 @@ static void unregisterOpenDatabase(JSDatabaseSync* db)
     openDatabases().remove(db);
 }
 
-NEVER_INLINE JSDatabaseSync::~JSDatabaseSync()
+JSDatabaseSync::~JSDatabaseSync()
 {
     // Reachable with a BusyScope still on the stack only when process.exit()
     // was called from inside a UDF/authorizer and the heap is destructed on
@@ -1778,7 +1778,7 @@ static const HashTableValue JSDatabaseSyncPrototypeTableValues[] = {
     { "createTagStore"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDatabaseSyncCreateTagStore, 0 } },
 };
 
-NEVER_INLINE void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSDatabaseSyncPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSDatabaseSync::info(), JSDatabaseSyncPrototypeTableValues, *this);
@@ -2030,7 +2030,7 @@ void JSStatementSync::finalizeStatement()
     sqlite3_finalize(std::exchange(m_stmt, nullptr));
 }
 
-NEVER_INLINE JSStatementSync::~JSStatementSync()
+JSStatementSync::~JSStatementSync()
 {
     // A live SteppingScope here means process.exit() from inside a
     // UDF/aggregate under BUN_DESTRUCT_VM_ON_EXIT=1. sqlite3_finalize on a
@@ -2546,7 +2546,7 @@ static const HashTableValue JSStatementSyncPrototypeTableValues[] = {
     { "setAllowUnknownNamedParameters"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatementSyncSetAllowUnknownNamedParameters, 1 } },
 };
 
-NEVER_INLINE void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
+void JSStatementSyncPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSStatementSync::info(), JSStatementSyncPrototypeTableValues, *this);
@@ -2719,7 +2719,7 @@ static const HashTableValue JSStatementSyncIteratorPrototypeTableValues[] = {
     { "return"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsStatementSyncIteratorReturn, 0 } },
 };
 
-NEVER_INLINE void JSStatementSyncIteratorPrototype::finishCreation(VM& vm, JSGlobalObject*)
+void JSStatementSyncIteratorPrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSStatementSyncIterator::info(), JSStatementSyncIteratorPrototypeTableValues, *this);
@@ -2893,7 +2893,7 @@ static const HashTableValue JSNodeSqliteSessionPrototypeTableValues[] = {
     { "close"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSessionClose, 0 } },
 };
 
-NEVER_INLINE void JSNodeSqliteSessionPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
+void JSNodeSqliteSessionPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSNodeSqliteSession::info(), JSNodeSqliteSessionPrototypeTableValues, *this);
@@ -3357,7 +3357,7 @@ static const HashTableValue JSNodeSqliteTagStorePrototypeTableValues[] = {
     { "clear"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTagStoreClear, 0 } },
 };
 
-NEVER_INLINE void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
+void JSNodeSqliteTagStorePrototype::finishCreation(VM& vm, JSGlobalObject*)
 {
     Base::finishCreation(vm);
     Bun::reifyStaticPropertyTable(vm, JSNodeSqliteTagStore::info(), JSNodeSqliteTagStorePrototypeTableValues, *this);

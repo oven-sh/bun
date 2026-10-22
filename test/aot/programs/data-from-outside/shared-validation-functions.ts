@@ -1,5 +1,6 @@
 // Call sites of JSON.parse<T>() with the same type share the functions that are emitted for the type.
-// IR= 1 validate String ",\\x22height\\x22:"
+// IR+ JSONStartsWith v\d+ text="\\x22height\\x22:"
+// IR- JSONStartsWith v\d+ text="\\x22height\\x22:"[\s\S]*JSONStartsWith v\d+ text="\\x22height\\x22:"
 interface Size { width: number; height: number }
 interface Box { size: Size; label: string }
 

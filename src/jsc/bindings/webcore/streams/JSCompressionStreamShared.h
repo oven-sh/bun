@@ -7,7 +7,7 @@
 
 // CompressionStreamCoder.rs. Each transform call runs one bounded step; `more` means the coder
 // must be stepped again (with no input, it kept the tail) before the next chunk is fed.
-extern "C" void* CompressionStreamCoder__create(JSC::JSGlobalObject* global, JSC::CallFrame* callFrame, uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
+extern "C" void* CompressionStreamCoder__create(uint8_t format, bool decompress, size_t highWaterMark, bool hasLevel, int32_t level);
 // Releases the cell's reference (in-flight off-thread steps hold their own).
 extern "C" void CompressionStreamCoder__destroy(void* coder);
 extern "C" JSC::EncodedJSValue CompressionStreamCoder__transform(void* coder, JSC::JSGlobalObject* global, const uint8_t* input, size_t input_len, bool finish, bool* more);

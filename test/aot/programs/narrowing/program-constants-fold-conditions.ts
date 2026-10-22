@@ -1,4 +1,5 @@
-// A `const` that holds a literal decides the conditions it is tested in. The code that never runs is not checked: each call of `wrong` with a text is a type error. A read in the temporal dead zone still throws.
+// A `const` that holds a primitive literal decides the conditions it is tested in. The code that never runs is not checked: each call of `wrong` with a text is a type error. A read in the temporal dead zone still throws.
+// A `const` that holds an object is checked on both sides, and the side for a falsy or missing object never runs.
 const log: unknown[] = []
 function readsEarly(): string {
   try {
@@ -37,8 +38,8 @@ function describe() {
   return "described"
 }
 const table = { a: 1 }
-const always = table ? "an object is truthy" : wrong("the arm of a falsy object")
-const present = table ?? wrong("behind ??")
+const always = table ? "an object is truthy" : wrong(1)
+const present = table ?? { a: wrong(2) }
 log.push(picked, describe(), always, present.a)
 
 function loop(): string[] {

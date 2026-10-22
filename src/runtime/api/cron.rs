@@ -272,6 +272,7 @@ enum RegisterState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRegister for CronRegisterJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
@@ -745,7 +746,7 @@ fn resolve_cron_tz(global: &JSGlobalObject, opts: JSValue) -> JsResult<CronTz> {
 
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Cron)]
 pub(crate) fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<3>();
 
@@ -1024,6 +1025,7 @@ enum RemoveState {
 // `maybe_finished` (via `CronJobBase`) may free `this`.
 bun_io::impl_buffered_reader_parent! {
     CronRemove for CronRemoveJob;
+    feature = Cron;
     has_on_read_chunk = false;
     // SAFETY: `this` is the live heap job registered via `set_parent`.
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(ThisPtr::new(this));
@@ -1277,7 +1279,7 @@ impl CronRemoveJob {
 }
 
 // free fn: `#[host_fn]` Free shim calls bare `cron_remove(..)`
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Cron)]
 pub(crate) fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<1>();
     if !args[0].is_string() {
@@ -1951,7 +1953,7 @@ pub(crate) fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> 
     cron_fn
 }
 
-#[bun_jsc::host_fn]
+#[bun_jsc::host_fn(feature = Cron)]
 pub(crate) fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_as_array::<3>();
 

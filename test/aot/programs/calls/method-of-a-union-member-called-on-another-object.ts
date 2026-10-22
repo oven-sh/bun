@@ -1,4 +1,4 @@
-// Methods of the members of a union of classes are also taken as values and called on other objects: those calls still go through the entry that tests `this`.
+// Methods of the members of a union of classes are also taken as values and called on other objects: `this` of a method is only predicted, so each of those calls answers as in plain Bun.
 class Circle {
   constructor(public radius: number) {}
   area(): number {

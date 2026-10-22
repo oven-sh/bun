@@ -1,7 +1,7 @@
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const answers = ["own", "own-and-cached", "cannot-say", "inherited-or-absent", "inherited-or-absent-and-cached", "no-such-name", "no-such-name-and-cached", "along-the-chain-of-a-dictionary"];
-const visits = () => answers.reduce((sum, answer) => sum + count("operationAOTGetByKeyGeneric:" + answer), count("operationAOTGetByVal"));
+const lookups = () => count("operationAOTGetByValGeneric");
+const visits = () => lookups() + count("operationAOTGetByVal");
 
 const keys = ["alpha", "beta", "gamma", "missing", "inherited", "computed"];
 const read = (object, key) => object[key];
@@ -79,13 +79,13 @@ collect();
 for (const store of stores) {
     for (const key of Object.keys({ alpha: 0, beta: 0, gamma: 0 })) total += read(store, key);
 }
-const places = () => count("operationAOTGetByKeyGeneric:own-and-cached");
-const placesBefore = places();
 for (let i = 0; i < 400; i++) round();
-const given = places() - placesBefore;
 const before = visits();
-for (let i = 0; i < 1000; i++) round();
+round();
+const missed = visits() - before;
+for (let i = 1; i < 1000; i++) round();
 const asked = visits() - before;
 console.log("the sum:", total);
-console.log("at least 90 of 96 pairs of a shape and a key that comes again are given a place of their own:", typeof aotOperationCount !== "function" || given >= 90);
+console.log("each of the 96 pairs of a structure and a key was looked up at least once:", typeof aotOperationCount !== "function" || lookups() >= 96);
+console.log("at least 90 of the 96 pairs are cached after 400 rounds:", typeof aotOperationCount !== "function" || missed <= 6);
 console.log("the run time is asked at most 960 times for 96000 reads under 3 keys that come again:", typeof aotOperationCount !== "function" || asked <= 960);

@@ -1,0 +1,30 @@
+[
+ [
+  "return [workInProgressHook.memoizedState, (reducer as FZ.Reducer)];",
+  "return [workInProgressHook.memoizedState, (reducer as FZ.Dispatch)];"
+ ],
+ [
+  "    action = function (payload) {\n      boundAction(payload);",
+  "    action = function (payload: any) {\n      boundAction(payload);"
+ ],
+ [
+  "var resumeSegmentID: FZ.SegmentId | undefined = (resumeSlots as FZ.ResumeSlots)[i];",
+  "var resumeSegmentID: FZ.SegmentId | undefined = (resumeSlots as FZ.SlotMap)[i];"
+ ],
+ [
+  "            delete (resumeSlots as FZ.ResumeSlots)[i])",
+  "            delete (resumeSlots as FZ.SlotMap)[i])"
+ ],
+ [
+  "for (resumeSlots = 0; (resumeSlots as FZ.ResumeSlots) < keyPath; resumeSlots++)",
+  "for (resumeSlots = 0; (resumeSlots as number) < keyPath; resumeSlots++)"
+ ],
+ [
+  "            ? (resumeSlots as FZ.ResumeSlots)\n            : keyPath - 1 - (resumeSlots as FZ.ResumeSlots)),",
+  "            ? (resumeSlots as number)\n            : keyPath - 1 - (resumeSlots as number)),"
+ ],
+ [
+  "    (0 === --row.pendingTasks\n      ? finishSuspenseListRow(request, (row",
+  "    (0 === --(row as FZ.SuspenseListRow).pendingTasks\n      ? finishSuspenseListRow(request, (row"
+ ]
+]

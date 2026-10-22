@@ -1,8 +1,8 @@
 {
  "a-key-that-is-the-same-symbol-on-every-way": "all agree",
  "arrays-made-by-a-length-of-unknown-type": "all agree",
- "exports-read-off-a-namespace": "as the bundle",
- "frozen-arrays": "alone: ints strict store=THROWS TypeError\ndoubles strict store=THROWS TypeError\nmixed strict store=THROWS TypeError\nholes strict store=THROWS TypeError\nand 7 lines more",
+ "exports-read-off-a-namespace": "as bun run",
+ "frozen-arrays": "as bun run",
  "json-of-optional-members": "all agree",
  "reads-by-name-at-a-guessed-place": "all agree",
  "reads-past-the-end": "all agree"

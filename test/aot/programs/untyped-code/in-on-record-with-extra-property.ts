@@ -11,7 +11,7 @@ const hasByKey: (p: any, k: any) => any = function (p: any, k: any): any { retur
 const ownMark: (p: any) => any = function (p: any): any { return Object.hasOwn(p, "mark") ? 1 : 0; };
 const ownX: (p: any) => any = function (p: any): any { return Object.hasOwn(p, "x") ? 1 : 0; };
 const ownByMethod: (p: any) => any = function (p: any): any { return p.hasOwnProperty("mark") ? 1 : 0; };
-const operations = ["operationAOTInByValAndCache", "operationAOTTypedHasKey", "operationAOTTypedHasName", "operationAOTTypedHasOwnProperty", "operationAOTTypedHasOwnPropertyByName"];
+const operations = ["operationAOTInByValAndCache", "operationAOTInByVal", "operationAOTInById", "operationAOTHasOwnProperty"];
 const entered = (): number => { let n = 0; if (typeof aotOperationCount === "function") for (const name of operations) n += aotOperationCount(name); return n; };
 const keys: string[] = JSON.parse('["mark","x","note","other"]');
 for (const [kind, make] of [["typed", makeTyped], ["marked", makeMarked]] as const) {

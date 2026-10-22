@@ -2431,6 +2431,13 @@ impl JSValue {
         }
         Ok(Some(v))
     }
+    /// True for what a generator function compiled ahead of time has made. The engine's own generator objects have `JSType::JSGenerator`.
+    pub fn is_compiled_generator(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isCompiledGenerator(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isCompiledGenerator(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {
@@ -2819,10 +2826,6 @@ impl JSValue {
         })
     }
 
-    pub fn jest_copy_along_property_matchers(self, matchers: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || JSC__JSValue__jestCopyAlongPropertyMatchers(self, matchers, global))
-    }
-
     // ── BigInt ordering. ────────────────────────────────
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
     /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
@@ -2933,11 +2936,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         replace_props: bool,
     ) -> bool;
-    safe fn JSC__JSValue__jestCopyAlongPropertyMatchers(
-        this: JSValue,
-        matchers: JSValue,
-        global: &JSGlobalObject,
-    ) -> JSValue;
     safe fn JSC__JSValue__asBigIntCompare(
         this: JSValue,
         global: &JSGlobalObject,

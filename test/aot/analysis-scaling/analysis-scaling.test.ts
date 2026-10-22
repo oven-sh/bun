@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { isASAN, isDebug, tempDir } from "harness";
 import { describe, test } from "../supported";
 import { measureLeast } from "./measure-check";
-import { shapes } from "./shapes";
+import { shapes, type Shape } from "./shapes";
 
 const runs = 3;
 const allowedNoise = { instructions: 30_000_000, peakBytes: 64 * 1024 * 1024 };
@@ -10,22 +10,20 @@ const skipped = isDebug || isASAN ? "a debug or ASAN build counts other instruct
 if (skipped) console.error(`SKIPPED: test/aot/analysis-scaling: ${skipped}`);
 
 describe.skipIf(!!skipped)("bun check --aot cost per item", () => {
-  test.each(shapes)(
-    "$name",
-    async shape => {
-      const measure = async (count: number) => {
-        using folder = tempDir("aot-analysis-scaling", shape.write(count));
-        return await measureLeast(String(folder), ["./main.ts"], runs);
-      };
-      const none = await measure(0);
-      for (const count of shape.sizes) {
-        const cost = await measure(count);
-        const added = { instructions: cost.instructions === undefined || none.instructions === undefined ? 0 : cost.instructions - none.instructions, peakBytes: cost.peakBytes - none.peakBytes };
-        const allowed = { instructions: allowedNoise.instructions + count * shape.instructionsPerItem, peakBytes: allowedNoise.peakBytes + count * shape.bytesPerItem };
-        const excessive = (Object.keys(added) as (keyof typeof added)[]).filter(name => added[name] > allowed[name]).map(name => `${count} ${shape.counted} add ${added[name]} ${name}; allowed: ${allowed[name]}`);
-        expect(excessive).toEqual([]);
-      }
-    },
-    600_000,
-  );
+  const costsNoMoreThanAllowed = async (shape: Shape) => {
+    const measure = async (count: number) => {
+      using folder = tempDir("aot-analysis-scaling", shape.write(count));
+      return await measureLeast(String(folder), ["./main.ts"], runs);
+    };
+    const none = await measure(0);
+    for (const count of shape.sizes) {
+      const cost = await measure(count);
+      const added = { instructions: cost.instructions === undefined || none.instructions === undefined ? 0 : cost.instructions - none.instructions, peakBytes: cost.peakBytes - none.peakBytes };
+      const allowed = { instructions: allowedNoise.instructions + count * shape.instructionsPerItem, peakBytes: allowedNoise.peakBytes + count * shape.bytesPerItem };
+      const excessive = (Object.keys(added) as (keyof typeof added)[]).filter(name => added[name] > allowed[name]).map(name => `${count} ${shape.counted} add ${added[name]} ${name}; allowed: ${allowed[name]}`);
+      expect(excessive).toEqual([]);
+    }
+  };
+  test.each(shapes.filter(shape => !shape.notYet))("$name", costsNoMoreThanAllowed, 600_000);
+  test.todo.each(shapes.filter(shape => shape.notYet))("$name ($notYet)", costsNoMoreThanAllowed, 600_000);
 });

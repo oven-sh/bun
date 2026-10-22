@@ -129,22 +129,20 @@ impl ResolveMessage {
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
-    #[crate::host_fn(getter)]
-    pub fn get_column(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_column(this: &Self, _global: &JSGlobalObject) -> i32 {
         if let Some(location) = &this.msg.data.location {
-            return Ok(JSValue::from((location.column - 1).max(0)));
+            return (location.column - 1).max(0);
         }
 
-        Ok(JSValue::from(0_i32))
+        0
     }
 
-    #[crate::host_fn(getter)]
-    pub fn get_line(this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn get_line(this: &Self, _global: &JSGlobalObject) -> i32 {
         if let Some(location) = &this.msg.data.location {
-            return Ok(JSValue::from((location.line - 1).max(0)));
+            return (location.line - 1).max(0);
         }
 
-        Ok(JSValue::from(0_i32))
+        0
     }
 
     pub fn fmt(

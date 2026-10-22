@@ -1,4 +1,0 @@
-nothing is written: string
-a variable with a type: TypeError
-a parameter with a type: TypeError
-a variable with a type, and the value fits: 1

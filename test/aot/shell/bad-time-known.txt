@@ -1,5 +1,7 @@
 # Programs that end with a realm that is having a bad time, which bad-time.py does not count, and why.
 arrays/empty-arrays-of-numbers    means it: defines an index accessor on the prototype of an Array subclass; has none before that line; the plain engine has none, as for language/array-subclass-iteration
+arrays/array-creation-and-search-stubs    means it: defines an index accessor on the prototype of an Array subclass, as arrays/empty-arrays-of-numbers does
+arrays/element-stubs-by-storage-shape    means it: defines an index accessor on the prototype of an Array subclass, as arrays/empty-arrays-of-numbers does
 arrays/frozen-arrays-proxy-in-prototype-chain    has one in the plain engine too
 arrays/array-subclass-prototype-element    has one in the plain engine too
 arrays/map-callback-0-index-accessor    has one in the plain engine too
@@ -23,7 +25,9 @@ counterexamples/sort-nine-numbers-comparator-adds-index    has one in the plain 
 counterexamples/sort-numbers-comparator-adds-index    has one in the plain engine too
 counterexamples/sort-strings-comparator-adds-index    has one in the plain engine too
 language/array-subclass-iteration    TODO: has none in the plain engine: a getter at an index of the prototype of a class that extends Array and has no instance yet
+language/for-in-after-indexed-accessor    means it: has one in the plain engine too
 objects/object-assign-onto-instances-of-classes-with-accessors    has one in the plain engine too
+soundness/native-short-cuts-over-heirs-of-indexed-getters    means it: has one in the plain engine too
 type-rules/out-of-bounds-array-reads    has one in the plain engine too
 typed-objects/absent-fields-under-another-prototype    has one in the plain engine too
 typed-objects/index-on-array-prototype-object    has one in the plain engine too

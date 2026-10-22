@@ -1,7 +1,0 @@
-method on F.prototype: no error f:4
-4f level,unit
-proxy of a class as new.target: no error 8c
-construct 4 true class
-constructor of a class returns another object: no error other 4
-field that holds the constructor made an accessor: no error true
-5c function

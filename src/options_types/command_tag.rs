@@ -251,7 +251,6 @@ pub static LOADS_CONFIG: TagTable<bool> = TagTable({
 pub static ALWAYS_LOADS_CONFIG: TagTable<bool> = TagTable({
     let mut a = [false; Tag::COUNT];
     a[Tag::BuildCommand as usize] = true;
-    a[Tag::CheckCommand as usize] = true;
     a[Tag::CompileCommand as usize] = true;
     a[Tag::TestCommand as usize] = true;
     a[Tag::LintCommand as usize] = true;

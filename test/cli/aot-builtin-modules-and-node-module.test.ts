@@ -4,8 +4,11 @@ import { test } from "../aot/supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { statSync } from "node:fs";
 import { join } from "node:path";
+import { importingByName } from "./aot-builtin-modules";
 
 const plain = "plain.mjs";
+const importsZlib = "imports-zlib.mjs";
+const importsWorkerThreads = "imports-worker-threads.mjs";
 const made = `import { createRequire } from "node:module";\nconst require = createRequire(import.meta.url);\n`;
 
 const files = {
@@ -15,6 +18,8 @@ const files = {
 
 const withoutADoor: Record<string, string> = {
   [plain]: `console.log("run");`,
+  [importsZlib]: `import "node:zlib";\nconsole.log("run");`,
+  [importsWorkerThreads]: `import "node:worker_threads";\nconsole.log("run");`,
   "a-made-require-of-a-written-name.mjs": `${made}console.log(require("./package.json").name ? "run" : "");`,
   "a-made-require-and-its-resolve.mjs": `${made}console.log(require("./lib.cjs").name && require.resolve("./lib.cjs") ? "run" : "");`,
   "a-made-require-under-another-name.mjs": `import { createRequire as makeRequire } from "node:module";\nconst load = makeRequire(import.meta.url);\nconsole.log(load("./lib.cjs").name && typeof load("node:zlib").gzipSync === "function" ? "run" : "");`,
@@ -31,7 +36,7 @@ const withoutADoor: Record<string, string> = {
 
 const name = `const name = ["node:zlib"][0];\n`;
 const loaded = (how: string) => `console.log(typeof ${how}.gzipSync === "function" ? "run" : "");`;
-const withADoor: Record<string, string> = {
+const withADoor = importingByName("node:zlib", {
   "a-made-require-of-a-computed-name.mjs": `${made}${name}${loaded("require(name)")}`,
   "a-made-require-that-is-handed-on.mjs": `${made}${name}const use = load => load(name);\n${loaded("use(require)")}`,
   "a-made-require-that-is-called-at-once.mjs": `import { createRequire } from "node:module";\n${name}${loaded("createRequire(import.meta.url)(name)")}`,
@@ -41,11 +46,11 @@ const withADoor: Record<string, string> = {
   "the-namespace.mjs": `import * as module from "node:module";\n${name}${loaded("module.createRequire(import.meta.url)(name)")}`,
   "required-and-kept.cjs": `const { createRequire } = require("node:module");\n${name}const load = createRequire(__filename);\n${loaded("load(name)")}`,
   "required.cjs": `const { createRequire } = require("node:module");\n${name}${loaded("createRequire(__filename)(name)")}`,
-};
+});
 
 const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
 
-test("harmless names of node:module and node:worker_threads do not bring every built-in module into the executable", async () => {
+test("harmless names of node:module and node:worker_threads bring no built-in module into the executable", async () => {
   const programs = { ...withoutADoor, ...withADoor };
   using dir = tempDir("builtin-modules-and-node-module", { ...files, ...programs });
   const sizes: Record<string, number> = {};
@@ -59,9 +64,9 @@ test("harmless names of node:module and node:worker_threads do not bring every b
     expect({ entry, stdout, ranWith }).toEqual({ entry, stdout: "run\n", ranWith: 0 });
     sizes[entry] = statSync(outfile).size;
   })));
-  const everyModule = Math.min(...Object.keys(withADoor).map(entry => sizes[entry])) - sizes[plain];
-  for (const entry of Object.keys(withoutADoor)) {
-    expect({ entry, grows: sizes[entry] - sizes[plain] > everyModule / 2 }).toEqual({ entry, grows: false });
+  for (const [entry, text] of Object.entries(withoutADoor)) {
+    const base = text.includes('"node:zlib"') ? importsZlib : text.includes('worker_threads"') ? importsWorkerThreads : plain;
+    expect({ entry, grows: sizes[entry] - sizes[base] > 1024 * 1024 }).toEqual({ entry, grows: false });
   }
 }, 240_000);
 

@@ -1,11 +1,11 @@
-// A plain object from untyped code that satisfies a record type, and that is the prototype of another object, cannot become the record where it lies, and a copy would not see later changes. It stays as it is and is read by name: at the top, below plain data, and where a read by name yields it. All data is built by stores, never written as a literal that looks like the type.
+// A plain object from untyped code that satisfies a record type, and that is the prototype of another object, stays as it is where it enters a typed place: at the top, below plain data, and where a read by name yields it. Its heir sees every later store. All data is built by stores, never written as a literal that looks like the type.
 type Inner = { p: number; q?: string; deep: number[] };
 type Outer = { inner: Inner; n?: number };
 function own(): Outer { return { inner: { p: 7, deep: [1] } }; }
 const kept: any[] = [];
 function read(o: Outer): unknown { const i = o.inner; return [i.p, i.q, i.deep.length, o.inner.p, o.n]; }
 function store(o: Outer): unknown { o.inner.q = "set"; o.n = 3; return [o.inner.q, o.n]; }
-function attempt(name: string, f: () => unknown): void { try { console.log(name, JSON.stringify(f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun --aot[^)]*\)/, "").slice(0, 150)); } }
+function attempt(name: string, f: () => unknown): void { try { console.log(name, JSON.stringify(f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun compile[^)]*\)/, "").slice(0, 150)); } }
 const built = (entries: [string, unknown][], onto: any = {}): any => { for (const [name, value] of entries) onto[name] = value; return onto; };
 const inner = (): any => built([["p", 1], ["deep", [1, 2]]]);
 const heirOf = (made: any): any => { kept.push(Object.create(made)); return made; };

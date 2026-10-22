@@ -1,0 +1,16 @@
+// One name of node:crypto is imported and used; another, createHash, is found through import() in the text of new Function. What the text gets at answers right, or it is refused aloud: with no other error and no other answer.
+import { randomUUID } from "node:crypto";
+const seen = [];
+console.log("the name that is imported:", String(randomUUID().length));
+const key = ["creat", "eHash"].join("");
+const name = ["node:", "crypto"].join("");
+let told;
+try {
+  const whole = await new Function("name", "return import(name)")(name);
+  const F = whole[key];
+  const answer = String(F("sha1").update("a").digest("hex"));
+  told = answer === "86f7e437faa5a7fce15d1ddcb9eaeaea377667b8" ? "right" : "ANOTHER ANSWER: " + answer;
+} catch (error) {
+  told = /was not compiled into this executable|Code generation from strings disallowed/.test(error.message) ? "refused aloud" : "threw " + error.constructor.name + ": " + error.message;
+}
+console.log("the other member:", told === "right" || told === "refused aloud" ? "right, or refused aloud" : told);

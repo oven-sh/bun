@@ -23,10 +23,6 @@
 #include "JSMessageEvent.h"
 #include <tuple>
 
-namespace Zig {
-JSC::JSValue WebSocketConstructorCallback(JSC::VM&, JSC::JSObject*);
-}
-
 namespace Bun {
 
 using namespace JSC;
@@ -36,7 +32,6 @@ using namespace WebCore;
 JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSValue (*volatile webSocketConstructor)(VM&, JSObject*) = Zig::WebSocketConstructorCallback;
 
     auto fields = std::make_tuple(
         globalObject->JSResponseConstructor(),
@@ -47,7 +42,7 @@ JSC::JSValue createUndiciInternalBinding(Zig::GlobalObject* globalObject)
         JSDOMURL::getConstructor(vm, globalObject),
         JSAbortSignal::getConstructor(vm, globalObject),
         JSURLSearchParams::getConstructor(vm, globalObject),
-        webSocketConstructor(vm, globalObject),
+        JSWebSocket::getConstructor(vm, globalObject),
         JSCloseEvent::getConstructor(vm, globalObject),
         JSErrorEvent::getConstructor(vm, globalObject),
         JSMessageEvent::getConstructor(vm, globalObject));

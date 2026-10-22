@@ -1,4 +1,4 @@
-// Recursion a million calls deep through tail calls: direct calls, methods, function values and continuation passing all finish without overflowing the stack.
+// Recursion a million calls deep through tail calls: direct calls, methods, function values and continuation passing all finish without overflowing the stack. One row differs from plain Bun, with or without the types: a call in a catch block without `finally` is in tail position by ECMAScript, and plain Bun makes no tail call there.
 declare const console: any;
 function attempt(name: string, f: () => unknown) { try { console.log(name + ": " + f()); } catch (e: any) { console.log(name + ": " + e.constructor.name); } }
 const N = 1_000_000;

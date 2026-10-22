@@ -51,16 +51,16 @@ function show(label: string, marks: Mark[], conversions: number, totals: string,
 function reportRead(label: string, text: string): void {
   const marks: Mark[] = JSON.parse(text);
   const kept: unknown[] = [];
-  const before = aotOperationCount("operationAOTTypedCoerce");
+  const before = aotOperationCount("operationAOTEnforceType");
   const totals = totalOfMoved(marks, 1, kept) + " " + totalOfMovedAndResized(marks, 2, 7, kept);
-  show(label, marks, aotOperationCount("operationAOTTypedCoerce") - before, totals, kept);
+  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, totals, kept);
 }
 
 function showPositionsOnly(label: string, marks: Mark[]): void {
   const kept: unknown[] = [];
-  const before = aotOperationCount("operationAOTTypedCoerce");
+  const before = aotOperationCount("operationAOTEnforceType");
   const total = totalOfPositions(marks, 1, kept);
-  show(label, marks, aotOperationCount("operationAOTTypedCoerce") - before, String(total), kept);
+  show(label, marks, aotOperationCount("operationAOTEnforceType") - before, String(total), kept);
 }
 
 const parsed = (text: string): Mark[] => {
@@ -100,6 +100,6 @@ console.log(reads);
 
 const many = parsed("[" + Array.from({ length: 300 }, (_, i) => '{"pos":' + i + ',"size":' + (i + 0.5) + ',"note":"n' + i + '","done":' + (i % 2 === 0) + ',"extra":[' + i + "]}").join() + "]");
 let total = 0;
-const beforeMany = aotOperationCount("operationAOTTypedCoerce");
+const beforeMany = aotOperationCount("operationAOTEnforceType");
 for (let round = 0; round < 40; round++) total += totalOfMoved(many, round, []);
-console.log("12,000 copies: " + total + ": " + (aotOperationCount("operationAOTTypedCoerce") - beforeMany) + " conversions by the runtime");
+console.log("12,000 copies: " + total + ": " + (aotOperationCount("operationAOTEnforceType") - beforeMany) + " conversions by the runtime");

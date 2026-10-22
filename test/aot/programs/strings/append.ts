@@ -1,6 +1,6 @@
 // A string that is only appended to is built in one buffer instead of a rope.
-// IR+ CallBuiltin StringAppendBegin
-// IR+ CallBuiltin StringAppendFinish
+// IR+ ^ .* = StringBuilderBegin
+// IR+ ^ .* = StringBuilderFinish 
 // IR= 0 listItems Strcat
 const log: string[] = [];
 let sum = 0;

@@ -1,6 +1,6 @@
 // A rest parameter of an inlined function that is spread into another call needs no array, and the inner call is direct.
-// IR- NewArray
-// IR- CallBuiltin Apply
+// IR- ^ .*NewArray
+// IR- ^ .*(?: = Call(List|Spread) |overload=FunctionPrototypeApply/)
 declare const console: any;
 let n = 0;
 function add(a: number, b: number) { n += a + b; }

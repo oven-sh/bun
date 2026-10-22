@@ -43,11 +43,11 @@ function Hidden(options) {
 Object.defineProperty(heirsInheritFrom(Hidden), ["sec", "ret"].join(""), { get() { return "hidden"; }, set(value) { note("secret " + value, this); } });
 
 function asked(make) {
-  const before = count("operationAOTTypedTryPutProperties");
+  const before = count("operationAOTTryPutProperties");
   const said = new Set();
   for (let i = 0; i < 2000; i++) said.add(make(i));
   console.log([...said].join("\n"));
-  return count("operationAOTTypedTryPutProperties") - before;
+  return count("operationAOTTryPutProperties") - before;
 }
 const withNames = asked(i => describe(new Response(i & 1)));
 const withoutNames = asked(i => Object.keys(new Hidden()).join() + " " + new Hidden().secret);

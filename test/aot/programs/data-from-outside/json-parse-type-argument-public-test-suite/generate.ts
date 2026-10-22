@@ -1,11 +1,18 @@
-// bun generate.ts <a clone of github.com/nst/JSONTestSuite>: writes files.json (each file of test_parsing and test_transform in base64: many are not UTF-8) and fitted.ts (for each file that JSON.parse accepts, a type written to fit its value). No script of that repository is run.
+// bun generate.ts <a clone of github.com/nst/JSONTestSuite>: writes files.json (each file of test_parsing and test_transform in base64, because many are not UTF-8; a long file that repeats a few bytes is stored as those bytes, a count and what follows) and fitted.ts (for each file that JSON.parse accepts, a type written to fit its value). No script of that repository is run.
 import { readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const clone = process.argv[2];
-const files: Record<string, string> = {};
-for (const folder of ["test_parsing", "test_transform"]) for (const name of readdirSync(join(clone, folder)).sort()) files[folder + "/" + name] = readFileSync(join(clone, folder, name)).toString("base64");
-writeFileSync(join(import.meta.dir, "files.json"), "{\n" + Object.entries(files).map(([name, bytes]) => JSON.stringify(name) + ": " + JSON.stringify(bytes)).join(",\n") + "\n}\n");
+const files: Record<string, Buffer> = {};
+for (const folder of ["test_parsing", "test_transform"]) for (const name of readdirSync(join(clone, folder)).sort()) files[folder + "/" + name] = readFileSync(join(clone, folder, name));
+function stored(bytes: Buffer): string | { repeat: string; times: number; then: string } {
+  for (let length = 1; length <= 16 && bytes.length >= 1000; length++) {
+    const times = Math.floor(bytes.length / length);
+    if (bytes.subarray(0, times * length).equals(Buffer.alloc(times * length, bytes.subarray(0, length)))) return { repeat: bytes.subarray(0, length).toString("base64"), times, then: bytes.subarray(times * length).toString("base64") };
+  }
+  return bytes.toString("base64");
+}
+writeFileSync(join(import.meta.dir, "files.json"), "{\n" + Object.entries(files).map(([name, bytes]) => JSON.stringify(name) + ": " + JSON.stringify(stored(bytes))).join(",\n") + "\n}\n");
 
 function typeOf(value: unknown): string {
   if (value === null) return "null";
@@ -18,7 +25,7 @@ const fits: Record<string, number> = {};
 for (const [name, bytes] of Object.entries(files)) {
   let value: unknown;
   try {
-    value = JSON.parse(new TextDecoder("utf-8", { ignoreBOM: true }).decode(Buffer.from(bytes, "base64")));
+    value = JSON.parse(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
   } catch {
     continue;
   }

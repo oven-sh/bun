@@ -1,4 +1,4 @@
-// A definition by a built-in function that brings a value is a store: the value is held to the type of the field. A hundred thousand times each, the answers counted: the optimizing JIT has an operation of its own for Object.defineProperty.
+// Defining a property with a value through a built-in function succeeds whatever the value is, as in plain JavaScript. Each case runs 100,000 times and the results are counted.
 import { define, rows } from "./sloppy.cjs";
 class Box { label = "b"; size = 1; late: number; constructor() { this.late = 2; } }
 function count(f: (i: number) => unknown): string { const seen: Record<string, number> = {}; for (let i = 0; i < 100000; i++) { let said: string; try { said = String(f(i)); } catch (e) { said = (e as Error).name; } seen[said] = (seen[said] || 0) + 1; } return JSON.stringify(seen); }

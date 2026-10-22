@@ -1,3 +1,4 @@
+import { builtinFeatureUses } from "bun:internal-for-testing";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -282,17 +283,17 @@ function programOf(name: string, probes: string[], { isModule, isSloppy, args, e
   };
 }
 
-export function programsThatReachNames(reflected: Reflected[], doors: string, seed: string, count: number): Program[] {
-  const decides = new Set([...doors.matchAll(/^when \S+ (global|Bun|process|console|module|native) (\S+)$/gm)].map(([, kind, name]) => `${kind} ${name}`));
-  const decidesAFeature = ([root, path]: Reflected) =>
-    root === "globalThis" ? decides.has(`global ${path[0]}`) || decides.has(`${path[0]} ${path[1]}`) : ["module", "native"].some(kind => decides.has(`${kind} ${root}`) || decides.has(`${kind} node:${root}`));
+export function programsThatReachNames(reflected: Reflected[], seed: string, count: number): Program[] {
+  const declared = new Set(builtinFeatureUses().filter(({ kind }) => kind !== "NativeBinding" && kind !== "InternalModule").map(({ path }) => path));
+  const declaredPrefixLength = (path: string[]) => path.findIndex((_, index) => declared.has(path.slice(0, index + 1).join("."))) + 1;
+  const isDeclared = ([root, path]: Reflected) => (root === "globalThis" ? declaredPrefixLength(path) > 0 : declared.has(root) || declared.has(`node:${root}`));
   const byRoot = [...Map.groupBy(reflected, ([root, path]) => (root === "globalThis" ? path[0] : root)).values()];
-  const byFact = [...Map.groupBy(reflected.filter(decidesAFeature), ([root, path]) => (root === "globalThis" ? path.slice(0, decides.has(`global ${path[0]}`) ? 1 : 2).join(" ") : root)).values()];
+  const byDeclaredBuiltin = [...Map.groupBy(reflected.filter(isDeclared), ([root, path]) => (root === "globalThis" ? path.slice(0, declaredPrefixLength(path)).join(" ") : root)).values()];
   return Array.from({ length: count }, (_, index) => {
     const random = new Random(`${seed} ${index}`);
     const isModule = random.chance(0.3);
     const context: Context = { random, isModule, isSloppy: !isModule && random.chance(0.5), args: [], env: {} };
-    const probes = Array.from({ length: 1 + random.below(4) }, () => probe(random.pick(random.pick(random.chance(0.6) ? byFact : byRoot)), context));
+    const probes = Array.from({ length: 1 + random.below(4) }, () => probe(random.pick(random.pick(random.chance(0.6) ? byDeclaredBuiltin : byRoot)), context));
     return programOf(`${seed}-${index}`, probes, context);
   });
 }

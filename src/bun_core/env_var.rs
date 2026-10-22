@@ -74,8 +74,9 @@ new!(pub BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: unsigned, "BUN_CONFIG_WS_HANDSHAKE_TIM
 // Seconds the `new WebSocket()` client waits for the server's TCP close after its close event. 0 disables.
 new!(pub BUN_CONFIG_WS_CLOSE_TIMEOUT: unsigned, "BUN_CONFIG_WS_CLOSE_TIMEOUT", { default: 30 });
 new!(pub BUN_CRASH_REPORT_URL: string, "BUN_CRASH_REPORT_URL", {});
-new!(pub BUN_AOT_TYPED_FILE: string, "BUN_AOT_TYPED_FILE", {});
-new!(pub BUN_AOT_TYPED_SNAPSHOT: string, "BUN_AOT_TYPED_SNAPSHOT", {});
+new!(pub BUN_AOT_TYPE_MISMATCH_LOG: string, "BUN_AOT_TYPE_MISMATCH_LOG", {});
+new!(pub BUN_AOT_TYPE_MISMATCH_LOG_FORMAT: string, "BUN_AOT_TYPE_MISMATCH_LOG_FORMAT", {});
+new!(pub BUN_AOT_VERBOSE: boolean, "BUN_AOT_VERBOSE", { default: false });
 new!(pub BUN_DEBUG: string, "BUN_DEBUG", {});
 new!(pub BUN_DEBUG_ALL: boolean, "BUN_DEBUG_ALL", {});
 new!(pub BUN_DEBUG_CSS_ORDER: boolean, "BUN_DEBUG_CSS_ORDER", { default: false });
@@ -148,7 +149,6 @@ platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows
 // Opt-in for the vendored node:test suite and run() children.
 new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
-new!(pub BUN_TRIM_RUNTIME_WITHOUT: string, "BUN_TRIM_RUNTIME_WITHOUT", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
@@ -243,7 +243,6 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_ASSUME_PERFECT_INCREMENTAL, "BUN_ASSUME_PERFECT_INCREMENTAL", { default: None });
     new_feature_flag!(pub BUN_BE_BUN, "BUN_BE_BUN", {});
     new_feature_flag!(pub BUN_DEBUG_NO_DUMP, "BUN_DEBUG_NO_DUMP", {});
-    new_feature_flag!(pub BUN_FEATURE_FLAG_TRIM_RUNTIME, "BUN_FEATURE_FLAG_TRIM_RUNTIME", {});
     // Run the full VM teardown when the main thread exits (workers always do).
     // The CI runner turns it on for LeakSanitizer-validated files on ASAN.
     new_feature_flag!(pub BUN_DESTRUCT_VM_ON_EXIT, "BUN_DESTRUCT_VM_ON_EXIT", {});

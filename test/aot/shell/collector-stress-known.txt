@@ -53,3 +53,6 @@ host-classes/fields-of-host-subclasses-avoid-runtime    counts calls into the ru
 untyped-code/prototype-freeze-and-assign-invalidate-by-name    counts calls into the runtime
 untyped-code/first-store-by-name-to-field-without-storage    counts calls into the runtime
 untyped-code/later-store-by-name-grows-extension    counts calls into the runtime
+typed-objects/arrow-fields-of-open-classes-that-only-untyped-code-extends    counts calls into the runtime
+typed-objects/arrow-fields-that-lie-in-the-plain-this-from-its-creation    counts calls into the runtime
+typed-objects/open-classes-with-many-fields-that-only-untyped-code-extends    counts calls into the runtime

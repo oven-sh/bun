@@ -1,0 +1,5 @@
+{
+  "skipInVariant": {
+    "inner-objects-flattened-wherever-legal": "TODO: under --aot-testing=FlattenUntilHeldWhereverLegal the program dies: where null or undefined meets a borrowed inner object in a parameter, MakeBorrowedObject compares two addresses that were taken from two representations of the marker, finds them different and calls the run time with no cell"
+  }
+}

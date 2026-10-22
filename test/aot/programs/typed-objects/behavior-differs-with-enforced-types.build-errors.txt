@@ -1,4 +1,0 @@
-error: TS100017: 'as number' is applied to a value that is always "5": under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.
-error: TS100017: 'as string' is applied to a value that is always 5: under --aot the cast converts it or throws, whereas plain JavaScript leaves it unchanged.
-error: TS100013: This always throws a TypeError under --aot: the property `x` expects 'number | undefined' and always gets "one".
-error: TS100013: This always throws a TypeError under --aot: what `parse` returns expects 'number' and always gets string.

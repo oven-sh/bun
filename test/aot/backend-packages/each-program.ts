@@ -6,7 +6,17 @@ import { join } from "node:path";
 
 const shipsNoBuildForThisPlatform = process.platform === "win32" && process.arch === "arm64" ? ["argon2"] : [];
 
-function testEachProgram(folder: string, part: number, parts: number, needsTheDisk: Record<string, string>, given: Record<string, string[]> = {}, prepare: string[][] = [], withoutExceptionValidation: string[] = []) {
+function testEachProgram(
+  folder: string,
+  part: number,
+  parts: number,
+  needsTheDisk: Record<string, string>,
+  given: Record<string, string[]> = {},
+  prepare: string[][] = [],
+  withoutExceptionValidation: string[] = [],
+  /** Why the executable prints something else than plain Bun, on purpose. It still has to run to its end. */
+  differs: Record<string, string> = {},
+) {
   const programs = readdirSync(join(import.meta.dir, folder))
     .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
     .map(file => file.slice(0, -".ts".length))
@@ -60,6 +70,7 @@ function testEachProgram(folder: string, part: number, parts: number, needsTheDi
           const built = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
           expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
           const compiled = await run([executable], env);
+          if (program in differs) return void expect({ isDone: compiled.stdout.includes("\nDONE"), exitCode: compiled.exitCode, stderr: compiled.exitCode ? compiled.stderr : "" }).toEqual({ isDone: true, exitCode: 0, stderr: "" });
           expect({ stdout: steady(compiled.stdout), exitCode: compiled.exitCode, stderr: compiled.exitCode === plain.exitCode ? "" : compiled.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
           if (program in needsTheDisk) return;
 
@@ -86,10 +97,15 @@ export const testPrograms = (part: number, parts: number) =>
     part,
     parts,
     {
-      sequelize: "a driver that is required by a computed name",
-      typeorm: "a driver that is required by a computed name",
+      sequelize: "a driver that is required by a computed name: the name of the package is looked up on the disk",
+      sequelize_named: "a driver that is required by a computed name: the name of the package is looked up on the disk",
+      typeorm: "a driver that is required by a computed name: the name of the package is looked up on the disk",
     },
     {
+      // A driver that is required by a computed name is found where it is an entry point.
+      sequelize: ["node_modules/pg/lib/index.js"],
+      sequelize_named: ["node_modules/pg/lib/index.js"],
+      typeorm: ["node_modules/sql.js/dist/sql-wasm.js", "--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
       argon2: ["--asset", "node_modules/argon2/prebuilds"],
       bcrypt: ["--asset", "node_modules/bcrypt/prebuilds"],
       newrelic: ["node_modules/newrelic/lib/subscribers/**/*.js", "node_modules/newrelic/lib/instrumentation/**/*.js"],
@@ -100,6 +116,10 @@ export const testPrograms = (part: number, parts: number) =>
     },
     [],
     ["argon2"],
+    {
+      ddtrace: "it traces Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
+      otel: "it traces node:http and Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
+    },
   );
 
 export const testMorePrograms = () => testEachProgram("more-programs", 0, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);

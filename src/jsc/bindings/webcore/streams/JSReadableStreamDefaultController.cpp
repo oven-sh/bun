@@ -244,7 +244,7 @@ JSObject* JSReadableStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject
     return getDOMPrototype<JSReadableStreamDefaultController>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSReadableStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSReadableStreamDefaultController::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSReadableStreamDefaultControllerConstructor, DOMConstructorID::ReadableStreamDefaultController>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }

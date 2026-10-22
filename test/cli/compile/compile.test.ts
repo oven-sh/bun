@@ -44,29 +44,32 @@ describe.concurrent("bun compile", () => {
     expect(plain.exitCode).toBe(0);
     expect(await run(String(dir), [executable(String(dir), "app")])).toEqual({ stdout: "one\n", stderr: "", exitCode: 0 });
 
-    expect(await bun(String(dir), "compile", "--no-aot", "--aot-type-errors=log", "app.ts")).toEqual({
+    expect(await bun(String(dir), "compile", "--no-aot", "--aot-log-type-mismatches", "app.ts")).toEqual({
       stdout: "",
-      stderr: "error: --aot-type-errors requires --aot\n",
+      stderr: "error: --aot-log-type-mismatches requires --aot\n",
       exitCode: 1,
     });
   });
 
   test.skipIf(!!unsupported)("says how much is typed, and --explain says why the rest is not", async () => {
-    using dir = tempDir("compile-explain", { "app.ts": `function first(list: any): number {\n  return list.head;\n}\nconsole.log(first({ head: 1 }));` });
+    using dir = tempDir("compile-explain", { "app.ts": `function first(text: string): number {\n  return JSON.parse(text).head;\n}\nconsole.log(first('{"head":1}'));` });
     const said = ({ stdout, stderr }: { stdout: string; stderr: string }) => (stdout + stderr).split("\n");
+    const hint = "Untyped code works, but runs slower. Run with --explain to see what to fix.";
     const built = await bun(String(dir), "compile", "app.ts");
-    expect(said(built).filter(line => line.startsWith("aot: "))).toEqual(["aot: 0.0% typed (0 of 1 property accesses)", "aot: --explain shows what is not typed and how to fix it"]);
+    const summary = said(built).filter(line => /^[\d.]+% of property accesses|^Untyped code works/.test(line));
+    expect(summary).toEqual([hint, expect.stringMatching(/^[\d.]+% of property accesses are one load: \d+ free, \d+ tested, [1-9]\d* by name \(\d+\)$/)]);
+    const accesses = Number(/(\d+) by name/.exec(summary[1]!)![1]);
     const explained = await bun(String(dir), "compile", "app.ts", "--explain");
-    expect(said(explained)).toContain("  1. any app.ts:1:22: fixing it types up to 1 access (+100.0 points)");
-    expect(said(explained)).not.toContain("aot: --explain shows what is not typed and how to fix it");
-    expect(said(await bun(String(dir), "compile", "app.ts", "--aot-explain")).filter(line => !/\[\d/.test(line))).toEqual(said(explained).filter(line => !/\[\d/.test(line)));
+    expect(said(explained)).toContainEqual(expect.stringMatching(/^note: 1\. [a-z-]+: /));
+    expect(said(explained)).toContain(`note: ${accesses} of ${accesses} untyped access${accesses === 1 ? "" : "es"}`);
+    expect(said(explained)).not.toContain(hint);
     expect(said(await bun(String(dir), "build", "--compile", "--aot", "app.ts", "--explain")).filter(line => !/\[\d/.test(line))).toEqual(said(explained).filter(line => !/\[\d/.test(line)));
     expect(await bun(String(dir), "build", "--compile", "app.ts", "--explain")).toEqual({ stdout: "", stderr: "error: --explain requires --aot\n", exitCode: 1 });
     const [entry] = said(await bun(String(dir), "compile", "app.ts", "--explain=json")).filter(line => line.startsWith('{"rank"'));
-    expect(JSON.parse(entry!)).toMatchObject({ code: "any", file: "app.ts", line: 1, column: 22, accesses: 1 });
+    expect(JSON.parse(entry!)).toMatchObject({ rank: 1, reason: expect.any(String), file: "app.ts", line: 2, source: "  return JSON.parse(text).head;" });
     expect(await bun(String(dir), "compile", "app.ts", "--explain=nonsense")).toEqual({
       stdout: "",
-      stderr: 'error: --explain does not take "nonsense": it is one of text, json, throws, throws-all, throws-json, throws-all-json, rules-json, runtime-use\n',
+      stderr: 'error: Invalid value for --explain: "nonsense". Must be one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics\n',
       exitCode: 1,
     });
   }, 120_000);
@@ -82,16 +85,13 @@ describe.concurrent("bun compile", () => {
     const compiled = await build("compile");
     expect(compiled).toMatchObject({ stdout: "2,4,6\n", exitCode: 0 });
     expect(compiled).toEqual(await build("build", "--compile", "--aot"));
-    expect(await build("compile", "--no-trim")).toEqual(compiled);
     const trimmed = await build("compile", "--trim");
     expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--trim"));
-    expect(trimmed).toEqual(await build("build", "--compile", "--aot", "--compile-trim-runtime"));
     expect(await build("build", "--trim")).toEqual({ stderr: "error: --trim requires --compile\n", exitCode: 1 });
   }, 60_000);
 
   test.each([
     [["--aot", "--no-aot"], "error: Cannot use both --aot and --no-aot\n"],
-    [["--trim", "--no-trim"], "error: Cannot use both --trim and --no-trim\n"],
   ])("%j", async (flags, stderr) => {
     using dir = tempDir("compile-both-flags", { "app.ts": `console.log(1);` });
     const built = await bun(String(dir), "compile", ...flags, "app.ts");
@@ -220,7 +220,7 @@ describe.concurrent("bun compile without an entry point", () => {
     [
       "a package.json that names none",
       { "package.json": JSON.stringify({ name: "tool" }) },
-      (dir: string) => `No entry point. ${join(dir, "package.json")} has no "bin", "module" or "main", and there is no index.ts, index.tsx, index.mts or index.js beside it`,
+      (dir: string) => `No entry point. ${join(dir, "package.json")} has no "bin", "module" or "main", and there is no index.ts, index.tsx, index.mts or index.js next to it`,
     ],
     [
       "a file that is not there",

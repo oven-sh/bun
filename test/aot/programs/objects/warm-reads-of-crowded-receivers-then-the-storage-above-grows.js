@@ -1,0 +1,107 @@
+"use strict";
+// Each receiver has forty names more of its own: reads by name of many kinds of receivers at sites that see them all, 200 times over; then objects above them get so many names that what they had moves to other storage; then the same reads again, of the same objects and of new ones.
+const unknown = String(process.argv.length > 99 ? process.argv[99] : "");
+class Base {
+  constructor() {
+    this.own = "own";
+  }
+  method() {
+    return "Base.method";
+  }
+  shared() {
+    return "Base.shared";
+  }
+  get getter() {
+    return "Base.getter";
+  }
+}
+class Derived extends Base {
+  method() {
+    return "Derived.method";
+  }
+}
+class OtherBase {
+  shared() {
+    return "OtherBase.shared";
+  }
+  added() {
+    return "OtherBase.added";
+  }
+}
+function Old() {
+  this.own = "own";
+}
+Old.prototype.method = function oldMethod() {};
+Old.prototype.value = "Old.value";
+const top = { value: "top.value", hidden: "top.hidden", method: function topMethod() {} };
+const middle = Object.setPrototypeOf({ hidden: "middle.hidden", middleOnly: "middle.only" }, top);
+const otherTop = { value: "otherTop.value", added: "otherTop.added" };
+const makers = {
+  parsed: () => Object.setPrototypeOf(JSON.parse('{"own":"own","n":1}'), middle),
+  created: () => Object.assign(Object.create(middle), { own: "own" }),
+  belowTop: () => Object.defineProperty(Object.assign(Object.create(top), { own: "own" }), "hidden", { value: "own hidden", writable: true, enumerable: true, configurable: true }),
+  plain: () => JSON.parse('{"own":"own"}'),
+  instance: () => new Derived(),
+  base: () => new Base(),
+  instanceWithMore: () => Object.assign(new Derived(), { ["more" + unknown]: 1 }),
+  old: () => new Old(),
+  literal: () => ({ own: "own", value: "literal.value" }),
+  bare: () => Object.assign(Object.create(null), { own: "own" }),
+};
+for (const kind of Object.keys(makers)) {
+  const make = makers[kind];
+  makers[kind] = () => {
+    const made = make();
+    for (let i = 0; i < 40; i++) made["filler" + i + unknown] = i;
+    return made;
+  };
+}
+const readers = {
+  own: o => o.own,
+  value: o => o.value,
+  hidden: o => o.hidden,
+  middleOnly: o => o.middleOnly,
+  method: o => o.method,
+  shared: o => o.shared,
+  getter: o => o.getter,
+  added: o => o.added,
+  toString: o => o.toString,
+  constructor: o => o.constructor,
+  zero: o => o[0],
+  zeroAsText: o => o["0"],
+  proto: o => o.__proto__ === Object.getPrototypeOf(o),
+};
+const show = value => (typeof value === "function" ? "function " + value.name : String(value));
+const makeAll = () => Object.entries(makers).map(([kind, make]) => [kind, make()]);
+function readAll(receivers) {
+  const lines = [];
+  for (const [kind, receiver] of receivers) {
+    const words = [];
+    for (const name in readers) words.push(name + "=" + show(readers[name](receiver)));
+    lines.push(kind + ": " + words.join(" "));
+  }
+  return lines.join("\n");
+}
+
+const receivers = makeAll();
+const warm = readAll(receivers);
+for (let round = 0; round < 200; round++) {
+  if (readAll(receivers) !== warm || readAll(makeAll()) !== warm) throw new Error("the reads changed by themselves in round " + round);
+}
+console.log(warm);
+
+const steps = [
+  ["the top gets seven names", () => { for (let i = 0; i < 7; i++) top["t" + i + unknown] = i; }],
+  ["the top gets forty more, the reads go on in between", () => { for (let i = 7; i < 47; i++) { top["t" + i + unknown] = i; for (const [, receiver] of receivers) if (readers.own(receiver) !== "own" || (readers.middleOnly(receiver) !== undefined && readers.value(receiver) !== "top.value")) throw new Error("wrong behind " + i); } }],
+  ["the middle and the prototype of a constructor function get forty", () => { for (let i = 0; i < 40; i++) { middle["m" + i + unknown] = i; Old.prototype["o" + i + unknown] = i; } }],
+  ["the prototype objects of the classes get forty", () => { for (let i = 0; i < 40; i++) { Base.prototype["b" + i + unknown] = i; Derived.prototype["d" + i + unknown] = i; } }],
+];
+for (const [what, change] of steps) {
+  change();
+  console.log("\n--- " + what);
+  for (let round = 0; round < 40; round++) {
+    const now = readAll(receivers);
+    const fresh = readAll(makeAll());
+    if (round === 0 || round === 39) console.log(now + "\n- new objects\n" + fresh);
+  }
+}

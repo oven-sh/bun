@@ -1,6 +1,6 @@
 // JSON.parse(text) without a type argument, passed to a parameter whose type is a union of records: each record keeps its compiled parser. The engine's parser is not asked for the value and no validator runs over it.
-// IR- JSONValueAt
-// IR+ JSONStringAt
+// IR- ^ .*JSONParseValue
+// IR+ ^ .*JSONParseString
 type Change = { action: "add"; ids: string[] } | { action: "remove"; ids: string[] } | { action: "clear" };
 type Shape = { center: { x: number; y: number }; radius: number } | { corners: { x: number; y: number }[] } | { label: string };
 

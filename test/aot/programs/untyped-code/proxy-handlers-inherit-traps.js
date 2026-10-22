@@ -33,8 +33,8 @@ const heir = Object.create(inherited); heir.own = 1; lines.push(readA(heir), hei
 class Throws { get() { throw new RangeError("in the trap"); } } lines.push(attempt(() => readA(new Proxy(target, new Throws()))));
 class Counts { n = 0; get(t, k) { return ++this.n; } } const counts = new Proxy(target, new Counts()); lines.push(readA(counts), readB(counts), readA(counts));
 for (let i = 0; i < 300; i++) { readA(inherited); readB(deeper); readMissing(deepest); }
-const before = count("operationAOTGetByNameAndCache");
+const before = count("operationAOTGetByIdAndCache");
 let length = 0;
 for (let i = 0; i < 3000; i++) length += readA(inherited).length + readB(deeper).length + readMissing(deepest).length;
-lines.push("the general operation is asked at most 60 times for 9000 reads: " + (count("operationAOTGetByNameAndCache") - before <= 60), length);
+lines.push("the general operation is asked at most 60 times for 9000 reads: " + (count("operationAOTGetByIdAndCache") - before <= 60), length);
 console.log(lines.join("\n"));

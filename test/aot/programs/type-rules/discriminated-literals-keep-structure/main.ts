@@ -1,4 +1,4 @@
-// Where no code of the program stores a property of a literal by its name, the object is made with that property as its discriminant. It is an object of its declared type like any other: untyped code cannot take its shape from it.
+// Where no code of the program stores a property of a literal by its name, the object is created with that property as its discriminant. It is an object like any other: every change untyped code makes to it succeeds, as in plain Bun.
 import { run } from "./untyped.cjs";
 enum E { A, B }
 type OfNumber = { f: number };

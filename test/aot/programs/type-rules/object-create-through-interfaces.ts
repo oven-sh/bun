@@ -8,8 +8,8 @@ rule("accessor and read-only properties", () => {
   return described.port
 })
 rule("heir of a frozen literal", () => { const locked: Conf = Object.create(Object.freeze({ host: "frozen", port: 1, nested: { depth: 2 } })); return locked.port })
-// Plain data without a prototype is taken, as a copy: identity changes, and later changes to one are not seen in the other. The original is held by an untyped object.
-// (Held by a local variable alone, that variable holds the copy from the cast on, and nothing shows: the second line printed.)
+// Plain data without a prototype is taken as it is: identity is kept, and a change through one reference is seen through the other,
+// whether an untyped object or a variable alone holds the original.
 const box: any = { held: Object.assign(Object.create(null), JSON.parse('{"host":"h","port":1,"nested":{"depth":0}}')) }
 const bare: Conf = box.held
 bare.port++

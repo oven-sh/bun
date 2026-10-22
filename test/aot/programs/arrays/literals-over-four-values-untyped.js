@@ -37,7 +37,8 @@ console.log(show([...seven("s")].reverse()), show(sixteen(1).map((x) => x * 2).f
 
 // Many of them, with collections between.
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
-const asked = count("operationAOTTypedNewArray"), served = count("operationAOTTypedNewArray:in-one-go");
+const filledByValue = () => count("operationAOTNewArrayOfHoles") + count("operationAOTStoreElement");
+const before = filledByValue();
 let kept = [], sum = 0, turn = 0;
 function step() {
   const i = turn++;
@@ -50,7 +51,7 @@ function ten() { step(); step(); step(); step(); step(); step(); step(); step();
 function hundred() { ten(); ten(); ten(); ten(); ten(); ten(); ten(); ten(); ten(); ten(); }
 function thousand() { hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); hundred(); }
 thousand(); thousand(); thousand();
-const left = count("operationAOTTypedNewArray") - asked - (count("operationAOTTypedNewArray:in-one-go") - served);
+const left = filledByValue() - before;
 console.log(sum, kept.length, show(kept[3][2]), left <= 8 ? "and no array was filled value by value" : "and " + left + " arrays were filled value by value");
 
 // A list too long for one go is an array all the same.

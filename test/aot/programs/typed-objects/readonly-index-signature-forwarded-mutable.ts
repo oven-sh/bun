@@ -1,4 +1,4 @@
-// `readonly` is no part of assignability: what is held through a read-only index signature may be handed on to one that is stored through.
+// `readonly` is no part of assignability: what is held through a read-only index signature may be handed on to one that is stored through. The store is taken, and the typed read of the field through the narrower type throws a TypeError.
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }

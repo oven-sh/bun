@@ -1,8 +1,4 @@
 // The init literal is handed to a parameter typed ResponseInit, as a framework written in TypeScript does: it is taken apart all the same.
-// IR= 1 statusAndHeaders CallBuiltin NewResponse#
-// IR= 1 statusOnly CallBuiltin NewResponse#
-// IR= 1 literalHeaders CallBuiltin NewResponse#
-// IR= 0 kept CallBuiltin NewResponse#
 const create = (body?: BodyInit | null, init?: ResponseInit): Response => new Response(body, init);
 function statusAndHeaders(body: string | null, status: number | undefined, headers: Headers) {
   return create(body, { status, headers });

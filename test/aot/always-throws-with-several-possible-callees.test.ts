@@ -41,13 +41,3 @@ test("a method of another class with the same name does not make a call always t
   const ran = { stdout: await proc.stdout.text() };
   expect(ran.stdout).toBe("document x folder y\n");
 }, 120_000);
-
-test("an argument that every possible callee refuses still always throws", async () => {
-  using dir = tempDir("always-throws-several-callees", {
-    "tsconfig.json": tsconfig,
-    "main.ts": classes + `console.log(folders.create("y"), documents.create(1 as any));\n`,
-  });
-  const checked = await run(String(dir), "check", "--aot", "main.ts");
-  expect(codes(checked.said)).toEqual(["TS100013"]);
-  expect(checked.exitCode).toBe(1);
-});

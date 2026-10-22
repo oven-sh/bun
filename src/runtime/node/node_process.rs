@@ -78,13 +78,15 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // regardless. `process.exit()` must never return control to JS, so replace the process
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
         if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
-            let should_clear_terminal =
-                !vm.env_loader().has_set_no_clear_terminal_on_reload(
-                    !bun_core::Output::enable_ansi_colors_stdout(),
-                );
-            bun_jsc::node_compile_cache::persist_now();
-            bun_core::Output::flush();
-            bun_core::reload_process(should_clear_terminal, false);
+            bun_removable_features::removable_body!(HotReload, Abort, {
+                let should_clear_terminal =
+                    !vm.env_loader().has_set_no_clear_terminal_on_reload(
+                        !bun_core::Output::enable_ansi_colors_stdout(),
+                    );
+                bun_jsc::node_compile_cache::persist_now();
+                bun_core::Output::flush();
+                bun_core::reload_process(should_clear_terminal, false);
+            });
         }
         vm.exit_handler.requested = true;
         vm.on_exit();
@@ -256,7 +258,7 @@ mod _impl {
         // Use append_options_env for BUN_OPTIONS to correctly handle quoted values.
         if let Some(graph) = vm
             .standalone_module_graph
-            .filter(|graph| !graph.preserves_source_paths())
+            .filter(|_| !crate::cli::run_compiled::runs_compiled_code())
         {
             // `standalone_module_graph` is the lower-crate trait object
             // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the field we
@@ -304,6 +306,8 @@ mod _impl {
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(if arg.starts_with(b"--aot-graph-fd=") {
                     BunString::static_("--debug-aot")
+                } else if arg.starts_with(b"--aot-checked=") {
+                    BunString::static_("--aot")
                 } else {
                     BunString::clone_utf8(arg)
                 });
@@ -384,13 +388,7 @@ mod _impl {
         // argv also omits the script name
         let mut args_list: Vec<BunString> = Vec::with_capacity(args_count + 2);
 
-        let entry_point_source_path = vm
-            .standalone_module_graph
-            .and_then(|graph| graph.source_path(vm.main()));
-        if vm
-            .standalone_module_graph
-            .is_some_and(|graph| !graph.preserves_source_paths())
-        {
+        if vm.standalone_module_graph.is_some() && !bun_jsc::compiled_program::runs_in_place() {
             // Don't break user's code because they did process.argv.slice(2)
             // Even if they didn't type "bun", we still want to add it as argv[0]
             args_list.push(BunString::static_("bun"));
@@ -413,16 +411,14 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+        if let Some(main) = vm.main()
+            && !strings::ends_with(main, EVAL_SUFFIX)
+            && !strings::ends_with(main, STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(
-                    entry_point_source_path.unwrap_or_else(|| vm.main()),
-                ));
+                args_list.push(BunString::borrow_utf8(main));
             }
         }
 
@@ -477,6 +473,9 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        if let Some(directory) = bun_core::working_directory_in_executable() {
+            return bun_string_jsc::create_utf8_for_js(global_object, directory);
+        }
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = bun_paths::path_buffer_pool::get();
@@ -519,6 +518,19 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, set_cwd(global_object, to))
     }
 
+    /// What `process.chdir(to)` finds under the executable's own root. `None` if `to` leads elsewhere: that is the system's.
+    fn find_directory_in_executable(to: &[u8]) -> Option<Result<&'static [u8], bun_sys::E>> {
+        use bun_paths::resolve_path::{self, platform};
+        let graph = bun_standalone_graph::Graph::get_ref()?;
+        let current = bun_core::working_directory_in_executable();
+        if !bun_paths::is_absolute(to) && current.is_none() {
+            return None;
+        }
+        let path = resolve_path::join_abs_string::<platform::Auto>(current.unwrap_or(b"/"), &[to]);
+        let leaves_executable = bun_paths::is_absolute(to) && !bun_standalone_graph::is_bun_standalone_file_path(path);
+        (!leaves_executable).then(|| graph.dir_key(path))
+    }
+
     fn set_cwd(global_object: &JSGlobalObject, to: &EncodedSlice) -> JsResult<JSValue> {
         if to.is_empty() {
             return Err(global_object
@@ -538,9 +550,23 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
+        let prev_cwd: Box<[u8]> =
+            Box::from(bun_core::working_directory_in_executable().unwrap_or(fs.top_level_dir));
+        match find_directory_in_executable(slice.as_bytes()) {
+            None => {}
+            Some(Ok(directory)) => {
+                bun_core::set_working_directory_in_executable(Some(directory));
+                return bun_string_jsc::create_utf8_for_js(global_object, directory);
+            }
+            Some(Err(errno)) => {
+                let e = bun_sys::Error::from_code(errno, bun_sys::Tag::chdir)
+                    .with_path_dest(&prev_cwd, slice.as_bytes());
+                return Err(global_object.throw_value(e.to_js(global_object)));
+            }
+        }
         match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
+                bun_core::set_working_directory_in_executable(None);
                 vm.test_isolation_scope(|state| {
                     state.saved_cwd.get_or_insert(prev_cwd);
                 });

@@ -1,4 +1,4 @@
-// A built-in object that is not a prototype accepts a new property.
+// `Math` accepts a new property: it is not always locked, and a program that writes it sees its write.
 interface Rec { n: number; o?: number }
 function fresh(): Rec { return { n: 1 } }
 function show(label: string, f: () => unknown) {

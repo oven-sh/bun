@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject * gl
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
-JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsFunction_isCPUProfilerRunning, NEVER_INLINE, (JSGlobalObject*, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, CallFrame*))
 {
     return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
 }

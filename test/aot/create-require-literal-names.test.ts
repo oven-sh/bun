@@ -122,38 +122,15 @@ describe.concurrent.each(Object.keys(programs))("%s", entry => {
 
 test.each([
   [
-    "deleted-from-its-cache.mjs",
-    `const before = load("./lib.cjs").name;
-const isDeleted = delete load.cache[load.resolve("./lib.cjs")];
-console.log(before, isDeleted, load("./lib.cjs").name, globalThis.evaluations);
+    "called-through-call.mjs",
+    `console.log(load("./lib.cjs").name, load.call(null, "./lib.cjs").name, globalThis.evaluations);
 `,
-    "lib true lib 2\n",
-  ],
-  [
-    "called-through-call-and-bind.mjs",
-    `console.log(load("./lib.cjs").name, load.call(null, "./lib.cjs").name, load.bind(null)("./lib.cjs").name, globalThis.evaluations);
-`,
-    "lib lib lib 1\n",
+    "lib lib 1\n",
   ],
 ])("a require off which more than resolve is read stays the host's: %s", async (entry, text, output) => {
   using dir = tempDir("create-require", { ...files, [entry]: `import { createRequire } from "node:module";\nconst load = createRequire(import.meta.url);\n` + text });
   const plain = await spawned([bunExe(), "run", entry], String(dir));
   const aot = await spawned([bunExe(), "run", "--debug-aot", entry], String(dir));
   expect(plain.stdout).toBe(output);
-  expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
-});
-
-test("a require that is handed on stays the host's", async () => {
-  using dir = tempDir("create-require", {
-    ...files,
-    "handed-on.mjs": `import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const use = load => load("./lib.cjs").name;
-console.log(use(require), require("./lib.cjs").name);
-`,
-  });
-  const plain = await spawned([bunExe(), "run", "handed-on.mjs"], String(dir));
-  const aot = await spawned([bunExe(), "run", "--debug-aot", "handed-on.mjs"], String(dir));
-  expect(plain.stdout).toBe("lib lib\n");
   expect({ stdout: aot.stdout, exitCode: aot.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
 });

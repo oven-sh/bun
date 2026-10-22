@@ -6,6 +6,7 @@
 // refused. What must never happen is that the replacement is taken in silence and the compiled code goes on using the original.
 //
 // A program is one global replaced by one spelling, because a replacement stays for the rest of the process.
+// The replaced Error is constructed by Reflect.construct: `bun run` turns `new Error(m)` into `Error(m)`, which a class in its place refuses.
 export type Target = { name: string; holder: string; replacement: string; replacementInJavaScript: string; use: string };
 
 export const targets: Target[] = [
@@ -14,7 +15,7 @@ export const targets: Target[] = [
   { name: "Map", holder: "globalThis", replacement: "class Fake<K, V> extends Map<K, V> { override get(k: K): any { return 4242; } }", replacementInJavaScript: "class Fake extends Map { get(k) { return 4242; } }", use: "[Map.name, new Map([[\"a\", 1]]).get(\"a\"), new Map().constructor.name].join()" },
   { name: "Set", holder: "globalThis", replacement: "class Fake<V> extends Set<V> { override has(v: V): boolean { return false; } }", replacementInJavaScript: "class Fake extends Set { has(v) { return false; } }", use: "[Set.name, new Set([\"a\"]).has(\"a\")].join()" },
   { name: "Array", holder: "globalThis", replacement: "class Fake<V> extends Array<V> { static override isArray(v: any): v is any[] { return false; } }", replacementInJavaScript: "class Fake extends Array { static isArray(v) { return false; } }", use: "[Array.name, Array.isArray([]), new Array(3).constructor.name, Array.from([1]).constructor.name, [].constructor.name, Array.of(1).constructor.name].join()" },
-  { name: "Error", holder: "globalThis", replacement: "class Fake extends Error { constructor(m?: string) { super('fake: ' + m); } }", replacementInJavaScript: "class Fake extends Error { constructor(m) { super('fake: ' + m); } }", use: "[Error.name, new Error(\"m\").message, new TypeError(\"t\").message, (() => { try { (null as any).x; } catch (e: any) { return e instanceof REAL; } })()].join()" },
+  { name: "Error", holder: "globalThis", replacement: "class Fake extends Error { constructor(m?: string) { super('fake: ' + m); } }", replacementInJavaScript: "class Fake extends Error { constructor(m) { super('fake: ' + m); } }", use: "[Error.name, Reflect.construct(Error, [\"m\"]).message, new TypeError(\"t\").message, (() => { try { (null as any).x; } catch (e: any) { return e instanceof REAL; } })()].join()" },
   { name: "RegExp", holder: "globalThis", replacement: "class Fake extends RegExp { override test(s: string): boolean { return false; } }", replacementInJavaScript: "class Fake extends RegExp { test(s) { return false; } }", use: "[RegExp.name, new RegExp(\"a\").test(\"a\"), /a/.test(\"a\"), /a/.constructor.name].join()" },
   { name: "Uint8Array", holder: "globalThis", replacement: "class Fake extends Uint8Array { override at(i: number): number { return 4242; } }", replacementInJavaScript: "class Fake extends Uint8Array { at(i) { return 4242; } }", use: "[Uint8Array.name, new Uint8Array([1]).at(0), Uint8Array.from([1]).constructor.name].join()" },
   { name: "Object", holder: "globalThis", replacement: "class Fake extends Object { static override keys(o: object): string[] { return ['fake']; } }", replacementInJavaScript: "class Fake extends Object { static keys(o) { return ['fake']; } }", use: "[Object.name, Object.keys({ a: 1 }).join(), ({}).constructor.name].join()" },
@@ -77,7 +78,8 @@ export function program({ name, holder, replacement, replacementInJavaScript, us
       "reflect-define": [`${both}if (!Reflect.defineProperty(${holder}, "${name}", { value: FAKE, writable: true, configurable: true })) throw new TypeError("Reflect.defineProperty says no");`],
       "alias": [`${both}const g: any = ${holder}; const h = [g][0]; h.${name} = FAKE;`],
       "table": [`${both}for (const [k, v] of Object.entries({ ${name}: FAKE })) ${held}[k] = v;`],
-      "text": [`${original} new Function("REAL", "${holder}.${name} = " + ${JSON.stringify(replacementInJavaScript)})(REAL);`],
+      // Strict text: outside of strict mode JavaScript ignores an assignment to a read-only property, so a refusal could not say anything.
+      "text": [`${original} new Function("REAL", "'use strict'; ${holder}.${name} = " + ${JSON.stringify(replacementInJavaScript)})(REAL);`],
       "js-file": [`${original} install();`, `export function install() { const REAL = ${holder}.${name}; ${holder}.${name} = ${replacementInJavaScript}; }\n`],
       "js-variable": [`${original} install("${name}");`, `export function install(k) { const REAL = ${holder}[k]; ${holder}[k] = ${replacementInJavaScript}; }\n`],
     } as Record<string, [string, string?]>

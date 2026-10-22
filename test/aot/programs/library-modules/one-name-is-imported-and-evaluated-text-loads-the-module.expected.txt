@@ -1,0 +1,2 @@
+Error 'ClientRequest' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)
+function

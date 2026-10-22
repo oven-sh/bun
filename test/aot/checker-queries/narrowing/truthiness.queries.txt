@@ -1,0 +1,8 @@
+# A reference used as a condition is tested for truth. The left operand of `??` is tested for presence, not for truth.
+truthiness.ts:4 type `x` = { a: 1; }
+truthiness.ts:6 type `x` = undefined
+
+truthiness.ts:9 type `y` = "" | "a" | undefined
+truthiness.ts:10 type `y` = "" | undefined
+truthiness.ts:11 type `y` = "" | "a" | undefined
+truthiness.ts:12 type `y` = undefined

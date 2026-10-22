@@ -7,7 +7,7 @@ use core::ptr::null_mut;
 use bun_windows_sys::externs as win32;
 use win32::{BOOL, DWORD, HANDLE};
 
-type Sid = *mut c_void;
+type PSID = *mut c_void;
 
 const TOKEN_USER: c_int = 1;
 const OWNER_AND_DACL: DWORD = 1 | 4;
@@ -38,12 +38,12 @@ struct Ace {
 #[link(name = "advapi32")]
 unsafe extern "system" {
     fn GetKernelObjectSecurity(handle: HANDLE, requested: DWORD, descriptor: *mut c_void, length: DWORD, needed: *mut DWORD) -> BOOL;
-    fn GetSecurityDescriptorOwner(descriptor: *mut c_void, owner: *mut Sid, is_defaulted: *mut BOOL) -> BOOL;
+    fn GetSecurityDescriptorOwner(descriptor: *mut c_void, owner: *mut PSID, is_defaulted: *mut BOOL) -> BOOL;
     fn GetSecurityDescriptorDacl(descriptor: *mut c_void, is_present: *mut BOOL, dacl: *mut *mut c_void, is_defaulted: *mut BOOL) -> BOOL;
     fn GetAce(acl: *mut c_void, index: DWORD, ace: *mut *mut Ace) -> BOOL;
-    fn EqualSid(a: Sid, b: Sid) -> BOOL;
-    fn IsWellKnownSid(sid: Sid, kind: c_int) -> BOOL;
-    fn ConvertSidToStringSidW(sid: Sid, text: *mut *mut u16) -> BOOL;
+    fn EqualSid(a: PSID, b: PSID) -> BOOL;
+    fn IsWellKnownSid(sid: PSID, kind: c_int) -> BOOL;
+    fn ConvertSidToStringSidW(sid: PSID, text: *mut *mut u16) -> BOOL;
     fn ConvertStringSecurityDescriptorToSecurityDescriptorW(text: *const u16, revision: DWORD, descriptor: *mut *mut c_void, size: *mut DWORD) -> BOOL;
 }
 
@@ -55,7 +55,7 @@ unsafe extern "system" {
 struct User(Box<[u64; 16]>);
 
 impl User {
-    fn of_this_process() -> Option<User> {
+    fn current() -> Option<User> {
         let mut token: HANDLE = null_mut();
         // SAFETY: the pseudo-handle of this process; `token` is a valid out-param.
         if unsafe { win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token) } == 0 {
@@ -70,22 +70,22 @@ impl User {
         (is_read != 0).then_some(User(user))
     }
 
-    fn sid(&self) -> Sid {
-        self.0[0] as usize as Sid
+    fn sid(&self) -> PSID {
+        self.0[0] as usize as PSID
     }
 
-    fn trusts(&self, sid: Sid) -> bool {
+    fn trusts(&self, sid: PSID) -> bool {
         // SAFETY: both are valid SIDs: one out of the token, one out of a descriptor that the system handed over.
         unsafe { EqualSid(sid, self.sid()) != 0 || IsWellKnownSid(sid, LOCAL_SYSTEM) != 0 || IsWellKnownSid(sid, BUILTIN_ADMINISTRATORS) != 0 }
     }
 
-    fn alone_reaches(&self, handle: HANDLE) -> bool {
+    fn has_exclusive_access(&self, handle: HANDLE) -> bool {
         let mut needed: DWORD = 0;
         // SAFETY: a length of 0 asks for the length only.
         unsafe { GetKernelObjectSecurity(handle, OWNER_AND_DACL, null_mut(), 0, &mut needed) };
         let mut buffer = vec![0u64; (needed as usize).div_ceil(8)];
         let descriptor: *mut c_void = buffer.as_mut_ptr().cast();
-        let (mut owner, mut dacl, mut is_present, mut is_defaulted): (Sid, *mut c_void, BOOL, BOOL) = (null_mut(), null_mut(), 0, 0);
+        let (mut owner, mut dacl, mut is_present, mut is_defaulted): (PSID, *mut c_void, BOOL, BOOL) = (null_mut(), null_mut(), 0, 0);
         // SAFETY: `buffer` holds `needed` bytes; what the two getters hand out points into it, and it lives to the end of this function.
         let is_read = unsafe {
             GetKernelObjectSecurity(handle, OWNER_AND_DACL, descriptor, needed, &mut needed) != 0
@@ -137,12 +137,12 @@ impl User {
 /// Makes the folder unless there is something at `path`. True where `path` is then a folder that this user, an administrator or
 /// the system made and that nobody else can reach. It cannot be moved or replaced for as long as this process lives.
 pub fn make_or_find(path: &[u8]) -> bool {
-    static HELD: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
-    let Ok(mut held) = HELD.lock() else { return false };
-    if held.iter().any(|it| it == path) {
+    static VERIFIED_FOLDERS: std::sync::Mutex<Vec<Vec<u8>>> = std::sync::Mutex::new(Vec::new());
+    let Ok(mut verified_folders) = VERIFIED_FOLDERS.lock() else { return false };
+    if verified_folders.iter().any(|folder| folder == path) {
         return true;
     }
-    let Some(user) = User::of_this_process() else { return false };
+    let Some(user) = User::current() else { return false };
     let mut wide = bun_paths::w_path_buffer_pool::get();
     let wide = bun_paths::string_paths::to_kernel32_path(&mut wide.0[..], path).as_ptr();
     user.create(wide);
@@ -166,12 +166,12 @@ pub fn make_or_find(path: &[u8]) -> bool {
     // SAFETY: `handle` is open and `found` is a valid out-param.
     let is_read = unsafe { win32::GetFileInformationByHandle(handle, &mut found) };
     let is_folder = is_read != 0 && found.dwFileAttributes & (win32::FILE_ATTRIBUTE_DIRECTORY | win32::FILE_ATTRIBUTE_REPARSE_POINT) == win32::FILE_ATTRIBUTE_DIRECTORY;
-    if !is_folder || !user.alone_reaches(handle) {
+    if !is_folder || !user.has_exclusive_access(handle) {
         // SAFETY: `handle` is open and not used again.
         unsafe { win32::CloseHandle(handle) };
         return false;
     }
     // `handle` stays open on purpose: it does not share deletion, so nobody can put another folder in this one's place.
-    held.push(path.to_vec());
+    verified_folders.push(path.to_vec());
     true
 }

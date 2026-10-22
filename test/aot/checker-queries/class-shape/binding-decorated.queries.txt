@@ -1,0 +1,3 @@
+# A class decorator can replace the binding, so it may not be the class.
+binding-decorated.ts:2 class binding `K` = yes
+binding-decorated.ts:4 class binding `C` = no

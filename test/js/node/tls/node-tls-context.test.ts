@@ -504,7 +504,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
     options: tls.ConnectionOptions = {},
     onSocket?: (socket: tls.TLSSocket) => void,
   ) {
-    const { promise, resolve, reject } = Promise.withResolvers<{ seen: Seen; session: Buffer | undefined }>();
+    const { promise, resolve, reject } = Promise.withResolvers<{ seen: Seen; session: Buffer }>();
     let body = "";
     let session: Buffer | undefined;
     const socket = tls.connect({
@@ -522,7 +522,7 @@ describe.each(["TLSv1.3", "TLSv1.2"] as const)("session resumption across SNI co
     socket.on("error", reject);
     socket.on("close", () => {
       try {
-        resolve({ seen: JSON.parse(body), session });
+        resolve({ seen: JSON.parse(body), session: session! });
       } catch (e) {
         reject(e);
       }

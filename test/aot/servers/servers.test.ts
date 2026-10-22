@@ -1,5 +1,5 @@
-// Opt-in test. Eight HTTP servers implement the same routes, each written the way a user of that framework would write it:
-// Bun.serve, a thin typed framework over it (./app/thin-framework.ts), Hono, Elysia, node:http, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
+// Opt-in test. Nine HTTP servers implement the same routes, each written the way a user of that framework would write it:
+// Bun.serve, a thin typed framework over it (./app/thin-framework.ts), Hono, Elysia, node:http, Koa, Express and Fastify (./app/<name>.ts on top of ./app/shared.ts), and TanStack Start
 // (./tanstack, built with vite first, using the same shared.ts). Each one is built with `bun build --compile --aot`, startServer,
 // and sent requests. ./answers.ts has the expected responses.
 //
@@ -12,9 +12,10 @@
 //   array storage                  a new array still has contiguous storage afterwards (the realm is not "having a bad time")
 //   edge-case requests             same status, headers and body as the same server compiled without --aot
 //   TanStack Start pages           same HTML as Bun without --aot
+//   other build options            same answers with --trim, with --disallow-code-generation-from-strings, and with both
 // ./go (net/http) and ./rust (axum) implement six of the routes. ./measure compares against them, so they are checked too.
 //
-//   AOT_SERVERS=1 bun test test/aot/servers                 all eight (about two minutes, mostly `bun install`)
+//   AOT_SERVERS=1 bun test test/aot/servers                 all nine (about two minutes, mostly `bun install`)
 //   AOT_SERVERS=express,fastify bun test test/aot/servers   only these
 //   AOT_SERVERS=go,rust bun test test/aot/servers           the two native servers; `cargo build` downloads crates
 //   AOT_SERVERS_MODULES=<node_modules folder> ..            use packages that are already installPackages; nothing is downloaded
@@ -26,24 +27,14 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { canTrim } from "../../bundler/compile-trim-features";
 import { built, spawned, unsupported } from "../run-programs";
 import { invalidOrders, invalidOrderBody, routes, type Route } from "./answers";
 import { installPackages, filterRequested, startServer, requestedServers } from "./run-servers";
 
-const servers = filterRequested(["bun", "thin", "hono", "elysia", "node", "express", "fastify", "tanstack"]);
+const servers = filterRequested(["bun", "thin", "hono", "elysia", "node", "koa", "express", "fastify", "tanstack"]);
 
-// Elysia types the request body as `unknown`. Under --aot a cast from `unknown` to the order type is checked at run time, so an
-// order of the wrong type throws a TypeError, which the route turns into a 400. Without --aot the handler continues with the order.
-// The other servers cast the result of JSON.parse or Request.json(), which is `any`; casts from `any` are not checked.
-const aotCastErrors: Record<string, Record<string, number>> = {
-  elysia: { "typed: a name that is a number": 400 },
-};
-
-// The Fastify route types every query parameter as a string, but a repeated key produces an array. Under --aot the array fails
-// the type check where it is passed as a string, and Fastify turns the TypeError into its response for a handler error.
-const aotTypeErrors: Record<string, Record<string, number>> = {
-  fastify: { "GET /users/42/posts/first?page=2&page=3&sort[]=top {} 0": 500 },
-};
+const generatesHandlersFromStrings = ["elysia", "koa"];
 
 const json = { "Content-Type": "application/json" };
 const order = routes.find(route => route.name === "post")!.request!;
@@ -211,8 +202,31 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
         }
         expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
       }
-      expect(actual).toEqual({ ...expected, ...aotCastErrors[name] });
+      expect(actual).toEqual(expected);
     });
+
+    test.each([
+      { options: ["--disallow-code-generation-from-strings"], needsTrimming: false },
+      { options: ["--trim"], needsTrimming: true },
+      { options: ["--trim", "--disallow-code-generation-from-strings"], needsTrimming: true },
+    ])("answers the same when built with $options", async ({ options, needsTrimming }) => {
+      if (needsTrimming && !canTrim) return;
+      if (generatesHandlersFromStrings.includes(name) && options.includes("--disallow-code-generation-from-strings")) return;
+      const variant = join(folder, `${name}-variant${isWindows ? ".exe" : ""}`);
+      built(await spawned([bunExe(), "build", "--compile", "--aot", ...options, ...flags, "--target=bun", entry, "--outfile", variant], folder, bunEnv));
+      using server = await startServer([variant], folder, bunEnv);
+      using reference = await startCompiled();
+      for (const route of routes) {
+        expect({ route: route.name, ...(await sendRequest(server.origin, route)) }).toEqual({ route: route.name, status: 200, type: route.type, body: route.expectedBody });
+      }
+      for (const route of routes.filter(route => route.method === "POST")) {
+        for (const [description, request] of Object.entries(invalidOrders)) {
+          const expected = await sendRequest(reference.origin, route, request);
+          expect({ route: route.name, description, ...(await sendRequest(server.origin, route, request)) }).toEqual({ route: route.name, description, ...expected });
+        }
+      }
+      expect((await fetch(server.origin + "/nothing")).status).toBe(404);
+    }, 240_000);
 
     test("handles edge-case requests like a build without --aot", async () => {
       const withoutAot = join(folder, `${name}-no-aot${isWindows ? ".exe" : ""}`);
@@ -233,11 +247,6 @@ setInterval(() => writeFileSync(${JSON.stringify(indexingTypePath)}, /ArrayWith[
       };
       const actual = await collectResponses(server.origin);
       const expected = await collectResponses(reference.origin);
-      for (const [request, status] of Object.entries(aotTypeErrors[name] ?? {})) {
-        expect({ request, status: actual[request].status }).toEqual({ request, status });
-        delete actual[request];
-        delete expected[request];
-      }
       expect(actual).toEqual(expected);
     });
 

@@ -19,7 +19,7 @@ const missing = ["files/absent.cjs", "files/a", "files/a.c", "files/with", "file
     return error.code;
   }
 });
-console.log(JSON.stringify({ written, computed, missing, cached: Object.keys(require.cache).filter(key => key.includes("files")).length }));
+console.log(JSON.stringify({ written, computed, missing }));
 `,
   });
   const run = async (cmd: string[], env = bunEnv) => {
@@ -29,8 +29,8 @@ console.log(JSON.stringify({ written, computed, missing, cached: Object.keys(req
   };
   const plain = await run([bunExe(), "run", "main.cjs"]);
   expect(plain.exitCode).toBe(0);
-  const build = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", "./main.cjs", "--outfile", "program"]);
+  const build = await run([bunExe(), "build", "--compile", "--aot", "--compile-in-place", "./main.cjs", ...names.map(name => "./files/" + name), "--outfile", "program"]);
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const compiled = await run([join(String(dir), "program")], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" });
-  expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+  expect({ stdout: compiled.stdout, stderr: compiled.stderr, exitCode: compiled.exitCode }).toEqual({ stdout: plain.stdout, stderr: "", exitCode: 0 });
 }, 120_000);

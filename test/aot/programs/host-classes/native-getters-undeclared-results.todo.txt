@@ -1,1 +1,0 @@
-Under --aot a value that enters a place typed by a declaration without a body is held to the declared type: a number where a string is declared, or a primitive where an interface is, throws a TypeError. Plain Bun carries on. Whether such a declaration is a claim or a prediction is not settled. The messages for a property of `undefined` or `null` are also worded differently.

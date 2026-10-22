@@ -37,7 +37,7 @@ function run(call: (a: any) => unknown, name: string, how: Change): string {
 }
 for (const [name, call] of onAny) out.push("any " + name + ": " + changes.map(([how, c]) => how + ": " + run(call, name, c)).join(" | "));
 for (const [name, call] of onTyped) out.push("number[] " + name + ": " + changes.map(([how, c]) => how + ": " + run(hide(call), name, c)).join(" | "));
-// A receiver typed `any` is not under row 71: an override that is there from the start runs.
+// A receiver typed `any`: an override that is there from the start runs.
 for (const [name, call] of onAny) out.push("any, overridden from the start, " + name + ": " + changes.slice(0, 2).map(([how, c]) => { const a = [1, 2, 3]; c(a, name); entered = 0; change = () => {}; let r: string; try { r = show(call(a)); } catch (e) { r = (e as Error).name; } return how + ": " + r + " " + entered; }).join(" | "));
 { const a: any = [1, 2, 3, 4]; a.length = 1; a.push = replacement; entered = 0; out.push("any, room and its own push: " + show(a.push(3)) + " " + show(a) + " " + entered); }
 // The arguments take an override away again: what was read is called.

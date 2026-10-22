@@ -2,7 +2,7 @@
 interface Row { id: number; label: string; done: boolean; weight?: number; note?: string; parent: number | null; alias: string | null; score?: number | null; title?: string | null }
 class Kept { id = 7; label = "kept"; done = true; weight = 2.5; note = "n"; parent: number | null = null; alias: string | null = "a"; score: number | null = 1; title: string | null = null }
 class WithGetters { get id() { return 8 } get label() { return "got" + "ten" } get done() { return false } get weight() { return undefined } get note() { return undefined } get parent() { return 3 } get alias() { return null } get score() { return null } get title() { return "t" } }
-function message(error: unknown): string { return error instanceof Error ? error.name + ": " + error.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(error) }
+function message(error: unknown): string { return error instanceof Error ? error.name : String(error) }
 function attempt(what: string, f: () => unknown) { try { console.log(what, String(f())) } catch (error) { console.log(what, "|", message(error)) } }
 
 function idOf(value: any): number { return value.id }

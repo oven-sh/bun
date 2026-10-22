@@ -42,7 +42,7 @@ try { all("the prototypes") } catch (e) { console.log("line 43:", e instanceof T
 try { attempt("the class, another class", () => { Object.setPrototypeOf(Dog, Robot) }) } catch (e) { console.log("line 44:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log("by Reflect:", Reflect.setPrototypeOf(Dog, Robot), Object.getPrototypeOf(Dog) === Animal) } catch (e) { console.log("line 45:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { all("the class") } catch (e) { console.log("line 46:", e instanceof TypeError ? "TypeError" : "other " + e) }
-// A required field cannot be deleted, so a property of the prototype with the same name never becomes visible.
+// A field is deleted as in plain Bun.
 try { attempt("delete of a required field", () => delete (cow as any).legs) } catch (e) { console.log("line 48:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { console.log(cow.legs, Object.keys(cow).join(), "legs" in cow) } catch (e) { console.log("line 49:", e instanceof TypeError ? "TypeError" : "other " + e) }
 // Records.

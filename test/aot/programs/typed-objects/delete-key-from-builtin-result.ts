@@ -1,5 +1,5 @@
 // A literal with required properties may be looked at as a dictionary, and a property of a dictionary may be deleted. Where the dictionary comes out of Object.values, Object.entries or another built-in function, the compiler knows nothing of the operand of `delete`, and the literal still has to have room for the absence. A property of the same name that is only deleted from an object without an index signature stays required elsewhere.
-// IR+ ^  field "stays" .* flags 2322
+// IR+ ^layout L\d+ .*\{name="stays" declared=[^{}]* initialization=(SetAtCreation|StoredBeforeEveryRead)
 type Words = Record<string, string>;
 function row(name: string, run: () => unknown) { try { console.log(name + ": " + String(run())); } catch (error) { console.log(name + ": THROWS " + String(error).split(" (bun")[0]); } }
 row("Object.values", () => { const made = { a: "x", b1: "y" }; const t: Record<string, Words> = { k: made }; delete Object.values(t)[0].b1; return Object.keys(made); });

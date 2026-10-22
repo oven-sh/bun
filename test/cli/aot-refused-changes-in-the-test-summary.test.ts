@@ -47,14 +47,14 @@ test.skipIf(!!unsupported)("bun test --aot names every refused change to a locke
   using dir = tempDir("aot-refused-changes", files);
   const { output, exitCode } = await bunTest(String(dir), "--aot");
   const lines = output.split("\n");
-  const heading = lines.findIndex(line => line.includes("locked built-ins"));
-  expect(lines[heading]).toBe("5 changes to locked built-ins refused during this run, caught or not; code that goes on after one may have been left half done:");
+  const heading = lines.findIndex(line => line.includes("read-only built-ins"));
+  expect(lines[heading]).toBe("5 writes to read-only built-ins failed during this run, caught or not. Code that continued after one may have left its work half done:");
   expect(lines.slice(heading + 1, heading + 6)).toEqual([
-    expect.stringMatching(/^  Cannot change 'set' of Headers\.prototype, at a-patches\.test\.js:5:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot change 'push' of Array\.prototype, at a-patches\.test\.js:20:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot delete 'append' of Headers\.prototype, at a-patches\.test\.js:15:\d+, while a-patches\.test\.js ran$/),
+    expect.stringMatching(/^  Cannot assign to Headers\.prototype\.set, at a-patches\.test\.js:5:\d+, while a-patches\.test\.js ran$/),
+    expect.stringMatching(/^  Cannot assign to Array\.prototype\.push, at a-patches\.test\.js:20:\d+, while a-patches\.test\.js ran$/),
+    expect.stringMatching(/^  Cannot delete Headers\.prototype\.append, at a-patches\.test\.js:15:\d+, while a-patches\.test\.js ran$/),
     expect.stringMatching(/^  Cannot change the prototype of Request\.prototype, at a-patches\.test\.js:16:\d+, while a-patches\.test\.js ran$/),
-    expect.stringMatching(/^  Cannot change 'toString' of URL\.prototype, at b-later\.test\.js:4:\d+, while b-later\.test\.js ran$/),
+    expect.stringMatching(/^  Cannot assign to URL\.prototype\.toString, at b-later\.test\.js:4:\d+, while b-later\.test\.js ran$/),
   ]);
   expect(output).toContain(" 4 pass");
   expect(exitCode).toBe(0);

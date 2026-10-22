@@ -103,7 +103,7 @@ impl Targets {
         }
         use bun_ast::Target as T;
         match target {
-            T::Node | T::Bun | T::BunBuiltins => Self::runtime_default(),
+            T::Node | T::Bun => Self::runtime_default(),
             T::Browser | T::BunMacro | T::ServerComponentsSsr => Self::browser_default(),
         }
     }

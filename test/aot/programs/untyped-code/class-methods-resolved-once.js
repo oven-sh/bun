@@ -26,7 +26,7 @@ function areas(shape, turns) { let sum = 0; for (let i = 0; i < turns; i++) sum 
 function names(shape, turns) { let text = ""; for (let i = 0; i < turns; i++) text = shape.name(); return text; }
 function describes(shape, turns) { let text = ""; for (let i = 0; i < turns; i++) text = shape.describe(); return text; }
 const all = () => [new Shape(), new Square(), new Tile()];
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 const [shape, square, tile] = all();
 let most = 0;
 const results = [];

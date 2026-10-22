@@ -1,7 +1,8 @@
-// JSON.parse<T>(text) adds nothing to the type of JSON.parse: a function written for `typeof JSON.parse` or `typeof JSON.stringify` takes the types of its parameters from there, as it does with tsc.
-const parse: typeof JSON.parse = (text, reviver) => JSON.parse(text.trim(), reviver);
-const first: typeof JSON.parse = text => JSON.parse(text.slice(0, 1));
-const holder: { read: typeof JSON.parse } = { read: (text, reviver) => JSON.parse(text, reviver) };
+// JSON.parse<T>(text) is an overload that bun-types adds to JSON.parse. A function can still be written for `typeof JSON.parse`: it writes the types of its parameters, because two overloads give a function expression none, with tsc too.
+type Reviver = (this: any, key: string, value: any) => any;
+const parse: typeof JSON.parse = (text: string, reviver?: Reviver) => JSON.parse(text.trim(), reviver);
+const first: typeof JSON.parse = (text: string) => JSON.parse(text.slice(0, 1));
+const holder: { read: typeof JSON.parse } = { read: (text: string, reviver?: Reviver) => JSON.parse(text, reviver) };
 const write: typeof JSON.stringify = (value: unknown) => JSON.stringify(value);
 type Parsed = ReturnType<typeof JSON.parse>;
 const parsed: Parsed = parse("[7]");

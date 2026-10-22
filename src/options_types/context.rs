@@ -44,8 +44,8 @@ pub struct ContextData {
 
     pub preloads: Vec<Box<[u8]>>,
     pub has_loaded_global_config: bool,
-    /// The path of the first bunfig.toml or .npmrc that exists but could not be read.
-    pub unreadable_config: Option<Box<[u8]>>,
+    /// Where the process started, if a relative `--cwd` changed its directory. Parsing the same arguments again gives the same result only from here.
+    pub original_cwd: Option<Box<[u8]>>,
 }
 
 impl Default for ContextData {
@@ -86,7 +86,7 @@ impl Default for ContextData {
             no_exit_on_error: false,
             preloads: Vec::new(),
             has_loaded_global_config: false,
-            unreadable_config: None,
+            original_cwd: None,
         }
     }
 }
@@ -238,26 +238,18 @@ pub struct BundlerOptions {
     pub compile: bool,
     pub compile_target: CompileTarget,
     pub compile_exec_argv: Option<Box<[u8]>>,
-    pub compile_function_source: bool,
     pub compile_autoload_dotenv: bool,
     pub compile_autoload_bunfig: bool,
     pub compile_autoload_tsconfig: bool,
     pub compile_autoload_package_json: bool,
-    pub aot_explain: Vec<Box<[u8]>>,
-    pub is_compile_command: bool,
-    pub aot_rules: Vec<Box<[u8]>>,
-    pub aot: bool,
-    pub aot_logs_type_errors: bool,
-    pub aot_huge_heap: bool,
-    pub aot_crash_if_interpreter_is_used: bool,
-    pub compile_run: bool,
-    pub compile_run_args: Vec<Box<[u8]>>,
-    pub compile_in_place: bool,
-    pub rewrite_jest_for_tests: bool,
     pub compile_executable_path: Option<Box<[u8]>>,
     /// `--compile-jit-policy`: JSC tier-up threshold scale baked into the executable (1 = normal).
     pub compile_jit_policy: f32,
     pub compile_assets: Vec<Box<[u8]>>,
+    /// `bun compile`, `--compile --aot`. `None`: the program is bundled, not compiled ahead of time.
+    pub aot: Option<Box<crate::aot_options::AotOptions>>,
+    /// `--trim` of a build that is not compiled ahead of time. With `aot` the request is `AotOptions::trim`, and this one is the default.
+    pub trim: crate::trim::TrimRequest,
     pub windows: bundle_enums::WindowsOptions,
     pub allow_unresolved: Option<Vec<Box<[u8]>>>,
 }
@@ -312,25 +304,15 @@ impl Default for BundlerOptions {
             compile: false,
             compile_target: CompileTarget::default(),
             compile_exec_argv: None,
-            compile_function_source: true,
             compile_autoload_dotenv: true,
             compile_autoload_bunfig: true,
             compile_autoload_tsconfig: false,
             compile_autoload_package_json: false,
-            aot_explain: Vec::new(),
-            is_compile_command: false,
-            aot_rules: Vec::new(),
-            aot: false,
-            aot_logs_type_errors: false,
-            aot_huge_heap: false,
-            aot_crash_if_interpreter_is_used: false,
-            compile_run: false,
-            compile_run_args: Vec::new(),
-            compile_in_place: false,
-            rewrite_jest_for_tests: false,
             compile_executable_path: None,
             compile_jit_policy: 1.0,
             compile_assets: Vec::new(),
+            aot: None,
+            trim: Default::default(),
             windows: bundle_enums::WindowsOptions::default(),
             allow_unresolved: None,
         }
@@ -387,6 +369,13 @@ pub struct DebugOptions {
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-kill-signal` and `--no-clear-screen` as given. `cli::apply_watch_mode_flags`
+    /// applies them once the watch mode is final, which `bun bake` decides after the arguments
+    /// of `bun` are parsed.
+    pub watch_kill_signal_arg: Option<Box<[u8]>>,
+    pub no_clear_screen: bool,
+    /// `--watch` was given. `hot_reload` alone does not tell: `--hot` with `--check` is `Watch` too.
+    pub watch_flag: bool,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -411,6 +400,9 @@ impl Default for DebugOptions {
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_kill_signal_arg: None,
+            no_clear_screen: false,
+            watch_flag: false,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,
@@ -588,13 +580,6 @@ pub struct DebuggerEnable {
 
 pub struct RuntimeOptions {
     pub smol: bool,
-    pub aot: bool,
-    pub aot_logs_type_errors: bool,
-    pub aot_huge_heap: bool,
-    pub aot_crash_if_interpreter_is_used: bool,
-    pub aot_graph_fd: Option<i32>,
-    pub aot_decode_crash_report: Option<Box<[u8]>>,
-    pub aot_audit: bool,
     /// `--check`: type check what is about to be run, and do not run it if there are errors.
     pub check: bool,
     pub debugger: Debugger,
@@ -668,13 +653,6 @@ impl Default for RuntimeOptions {
     fn default() -> Self {
         Self {
             smol: false,
-            aot: false,
-            aot_logs_type_errors: false,
-            aot_huge_heap: false,
-            aot_crash_if_interpreter_is_used: false,
-            aot_graph_fd: None,
-            aot_decode_crash_report: None,
-            aot_audit: false,
             check: false,
             debugger: Debugger::Unspecified,
             if_present: false,

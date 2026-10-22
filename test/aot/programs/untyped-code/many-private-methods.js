@@ -73,8 +73,8 @@ for (let i = 0; i < 3; i++) {
 }
 lines.push(made.map(C => new C().sum()).join(), made.map(C => made.map(D => C.is(new D())).join("")).join(" ").replaceAll("true", "T").replaceAll("false", "f"));
 for (let i = 0; i < 200; i++) { tree(Renderer); tree(Special); }
-const before = count("operationAOTTypedPrivateMethodsAdd");
+const before = count("operationAOTPrivateMethodsAdd");
 let length = 0;
 for (let i = 0; i < 2000; i++) length += tree(Renderer).text().length + tree(Special).letters().length;
-lines.push(length + " asked " + (count("operationAOTTypedPrivateMethodsAdd") - before));
+lines.push(length + " asked " + (count("operationAOTPrivateMethodsAdd") - before));
 tree(Renderer).later().then(x => { lines.push(x); console.log(lines.join("\n")); });

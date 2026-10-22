@@ -15,7 +15,7 @@ function expected(by: number, i: number): number | undefined {
 }
 const record: any = make(100);
 let wrongIndexed = 0, wrongReflect = 0, wrongDescriptor = 0, wrongHas = 0, wrongIn = 0;
-for (let round = 0; round < 60; round++) { // 400 in main's first version: 24,000 collections: too slow for the suite; two thirds of the answers are wrong on jsc-2027x either way
+for (let round = 0; round < 60; round++) { // Five collections for each key: more rounds are too slow for the suite.
   for (let i = 0; i < 12; i++) {
     const j = (i * 7 + round) % 12;
     if (record[key(j)] !== expected(100, j)) wrongIndexed++;
@@ -64,8 +64,8 @@ writes('store: indexed', 40, (o, k, v) => { o[k] = v; });
 writes('store: Reflect.set', 40, (o, k, v) => { Reflect.set(o, k, v); });
 writes('store: defineProperty', 40, (o, k, v) => { Object.defineProperty(o, k, { value: v, writable: true, enumerable: true, configurable: true }); });
 writes('store: Object.assign', 40, (o, k, v) => { Object.assign(o, { [k]: v }); });
-// delete: the one that is named goes, and no other. (Only an optional property of a record can be deleted: a rule of ours.) What is left is read THROUGH THE TYPE: A TEST THAT ASKS BY A NAME IT KEEPS (`o.narrow` of an `any`, a list of the names, Object.keys(), JSON.stringify()) MAKES THAT NAME
-// LIVE FOR GOOD, AND SHOWS NOTHING FROM THEN ON: my first versions of this row and of two more did.
+// delete: the one that is named goes, and no other. What is left is read through the type: a test that asks by a name it keeps (`o.narrow` of an `any`, a list of the names, Object.keys(), JSON.stringify()) makes that name
+// live for good, and shows nothing from then on.
 type Loose = { narrow?: number; wide?: number; tails?: number; heads?: number; masks?: number; empty?: number; space?: number; words?: number; tabs?: number };
 const makeLoose = (by: number): Loose => ({ narrow: by, wide: by + 1, tails: by + 2, heads: by + 3, masks: by + 4, empty: by + 5, space: by + 6, words: by + 7, tabs: by + 8 });
 const readLoose = (l: Loose): (number | undefined)[] => [l.narrow, l.wide, l.tails, l.heads, l.masks, l.empty, l.space, l.words, l.tabs];

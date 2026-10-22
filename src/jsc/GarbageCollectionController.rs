@@ -211,6 +211,7 @@ impl GarbageCollectionController {
         let prev_heap_size = this.gc_last_heap_size.get();
         // SAFETY: per fn contract.
         let vm_ref = unsafe { &*vm };
+        vm_ref.answer_object_census_request();
         let grew = vm_ref.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = this.idle_tick(vm_ref, grew, interval);
         this.perform_gc(full);

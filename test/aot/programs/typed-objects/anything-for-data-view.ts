@@ -1,5 +1,5 @@
-// A place that is typed by a class that only a declaration of the standard library describes takes whatever comes: a wrong claim is found out, if at all, where JavaScript finds it out: at the use, with JavaScript's own answer or error.
-// Places: a parameter, a variable, a field, a field of a class, a result, an element. Every fact that compiled code relies on is tested once more.
+// `DataView` names a class of the engine, and a place typed by it is tested for that class: it takes a DataView, undefined or null. Anything else throws a TypeError where it enters the place: a proxy or an heir of one, another class of the engine, a look-alike, a primitive.
+// Places: a parameter, a variable, a field, a field of a class, a result, an element. undefined and null pass and meet JavaScript's own answer or error at the use.
 // VALIDATED compiles
 function claim<T>(v: unknown): T { return v as T }
 function say(name: string, f: () => unknown): void {

@@ -1,7 +1,7 @@
 // Array methods that take a callback, called in a loop: the method and its callback are inlined, but not the method's slow loop for sparse arrays.
-// IRM= 0 CallBuiltin (HasIndex|GetIndex)#
-// IR= 1 mapFrom CallBuiltin HasIndex#
-// IR= 1 filterFrom CallBuiltin HasIndex#
+// IRM= 0 = Array(HasIndex|GetIndex) 
+// IR= 1 mapFrom = ArrayHasIndex 
+// IR= 1 filterFrom = ArrayHasIndex 
 interface Item { id: number; name: string; on: boolean }
 function names(items: Item[]): string[] { return items.map(i => i.name + "!") }
 function ids(items: Item[]): number[] { return items.map(i => i.id) }

@@ -1,6 +1,6 @@
-// A field of type number gets a string, undefined or nothing through `any`, `Object.assign` and parsed JSON.
+// A field of type number gets a string, undefined, null or nothing through `any`, `Object.assign` and parsed JSON. Every store succeeds. A typed read of the string throws a TypeError; undefined, null and a missing field pass.
 declare const console: { log(...values: unknown[]): void };
-function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\n")[0] : String(e))) } }
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
 function hide(v: unknown): any { return v }
 function parse(t: string): any { return JSON.parse(t) }
 type Item = { id: number; n: number; tag?: string };

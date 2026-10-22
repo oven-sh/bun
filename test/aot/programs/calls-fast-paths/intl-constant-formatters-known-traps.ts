@@ -2,8 +2,8 @@
 // narrow no-break space before AM, month names in the genitive and standing alone, flexible day periods, eras, time zone names, locales whose
 // digits or calendar are not Latin and Gregorian, -u- extensions, right-to-left marks, two-digit years; for numbers minimum grouping digits,
 // useGrouping, signDisplay, notation, units, percent, integer digits, currencies with none, three or their own separators, rounding modes.
-// CALLS+ accountingInTamil operationAOTTypedFormatNumberWithPattern
-// CALLS- roundedToAnIncrement operationAOTTypedFormatNumberWithPattern
+// CALLS+ accountingInTamil operationAOTFormatWithPattern
+// CALLS- roundedToAnIncrement operationAOTFormatWithPattern
 export function accountingInTamil(amount: number): string {
   return amount.toLocaleString("ta", { style: "currency", currency: "INR", currencySign: "accounting" });
 }

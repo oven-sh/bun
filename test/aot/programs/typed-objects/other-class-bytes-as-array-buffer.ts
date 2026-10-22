@@ -1,5 +1,5 @@
-// `get<ArrayBuffer>(url)` of a client library: the type is a claim handed to a generic function, and it may be wrong: a view of bytes comes, or text. JavaScript does not mind: `byteLength` is there, or is undefined.
-// The value goes through a record and a helper that are typed by the claim.
+// `get<ArrayBuffer>(url)` of a client library: the type is a claim handed to a generic function, and it may be wrong: a view of bytes comes, or text. `data as T` inside the generic function tests nothing.
+// The value then goes through a record and a helper in which the program wrote `ArrayBuffer | undefined`: what is no ArrayBuffer throws a TypeError there, and undefined passes.
 // VALIDATED compiles
 interface Answer<T> { status: number; data: T }
 function get<T>(kind: string): Answer<T> {

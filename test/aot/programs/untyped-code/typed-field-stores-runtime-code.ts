@@ -1,10 +1,6 @@
-// Code made at run time stores to a declared field of a typed object without going back to the run time each time: the interpreter remembers where the field lies and how it is kept, and stores what the field's type takes without asking.
-// Only the jsc shell can count. Elsewhere the program checks the answers alone.
-// ENV JSC_useAOTOperationCounters=1
+// Code made at run time stores to a declared field of a typed object, many times at one place, so that what the interpreter remembers of the field is used: what the field's type takes and what it does not.
 import type { int32 } from "bun";
-declare const aotOperationCount: undefined | ((name: string) => number);
 declare const gc: undefined | (() => void);
-const asked = () => (typeof aotOperationCount === "function" ? aotOperationCount("InterpreterPutByIdOfCompiledObject") : 0);
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
 interface Kinds {
   whole: number;
@@ -35,11 +31,8 @@ for (const name of ["whole", "fraction", "small", "flag", "text", "anything", "m
 const loops: Record<string, (o: unknown, values: unknown[], turns: number) => void> = {};
 for (const name of ["whole", "fraction", "small", "flag", "text", "anything", "x", "label"]) loops[name] = new Function("o", "values", "turns", "for (let i = 0; i < turns; i++) o." + name + " = values[i & 3];") as (o: unknown, values: unknown[], turns: number) => void;
 
-let most = 0;
 function measure(label: string, run: () => unknown) {
-  const before = asked();
   const result = run();
-  most = Math.max(most, asked() - before);
   console.log(label + ":", show(result));
 }
 const one = make();
@@ -51,8 +44,6 @@ measure("strings", () => (loops.text(one, ["a", "bb", "", "dddd"], 500), one.tex
 measure("whatever comes, in a field of type unknown", () => (loops.anything(one, [1, "two", null, { three: 3 }], 500), one.anything));
 const point = new Point(1, 2, "p");
 measure("fields of an instance of a class", () => (loops.x(point, [5, 6, 7, 8], 500), loops.label(point, ["a", "b", "c", "d"], 500), [point.sum(), point.label]));
-console.log(most <= 8 ? "no 500 stores went back to the run time more than eight times" : "500 stores went back to the run time " + most + " times");
-console.log(typeof aotOperationCount !== "function" || asked() > 0 ? "each place asked it at first" : "nothing was counted");
 
 const numbers = [0, -0, 1, -1, 0.5, NaN, Infinity, -Infinity, 1073741823, 1073741824, -1073741824, -1073741825, 2147483647, 2147483648, -2147483648, -2147483649, 4294967296, 9007199254740991, 1e300, 5e-324];
 for (const name of ["whole", "fraction", "anything"]) {

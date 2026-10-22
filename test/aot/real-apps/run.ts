@@ -225,7 +225,7 @@ function causeOf(block: string[], source: string) {
   const message = block.find(line => /^(\w*Error|error|panic)\b.*:/.test(line)) ?? "(no message)";
   const frames = block.flatMap(line => (line.trim().startsWith("at ") ? (/\(?(\/[^():]+:\d+):\d+\)?$/.exec(line.trim())?.[1] ?? []) : []));
   const place = frames.find(frame => frame.startsWith(source) && !frame.includes("/node_modules/")) ?? frames[0] ?? "";
-  return { message: message.replace(/ \(bun --aot: \S+\)/, " [--aot]").replace(/\d+/g, "N").replace(/"[^"]*"/g, '".."'), place: place.replace(source + "/", "") };
+  return { message: message.replace(/ \(bun compile[^)]*\)/, " [--aot]").replace(/\d+/g, "N").replace(/"[^"]*"/g, '".."'), place: place.replace(source + "/", "") };
 }
 
 export function compare(first: Tests, second: Tests, aot: Tests): Compared {

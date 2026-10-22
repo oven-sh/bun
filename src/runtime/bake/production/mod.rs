@@ -515,6 +515,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         Global::crash();
     }
 
+    // Only the dev server puts the pages in the browser build and gives the client entry `route`.
+    if framework
+        .file_system_router_types
+        .iter()
+        .any(|fsr| fsr.client_pages)
+    {
+        bun_core::err_generic!(
+            "'fileSystemRouterTypes[n].clientPages' is not supported in a production build yet"
+        );
+        Output::flush();
+        Global::crash();
+    }
+
     bun_core::pretty_errorln!("Bundling routes");
     Output::flush();
 
@@ -570,6 +583,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .collect(),
             style: fsr.style,
             allow_layouts: fsr.allow_layouts,
+            client_pages: fsr.client_pages,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
             server_file_string: bun_jsc::StrongOptional::empty(),
@@ -763,11 +777,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         | OutputKind::BuiltinBytecode
                         | OutputKind::BytecodeStringTable
                         | OutputKind::BytecodePayload
-                        | OutputKind::AotImage
-                        | OutputKind::RuntimeUse
                         | OutputKind::ModuleInfoStringTable
                         | OutputKind::PrelinkedModuleGraph => {}
-                        OutputKind::MetafileJson | OutputKind::MetafileMarkdown | OutputKind::Declaration | OutputKind::Sound => {}
+                        OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}
                     }
                 }
             }

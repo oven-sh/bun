@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 // A CommonJS module that is first required where the stack ends: the RangeError comes before its first statement. Whoever requires it
 // later gets the whole object, as in `bun run`: the module is evaluated again. An executable built without --aot hands out the empty
-// one that the bundle's wrapper had made by then.
+// one that the bundle's wrapper had made by then. A module of an --aot executable whose body has begun does not run again: it keeps the
+// RangeError that one of its own statements ran into, so no library here does anything that needs more of the stack than its frame.
 
 const main = `function lazy() { return require("./lib"); }
 function dive(n) { try { return dive(n + 1); } catch (e) { return lazy(); } }
@@ -20,7 +21,6 @@ const libraries: Record<string, Record<string, string>> = {
   "only-values": { "lib.js": `"use strict";\nconst keys = { kState: Symbol("state"), kOptions: Symbol("options") };\nmodule.exports = keys;\n` },
   "a-function-too": { "lib.js": `"use strict";\nlet n = 0;\nfunction f() { return n++; }\nmodule.exports = { f, kState: Symbol("state") };\n` },
   "exports-dot": { "lib.js": `"use strict";\nexports.kState = Symbol("state");\nexports.kOptions = Symbol("options");\n` },
-  "a-side-effect": { "lib.js": `"use strict";\nglobalThis.loads = (globalThis.loads || 0) + 1;\nmodule.exports = { kState: Symbol("state"), loads: globalThis.loads };\n` },
   "a-class": { "lib.js": `"use strict";\nclass Box { constructor(v) { this.v = v; } }\nmodule.exports = { Box, kState: Symbol("state") };\n` },
   "it-requires-another": {
     "lib.js": `"use strict";\nconst other = require("./other");\nmodule.exports = { kState: Symbol("state"), other };\n`,

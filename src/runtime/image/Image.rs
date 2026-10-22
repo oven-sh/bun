@@ -906,14 +906,12 @@ impl Image {
 // ───────────────────────────── getters ──────────────────────────────────────
 
 impl Image {
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_width(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_width.get()))
+    pub(crate) fn get_width(&self, _: &JSGlobalObject) -> i32 {
+        self.last_width.get()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_height(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self.last_height.get()))
+    pub(crate) fn get_height(&self, _: &JSGlobalObject) -> i32 {
+        self.last_height.get()
     }
 }
 
@@ -1159,11 +1157,13 @@ impl Image {
     ///
     /// A later refinement is to return a `.Locked` body and resolve it from the
     /// worker pool; this is the simple, correct first cut.
+    #[inline(never)]
     pub(crate) fn encode_for_body(
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
+        bun_removable_features::removable_definition!(Image, Self::encode_for_body);
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed

@@ -1,4 +1,0 @@
-red2 null a
-red3 a b
-TypeError
-red5 c d

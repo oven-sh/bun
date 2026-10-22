@@ -132,6 +132,18 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
+#[inline(never)]
+fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
+    s3_credentials_from_env(
+        global_this
+            .bun_vm()
+            .as_mut()
+            .transpiler
+            .env_mut()
+            .get_s3_credentials(),
+    )
+}
+
 /// `Blob.Any` accessor shim.
 trait AnyBlobExt {
     fn blob(&self) -> &Blob;
@@ -203,58 +215,6 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         // transfers to JSC.
         Response::make_maybe_pooled(global_this, response),
     )
-}
-
-#[unsafe(no_mangle)]
-#[inline(never)]
-pub(crate) extern "C" fn Bun__fetchS3Credentials(
-    global_this: &JSGlobalObject,
-    _callframe: &CallFrame,
-    options_object: JSValue,
-    result: &mut Option<s3::S3CredentialsWithOptions>,
-) -> JSValue {
-    bun_jsc::to_js_host_call(global_this, || {
-        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
-        // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
-            global_this
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
-        );
-        let mut credentials_with_options = s3::S3CredentialsWithOptions {
-            credentials: env_creds,
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
-            ..Default::default()
-        };
-
-        if !options_object.is_empty() {
-            if let Some(s3_options) =
-                options_object.get_common_string(global_this, jsc::CommonString::FetchOptionS3)?
-            {
-                let s3_options: JSValue = s3_options;
-                if s3_options.is_object() {
-                    s3_options.ensure_still_alive();
-                    use crate::webcore::s3_client::S3CredentialsExt as _;
-                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
-                        &credentials_with_options.credentials,
-                        Default::default(),
-                        Some(s3_options),
-                        None,
-                        None,
-                        false,
-                        global_this,
-                    )?;
-                }
-            }
-        }
-        *result = Some(credentials_with_options);
-        Ok(JSValue::UNDEFINED)
-    })
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1450,12 +1410,15 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
-                let main = global_this.bun_vm().as_mut().main();
+                // Relative to the folder of the entry module, or to the working directory when there
+                // is none (`bun bake`).
+                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                    Some(main) => &[main, b"../", url_path_decoded],
+                    None => &[url_path_decoded],
+                };
                 let fullpath = bun_paths::resolve_path::join_abs_string_buf::<
                     bun_paths::platform::Auto,
-                >(
-                    cwd, &mut path_buf, &[main, b"../", url_path_decoded]
-                );
+                >(cwd, &mut path_buf, parts);
                 #[cfg(windows)]
                 {
                     break 'brk match PosixToWinNormalizer::resolve_cwd_with_external_buf_z(
@@ -1483,7 +1446,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 crate::webcore::node_types::PathLike::owned(temp_file_path.to_vec()),
             );
 
-            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this);
+            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
         let response = bun_core::heap::into_raw(Box::new(Response::init(
@@ -1765,28 +1728,49 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     if url.is_s3() {
-        let mut credentials_with_options = None;
-        let s3_credentials = core::hint::black_box(
-            Bun__fetchS3Credentials
-                as extern "C" fn(
-                    &JSGlobalObject,
-                    &CallFrame,
-                    JSValue,
-                    &mut Option<s3::S3CredentialsWithOptions>,
-                ) -> JSValue,
+        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
+        // process-singleton dotenv loader (set during init).
+        let env_creds = bun_removable_features::call_removable_or!(
+            S3Client,
+            Throw,
+            {
+                return Err(crate::removed_feature::throw_for_removed_feature(
+                    global_this,
+                    bun_removable_features::Feature::S3Client,
+                ));
+            },
+            s3_credentials_for_fetch,
+            global_this
         );
-        bun_jsc::from_js_host_call(global_this, || {
-            s3_credentials(
-                global_this,
-                callframe,
-                options_object.unwrap_or(JSValue::ZERO),
-                &mut credentials_with_options,
-            )
-        })?;
-        let Some(credentials_with_options) = credentials_with_options else {
-            unreachable!()
+        let mut credentials_with_options = s3::S3CredentialsWithOptions {
+            credentials: env_creds,
+            options: Default::default(),
+            acl: None,
+            storage_class: None,
+            ..Default::default()
         };
         // `defer credentialsWithOptions.deinit()` → Drop.
+
+        if let Some(options) = options_object {
+            if let Some(s3_options) =
+                options.get_common_string(global_this, jsc::CommonString::FetchOptionS3)?
+            {
+                let s3_options: JSValue = s3_options;
+                if s3_options.is_object() {
+                    s3_options.ensure_still_alive();
+                    use crate::webcore::s3_client::S3CredentialsExt as _;
+                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
+                        &credentials_with_options.credentials,
+                        Default::default(),
+                        Some(s3_options),
+                        None,
+                        None,
+                        false,
+                        global_this,
+                    )?;
+                }
+            }
+        }
 
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload

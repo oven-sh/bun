@@ -1,0 +1,3 @@
+export { probeValue, probeValue as probeOther } from "./probe-a";
+export { default } from "./probe-a";
+export { default as probeDefault } from "./probe-b";

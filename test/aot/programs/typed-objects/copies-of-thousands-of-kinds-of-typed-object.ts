@@ -1,4 +1,5 @@
 // Typed objects with undeclared keys of thousands of kinds are cloned, spread, assigned, frozen, listed and compared: every road that copies or lists a typed object, past the caps of what those roads remember.
+import { validate } from "bun:bundle";
 interface Item { id: number }
 interface Holder { first: number; items: Item[]; last: string }
 let serial = 0;
@@ -25,7 +26,7 @@ const roads: [string, (holder: Holder) => unknown][] = [
   }],
   ["own property descriptors", holder => Object.defineProperties({}, Object.getOwnPropertyDescriptors({ ...holder, items: holder.items.map(item => Object.defineProperties({}, Object.getOwnPropertyDescriptors(item))) }))],
   ["frozen, then spread", holder => ({ ...Object.freeze(holder), items: holder.items.map(item => ({ ...Object.freeze(item) })) })],
-  ["Bun.validate", holder => Bun.validate<Holder>(holder)],
+  ["validate", holder => validate<Holder>(holder)],
   ["rest", holder => {
     const { first, ...rest } = holder;
     return { a: (rest as any).a, first, items: holder.items.map(({ ...all }) => all), c: (rest as any).c, last: rest.last, d: (rest as any).d };

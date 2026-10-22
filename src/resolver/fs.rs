@@ -105,7 +105,8 @@ pub trait EntryKindResolver {
 pub enum EntryKind {
     Dir,
     File,
-    /// A symlink to nothing; treated like a missing entry, as `stat()` would report it.
+    /// A symlink whose target doesn't exist. It's treated like a missing entry, which is how
+    /// `stat()` reports it.
     Dangling,
 }
 
@@ -373,21 +374,6 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
-pub trait DirectoryListingSource: Send + Sync {
-    fn list(&self, path: &[u8]) -> Option<Vec<(Vec<u8>, bun_sys::FileKind)>>;
-}
-
-static DIRECTORY_LISTING_SOURCE: bun_threading::Guarded<Option<std::sync::Arc<dyn DirectoryListingSource>>> = bun_threading::Guarded::new(None);
-
-pub fn set_directory_listing_source(source: Option<std::sync::Arc<dyn DirectoryListingSource>>) {
-    *DIRECTORY_LISTING_SOURCE.lock() = source;
-}
-
-pub(crate) fn list_from_source(path: &[u8]) -> Option<Vec<(Vec<u8>, bun_sys::FileKind)>> {
-    let source = DIRECTORY_LISTING_SOURCE.lock().clone()?;
-    source.list(path)
-}
-
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
@@ -419,22 +405,12 @@ impl DirEntry {
         filename_store: &mut FilenameStoreAppender,
         iterator: I,
     ) -> crate::CrateResult<()> {
+        use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
-        self.add_named_entry_with_store(prev_map, entry.name.slice_u8(), entry.kind, filename_store, iterator)
-    }
-
-    pub(crate) fn add_named_entry_with_store<I: DirEntryIterator>(
-        &mut self,
-        prev_map: Option<&mut dir_entry::EntryMap>,
-        name_slice: &[u8],
-        kind: bun_sys::FileKind,
-        filename_store: &mut FilenameStoreAppender,
-        iterator: I,
-    ) -> crate::CrateResult<()> {
-        use bun_sys::FileKind as DK;
-        let found_kind: Option<EntryKind> = match kind {
+        let name_slice = entry.name.slice_u8();
+        let found_kind: Option<EntryKind> = match entry.kind {
             DK::Directory => Some(EntryKind::Dir),
             DK::File => Some(EntryKind::File),
 

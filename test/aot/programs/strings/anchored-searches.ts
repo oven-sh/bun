@@ -3,8 +3,8 @@
 // CALLS- oldStartsWithDot ReverseFind|LastIndexOf
 // CALLS- oldStartsWithText ReverseFind|LastIndexOf
 // CALLS- lastIndexOfBelowZero ReverseFind|LastIndexOf
-// CALLS+ lastIndexOfOne operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
-// CALLS+ lastIndexOfAnywhere operationAOTTypedStringReverseFind8|operationAOTTypedStringLastIndexOf
+// CALLS+ lastIndexOfOne operationAOTStringReverseFind8|operationAOTStringLastIndexOf
+// CALLS+ lastIndexOfAnywhere operationAOTStringReverseFind8|operationAOTStringLastIndexOf
 // CALLS+ oldEndsWith StringFindString
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {

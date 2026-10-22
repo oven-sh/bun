@@ -1,9 +1,9 @@
 // Symbols that a CommonJS module makes and exports in `module.exports = { .. }`, taken out by other modules and used as keys: by name where the module only makes values, and the same answers wherever it does more.
-// IR= 0 Thing PutByVal
-// IR= 0 bump GetByVal
-// IR= 0 bump PutByVal
-// IR= 0 throughTheObject GetByVal
-// IR= 1 underWhatACallMade GetByVal
+// IR= 0 Thing ElemSet
+// IR= 0 bump ElemGet
+// IR= 0 bump ElemSet
+// IR= 0 throughTheObject ElemGet
+// IR= 1 underWhatACallMade ElemGet
 "use strict";
 const lines = [];
 function show(what, value) { lines.push(what + ": " + String(value)); }

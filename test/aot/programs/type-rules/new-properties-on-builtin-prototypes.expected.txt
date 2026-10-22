@@ -1,8 +1,8 @@
-String.prototype: TypeError
-Map.prototype: TypeError
+String.prototype: no error
+Map.prototype: no error
 Promise.prototype: TypeError
 Function.prototype: TypeError
 Object.prototype: TypeError
 Object.prototype, defineProperty: TypeError
-undefined undefined undefined undefined undefined undefined
-false,false,false,false,false,false
+1 1 undefined undefined undefined undefined
+true,false,true,true,true,false

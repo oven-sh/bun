@@ -1,3 +1,4 @@
+// A part of parsed JSON is cast from its base type to subtypes whose fields hold objects, arrays and functions. Any object passes where an object type is written. A field written as an array throws at its typed read when it holds no array, a field written as an object type when it holds a number, a number field when it holds a string. A store through the typed reference replaces what did not fit.
 interface Base { kind: number }
 interface Point { x: number; y: number }
 interface Shape extends Base { at: Point; tags: string[]; next: Shape | null }

@@ -1,0 +1,120 @@
+feature JIT "the JIT compilers"
+  entered-from startup
+  minimum 600000
+
+feature Interpreter "eval, new Function and the JavaScript interpreter"
+  minimum 1000000
+
+feature BuiltinSourceText "the source code of built-in functions"
+
+feature ImageCompiler "the ahead-of-time compiler's code generator"
+  entered-from command-line
+
+feature WebAssembly "WebAssembly"
+  minimum 80000
+
+feature Inspector "the debugger and node:inspector"
+  minimum 70000
+
+feature Profilers "the CPU and heap profilers, heap snapshots and code coverage"
+  minimum 30000
+
+feature RegExp "regular expressions"
+
+feature RegExpUnicodeProperties "Unicode property escapes in regular expressions"
+  minimum 60000
+
+feature IntlCollation "Intl.Collator and localeCompare"
+
+feature IntlNumberFormat "Intl.NumberFormat, Intl.DurationFormat and toLocaleString on numbers and BigInts"
+
+feature IntlDateTimeFormat "Intl.DateTimeFormat and toLocaleString, toLocaleDateString and toLocaleTimeString on Date and Temporal objects"
+
+feature IntlUnits "units in Intl.NumberFormat, Intl.DurationFormat and toLocaleString"
+
+feature IntlSegmenter "Intl.Segmenter"
+
+feature IntlDisplayNames "Intl.DisplayNames"
+
+feature IntlOther "Intl.ListFormat, Intl.Locale, Intl.PluralRules, Intl.RelativeTimeFormat, Intl.getCanonicalLocales and Intl.supportedValuesOf"
+
+feature Temporal "Temporal and Date.prototype.toTemporalInstant"
+  minimum 20000
+
+feature Atomics "Atomics"
+
+feature WeakReferences "WeakRef and FinalizationRegistry"
+
+feature DataView "DataView"
+
+feature Int8Array "Int8Array"
+
+feature Uint8ClampedArray "Uint8ClampedArray"
+
+feature Int16Array "Int16Array"
+
+feature Uint16Array "Uint16Array"
+
+feature Int32Array "Int32Array"
+
+feature Uint32Array "Uint32Array"
+
+feature Float16Array "Float16Array"
+
+feature Float32Array "Float32Array"
+
+feature Float64Array "Float64Array"
+
+feature BigInt64Array "BigInt64Array"
+
+feature BigUint64Array "BigUint64Array"
+
+feature TypedArraySort "sort and toSorted on typed arrays"
+
+feature Uint8ArrayBase64 "Uint8Array's toBase64, fromBase64, setFromBase64, toHex, fromHex and setFromHex"
+
+feature RareArrayMethods "Array.prototype.copyWithin, toSpliced, toReversed, toSorted, with, lastIndexOf and flat"
+
+feature SetMethods "Set.prototype.union, intersection, difference, symmetricDifference, isSubsetOf, isSupersetOf and isDisjointFrom"
+
+feature MapGetOrInsert "getOrInsert and getOrInsertComputed on Map and WeakMap"
+
+feature PromiseAll "Promise.all"
+
+feature PromiseAllSettled "Promise.allSettled"
+
+feature PromiseAny "Promise.any"
+
+feature PromiseRace "Promise.race"
+
+feature JSONRawJSON "JSON.rawJSON"
+
+feature MathSumPrecise "Math.sumPrecise"
+
+feature NumberPrecisionMethods "Number.prototype.toFixed, toExponential and toPrecision"
+
+feature LegacyAccessors "__defineGetter__, __defineSetter__, __lookupGetter__ and __lookupSetter__"
+
+feature EscapeUnescape "escape and unescape"
+
+feature URICoding "encodeURI, encodeURIComponent, decodeURI and decodeURIComponent"
+
+feature StringLocaleCase "String.prototype.toLocaleLowerCase and toLocaleUpperCase"
+
+feature StringNormalize "String.prototype.normalize"
+
+feature StringPadding "String.prototype.padStart and padEnd"
+
+feature StringRepeat "String.prototype.repeat"
+
+feature StringHTML "String.prototype.anchor, big, blink, bold and the other nine HTML methods"
+
+feature StringWellFormed "String.prototype.isWellFormed and toWellFormed"
+
+feature StringLastIndexOf "String.prototype.lastIndexOf"
+
+feature RegExpFromString "regular expressions created from strings at run time with RegExp, compile, match, matchAll or search"
+
+feature ShadowRealm "ShadowRealm"
+
+feature ElementsToLocaleString "toLocaleString on arrays and typed arrays"

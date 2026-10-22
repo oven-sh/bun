@@ -20,14 +20,13 @@ bun_wyhash.workspace = true
 bun_zstd.workspace = true
 bstr.workspace = true
 hashbrown.workspace = true
-libc.workspace = true
 rustc-hash = "2"
 smallvec.workspace = true
 bitflags.workspace = true
 
 [dev-dependencies]
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
-bun_sema_standalone = { path = "standalone", default-features = false }
+bun_sema_standalone = { path = "standalone" }
 
 [lints]
 workspace = true

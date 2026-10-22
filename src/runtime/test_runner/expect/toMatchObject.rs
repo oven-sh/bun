@@ -30,7 +30,7 @@ pub(crate) fn to_match_object(
 
     let property_matchers = args[0];
 
-    let mut pass = received_object.jest_deep_match(property_matchers, global, false)?;
+    let mut pass = received_object.jest_deep_match(property_matchers, global, true)?;
 
     if not {
         pass = !pass;
@@ -40,13 +40,6 @@ pub(crate) fn to_match_object(
     }
 
     // handle failure
-    let property_matchers = property_matchers.jest_copy_along_property_matchers(received_object, global)?;
-    let received_object = received_object.jest_copy_along_property_matchers(property_matchers, global)?;
-    if let Err(error) = received_object.jest_deep_match(property_matchers, global, true) {
-        if matches!(error, bun_jsc::JsError::Terminated) || !global.clear_exception_except_termination() {
-            return Err(error);
-        }
-    }
     let diff_formatter = DiffFormatter::new(global, received_object, property_matchers, not)?;
 
     if not {

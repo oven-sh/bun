@@ -1,0 +1,2 @@
+# A signature in an inferred file keeps its parameter forms and has nothing written.
+function-signature-in-javascript.js:2 signature `f` = (unwritten checked any, unwritten checked number?, ...unwritten checked any[]) this unwritten checked any returns unwritten checked void

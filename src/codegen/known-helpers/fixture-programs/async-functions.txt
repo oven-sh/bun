@@ -1,0 +1,68 @@
+Async functions, arrows and methods: the order of ticks against plain promise chains, thenables, `this` and `arguments`, try, catch and finally around an await, a rejection that nobody awaits in time.
+//// main.js
+const log = [];
+
+async function plusOne(value) {
+  log.push("plusOne starts " + String(value && value.then ? "thenable" : value));
+  const got = await value;
+  log.push("plusOne got " + got);
+  return got + 1;
+}
+
+async function failing() {
+  await null;
+  throw new Error("failed");
+}
+
+const arrow = async (left, right) => (await left) + (await right);
+
+class Holder {
+  constructor() {
+    this.name = "holder";
+  }
+  async method() {
+    const count = arguments.length;
+    await undefined;
+    return this.name + " " + count + " " + arguments[1];
+  }
+}
+
+async function guarded() {
+  try {
+    await failing();
+    log.push("not reached");
+  } catch (error) {
+    log.push("caught " + error.message);
+    return "from catch";
+  } finally {
+    await null;
+    log.push("finally");
+  }
+}
+
+async function loop() {
+  let sum = 0;
+  for (let index = 0; index < 3; index++) sum += await plusOne(index);
+  return sum;
+}
+
+function ticks(count) {
+  let chain = Promise.resolve();
+  for (let index = 1; index <= count; index++) chain = chain.then(() => void log.push("tick " + index));
+  return chain;
+}
+
+const thenable = {
+  then(resolve) {
+    log.push("then is called");
+    resolve(40);
+  },
+};
+
+const all = Promise.all([plusOne(1), plusOne(Promise.resolve(10)), plusOne(thenable), arrow(1, Promise.resolve(2)), new Holder().method("a", "b"), guarded(), loop(), ticks(12)]);
+log.push("the script ends");
+all.then(results => {
+  console.log(log.join("\n"));
+  console.log(JSON.stringify(results));
+  console.log(plusOne(0) instanceof Promise, Object.prototype.toString.call(plusOne), plusOne.length, arrow.length);
+});

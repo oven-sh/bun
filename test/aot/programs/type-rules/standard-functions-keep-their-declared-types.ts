@@ -1,5 +1,5 @@
-// The declarations that the compiler brings along add names of Bun's own. Those of the standard library stay as they are: what uses JSON.parse or json() as a type or as a value checks as it does without them.
-export const parseWithReviver: typeof JSON.parse = (text, reviver) => JSON.parse(text, reviver);
+// bun-types adds an overload to JSON.parse. What uses JSON.parse or json() as a type or as a value checks as it does without it, but for a function expression, which writes the types of its parameters.
+export const parseWithReviver: typeof JSON.parse = (text: string, reviver?: (this: any, key: string, value: any) => any) => JSON.parse(text, reviver);
 const parseText: (text: string) => any = JSON.parse;
 const parameters: Parameters<typeof JSON.parse> = ["[1,2]", (_key, value) => value];
 function call<F extends (...given: any[]) => any>(f: F, ...given: Parameters<F>): ReturnType<F> {

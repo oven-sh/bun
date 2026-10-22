@@ -1,6 +1,5 @@
 // A variable without an initializer is assigned in every case of a switch that is exhaustive over a union of literals.
 declare const console: { log(...values: unknown[]): void };
-// A variable without an initializer is assigned in every case of a switch that is EXHAUSTIVE over a union of literals. tsc accepts it (strict); --aot: TS100001.
 type Marker = '+' | '-' | ' '
 function f(marker: Marker, a: number, b: number) {
   let n: number

@@ -1,12 +1,12 @@
 // `(x as T).p`, read on the spot, where T holds external data: the cast makes no view of x that outlives the read, so the type of x keeps its layout.
-// IR+ ^shape .*"Message".* allocated
-// IR+ ^shape .*"Note".* allocated
-// IR+ ^shape .*"Crate".* allocated
-// IR- ^shape .*"Lining"
-// IR- ^shape .*"Letter"
-// IR- ^shape .*"Parcel"
-// IR- ^shape .*"Basket"
-// IR- ^shape .*"Tool"
+// IR+ ^layout L\d+ .*name="Message" .* representation=Typed
+// IR+ ^layout L\d+ .*name="Note" .* representation=Typed
+// IR+ ^layout L\d+ .*name="Crate" .* representation=Typed
+// IR- ^layout L\d+ .*name="Lining" .* representation=Typed
+// IR- ^layout L\d+ .*name="Letter" .* representation=Typed
+// IR- ^layout L\d+ .*name="Parcel" .* representation=Typed
+// IR- ^layout L\d+ .*name="Basket" .* representation=Typed
+// IR- ^layout L\d+ .*name="Tool" .* representation=Typed
 const say = (label: string, f: () => unknown): void => { let r: string; try { r = String(f()); } catch (e) { r = "throws " + (e as Error).name; } console.log(label + " ==> " + r); };
 type Dictionary = Record<string, unknown>;
 const parsed = JSON.parse('{"a":1}') as Dictionary;

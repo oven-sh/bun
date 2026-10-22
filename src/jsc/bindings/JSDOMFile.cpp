@@ -102,7 +102,7 @@ const JSC::ClassInfo JSDOMFile::s_info = { "File"_s, &Base::s_info, nullptr, nul
 
 namespace Bun {
 
-NEVER_INLINE JSC::JSObject* createJSDOMFileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+JSC::JSObject* createJSDOMFileConstructor(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
 {
     return JSDOMFile::create(vm, globalObject);
 }

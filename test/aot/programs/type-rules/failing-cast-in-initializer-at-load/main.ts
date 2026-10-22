@@ -1,4 +1,4 @@
-// A cast that fails, or a typed read behind a cast that finds something else, throws a TypeError while the initializer of a top-level constant runs: that is while the module is loaded, not when the constant is first read.
+// A cast to an object type lets any object through. A typed read behind a cast that finds a value of another kind throws a TypeError while the initializer of a top-level constant runs: that is while the module is loaded, not when the constant is first read.
 async function load(name: string, importing: () => Promise<{ made: unknown }>): Promise<void> {
   let loaded = false;
   try {

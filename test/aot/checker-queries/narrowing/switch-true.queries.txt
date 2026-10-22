@@ -1,0 +1,27 @@
+# Each `case` test of `switch (true)` narrows in its clause, and `default` gets what no test accepts. The test can be about a property, a nested property, a property of `this` or an element at a constant key. A clause also knows that the tests before it failed. Clauses that share their statements, or fall through, get the union.
+switch-true.ts:4 type `x` = string | number
+switch-true.ts:5 type `x` = string
+switch-true.ts:8 type `x` = number
+switch-true.ts:20 type `entry.token` = Token
+switch-true.ts:21 type `entry.token` = Word
+switch-true.ts:24 type `entry.token` = Digits
+switch-true.ts:27 type `entry.token` = Space
+
+switch-true.ts:34 type `entry.inner.token` = Space
+switch-true.ts:35 type `entry.token` = Token
+switch-true.ts:38 type `entry.inner.token` = Digits | Word
+
+switch-true.ts:50 type `this.token` = Word
+switch-true.ts:53 type `this.token` = Digits
+switch-true.ts:56 type `this.token` = Space
+
+switch-true.ts:64 type `pair[0]` = Word
+switch-true.ts:65 type `pair[1]` = Token
+switch-true.ts:68 type `entry.token` = Digits
+switch-true.ts:69 type `pair[0]` = Digits | Space
+
+switch-true.ts:78 type `entry.token` = Digits | Word
+switch-true.ts:81 type `entry.token` = Space
+
+switch-true.ts:88 type `entry.token` = Word
+switch-true.ts:90 type `entry.token` = Digits | Word

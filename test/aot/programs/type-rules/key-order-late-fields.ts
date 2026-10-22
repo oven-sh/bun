@@ -9,7 +9,7 @@ console.log(show(typed))
 delete loose.x2; delete typed.q; typed.q = "again"; loose.x2 = "back"
 console.log(show(typed), typed.q, typed.p)
 console.log(keys({ ...typed }), Object.entries(typed).map(e => e[0]).join(""), Reflect.ownKeys(typed).join(""))
-// A required field is not deleted, so it does not move to the end either.
+// A required field is deleted like any other. Stored again, it is the last key.
 const cycle: Wide = { id: 6, p: 1, q: "q", r: true }
 try { delete (cycle as { id?: number }).id; console.log("delete of a required field: no error") } catch (e) { console.log("delete of a required field:", e instanceof TypeError ? "TypeError" : "other " + e) }
 cycle.id = 60

@@ -1,17 +1,17 @@
 // Escape analysis across calls: a small object returned by one function and only read by the next is not allocated, including when it merges with other fresh objects at a phi.
-// IR= 0 handedOn NewObjectWithShape|CallDirect
-// IR= 0 handedOnTwice NewObjectWithShape|CallDirect
-// IR= 0 joinedWithItsSource NewObjectWithShape|CallDirect
-// IR= 0 joinedThenHandedOn NewObjectWithShape|CallDirect
-// IR= 0 carriedByLoop NewObjectWithShape|CallDirect
-// IR= 0 madeAheadOfTheBranch NewObjectWithShape
-// IR= 1 keptResultFreesItsArgument NewObjectWithShape
+// IR= 0 handedOn : =?L[0-9]+ = NewObject |CallDirect
+// IR= 0 handedOnTwice : =?L[0-9]+ = NewObject |CallDirect
+// IR= 0 joinedWithItsSource : =?L[0-9]+ = NewObject |CallDirect
+// IR= 0 joinedThenHandedOn : =?L[0-9]+ = NewObject |CallDirect
+// IR= 0 carriedByLoop : =?L[0-9]+ = NewObject |CallDirect
+// IR= 0 madeAheadOfTheBranch : =?L[0-9]+ = NewObject 
+// IR= 1 keptResultFreesItsArgument : =?L[0-9]+ = NewObject 
 // IR= 0 keptResultFreesItsArgument CallDirect
-// IR= 1 isKeptByTheCallee NewObjectWithShape|CallDirect
-// IR= 1 isReturnedByTheCallee NewObjectWithShape|CallDirect
-// IR= 2 isWrittenBehindTheJoin NewObjectWithShape|CallDirect
-// IR= 2 sourceIsWrittenBehindTheJoin NewObjectWithShape|CallDirect
-// IR= 1 isEnumerated NewObjectWithShape|CallDirect
+// IR= 1 isKeptByTheCallee : =?L[0-9]+ = NewObject |CallDirect
+// IR= 1 isReturnedByTheCallee : =?L[0-9]+ = NewObject |CallDirect
+// IR= 2 isWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
+// IR= 2 sourceIsWrittenBehindTheJoin : =?L[0-9]+ = NewObject |CallDirect
+// IR= 1 isEnumerated : =?L[0-9]+ = NewObject |CallDirect
 declare const console: { log(...v: unknown[]): void };
 interface Range { low: number; high: number }
 function range(low: number, high: number): Range { return { low, high }; }

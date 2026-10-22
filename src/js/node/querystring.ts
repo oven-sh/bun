@@ -1,6 +1,5 @@
-// @ts-check
 // Hardcoded module "node:querystring"
-const ArrayIsArray: (value: unknown) => boolean = Array.isArray;
+const ArrayIsArray = Array.isArray;
 const MathAbs = Math.abs;
 const NumberIsFinite = Number.isFinite;
 const ObjectKeys = Object.keys;
@@ -9,186 +8,224 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
 
-function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]): string {
-  const len = str.length;
-  if (len === 0) return "";
+type Coder = (text: string) => string;
+type ParsedQuery = Record<string, string | string[]>;
 
-  let out = "";
-  let lastPos = 0;
-
-  for (let i = 0; i < len; i++) {
-    let c = StringPrototypeCharCodeAt.$call(str, i);
-
-    // ASCII
-    if (c < 0x80) {
-      if (noEscapeTable[c] === 1) continue;
-      if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
-      lastPos = i + 1;
-      out += hexTable[c];
-      continue;
-    }
-
-    if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
-
-    // Multi-byte characters ...
-    if (c < 0x800) {
-      lastPos = i + 1;
-      out += hexTable[0xc0 | (c >> 6)] + hexTable[0x80 | (c & 0x3f)];
-      continue;
-    }
-    if (c < 0xd800 || c >= 0xe000) {
-      lastPos = i + 1;
-      out += hexTable[0xe0 | (c >> 12)] + hexTable[0x80 | ((c >> 6) & 0x3f)] + hexTable[0x80 | (c & 0x3f)];
-      continue;
-    }
-    // Surrogate pair
-    ++i;
-
-    // This branch should never happen because all URLSearchParams entries
-    // should already be converted to USVString. But, included for
-    // completion's sake anyway.
-    if (i >= len) throw $ERR_INVALID_URI();
-
-    const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
-
-    lastPos = i + 1;
-    c = 0x10000 + (((c & 0x3ff) << 10) | c2);
-    out +=
-      hexTable[0xf0 | (c >> 18)] +
-      hexTable[0x80 | ((c >> 12) & 0x3f)] +
-      hexTable[0x80 | ((c >> 6) & 0x3f)] +
-      hexTable[0x80 | (c & 0x3f)];
-  }
-  if (lastPos === 0) return str;
-  if (lastPos < len) return out + StringPrototypeSlice.$call(str, lastPos);
-  return out;
+interface StringifyOptions {
+  encodeURIComponent?: Coder;
 }
 
-const hexTable: string[] = new Array(256);
-for (let i = 0; i < 256; ++i)
-  hexTable[i] = "%" + StringPrototypeToUpperCase.$call((i < 16 ? "0" : "") + NumberPrototypeToString.$call(i, 16));
-// prettier-ignore
-const isHexTable = new Int8Array([
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16 - 31
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 32 - 47
-  1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, // 48 - 63
-  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 64 - 79
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 80 - 95
-  0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 96 - 111
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 112 - 127
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 128 ...
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ... 256
-]);
-const QueryString: Record<string, any> = {
-  unescapeBuffer,
-  // `unescape()` is a JS global, so we need to use a different local name
-  unescape: qsUnescape,
+interface ParseOptions {
+  maxKeys?: number;
+  decodeURIComponent?: Coder;
+}
 
-  // `escape()` is a JS global, so we need to use a different local name
-  escape: qsEscape,
+interface QueryStringExports {
+  unescapeBuffer(s: string, decodeSpaces?: boolean): Buffer;
+  unescape(s: string, decodeSpaces?: boolean): string;
+  escape(str: unknown): string;
+  stringify(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null): string;
+  encode(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null): string;
+  parse(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null): ParsedQuery;
+  decode(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null): ParsedQuery;
+}
 
-  stringify,
-  encode: stringify,
+var __commonJS =
+  <T extends object>(cb: (exports: T, module: { exports: T }) => void, mod: { exports: T } | undefined = undefined) =>
+  () => (mod || cb((mod = { exports: {} as T }).exports, mod), mod.exports);
 
-  parse,
-  decode: parse,
-};
+var require_src = __commonJS<QueryStringExports>((exports, module) => {
+  /**
+   * @param {string} str
+   * @param {Int8Array} noEscapeTable
+   * @param {string[]} hexTable
+   * @returns {string}
+   */
+  function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
+    const len = str.length;
+    if (len === 0) return "";
 
-// prettier-ignore
-const unhexTable = new Int8Array([
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 0 - 15
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 16 - 31
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 32 - 47
-  +0, +1, +2, +3, +4, +5, +6, +7, +8, +9, -1, -1, -1, -1, -1, -1, // 48 - 63
-  -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 64 - 79
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 80 - 95
-  -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 96 - 111
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 112 - 127
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 128 ...
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
-  -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ... 255
-]);
-/**
- * A safe fast alternative to decodeURIComponent
- * @param {string} s
- * @param {boolean} decodeSpaces
- * @returns {string}
- */
-function unescapeBuffer(s, decodeSpaces) {
-  const out = Buffer.allocUnsafe(s.length);
-  let index = 0;
-  let outIndex = 0;
-  let currentChar;
-  let nextChar;
-  let hexHigh;
-  let hexLow;
-  const maxLength = s.length - 2;
-  // Flag to know if some hex chars have been decoded
-  let hasHex = false;
-  while (index < s.length) {
-    currentChar = StringPrototypeCharCodeAt.$call(s, index);
-    if (currentChar === 43 /* '+' */ && decodeSpaces) {
-      out[outIndex++] = 32; // ' '
-      index++;
-      continue;
-    }
-    if (currentChar === 37 /* '%' */ && index < maxLength) {
-      currentChar = StringPrototypeCharCodeAt.$call(s, ++index);
-      hexHigh = unhexTable[currentChar];
-      if (!(hexHigh >= 0)) {
-        out[outIndex++] = 37; // '%'
+    let out = "";
+    let lastPos = 0;
+    let i = 0;
+
+    outer: for (; i < len; i++) {
+      let c = StringPrototypeCharCodeAt.$call(str, i);
+
+      // ASCII
+      while (c < 0x80) {
+        if (noEscapeTable[c] !== 1) {
+          if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
+          lastPos = i + 1;
+          out += hexTable[c];
+        }
+
+        if (++i === len) break outer;
+
+        c = StringPrototypeCharCodeAt.$call(str, i);
+      }
+
+      if (lastPos < i) out += StringPrototypeSlice.$call(str, lastPos, i);
+
+      // Multi-byte characters ...
+      if (c < 0x800) {
+        lastPos = i + 1;
+        out += hexTable[0xc0 | (c >> 6)] + hexTable[0x80 | (c & 0x3f)];
         continue;
-      } else {
-        nextChar = StringPrototypeCharCodeAt.$call(s, ++index);
-        hexLow = unhexTable[nextChar];
-        if (!(hexLow >= 0)) {
+      }
+      if (c < 0xd800 || c >= 0xe000) {
+        lastPos = i + 1;
+        out += hexTable[0xe0 | (c >> 12)] + hexTable[0x80 | ((c >> 6) & 0x3f)] + hexTable[0x80 | (c & 0x3f)];
+        continue;
+      }
+      // Surrogate pair
+      ++i;
+
+      // This branch should never happen because all URLSearchParams entries
+      // should already be converted to USVString. But, included for
+      // completion's sake anyway.
+      if (i >= len) throw $ERR_INVALID_URI();
+
+      const c2 = StringPrototypeCharCodeAt.$call(str, i) & 0x3ff;
+
+      lastPos = i + 1;
+      c = 0x10000 + (((c & 0x3ff) << 10) | c2);
+      out +=
+        hexTable[0xf0 | (c >> 18)] +
+        hexTable[0x80 | ((c >> 12) & 0x3f)] +
+        hexTable[0x80 | ((c >> 6) & 0x3f)] +
+        hexTable[0x80 | (c & 0x3f)];
+    }
+    if (lastPos === 0) return str;
+    if (lastPos < len) return out + StringPrototypeSlice.$call(str, lastPos);
+    return out;
+  }
+
+  const hexTable: string[] = new Array(256);
+  for (let i = 0; i < 256; ++i)
+    hexTable[i] = "%" + StringPrototypeToUpperCase.$call((i < 16 ? "0" : "") + NumberPrototypeToString.$call(i, 16));
+  // prettier-ignore
+  const isHexTable = new Int8Array([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16 - 31
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 32 - 47
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, // 48 - 63
+    0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 64 - 79
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 80 - 95
+    0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 96 - 111
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 112 - 127
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 128 ...
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  // ... 256
+  ]);
+  const QueryString = (module.exports = {
+    unescapeBuffer,
+    // `unescape()` is a JS global, so we need to use a different local name
+    unescape: qsUnescape,
+
+    // `escape()` is a JS global, so we need to use a different local name
+    escape: qsEscape,
+
+    stringify,
+    encode: stringify,
+
+    parse,
+    decode: parse,
+  });
+
+  // prettier-ignore
+  const unhexTable = new Int8Array([
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 0 - 15
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 16 - 31
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 32 - 47
+    +0, +1, +2, +3, +4, +5, +6, +7, +8, +9, -1, -1, -1, -1, -1, -1, // 48 - 63
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 64 - 79
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 80 - 95
+    -1, 10, 11, 12, 13, 14, 15, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 96 - 111
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 112 - 127
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, // 128 ...
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  // ... 255
+  ]);
+  /**
+   * A safe fast alternative to decodeURIComponent
+   * @param {string} s
+   * @param {boolean} decodeSpaces
+   * @returns {string}
+   */
+  function unescapeBuffer(s: string, decodeSpaces?: boolean): Buffer {
+    const out: Buffer = Buffer.allocUnsafe(s.length);
+    let index = 0;
+    let outIndex = 0;
+    let currentChar;
+    let nextChar;
+    let hexHigh;
+    let hexLow;
+    const maxLength = s.length - 2;
+    // Flag to know if some hex chars have been decoded
+    let hasHex = false;
+    while (index < s.length) {
+      currentChar = StringPrototypeCharCodeAt.$call(s, index);
+      if (currentChar === 43 /* '+' */ && decodeSpaces) {
+        out[outIndex++] = 32; // ' '
+        index++;
+        continue;
+      }
+      if (currentChar === 37 /* '%' */ && index < maxLength) {
+        currentChar = StringPrototypeCharCodeAt.$call(s, ++index);
+        hexHigh = unhexTable[currentChar];
+        if (!(hexHigh >= 0)) {
           out[outIndex++] = 37; // '%'
-          index--;
+          continue;
         } else {
-          hasHex = true;
-          currentChar = hexHigh * 16 + hexLow;
+          nextChar = StringPrototypeCharCodeAt.$call(s, ++index);
+          hexLow = unhexTable[nextChar];
+          if (!(hexLow >= 0)) {
+            out[outIndex++] = 37; // '%'
+            index--;
+          } else {
+            hasHex = true;
+            currentChar = hexHigh * 16 + hexLow;
+          }
         }
       }
+      out[outIndex++] = currentChar;
+      index++;
     }
-    out[outIndex++] = currentChar;
-    index++;
+    return hasHex ? out.slice(0, outIndex) : out;
   }
-  return hasHex ? out.slice(0, outIndex) : out;
-}
 
-/**
- * @param {string} s
- * @param {boolean} decodeSpaces
- * @returns {string}
- */
-function qsUnescape(s, decodeSpaces) {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return QueryString.unescapeBuffer(s, decodeSpaces).toString();
+  /**
+   * @param {string} s
+   * @param {boolean} decodeSpaces
+   * @returns {string}
+   */
+  function qsUnescape(s: string, decodeSpaces?: boolean): string {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return QueryString.unescapeBuffer(s, decodeSpaces).toString();
+    }
   }
-}
 
-// These characters do not need escaping when generating query strings:
-// ! - . _ ~
-// ' ( ) *
-// digits
-// alpha (uppercase)
-// alpha (lowercase)
-// prettier-ignore
-const noEscape = new Int8Array([
+  // These characters do not need escaping when generating query strings:
+  // ! - . _ ~
+  // ' ( ) *
+  // digits
+  // alpha (uppercase)
+  // alpha (lowercase)
+  // prettier-ignore
+  const noEscape = new Int8Array([
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 16 - 31
   0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 1, 0, // 32 - 47
@@ -199,424 +236,317 @@ const noEscape = new Int8Array([
   1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 0,  // 112 - 127
 ]);
 
-/**
- * QueryString.escape() replaces encodeURIComponent()
- * @see https://www.ecma-international.org/ecma-262/5.1/#sec-15.1.3.4
- * @param {any} str
- * @returns {string}
- */
-function qsEscape(str) {
-  if (typeof str !== "string") {
-    if (typeof str === "object") str = String(str);
-    else str += "";
-  }
-
-  return encodeStr(str, noEscape, hexTable);
-}
-
-/**
- * @param {string | number | bigint | boolean | symbol | undefined | null} v
- * @returns {string}
- */
-function stringifyPrimitive(v: unknown): string {
-  if (typeof v === "string") return v;
-  if (typeof v === "number" && NumberIsFinite(v)) return "" + v;
-  if (typeof v === "bigint") return "" + v;
-  if (typeof v === "boolean") return v ? "true" : "false";
-  return "";
-}
-
-function encodeStringified(v: unknown): string {
-  if (typeof v === "string") return encodeStr(v, noEscape, hexTable);
-  if (typeof v === "number" && NumberIsFinite(v)) {
-    // Values >= 1e21 automatically switch to scientific notation which requires
-    // escaping due to the inclusion of a '+' in the output
-    return MathAbs(v) < 1e21 ? "" + v : encodeStr("" + v, noEscape, hexTable);
-  }
-  if (typeof v === "bigint") return "" + v;
-  if (typeof v === "boolean") return v ? "true" : "false";
-  return "";
-}
-
-function stringifyWith(obj, sep, eq, encode) {
-  const keys = ObjectKeys(obj);
-  const len = keys.length;
-  let fields = "";
-  for (let i = 0; i < len; ++i) {
-    const k = keys[i];
-    const v = obj[k];
-    let ks = encode(stringifyPrimitive(k));
-    ks += eq;
-
-    if (ArrayIsArray(v)) {
-      const vlen = v.length;
-      if (vlen === 0) continue;
-      if (fields) fields += sep;
-      for (let j = 0; j < vlen; ++j) {
-        if (j) fields += sep;
-        fields += ks;
-        fields += encode(stringifyPrimitive(v[j]));
-      }
-    } else {
-      if (fields) fields += sep;
-      fields += ks;
-      fields += encode(stringifyPrimitive(v));
+  /**
+   * QueryString.escape() replaces encodeURIComponent()
+   * @see https://www.ecma-international.org/ecma-262/5.1/#sec-15.1.3.4
+   * @param {any} str
+   * @returns {string}
+   */
+  function qsEscape(str: unknown) {
+    if (typeof str !== "string") {
+      if (typeof str === "object") str = String(str);
+      else str += "";
     }
+
+    return encodeStr(str as string, noEscape, hexTable);
   }
-  return fields;
-}
 
-function stringifyArray(fields: string, ks: string, v, sep: string): string {
-  const vlen = v.length;
-  if (vlen === 0) return fields;
-  if (fields) fields += sep;
-  for (let j = 0; j < vlen; ++j) {
-    if (j) fields += sep;
-    fields += ks;
-    fields += encodeStringified(v[j]);
+  /**
+   * @param {string | number | bigint | boolean | symbol | undefined | null} v
+   * @returns {string}
+   */
+  function stringifyPrimitive(v: unknown) {
+    if (typeof v === "string") return v;
+    if (typeof v === "number" && NumberIsFinite(v)) return "" + v;
+    if (typeof v === "bigint") return "" + v;
+    if (typeof v === "boolean") return v ? "true" : "false";
+    return "";
   }
-  return fields;
-}
 
-/**
- * @param {Record<string, string | number | boolean
- * | ReadonlyArray<string | number | boolean> | null>} obj
- * @param {string} [sep]
- * @param {string} [eq]
- * @param {{ encodeURIComponent?: (v: string) => string }} [options]
- * @returns {string}
- */
-function stringify(obj, sep, eq, options) {
-  sep ||= "&";
-  eq ||= "=";
-
-  let encode = QueryString.escape;
-  if (options) {
-    const encodeURIComponentOption = options.encodeURIComponent;
-    if (typeof encodeURIComponentOption === "function") {
-      encode = encodeURIComponentOption;
+  /**
+   * @param {string | number | bigint | boolean} v
+   * @param {(v: string) => string} encode
+   * @returns {string}
+   */
+  function encodeStringified(v: unknown, encode: Coder) {
+    if (typeof v === "string") return v.length ? encode(v) : "";
+    if (typeof v === "number" && NumberIsFinite(v)) {
+      // Values >= 1e21 automatically switch to scientific notation which requires
+      // escaping due to the inclusion of a '+' in the output
+      return MathAbs(v) < 1e21 ? "" + v : encode("" + v);
     }
+    if (typeof v === "bigint") return "" + v;
+    if (typeof v === "boolean") return v ? "true" : "false";
+    return "";
   }
 
-  if (obj !== null && typeof obj === "object") {
-    if (encode !== qsEscape || typeof sep !== "string" || typeof eq !== "string") {
-      return encode === qsEscape ? stringifyWith(obj, sep, eq, encodeStringified) : stringifyWith(obj, sep, eq, encode);
-    }
-    const keys: string[] = ObjectKeys(obj);
-    const len = keys.length;
-    let fields = "";
-    for (let i = 0; i < len; ++i) {
-      const k = keys[i];
-      const v = obj[k];
-      const ks = encodeStr(k, noEscape, hexTable) + eq;
+  /**
+   * @param {string | number | boolean | null} v
+   * @param {(v: string) => string} encode
+   * @returns {string}
+   */
+  function encodeStringifiedCustom(v: unknown, encode: Coder) {
+    return encode(stringifyPrimitive(v));
+  }
 
-      if (ArrayIsArray(v)) {
-        fields = stringifyArray(fields, ks, v, sep);
-      } else {
-        if (fields) fields += sep;
-        fields += ks;
-        fields += encodeStringified(v);
+  /**
+   * @param {Record<string, string | number | boolean
+   * | ReadonlyArray<string | number | boolean> | null>} obj
+   * @param {string} [sep]
+   * @param {string} [eq]
+   * @param {{ encodeURIComponent?: (v: string) => string }} [options]
+   * @returns {string}
+   */
+  function stringify(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null) {
+    sep ||= "&";
+    eq ||= "=";
+
+    let encode: Coder = QueryString.escape;
+    if (options) {
+      const encodeURIComponentOption = options.encodeURIComponent;
+      if (typeof encodeURIComponentOption === "function") {
+        encode = encodeURIComponentOption;
       }
     }
-    return fields;
-  }
-  return "";
-}
+    const convert = encode === qsEscape ? encodeStringified : encodeStringifiedCustom;
 
-function charCodes(str: string): number[] {
-  if (str.length === 0) return [];
-  if (str.length === 1) return [StringPrototypeCharCodeAt.$call(str, 0)];
-  const ret: number[] = new Array(str.length);
-  for (let i = 0; i < str.length; ++i) ret[i] = StringPrototypeCharCodeAt.$call(str, i);
-  return ret;
-}
-const defSepCodes = [38]; // &
-const defEqCodes = [61]; // =
+    if (obj !== null && typeof obj === "object") {
+      const keys = ObjectKeys(obj);
+      const len = keys.length;
+      let fields = "";
+      for (let i = 0; i < len; ++i) {
+        const k = keys[i];
+        const v = obj[k];
+        let ks = convert(k, encode);
+        ks += eq;
 
-function addKeyVal(obj, key, value, keyEncoded: boolean, valEncoded: boolean, decode) {
-  if (key.length > 0 && keyEncoded) key = decodeStr(key, decode);
-  if (value.length > 0 && valEncoded) value = decodeStr(value, decode);
-
-  if (obj[key] === undefined) {
-    obj[key] = value;
-  } else {
-    const curValue = obj[key];
-    // A simple Array-specific property check is enough here to
-    // distinguish from a string value and is faster and still safe
-    // since we are generating all of the values being assigned.
-    if (curValue.pop) curValue[curValue.length] = value;
-    else obj[key] = [curValue, value];
-  }
-}
-
-/**
- * Parse a key/val string.
- * @param {string} qs
- * @param {string} sep
- * @param {string} eq
- * @param {{
- *   maxKeys?: number;
- *   decodeURIComponent?(v: string): string;
- *   }} [options]
- * @returns {Record<string, string | string[]>}
- */
-function parse(qs, sep, eq, options) {
-  const obj = Object.create(null);
-
-  if (typeof qs !== "string" || qs.length === 0) {
-    return obj;
-  }
-
-  const sepCodes = !sep ? defSepCodes : charCodes(String(sep));
-  const eqCodes = !eq ? defEqCodes : charCodes(String(eq));
-
-  let pairs = 1000;
-  let decode = QueryString.unescape;
-  if (options) {
-    const { maxKeys, decodeURIComponent: decodeURIComponentOption } = options;
-    if (typeof maxKeys === "number") {
-      // -1 is used in place of a value like Infinity for meaning
-      // "unlimited pairs" because of additional checks V8 (at least as of v5.4)
-      // has to do when using variables that contain values like Infinity. Since
-      // `pairs` is always decremented and checked explicitly for 0, -1 works
-      // effectively the same as Infinity, while providing a significant
-      // performance boost.
-      pairs = maxKeys > 0 ? maxKeys : -1;
-    }
-    if (typeof decodeURIComponentOption === "function") {
-      decode = decodeURIComponentOption;
-    }
-  }
-  if (sepCodes.length === 1 && eqCodes.length === 1) {
-    parseWithCodes(obj, qs, sepCodes[0] | 0, eqCodes[0] | 0, pairs, decode, decode !== qsUnescape);
-  } else {
-    parseInto(obj, qs, sepCodes, eqCodes, pairs, decode, decode !== qsUnescape);
-  }
-  return obj;
-}
-
-// parseInto() for a separator and an assignment of one code unit each.
-function parseWithCodes(obj, qs: string, sepCode: number, eqCode: number, pairs: number, decode, customDecode: boolean): void {
-  const len = qs.length;
-  let lastPos = 0;
-  let sawEq = false;
-  let key = "";
-  let value = "";
-  let keyEncoded = customDecode;
-  let valEncoded = customDecode;
-  const plusChar = customDecode ? "%20" : " ";
-  let encodeCheck = 0;
-  for (let i = 0; i < len; ++i) {
-    const code = StringPrototypeCharCodeAt.$call(qs, i) | 0;
-
-    if (code === sepCode) {
-      if (!sawEq) {
-        if (lastPos < i) {
-          key += StringPrototypeSlice.$call(qs, lastPos, i);
-        } else if (key.length === 0) {
-          if (--pairs === 0) return;
-          lastPos = i + 1;
-          continue;
+        if (ArrayIsArray(v)) {
+          const vlen = v.length;
+          if (vlen === 0) continue;
+          if (fields) fields += sep;
+          for (let j = 0; j < vlen; ++j) {
+            if (j) fields += sep;
+            fields += ks;
+            fields += convert(v[j], encode);
+          }
+        } else {
+          if (fields) fields += sep;
+          fields += ks;
+          fields += convert(v, encode);
         }
-      } else if (lastPos < i) {
-        value += StringPrototypeSlice.$call(qs, lastPos, i);
       }
-
-      addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
-
-      if (--pairs === 0) return;
-      keyEncoded = valEncoded = customDecode;
-      key = value = "";
-      encodeCheck = 0;
-      lastPos = i + 1;
-      sawEq = false;
-      continue;
+      return fields;
     }
-    if (!sawEq) {
-      if (code === eqCode) {
-        sawEq = true;
-        if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
-        encodeCheck = 0;
-        lastPos = i + 1;
-        continue;
+    return "";
+  }
+
+  /**
+   * @param {string} str
+   * @returns {number[]}
+   */
+  function charCodes(str: string): number[] {
+    if (str.length === 0) return [];
+    if (str.length === 1) return [StringPrototypeCharCodeAt.$call(str, 0)];
+    const ret: number[] = new Array(str.length);
+    for (let i = 0; i < str.length; ++i) ret[i] = StringPrototypeCharCodeAt.$call(str, i);
+    return ret;
+  }
+  const defSepCodes = [38]; // &
+  const defEqCodes = [61]; // =
+
+  function addKeyVal(
+    obj: ParsedQuery,
+    key: string,
+    value: string,
+    keyEncoded: boolean,
+    valEncoded: boolean,
+    decode: Coder,
+  ) {
+    if (key.length > 0 && keyEncoded) key = decodeStr(key, decode);
+    if (value.length > 0 && valEncoded) value = decodeStr(value, decode);
+
+    if (obj[key] === undefined) {
+      obj[key] = value;
+    } else {
+      const curValue = obj[key];
+      // A simple Array-specific property check is enough here to
+      // distinguish from a string value and is faster and still safe
+      // since we are generating all of the values being assigned.
+      if ((curValue as string[]).pop) (curValue as string[])[curValue.length] = value;
+      else obj[key] = [curValue as string, value];
+    }
+  }
+
+  /**
+   * Parse a key/val string.
+   * @param {string} qs
+   * @param {string} sep
+   * @param {string} eq
+   * @param {{
+   *   maxKeys?: number;
+   *   decodeURIComponent?(v: string): string;
+   *   }} [options]
+   * @returns {Record<string, string | string[]>}
+   */
+  function parse(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null) {
+    const obj: ParsedQuery = Object.create(null);
+
+    if (typeof qs !== "string" || qs.length === 0) {
+      return obj;
+    }
+
+    const sepCodes = !sep ? defSepCodes : charCodes(String(sep));
+    const eqCodes = !eq ? defEqCodes : charCodes(String(eq));
+    const sepLen = sepCodes.length;
+    const eqLen = eqCodes.length;
+
+    let pairs = 1000;
+    let decode: Coder = QueryString.unescape;
+    if (options) {
+      const { maxKeys, decodeURIComponent: decodeURIComponentOption } = options;
+      if (typeof maxKeys === "number") {
+        // -1 is used in place of a value like Infinity for meaning
+        // "unlimited pairs" because of additional checks V8 (at least as of v5.4)
+        // has to do when using variables that contain values like Infinity. Since
+        // `pairs` is always decremented and checked explicitly for 0, -1 works
+        // effectively the same as Infinity, while providing a significant
+        // performance boost.
+        pairs = maxKeys > 0 ? maxKeys : -1;
       }
-      if (!keyEncoded) {
-        if (code === 37 /* % */) {
-          encodeCheck = 1;
-          continue;
-        } else if (encodeCheck > 0) {
-          if (isHexTable[code] === 1) {
-            if (++encodeCheck === 3) keyEncoded = true;
+      if (typeof decodeURIComponentOption === "function") {
+        decode = decodeURIComponentOption;
+      }
+    }
+    const customDecode = decode !== qsUnescape;
+
+    let lastPos = 0;
+    let sepIdx = 0;
+    let eqIdx = 0;
+    let key = "";
+    let value = "";
+    let keyEncoded = customDecode;
+    let valEncoded = customDecode;
+    const plusChar = customDecode ? "%20" : " ";
+    let encodeCheck = 0;
+    for (let i = 0; i < qs.length; ++i) {
+      const code = StringPrototypeCharCodeAt.$call(qs, i);
+
+      // Try matching key/value pair separator (e.g. '&')
+      if (code === sepCodes[sepIdx]) {
+        if (++sepIdx === sepLen) {
+          // Key/value pair separator match!
+          const end = i - sepIdx + 1;
+          if (eqIdx < eqLen) {
+            // We didn't find the (entire) key/value separator
+            if (lastPos < end) {
+              // Treat the substring as part of the key instead of the value
+              key += StringPrototypeSlice.$call(qs, lastPos, end);
+            } else if (key.length === 0) {
+              // We saw an empty substring between separators
+              if (--pairs === 0) return obj;
+              lastPos = i + 1;
+              sepIdx = eqIdx = 0;
+              continue;
+            }
+          } else if (lastPos < end) {
+            value += StringPrototypeSlice.$call(qs, lastPos, end);
+          }
+
+          addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
+
+          if (--pairs === 0) return obj;
+          keyEncoded = valEncoded = customDecode;
+          key = value = "";
+          encodeCheck = 0;
+          lastPos = i + 1;
+          sepIdx = eqIdx = 0;
+        }
+      } else {
+        sepIdx = 0;
+        // Try matching key/value separator (e.g. '=') if we haven't already
+        if (eqIdx < eqLen) {
+          if (code === eqCodes[eqIdx]) {
+            if (++eqIdx === eqLen) {
+              // Key/value separator match!
+              const end = i - eqIdx + 1;
+              if (lastPos < end) key += StringPrototypeSlice.$call(qs, lastPos, end);
+              encodeCheck = 0;
+              lastPos = i + 1;
+            }
             continue;
           } else {
-            encodeCheck = 0;
-          }
-        }
-      }
-      if (code === 43 /* + */) {
-        if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
-        key += plusChar;
-        lastPos = i + 1;
-        continue;
-      }
-    }
-    if (code === 43 /* + */) {
-      if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);
-      value += plusChar;
-      lastPos = i + 1;
-    } else if (!valEncoded) {
-      if (code === 37 /* % */) {
-        encodeCheck = 1;
-      } else if (encodeCheck > 0) {
-        if (isHexTable[code] === 1) {
-          if (++encodeCheck === 3) valEncoded = true;
-        } else {
-          encodeCheck = 0;
-        }
-      }
-    }
-  }
-
-  if (lastPos < len) {
-    if (!sawEq) key += StringPrototypeSlice.$call(qs, lastPos);
-    else value += StringPrototypeSlice.$call(qs, lastPos);
-  } else if (!sawEq && key.length === 0) {
-    return;
-  }
-
-  addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
-}
-
-function parseInto(obj, qs: string, sepCodes: number[], eqCodes: number[], pairs: number, decode, customDecode: boolean): void {
-  const sepLen = sepCodes.length;
-  const eqLen = eqCodes.length;
-  const len = qs.length;
-  let lastPos = 0;
-  let sepIdx = 0;
-  let eqIdx = 0;
-  let key = "";
-  let value = "";
-  let keyEncoded = customDecode;
-  let valEncoded = customDecode;
-  const plusChar = customDecode ? "%20" : " ";
-  let encodeCheck = 0;
-  for (let i = 0; i < len; ++i) {
-    const code = StringPrototypeCharCodeAt.$call(qs, i);
-
-    // Try matching key/value pair separator (e.g. '&')
-    if (code === sepCodes[sepIdx]) {
-      if (++sepIdx === sepLen) {
-        // Key/value pair separator match!
-        const end = i - sepIdx + 1;
-        if (eqIdx < eqLen) {
-          // We didn't find the (entire) key/value separator
-          if (lastPos < end) {
-            // Treat the substring as part of the key instead of the value
-            key += StringPrototypeSlice.$call(qs, lastPos, end);
-          } else if (key.length === 0) {
-            // We saw an empty substring between separators
-            if (--pairs === 0) return;
-            lastPos = i + 1;
-            sepIdx = eqIdx = 0;
-            continue;
-          }
-        } else if (lastPos < end) {
-          value += StringPrototypeSlice.$call(qs, lastPos, end);
-        }
-
-        addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
-
-        if (--pairs === 0) return;
-        keyEncoded = valEncoded = customDecode;
-        key = value = "";
-        encodeCheck = 0;
-        lastPos = i + 1;
-        sepIdx = eqIdx = 0;
-      }
-    } else {
-      sepIdx = 0;
-      // Try matching key/value separator (e.g. '=') if we haven't already
-      if (eqIdx < eqLen) {
-        if (code === eqCodes[eqIdx]) {
-          if (++eqIdx === eqLen) {
-            // Key/value separator match!
-            const end = i - eqIdx + 1;
-            if (lastPos < end) key += StringPrototypeSlice.$call(qs, lastPos, end);
-            encodeCheck = 0;
-            lastPos = i + 1;
-          }
-          continue;
-        } else {
-          eqIdx = 0;
-          if (!keyEncoded) {
-            // Try to match an (valid) encoded byte once to minimize unnecessary
-            // calls to string decoding functions
-            if (code === 37 /* % */) {
-              encodeCheck = 1;
-              continue;
-            } else if (encodeCheck > 0) {
-              if (isHexTable[code] === 1) {
-                if (++encodeCheck === 3) keyEncoded = true;
+            eqIdx = 0;
+            if (!keyEncoded) {
+              // Try to match an (valid) encoded byte once to minimize unnecessary
+              // calls to string decoding functions
+              if (code === 37 /* % */) {
+                encodeCheck = 1;
                 continue;
-              } else {
-                encodeCheck = 0;
+              } else if (encodeCheck > 0) {
+                if (isHexTable[code] === 1) {
+                  if (++encodeCheck === 3) keyEncoded = true;
+                  continue;
+                } else {
+                  encodeCheck = 0;
+                }
               }
             }
           }
+          if (code === 43 /* + */) {
+            if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
+            key += plusChar;
+            lastPos = i + 1;
+            continue;
+          }
         }
         if (code === 43 /* + */) {
-          if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
-          key += plusChar;
+          if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);
+          value += plusChar;
           lastPos = i + 1;
-          continue;
-        }
-      }
-      if (code === 43 /* + */) {
-        if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);
-        value += plusChar;
-        lastPos = i + 1;
-      } else if (!valEncoded) {
-        // Try to match an (valid) encoded byte (once) to minimize unnecessary
-        // calls to string decoding functions
-        if (code === 37 /* % */) {
-          encodeCheck = 1;
-        } else if (encodeCheck > 0) {
-          if (isHexTable[code] === 1) {
-            if (++encodeCheck === 3) valEncoded = true;
-          } else {
-            encodeCheck = 0;
+        } else if (!valEncoded) {
+          // Try to match an (valid) encoded byte (once) to minimize unnecessary
+          // calls to string decoding functions
+          if (code === 37 /* % */) {
+            encodeCheck = 1;
+          } else if (encodeCheck > 0) {
+            if (isHexTable[code] === 1) {
+              if (++encodeCheck === 3) valEncoded = true;
+            } else {
+              encodeCheck = 0;
+            }
           }
         }
       }
     }
+
+    // Deal with any leftover key or value data
+    if (lastPos < qs.length) {
+      if (eqIdx < eqLen) key += StringPrototypeSlice.$call(qs, lastPos);
+      else if (sepIdx < sepLen) value += StringPrototypeSlice.$call(qs, lastPos);
+    } else if (eqIdx === 0 && key.length === 0) {
+      // We ended on an empty substring
+      return obj;
+    }
+
+    addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
+
+    return obj;
   }
 
-  // Deal with any leftover key or value data
-  if (lastPos < len) {
-    if (eqIdx < eqLen) key += StringPrototypeSlice.$call(qs, lastPos);
-    else if (sepIdx < sepLen) value += StringPrototypeSlice.$call(qs, lastPos);
-  } else if (eqIdx === 0 && key.length === 0) {
-    // We ended on an empty substring
-    return;
+  /**
+   * V8 does not optimize functions with try-catch blocks, so we isolate them here
+   * to minimize the damage (Note: no longer true as of V8 5.4 -- but still will
+   * not be inlined).
+   * @param {string} s
+   * @param {(v: string) => string} decoder
+   * @returns {string}
+   */
+  function decodeStr(s: string, decoder: Coder) {
+    try {
+      return decoder(s);
+    } catch {
+      return QueryString.unescape(s, true);
+    }
   }
-
-  addKeyVal(obj, key, value, keyEncoded, valEncoded, decode);
-}
-
-/**
- * V8 does not optimize functions with try-catch blocks, so we isolate them here
- * to minimize the damage (Note: no longer true as of V8 5.4 -- but still will
- * not be inlined).
- * @param {string} s
- * @param {(v: string) => string} decoder
- * @returns {string}
- */
-function decodeStr(s, decoder) {
-  try {
-    return decoder(s);
-  } catch {
-    return QueryString.unescape(s, true);
-  }
-}
-
-export default QueryString;
+});
+export default require_src();

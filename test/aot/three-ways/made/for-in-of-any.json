@@ -1,3 +1,3 @@
 {
- "for-in-of-any": "alone: 0 class: a,b,c,d, | a=1,b=b,c=undefined,d=undefined, | a,b,c,d, | aa,ab,ba,bb,ca,cb,da,db, | aa,ab,ac,ad,ba,bb,bc,bd,ca,cb,cc,cd,da,db,dc,dd, | abc | a,b,c,d | \n0 subclass: a,b,c,d,e, | a=1,b=b,c=undefined,d=undefined,e=5, | a,b,c,d,e, | aa,ab,ba,bb,ca,cb,da,db,ea,eb, | aa,ab,ac,ad,ae,ba,bb,bc,bd,be,ca,cb,cc,cd,ce,da,db\n3 class: a,b,c,d, | a=1,b=b,c=undefined,d=undefined, | a,b,c,d, | aa,ab,ba,bb,ca,cb,da,db, | aa,ab,ac,ad,ba,bb,bc,bd,ca,cb,cc,cd,da,db,dc,dd, | abc | a,b,c,d | \n3 subclass: a,b,c,d,e, | a=1,b=b,c=undefined,d=undefined,e=5, | a,b,c,d,e, | aa,ab,ba,bb,ca,cb,da,db,ea,eb, | aa,ab,ac,ad,ae,ba,bb,bc,bd,be,ca,cb,cc,cd,ce,da,db"
+ "for-in-of-any": "all agree"
 }

@@ -1,23 +1,20 @@
 {
   "require-esm.tla_dep_mjs.cjs": {
-    "errors": "error: <folder>/require-esm.tla_dep_mjs.cjs:6: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
+    "output": "req THROWS TypeError\n"
   },
   "require-esm.tla_dep_mjs.in_esm.mjs": {
-    "errors": "error: <folder>/require-esm.tla_dep_mjs.in_esm.mjs:6: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
+    "output": "req THROWS TypeError\n"
   },
   "require-esm.tla_dep_mjs.ts": {
-    "errors": "error: <folder>/require-esm.tla_dep_mjs.ts:7: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
+    "output": "req THROWS TypeError\n"
   },
   "require-esm.tla_mjs.cjs": {
-    "errors": "error: <folder>/require-esm.tla_mjs.cjs:6: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
+    "output": "req THROWS TypeError\n"
   },
   "require-esm.tla_mjs.in_esm.mjs": {
-    "errors": "error: <folder>/require-esm.tla_mjs.in_esm.mjs:6: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
+    "output": "req THROWS TypeError\n"
   },
   "require-esm.tla_mjs.ts": {
-    "errors": "error: <folder>/require-esm.tla_mjs.ts:7: --aot does not support a `require` of a module that has a top-level `await` or imports one that does\n"
-  },
-  "require-esm.write.cjs": {
-    "output": "write THROWS TypeError\nadd THROWS TypeError\n"
+    "output": "req THROWS TypeError\n"
   }
 }

@@ -2,7 +2,7 @@
 // In a loop the characters are compared in place and only the rarely taken arm for 16-bit strings calls out, handing over the literal's number.
 // Outside a loop the whole comparison is one call of the stub.
 // CALLS- is5L (?<!Typed)StringEqualsLiteral
-// CALLS+ is5L operationAOTTypedStringEqualsLiteral
+// CALLS+ is5L operationAOTStringEqualsLiteral
 // CALLS- is5L StringHasAt
 // CALLS- ofAnyL (?<!Typed)(String|Value)EqualsLiteral
 // CALLS+ is5 (?<!Typed)StringEqualsLiteral

@@ -1,8 +1,8 @@
 // JavaScript files of the program import functions of typed files, or get them through a JavaScript file that exports them again. The records of written types that those functions yield, and the ones they take, stay laid out by their types, and typed code reads their fields in place.
 // Whatever the JavaScript does to a record it has got (freezing it, a property more or less, another prototype, an object of its own making stored into a field), and whatever it hands in for one (a plain object with more members, in another order, frozen, with accessors, an instance of a class of its own), typed code sees what it sees under plain Bun.
-// IR= 1 total : number = GetById v[0-9]+ "y"
-// IR= 1 length : number = GetById v[0-9]+ "y"
-// IR+ NewObjectWithShape
+// IR= 1 total : number = PropGet v[0-9]+ name="y"(?!.* isFallback)
+// IR= 1 length : number = PropGet v[0-9]+ name="y"(?!.* isFallback)
+// IR+ : =?L[0-9]+ = NewObject 
 import { deeds } from "./hostile.js";
 import { deeds as deedsThroughEntry } from "./hostile-through-entry.js";
 import * as caller from "./importing-caller.js";

@@ -49,7 +49,7 @@ describe.concurrent("bun fmt does what oxfmt does", () => {
         changed: Object.fromEntries(changed),
         listed: it.listed && it.listed.filter(name => named.includes(name)),
         others:
-          it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !(it.listed as string[]).includes(name)),
+          it.listed && texts.map(([name]) => name).filter(name => named.includes(name) && !it.listed.includes(name)),
         stdout: it.stdout === undefined ? undefined : stdout,
         exitCode,
       }).toEqual({

@@ -1,11 +1,11 @@
 // A module variable to which, by every store in the program, closures of one function are stored and nothing else: calls of it are calls of that function. And the ways in which that is not so.
-// IR+ ^variable \d+ "storedAgain" .* only f\d+ proven$
-// IR+ ^variable \d+ "bySetter" .* only f\d+ proven$
-// IR+ ^variable \d+ "overTwoLevels" .* only f\d+ proven$
-// IR+ ^variable \d+ "savedAndPutBack" .* only f\d+ proven$
-// IR+ ^variable \d+ "chosen" .* only f\d+ proven$
-// IR+ ^variable \d+ "exportedVariable" .* only f\d+ proven$
-// IR- ^variable \d+ "(anArrow|aSecondFunction|mayBeNothing|setLate|setterIsAValue|fromUntypedCode|whatACallYields|parameterIsAssigned|withDefault)" .* proven$
+// IR+ ^variable g\d+ name="storedAgain" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="bySetter" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="overTwoLevels" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="savedAndPutBack" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="chosen" .*declared=f\d+( |$)
+// IR+ ^variable g\d+ name="exportedVariable" .*declared=f\d+( |$)
+// IR- ^variable g\d+ name="(anArrow|aSecondFunction|mayBeNothing|setLate|setterIsAValue|fromUntypedCode|whatACallYields|parameterIsAssigned|withDefault)" .*declared=f\d+( |$)
 import * as holders from "./holders.ts";
 import { five, six, type Count } from "./holders.ts";
 import { storeFromUntypedCode } from "./untyped.js";

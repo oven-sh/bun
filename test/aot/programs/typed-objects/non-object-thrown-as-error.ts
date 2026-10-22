@@ -1,4 +1,4 @@
-// What a program throws need be no object, and `catch (e) { report(e as Error) }` is how it is written everywhere. A place for an Error takes it: a variable, a parameter, a field, a field of a class, a result, an element.
+// What a program throws need be no object. `Error` is tested like any object type: undefined, null and every object, an Error or not, pass `e as Error` and every place written `Error` (a variable, a parameter, a field, a field of a class, a result, an element) and stay what they are. A thrown string, number, boolean or bigint is no object: `e as Error` throws a TypeError.
 class Report { cause: Error; constructor(cause: Error) { this.cause = cause } }
 function thrown(v: unknown): unknown { try { throw v } catch (e) { return e } }
 function kindOf(e: Error): string { return typeof e }

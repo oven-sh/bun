@@ -1,3 +1,4 @@
+// A field of a typed object becomes an accessor, read-only or not enumerable through `any`, an untyped function, a computed name and Reflect. Every definition succeeds, and typed code reads what the property gives.
 class Counter {
   count = 1;
   label = "c";

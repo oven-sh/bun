@@ -1,10 +1,10 @@
 // What is read by name from `await import()` of an ES module is what the module declares, as with an import statement: a member, a pattern and a constant that holds the module look nothing up by name, and functions are called directly. The promise and the wait stay.
-// IR= 0 member GetById|GetByVal| = Call v|CallMethod
-// IR= 0 pattern GetById|GetByVal| = Call v|CallMethod
-// IR= 0 held GetById|GetByVal| = Call v|CallMethod
-// IR= 0 heldAndChained GetById|GetByVal| = Call v|CallMethod
-// IR= 0 constructs GetById|GetByVal
-// IR= 1 asAValue GetByVal
+// IR= 0 member PropGet|ElemGet| = Call v|CallMethod
+// IR= 0 pattern PropGet|ElemGet| = Call v|CallMethod
+// IR= 0 held PropGet|ElemGet| = Call v|CallMethod
+// IR= 0 heldAndChained PropGet|ElemGet| = Call v|CallMethod
+// IR= 0 constructs PropGet|ElemGet
+// IR= 1 asAValue ElemGet
 import { log } from "./log";
 
 async function member() {

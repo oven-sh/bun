@@ -12,7 +12,14 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+// `bun check` writes `file(line,column): error TS1: ..`, a build `error: TS1: ..` and under it `at <folder>/file:line:column`.
+const errors = (said: string) =>
+  [
+    ...[...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`),
+    ...[...said.matchAll(/^error: (TS\d+):.*\n +at .*diagnostics-do-not-depend-on-neighbors[^\\/]*[\\/](.+):(\d+):\d+$/gm)].map(
+      match => `${match[2].replaceAll("\\", "/")}:${match[3]} ${match[1]}`,
+    ),
+  ].sort();
 
 async function aloneAndTogether(cwd: string, files: string[]) {
   const alone = await Promise.all(files.map(file => run(cwd, "test", "--aot", `./${file}`)));
@@ -109,7 +116,7 @@ test("a relative import of a file that is not there is still an error under Node
     "test/missing.test.ts": `import { expect, test } from "bun:test";\nimport { value } from "../src/nowhere";\ntest("never runs", () => {\n  expect(value).toBe(1);\n});\n`,
   });
   const { said, exitCode } = await run(String(dir), "test", "--aot");
-  expect(errors(said)).toEqual(["test/missing.test.ts:2 TS2834"]);
+  expect(errors(said)).toEqual(["test/missing.test.ts:2 TS100150"]);
   expect(exitCode).toBe(1);
 });
 

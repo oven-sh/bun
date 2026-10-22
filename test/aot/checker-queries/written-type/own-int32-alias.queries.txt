@@ -1,0 +1,5 @@
+# A program's own `type int32 = number` is a plain `number`: only `int32` from "bun" has the constraint.
+own-int32-alias.ts:3 written `int32` = number
+own-int32-alias.ts:3 shape `int32` = Number
+own-int32-alias.ts:3 variable `a` = number
+absent: own-int32-alias.ts:3 shape `int32` = Constrained(number; Int32)

@@ -1,4 +1,4 @@
-// Function.prototype.toString() of the functions and classes that stand behind a direct eval in their file says the same text as in plain Bun.
+// Function.prototype.toString() of the functions and classes that stand behind a direct eval in their file says the text as it is written. Plain Bun shows the transpiler's reprint, which differs in one row: `class D extends K { }`.
 function first(s) { return eval(s); }
 function Plain(a) { this.a = a; }
 const arrow = (x) => x + 1;

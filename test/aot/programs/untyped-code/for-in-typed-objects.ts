@@ -47,6 +47,6 @@ show("many objects", () => { let n = 0; for (let i = 0; i < 3000; i++) { const x
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const one: T = { a: 1, b: 2, c: "c" }, other = new Base(1);
 let total = keys(one).length + keys(other).length;
-const before = counted("operationAOTTypedForInKeys");
+const before = counted("operationAOTForInKeys");
 for (let i = 0; i < 1000; i++) total += keys(one).length + keys(other).length;
-console.log(total, counted("operationAOTTypedForInKeys") - before < 100);
+console.log(total, counted("operationAOTForInKeys") - before < 100);

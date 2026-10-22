@@ -1933,7 +1933,7 @@ fn spawn_maybe_sync(
     subprocess.update_has_pending_activity();
 
     let signal_code = SubprocessT::get_signal_code(subprocess, cx.global());
-    let exit_code = SubprocessT::get_exit_code(subprocess, cx.global());
+    let exit_code = SubprocessT::get_exit_code(subprocess, cx.global()).value();
     let read_error = subprocess
         .stdout
         .with_mut(|s| s.take_read_error())

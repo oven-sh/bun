@@ -1,16 +1,16 @@
 // A library keeps the built-ins it uses in variables that it fills from an object it is handed. They are predicted, so a call through such a variable is carried out in place.
-// IR= 1 isList IsBuiltinFunction v[0-9]+ Array.isArray
-// IR= 1 isList CallBuiltin Array.isArray#
-// IR= 1 has IsBuiltinFunction v[0-9]+ Object.hasOwnProperty
-// IR= 1 has = BuiltinFunction Object.hasOwnProperty
-// IR= 1 larger IsBuiltinFunction v[0-9]+ Math.max
-// IR= 1 larger CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
-// IR= 1 listOf IsBuiltinFunction v[0-9]+ Array$
-// IR= 1 listOf CallDirect f[0-9]+ \(v[0-9]+\)$
-// IR= 1 asObject IsBuiltinFunction v[0-9]+ Object$
-// IR= 1 asObject CallBuiltin Object#
-// IR= 1 keysOf IsBuiltinFunction v[0-9]+ Object$
-// IR= 1 keysOf CallBuiltin Object.keys#
+// IR= 1 isList TypeTest v[0-9]+ testedType=builtin\(ArrayIsArray\)
+// IR= 1 isList CallBuiltin - \(v[0-9]+\) overload=ArrayIsArray/
+// IR= 1 has TypeTest v[0-9]+ testedType=builtin\(ObjectPrototypeHasOwnProperty\)
+// IR= 1 has CallBuiltin .* overload=Object(PrototypeHasOwnProperty|HasOwn)/
+// IR= 1 larger TypeTest v[0-9]+ testedType=builtin\(MathMax\)
+// IR= 1 larger CallBuiltin - \(v[0-9]+, v[0-9]+\) overload=MathMax/
+// IR= 1 listOf TypeTest v[0-9]+ testedType=builtin\(Array\)
+// IR= 1 listOf CallBuiltin - \(v[0-9]+\) overload=Array/
+// IR= 1 asObject TypeTest v[0-9]+ testedType=builtin\(Object\)
+// IR= 1 asObject CallBuiltin - \(v[0-9]+\) overload=Object/
+// IR= 1 keysOf TypeTest v[0-9]+ testedType=builtin\(Object\)
+// IR= 1 keysOf CallBuiltin - \(v[0-9]+\) overload=ObjectKeys/
 var root = (typeof globalThis == "object" && globalThis && globalThis.Object === Object && globalThis) || Function("return this")();
 function make(context) {
   context = context == null ? root : context;

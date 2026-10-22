@@ -46,6 +46,14 @@ pub struct PEFile {
     pub(crate) num_sections: u16,
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct PELayout {
+    pub(crate) pe_header_offset: usize,
+    pub(crate) optional_header_offset: usize,
+    pub(crate) section_headers_offset: usize,
+    pub(crate) num_sections: u16,
+}
+
 // PE/COFF on-disk header structs are byte-packed (no padding) per spec, and may
 // live at arbitrary byte offsets inside a `Vec<u8>` image, so `align_of` must be 1
 // for it to be sound to materialize references/pointers to them from the buffer.
@@ -184,7 +192,7 @@ fn is_pow2(x: u32) -> bool {
     x != 0 && (x & (x - 1)) == 0
 }
 
-fn align_up_u32(v: u32, a: u32) -> Result<u32, Error> {
+pub(crate) fn align_up_u32(v: u32, a: u32) -> Result<u32, Error> {
     if a == 0 {
         return Ok(v);
     }
@@ -222,7 +230,7 @@ impl PEFile {
         view_at_mut::<OptionalHeader64>(&mut self.data, self.optional_header_offset)
     }
 
-    fn get_section_headers(&self) -> Result<&[SectionHeader], Error> {
+    pub(crate) fn get_section_headers(&self) -> Result<&[SectionHeader], Error> {
         let start = self.section_headers_offset;
         let size = size_of::<SectionHeader>() * self.num_sections as usize;
         if start + size > self.data.len() {
@@ -241,12 +249,17 @@ impl PEFile {
         let mut data: Vec<u8> = Vec::with_capacity(pe_data.len() + 64 * 1024);
         data.extend_from_slice(pe_data);
 
+        let layout = Self::layout_of(&data)?;
+        Ok(Box::new(Self::from_layout(data, layout)))
+    }
+
+    pub(crate) fn layout_of(data: &[u8]) -> Result<PELayout, Error> {
         // 2. Validate DOS header
         if data.len() < size_of::<DOSHeader>() {
             return Err(Error::InvalidPEFile);
         }
 
-        let dos_header = view_at_const::<DOSHeader>(&data, 0)?;
+        let dos_header = view_at_const::<DOSHeader>(data, 0)?;
         // SAFETY: validated bounds; offset 0 in Vec<u8> backing store
         let dos_header = unsafe { &*dos_header };
         if dos_header.e_magic != DOS_SIGNATURE {
@@ -261,11 +274,11 @@ impl PEFile {
             return Err(Error::InvalidPEFile);
         }
 
-        // 3. Read PE header via viewAtMut
+        // 3. Read PE header
         let pe_off = dos_header.e_lfanew as usize;
-        let pe_header = view_at_mut::<PEHeader>(&mut data, pe_off)?;
+        let pe_header = view_at_const::<PEHeader>(data, pe_off)?;
         // SAFETY: validated bounds above
-        let pe_header = unsafe { &mut *pe_header };
+        let pe_header = unsafe { &*pe_header };
         if pe_header.signature != PE_SIGNATURE {
             return Err(Error::InvalidPESignature);
         }
@@ -282,9 +295,9 @@ impl PEFile {
         // 5. Read optional header
         let size_of_optional_header = pe_header.size_of_optional_header;
         let number_of_sections = pe_header.number_of_sections;
-        let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
+        let optional_header = view_at_const::<OptionalHeader64>(data, optional_header_offset)?;
         // SAFETY: validated bounds above
-        let optional_header = unsafe { &mut *optional_header };
+        let optional_header = unsafe { &*optional_header };
         if optional_header.magic != OPTIONAL_HEADER_MAGIC_64 {
             return Err(Error::UnsupportedPEFormat);
         }
@@ -327,13 +340,22 @@ impl PEFile {
                 .ok_or(Error::Overflow)?;
         }
 
-        Ok(Box::new(PEFile {
-            data,
+        Ok(PELayout {
             pe_header_offset: pe_off,
             optional_header_offset,
             section_headers_offset,
             num_sections,
-        }))
+        })
+    }
+
+    pub(crate) fn from_layout(data: Vec<u8>, layout: PELayout) -> PEFile {
+        PEFile {
+            data,
+            pe_header_offset: layout.pe_header_offset,
+            optional_header_offset: layout.optional_header_offset,
+            section_headers_offset: layout.section_headers_offset,
+            num_sections: layout.num_sections,
+        }
     }
 
     // deinit: Drop is automatic — Vec<u8> field freed; Box<PEFile> dropped by caller.
@@ -425,7 +447,7 @@ impl PEFile {
     }
 
     /// Recompute PE checksum according to Windows spec
-    fn recompute_pe_checksum(&mut self) -> Result<(), Error> {
+    pub(crate) fn recompute_pe_checksum(&mut self) -> Result<(), Error> {
         let checksum_off = self.optional_header_offset + offset_of!(OptionalHeader64, checksum);
 
         // Zero checksum field before summing
@@ -640,4 +662,93 @@ impl PEFile {
 unsafe extern "C" {
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error::*;
+    use super::*;
+    use crate::image::Architecture;
+    use crate::pe_ranges::tests::{
+        edit_dos_header, edit_optional, edit_pe_header, edit_section, toy_pe,
+    };
+
+    fn assert_init_error(expected: Error, edit: impl FnOnce(&mut Vec<u8>)) {
+        let mut bytes = toy_pe(Architecture::X86_64);
+        edit(&mut bytes);
+        assert_eq!(PEFile::init(&bytes).err(), Some(expected));
+        assert_eq!(PEFile::layout_of(&bytes).err(), Some(expected));
+    }
+
+    #[test]
+    fn init_copies_bytes_and_layout() {
+        let bytes = toy_pe(Architecture::X86_64);
+        let layout = PEFile::layout_of(&bytes).unwrap();
+        assert_eq!(layout.pe_header_offset, size_of::<DOSHeader>());
+        assert_eq!(layout.optional_header_offset, 88);
+        assert_eq!(layout.section_headers_offset, 328);
+        assert_eq!(layout.num_sections, 7);
+
+        let file = PEFile::init(&bytes).unwrap();
+        assert!(file.data == bytes);
+        assert_eq!(file.pe_header_offset, layout.pe_header_offset);
+        assert_eq!(file.optional_header_offset, layout.optional_header_offset);
+        assert_eq!(file.section_headers_offset, layout.section_headers_offset);
+        assert_eq!(file.num_sections, layout.num_sections);
+    }
+
+    #[test]
+    fn init_rejects_malformed_dos_and_pe_headers() {
+        assert_init_error(InvalidPEFile, |bytes| bytes.truncate(32));
+        assert_init_error(InvalidDOSSignature, |bytes| {
+            edit_dos_header(bytes, |header| {
+                header.e_magic = 0;
+                header.e_lfanew = 0;
+            });
+        });
+        assert_init_error(InvalidPEFile, |bytes| {
+            edit_dos_header(bytes, |header| header.e_lfanew = 8);
+        });
+        assert_init_error(InvalidPEFile, |bytes| {
+            let file_size = bytes.len() as u32;
+            edit_dos_header(bytes, |header| header.e_lfanew = file_size);
+        });
+        assert_init_error(InvalidPESignature, |bytes| {
+            edit_pe_header(bytes, |header| {
+                header.signature = 0;
+                header.size_of_optional_header = 0;
+            });
+        });
+        assert_init_error(InvalidPEFile, |bytes| {
+            edit_pe_header(bytes, |header| header.size_of_optional_header = 16);
+            edit_optional(bytes, |optional| optional.magic = 0);
+        });
+    }
+
+    #[test]
+    fn init_rejects_malformed_optional_header_and_sections() {
+        assert_init_error(UnsupportedPEFormat, |bytes| {
+            edit_optional(bytes, |optional| {
+                optional.magic = 0x010b;
+                optional.file_alignment = 3;
+            });
+        });
+        assert_init_error(BadAlignment, |bytes| {
+            edit_optional(bytes, |optional| optional.file_alignment = 3);
+            edit_pe_header(bytes, |header| header.number_of_sections = 97);
+        });
+        assert_init_error(InvalidPEFile, |bytes| {
+            edit_optional(bytes, |optional| optional.section_alignment = 1024);
+        });
+        assert_init_error(TooManySections, |bytes| {
+            edit_pe_header(bytes, |header| header.number_of_sections = 97);
+        });
+        assert_init_error(InvalidPEFile, |bytes| {
+            let layout = PEFile::layout_of(bytes).unwrap();
+            bytes.truncate(layout.section_headers_offset + size_of::<SectionHeader>());
+        });
+        assert_init_error(Overflow, |bytes| {
+            edit_section(bytes, 0, |section| section.virtual_address = u32::MAX);
+        });
+    }
 }

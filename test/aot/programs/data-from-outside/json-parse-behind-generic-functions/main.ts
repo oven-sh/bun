@@ -1,5 +1,5 @@
 // The type that a parsed value goes to is also found behind a generic function: at the type arguments and the destinations of its calls. The calls that run here yield `unknown`, so the values are looked at by code that knows nothing of the type.
-// IR+ CallBuiltin JSONOpen
+// IR+ ^ .* = JSONSourceOpen v
 import { describe, parseEveryText } from "./texts";
 const namedInCode = ["function", "id", "name", "ok", "note", "a", "b", "c", "d", "e", "first", "second", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "sku", "quantity", "items", "tags", "owner", "age", "value", "next", "label", "children", "kind", "radius", "side", "color", "level", "mode", "zero", "flag", "nothing", "anything", "unknown", "object", "when", "table", "run", "big", "constructor", "toString", "list", "left", "right", "sites", "text", "incoming"];
 console.log(namedInCode.length);

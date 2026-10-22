@@ -119,7 +119,7 @@ test("react-dom's server bundles are typed at the installed files' own paths", (
       expect([path, /^exports\.renderToString = function \(/m.test(text)]).toEqual([path, path.includes("legacy")]);
       expect([path, /^exports\.version = "/m.test(text)]).toEqual([path, true]);
       expect([path, /^(import|export) /m.test(text)]).toEqual([path, false]);
-      expect([path, /^namespace FZ \{$/m.test(text)]).toEqual([path, true]);
+      expect([path, /^(declare )?namespace FZ \{$/m.test(text)]).toEqual([path, true]);
     }
   }
 });
@@ -156,7 +156,7 @@ test.skipIf(!existsSync(join(home, "..", "..", ".gitattributes")))(
 );
 
 test("what seroval exports does not name the type of its nodes in a result", () => {
-  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.sound.ts"), "utf8");
+  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.js"), "utf8");
   const exported = /^export \{ (.*) \};$/m.exec(text)![1].split(", ");
   expect(exported).toContain("toCrossJSONAsync");
   for (const name of exported) {
@@ -166,9 +166,10 @@ test("what seroval exports does not name the type of its nodes in a result", () 
 });
 
 test("no typed text freezes a value of which its type says nothing", () => {
-  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.sound.ts"), "utf8");
+  const text = readFileSync(join(home, "seroval", "1.6.9", "lay", "dist", "index.js"), "utf8");
   expect(text).toContain("function applyObjectFlag(obj: any[] | SV.MadeObject, flag: SV.Given): SV.Deserialized {");
-  expect(text).toContain("export interface MadeObject { [key: string]: any }");
+  expect(text).toMatch(/^declare namespace SV \{$/m);
+  expect(text).toContain("\n  interface MadeObject { [key: string]: any }\n");
 });
 
 describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"), folder]))("%s", (where, folder) => {
@@ -176,7 +177,8 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
   const { name, version } = manifest;
 
   test("the manifest has the expected format", () => {
-    expect(Object.keys(manifest).sort()).toEqual(["basis", "lay", "name", "needs", "sound", "version", "when"]);
+    const required = Object.keys(manifest).filter(key => key !== "compilerOptions");
+    expect(required.sort()).toEqual(["basis", "lay", "name", "needs", "sound", "version", "when"]);
     expect([1, 2]).toContain(manifest.sound);
     expect(`${name}/${version}`).toBe(where);
     expect(manifest.needs).toBeArray();
@@ -238,7 +240,7 @@ describe.each(folders.map(folder => [relative(home, folder).replaceAll("\\", "/"
     if (licence === "MIT") expect(text).toMatch(holder);
     if (licence !== "Apache-2.0") return;
     for (const [path, bytes] of Object.entries(layOf(folder, name, version))) {
-      if (manifest.lay[path] !== "new") continue;
+      if (manifest.sound === 1 && manifest.lay[path] !== "new") continue;
       expect(bytes.toString().split("\n")[0]).toMatch(/^\/\/ CHANGED: /);
       expect(bytes.toString()).toMatch(holder);
     }

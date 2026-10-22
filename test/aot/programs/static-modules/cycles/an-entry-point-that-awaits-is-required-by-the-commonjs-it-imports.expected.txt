@@ -1,0 +1,1 @@
+the entry point runs threw TypeError

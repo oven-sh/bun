@@ -1,0 +1,30 @@
+//// entry.js
+import probeDefault, { probeNamed } from "./probe-commonjs.cjs";
+import * as probeNamespace from "./probe-commonjs.cjs";
+import probeExternalDefault, * as probeExternalNamespace from "probe-external-a";
+import { probeExternalNamed } from "probe-external-b";
+export * from "./probe-commonjs.cjs";
+export * from "./probe-module.js";
+export * from "probe-external-c";
+export * as probeExternalStar from "probe-external-d";
+export { default as probeExternalReexport } from "probe-external-e";
+const probeRequired = require("./probe-module.js");
+const probeBuiltin = require("probe-external-g");
+export const probeOwn = [probeDefault, probeNamed, probeNamespace, probeExternalDefault, probeExternalNamespace, probeExternalNamed, probeRequired, probeBuiltin];
+export function probeLoad() {
+  return [import("./probe-lazy.js"), import("./probe-commonjs.cjs"), import("probe-external-f")];
+}
+export default probeOwn;
+//// probe-commonjs.cjs
+exports.probeNamed = 1;
+module.exports.probeOther = require("./probe-module.js");
+//// probe-module.js
+import * as probeSelf from "./probe-module.js";
+export let probeValue = 1;
+export function probeSet(probeNext) {
+  probeValue = probeNext;
+  return probeSelf;
+}
+export default function probeFunction() {}
+//// probe-lazy.js
+export const probeLazyValue = 1;

@@ -4,11 +4,11 @@ function show(o: object): string { return Object.keys(o).join() + " " + JSON.str
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 function conf(): Conf { return { host: "h", port: 80 } }
 const trace: string[] = []
-// Silent: late fields list before the extra properties, whatever the order the source gives them in.
+// Fields that are stored late and extra properties are listed in the order in which the source gives them.
 const c2 = conf()
 Object.assign(c2, { extra1: 1, tags: [], extra2: 2, secure: false } as any)
 console.log(show(c2), c2.secure, c2.tags?.length, (c2 as any).extra1 + (c2 as any).extra2)
-// Silent: an accessor of a literal is not a field: it is listed, and read, after the fields.
+// An accessor of a literal is listed, and read, in its place among the properties.
 const c9 = conf()
 const throwing = { host: "one", get port(): number { throw new RangeError("x") }, secure: true }
 console.log(Object.keys(throwing).join(), attempt(() => Object.assign(c9, throwing as any)), show(c9))

@@ -1,5 +1,5 @@
-// `x as T` converts between string, number and boolean only where T is made of primitive types alone. A type that a string merely satisfies
-// (ArrayLike, Iterable, { length: number }, String) or a union with a member that is not a primitive type leaves a primitive as it is.
+// `x as T` never converts. A type that a string satisfies (ArrayLike, Iterable, { length: number }, String), alone or in a union, takes a string as it is.
+// A primitive that does not satisfy the type throws a TypeError. A type parameter tests nothing.
 declare const console: { log(...values: unknown[]): void };
 interface HasLength { length: number }
 const values: unknown[] = [123, 12.5, true, false, 10n, "ab"];

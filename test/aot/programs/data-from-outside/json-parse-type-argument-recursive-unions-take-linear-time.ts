@@ -1,4 +1,5 @@
-// Recursive unions of every kind, 20 to 2,000 levels deep, accepted and refused, by JSON.parse<T> (also with an escape in the first key) and by Bun.validate<T>: nothing looks at a nested value once for each arm, so each answer comes within a second.
+// Recursive unions of every kind, 20 to 2,000 levels deep, accepted and refused, by JSON.parse<T> (also with an escape in the first key) and by validate<T>: nothing looks at a nested value once for each arm, so each answer comes within a second.
+import { validate } from "bun:bundle";
 type NumberTag = { below: NumberTag | null; k: 1 } | { below: NumberTag | null; k: 2 };
 type FlagTag = { below: FlagTag | null; k: true } | { below: FlagTag | null; k: false };
 type TextTag = { below: TextTag | null; k: "one" } | { below: TextTag | null; k: "two" };
@@ -19,26 +20,26 @@ type TwoBelow = { left: TwoBelow | null; right: TwoBelow | null; k: 1 } | { left
 
 const nest = (open: string, middle: string, close: string, levels: number) => open.repeat(levels) + middle + close.repeat(levels);
 const kinds: [string, (text: string) => unknown, (value: unknown) => unknown, (levels: number, bottom: string) => string, string][] = [
-  ["number tags", text => JSON.parse<NumberTag>(text), value => Bun.validate<NumberTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
-  ["true or false", text => JSON.parse<FlagTag>(text), value => Bun.validate<FlagTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
-  ["text tags", text => JSON.parse<TextTag>(text), value => Bun.validate<TextTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"two"}', levels), "null"],
-  ["a number or a string", text => JSON.parse<Kinds>(text), value => Bun.validate<Kinds>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"s"}', levels), "null"],
-  ["four kinds", text => JSON.parse<FourKinds>(text), value => Bun.validate<FourKinds>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
-  ["a number tag one level below", text => JSON.parse<Below>(text), value => Bun.validate<Below>(value), (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":2}}', levels), "null"],
-  ["a text tag one level below", text => JSON.parse<BelowText>(text), value => Bun.validate<BelowText>(value), (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":"two"}}', levels), "null"],
-  ["lists of numbers or of strings", text => JSON.parse<Lists>(text), value => Bun.validate<Lists>(value), (levels, bottom) => nest('{"below":[', bottom, '],"k":["s"]}', levels), ""],
-  ["tuples", text => JSON.parse<Tuples>(text), value => Bun.validate<Tuples>(value), (levels, bottom) => nest("[", bottom, ",2]", levels), "null"],
-  ["arrays", text => JSON.parse<Arrays>(text), value => Bun.validate<Arrays>(value), (levels, bottom) => nest("[", bottom, ',"a"]', levels), '"a"'],
-  ["a dictionary of a union", text => JSON.parse<Table>(text), value => Bun.validate<Table>(value), (levels, bottom) => nest('{"e":{"below":', bottom, ',"k":"s"}}', levels), "{}"],
-  ["optional members only", text => JSON.parse<Optional>(text), value => Bun.validate<Optional>(value), (levels, bottom) => nest('{"below":', bottom, ',"a":"s"}', levels), "{}"],
-  ["other names", text => JSON.parse<Names>(text), value => Bun.validate<Names>(value), (levels, bottom) => nest('{"below":', bottom, ',"b":1}', levels), "null"],
-  ["tags of four kinds, null", text => JSON.parse<Mixed>(text), value => Bun.validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
-  ["tags of four kinds, a text", text => JSON.parse<Mixed>(text), value => Bun.validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"one"}', levels), "null"],
-  ["tags of four kinds, a number", text => JSON.parse<Mixed>(text), value => Bun.validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
-  ["tags of four kinds, false", text => JSON.parse<Mixed>(text), value => Bun.validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
-  ["a text or null", text => JSON.parse<TextOrNull>(text), value => Bun.validate<TextOrNull>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
-  ["two nested members, a text or null", text => JSON.parse<Forked>(text), value => Bun.validate<Forked>(value), (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":null}', levels), "null"],
-  ["two nested members", text => JSON.parse<TwoBelow>(text), value => Bun.validate<TwoBelow>(value), (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":2}', levels), "null"],
+  ["number tags", text => JSON.parse<NumberTag>(text), value => validate<NumberTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
+  ["true or false", text => JSON.parse<FlagTag>(text), value => validate<FlagTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
+  ["text tags", text => JSON.parse<TextTag>(text), value => validate<TextTag>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"two"}', levels), "null"],
+  ["a number or a string", text => JSON.parse<Kinds>(text), value => validate<Kinds>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"s"}', levels), "null"],
+  ["four kinds", text => JSON.parse<FourKinds>(text), value => validate<FourKinds>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["a number tag one level below", text => JSON.parse<Below>(text), value => validate<Below>(value), (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":2}}', levels), "null"],
+  ["a text tag one level below", text => JSON.parse<BelowText>(text), value => validate<BelowText>(value), (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":"two"}}', levels), "null"],
+  ["lists of numbers or of strings", text => JSON.parse<Lists>(text), value => validate<Lists>(value), (levels, bottom) => nest('{"below":[', bottom, '],"k":["s"]}', levels), ""],
+  ["tuples", text => JSON.parse<Tuples>(text), value => validate<Tuples>(value), (levels, bottom) => nest("[", bottom, ",2]", levels), "null"],
+  ["arrays", text => JSON.parse<Arrays>(text), value => validate<Arrays>(value), (levels, bottom) => nest("[", bottom, ',"a"]', levels), '"a"'],
+  ["a dictionary of a union", text => JSON.parse<Table>(text), value => validate<Table>(value), (levels, bottom) => nest('{"e":{"below":', bottom, ',"k":"s"}}', levels), "{}"],
+  ["optional members only", text => JSON.parse<Optional>(text), value => validate<Optional>(value), (levels, bottom) => nest('{"below":', bottom, ',"a":"s"}', levels), "{}"],
+  ["other names", text => JSON.parse<Names>(text), value => validate<Names>(value), (levels, bottom) => nest('{"below":', bottom, ',"b":1}', levels), "null"],
+  ["tags of four kinds, null", text => JSON.parse<Mixed>(text), value => validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["tags of four kinds, a text", text => JSON.parse<Mixed>(text), value => validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":"one"}', levels), "null"],
+  ["tags of four kinds, a number", text => JSON.parse<Mixed>(text), value => validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
+  ["tags of four kinds, false", text => JSON.parse<Mixed>(text), value => validate<Mixed>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
+  ["a text or null", text => JSON.parse<TextOrNull>(text), value => validate<TextOrNull>(value), (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["two nested members, a text or null", text => JSON.parse<Forked>(text), value => validate<Forked>(value), (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":null}', levels), "null"],
+  ["two nested members", text => JSON.parse<TwoBelow>(text), value => validate<TwoBelow>(value), (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":2}', levels), "null"],
 ];
 
 function answer(run: () => unknown, text: string): string {
@@ -65,5 +66,5 @@ const fork = (levels: number, tail: string): string => (levels === 0 ? "null" : 
 for (const levels of [2, 6, 10, 14]) {
   const forked = fork(levels, ',"k":null}');
   const two = fork(levels, ',"k":2}');
-  console.log("a full tree of " + levels + " levels: " + [answer(() => JSON.parse<Forked>(forked), forked), answer(() => JSON.parse<Forked>(forked.replace('"left"', '"\\u006ceft"')), forked), answer(() => Bun.validate<Forked>(JSON.parse(forked)), forked), answer(() => JSON.parse<TwoBelow>(two), two), answer(() => Bun.validate<TwoBelow>(JSON.parse(two)), two)].join(", "));
+  console.log("a full tree of " + levels + " levels: " + [answer(() => JSON.parse<Forked>(forked), forked), answer(() => JSON.parse<Forked>(forked.replace('"left"', '"\\u006ceft"')), forked), answer(() => validate<Forked>(JSON.parse(forked)), forked), answer(() => JSON.parse<TwoBelow>(two), two), answer(() => validate<TwoBelow>(JSON.parse(two)), two)].join(", "));
 }

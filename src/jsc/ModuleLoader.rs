@@ -1,4 +1,4 @@
-//! The `ModuleLoader` struct and the builtin-module lookup
+//! The `ModuleLoader` struct, `FetchFlags`, and the builtin-module lookup
 //! helpers. `transpile_source_code` / `fetch_builtin_module` and the
 //! `Bun__transpile*` / `Bun__resolve*` C++ entry points live in
 //! `bun_runtime::jsc_hooks` (they reach into `node::fs`, the transpiler, and
@@ -42,11 +42,7 @@ pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
 pub fn is_allowed_to_use_internal_testing_apis() -> bool {
     (bun_core::env::IS_DEBUG
         || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed))
-        && Bun__hasInternalTestingAPIs()
-}
-
-unsafe extern "C" {
-    safe fn Bun__hasInternalTestingAPIs() -> bool;
+        && !bun_removable_features::is_removed(bun_removable_features::Feature::InternalForTesting)
 }
 
 impl ModuleLoader {
@@ -105,6 +101,19 @@ impl Drop for ArenaResetGuard {
     }
 }
 
+/// Dumps the module source to a file in /tmp/bun-debug-src/{filepath}
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub enum FetchFlags {
+    Transpile,
+    PrintSource,
+}
+
+impl FetchFlags {
+    pub const fn disable_transpiling(self) -> bool {
+        !matches!(self, FetchFlags::Transpile)
+    }
+}
+
 pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
@@ -112,6 +121,7 @@ pub struct TranspileArgs<'a> {
     pub log: *mut bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source>,
     pub global_object: &'a JSGlobalObject,
+    pub flags: FetchFlags,
     /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
     pub extra: *mut TranspileExtra,
 }
@@ -125,12 +135,11 @@ pub struct TranspileExtra {
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
     /// Null forbids async resolution.
     pub promise_ptr: *mut *mut JSInternalPromise,
-    pub function_sources: *mut Vec<bun_js_printer::FunctionSource>,
 }
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
-    pub(crate) fn __bun_read_source_code(
+    pub(crate) fn __bun_transpile_source_code(
         jsc_vm: *mut VirtualMachine,
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
@@ -143,104 +152,43 @@ unsafe extern "Rust" {
     ) -> Option<ResolvedSource>;
 }
 
-fn name_that_removed(module: &[u8]) -> Option<&'static [u8]> {
-    unsafe extern "C" {
-        static Bun__islands: core::ffi::c_char;
+unsafe extern "C" {
+    fn Bun__throwIfModuleIsRemoved(global: &JSGlobalObject, feature: u16, specifier: *const u8, length: usize, code: jsc::ErrCode) -> bool;
+    safe fn Bun__createModuleNotCompiledInError(global: &JSGlobalObject, code: jsc::ErrCode, specifier: &bun_core::String) -> JSValue;
+    safe fn Bun__refusesCodeOutsideExecutable(global: &JSGlobalObject) -> bool;
+    safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
+}
+
+fn module_removal(module: &[u8]) -> bun_removable_features::Removal {
+    if !bun_removable_features::is_trimmed() {
+        return bun_removable_features::Removal::Present;
     }
-    const HEADER: &core::ffi::CStr = c"bun-trimmed 1\n";
-    // SAFETY: a NUL ends what the executable's writer leaves there, and an empty text ends the list.
-    let mut texts = unsafe {
-        let start = &raw const Bun__islands;
-        let first = core::ffi::CStr::from_ptr(start).to_bytes();
-        let mut next = start.add(first.strip_prefix(HEADER.to_bytes()).map(|_| HEADER.to_bytes().len())?);
-        core::iter::from_fn(move || {
-            let text = core::ffi::CStr::from_ptr(next).to_bytes();
-            next = next.add(text.len() + 1);
-            Some(text).filter(|text| !text.is_empty())
-        })
-    };
-    while let (Some(removed), Some(name)) = (texts.next(), texts.next()) {
-        if removed == module {
-            return Some(name);
-        }
-    }
-    None
+    crate::ResolvedSourceTag::try_from_name(module)
+        .and_then(crate::ResolvedSourceTag::feature)
+        .map_or(bun_removable_features::Removal::Present, bun_removable_features::removal_of)
 }
 
-const LEFT_OUT_BY_ANALYSIS: &[u8] = b"-";
-
-pub fn error_that_module_was_not_compiled_in(
-    global: &JSGlobalObject,
-    code: jsc::ErrCode,
-    specifier: impl core::fmt::Display,
-) -> JSValue {
-    global
-        .err(
-            code,
-            format_args!(
-                "Cannot find module '{specifier}': it was not compiled into this executable, which was built with --compile-trim-runtime and loads nothing else",
-            ),
-        )
-        .to_js()
+pub fn module_not_compiled_in_error(global: &JSGlobalObject, code: jsc::ErrCode, specifier: &bun_core::String) -> JSValue {
+    Bun__createModuleNotCompiledInError(global, code, specifier)
 }
 
-pub(crate) fn error_if_removed_by_name(global: &JSGlobalObject, module: &[u8]) -> Option<JSValue> {
-    let name = name_that_removed(module).filter(|name| *name != LEFT_OUT_BY_ANALYSIS)?;
-    Some(
-        global
-            .err(
-                jsc::ErrCode::ERR_MODULE_NOT_FOUND,
-                format_args!(
-                    "Cannot find module '{}': compile.trim removed \"{}\" from this executable",
-                    bstr::BStr::new(module),
-                    bstr::BStr::new(name),
-                ),
-            )
-            .to_js(),
-    )
-}
-
-fn error_if_left_out(global: &JSGlobalObject, module: &[u8]) -> Option<JSValue> {
-    if !is_left_out(module) {
+fn error_if_removed(global: &JSGlobalObject, module: &[u8], code: jsc::ErrCode) -> Option<JSValue> {
+    if !is_module_removed(module) {
         return None;
     }
-    error_if_removed_by_name(global, module).or_else(|| {
-        Some(error_that_module_was_not_compiled_in(global, jsc::ErrCode::ERR_MODULE_NOT_FOUND, bstr::BStr::new(module)))
-    })
+    let feature = crate::ResolvedSourceTag::try_from_name(module)?.feature()?;
+    // SAFETY: `module` outlives the call, which copies the bytes into the message.
+    let has_thrown = unsafe { Bun__throwIfModuleIsRemoved(global, feature.index(), module.as_ptr(), module.len(), code) };
+    has_thrown.then(|| global.take_error(jsc::JsError::Thrown))
 }
 
-pub fn is_left_out(module: &[u8]) -> bool {
-    name_that_removed(module).is_some()
+pub fn is_module_removed(module: &[u8]) -> bool {
+    module_removal(module) != bun_removable_features::Removal::Present
 }
 
-pub fn is_removed_by_trimming(module: &[u8]) -> bool {
-    name_that_removed(module).is_some_and(|name| name != LEFT_OUT_BY_ANALYSIS)
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__isRemovedByTrimming(specifier: *const u8, length: usize) -> bool {
-    // SAFETY: the caller passes the bytes of a specifier, which outlive the call.
-    let specifier = unsafe { bun_core::ffi::slice(specifier, length) };
-    bun_aliases_get(specifier).is_some_and(|alias| is_removed_by_trimming(alias.path.as_bytes()))
-}
-
-pub fn removed_by_trimming(global: &JSGlobalObject, module: &[u8]) -> Option<ErrorableResolvedSource> {
-    error_if_left_out(global, module).map(ErrorableResolvedSource::err)
-}
-
-#[unsafe(no_mangle)]
-extern "C" fn Bun__throwIfRemovedByTrimming(
-    global: &JSGlobalObject,
-    module: *const u8,
-    length: usize,
-) -> bool {
-    // SAFETY: the caller passes the bytes of a module's name, which outlive the call.
-    let module = unsafe { bun_core::ffi::slice(module, length) };
-    let Some(error) = error_if_left_out(global, module) else {
-        return false;
-    };
-    let _ = global.throw_value(error);
-    true
+/// `specifier`: any spelling of a built-in module, as in an import.
+pub fn feature_of_builtin_module(specifier: &[u8]) -> Option<bun_removable_features::Feature> {
+    crate::ResolvedSourceTag::try_from_name(bun_aliases_get(specifier)?.path.as_bytes())?.feature()
 }
 
 #[unsafe(no_mangle)]
@@ -248,11 +196,24 @@ extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: &VirtualMachine,
     global_object: &JSGlobalObject,
     specifier: &bun_core::String,
+    is_commonjs_require: bool,
     ret: &mut ErrorableResolvedSource,
 ) -> bool {
     jsc::mark_binding();
-    if let Some(removed) = removed_by_trimming(global_object, specifier.to_utf8().slice()) {
-        *ret = removed;
+    let code = if is_commonjs_require { jsc::ErrCode::MODULE_NOT_FOUND } else { jsc::ErrCode::ERR_MODULE_NOT_FOUND };
+    // The helpers of the bundler are served as text. An executable that was compiled ahead of time interprets none. Where a file of the program imports them by name, the compiled
+    // module answers, like a file of the program. Elsewhere the name fails as for any built-in module that isn't in the executable.
+    if Bun__refusesCodeOutsideExecutable(global_object) && specifier.to_utf8().slice() == b"bun:wrap" {
+        if Bun__isCompiledProgramFile(specifier) {
+            return false;
+        }
+        *ret = ErrorableResolvedSource::err(module_not_compiled_in_error(global_object, code, specifier));
+        return true;
+    }
+    if bun_removable_features::is_trimmed()
+        && let Some(error) = error_if_removed(global_object, specifier.to_utf8().slice(), code)
+    {
+        *ret = ErrorableResolvedSource::err(error);
         return true;
     }
     match __bun_fetch_builtin_module(jsc_vm, global_object, specifier) {
@@ -294,10 +255,11 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     let mut name = Vec::with_capacity(b"internal:".len() + rest.len());
     name.extend_from_slice(b"internal:");
     name.extend_from_slice(rest);
-    if name == b"internal:test/binding" && !Bun__hasInternalTestingAPIs() {
+    let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
+    let internal_for_testing = bun_removable_features::Feature::InternalForTesting;
+    if tag.feature() == Some(internal_for_testing) && bun_removable_features::is_removed(internal_for_testing) {
         return None;
     }
-    let tag = crate::ResolvedSourceTag::try_from_name(&name)?;
     Some((name, tag))
 }
 

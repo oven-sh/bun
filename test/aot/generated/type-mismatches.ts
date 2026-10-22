@@ -195,7 +195,7 @@ class Held { constructor(public promise: Promise<unknown>) {} }
 async function wrap(f: () => unknown): Promise<[unknown]> { const got = f(); return [got instanceof Held ? await got.promise : got]; }
 async function cell(name: string, f: () => unknown): Promise<void> {
   let text: string;
-  try { text = "ok " + show((await wrap(f))[0]); } catch (e) { text = "THROWS " + (e instanceof Error ? e.name + " " + e.message.split(" (bun --aot")[0].replaceAll(": ", " - ") : String(e)); }
+  try { text = "ok " + show((await wrap(f))[0]); } catch (e) { text = "THROWS " + (e instanceof Error ? e.name + " " + e.message.split(" (bun compile")[0].replaceAll(": ", " - ") : String(e)); }
   console.log(name + ": " + text);
 }
 `;

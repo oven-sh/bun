@@ -1,1 +1,0 @@
-Known failure: the record that a method returns is laid out by the implementation's instantiation, { value: unknown }, and the call through the overload's promised type expects { value: number }. The value fits, but the two layouts have no listed conversion and a copy is refused, so the call throws a TypeError.

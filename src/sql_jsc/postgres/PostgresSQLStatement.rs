@@ -122,14 +122,15 @@ impl PostgresSQLStatement {
             .iter()
             .map(|field| {
                 let ColumnIdentifier::Name(name) = &field.name_or_index else { return None };
-                let format = match field.type_tag() {
-                    _ if (u16::MAX as u32) < field.type_oid => WireFormat::Text,
-                    T::int4 => WireFormat::Int32,
-                    T::float4 if field.binary || T::float4.is_binary_in(types::ResultFormats::Decodable) => WireFormat::Float32,
-                    T::float8 => WireFormat::Float64,
-                    T::bool => WireFormat::Boolean,
-                    T::timestamp | T::timestamptz => WireFormat::TimestampMicroseconds,
-                    T::text | T::varchar | T::bpchar | T::name | T::uuid | T::int8 => WireFormat::Text,
+                let tag = field.type_tag();
+                let is_binary = field.binary || tag.is_binary_in(types::ResultFormats::Decodable);
+                let format = match (tag, is_binary) {
+                    (T::int4, true) => WireFormat::Int32,
+                    (T::float4, true) => WireFormat::Float32,
+                    (T::float8, true) => WireFormat::Float64,
+                    (T::bool, true) => WireFormat::Boolean,
+                    (T::timestamp | T::timestamptz, true) => WireFormat::TimestampMicroseconds,
+                    (T::text | T::varchar | T::bpchar | T::name, _) | (T::uuid | T::int8, false) => WireFormat::Text,
                     _ => return None,
                 };
                 Some(RowColumn { name: name.slice().as_ptr(), name_length: name.slice().len() as u32, format })
@@ -184,6 +185,7 @@ impl PostgresSQLStatement {
         self.cached_structure = Default::default();
         self.needs_duplicate_check = true;
         self.fields_flags = Default::default();
+        self.row_decoder = Default::default();
         (
             core::mem::take(&mut self.parameters),
             core::mem::take(&mut self.fields),

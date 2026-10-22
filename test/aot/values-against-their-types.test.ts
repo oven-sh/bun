@@ -1,7 +1,7 @@
 // Each program under ./values-against-their-types puts a value where its declared type does not allow it, by a road the type
 // checker accepts: a covariant array, JSON.parse, a definite assignment assertion, a stale narrowing. The first argument says
-// whether it does so ("0": it does not). An executable built with --aot either does what plain Bun does or stops at the value
-// with a TypeError: `departures` lists every run that differs, with what the executable prints and its exit code.
+// whether it does so ("0": it does not). Nothing throws because of a type: an executable built with --aot does what plain Bun
+// does. `departures` lists every run that differs, with what the executable prints: only the text of an error's message does.
 import { expect } from "bun:test";
 import { describe, test } from "./supported";
 import { readdirSync } from "fs";
@@ -15,18 +15,9 @@ const programs = readdirSync(folder)
   .sort();
 
 const readsOfUndefined =
-  "TypeError: Cannot read properties of undefined (reading 'v')\nTypeError: Cannot read properties of undefined (reading 'length')\n";
-const departures: Record<string, Record<string, { stdout: string; exitCode: number }>> = {
-  "covariant-array": { "1": { stdout: "-1\n", exitCode: 0 } },
-  "covariant-member": { "1": { stdout: "-1\n", exitCode: 0 } },
-  "define-property": { "1": { stdout: "", exitCode: 1 } },
-  "error-message": {
-    "1": { stdout: readsOfUndefined, exitCode: 0 },
-    "2": { stdout: readsOfUndefined, exitCode: 0 },
-    "7": { stdout: readsOfUndefined, exitCode: 0 },
-  },
-  "json-parse": { "1": { stdout: "", exitCode: 1 } },
-  "optional-through-wider-type": { "1": { stdout: "caught\n", exitCode: 0 } },
+  "TypeError: undefined is not an object (evaluating 'undefined.v')\nTypeError: undefined is not an object (evaluating 'undefined.length')\n";
+const departures: Record<string, Record<string, string>> = {
+  "error-message": { "1": readsOfUndefined, "2": readsOfUndefined, "7": readsOfUndefined },
 };
 
 async function run(cmd: string[]) {
@@ -45,9 +36,8 @@ describe.concurrent("compile/aot/values-against-their-types", () => {
       const plain = await run([bunExe(), `${program}.ts`, argument]);
       expect({ argument, exitCode: plain.exitCode }).toEqual({ argument, exitCode: 0 });
       const compiled = await run([executable, argument]);
-      const expected = departures[program]?.[argument] ?? { stdout: plain.stdout, exitCode: 0 };
-      expect({ argument, stdout: compiled.stdout, exitCode: compiled.exitCode, signalCode: compiled.signalCode }).toEqual({ argument, ...expected, signalCode: null });
-      if (expected.exitCode) expect(compiled.stderr).toContain("(bun --aot: ");
+      const stdout = departures[program]?.[argument] ?? plain.stdout;
+      expect({ argument, stdout: compiled.stdout, exitCode: compiled.exitCode, signalCode: compiled.signalCode }).toEqual({ argument, stdout, exitCode: 0, signalCode: null });
     }
   }, 120_000);
 });

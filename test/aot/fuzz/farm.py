@@ -30,7 +30,7 @@ The config:
     build       a label for the build under test
     machine     a small integer; seeds of different machines do not overlap
     plain       the Bun that gives the reference
-    forms       { <name>: { "bun": <path>, "build": <label>, "build_env": {..}, "run_env": {..}, "modes": [..], "slowness": <factor>, "share": <0..1>, "stress_share": <0..1> } }
+    forms       { <name>: { "bun": <path>, "build": <label>, "build_flags": [..], "build_env": {..}, "run_env": {..}, "modes": [..], "slowness": <factor>, "share": <0..1>, "stress_share": <0..1> } }
                 "from_sources": true runs `bun run --aot <file>` in place of building an executable
                 "bun" may hold a `*` where the label of the build stands: the newest build that is not listed as faulty is taken, anew at every round
     strip       [ { "from": <path with *>, "to": <path with *> } ]: the newest build's Bun is copied without its debug information
@@ -64,7 +64,6 @@ BASE_ENV = {
     "WTF_numberOfProcessorCores": "2",
     "UV_THREADPOOL_SIZE": "2",
     "GOMAXPROCS": "2",
-    "BUN_JSC_numberOfAOTCompilerThreads": "2",
     "ASAN_OPTIONS": "detect_leaks=0:allow_user_segv_handler=1:allocator_may_return_null=1:abort_on_error=0:symbolize=1:detect_stack_use_after_return=0",
 }
 
@@ -237,18 +236,18 @@ class Farm:
                 departing.append((i, a, b))
         if not departing and (code == 0) == (ref_code == 0):
             return "same", ""
-        reported = "(bun --aot" in said
+        reported = "(bun compile" in said
         if reported and program.lines_may_be_refused:
             return "refused", ""
-        is_refusal = lambda a, b: "(bun --aot" in a or (bool(re.search(r"TypeError|THROWS|REFUSED", a)) and not re.search(r"TypeError|THROWS|REFUSED", b))
+        is_refusal = lambda a, b: "(bun compile" in a or (bool(re.search(r"TypeError|THROWS|REFUSED", a)) and not re.search(r"TypeError|THROWS|REFUSED", b))
         if departing and not is_refusal(departing[0][1], departing[0][2]):
             reported = False
         i, a, b = departing[0] if departing else (0, "", "")
         detail = "line %d: compiled %r | plain %r | exits %s %s" % (i + 1, a[:100], b[:100], code, ref_code)
         if reported or (departing and re.search(r"TypeError|THROWS|REFUSED", a) and not re.search(r"TypeError|THROWS|REFUSED", b)):
-            message = re.search(r"[^\n]*\(bun --aot", said)
+            message = re.search(r"[^\n]*\(bun compile", said)
             if message and not program.may_be_refused:
-                text = re.sub(r"^.*?(\w*Error: )", r"\1", message.group(0)).replace(" (bun --aot", "")
+                text = re.sub(r"^.*?(\w*Error: )", r"\1", message.group(0)).replace(" (bun compile", "")
                 detail = re.sub(r'"(?:[^"\\]|\\.)*"', '".."', text)[:160] + " | " + detail
             return ("refused" if program.may_be_refused else "REFUSED"), detail
         if "Maximum call stack" in said + ref_out + ref_err:

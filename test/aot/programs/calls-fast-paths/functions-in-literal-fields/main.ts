@@ -1,6 +1,6 @@
 // Calls of functions that are stored in the fields of one object literal, as in the TypeScript compiler's scanner.
-// IR+ IsClosureOf v[0-9]+ f[0-9]+
-// IR+ GetCapture
+// IR+ IsClosureOf v[0-9]+ function=f[0-9]+
+// IR+ ^ .*GetCapture
 // @ts-ignore
 import { createScanner } from "./untyped.js";
 declare const console: any;

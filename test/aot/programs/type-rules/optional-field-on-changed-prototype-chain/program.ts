@@ -23,7 +23,7 @@ refused("another prototype", () => Object.setPrototypeOf(late, { size: 99, descr
 console.log(inspect(late), show(late))
 refused("a store under a getter without a setter", () => { late.tag = "x" }); late.size = 1
 console.log(inspect(late), show(late))
-refused("no prototype", () => Object.setPrototypeOf({ label: "cut" } as Describable, null)) // Allowed since 2026-10-08, on an object of its own: `late` goes on inheriting.
+refused("no prototype", () => Object.setPrototypeOf({ label: "cut" } as Describable, null)) // On an object of its own: `late` goes on inheriting.
 console.log(late.label, late.size, late.tag, late.describe === undefined, "tag" in late, String(late))
 
 refused("a property defined on Object.prototype", () => Object.defineProperty(Object.prototype, "tag", { value: "polluted", configurable: true, writable: true }))

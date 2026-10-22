@@ -32,7 +32,7 @@ const fields: Record<string, Record<string, unknown>> = {
   "bun-is-typescript": {"exports": {".": {"bun": "./src.ts", "types": "./index.d.ts", "default": "./d.js"}}},
 };
 
-const differs = "What cannot be resolved is a build error of the bundler, with or without --aot; `bun run` reports it when the line runs.";
+const differs = "A static import that cannot be resolved is an error of the build; `bun run` reports it when the file is loaded. A require() or an import() that cannot be resolved throws where it runs, as under `bun run`.";
 
 const paths = (value: unknown): string[] => (typeof value === "string" ? [value] : value && typeof value === "object" ? Object.values(value).flatMap(paths) : []);
 
@@ -50,6 +50,8 @@ export const cases: Case[] = Object.entries(fields).map(([name, packageJson]) =>
   const named = [...paths(packageJson.exports), ...paths(packageJson.main), ...paths(packageJson.module), "./index.d.ts"].map(path => path.slice(2));
   return {
     name,
+    // A package that has no file for the way it is asked for is not found under `bun run` either.
+    ...(name === "require-only" || name === "import-only" ? { fails: true as const } : {}),
     differs,
     files: pkg(packageName, Object.fromEntries(named.map(path => [path, text(packageName, path, packageJson.type === "module")])), packageJson),
     importers: ways(packageName, ["which", "f"], { tag: "x" }),

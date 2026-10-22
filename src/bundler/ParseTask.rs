@@ -313,8 +313,8 @@ impl ParseTask {
     /// Re-export of `parse_worker::get_runtime_source` as an associated fn so
     /// callers can spell it `ParseTask::get_runtime_source`.
     #[inline]
-    pub(crate) fn get_runtime_source(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
-        parse_worker::get_runtime_source(target, has_validation_helper)
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+        parse_worker::get_runtime_source(target)
     }
 }
 
@@ -554,7 +554,7 @@ export var __callDispose = (stack, error, hasError) => {
 pub mod parse_worker {
     use super::*;
 
-    fn get_runtime_source_comptime(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
+    fn get_runtime_source_comptime(target: options::Target) -> RuntimeSource {
         // The runtime module is the shared `runtime.js` body plus a per-target
         // `__require`/`__using` tail. Concatenating at compile time would embed
         // four copies of the 13 KB body, so each variant is assembled once on
@@ -567,18 +567,18 @@ pub mod parse_worker {
             Other,
         }
         let variant = match target {
-            options::Target::Bun | options::Target::BunBuiltins => Variant::Bun,
+            options::Target::Bun => Variant::Bun,
             options::Target::BunMacro => Variant::BunMacro,
             options::Target::Node => Variant::Node,
             _ => Variant::Other,
         };
-        static SOURCES: [[bun_core::Once<Box<[u8]>>; 2]; 4] = [
-            [bun_core::Once::new(), bun_core::Once::new()],
-            [bun_core::Once::new(), bun_core::Once::new()],
-            [bun_core::Once::new(), bun_core::Once::new()],
-            [bun_core::Once::new(), bun_core::Once::new()],
+        static SOURCES: [bun_core::Once<Box<[u8]>>; 4] = [
+            bun_core::Once::new(),
+            bun_core::Once::new(),
+            bun_core::Once::new(),
+            bun_core::Once::new(),
         ];
-        let runtime_code: &'static [u8] = SOURCES[variant as usize][usize::from(has_validation_helper)].get_or_init(|| {
+        let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
             let (require, using, preload): (&str, &str, &str) = match variant {
                 Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN, ""),
                 Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER, ""),
@@ -589,8 +589,7 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            let validation = if has_validation_helper { include_str!("../js/internal/validation.ts") } else { "" };
-            [include_str!("../runtime.js"), validation, require, using, preload]
+            [include_str!("../runtime.js"), require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()
@@ -606,7 +605,7 @@ pub mod parse_worker {
             },
             contents_or_fd: ContentsOrFd::Contents(runtime_code),
             source_index: Index::RUNTIME,
-            loader: Some(if has_validation_helper { Loader::Ts } else { Loader::Js }),
+            loader: Some(Loader::Js),
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
@@ -648,8 +647,8 @@ pub mod parse_worker {
         RuntimeSource { parse_task, source }
     }
 
-    pub(crate) fn get_runtime_source(target: options::Target, has_validation_helper: bool) -> RuntimeSource {
-        get_runtime_source_comptime(target, has_validation_helper)
+    pub(crate) fn get_runtime_source(target: options::Target) -> RuntimeSource {
+        get_runtime_source_comptime(target)
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -1605,7 +1604,7 @@ pub mod parse_worker {
     // `transpiler`/`resolver` are raw `*mut` — see
     // `get_code_for_parse_task_without_plugins`.
     #[allow(clippy::too_many_arguments)]
-    fn get_code_for_parse_task<'b>(
+    pub(crate) fn get_code_for_parse_task<'b>(
         task: &mut ParseTask,
         log: &mut Log,
         transpiler: *mut Transpiler<'b>,
@@ -2319,7 +2318,7 @@ pub mod parse_worker {
         // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
         // reads through the returned ASTs. `arena` is a `*const Bump` field; the
         // deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref((*worker_raw).parse_arena()) };
+        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
@@ -2507,8 +2506,6 @@ pub mod parse_worker {
             ))
         };
         opts.package_version = task.package_version.slice();
-        opts.bun_builtin_syntax =
-            target == options::Target::BunBuiltins && !task.source_index.is_runtime();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
         opts.features.unwrap_commonjs_to_esm =
@@ -2527,11 +2524,6 @@ pub mod parse_worker {
             options::Format::Iife => js_parser::options::Format::Iife,
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
-        opts.inline_import_meta_paths = topts.preserve_source_paths;
-        opts.keeps_reexport_only_modules = topts.preserve_source_paths;
-        opts.defers_import_assignment_errors = topts.preserve_source_paths && topts.compiles_ahead_of_time();
-        opts.compiles_ahead_of_time = topts.compiles_ahead_of_time();
-        opts.features.inject_jest_globals = topts.rewrite_jest_for_tests;
         opts.features.minify_syntax = topts.minify_syntax;
         opts.features.minify_identifiers = topts.minify_identifiers;
         opts.features.minify_keep_names = topts.keep_names;
@@ -2658,6 +2650,26 @@ pub mod parse_worker {
                 bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
             }
         });
+
+        // The browser copy of a page of a `clientPages` router: its data functions run on the
+        // server only.
+        if target == options::Target::Browser
+            && topts
+                .framework
+                .is_some_and(|f| f.is_client_page_file(task.path.text))
+        {
+            for name in [
+                &b"getServerSideProps"[..],
+                b"getStaticProps",
+                b"getStaticPaths",
+            ] {
+                bun_core::handle_oom(
+                    opts.features
+                        .replace_exports
+                        .put(name, bun_ast::runtime::ReplaceableExport::Delete),
+                );
+            }
+        }
 
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
@@ -2851,25 +2863,13 @@ pub mod parse_worker {
                     ParseTaskStage::NeedsParse(e) => e,
                     ParseTaskStage::NeedsSourceCode => unreachable!(),
                 };
-            let bundle_options = &ctx.transpiler().options;
-            let is_parsed_for_analysis_only = bundle_options.compiles_ahead_of_time()
-                && !this.source_index.is_runtime()
-                && this.known_target != options::Target::Browser
-                && this.loader.or_else(|| this.path.loader(&bundle_options.loaders)).is_some_and(|loader| loader.is_javascript_like());
-            if is_parsed_for_analysis_only {
-                worker.enter_scan_arena();
-            }
             let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
-            if is_parsed_for_analysis_only {
-                worker.leave_scan_arena();
-            }
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
-                    let runs_in_place = ctx.transpiler().options.preserve_source_paths && ctx.transpiler().options.compiles_ahead_of_time();
-                    if (ctx.transpiler().options.has_dev_server() || runs_in_place) && ast.log.has_errors() {
+                    if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
                             err: crate::Error::SyntaxError,
                             step: Step::Parse,

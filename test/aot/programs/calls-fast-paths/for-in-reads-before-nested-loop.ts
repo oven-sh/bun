@@ -1,10 +1,10 @@
 // `o[k]` at the start of the body of `for (k in o)` is read without a lookup while the key is still listed, also where a loop follows the read: the copy of the body that does so ends ahead of that loop.
-// IR= 1 loopBehindTheRead GetByVal v[0-9]+, v[0-9]+ for-in key
-// IR= 1 whileBehindTheRead GetByVal v[0-9]+, v[0-9]+ for-in key
-// IR= 1 loopBehindHasOwn GetByVal v[0-9]+, v[0-9]+ for-in key
-// IR= 1 loopOnAFlagBehindTheRead GetByVal v[0-9]+, v[0-9]+ for-in key
-// IR= 1 loopOnTheMemberBehindTheRead GetByVal v[0-9]+, v[0-9]+ for-in key
-// IR= 1 loopBehindTheReadOfAGivenObject GetByVal v[0-9]+, v[0-9]+ for-in key
+// IR= 1 loopBehindTheRead  = GetForInSlot v[0-9]+, 
+// IR= 1 whileBehindTheRead  = GetForInSlot v[0-9]+, 
+// IR= 1 loopBehindHasOwn  = GetForInSlot v[0-9]+, 
+// IR= 1 loopOnAFlagBehindTheRead  = GetForInSlot v[0-9]+, 
+// IR= 1 loopOnTheMemberBehindTheRead  = GetForInSlot v[0-9]+, 
+// IR= 1 loopBehindTheReadOfAGivenObject  = GetForInSlot v[0-9]+, 
 declare const console: any;
 let calls = 0;
 function tick(): number { return ++calls; }

@@ -1,8 +1,8 @@
 // A switch over integers whose cases lead to few places is compiled to range tests and bit tests, however many cases it has. The inliner
 // measures it as that: a predicate of thirty cases is copied into a loop as one of four is. A switch whose cases each lead somewhere else is as
 // large as it was, and stays a call.
-// IRT= 0 walk : boolean( frame [0-9]+)? = CallDirect
-// IRT= 1 walk : (number|i32)( frame [0-9]+)? = CallDirect
+// IRT= 0 walk : boolean = CallDirect
+// IRT= 1 walk : (number|i32|int\S*) = CallDirect
 declare const console: { log(...values: unknown[]): void };
 declare const globalThis: { kept?: unknown };
 interface Item { kind: number; parent: Item | undefined; names: number | undefined }

@@ -1,5 +1,0 @@
-1k1
-a required field is missing: TypeError: property 'b' is missing in untyped object but required in Host
-a field of another type: TypeError: property 'c': expected string, got number 9
-an optional field of another type: TypeError: property 'o3': expected number | undefined, got string "three"
-what satisfies it: 9z1

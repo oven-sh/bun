@@ -1,4 +1,4 @@
-// A write that fails only because --aot makes built-in objects immutable throws a TypeError whose message mentions --aot, whether it assigns, defines or deletes. A write that JavaScript itself rejects keeps its usual message.
+// A write that the lock of a built-in object refuses throws a TypeError, whether it assigns, defines or deletes, as a write that JavaScript itself rejects does. A write to a built-in that is not locked succeeds, and so does a new ordinary name on an object that only keeps its members.
 const f = function () {};
 const d = { value: f, configurable: true, writable: true };
 const size: string = ["size"][0];
@@ -6,7 +6,9 @@ const writes: [string, () => unknown][] = [
   ["assign over a method of a prototype", () => ((Array.prototype as any).push = f)],
   ["define over a method of a prototype", () => Object.defineProperty(Array.prototype, "push", d)],
   ["delete a method of a prototype", () => delete (Array.prototype as any).push],
-  ["define a new property of a prototype", () => Object.defineProperty(Array.prototype, "added", d)],
+  ["define a new property of a prototype that is closed", () => Object.defineProperty(Object.prototype, "added", d)],
+  ["define an index of a prototype that takes new names", () => Object.defineProperty(Array.prototype, "7", d)],
+  ["allowed: define a new property of a prototype that takes new names", () => Object.defineProperty(Array.prototype, "added", d) === Array.prototype && delete (Array.prototype as any).added],
   ["define over a static method", () => Object.defineProperty(Array, "from", d)],
   ["define over an inherited static method", () => Object.defineProperty(Uint8Array, "from", d)],
   ["define over a function of a namespace", () => Object.defineProperty(Math, "max", d)],
@@ -28,6 +30,6 @@ for (const [label, write] of writes) {
   try {
     console.log(label + ": " + (write() ? "no error" : "false"));
   } catch (e: any) {
-    console.log(label + ": " + e.name + (String(e.message).includes("--aot") ? ", mentions --aot" : ""));
+    console.log(label + ": " + e.name);
   }
 }

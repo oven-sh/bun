@@ -1,1 +1,0 @@
-It prints true: the enum is one object for all calls of the function.

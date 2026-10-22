@@ -32,7 +32,7 @@ console.log(JSON.stringify([copy(typed), copy(partly), copy(extended), copy(chil
 delete typed.a; partly.a = 5;
 console.log(short(typed, "a"), short(partly, "a"), JSON.stringify([copy(typed), copy(partly)]));
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 const before = entered();
 let total = 0;
 const fresh: { q1: number; q2?: number } = { q1: 1 };

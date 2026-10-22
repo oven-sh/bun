@@ -1,6 +1,6 @@
 // `typeof x === "function"` creates no string.
-// IR+ TypeOfIs v[0-9]+ function
-// IR- = TypeOf v
+// IR+ TypeOfIs v[0-9]+ typeofType=7\b
+// IR- ^ .*= TypeOf v
 declare const console: any;
 let n = 0;
 const table: any[] = [() => 1, 1];

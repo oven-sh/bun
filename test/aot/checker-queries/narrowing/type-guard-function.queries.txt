@@ -1,0 +1,38 @@
+# A call to a function declared `x is T` narrows its argument in both branches when the argument is a property, a nested property, a property of `this` or an element at a constant key. A `this is T` method narrows its receiver. A function whose body is such a check gets an inferred type predicate. The narrowing of a property lasts until that property path is assigned: a store through an alias or a call doesn't reset it.
+type-guard-function.ts:11 type `entry.inner.token` = Token
+type-guard-function.ts:12 type `entry.inner.token` = Word
+type-guard-function.ts:13 type `entry.token` = Token
+type-guard-function.ts:15 type `entry.inner.token` = Digits
+type-guard-function.ts:17 type `entry.token` = Token
+type-guard-function.ts:18 type `entry.token` = Word
+type-guard-function.ts:20 type `entry.token` = Digits
+
+type-guard-function.ts:30 type `this.token` = Token
+type-guard-function.ts:31 type `this.token` = Word
+type-guard-function.ts:33 type `this.token` = Digits
+
+type-guard-function.ts:39 type `pair[0]` = Token
+type-guard-function.ts:40 type `pair[0]` = Word
+type-guard-function.ts:41 type `pair[1]` = Token
+type-guard-function.ts:43 type `entry["token"]` = Token
+type-guard-function.ts:44 type `entry.token` = Word
+
+type-guard-function.ts:58 type `shape` = Round
+type-guard-function.ts:60 type `shape` = Shape
+type-guard-function.ts:63 type `holder.shape` = Round
+type-guard-function.ts:65 type `holder.shape` = Shape
+
+type-guard-function.ts:71 type `entry.token` = Digits
+type-guard-function.ts:73 type `entry.token` = Word
+
+type-guard-function.ts:79 type `entry.token` = Word
+type-guard-function.ts:81 type `entry.token` = Word
+type-guard-function.ts:82 type `entry.token` = Digits
+type-guard-function.ts:86 type `entry.token` = Word
+
+type-guard-function.ts:92 type `entry.token` = Word
+type-guard-function.ts:94 type `entry.token` = Digits
+
+type-guard-function.ts:101 type `entry.token` = Word
+type-guard-function.ts:103 type `entry.token` = Word
+type-guard-function.ts:105 type `entry.token` = Token

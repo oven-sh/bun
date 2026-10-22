@@ -277,39 +277,6 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
-pub(crate) fn standard_error_sink(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
-    #[cfg(windows)]
-    let sink = {
-        let fd = Fd::from_uv(2);
-        let sink = FileSink::init(fd, event_loop);
-        sink.writer.with_mut(|w| w.owns_fd = false);
-        if let sys::Result::Err(err) = sink.writer.with_mut(|w| w.start_sync(fd, false)) {
-            return Err(bun_jsc::SysErrorJsc::throw(&err, global));
-        }
-        sink
-    };
-    #[cfg(not(windows))]
-    let sink = {
-        let sink = FileSink::init(Fd::INVALID, event_loop);
-        let start = streams::Start::FileSink(streams::FileSinkOptions {
-            input_path: PathOrFileDescriptor::Fd(Fd::stderr()),
-            ..Default::default()
-        });
-        if let sys::Result::Err(err) = sink.start(&start, global.bun_vm().context_of_caller(frame)) {
-            return Err(bun_jsc::SysErrorJsc::throw(&err, global));
-        }
-        sink
-    };
-    // SAFETY: `&mut` scoped to the call.
-    let js = unsafe { (*sink.as_ptr()).to_js(global) };
-    let is_socket = frame.argument(0).to_boolean();
-    if cfg!(not(windows)) || !is_socket {
-        Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(core::ptr::from_ref(global).cast_mut(), js);
-    }
-    Ok(js)
-}
-
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///

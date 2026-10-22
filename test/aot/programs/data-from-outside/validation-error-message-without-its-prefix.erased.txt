@@ -1,0 +1,7 @@
+n: expected number, received string | Invalid input: expected number, received string
+n: expected number to be >=1 | Too small: expected number to be >=1
+n: expected number to be <=1 | Too big: expected number to be <=1
+s: must match pattern /^a+$/ | Invalid string: must match pattern /^a+$/
+n: must be a multiple of 2 | Invalid number: must be a multiple of 2
+n: my own words | my own words
+accepted {"n":1}

@@ -1,3 +1,5 @@
+import type { ClassColumns, EntryColumns, SignatureColumns } from "./builtins/vocabulary.ts";
+
 interface PropertyAttribute {
   enumerable?: boolean;
   configurable?: boolean;
@@ -28,17 +30,45 @@ export const InvalidThisBehavior = {
 } as const;
 export type InvalidThisBehavior = (typeof InvalidThisBehavior)[keyof typeof InvalidThisBehavior];
 
+/** Columns of the built-ins table for a member (src/codegen/builtins/vocabulary.ts). Read by src/codegen/builtins/collect-classes.ts. None of them changes the generated bindings. */
+type TableColumns = SignatureColumns & EntryColumns;
+
+/**
+ * Code compiled with `--aot` takes the declared type of a getter or function on trust, so every declared type is either
+ * proven or checked.
+ */
+interface DeclaredTypeStrength {
+  /**
+   * `true`: the native method may return any `JSValue`. The generated C++ wrapper looks at the value in every build and
+   * ends the process, naming the member, if the value lies outside the declared type.
+   *
+   * Otherwise the Rust method's return type must prove the declared type (src/jsc/proven_return.rs), and nothing is
+   * looked at when the program runs.
+   */
+  checkedAtRuntime?: boolean;
+}
+
 export type Field =
   | ({
       getter: string;
       cache?: true | string;
+      /** Type of the value, in the grammar of `parseDeclaredType`. */
       type?: string;
       /**
        * Allow overriding the value of the property
        */
       writable?: boolean;
       this?: boolean;
-    } & PropertyAttribute)
+      /**
+       * Somebody has read the native getter down to the last function it calls: it allocates nothing in the JavaScript heap,
+       * throws nothing, runs no JavaScript, walks no stack, takes no lock that a collection waits for, and changes nothing that
+       * a program can see. Code compiled ahead of time enters it without a frame, so a getter of which this is not true
+       * corrupts the program. Its `type` holds no cell and is proven by the return type of the Rust method.
+       */
+      pure?: boolean;
+    } & DeclaredTypeStrength &
+      PropertyAttribute &
+      TableColumns)
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
@@ -58,7 +88,11 @@ export type Field =
       length?: number;
       passThis?: boolean;
       invalidThisBehavior?: InvalidThisBehavior;
-    } & PropertyAttribute)
+      /** Result type, in the grammar of `parseDeclaredType`. */
+      returns?: string;
+    } & DeclaredTypeStrength &
+      PropertyAttribute &
+      TableColumns)
   | { internal: true }
   | {
       /**
@@ -217,6 +251,12 @@ export class ClassDefinition {
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
+  /** With `--aot` the prototype is locked like a built-in's: no member can be replaced, added or deleted. Subclasses are unaffected. */
+  lockedPrototype?: boolean;
+  /** For the built-ins table: an instance's internal slots, the heap of its other state, and the TypeScript types that denote the class. */
+  slots?: ClassColumns["slots"];
+  stateHeap?: ClassColumns["stateHeap"];
+  types?: ClassColumns["types"];
 
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
@@ -225,6 +265,90 @@ export class ClassDefinition {
 
     Object.assign(this, options);
   }
+}
+
+export type DeclaredAlternative =
+  | "string"
+  | "number"
+  | "int32"
+  | "bigint"
+  | "boolean"
+  | "undefined"
+  | "null"
+  | "object" /* any object, functions too */
+  | "Promise"
+  | "this" /* the receiver itself */
+  | { instance: string /* a class of a `.classes.ts` file, or one of `nativeInstances` in declared-type-checks.ts */ };
+
+function parseDeclaredAlternative(word: string): DeclaredAlternative | undefined {
+  switch (word) {
+    case "string":
+    case "number":
+    case "int32":
+    case "bigint":
+    case "boolean":
+    case "undefined":
+    case "null":
+    case "object":
+    case "Promise":
+    case "this":
+      return word;
+  }
+  if (/^Promise<.*>$/.test(word)) return "Promise";
+  return /^[A-Z][A-Za-z0-9]*$/.test(word) ? { instance: word } : undefined;
+}
+
+function splitDeclaredAlternatives(text: string): string[] {
+  const words: string[] = [];
+  let bracketDepth = 0;
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if (character === "<") bracketDepth++;
+    else if (character === ">") bracketDepth--;
+    else if (character === "|" && bracketDepth === 0) {
+      words.push(text.slice(start, index));
+      start = index + 1;
+    }
+  }
+  words.push(text.slice(start));
+  return words;
+}
+
+/**
+ * A union, written with `|`, of `string`, `number`, `int32`, `bigint`, `boolean`, `undefined`, `null`, `object`, `Promise`
+ * (or `Promise<T>`), `this` and names of classes.
+ */
+export function parseDeclaredType(text: string): DeclaredAlternative[] {
+  const alternatives: DeclaredAlternative[] = [];
+  const names = new Set<string>();
+  for (const word of splitDeclaredAlternatives(text)) {
+    const alternative = parseDeclaredAlternative(word.trim());
+    const name = typeof alternative === "object" ? alternative.instance : alternative;
+    if (name === undefined || names.has(name)) throw new Error(`'${text}' is not a declared type`);
+    names.add(name);
+    alternatives.push(alternative!);
+  }
+  return alternatives;
+}
+
+export function declaredTypeOf(field: Field): string | undefined {
+  if ("getter" in field) return field.type;
+  if ("fn" in field) return field.returns;
+  return undefined;
+}
+
+export function isCheckedAtRuntime(field: Field): boolean {
+  return ("getter" in field || "fn" in field) && field.checkedAtRuntime === true;
+}
+
+export function typeScriptOf(text: string): string {
+  return text.replace(/\bint32\b/g, "number").replace(/\bPromise\b(?!<)/g, "Promise<unknown>");
+}
+
+/** The order in which a program sees the members of a class. */
+export function sortFields(fields: Record<string, Field>): Record<string, Field> {
+  return Object.fromEntries(Object.entries(fields).sort(([a], [b]) => a.localeCompare(b)));
 }
 
 /**
@@ -263,7 +387,7 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    klass: Object.fromEntries(Object.entries(klass).sort(([a], [b]) => a.localeCompare(b))),
-    proto: Object.fromEntries(Object.entries(proto).sort(([a], [b]) => a.localeCompare(b))),
+    klass: sortFields(klass),
+    proto: sortFields(proto),
   });
 }

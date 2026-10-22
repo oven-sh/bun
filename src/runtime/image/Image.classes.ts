@@ -26,48 +26,48 @@ export default [
       // default where available) or "bun" (static libjpeg-turbo/spng/libwebp +
       // Highway resize, byte-identical across platforms). Set BEFORE awaiting a
       // pipeline; in-flight tasks read whatever was set when they launched.
-      backend: { getter: "getBackend", setter: "setBackend" },
+      backend: { getter: "getBackend", type: "string", checkedAtRuntime: true, setter: "setBackend" },
       // System clipboard image reader. `Image | null` — null on Linux (no
       // native API) and when there's no image present. The probe is the
       // cheap "should I show a paste-an-image hint?" check.
-      fromClipboard: { fn: "fromClipboard", length: 0 },
-      hasClipboardImage: { fn: "hasClipboardImage", length: 0 },
-      clipboardChangeCount: { fn: "clipboardChangeCount", length: 0 },
+      fromClipboard: { fn: "fromClipboard", returns: "Image | null", checkedAtRuntime: true, length: 0 },
+      hasClipboardImage: { fn: "hasClipboardImage", returns: "boolean", checkedAtRuntime: true, length: 0 },
+      clipboardChangeCount: { fn: "clipboardChangeCount", returns: "number", checkedAtRuntime: true, length: 0 },
     },
     proto: {
       // Chainable mutators — record an op and return `this`.
-      resize: { fn: "doResize", length: 2 },
-      rotate: { fn: "doRotate", length: 1 },
-      flip: { fn: "doFlip", length: 0 },
-      flop: { fn: "doFlop", length: 0 },
-      modulate: { fn: "doModulate", length: 1 },
+      resize: { fn: "doResize", returns: "this", checkedAtRuntime: true, length: 2 },
+      rotate: { fn: "doRotate", returns: "this", checkedAtRuntime: true, length: 1 },
+      flip: { fn: "doFlip", returns: "this", checkedAtRuntime: true, length: 0 },
+      flop: { fn: "doFlop", returns: "this", checkedAtRuntime: true, length: 0 },
+      modulate: { fn: "doModulate", returns: "this", checkedAtRuntime: true, length: 1 },
       // Chainable output-format setters (Sharp-style); the encode happens
       // when a terminal below is awaited.
-      jpeg: { fn: "doFormatJpeg", length: 1 },
-      png: { fn: "doFormatPng", length: 1 },
-      webp: { fn: "doFormatWebp", length: 1 },
-      heic: { fn: "doFormatHeic", length: 1 },
-      avif: { fn: "doFormatAvif", length: 1 },
+      jpeg: { fn: "doFormatJpeg", returns: "this", checkedAtRuntime: true, length: 1 },
+      png: { fn: "doFormatPng", returns: "this", checkedAtRuntime: true, length: 1 },
+      webp: { fn: "doFormatWebp", returns: "this", checkedAtRuntime: true, length: 1 },
+      heic: { fn: "doFormatHeic", returns: "this", checkedAtRuntime: true, length: 1 },
+      avif: { fn: "doFormatAvif", returns: "this", checkedAtRuntime: true, length: 1 },
 
       // Terminal async ops — run decode → pipeline → encode on the work pool.
-      bytes: { fn: "doBytes", length: 0, async: true },
-      buffer: { fn: "doBuffer", length: 0, async: true },
+      bytes: { fn: "doBytes", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
+      buffer: { fn: "doBuffer", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
       // Sharp-compat alias for `buffer()`; same native fn, no overhead.
-      toBuffer: { fn: "doBuffer", length: 0, async: true },
+      toBuffer: { fn: "doBuffer", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
       // Encode → fs.writeFile, both off-thread; resolves bytes-written.
-      write: { fn: "doWrite", length: 1, async: true },
-      blob: { fn: "doBlob", length: 0, async: true },
-      toBase64: { fn: "doToBase64", length: 0, async: true },
+      write: { fn: "doWrite", returns: "Promise", checkedAtRuntime: true, length: 1, async: true },
+      blob: { fn: "doBlob", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
+      toBase64: { fn: "doToBase64", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
       // toBase64() with the `data:{mime};base64,` prefix.
-      dataurl: { fn: "doDataUrl", length: 0, async: true },
+      dataurl: { fn: "doDataUrl", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
       // ThumbHash-rendered ≤32px PNG data: URL — ~400-700B, ready for
       // <img src> / blurDataURL.
-      placeholder: { fn: "doPlaceholder", length: 0, async: true },
-      metadata: { fn: "doMetadata", length: 0, async: true },
+      placeholder: { fn: "doPlaceholder", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
+      metadata: { fn: "doMetadata", returns: "Promise", checkedAtRuntime: true, length: 0, async: true },
 
       // Read-only after a pipeline has run; -1 before.
-      width: { getter: "getWidth" },
-      height: { getter: "getHeight" },
+      width: { getter: "getWidth", type: "int32", pure: true },
+      height: { getter: "getHeight", type: "int32", pure: true },
     },
   }),
 ];

@@ -1,9 +1,9 @@
-// A type literal has an implicit index signature: a record may be held as a dictionary whose values are of more kinds than its fields, and be stored to through that. No cast is written, so nothing is refused.
-// IR+ shape \d+ Record "Lit" .* accepts-untyped may-despecialize
-// IR+ shape \d+ Record "Loose" .* accepts-untyped may-despecialize
-// IR- shape \d+ Record "Kept" .* accepts-untyped
-// IR- shape \d+ Record "Copied" .* accepts-untyped
-// IR- shape \d+ Record "Even" .* accepts-untyped
+// A type literal has an implicit index signature: a record may be held as a dictionary whose values are of more kinds than its fields, and be stored to through that. The store is taken. A typed read of a field that then holds another kind throws a TypeError; null, a deleted field and a value of the field's own kind read as in plain Bun.
+// IR+ ^layout L\d+ .*name="Lit" (?!.*isStable=true)
+// IR+ ^layout L\d+ .*name="Loose" (?!.*isStable=true)
+// IR+ ^layout L\d+ .*name="Kept" .*isStable=true
+// IR+ ^layout L\d+ .*name="Copied" .*isStable=true
+// IR+ ^layout L\d+ .*name="Even" .*isStable=true
 function attempt(label: string, f: () => unknown) {
   try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
 }

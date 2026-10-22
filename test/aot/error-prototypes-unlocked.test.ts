@@ -11,15 +11,14 @@ const files = {
   "classes-that-extend-errors.ts": `class Failure extends Error { constructor(message: string, public code: number) { super(message); } }\nclass Worse extends Failure { override name = "Worse"; }\n(Error.prototype as unknown as { describe(): string }).describe = function (this: Error) { return this.name + "/" + this.message; };\nconst all: Error[] = [new Failure("f", 1), new Worse("w", 2), new TypeError("t")];\nconsole.log(all.map(each => (each as unknown as { describe(): string }).describe()).join(), all.map(each => each instanceof Error && each instanceof Object).join());\nError.prototype.name = "Base";\nconsole.log(all.map(each => each.name).join(), String(all[0]));\n`,
   "feature-tests-are-not-folded.mjs": `console.log(typeof Error.prototype.toJSON, typeof Error.prototype.toString);\nif (!Error.prototype.toJSON) Error.prototype.toJSON = function () { return { name: this.name, message: this.message }; };\nconsole.log(typeof Error.prototype.toJSON, JSON.stringify([new Error("e"), new URIError("u")]));\nconst toString = Error.prototype.toString;\nError.prototype.toString = () => "replaced";\nconsole.log(toString.call(new Error("kept")), Error.prototype.toString.call(new Error("x")), String(new EvalError("y")));\n`,
   "another-prototype.mjs": `const base = { shared: "from the base" };\nObject.setPrototypeOf(Error.prototype, base);\nconsole.log(new Error("e").shared, new TypeError("t").shared, new Error("e") instanceof Object, Object.getPrototypeOf(Error.prototype) === base);\n`,
+  "the-constructor-and-its-global-name.cjs": `"use strict";\nconst original = Error;\nError.captureStackTrace = () => "replaced";\nconsole.log(Error.captureStackTrace({}), original.captureStackTrace({}));\nError = function Other() {};\nconsole.log(Error.name, globalThis.Error === Error, Error === original, new original("kept").message, new TypeError("t") instanceof original);\n`,
   "aggregate-suppressed-webassembly.mjs": `AggregateError.prototype.extra = 1;\nSuppressedError.prototype.extra = 2;\nWebAssembly.RuntimeError.prototype.extra = 3;\nconsole.log(new AggregateError([]).extra, new SuppressedError(1, 2).extra, new WebAssembly.RuntimeError("r").extra);\n`,
 };
 const refused = `"use strict";
 const attempts = {
-  "the global name": () => { Error = function () {}; },
-  "a function of the constructor": () => { Error.captureStackTrace = () => {}; },
   "the constructor's prototype": () => { TypeError.prototype = {}; },
   "Object.prototype": () => { Object.prototype.extra = 1; },
-  "Array.prototype": () => { Array.prototype.extra = 1; },
+  "Array.prototype.push": () => { Array.prototype.push = () => {}; },
   "Function.prototype": () => { Function.prototype.extra = 1; },
   "Promise.prototype": () => { Promise.prototype.extra = 1; },
   "Promise.prototype.then": () => { Promise.prototype.then = () => {}; },
@@ -52,9 +51,9 @@ test.concurrent.each(Object.keys(files))(
   120_000,
 );
 
-test("the constructors, the global names and the other prototypes are locked as before", async () => {
+test("the prototype of a constructor and the other prototypes are locked as before", async () => {
   using dir = tempDir("aot-error-prototypes-refused", { "refused.cjs": refused });
-  const expected = ["the global name", "a function of the constructor", "the constructor's prototype", "Object.prototype", "Array.prototype", "Function.prototype", "Promise.prototype", "Promise.prototype.then"].map(what => what + " TypeError\n").join("");
+  const expected = ["the constructor's prototype", "Object.prototype", "Array.prototype.push", "Function.prototype", "Promise.prototype", "Promise.prototype.then"].map(what => what + " TypeError\n").join("");
   const ran = await run(String(dir), [bunExe(), "run", "--debug-aot", "./refused.cjs"]);
   expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: expected, exitCode: 0 });
 }, 120_000);

@@ -34,7 +34,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
-    mut module_info: Option<&mut ModuleInfo>,
+    module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
 
@@ -529,11 +529,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
-    if stmts.inside_wrapper_prefix.has_async_dependency && flags.wrap == WrapKind::None {
-        if let Some(mi) = module_info.as_deref_mut() {
-            mi.flags.has_tla = true;
-        }
-    }
     stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 

@@ -1,4 +1,4 @@
-// In a file of CommonJS, which is sloppy, a function whose body begins with "use strict" is strict, and so is all that is written within it.
+// In a file of CommonJS, which is sloppy, a function whose body begins with "use strict" is as sloppy as the file: plain Bun drops the directive of a function when it transpiles, and --aot does what plain Bun does. The stored output is that of plain Bun; run-aot-matches-executable.test.ts reads it.
 function sloppy() { return typeof this; }
 function strict() { "use strict"; return typeof this; }
 const parameters = function (a, b) { "use strict"; a = "A"; arguments[1] = "B"; return [a, b, arguments[0], arguments[1]].join(); };

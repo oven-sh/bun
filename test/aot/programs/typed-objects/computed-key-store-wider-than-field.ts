@@ -1,4 +1,4 @@
-// A store under a key that is a union of names is accepted by TypeScript for any value when one of the named properties is `any`. It must not throw.
+// A store under a key that is a union of names is accepted by TypeScript for any value when one of the named properties is `any`. The store does not throw. A read of the field by its name through the written type finds a value of another kind and throws a TypeError.
 type Body = { json: any; text: string; bytes: Uint8Array };
 interface Raw {
   json(): Promise<any>;
@@ -38,7 +38,7 @@ const raw: Raw = {
 
 const request = new CachingRequest(raw);
 console.log(JSON.stringify(await request.json()), await request.text(), (await request.bytes())[0], reads);
-console.log(Object.keys(request.bodyCache).join(), (request.bodyCache.text as unknown) instanceof Promise, typeof request.bodyCache.json);
+console.log(Object.keys(request.bodyCache).join(), (request.bodyCache as any).text instanceof Promise, typeof request.bodyCache.json);
 
 interface Settings {
   extra: any;
@@ -50,6 +50,6 @@ function set(settings: Settings, key: "extra" | "name", value: number[]) {
 }
 const settings: Settings = { extra: 1, name: "a", size: 2 };
 set(settings, "name", [1, 2]);
-console.log(JSON.stringify(settings), Array.isArray(settings.name), settings.size + 1);
+try { console.log(JSON.stringify(settings), Array.isArray(settings.name), settings.size + 1); } catch (e) { console.log("a read of settings.name:", (e as Error).constructor.name); }
 set(settings, "extra", [3]);
 console.log(JSON.stringify(settings));

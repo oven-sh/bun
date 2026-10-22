@@ -1,3 +1,4 @@
+// `x!` tests nothing, and undefined and null pass every place written `number`: operators, built-ins, parameters, results, fields and typed arrays get them as they are.
 function say(label: string, make: () => unknown): void {
   try { console.log(label, String(make())); } catch (error) { console.log(label, "THROWS", (error as Error).constructor.name); }
 }

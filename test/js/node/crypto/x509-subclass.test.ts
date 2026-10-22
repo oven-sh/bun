@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { describe, expect, test } from "bun:test";
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";

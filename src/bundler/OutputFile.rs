@@ -228,54 +228,6 @@ impl OutputFile {
         }
     }
 
-    pub fn declaration_path(root_dir: &[u8], source: &[u8]) -> Option<Box<[u8]>> {
-        const EXTENSIONS: [(&[u8], &[u8]); 8] = [
-            (b".tsx", b".d.ts"),
-            (b".ts", b".d.ts"),
-            (b".mts", b".d.mts"),
-            (b".cts", b".d.cts"),
-            (b".jsx", b".d.ts"),
-            (b".js", b".d.ts"),
-            (b".mjs", b".d.mts"),
-            (b".cjs", b".d.cts"),
-        ];
-        let relative = resolve_path::relative_platform::<platform::Auto, false>(root_dir, source);
-        if relative.starts_with(b"..") || bun_paths::is_absolute(relative) {
-            return None;
-        }
-        let (stem, extension) = EXTENSIONS.iter().find_map(|(from, to)| Some((relative.strip_suffix(*from)?, *to)))?;
-        let mut path = [stem, extension].concat();
-        resolve_path::platform_to_posix_in_place::<u8>(&mut path);
-        Some(path.into_boxed_slice())
-    }
-
-    pub fn path_inside(outdir: &[u8], path: &[u8]) -> Box<[u8]> {
-        let inside = path.strip_prefix(outdir).map_or(path, |inside| inside.strip_prefix(bun_paths::SEP_STR.as_bytes()).unwrap_or(inside));
-        let mut inside = inside.to_vec();
-        resolve_path::platform_to_posix_in_place::<u8>(&mut inside);
-        inside.into_boxed_slice()
-    }
-
-    pub fn sound(source: &[u8], path: Box<[u8]>, text: Box<[u8]>, is_saved: bool) -> OutputFile {
-        let loader = if path.ends_with(b".json") { Loader::Json } else { Loader::Ts };
-        let mut file = OutputFile::declaration(source, path, text, is_saved);
-        (file.loader, file.output_kind) = (loader, OutputKind::Sound);
-        file
-    }
-
-    pub fn declaration(source: &[u8], path: Box<[u8]>, text: Box<[u8]>, is_saved: bool) -> OutputFile {
-        OutputFile::init(Options {
-            loader: Loader::Ts,
-            input_loader: Loader::Ts,
-            input_path: Box::from(source),
-            output_path: path,
-            size: Some(text.len()),
-            data: if is_saved { OptionsData::Saved(text.len()) } else { OptionsData::Buffer { data: text } },
-            output_kind: OutputKind::Declaration,
-            ..Default::default()
-        })
-    }
-
     /// `dest_path` is relative to `root_dir`.
     pub fn write_to_disk(&self, root_dir: Fd) -> Result<(), Error> {
         match &self.value {

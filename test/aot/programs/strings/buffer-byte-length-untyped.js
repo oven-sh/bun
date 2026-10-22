@@ -78,10 +78,6 @@ let sum = 0;
 for (let i = 0;i < 1000; i++)
   sum += ofText(texts[i % texts.length]) + ofUnknown(texts[(i + 3) % texts.length]);
 console.log(sum);
-const original = g.Buffer.byteLength;
-g.Buffer.byteLength = (s) => -s.length;
-console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts));
-g.Buffer.byteLength = original;
 console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts));
 const { byteLength } = Buffer;
 console.log(byteLength(latin1, "utf8"), byteLength.call(undefined, wide));

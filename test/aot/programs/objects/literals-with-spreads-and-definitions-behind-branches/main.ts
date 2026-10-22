@@ -39,8 +39,8 @@ for (const options of given) {
   console.log(JSON.stringify(makeUntyped(options)), Object.keys(makeUntyped(options)).join());
   console.log(JSON.stringify(onOneBranch(options, true)), JSON.stringify(onOneBranch(options, false)));
 }
-const before = count("operationAOTTypedFinishObjectLiteral");
+const before = count("operationAOTFinishObjectLiteral");
 let sum = 0;
 for (let i = 0; i < 3000; ++i) sum += make(given[i % given.length]).limit + makeUntyped(given[i % given.length]).limit;
-const asked = count("operationAOTTypedFinishObjectLiteral") - before;
+const asked = count("operationAOTFinishObjectLiteral") - before;
 console.log(sum, asked <= 30 ? "no literal was copied at its end" : asked + " literals were copied at their end");

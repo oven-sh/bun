@@ -74,10 +74,10 @@ const turn = () => {
   }
 };
 turn();
-const before = count("operationAOTTypedInstanceOfClass");
+const before = count("operationAOTInstanceOfClass");
 for (let i = 0; i < 300; i++) turn();
 for (let i = 0; i < 300; i++) inLoop(quiet);
-console.log("many", yes, count("operationAOTTypedInstanceOfClass") - before < 100);
+console.log("many", yes, count("operationAOTInstanceOfClass") - before < 100);
 const changed: any = Object.create(Leaf.prototype);
 console.log("before", isKnown(changed), isLeaf(changed));
 Object.setPrototypeOf(changed, Other.prototype);

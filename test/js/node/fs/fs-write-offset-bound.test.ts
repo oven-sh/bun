@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * fs.write()/fs.writeSync(fd, buffer, offset) only checked `offset` against
  * the buffer when a numeric `length` argument followed it. Without one, an

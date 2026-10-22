@@ -29,7 +29,7 @@ console.log(say(() => ({ hasOwnProperty() { return "mine"; } }).hasOwnProperty()
 console.log(say(() => { const o: any = {}; const f = o.hasOwnProperty; o.x = 1; return [f.call(o, "x"), f.call(o, "y"), f === hasOwn]; }), say(() => { const o: any = {}; o.hasOwnProperty = () => "set"; return o.hasOwnProperty("x"); }), say(() => { const list: any = []; list.slice = () => "set"; return list.slice(); }));
 console.log(classNames("a", { b: true, c: false, d: 1 }, ["e", { f: typed }], typed, partly, child, 0, null, 7));
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 const fresh: { q1: number; q2?: number } = { q1: 1 }, other: { r1: number; r2?: number } = { r1: 1 };
 const things: any[] = [fresh, JSON.parse('{"q1":1,"q9":2}')], others: any[] = [other, JSON.parse('{"r1":1,"r9":2}')], names = ["q1", "q2", "q3", "q9"], more = ["r1", "r2", "r3", "r9"];
 let before = entered(), total = 0;

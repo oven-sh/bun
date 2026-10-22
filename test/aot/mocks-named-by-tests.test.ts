@@ -1,6 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+
+setDefaultTimeout(120_000);
 
 const service = {
   "tsconfig.json": JSON.stringify({ compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] } }),
@@ -110,17 +112,16 @@ async function seen(cwd: string, args: string[]) {
   return { seen: (stdout + stderr).split("\n").filter(line => line.startsWith("see:")), exitCode };
 }
 
-const inPart = "what a spy returns lacks members that the type requires";
-
-test("bun test --aot holds what a spy returns to the type: " + inPart, async () => {
-  using dir = tempDir("mocks-named-by-tests", cases[inPart]);
-  await using ran = Bun.spawn({ cmd: [bunExe(), "test", "--aot", "./main.test.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
+// The compiler itself has no support for mocks: the debugging option that runs the tests as compiled code refuses them.
+test("bun test --debug-aot refuses a spy on an export of a compiled module", async () => {
+  using dir = tempDir("mocks-named-by-tests", cases["what a spy returns lacks members that the type requires"]);
+  await using ran = Bun.spawn({ cmd: [bunExe(), "test", "--debug-aot", "./main.test.ts"], cwd: String(dir), env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stderr, exitCode] = await Promise.all([ran.stderr.text(), ran.exited]);
-  expect(stderr).toContain("TypeError: expected ");
+  expect(stderr).toContain("TypeError: Cannot spy on 'load' because module exports can't be replaced in a compiled executable");
   expect(exitCode).toBe(1);
 }, 120_000);
 
-test.concurrent.each(Object.keys(cases).filter(name => name !== inPart))(
+test.concurrent.each(Object.keys(cases))(
   "bun test --aot prints what bun test prints: %s",
   async name => {
     using dir = tempDir("mocks-named-by-tests", cases[name]);

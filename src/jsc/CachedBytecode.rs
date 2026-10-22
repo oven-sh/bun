@@ -75,7 +75,6 @@ unsafe extern "C" {
         evaluated_module_count: usize,
         not_evaluated_modules: *const u64,
         not_evaluated_module_count: usize,
-        compile_ahead_of_time: bool,
     ) -> *mut BytecodeLinkEncoder;
     fn Bun__BytecodeLinkEncoder__destroy(this: *mut BytecodeLinkEncoder);
     fn Bun__BytecodeLinkEncoder__addModule(
@@ -106,37 +105,6 @@ unsafe extern "C" {
         depth: u32,
         names: &CodeNamesRef<'_>,
     ) -> bool;
-    fn Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(
-        this: *mut BytecodeLinkEncoder,
-        blob: *const u8,
-        blob_size: usize,
-        string_slots: *const u32,
-        string_slot_count: usize,
-        graph_module_indices: *const u32,
-        add_count: usize,
-    );
-    fn Bun__BytecodeLinkEncoder__setTypedProgram(
-        this: *mut BytecodeLinkEncoder,
-        program: *const u8,
-        size: usize,
-        modules: *const u32,
-        number_of_modules: usize,
-        replaced_strings: *const u8,
-        replaced_strings_size: usize,
-    ) -> bool;
-    fn Bun__AOT__readTypedProgram(program: *const u8, size: usize) -> *mut core::ffi::c_void;
-    fn Bun__AOT__optimizeTypedProgram(
-        prepared: *mut core::ffi::c_void,
-        replaced_strings: *const u8,
-        replaced_strings_size: usize,
-    );
-    fn Bun__AOT__discardTypedProgram(prepared: *mut core::ffi::c_void);
-    fn Bun__BytecodeLinkEncoder__setPreparedTypedProgram(
-        this: *mut BytecodeLinkEncoder,
-        prepared: *mut core::ffi::c_void,
-        modules: *const u32,
-        number_of_modules: usize,
-    ) -> bool;
     fn Bun__BytecodeLinkEncoder__finish(
         this: *mut BytecodeLinkEncoder,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -149,13 +117,6 @@ unsafe extern "C" {
         placed_hot_functions: *mut u32,
         functions_without_name: *mut u32,
     ) -> bool;
-    fn Bun__BytecodeLinkEncoder__takeBuildErrors(
-        this: *mut BytecodeLinkEncoder,
-        ctx: *mut core::ffi::c_void,
-        add: extern "C" fn(*mut core::ffi::c_void, *const u8, usize, *const u8, usize, u32, u32),
-    );
-    fn Bun__BytecodeLinkEncoder__aotImage(size: *mut usize) -> *const u8;
-    safe fn Bun__BytecodeLinkEncoder__freeAOTImage();
 }
 
 unsafe extern "C" {
@@ -357,7 +318,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     known_functions: &[u64],
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
-    compile_ahead_of_time: bool,
 ) -> NonNull<BytecodeLinkEncoder> {
     crate::initialize(crate::InitializeOptions::default());
     // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
@@ -372,7 +332,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
             evaluated_modules.len(),
             not_evaluated_modules.as_ptr(),
             not_evaluated_modules.len(),
-            compile_ahead_of_time,
         ))
     }
 }
@@ -459,96 +418,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
     }
 }
 
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_set_typed_program(
-    encoder: NonNull<BytecodeLinkEncoder>,
-    program: &[u8],
-    modules: &[u32],
-    replaced_strings: &[u8],
-) -> bool {
-    // SAFETY: `encoder` is live. C++ copies `modules` and `replaced_strings`. What it reads from
-    // `program` keeps pointing into it: the caller holds those bytes until `finish`.
-    unsafe {
-        Bun__BytecodeLinkEncoder__setTypedProgram(
-            encoder.as_ptr(),
-            program.as_ptr(),
-            program.len(),
-            modules.as_ptr(),
-            modules.len(),
-            replaced_strings.as_ptr(),
-            replaced_strings.len(),
-        )
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prepared_typed_program(
-    encoder: NonNull<BytecodeLinkEncoder>,
-    prepared: usize,
-    modules: &[u32],
-) -> bool {
-    // SAFETY: `encoder` is live. `prepared` came from `Bun__AOT__readTypedProgram` and is C++'s
-    // from here on. C++ copies `modules`.
-    unsafe {
-        Bun__BytecodeLinkEncoder__setPreparedTypedProgram(
-            encoder.as_ptr(),
-            prepared as *mut core::ffi::c_void,
-            modules.as_ptr(),
-            modules.len(),
-        )
-    }
-}
-
-pub fn start_typed_program(program: &[u8], waits_for_strings: bool) -> bun_ast::type_tags::EarlyEngine {
-    crate::initialize(crate::InitializeOptions::default());
-    let (address, size) = (program.as_ptr() as usize, program.len());
-    let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
-    let thread = std::thread::Builder::new()
-        .stack_size(64 << 20)
-        .spawn(move || {
-            bun_core::Output::Source::configure_named_thread(bun_core::zstr!("AOT engine"));
-            // SAFETY: `EarlyEngine` joins this thread when it is finished or dropped, and whoever
-            // holds it drops it ahead of the bytes: see `ProgramFacts::engine`.
-            let prepared = unsafe { Bun__AOT__readTypedProgram(address as *const u8, size) };
-            let strings = if waits_for_strings { receiver.recv().ok() } else { Some(Vec::new()) };
-            if let Some(strings) = strings {
-                // SAFETY: `prepared` is never null and only this thread has it. C++ copies what it
-                // takes from `strings`.
-                unsafe { Bun__AOT__optimizeTypedProgram(prepared, strings.as_ptr(), strings.len()) };
-            }
-            prepared as usize
-        })
-        .expect("failed to spawn the AOT engine thread");
-    // SAFETY: `EarlyEngine` calls this with what the thread returned, once, and only if nobody took
-    // it with `finish`.
-    bun_ast::type_tags::EarlyEngine::new(thread, waits_for_strings.then_some(sender), |prepared| unsafe {
-        Bun__AOT__discardTypedProgram(prepared as *mut core::ffi::c_void)
-    })
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_set_prelinked_module_graph(
-    encoder: NonNull<BytecodeLinkEncoder>,
-    blob: &[u8],
-    string_slots: &[u32],
-    graph_module_indices: &[u32],
-) {
-    // SAFETY: `encoder` is live. C++ copies `graph_module_indices`. It keeps `blob` and
-    // `string_slots` as they are and reads them in `finish`, which the one caller, `finish_linked`,
-    // calls while it borrows them.
-    unsafe {
-        Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(
-            encoder.as_ptr(),
-            blob.as_ptr(),
-            blob.len(),
-            string_slots.as_ptr(),
-            string_slots.len(),
-            graph_module_indices.as_ptr(),
-            graph_module_indices.len(),
-        )
-    }
-}
-
 /// The payload, each module's cache-entry offset in it (in the order of the successful `add_*` calls), where each of the
 /// payload's regions ends (`JSC::BytecodeLinkEncoder`), how many of the order files' hot functions are functions
 /// of this link, and for each module how many functions with code its names did not cover.
@@ -589,10 +458,6 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     // SAFETY: `bytes[..size]` is the CachedBytecode's payload, valid until the deref below.
     payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
-    let mut aot_image_size = 0usize;
-    // SAFETY: the out-param is an initialized local.
-    unsafe { Bun__BytecodeLinkEncoder__aotImage(&raw mut aot_image_size) };
-    Bun__BytecodeLinkEncoder__freeAOTImage();
     Some(bun_bundler::bytecode_order::LinkedPayload {
         payload,
         entry_offsets,
@@ -600,75 +465,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
         named_hot_functions,
         placed_hot_functions,
         functions_without_name,
-        has_aot_image: aot_image_size != 0,
     })
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_bytecode_link_encoder_take_build_errors(
-    encoder: NonNull<BytecodeLinkEncoder>,
-) -> Vec<bun_bundler::bytecode_order::AotBuildError> {
-    extern "C" fn add(
-        ctx: *mut core::ffi::c_void,
-        message: *const u8,
-        message_length: usize,
-        path: *const u8,
-        path_length: usize,
-        line: u32,
-        column: u32,
-    ) {
-        let copy = |bytes: *const u8, length: usize| {
-            if length == 0 {
-                return Vec::new();
-            }
-            // SAFETY: C++ passes `length` bytes that are live for the call, and `length` is not 0
-            // here.
-            unsafe { core::slice::from_raw_parts(bytes, length) }.to_vec()
-        };
-        let error = bun_bundler::bytecode_order::AotBuildError {
-            message: copy(message, message_length),
-            path: copy(path, path_length),
-            line,
-            column,
-        };
-        // SAFETY: `ctx` is the `&mut errors` passed below.
-        unsafe { (*ctx.cast::<Vec<bun_bundler::bytecode_order::AotBuildError>>()).push(error) };
-    }
-    let mut errors: Vec<bun_bundler::bytecode_order::AotBuildError> = Vec::new();
-    // SAFETY: `encoder` is live. `add` gets `errors` back as its `ctx`, during the call only.
-    unsafe {
-        Bun__BytecodeLinkEncoder__takeBuildErrors(encoder.as_ptr(), (&raw mut errors).cast(), add)
-    };
-    errors
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_check_module_syntax(
-    path: &[u8],
-    ascii_text: &[u8],
-    is_module: bool,
-) -> Option<(Vec<u8>, u32)> {
-    unsafe extern "C" {
-        fn Bun__checkModuleSyntax(
-            source_url: &BunString,
-            text: &BunString,
-            is_module: bool,
-            message: *mut BunString,
-            offset: *mut u32,
-        ) -> bool;
-    }
-    crate::initialize(crate::InitializeOptions::default());
-    let source_url = BunString::clone_utf8(path);
-    let text = BunString::clone_latin1(ascii_text);
-    let mut message = BunString::EMPTY;
-    let mut offset: u32 = 0;
-    // SAFETY: the four pointers are to locals that outlive the call, and C++ keeps none of them: the
-    // source it makes of `text` is gone when it returns. It writes `message` and `offset` only
-    // where it returns false.
-    let is_valid = unsafe {
-        Bun__checkModuleSyntax(&source_url, &text, is_module, &raw mut message, &raw mut offset)
-    };
-    (!is_valid).then(|| (message.to_owned_slice(), offset))
 }
 
 /// Frees the calling thread's bytecode-generation VM, if it made one.
@@ -689,91 +486,6 @@ pub(crate) fn __bun_jsc_encoder_string_table_take(
     let bytes = EncoderStringTable::serialize(table, hot_strings).into_boxed_slice();
     EncoderStringTable::destroy(table);
     bytes
-}
-
-#[unsafe(no_mangle)]
-pub(crate) fn __bun_jsc_build_program_data(
-    strings: &[u8],
-    original_position: &dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>,
-) -> Vec<u8> {
-    type Find = extern "C" fn(
-        *mut core::ffi::c_void,
-        u32,
-        u32,
-        u32,
-        *mut *const u8,
-        *mut usize,
-        *mut u32,
-        *mut u32,
-    ) -> bool;
-    unsafe extern "C" {
-        fn Bun__AOT__buildProgramData(
-            strings: *const u8,
-            strings_size: usize,
-            ctx: *mut core::ffi::c_void,
-            reserve: extern "C" fn(*mut core::ffi::c_void, usize),
-            append: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
-            find_ctx: *mut core::ffi::c_void,
-            find: Find,
-        );
-    }
-    extern "C" fn find(
-        ctx: *mut core::ffi::c_void,
-        entry_offset: u32,
-        line: u32,
-        column: u32,
-        name: *mut *const u8,
-        name_length: *mut usize,
-        line_in_source: *mut u32,
-        column_in_source: *mut u32,
-    ) -> bool {
-        // SAFETY: `ctx` is the `&original_position` passed below, and the four out-params are C++'s
-        // writable locals.
-        unsafe {
-            let original_position =
-                *ctx.cast::<&dyn Fn(u32, u32, u32) -> Option<(*const [u8], u32, u32)>>();
-            let Some((source, line, column)) = original_position(entry_offset, line, column) else {
-                return false;
-            };
-            *name = source.cast::<u8>();
-            *name_length = source.len();
-            *line_in_source = line;
-            *column_in_source = column;
-        }
-        true
-    }
-    extern "C" fn reserve(ctx: *mut core::ffi::c_void, size: usize) {
-        // SAFETY: `ctx` is the `&mut out` passed below.
-        unsafe { (*ctx.cast::<Vec<u8>>()).reserve_exact(size) };
-    }
-    extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, size: usize) {
-        if size == 0 {
-            return;
-        }
-        // SAFETY: `ctx` is the `&mut out` passed below. `bytes` is readable for `size` bytes,
-        // `reserve` has made room for as many, and the copy initializes them.
-        unsafe {
-            let out = &mut *ctx.cast::<Vec<u8>>();
-            out.reserve(size);
-            bun_core::copy_in_parallel(out.spare_capacity_mut().as_mut_ptr().cast::<u8>(), bytes, size);
-            out.set_len(out.len() + size);
-        };
-    }
-    let mut out: Vec<u8> = Vec::new();
-    // SAFETY: `strings` is valid for the call. The callbacks get `out` and `original_position` back
-    // as their contexts, during the call only.
-    unsafe {
-        Bun__AOT__buildProgramData(
-            strings.as_ptr(),
-            strings.len(),
-            (&raw mut out).cast(),
-            reserve,
-            append,
-            core::ptr::from_ref(&original_position).cast_mut().cast(),
-            find,
-        )
-    };
-    out
 }
 
 #[unsafe(no_mangle)]

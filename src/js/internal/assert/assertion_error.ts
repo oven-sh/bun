@@ -16,7 +16,7 @@ const ArrayPrototypePop = Array.prototype.pop;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const StringPrototypeRepeat = String.prototype.repeat;
 const StringPrototypeSlice = String.prototype.slice;
-const StringPrototypeSplit = String.prototype.split;
+const StringPrototypeSplit: (this: string, separator: string, limit?: number) => string[] = String.prototype.split;
 
 declare namespace Internal {
   function printSimpleMyersDiff(actual: string, expected: string): string;
@@ -256,10 +256,10 @@ function addEllipsis(string) {
 
 class AssertionError extends Error {
   declare diff: string;
-  generatedMessage;
-  actual;
-  expected;
-  operator;
+  generatedMessage: boolean;
+  actual: unknown;
+  expected: unknown;
+  operator!: string;
 
   constructor(options) {
     validateObject(options, "options");
@@ -415,7 +415,7 @@ class AssertionError extends Error {
     return `${this.name} [${this.code}]: ${this.message}`;
   }
 
-  [(inspect as any).custom](recurseTimes, ctx) {
+  [inspect.custom](recurseTimes, ctx) {
     // Long strings should not be fully inspected.
     const tmpActual = this.actual;
     const tmpExpected = this.expected;

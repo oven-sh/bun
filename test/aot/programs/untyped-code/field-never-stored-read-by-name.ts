@@ -54,9 +54,9 @@ const read = (reply: any) => {
   if (reply.fourth === undefined) undefinedOnes++;
 };
 for (let i = 0; i < replies.length; i++) read(replies[i]);
-const before = count("operationAOTGetByNameAndCache");
+const before = count("operationAOTGetByIdAndCache");
 for (let turn = 0; turn < 100; turn++) for (let i = 0; i < replies.length; i++) read(replies[i]);
-console.log(undefinedOnes, count("operationAOTGetByNameAndCache") - before < 100);
+console.log(undefinedOnes, count("operationAOTGetByIdAndCache") - before < 100);
 
 const inherited: any = make("/");
 Object.setPrototypeOf(inherited, { fourth: "from the prototype", size: 1, other: "inherited" });

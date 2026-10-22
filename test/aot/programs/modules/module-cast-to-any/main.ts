@@ -1,7 +1,7 @@
 // A typed module that is required and looked at as `any`: what is read from it is read as a binding, and is `any` all the same: what the program does with it is held to nothing, and a value that is taken for a type again is given from outside, as it was.
-// IR= 0 reads GetById|GetByVal|DefineField|CallMethod|MakeModuleNamespace
-// IR= 0 takenForItsTypeAgain GetByVal|DefineField|CallMethod|MakeModuleNamespace
-// IR= 0 calls GetById|GetByVal|DefineField|CallMethod|MakeModuleNamespace
+// IR= 0 reads PropGet|ElemGet|(Prop|Elem)Define|CallMethod|ModuleNamespace
+// IR= 0 takenForItsTypeAgain ElemGet|(Prop|Elem)Define|CallMethod|ModuleNamespace
+// IR= 0 calls PropGet|ElemGet|(Prop|Elem)Define|CallMethod|ModuleNamespace
 import type { Root } from "./state";
 import "./state";
 function reads() {

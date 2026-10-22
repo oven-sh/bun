@@ -1,13 +1,15 @@
+declare const aotRuntimeCounters: () => string;
+const writersFailed = () => Number(/(\d+)\tJSONWriterFailed/.exec(aotRuntimeCounters())![1]);
 declare const aotOperationCount: (name: string) => number;
 interface Address { city: string; zip: string }
 interface User { id: number; name: string; address: Address }
 interface Team { name: string; lead: User; members: User[] }
 function measure(label: string, run: () => string): void {
-    const finished = aotOperationCount("operationAOTTypedJSONFinish");
-    const values = aotOperationCount("operationAOTTypedJSONAppendValue");
+    const finished = (aotOperationCount("operationAOTJSONWriterFinish") - writersFailed());
+    const values = aotOperationCount("operationAOTJSONAppendValue");
     let text = "";
     for (let i = 0; i < 100; i++) text = run();
-    console.log(label + ": " + text + ": " + (aotOperationCount("operationAOTTypedJSONFinish") - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTTypedJSONAppendValue") - values) + " values handed to the runtime");
+    console.log(label + ": " + text + ": " + ((aotOperationCount("operationAOTJSONWriterFinish") - writersFailed()) - finished) + " texts finished by compiled code, " + (aotOperationCount("operationAOTJSONAppendValue") - values) + " values handed to the runtime");
 }
 const users: User[] = [];
 for (let i = 0; i < 2; i++) users.push({ id: i, name: "user " + i, address: { city: "Springfield", zip: "0" + i } });

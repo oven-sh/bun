@@ -356,28 +356,3 @@ describe.concurrent("formats that show a hint", () => {
     expect(stdout).not.toContain("overwritten");
   });
 });
-
-describe.concurrent("bun/aot", () => {
-  const project = { "tsconfig.json": `{ "compilerOptions": { "strict": true } }`, "bunfig.toml": "[lint]\naot = true\n" };
-
-  test("where an any comes from", async () => {
-    const code = `declare function double(n: number): number;\nconst body = JSON.parse("{}");\ndouble(body.visits);\nexport {};\n`;
-    expect(await hints(code, "a.ts", project)).toEqual([
-      'bun/aot-no-any-to-typed 3: It comes from `JSON.parse("{}")` at line 2. Give it a type there, or validate it.',
-    ]);
-  });
-
-  test("an any with no identifiable source", async () => {
-    const code = `declare function double(n: number): number;\ndouble(JSON.parse("1"));\nexport {};\n`;
-    expect(await hints(code, "a.ts", project)).toEqual([
-      "bun/aot-no-any-to-typed 2: Give the value a type, or validate it where it comes in.",
-    ]);
-  });
-
-  test("outside data", async () => {
-    const code = `interface User {\n  id: number;\n}\nexport const user = JSON.parse("{}") as User;\n`;
-    expect(await hints(code, "a.ts", project)).toEqual([
-      "bun/aot-outside-data 4: Validate it here, once, and build a typed value from it.",
-    ]);
-  });
-});

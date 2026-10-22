@@ -1,5 +1,5 @@
 // `rows.map(row => ({ .. }))` where Comment[] is expected: the literal, and the literal nested in it, are born as Comment and UserRef, not as anonymous layouts of their own. So a later `{ ...comment, replies: [] }` copies within one family of layouts.
-// IR+ : Comment\.\d+ = NewObjectWithShape
+// IR+ ^layout (L\d+) .*name="Comment" [\s\S]*: =?\1 = NewObject 
 interface Row { id: number; parentId: number | null; authorLogin: string; authorName: string; body: string }
 interface UserRef { login: string; name: string }
 interface Comment { id: number; parentId: number | null; author: UserRef; body: string }

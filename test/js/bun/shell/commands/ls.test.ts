@@ -86,7 +86,7 @@ describe.concurrent("bunshell ls", () => {
   describe("basic flags", () => {
     test("no arguments (current directory)", async () => {
       await TestBuilder.command`ls`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["a", "b", "c", "foo"].sort()))
         .run();
     });
@@ -95,7 +95,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-show-all", {});
       await $`touch .hidden regular; mkdir .hidden-dir`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -a`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => {
           expect(sortedLsOutput(s)).toContain(".");
           expect(sortedLsOutput(s)).toContain("..");
@@ -109,7 +109,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-almost-all", {});
       await $`touch .hidden regular`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -A`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).not.toContain("."))
         .stdout(s => expect(sortedLsOutput(s)).not.toContain(".."))
         .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
@@ -118,12 +118,12 @@ describe.concurrent("bunshell ls", () => {
     });
 
     test("-d flag lists directories themselves", async () => {
-      await TestBuilder.command`ls -d foo`.setTempdir(String(tempdir)).stdout("foo\n").run();
+      await TestBuilder.command`ls -d foo`.setTempdir(tempdir).stdout("foo\n").run();
     });
 
     // test("-1 flag lists one file per line", async () => {
     //   await TestBuilder.command`ls -1`
-    //     .setTempdir(String(tempdir))
+    //     .setTempdir(tempdir)
     //     .stdout(s => expect(s.split("\n").filter(l => l.trim())).toEqual(["a", "b", "c", "foo"]))
     //     .run();
     // });
@@ -132,7 +132,7 @@ describe.concurrent("bunshell ls", () => {
   describe("multiple arguments", () => {
     test("multiple files", async () => {
       await TestBuilder.command`ls a b c`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["a", "b", "c"]))
         .run();
     });
@@ -141,14 +141,14 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-multi-dirs", {});
       await $`mkdir dir1 dir2; touch dir1/file1 dir2/file2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls dir1 dir2`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["dir1:", "dir2:", "file1", "file2"]))
         .run();
     });
 
     test("mixed files and directories", async () => {
       await TestBuilder.command`ls a foo`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["a", "foo:", "a", "b", "c"].sort()))
         .run();
     });
@@ -158,14 +158,14 @@ describe.concurrent("bunshell ls", () => {
     test("empty directory", async () => {
       await using tempdir = tempDir("ls-empty", {});
       await $`mkdir empty`.quiet().throws(true).cwd(tempdir);
-      await TestBuilder.command`ls empty`.setTempdir(String(tempdir)).stdout("").run();
+      await TestBuilder.command`ls empty`.setTempdir(tempdir).stdout("").run();
     });
 
     test("directory with only hidden files using -a", async () => {
       await using tempdir = tempDir("ls-hidden-only-a", {});
       await $`mkdir hidden-only; touch hidden-only/.hidden1 hidden-only/.hidden2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -a hidden-only`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual([".", "..", ".hidden1", ".hidden2"]))
         .run();
     });
@@ -175,7 +175,7 @@ describe.concurrent("bunshell ls", () => {
       const longName = "a".repeat(100);
       await $`touch ${longName}`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain(longName))
         .run();
     });
@@ -184,7 +184,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-spaces", {});
       await $`touch "file with spaces"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain("file with spaces"))
         .run();
     });
@@ -193,7 +193,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-special", {});
       await $`touch "file-with-!@#$%^&*()"`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain("file-with-!@#$%^&*()"))
         .run();
     });
@@ -204,7 +204,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-ra", {});
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -Ra`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
         .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden-sub"))
         .run();
@@ -214,7 +214,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-ra-caps", {});
       await $`mkdir sub; touch .hidden sub/.hidden-sub`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -RA`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden"))
         .stdout(s => expect(sortedLsOutput(s)).toContain(".hidden-sub"))
         .stdout(s => expect(sortedLsOutput(s)).not.toContain("."))
@@ -255,7 +255,7 @@ describe.concurrent("bunshell ls", () => {
       await using tempdir = tempDir("ls-d-multi", {});
       await $`mkdir dir1 dir2`.quiet().throws(true).cwd(tempdir);
       await TestBuilder.command`ls -d dir1 dir2`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["dir1", "dir2"]))
         .run();
     });
@@ -280,7 +280,7 @@ describe.concurrent("bunshell ls", () => {
 
     test("mixed existent and non-existent files", async () => {
       await TestBuilder.command`ls a nonexistent`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .exitCode(1)
         .stdout(s => expect(sortedLsOutput(s)).toContain("a"))
         .stderr(s => expect(s).toContain("nonexistent: No such file or directory"))
@@ -308,14 +308,14 @@ describe.concurrent("bunshell ls", () => {
         .throws(true)
         .cwd(tempdir);
       await TestBuilder.command`ls restricted`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .exitCode(1)
         .stderr(s => expect(s).toContain("Permission denied"))
         .run();
       // A symlink to a directory that cannot be opened reports the open
       // error. It is not listed by name like a symlink to a file.
       await TestBuilder.command`ls link-to-restricted`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .exitCode(1)
         .stdout("")
         .stderr(s => expect(s).toContain("Permission denied"))
@@ -336,7 +336,7 @@ describe.concurrent("bunshell ls", () => {
         .cwd(tempdir);
 
       await TestBuilder.command`ls -R level1`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .exitCode(1)
         .stdout(s => expect(sortedLsOutput(s)).toContain("file1"))
         .stdout(s => expect(sortedLsOutput(s)).toContain("file2"))
@@ -356,7 +356,7 @@ describe.concurrent("bunshell ls", () => {
         .exitCode(0)
         .stdout("broken-link\n")
         .stderr("")
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .run();
       await TestBuilder.command`ls -l broken-link`
         .exitCode(0)
@@ -366,7 +366,7 @@ describe.concurrent("bunshell ls", () => {
           expect(s).toEndWith(" broken-link\n");
         })
         .stderr("")
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .run();
     });
 
@@ -377,19 +377,19 @@ describe.concurrent("bunshell ls", () => {
         .exitCode(0)
         .stdout("broken-link\n")
         .stderr("")
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .run();
     });
 
     test.if(isPosix)("symlink loop", async () => {
       await using tempdir = tempDir("ls-symlink-loop", {});
       await $`ln -s loop loop`.quiet().throws(true).cwd(tempdir);
-      await TestBuilder.command`ls loop`.exitCode(0).stdout("loop\n").stderr("").setTempdir(String(tempdir)).run();
+      await TestBuilder.command`ls loop`.exitCode(0).stdout("loop\n").stderr("").setTempdir(tempdir).run();
       await TestBuilder.command`ls loop/x`
         .exitCode(1)
         .stdout("")
         .stderr("ls: loop/x: Too many levels of symbolic links\n")
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .run();
     });
 
@@ -469,7 +469,7 @@ describe.concurrent("bunshell ls", () => {
         .throws(true)
         .cwd(tempdir);
       await TestBuilder.command`ls -RA .`
-        .setTempdir(String(tempdir))
+        .setTempdir(tempdir)
         .stdout(s => expect(sortedLsOutput(s)).toEqual(["./foo:", "a", "b", "broken-link", "c", "foo"]))
         .run();
     });

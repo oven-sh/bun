@@ -7,7 +7,7 @@ class Puppy extends Dog { age = 1; }
 function makers(value, turns) { let maker; for (let i = 0; i < turns; i++) maker = value.constructor; return maker; }
 function kinds(value, turns) { let text = ""; for (let i = 0; i < turns; i++) text = value.constructor.name; return text; }
 function copies(value, turns) { let copy; for (let i = 0; i < turns; i++) copy = new value.constructor(); return copy; }
-const asked = () => count("operationAOTGetByNameAndCache");
+const asked = () => count("operationAOTGetByIdAndCache");
 const receivers = [new Animal(), new Dog(), new Puppy()];
 let most = 0;
 const results = [];

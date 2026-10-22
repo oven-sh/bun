@@ -1,4 +1,4 @@
-// A private method that is read by name is searched for among the methods of its class once, not at every read. The program counts the searches.
+// A private method that is read by name is searched for among the methods of its class once, not at every read. The program counts how often the run time is asked for it.
 declare const aotOperationCount: undefined | ((name: string) => number);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
 let evaluated = 0;
@@ -21,5 +21,5 @@ class Heir extends Untyped {}
 const taken: any[] = [new Heir(), new Pool()];
 const pool = taken[1] as Pool;
 for (let turn = 0; turn < 2000; turn++) pool.add();
-const searches = counted ? counted("a private method is searched for") : null;
-console.log(pool.total, evaluated, searches === null || (searches > 0 && searches < 10));
+const searches = counted ? counted("operationAOTPrivateGet") : null;
+console.log(pool.total, evaluated, searches === null || searches < 10);

@@ -10,8 +10,9 @@ import { dirname, join } from "path";
 import { asLibraries, asMain, settings, texts } from "./generated/file-kinds";
 import { slot, spawned, unsupported, wanted } from "./run-programs";
 
-// By `<role>: <setting>`, the cells in which --aot answers as neither of the two: none today. A fix takes its cells out of this list.
-const alone: Record<string, string[]> = {};
+// By `<role>: <setting>`, the cells in which --aot answers as neither of the two. A fix takes its cells out of this list.
+// On purpose: an imported .cjs file in whose text nothing shows that it is CommonJS is sloppy, as in Node.js (docs/bundler/aot-compatibility.mdx, "Sloppy-mode code").
+const alone: Record<string, string[]> = { "imported: cjs": ["none", "L", "C", "LC"] };
 
 const root = String(tempDir("aot-kinds-of-files", {}));
 afterAll(() => rmSync(root, { recursive: true, force: true }));

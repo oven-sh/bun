@@ -30,6 +30,8 @@ use bun_jsc::AbortSignalRef;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
+use bun_jsc::proven_return::{Proven, return_kind::{self, Instance}};
+use crate::generated_classes::js_Request as js_typed;
 use bun_ptr::weak_ptr::WeakPtrData;
 use core::mem::ManuallyDrop;
 
@@ -53,6 +55,9 @@ const _: () = {
         }
         fn from_js_direct(value: bun_jsc::JSValue) -> Option<*mut Self> {
             js::from_js_direct(value).map(|p| p.as_ptr())
+        }
+        fn is_wrapper(value: bun_jsc::JSValue) -> bool {
+            js::is_wrapper(value)
         }
         fn to_js(self, global: &bun_jsc::JSGlobalObject) -> bun_jsc::JSValue {
             // Route through the inherent `Request::to_js` so generic
@@ -148,11 +153,15 @@ impl crate::webcore::body::BodyOwnerJs for Request {
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
-        js_gen::body_get_cached(this)
+        js_typed::body_get_cached(this)
     }
     #[inline]
-    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: JSValue) {
-        js_gen::body_set_cached(this, global, value)
+    fn body_set_cached(this: JSValue, global: &JSGlobalObject, value: body::ProvenBody) {
+        js_typed::body_set_cached(this, global, value)
+    }
+    #[inline]
+    fn body_clear_cached(this: JSValue, global: &JSGlobalObject) {
+        js_typed::body_clear_cached(this, global)
     }
     #[inline]
     fn stream_get_cached(this: JSValue) -> Option<JSValue> {
@@ -186,20 +195,6 @@ impl BodyMixin for Request {
     ) -> bun_jsc::JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
         Request::get_form_data_encoding(self)
     }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Request__fetchHeadersOrParsedRequest(request: &Request, parsed_request: &mut *mut core::ffi::c_void) -> *mut FetchHeaders {
-    if let Some(headers) = request.headers.get().as_ref() {
-        return headers.as_ptr();
-    }
-    *parsed_request = request.request_context.get_request().map_or(core::ptr::null_mut(), |parsed| parsed.cast());
-    core::ptr::null_mut()
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Request__ensureFetchHeaders(request: &Request, global_this: &JSGlobalObject) -> *mut FetchHeaders {
-    request.ensure_fetch_headers(global_this).map_or(core::ptr::null_mut(), |headers| headers.as_ptr())
 }
 
 // ─── header accessors & simple getters ──────────────────────────────────────
@@ -326,8 +321,8 @@ impl Request {
     }
 
     /// This should only be called by the JS code. use getFetchHeaders to get the current headers or ensureFetchHeaders to get the headers and create them if they don't exist.
-    pub(crate) fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(self.ensure_fetch_headers(global_this)?.to_js(global_this))
+    pub(crate) fn get_headers(&self, global_this: &JSGlobalObject) -> JsResult<Proven<Instance<FetchHeaders>>> {
+        Ok(Proven::from_headers(self.ensure_fetch_headers(global_this)?, global_this))
     }
 
     pub(crate) fn clone_headers(
@@ -623,7 +618,7 @@ impl Request {
             writer.write_str(
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>headers<d>:<r> ").as_ref(),
             )?;
-            let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
+            let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?.value();
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
                     bun_jsc::FormatTag::Private,
@@ -677,20 +672,20 @@ impl Request {
         Ok(())
     }
 
-    pub(crate) fn get_cache(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_cache_mode_to_js(self.flags.cache, global_this)
+    pub(crate) fn get_cache(&self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::expect(fetch_cache_mode_to_js(self.flags.cache, global_this))
     }
 
-    pub(crate) fn get_credentials(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        global_this.common_strings().include()
+    pub(crate) fn get_credentials(_this: &Self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::from_common_string(bun_jsc::CommonString::FetchInclude, global_this)
     }
 
-    pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_destination(_this: &Self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::empty(global_this)
     }
 
-    pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_integrity(_this: &Self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::empty(global_this)
     }
 
     /// The `AbortSignal` this request was constructed with or lazily created
@@ -699,27 +694,27 @@ impl Request {
         self.signal.get().as_ref()
     }
 
-    pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_signal(&self, global_this: &JSGlobalObject) -> Proven<Instance<AbortSignal>> {
         // Already have a C++ instance
         if let Some(signal) = self.signal.get() {
-            return signal.to_js(global_this);
+            return Proven::from_signal(signal, global_this);
         }
         // Lazy create default signal
-        let js_signal = AbortSignal::create(global_this);
-        js_signal.ensure_still_alive();
-        if let Some(signal) = AbortSignal::ref_from_js(js_signal) {
+        let js_signal = Proven::<Instance<AbortSignal>>::create(global_this);
+        js_signal.value().ensure_still_alive();
+        if let Some(signal) = AbortSignal::ref_from_js(js_signal.value()) {
             // `ref_from_js` already bumped the C++ refcount.
             self.signal.set(Some(signal));
         }
         js_signal
     }
 
-    pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> JSValue {
-        self.method.to_js(global_this)
+    pub(crate) fn get_method(&self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::expect(self.method.to_js(global_this))
     }
 
-    pub(crate) fn get_mode(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_request_mode_to_js(self.flags.mode, global_this)
+    pub(crate) fn get_mode(&self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::expect(fetch_request_mode_to_js(self.flags.mode, global_this))
     }
 
     pub(crate) fn finalize_without_deinit(&mut self) {
@@ -759,27 +754,27 @@ impl Request {
         }
     }
 
-    pub(crate) fn get_redirect(&self, global_this: &JSGlobalObject) -> JSValue {
-        fetch_redirect_to_js(self.flags.redirect, global_this)
+    pub(crate) fn get_redirect(&self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::expect(fetch_redirect_to_js(self.flags.redirect, global_this))
     }
 
-    pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_referrer(&self, global_object: &JSGlobalObject) -> Proven<return_kind::String> {
         if let Some(headers_ref) = self.headers_mut().as_mut() {
             if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return referrer.to_js(global_object);
+                return Proven::expect(referrer.to_js(global_object));
             }
         }
 
-        JSValue::js_empty_string(global_object)
+        Proven::empty(global_object)
     }
 
-    pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        JSValue::js_empty_string(global_this)
+    pub(crate) fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> Proven<return_kind::String> {
+        Proven::empty(global_this)
     }
 
-    pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<Proven<return_kind::String>> {
         self.ensure_url()?;
-        self.url.get().to_js(global_object)
+        Proven::from_string(self.url.get(), global_object)
     }
 
     pub(crate) fn size_of_url(&self) -> usize {
@@ -1099,7 +1094,7 @@ impl Request {
             let explicit_check = values_to_try.len() == 2
                 && matches!(
                     value_type,
-                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::Object
+                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::CompiledObject
                 )
                 && values_to_try[1].js_type() == bun_jsc::JSType::DOMWrapper;
             if value_type == bun_jsc::JSType::DOMWrapper {

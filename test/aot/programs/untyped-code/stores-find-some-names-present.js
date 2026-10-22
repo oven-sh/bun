@@ -47,7 +47,7 @@ for (let i = 0; i < 3000; i++) {
   said.add(describe(new Response("r")));
   said.add(describe(new State(i & 3, null)));
 }
-const learnt = count("operationAOTTypedTryPutProperties:some-names-are-there");
+const learnt = count("operationAOTTryPutProperties");
 console.log([...said].join("\n"));
 console.log(!counts || (learnt >= 1 && learnt <= 300) ? "the stores were learnt together" : "stores of which some find their names there were learnt " + learnt + " times");
 

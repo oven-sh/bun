@@ -1,4 +1,4 @@
-// Parsed JSON is stored into the fields of an object that the program creates.
+// Parsed JSON is stored into the fields of an object that the program creates. What fits is stored as it is. A number under `id: string` and a string under `flag: boolean` throw a TypeError where typed code takes them, and what was stored until then stays.
 type Def = { id: string; held?: () => boolean }
 type Plan = { slot: Def | null; overflow: number }
 type State = { winner: Def | null; rule: { flag: boolean } | null; released: boolean; label: string | null }
@@ -34,7 +34,7 @@ function show(plan: Plan) {
 show(choose(made, { flag: true }))
 show(choose(made, options))
 show(choose(given, options))
-show(choose(given.slice(1), { flag: false }))
+try { show(choose(given.slice(1), { flag: false })) } catch (e) { console.log("a number for the id:", (e as Error).constructor.name) }
 state.rule = null
-show(choose(given.slice(1), JSON.parse('{"flag":"yes"}')))
+try { show(choose(given.slice(1), JSON.parse('{"flag":"yes"}'))) } catch (e) { console.log("a string for the flag:", (e as Error).constructor.name) }
 show(choose([], options))

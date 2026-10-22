@@ -1,1 +1,0 @@
-A bug: plain Bun throws in none of the nine cases; under --aot the last one throws a TypeError, and where the layouts are closed the others throw too: Cannot redefine property: a required field cannot be made not enumerable, because a typed copy by spread would then lack it.

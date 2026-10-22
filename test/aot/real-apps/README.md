@@ -21,7 +21,7 @@ It prints one line per project and writes `<work folder>/results.json`. A test c
 
 On Linux every step except `fetch` runs in `jail.sh`: its own user, mount, process and network namespaces, loopback only, an empty home directory, and the project as an overlay whose writes are thrown away. Run third-party code nowhere else. `--no-jail` is for your own projects.
 
-`programs/` holds small programs in the shape of code that these projects contain, which TypeScript accepts and plain Bun runs, and which `--aot` ends with a `TypeError` in one mode or another. `programs.test.ts` runs each one plain, under `bun run --aot` and as an executable. Where the output is not plain Bun's, the test is `test.failing`: it turns red when the behavior changes, and the entry in its table is then corrected.
+`programs/` holds small programs in the shape of code that these projects contain, which TypeScript accepts and plain Bun runs, and in which a value does not fit the type it is declared with. `programs.test.ts` runs each one plain, under `bun run --aot` and as an executable: all three print the same.
 
 `test-runs.test.ts` holds small projects in the shape of these repositories where what `bun test --aot` does with a test file depends on the other test files of the run. Each test states a property that does not hold yet, as `test.failing`.
 

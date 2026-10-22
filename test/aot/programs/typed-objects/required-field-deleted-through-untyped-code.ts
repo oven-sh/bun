@@ -1,3 +1,4 @@
+// A required field of a typed object is deleted through `any`, an untyped function, a computed name and Reflect. Every delete succeeds, and a typed read afterwards gives undefined.
 class Counter {
   count = 1;
   label = "c";

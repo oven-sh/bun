@@ -1,3 +1,4 @@
+// Elements of a `number[]` read where any value is taken: as text, into `unknown`, into a Map, as an argument. Numbers, holes and reads past the end give what plain Bun gives. A string that got into the array through `unknown[]` throws a TypeError where the element is read.
 declare const console: { log(...values: unknown[]): void };
 function show(v: unknown): string { return typeof v + ":" + (Object.is(v, -0) ? "-0" : String(v)); }
 const given: number[] = [0, -0, 1, -1, 42, 2147483647, -2147483648, 2147483648, 4294967296, 0.5, -2.5, 1e21, 5e-324, Infinity, -Infinity, NaN];

@@ -2,3 +2,4 @@
 # trimmed-against-whole.test.ts does not fail for a difference that a line describes:
 #   program | <corpus> <name> | what is wrong
 #   says | <regular expression that what the trimmed executable prints matches> | what is wrong
+says | it isn't in this executable\. Import it by name | a native built-in module (node:sqlite, bun:jsc) asked for by a computed name loads without --trim and is left out with it

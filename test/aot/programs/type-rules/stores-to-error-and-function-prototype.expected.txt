@@ -1,2 +1,2 @@
 Error.prototype.name: X X: m
-Function.prototype.mine: THROWS TypeError: Cannot change 'mine' of Function.prototype: built-ins are locked in a program compiled with --aot (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+Function.prototype.mine: THROWS TypeError

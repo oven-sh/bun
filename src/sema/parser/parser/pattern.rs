@@ -29,7 +29,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         pat
     }
 
-    /// `parseBindingIdentifierWithDiagnostic`, at a token that is none.
+    /// `parseBindingIdentifierWithDiagnostic`, at a token that isn't a binding identifier.
     #[cold]
     #[track_caller]
     pub(crate) fn missing_binding_identifier(&mut self, code_of_private_name: u32) -> PatId {
@@ -51,7 +51,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
+        let saved = self.enter_context(0, self.disallow_in_if_cleared_by_brackets());
         let base = self.s.pat_elems.len();
         let lists = self.enter_list(ListKind::ArrayBindingElements);
         while self.is_in_list(T::CloseBracket) && self.is_at_element(ListKind::ArrayBindingElements)
@@ -83,16 +83,11 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 });
                 // `checkGrammarBindingElement`
                 if is_rest && self.token() == T::Comma && self.peek() == T::CloseBracket {
-                    self.flag(
-                        DiagnosticKind::Grammar,
-                        1013,
-                        (self.lx.start, self.lx.end),
-                        &[],
-                    );
+                    self.flag_early_error(1013, (self.lx.start, self.lx.end), &[]);
                 }
             }
             if !self.eat(T::Comma)
-                && !self.goes_on_without_comma(ListKind::ArrayBindingElements, element)
+                && !self.continues_without_comma(ListKind::ArrayBindingElements, element)
             {
                 break;
             }
@@ -112,7 +107,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
         let start = self.pos();
         self.next();
-        let saved = self.enter_context(0, self.disallow_in_if_brackets_end_it());
+        let saved = self.enter_context(0, self.disallow_in_if_cleared_by_brackets());
         let base = self.s.pat_props.len();
         let lists = self.enter_list(ListKind::ObjectBindingElements);
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::ObjectBindingElements)
@@ -140,14 +135,14 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             };
             self.s.pat_props.push(property);
             if !self.eat(T::Comma) {
-                if self.goes_on_without_comma(ListKind::ObjectBindingElements, element) {
+                if self.continues_without_comma(ListKind::ObjectBindingElements, element) {
                     continue;
                 }
                 break;
             }
             if property.is_rest && self.token() == T::CloseBrace {
                 let at = (self.prev_end() - 1, self.prev_end());
-                self.flag(DiagnosticKind::Grammar, 1013, at, &[]);
+                self.flag_early_error(1013, at, &[]);
             }
         }
         self.leave_list(lists);
@@ -158,7 +153,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_pat(PatKind::Object(properties), start, end)
     }
 
-    /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: its first token.
+    /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: the start of its first token.
     #[inline(always)]
     fn object_binding_element(&mut self, pos: u32) -> PatProp {
         let is_identifier = self.is_binding_identifier();
@@ -168,13 +163,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if matches!(key, PropKey::Private(_)) {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
         }
-        // In a type nothing asks whether the name is in quotes.
+        // In a type, nothing needs to know whether the name was quoted.
         if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
             name_kind = NameKind::Identifier;
         }
-        // `name.Text()` ends with the `n`.
-        if let Some(written) = bigint.filter(|_| !self.options.bigint_names_are_digits) {
-            key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
+        // `name.Text()` keeps the `n` suffix.
+        if let Some(bigint_text) = bigint {
+            key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(bigint_text)));
         }
         let value = if is_identifier && self.token() != T::Colon {
             match key {
@@ -201,15 +196,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
-    /// The same after `...`, where `checkGrammarBindingElement` reports a property name and an
-    /// initializer.
+    /// `object_binding_element` after `...`, where `checkGrammarBindingElement` reports a property
+    /// name or an initializer.
     #[cold]
     #[inline(never)]
     fn rest_binding_element(&mut self, pos: u32) -> PatProp {
         let is_identifier = self.is_binding_identifier();
         let mut property = self.object_binding_element(pos);
         property.is_rest = true;
-        // `...a`: the identifier is the binding, and there is no property name.
+        // `...a`: the identifier is the binding, and there's no property name.
         let value = self.f.pats.get(property.value.idx());
         if is_identifier && value.is_some_and(|pat| pat.pos == property.key_pos) {
             property.key = PropKey::None;

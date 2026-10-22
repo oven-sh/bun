@@ -1,6 +1,0 @@
-error: TS100014: This always fails under --aot: `String.prototype.poop` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Map.prototype.poop` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Promise.prototype.poop` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Function.prototype.poop` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Object.prototype.poop` is assigned: built-in prototypes are frozen.
-error: TS100014: This always fails under --aot: `Object.defineProperty(Object.prototype, ..)` throws: built-in prototypes are frozen.

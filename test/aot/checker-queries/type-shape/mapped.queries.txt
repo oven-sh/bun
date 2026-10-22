@@ -1,0 +1,4 @@
+# A resolved mapped type is an object; a generic one is a type variable without a constraint.
+mapped.ts:3 shape `Partial<Config>` = Object
+mapped.ts:4 shape `Record<"a", number>` = Object
+mapped.ts:5 shape `{ [K in keyof T]: T[K] }` = TypeVariable(none)

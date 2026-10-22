@@ -1,1 +1,0 @@
-It prints `1 1 false 2`: the written name reaches the compiled module, the computed one makes the host load the file from the disk a second time.

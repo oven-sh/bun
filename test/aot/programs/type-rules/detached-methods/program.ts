@@ -49,9 +49,9 @@ const borrower = { count: 1000, step: 1, bump: c.bump, describe: fast.describe }
 attempt("borrowed by assignment", () => borrower.bump())
 attempt("borrowed by assignment, with an argument", () => borrower.describe("b"))
 console.log(show(plain), show(swapped), show(borrower), c.count)
-// A static method takes the class, or one that extends it.
+// A static method takes any `this` too.
 const note = Counter.note
 attempt("static, a literal", () => note.call({ tally: 41 }))
-// A cast copies plain data only: this one inherits.
+// A cast lets any object through as it is: this one inherits.
 function area(this: { w: number; h: number }): number { return this.w * this.h }
 attempt("cast of an heir", () => (Object.assign(Object.create({ area, w: 7 }), { h: 8 }) as { w: number; h: number; area: typeof area }).area())

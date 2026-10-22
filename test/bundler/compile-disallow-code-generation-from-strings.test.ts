@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 import { unsupported } from "../aot/run-programs";
+import { canTrim } from "./compile-trim-features";
 
 const flag = "--disallow-code-generation-from-strings";
 const refused = "EvalError: Code generation from strings disallowed for this context";
@@ -47,13 +48,9 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   return { stdout, stderr, exitCode };
 }
 
-using probe = tempDir("compile-disallow-code-generation-probe", { "hello.ts": `console.log("hello");` });
-const probed = Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--compile-trim-runtime", "hello.ts", "--outfile", "hello"], cwd: String(probe), env: bunEnv, stdout: "pipe", stderr: "pipe" });
-const hasIslands = probed.exitCode === 0 && !probed.stderr.toString().includes("nothing can be left out of this Bun");
-
 const kinds: [string, string[]][] = [["--compile", []]];
 if (!unsupported && !isWindows) kinds.push(["--compile --aot", ["--aot"]]);
-if (!unsupported && !isWindows && hasIslands) kinds.push(["--compile --aot --compile-trim-runtime", ["--aot", "--compile-trim-runtime"]]);
+if (!unsupported && !isWindows && canTrim) kinds.push(["--compile --aot --trim", ["--aot", "--trim"]]);
 
 describe.concurrent("bun build --compile --disallow-code-generation-from-strings", () => {
   describe.each(kinds)("%s", (_, more) => {

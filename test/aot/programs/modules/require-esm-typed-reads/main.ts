@@ -1,18 +1,18 @@
 // `require()` of an ES module binds as an import does: a member, a pattern and a constant that holds the module read what the module declares. No object is made, nothing is looked up by name, and functions are called directly.
-// IR= 0 memberOfTheCall GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 keyOfTheCall GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 pattern GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 held GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 heldAndChained GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 readsTheTop GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 readsWhatTheBuildDecided GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 patternOverTheHeld GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 throughABarrel GetById|GetByVal|DefineField| = Call v|CallMethod
-// IR= 0 forNothing GetById|GetByVal|DefineField| = Call v|CallMethod|MakeModuleNamespace
-// IR= 0 constructs GetById|GetByVal|DefineField
-// IR= 0 onlyTests GetById|GetByVal|DefineField| = Call v|CallMethod|ToBoolean|IsUndefinedOrNull
-// IR= 1 asAValue GetByVal
-// IR= 0 keptByClosures GetById|GetByVal|DefineField| = Call v|CallMethod
+// IR= 0 memberOfTheCall PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 keyOfTheCall PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 pattern PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 held PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 heldAndChained PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 readsTheTop PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 readsWhatTheBuildDecided PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 patternOverTheHeld PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 throughABarrel PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
+// IR= 0 forNothing PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod|ModuleNamespace
+// IR= 0 constructs PropGet|ElemGet|(Prop|Elem)Define
+// IR= 0 onlyTests PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod|ToBoolean|TypeTest v[0-9]+ testedType=undefined\|null
+// IR= 1 asAValue ElemGet
+// IR= 0 keptByClosures PropGet|ElemGet|(Prop|Elem)Define| = Call v|CallMethod
 import { log } from "./log";
 type Lib = typeof import("./lib");
 

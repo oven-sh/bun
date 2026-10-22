@@ -1,6 +1,6 @@
 // A subject that has just been put together from parts (a rope) is matched like any other: test, exec, match and replace give what plain Bun gives, and the parts are joined once.
 const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
-const names = ["operationAOTTypedRegExpTest", "operationAOTTypedRegExpTestBoxed", "operationAOTTypedRegExpExec", "operationAOTTypedStringMatchRegExp", "operationAOTTypedStringReplaceRegExpString"];
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp", "operationAOTStringReplaceRegExpString"];
 const entries = () => names.reduce((sum, name) => sum + count(name), 0);
 function show(match: RegExpMatchArray | RegExpExecArray | null) {
   return match ? `${JSON.stringify(match)}@${match.index} of ${JSON.stringify(match.input)} ${match.length}` : "null";

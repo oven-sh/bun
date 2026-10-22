@@ -17,7 +17,7 @@ listener.stop(true);
 const second = Promise.withResolvers<string>();
 const server = net.createServer((socket: any) => { socket.on("data", (data: any) => socket.end("node:" + data)); });
 server.listen(0, "127.0.0.1", () => {
-  const client: any = net.connect(server.address().port, "127.0.0.1", () => client.write("hey"));
+  const client: any = net.connect((server.address() as { port: number }).port, "127.0.0.1", () => client.write("hey"));
   let text = "";
   client.on("data", (data: any) => (text += data));
   client.on("close", () => second.resolve(`${text} ${client.remoteFamily ?? "closed"}`));

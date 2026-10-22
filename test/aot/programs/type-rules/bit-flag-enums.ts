@@ -1,4 +1,4 @@
-// A numeric enum whose members are all 32-bit integers is a 32-bit integer type: fractions, NaN, -0 and larger numbers throw a TypeError.
+// A numeric enum is tested as `number`, because TypeScript lets any number into it: fractions, NaN, -0 and numbers beyond 32 bits pass and are stored as they are.
 enum NodeFlags { None = 0, Let = 1 << 0, Const = 1 << 1, Top = 1 << 30 }
 enum Small { A = 1, B = 2, C = 4 }
 function rule(label: string, f: () => unknown) { try { console.log(label + ": no error", f()) } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }

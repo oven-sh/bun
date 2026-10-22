@@ -2,6 +2,7 @@
 name = "bun_sema_standalone"
 version.workspace = true
 edition.workspace = true
+build = "build.rs"
 
 [lib]
 path = "lib.rs"
@@ -10,26 +11,24 @@ path = "lib.rs"
 name = "bun-sema"
 path = "main.rs"
 
-[features]
-default = ["mimalloc"]
-# Bun's allocator, as Bun's build has compiled it. Without it: a stand-in that never frees, for tests that link this library and nothing of Bun's C side.
-mimalloc = []
-
 [dependencies]
 bun_sema_parser.workspace = true
 bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_sema_baselines.workspace = true
-bun_aot.workspace = true
-bun_builtin_syntax.workspace = true
 bun_js_parser.workspace = true
 bun_threading.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
 bun_paths.workspace = true
 bun_sys.workspace = true
+bun_zstd.workspace = true
+bun_boringssl_sys.workspace = true
 libc.workspace = true
 bstr.workspace = true
+
+[build-dependencies]
+cc = "1"
 
 [lints]
 workspace = true

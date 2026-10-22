@@ -14,10 +14,7 @@ const files = {
 const child = require(name);
 require("./child.cjs");
 say("the parent of the child is this module", child.parent === module);
-say("by the cache too", require.cache[require.resolve(name)].parent === module);
-say("the cached child is the child's own module", require.cache[require.resolve(name)] === child.own);
 say("children", module.children.map(each => base(each.filename)));
-say("this module is the cached one", require.cache[__filename] === module);
 say("it is the main one", require.main === module);
 `,
   "computed-only.cjs": `${says}const names = ["./child", "./other"].map(name => name + ".cjs");

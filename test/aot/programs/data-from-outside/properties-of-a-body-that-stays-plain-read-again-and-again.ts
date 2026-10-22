@@ -1,4 +1,4 @@
-// A parsed body is cast to a record type that takes plain objects as they are; its properties (a record, arrays, an optional text) are read by typed code again and again, with stores from outside in between.
+// A parsed body is cast to a record type and stays the object it is; its properties (a record, arrays, an optional text) are read by typed code again and again, with stores from outside in between.
 type Customer = { id: number; name: string; tags: string[] };
 type Item = { sku: string; quantity: number };
 type Order = { customer: Customer; items: Item[]; coupon?: string; spare: Customer | null };

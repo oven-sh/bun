@@ -279,7 +279,7 @@ scenario("24 the root: rendered later and not at once, twice in a row, emptied, 
   ui.render(null); say(ui.show()); ui.render(<Deep n={40} />); say(String(ui.show().length)); ui.render(<Deep n={3} />); say(ui.show());
 });
 
-const typeName = (type: unknown) => (typeof type === "function" ? "fn" : String(type)); // never a function by its text: an audit build has none to print (main, 14:5x)
+const typeName = (type: unknown) => (typeof type === "function" ? "fn" : String(type)); // never a function by its text: an audit build has none to print
 scenario("25 Children: map, forEach, count, toArray, only; keys that are made", (tag, say) => {
   const kids = (children: ReactNode) => Children.toArray(children).map(c => (isValidElement(c) ? typeName(c.type) + "#" + c.key : typeof c + ":" + String(c))).join(" ");
   const nested: ReactNode = [<T key="a">a</T>, [<T key="b">b</T>, [<T key="c/=:">c</T>, "text", 7, 8n]], null, undefined, true, false, <T>no key</T>, new Set([<T key="s">s</T>]), ""];

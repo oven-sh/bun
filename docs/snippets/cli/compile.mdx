@@ -6,7 +6,7 @@ bun compile [flags] [entry point]
 
 `bun compile` is short for `bun build --compile --aot` and takes every flag of [`bun build`](/bundler#cli-usage).
 
-Without an entry point, it compiles the file that `package.json` names in `"bin"`, else `"module"`, else `"main"`, else
+Without an entry point, it compiles the file that `"bin"` in `package.json` points to, then `"module"`, then `"main"`, then
 `index.ts`, `index.tsx`, `index.mts` or `index.js`. The executable is named after the `"bin"` entry or the package.
 
 If `package.json` has a `"compile"` script, `bun compile` runs that script.
@@ -33,68 +33,36 @@ If `package.json` has a `"compile"` script, `bun compile` runs that script.
 ### Compiling ahead of time
 
 <ParamField path="--no-aot" type="boolean">
-  Keep the JavaScript in the executable instead of compiling it to machine code ahead of time
+  Bundle the JavaScript into the executable instead of compiling it to machine code, like bun build --compile
 </ParamField>
 
 <ParamField path="--explain" type="string">
-  List what keeps the compiler from using your types, the most expensive cause first, with a fix for each.{" "}
-  <code>--explain=json</code> prints one object per line
+  List the code that compiled to a slow path, worst first, with a fix for each. <code>--explain=json</code> prints one
+  object per line. Other reports: <code>guards</code>, <code>guards-json</code>, <code>trim</code>,{" "}
+  <code>missed-optimizations</code>, <code>allocations</code>
 </ParamField>
 
-<ParamField path="--aot-type-errors" type="string" default="throw">
-  What the executable does when a value does not match its TypeScript type: <code>throw</code>, or <code>log</code> to
-  write a line to stderr and continue
+<ParamField path="--aot-log-type-mismatches" type="boolean">
+  The executable logs every value that doesn't match its declared type
+</ParamField>
+
+<ParamField path="--no-compile-function-source" type="boolean">
+  Don't embed function source code. <code>fn.toString()</code> returns <code>[native code]</code>, and the executable
+  only runs code that was compiled into it
+</ParamField>
+
+<ParamField path="--compile-inspector" type="boolean">
+  Let a debugger attach to the executable. Makes it larger and slower
 </ParamField>
 
 ### Size
 
 <ParamField path="--trim" type="boolean">
-  Leave the parts of Bun that the program cannot reach out of the executable. Same as{" "}
-  <code>--compile-trim-runtime</code>
+  Remove the Bun and Node.js APIs your code never calls
 </ParamField>
 
-<ParamField path="--no-trim" type="boolean">
-  Keep all of Bun in the executable. This is the default
-</ParamField>
-
-### Libraries
-
-```bash
-bun compile --library [flags] [entry points]
-```
-
-Builds a package to publish instead of an executable. It writes into `--outdir`:
-
-- the JavaScript (ES modules), which any runtime or bundler can use
-- `.d.ts` files, for `tsc` and `bun check`
-- `index.aot.ts`: the same JavaScript with its types kept, which `bun compile` compiles in place of the JavaScript when
-  a program uses the package. The `"bun-aot"` condition in `"exports"` names it
-- a `package.json` made from the project's own: `main`, `module`, `types`, `exports` and `files` name what was written,
-  and `scripts`, `devDependencies`, `private` and `workspaces` are left out
-- the project's `README` and `LICENSE`
-
-`dependencies`, `peerDependencies` and `optionalDependencies` stay imports. `devDependencies` are bundled.
-
-Without an entry point, it builds `"module"` or `"main"` of `package.json` if that is a TypeScript file, else `index.ts`
-or `src/index.ts`.
-
-The sources can be plain JavaScript. The `.d.ts` files are then inferred from the code and its JSDoc comments, one for
-each source file, and there is no `index.aot.ts`.
-
-<ParamField path="--library" type="boolean">
-  Build a package to publish instead of an executable
-</ParamField>
-
-<ParamField path="--outdir" type="string" default="dist">
-  The folder to write the package to. It cannot be the project's own folder
-</ParamField>
-
-<ParamField path="--target" type="string" default="node">
-  With <code>--library</code>: <code>node</code>, <code>browser</code> or <code>bun</code>
-</ParamField>
-
-<ParamField path="--format" type="string" default="esm">
-  With <code>--library</code>: <code>esm</code>, or <code>cjs</code> for sources that are CommonJS
+<ParamField path="--trim-locales" type="string">
+  With <code>--trim</code>: keep only these locales, such as <code>en,de-AT</code>
 </ParamField>
 
 ### Scripts

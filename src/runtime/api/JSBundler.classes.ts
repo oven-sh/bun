@@ -13,18 +13,26 @@ export default [
     proto: {
       scanImports: {
         fn: "scanImports",
+        returns: "Array",
+        checkedAtRuntime: true,
         length: 2,
       },
       scan: {
         fn: "scan",
+        returns: "object",
+        checkedAtRuntime: true,
         length: 2,
       },
       transform: {
         fn: "transform",
+        returns: "Promise",
+        checkedAtRuntime: true,
         length: 2,
       },
       transformSync: {
         fn: "transformSync",
+        returns: "string",
+        checkedAtRuntime: true,
         length: 2,
       },
     },
@@ -41,19 +49,19 @@ export default [
     // receiver's slot; it must never reach through JSBlob's layout here.
     values: ["stream"],
     proto: {
-      text: { fn: "getText" },
-      json: { fn: "getJSON" },
-      arrayBuffer: { fn: "getArrayBuffer" },
-      slice: { fn: "getSlice", length: 2 },
-      stream: { fn: "getStream", length: 1 },
+      text: { fn: "getText", returns: "Promise", checkedAtRuntime: true },
+      json: { fn: "getJSON", returns: "Promise", checkedAtRuntime: true },
+      arrayBuffer: { fn: "getArrayBuffer", returns: "Promise", checkedAtRuntime: true },
+      slice: { fn: "getSlice", returns: "Blob", checkedAtRuntime: true, length: 2 },
+      stream: { fn: "getStream", returns: "ReadableStream", checkedAtRuntime: true, length: 1 },
 
-      path: { getter: "getPath", cache: true },
-      size: { getter: "getSize" },
-      hash: { getter: "getHash", cache: true },
-      sourcemap: { getter: "getSourceMap", cache: true },
-      loader: { getter: "getLoader", cache: true },
-      type: { getter: "getMimeType", cache: true },
-      kind: { getter: "getOutputKind", cache: true },
+      path: { getter: "getPath", type: "string", checkedAtRuntime: true, cache: true },
+      size: { getter: "getSize", type: "number" },
+      hash: { getter: "getHash", type: "string", checkedAtRuntime: true, cache: true },
+      sourcemap: { getter: "getSourceMap", type: "BuildArtifact | null", checkedAtRuntime: true, cache: true },
+      loader: { getter: "getLoader", type: "string", checkedAtRuntime: true, cache: true },
+      type: { getter: "getMimeType", type: "string", checkedAtRuntime: true, cache: true },
+      kind: { getter: "getOutputKind", type: "string", checkedAtRuntime: true, cache: true },
     },
   }),
 ];

@@ -1,3 +1,4 @@
+// `let x!: T` and a field `x!: T` test nothing: until something is stored, a read gives undefined, whatever T is.
 interface Row { id: number; name: string }
 
 function say(label: string, make: () => unknown): void {

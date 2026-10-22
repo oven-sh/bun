@@ -22,14 +22,14 @@
 // REMARK- readsBetween rejected
 // REMARK- nilPlusNumber stack
 // REMARK- wordsNotAKey stack
-// IRT= 1 wordsNotAKey StringAppendFinish
+// IRT= 1 wordsNotAKey  = StringBuilderFinish 
 // REMARK- readByIndex stack
 // REMARK+ readByIndex rejected: intermediate value escapes
 // REMARK- compared stack
 // REMARK- passedOn stack
 // REMARK- reinitialized stack
 // REMARK- onlyStrings stack
-// IRT= 1 onlyStrings StringAppendFinish
+// IRT= 1 onlyStrings  = StringBuilderFinish 
 // REMARK- withHandler stack
 // REMARK- putInFront stack
 // REMARK- addedToTwice stack
@@ -38,9 +38,9 @@
 // REMARK- oneNumber stack
 // REMARK- withObject stack
 // CALLS+ keyOfIdsLoop StringBuilderFinish
-// CALLS- keyOfIdsLoop operationAOTTypedConcat\b|IntToString
+// CALLS- keyOfIdsLoop operationAOTConcat\b|IntToString
 // CALLS+ keyDashLoop StringBuilder(Finish|Flush)
-// CALLS- keyDashLoop operationAOTTypedConcat\b|IntToString
+// CALLS- keyDashLoop operationAOTConcat\b|IntToString
 // CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
 // CALLS- notAKey ConcatenateWithIntegers|StringBuilder
 // CALLS- readByIndex StringBuilder
@@ -214,7 +214,7 @@ function readsBetween(firsts: T[], seconds: T[]) {
 function nilPlusNumber(words: (string | undefined)[], ids: T[]) {
     let s = "";
     for (let i = 0; i < ids.length; i++) {
-        s += ((words[i] as any) + ids[i].id) as string;
+        s += (words[i] as any) + ids[i].id;
         s += ",";
     }
     return s;

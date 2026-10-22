@@ -2187,6 +2187,7 @@ impl Drop for PipeReader {
 // may free `this` on drop, so a `&mut self` protector would be UB.
 bun_io::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
+    feature = Shell;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| PipeReader::on_reader_done(this);

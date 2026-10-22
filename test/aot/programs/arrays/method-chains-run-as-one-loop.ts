@@ -1,16 +1,16 @@
-// IR= 1 filterThenMap NewArrayWith
-// IR= 1 mapThenFilter NewArrayWith
-// IR= 1 mapThenMap NewArrayWith
-// IR= 1 fourStages NewArrayWith
-// IR= 0 greatestThroughAMadeFunction NewArrayWith
-// IR= 0 greatestThroughAMadeFunction NewObjectWithShape
-// IR= 0 reduceToARecord NewArrayWith
-// IR= 0 countThatPass NewArrayWith
-// IR= 0 countAfterTwoStages NewArrayWith
-// IR= 0 searches NewArrayWith
-// IR= 2 numbers NewArrayWith
-// IR= 0 sumOfNumbers NewArrayWith
-// IR= 1 partOfTheList NewArrayWith
+// IR= 1 filterThenMap NewArray(Like|WithCapacity)
+// IR= 1 mapThenFilter NewArray(Like|WithCapacity)
+// IR= 1 mapThenMap NewArray(Like|WithCapacity)
+// IR= 1 fourStages NewArray(Like|WithCapacity)
+// IR= 0 greatestThroughAMadeFunction NewArray(Like|WithCapacity)
+// IR= 0 greatestThroughAMadeFunction : =?L[0-9]+ = NewObject
+// IR= 0 reduceToARecord NewArray(Like|WithCapacity)
+// IR= 0 countThatPass NewArray(Like|WithCapacity)
+// IR= 0 countAfterTwoStages NewArray(Like|WithCapacity)
+// IR= 0 searches NewArray(Like|WithCapacity)
+// IR= 2 numbers NewArray(Like|WithCapacity)
+// IR= 0 sumOfNumbers NewArray(Like|WithCapacity)
+// IR= 1 partOfTheList NewArray(Like|WithCapacity)
 // IR= 4 partOfTheList LoopHint
 interface Sale {
   customer: number;

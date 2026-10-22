@@ -1,8 +1,8 @@
-// Data from `JSON.parse` is cast to a type that it does not match: the cases that are not handled yet.
+// Data from `JSON.parse` is cast to a type that it does not match. A string where `string[]` is written throws a TypeError where it enters a parameter or an annotated variable and where typed code reads the field, also after the data has passed through an `any` of the program's own.
 type P = { tools: string[]; n?: number }
 type G = { projects: Record<string, P> }
 const text = JSON.stringify({ projects: { good: { tools: ["a"] }, wrong: { tools: "one,two" }, word: "corrupted" } })
-const row = (what: string, f: () => unknown) => { let said: string; try { said = String(f()) } catch (e) { said = "THROWS " + (e as Error).message.split("\n")[0] } console.log(what + ": " + said) }
+const row = (what: string, f: () => unknown) => { let said: string; try { said = String(f()) } catch (e) { said = "THROWS " + (e as Error).constructor.name } console.log(what + ": " + said) }
 const parse = () => JSON.parse(text) as G
 // a parameter, a result, a field of a type that is everybody's
 const count = (tools: string[]) => (typeof tools === "string" ? -1 : tools.length)
@@ -18,9 +18,9 @@ row("assigned later to an annotated variable", () => { let t: string[] = []; t =
 type Late = { late: string[] }
 const through = (raw: any): Late => raw as Late
 const holder: { raw: any } = { raw: JSON.parse('{"late":"text"}') }
-row("through a parameter of type any", () => typeof through(JSON.parse('{"late":"text"}')).late)
+row("through a parameter of type any", () => { const late: Late = through(JSON.parse('{"late":"text"}')); return typeof late.late })
 row("through a field of type any", () => typeof (holder.raw as Late).late)
-// a layout that gets into a place of a tainted type as an argument, a property of a literal, a return
+// an object made as one record type enters a field of another record type as an argument: any object passes
 type Wide = { value: number; next: Wide | null }
 type Narrow = { value: number; next: Narrow | null; back: Narrow | null }
 const given: Wide = JSON.parse('{"value":1,"next":null}')

@@ -1,0 +1,4 @@
+the name that is imported: 1
+the other library module: undefined
+exit code 1
+error: Cannot load 'node:util': this executable can't load a module from a dynamic path. The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly. (bun compile differs from bun run here: https://bun.com/docs/bundler/aot-compatibility)

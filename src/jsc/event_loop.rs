@@ -74,6 +74,9 @@ pub struct EventLoop {
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
+    /// See `TaskTag::is_plugin_request`: as other threads post them, and as this thread has taken them.
+    concurrent_plugin_requests: ConcurrentQueue,
+    plugin_requests: Queue,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
     /// loop's queue (the VM's handle names only the VM's own two loops).
     pub(crate) isolated_poster: Option<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
@@ -124,6 +127,8 @@ impl Default for EventLoop {
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
             concurrent_tasks: ConcurrentQueue::default(),
+            concurrent_plugin_requests: ConcurrentQueue::default(),
+            plugin_requests: Queue::init(),
             isolated_poster: None,
             global: None,
             virtual_machine: None,
@@ -155,6 +160,7 @@ mod drain_result {
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
+    safe fn Bun__noteEntryEvaluation(global: &JSGlobalObject);
 }
 
 impl JSGlobalObject {
@@ -592,6 +598,7 @@ impl EventLoop {
     /// Other threads have posted work that this loop's next drain will pick up.
     pub(crate) fn has_concurrent_tasks(&self) -> bool {
         !self.concurrent_tasks.is_empty()
+            || !self.concurrent_plugin_requests.is_empty()
             || self
                 .macro_loop_if_not_running()
                 .is_some_and(|m| !m.concurrent_tasks.is_empty())
@@ -630,7 +637,7 @@ impl EventLoop {
         if let Some(macro_loop) = self.macro_loop_if_not_running() {
             macro_loop.apply_concurrent_ref_delta();
             let batch = macro_loop.concurrent_tasks.pop_batch();
-            self.take_concurrent_tasks(batch);
+            Self::take_concurrent_tasks(&mut self.tasks, batch);
         }
 
         let concurrent = self.concurrent_tasks.pop_batch();
@@ -768,7 +775,31 @@ impl EventLoop {
     /// Work is queued that the next `tick()` will run: the poll before it must
     /// not block.
     pub fn has_pending_tasks(&self) -> bool {
-        self.tasks.readable_length() > 0 || self.has_concurrent_tasks()
+        self.tasks.readable_length() > 0
+            || self.plugin_requests.readable_length() > 0
+            || self.has_concurrent_tasks()
+    }
+
+    /// Any thread.
+    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
+        // SAFETY: the task is the caller's until it is pushed.
+        match unsafe { task.as_ref() }.task.tag.is_plugin_request() {
+            true => self.concurrent_plugin_requests.push(task),
+            false => self.concurrent_tasks.push(task),
+        }
+    }
+
+    /// The task that the drain of the queue runs next.
+    pub fn next_task(&mut self) -> Option<Task> {
+        if !self.concurrent_plugin_requests.is_empty() {
+            let batch = self.concurrent_plugin_requests.pop_batch();
+            Self::take_concurrent_tasks(&mut self.plugin_requests, batch);
+        }
+        if let Some(request) = self.plugin_requests.read_item() {
+            self.plugin_requests.reset_head_if_empty();
+            return Some(request);
+        }
+        self.tasks.read_item()
     }
 
     pub fn tick(&mut self) {
@@ -891,13 +922,13 @@ impl EventLoop {
     }
 
     /// Move a batch other threads posted (`concurrent_tasks`) into
-    /// `self.tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
+    /// `tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
     /// over `self.tasks` releases everything. Called by `release_queued_tasks`
     /// in teardown, after `join_child_workers()` (every child has posted its
     /// close task by then) and before the JSC VM is destroyed (so captured
     /// `Ref<>`s in queued C++ lambdas drop against a live heap).
     fn take_concurrent_tasks(
-        &mut self,
+        tasks: &mut Queue,
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
     ) {
         let mut iter = batch.iterator();
@@ -910,7 +941,7 @@ impl EventLoop {
             // iterator advanced past it before returning.
             let task =
                 unsafe { ConcurrentTask::ConcurrentTask::into_task(NonNull::new_unchecked(node)) };
-            let _ = self.tasks.write_item(task);
+            let _ = tasks.write_item(task);
         }
     }
 
@@ -923,9 +954,9 @@ impl EventLoop {
     pub fn release_queued_tasks(&mut self) {
         self.closed_for_tasks = true;
         let batch = self.concurrent_tasks.pop_batch();
-        self.take_concurrent_tasks(batch);
+        Self::take_concurrent_tasks(&mut self.tasks, batch);
         let _ = self.promote_yield_tasks();
-        while let Some(task) = self.tasks.read_item() {
+        while let Some(task) = self.next_task() {
             // SAFETY: JS thread, heap alive; `task` just left the queue.
             unsafe { self.release_task_unrun(task) };
         }
@@ -953,7 +984,10 @@ impl EventLoop {
         // also made later enqueues release on arrival) and refused posts never
         // reach `concurrent_tasks`; nothing can be left to leak with the VM box.
         debug_assert!(
-            self.tasks.readable_length() == 0 && self.concurrent_tasks.is_empty(),
+            self.tasks.readable_length() == 0
+                && self.concurrent_tasks.is_empty()
+                && self.plugin_requests.readable_length() == 0
+                && self.concurrent_plugin_requests.is_empty(),
             "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
         );
         debug_assert!(
@@ -1134,15 +1168,10 @@ impl EventLoop {
     /// `JsResult` function crosses explicitly with [`jsc::Stopped::throw`] (which, with
     /// the termination already pending, is just `Thrown`).
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
-        self.wait_for_promise_unless(promise, || false).map(|_| ())
-    }
-
-    pub fn wait_for_promise_unless(
-        &mut self,
-        promise: jsc::AnyPromise,
-        mut gives_up: impl FnMut() -> bool,
-    ) -> Result<bool, jsc::Stopped> {
         let jsc_vm = self.vm_ref().jsc_vm();
+        if promise.status() != PromiseStatus::Pending {
+            return Ok(());
+        }
         while promise.status() == PromiseStatus::Pending {
             if jsc_vm.execution_forbidden()
                 || !self.vm_ref().script_allowed()
@@ -1150,15 +1179,12 @@ impl EventLoop {
             {
                 return Err(jsc::Stopped);
             }
-            if gives_up() {
-                return Ok(false);
-            }
             self.tick();
             if promise.status() == PromiseStatus::Pending {
                 self.auto_tick();
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     pub fn wakeup(&self) {
@@ -1370,6 +1396,9 @@ impl EventLoop {
                 break;
             }
             self.tick();
+            if crate::compiled_program::compiled_program().is_some() {
+                Bun__noteEntryEvaluation(self.global_ref());
+            }
             let vm = self.vm_ref();
             let terminated = vm.worker_ref().is_some_and(|w| w.has_requested_terminate());
             if terminated

@@ -65,6 +65,8 @@
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
+#include "JavaScriptCore/AOTModuleHost.h"
+#include "BunCompiledModules.h"
 
 namespace Bun {
 using namespace WebCore;
@@ -1660,7 +1662,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* sandbox = thisObject->m_sandbox.get();
-    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
+    bool deleted = Bun::hasCompiledModules() ? sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot) : sandbox->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
     if (!deleted) {
         return false;
@@ -1728,7 +1730,10 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
     if (thisObject->m_sandbox) {
-        thisObject->m_sandbox->methodTable()->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+        if (Bun::hasCompiledModules()) [[unlikely]]
+            thisObject->m_sandbox->methodTable()->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+        else
+            thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -1737,7 +1742,8 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
+    JSValue argument = callFrame->argument(0);
+    return JSValue::encode(jsBoolean(argument.inherits(JSModuleNamespaceObject::info()) || (argument.isCell() && JSC::AOT::isModuleNamespace(argument.asCell()))));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

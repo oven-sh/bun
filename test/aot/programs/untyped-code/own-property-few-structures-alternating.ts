@@ -2,7 +2,7 @@
 declare const aotOperationCount: undefined | ((name: string) => number);
 const has = (o: any, k: any): boolean => Object.prototype.hasOwnProperty.call(o, k);
 const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
-const entered = () => counted ? counted("operationAOTTypedHasOwnProperty") + counted("operationAOTTypedHasOwnPropertyByName") : 0;
+const entered = () => counted ? counted("operationAOTHasOwnProperty") : 0;
 const turns = 50;
 let yes = 0, asked = 0, workedOut = 0;
 function ask(shapes: number, width: number, tag: string) {

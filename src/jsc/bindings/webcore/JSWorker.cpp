@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "RemovableFeatures.h"
 #include "JSWorker.h"
 #include "CodeGenerationFromStrings.h"
 
@@ -137,6 +138,7 @@ using JSWorkerDOMConstructor = JSDOMConstructor<JSWorker>;
 
 template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WorkerConstructor, JSWorkerDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSWorkerDOMConstructor>(callFrame->jsCallee());
@@ -497,7 +499,7 @@ JSObject* JSWorker::prototype(VM& vm, JSDOMGlobalObject& globalObject)
     return getDOMPrototype<JSWorker>(vm, globalObject);
 }
 
-NEVER_INLINE JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
+JSValue JSWorker::getConstructor(VM& vm, const JSGlobalObject* globalObject)
 {
     return getDOMConstructor<JSWorkerDOMConstructor, DOMConstructorID::Worker>(vm, *uncheckedDowncast<const JSDOMGlobalObject>(globalObject));
 }
@@ -605,6 +607,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_terminateBody(JSC::J
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_terminate, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_terminate);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_terminateBody>(*lexicalGlobalObject, *callFrame, "terminate");
 }
 
@@ -681,6 +684,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_postMessageOverloadD
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_postMessage);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_postMessageOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "postMessage");
 }
 
@@ -692,6 +696,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_refBody(JSC::JSGloba
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_ref);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_refBody>(*lexicalGlobalObject, *callFrame, "ref");
 }
 
@@ -703,6 +708,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_unrefBody(JSC::JSGlo
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_unref);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
@@ -946,26 +952,31 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_cpuUsageInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_cpuUsageInternalBody>(*lexicalGlobalObject, *callFrame, "cpuUsageInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_startCpuProfileInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_startCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "startCpuProfileInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_stopCpuProfileInternal);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopCpuProfileInternal");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_getHeapStatistics);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapStatisticsBody>(*lexicalGlobalObject, *callFrame, "getHeapStatistics");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Worker, jsWorkerPrototypeFunction_getHeapSnapshot);
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapSnapshotBody>(*lexicalGlobalObject, *callFrame, "getHeapSnapshot");
 }
 
@@ -1017,7 +1028,7 @@ extern void* _ZTVN7WebCore6WorkerE[];
 #endif
 #endif
 
-NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<Worker>&& impl)
 {
 
     if constexpr (std::is_polymorphic_v<Worker>) {
@@ -1041,6 +1052,7 @@ NEVER_INLINE JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObje
 
 NEVER_INLINE JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Worker& impl)
 {
+    BUN_REMOVABLE_DEFINITION(Worker, static_cast<JSC::JSValue (*)(JSC::JSGlobalObject*, JSDOMGlobalObject*, Worker&)>(toJS));
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 

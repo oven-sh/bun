@@ -1,15 +1,15 @@
 // `slice`, `substring`, `substr` and the `trim` methods inside and outside loops, on every internal representation of a string.
 // CALLS+ slicedL Substring(;|$)
-// CALLS- slicedL operationAOTTypedSubstring
+// CALLS- slicedL operationAOTSubstring
 // CALLS+ slicedH Substring(;|$)
-// CALLS- slicedH operationAOTTypedSubstring
+// CALLS- slicedH operationAOTSubstring
 // CALLS+ trimmed StringTrim(;|$)
 // CALLS+ trimmedStart StringTrimStart(;|$)
 // CALLS+ trimmedEnd StringTrimEnd(;|$)
 // CALLS+ trimmedL StringTrim(;|$)
 // CALLS+ trimmedInLoop StringTrim(;|$)
-// CALLS- trimmed operationAOTTypedStringTrimmed
-// CALLS- trimmedL operationAOTTypedStringTrimmed
+// CALLS- trimmed operationAOTStringTrim
+// CALLS- trimmedL operationAOTStringTrim
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

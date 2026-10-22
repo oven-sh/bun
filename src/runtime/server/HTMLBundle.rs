@@ -48,7 +48,7 @@ pub(crate) struct HTMLBundle {
 
 // `jsc.Codegen.JSHTMLBundle` — hand-expansion of what the `#[bun_jsc::JsClass]`
 // derive would emit. Symbol names match generate-classes.ts
-// (`${typeName}__fromJS` / `__fromJSDirect` / `__create` / `__getConstructor`).
+// (`${typeName}__fromJS` / `__fromJSDirect` / `__isInstance` / `__create` / `__getConstructor`).
 // Hand-written (rather than `#[bun_jsc::JsClass]`) because HTMLBundle has a
 // custom `finalize` that derefs an intrusive refcount instead of Box-dropping.
 const _: () = {
@@ -64,6 +64,8 @@ const _: () = {
             safe fn __from_js(value: JSValue) -> *mut HTMLBundle;
             #[link_name = "HTMLBundle__fromJSDirect"]
             safe fn __from_js_direct(value: JSValue) -> *mut HTMLBundle;
+            #[link_name = "HTMLBundle__isInstance"]
+            safe fn __is_instance(value: JSValue) -> bool;
             #[link_name = "HTMLBundle__create"]
             safe fn __create(global: *mut JSGlobalObject, ptr: *mut HTMLBundle) -> JSValue;
         }
@@ -77,6 +79,9 @@ const _: () = {
         fn from_js_direct(value: JSValue) -> Option<*mut Self> {
             let p = __from_js_direct(value);
             if p.is_null() { None } else { Some(p) }
+        }
+        fn is_wrapper(value: JSValue) -> bool {
+            __is_instance(value)
         }
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
             // HTMLBundle is *only* constructed via `init()` → `RefPtr::new`
@@ -211,7 +216,9 @@ impl Route {
         Self::on_any_request(this, req, resp, true);
     }
 
+    #[inline(never)]
     fn on_any_request(this: ThisPtr<Self>, mut req: AnyRequest, resp: AnyResponse, is_head: bool) {
+        bun_removable_features::removable_definition!(Bundler, Self::on_any_request);
         let _guard = RefPtr::from_this(this);
         let route: &Route = &this;
 

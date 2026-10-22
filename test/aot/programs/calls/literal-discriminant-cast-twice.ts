@@ -1,4 +1,4 @@
-// A literal discriminant value goes through two casts before it is stored or compared.
+// A literal discriminant value goes through two casts before it is stored or compared. A cast is a test and never a conversion: the number 5 cast to boolean throws a TypeError, and 5 cast to the numeric enum passes.
 declare const console: any;
 function any(x: unknown): any { return x }
 enum Kind { A = 1, B = 2, C = 5 }
@@ -18,10 +18,10 @@ const H: unknown[] = ((globalThis as any).H = [5, 1, 2]);
 const kept: Node[] = [];
 let r = "";
 for (let turn = 0; turn < 3; turn++) {
-  try { r = show(makeC(any(any(5) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5 made true made 1, written: " + r);
-  try { r = show(makeC(any(any(H[0]) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5 made true made 1, hidden:  " + r);
-  try { r = show(makeA(any(any(5) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("A of 5 made true made 1, written: " + r);
-  try { r = show(makeA(any(any(H[0]) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("A of 5 made true made 1, hidden:  " + r);
+  try { r = show(makeC(any(any(5) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5 cast to boolean and then to Kind, written: " + r);
+  try { r = show(makeC(any(any(H[0]) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5 cast to boolean and then to Kind, hidden:  " + r);
+  try { r = show(makeA(any(any(5) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("A of 5 cast to boolean and then to Kind, written: " + r);
+  try { r = show(makeA(any(any(H[0]) as boolean) as Kind)) } catch (e) { r = failure(e) } console.log("A of 5 cast to boolean and then to Kind, hidden:  " + r);
   try { r = show(makeC(any(5) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5, written: " + r);
   try { r = show(makeC(any(H[0]) as Kind)) } catch (e) { r = failure(e) } console.log("C of 5, hidden:  " + r);
   try { r = show(makeC(Kind.C)) } catch (e) { r = failure(e) } console.log("C of 5: " + r);

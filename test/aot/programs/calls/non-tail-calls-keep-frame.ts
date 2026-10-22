@@ -19,7 +19,7 @@ function thrower(k: number): number { if (k === 3) throw new RangeError("three")
 function passesOn(k: number): number { return thrower(k); }
 function catches(k: number): string { try { return "got " + passesOn(k); } catch (e: any) { return "caught " + e.message; } }
 attempt("the handler above", () => [catches(1), catches(3)]);
-// Constructors: what is returned is looked at. (Untyped: typed code refuses a constructor that returns another object.)
+// Constructors: what is returned is looked at.
 const Plain: any = function (this: any, o: any) { this.v = 1; return make(o); };
 function make(o: any): any { return o; }
 attempt("constructors", () => [new Plain(undefined).v, new Plain(5).v, new Plain({ z: 5 }).z]);
@@ -40,7 +40,7 @@ function small(n: number): number { return n & 7; }
 function asAnything(n: number): unknown { return n === 0 ? "s" : isOdd(n); }
 function isOdd(n: number): boolean { return (n & 1) === 1; }
 attempt("kept otherwise", () => [asNumber(0), asNumber(13), asAnything(0), asAnything(3)]);
-// HERE ONLY THE FORMS THAT `bun run` LEAVES AS THEY ARE WRITTEN: its transpiler turns `const r = f(x); return r;` (and `let`) INTO `return f(x);` (f.toString() shows it): those rows are in n62, against JavaScriptCore interpreting the text itself.
+// HERE ONLY THE FORMS THAT `bun run` LEAVES AS THEY ARE WRITTEN: its transpiler turns `const r = f(x); return r;` (and `let`) INTO `return f(x);` (f.toString() shows it).
 function throughVar(n: number): number { if (n === 0) return 0; var r; r = throughVar(n - 1); return r; }
 function throughParameter(n: number, r?: number): number { if (n === 0) return 0; r = throughParameter(n - 1); return r; }
 let outside = 0;

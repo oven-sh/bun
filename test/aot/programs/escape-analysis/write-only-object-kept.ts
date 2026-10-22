@@ -9,7 +9,7 @@ function viaSetter(a: number): number {
   return a;
 }
 function held(a: number): number {
-  const inner = new P(a); //! heap: PutField
+  const inner = new P(a); //! heap: NewObject
   const outer = { inner }; //! heap: CallBuiltin
   sink.push(outer);
   return a;

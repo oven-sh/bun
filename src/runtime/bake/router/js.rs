@@ -94,6 +94,7 @@ impl JSFrameworkRouter {
             ]),
             style,
             allow_layouts: true,
+            client_pages: false,
             // Unused by JSFrameworkRouter
             client_file: None,
             server_file: OpaqueFileId::init(0),

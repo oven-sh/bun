@@ -1,22 +1,22 @@
 // RegExp literals that are only used in place (`test`, `exec`, `replace`, `split`) next to literals that are returned, stored or passed on: each evaluation still behaves like a new object.
-// CALLS+ tested operationAOTTypedSharedRegExpLiteral
-// CALLS- tested operationAOTTypedNewRegExpLiteral
-// CALLS+ testedUntyped operationAOTTypedSharedRegExpLiteral
-// CALLS+ testedOfProperty operationAOTTypedSharedRegExpLiteral
-// CALLS+ executed operationAOTTypedSharedRegExpLiteral
-// CALLS+ replacedAll operationAOTTypedSharedRegExpLiteral
-// CALLS+ cutUp operationAOTTypedSharedRegExpLiteral
-// CALLS+ heldInConstant operationAOTTypedSharedRegExpLiteral
-// CALLS- returned operationAOTTypedSharedRegExpLiteral
-// CALLS- stored operationAOTTypedSharedRegExpLiteral
-// CALLS- passedOn operationAOTTypedSharedRegExpLiteral
-// CALLS- globalTested operationAOTTypedSharedRegExpLiteral
-// CALLS- globalLoop operationAOTTypedSharedRegExpLiteral
-// CALLS- sticky operationAOTTypedSharedRegExpLiteral
-// CALLS- givenProperty operationAOTTypedSharedRegExpLiteral
-// CALLS- lastIndexRead operationAOTTypedSharedRegExpLiteral
-// CALLS- replacedUntyped operationAOTTypedSharedRegExpLiteral
-// CALLS- otherMethod operationAOTTypedSharedRegExpLiteral
+// CALLS+ tested operationAOTSharedRegExpLiteral
+// CALLS- tested operationAOTNewRegExpLiteral
+// CALLS+ testedUntyped operationAOTSharedRegExpLiteral
+// CALLS+ testedOfProperty operationAOTSharedRegExpLiteral
+// CALLS+ executed operationAOTSharedRegExpLiteral
+// CALLS+ replacedAll operationAOTSharedRegExpLiteral
+// CALLS+ cutUp operationAOTSharedRegExpLiteral
+// CALLS+ heldInConstant operationAOTSharedRegExpLiteral
+// CALLS- returned operationAOTSharedRegExpLiteral
+// CALLS- stored operationAOTSharedRegExpLiteral
+// CALLS- passedOn operationAOTSharedRegExpLiteral
+// CALLS- globalTested operationAOTSharedRegExpLiteral
+// CALLS- globalLoop operationAOTSharedRegExpLiteral
+// CALLS- sticky operationAOTSharedRegExpLiteral
+// CALLS- givenProperty operationAOTSharedRegExpLiteral
+// CALLS- lastIndexRead operationAOTSharedRegExpLiteral
+// CALLS- replacedUntyped operationAOTSharedRegExpLiteral
+// CALLS- otherMethod operationAOTSharedRegExpLiteral
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

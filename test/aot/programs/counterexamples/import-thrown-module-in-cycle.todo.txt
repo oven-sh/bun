@@ -1,1 +1,0 @@
-It prints `late rejects early` where plain Bun and Node.js print `late rejects late`.

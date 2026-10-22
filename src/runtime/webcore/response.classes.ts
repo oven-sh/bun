@@ -13,19 +13,27 @@ export default [
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
+    lockedPrototype: true,
+    types: [{ path: ["Request"], isView: true, typeArguments: [] }],
     overridesToJS: true,
     memoryCost: true,
     values: ["stream"],
     proto: {
-      text: { fn: "getText", async: true },
-      textStream: { fn: "getTextStream" },
-      json: { fn: "getJSON", async: true },
-      bytes: { fn: "getBytes", async: true },
+      text: { fn: "getText", returns: "Promise", checkedAtRuntime: true, async: true },
+      textStream: { fn: "getTextStream", returns: "ReadableStream", checkedAtRuntime: true },
+      json: {
+        fn: "getJSON",
+        returns: "Promise",
+        checkedAtRuntime: true,
+        async: true,
+        typedResultForm: { form: "ParsedBody", source: "this" },
+      },
+      bytes: { fn: "getBytes", returns: "Promise", checkedAtRuntime: true, async: true },
       body: { getter: "getBody", cache: true, type: "ReadableStream | null" },
-      arrayBuffer: { fn: "getArrayBuffer", async: true },
-      formData: { fn: "getFormData", async: true },
-      blob: { fn: "getBlob", async: true },
-      clone: { fn: "doClone", length: 1 },
+      arrayBuffer: { fn: "getArrayBuffer", returns: "Promise", checkedAtRuntime: true, async: true },
+      formData: { fn: "getFormData", returns: "Promise", checkedAtRuntime: true, async: true },
+      blob: { fn: "getBlob", returns: "Promise", checkedAtRuntime: true, async: true },
+      clone: { fn: "doClone", returns: "Request", checkedAtRuntime: true, length: 1 },
       cache: {
         getter: "getCache",
         type: "string",
@@ -93,17 +101,26 @@ export default [
     final: false,
     JSType: "0b11101110",
     configurable: false,
+    lockedPrototype: true,
+    types: [{ path: ["Response"], isView: true, typeArguments: [] }],
     estimatedSize: true,
     overridesToJS: true,
     klass: {
       json: {
         fn: "constructJSON",
+        returns: "Response",
+        checkedAtRuntime: true,
+        jsonTextForm: { argument: 0, nativeSymbol: "Response__constructJSONFromText" },
       },
       redirect: {
         fn: "constructRedirect",
+        returns: "Response",
+        checkedAtRuntime: true,
       },
       error: {
         fn: "constructError",
+        returns: "Response",
+        checkedAtRuntime: true,
       },
     },
     values: ["stream", "transform"],
@@ -115,15 +132,21 @@ export default [
       },
       body: { getter: "getBody", cache: true, type: "ReadableStream | null" },
 
-      text: { fn: "getText", async: true },
-      textStream: { fn: "getTextStream" },
-      json: { fn: "getJSON", async: true },
-      bytes: { fn: "getBytes", async: true },
-      arrayBuffer: { fn: "getArrayBuffer", async: true },
-      blob: { fn: "getBlob", async: true },
-      formData: { fn: "getFormData", async: true },
+      text: { fn: "getText", returns: "Promise", checkedAtRuntime: true, async: true },
+      textStream: { fn: "getTextStream", returns: "ReadableStream", checkedAtRuntime: true },
+      json: {
+        fn: "getJSON",
+        returns: "Promise",
+        checkedAtRuntime: true,
+        async: true,
+        typedResultForm: { form: "ParsedBody", source: "this" },
+      },
+      bytes: { fn: "getBytes", returns: "Promise", checkedAtRuntime: true, async: true },
+      arrayBuffer: { fn: "getArrayBuffer", returns: "Promise", checkedAtRuntime: true, async: true },
+      blob: { fn: "getBlob", returns: "Promise", checkedAtRuntime: true, async: true },
+      formData: { fn: "getFormData", returns: "Promise", checkedAtRuntime: true, async: true },
 
-      clone: { fn: "doClone", length: 1 },
+      clone: { fn: "doClone", returns: "Response", checkedAtRuntime: true, length: 1 },
 
       type: {
         getter: "getResponseType",
@@ -167,6 +190,8 @@ export default [
     JSType: "0b11101110",
     klass: {},
     configurable: false,
+    lockedPrototype: true,
+    types: [{ path: ["Blob"], isView: true, typeArguments: [] }],
     structuredClone: {
       transferable: false,
       tag: 254,
@@ -179,24 +204,32 @@ export default [
     values: ["stream"],
     overridesToJS: true,
     proto: {
-      text: { fn: "getText", async: true },
-      json: { fn: "getJSON", async: true },
-      arrayBuffer: { fn: "getArrayBuffer", async: true },
-      slice: { fn: "getSlice", length: 2 },
-      stream: { fn: "getStream", length: 1 },
-      formData: { fn: "getFormData", async: true },
-      exists: { fn: "getExists", length: 0 },
+      text: { fn: "getText", returns: "Promise", checkedAtRuntime: true, async: true },
+      json: {
+        fn: "getJSON",
+        returns: "Promise",
+        checkedAtRuntime: true,
+        async: true,
+        typedResultForm: { form: "ParsedBody", source: "this" },
+      },
+      arrayBuffer: { fn: "getArrayBuffer", returns: "Promise", checkedAtRuntime: true, async: true },
+      slice: { fn: "getSlice", returns: "Blob", checkedAtRuntime: true, length: 2 },
+      stream: { fn: "getStream", returns: "ReadableStream", checkedAtRuntime: true, length: 1 },
+      formData: { fn: "getFormData", returns: "Promise", checkedAtRuntime: true, async: true },
+      exists: { fn: "getExists", returns: "Promise", checkedAtRuntime: true, length: 0 },
 
       // Non-standard, but consistent!
-      bytes: { fn: "getBytes", async: true },
+      bytes: { fn: "getBytes", returns: "Promise", checkedAtRuntime: true, async: true },
 
       // `new Bun.Image(this, opts)` — synchronous (the read happens lazily
       // when an Image terminal is awaited), so this is just a constructor
       // call with the receiver as input. Covers BunFile/S3File.
-      image: { fn: "doImage", length: 0 },
+      image: { fn: "doImage", returns: "Image", checkedAtRuntime: true, length: 0 },
 
       type: {
         getter: "getType",
+        type: "string",
+        checkedAtRuntime: true,
       },
 
       // TODO: Move this to a separate `File` object or BunFile
@@ -205,6 +238,8 @@ export default [
         this: true,
         cache: true,
         getter: "getName",
+        type: "string | undefined | null",
+        checkedAtRuntime: true,
         setter: "setName",
       },
 
@@ -212,19 +247,23 @@ export default [
       // This is *not* spec-compliant.
       lastModified: {
         getter: "getLastModified",
+        type: "number",
       },
 
       // Non-standard, s3 + BunFile support
-      unlink: { fn: "doUnlink", length: 0 },
-      delete: { fn: "doUnlink", length: 0 },
-      write: { fn: "doWrite", length: 2 },
+      unlink: { fn: "doUnlink", returns: "Promise", checkedAtRuntime: true, length: 0 },
+      delete: { fn: "doUnlink", returns: "Promise", checkedAtRuntime: true, length: 0 },
+      write: { fn: "doWrite", returns: "Promise", checkedAtRuntime: true, length: 2 },
       size: {
         getter: "getSize",
+        type: "number",
       },
-      stat: { fn: "getStat", length: 0 },
+      stat: { fn: "getStat", returns: "Promise | undefined", checkedAtRuntime: true, length: 0 },
 
       writer: {
         fn: "getWriter",
+        returns: "object",
+        checkedAtRuntime: true,
         length: 1,
       },
     },

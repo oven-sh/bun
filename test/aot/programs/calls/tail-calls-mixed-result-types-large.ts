@@ -1,18 +1,16 @@
 // Chains of tail calls between functions that are too large to be inlined: some return values of a declared type on one path, some only
 // pass on what another returns, some return `any`, some are arrow functions that are only ever called as values. All run in constant space,
 // whether the chain is entered by a direct call or by a call of a value.
-// A function that may be received as any value and ends in a call whose result has to be checked gives up its declared result type: the call
-// is a plain tail call that drops no frame, and whoever receives the result as a type checks it:
-// IR+ function [0-9]+ "numbers" Plain flags [0-9]+ .*annotated\) result -$
-// IR+ function [0-9]+ "flags" Plain flags [0-9]+ .*annotated\) result -$
-// IR+ function [0-9]+ "items" Plain flags [0-9]+ .*annotated\) result -$
-// IR+ function [0-9]+ "onlyForwards" Plain flags [0-9]+ .*annotated\) result -$
-// IR+ tail = Call v
-// IR+ tail = CallDirect f
-// IR- tail drops
-// IR- tail droppable
+// A function in a cycle of tail calls that ends in a call whose result has to be tested does not test it itself: the call stays a tail call,
+// and the first caller that is not in tail position tests the result against the type of the function it called:
+// IR+ ^function f[0-9]+ "numbers" Plain .* -> anything( |$)
+// IR+ ^function f[0-9]+ "flags" Plain .* -> anything( |$)
+// IR+ ^function f[0-9]+ "items" Plain .* -> anything( |$)
+// IR+ ^function f[0-9]+ "onlyForwards" Plain .* -> anything( |$)
+// IR+ ^ .* = TailCall v
+// IR+  = TailCallDirect \(
 // So does one that only passes on what a call of a value returns:
-// IR+ function [0-9]+ "onlyPassesOn" Plain flags [0-9]+ .*annotated\) result -$
+// IR+ ^function f[0-9]+ "onlyPassesOn" Plain .* -> anything( |$)
 const lines: string[] = [];
 function say(...parts: unknown[]) {
   lines.push(parts.map(part => (typeof part === "object" && part !== null ? JSON.stringify(part) : String(part))).join(" "));
@@ -134,10 +132,12 @@ say(walkers.map(walker => walker.step(deep, 0, 1) + 1), walkers.map(walker => wa
 
 function framesOf(error: Error): string {
   const known = /\b(thrower|nextThrower|numbers|first|second|onlyForwards|onlyPassesOn)\b/;
+  // A frame without a name is its path alone, and a folder may be called `first`.
   return String(error.stack)
     .split("\n")
-    .filter(line => known.test(line.split("(")[0].split("@")[0]))
-    .map(line => known.exec(line)![1])
+    .map(line => (line.includes("(") ? line.split("(")[0] : line.includes("@") ? line.split("@")[0] : ""))
+    .filter(name => known.test(name))
+    .map(name => known.exec(name)![1])
     .join(" < ");
 }
 function thrower(n: number, acc: number, next: (n: number, acc: number, pad: number) => number, pad: number): number {

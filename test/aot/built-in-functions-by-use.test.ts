@@ -65,20 +65,15 @@ const programs: Record<string, Program> = {
   "WebAssembly.instantiateStreaming of a stream": {
     source: `const bytes = new Uint8Array(${wasm}); const body = new ReadableStream({ start(controller) { controller.enqueue(bytes.slice(0, 10)); controller.enqueue(bytes.slice(10)); controller.close(); } }); const { instance } = await WebAssembly.instantiateStreaming(new Response(body, { headers: { "content-type": "application/wasm" } })); console.log(typeof instance.exports.f);`,
   },
-  "require of a file": { name: "main.cjs", source: `console.log(require("./other.cjs").value, typeof require, typeof module.require);`, files: { "other.cjs": "exports.value = 'required';" } },
+  // With --aot no bundler links the require() calls of a CommonJS program: `module`, `require.main` and `require.cache` are what they are under `bun run`.
+  "require of a file": { name: "main.cjs", source: `console.log(require("./other.cjs").value, typeof require, typeof module.require);`, files: { "other.cjs": "exports.value = 'required';" }, aheadOfTime: "required function function\n" },
   "require.resolve": { name: "main.cjs", source: `console.log(require.resolve("./other.cjs").endsWith("other.cjs"), typeof require.resolve.paths);`, files: { "other.cjs": "" } },
-  "require.main": { name: "main.cjs", source: `console.log(require.main === module, typeof require.main);` },
-  "require.cache": { name: "main.cjs", source: `require("./other.cjs"); console.log(Object.keys(require.cache).some(key => key.endsWith("other.cjs")), typeof require.cache[__filename]);`, files: { "other.cjs": "" } },
+  "require.main": { name: "main.cjs", source: `console.log(require.main === module, typeof require.main);`, aheadOfTime: "true object\n" },
   "module.require": { name: "main.cjs", source: `console.log(module.require("node:path").sep === require("node:path").sep);` },
-  "require handed on": { name: "main.cjs", source: `const load = name => [require].map(one => one(name))[0]; console.log(typeof load("node:os").EOL);` },
+  "require handed on": { name: "main.cjs", source: `const os = require("node:os"); const load = name => [require].map(one => one(name))[0]; console.log(typeof load("node:os").EOL, load("node:os") === os);` },
   "import.meta.require": { source: `console.log(typeof import.meta.require("node:path").join);` },
   "createRequire": { source: `import { createRequire } from "node:module"; const require = createRequire(import.meta.url); console.log(typeof require("node:os").EOL, typeof require.resolve);` },
   "an ES module required": { name: "main.cjs", source: `console.log(require("./other.mjs").value);`, files: { "other.mjs": "export const value = 'from a module';" } },
-  "Module.prototype.require replaced": {
-    name: "main.cjs",
-    source: `const Module = require("node:module"); const original = Module.prototype.require; Module.prototype.require = function (id) { console.log("asked for", id); return original.call(this, id); }; require("./other.cjs"); Module.prototype.require = original;`,
-    files: { "other.cjs": "" },
-  },
   "Module.wrapper, _extensions and _initPaths": {
     name: "main.cjs",
     source: `const Module = require("node:module"); console.log(Module.wrapper.length, Module.wrap("x").length > 1, Object.keys(Module._extensions).sort().join(), typeof Module._initPaths()); console.log(Array.isArray(Module.globalPaths));`,
@@ -111,8 +106,10 @@ const programs: Record<string, Program> = {
     source: `const custom = Symbol.for("nodejs.util.inspect.custom"); console.log(String(new URLSearchParams("a=1&b=2")[custom](2, {})), String(new URL("https://example.com/a")[custom](2, {})).length > 20);`,
   },
   "a host object's own inspector, found by reflection": {
-    source: `const [custom] = Object.getOwnPropertySymbols(URLSearchParams.prototype).filter(symbol => symbol.description === "nodejs.util.inspect.custom"); console.log(String(new URLSearchParams("a=1")[custom](2, {})));
-const found = Reflect.ownKeys(ReadableStream.prototype).find(key => typeof key === "symbol" && key.description === "nodejs.util.inspect.custom"); console.log(String(new ReadableStream()[found](2, {})));`,
+    source: `function print(object, key) { try { console.log(String(object[key](2, {}))); } catch (error) { console.log(error.constructor.name, error.message.startsWith("Cannot use ")); } }
+const [custom] = Object.getOwnPropertySymbols(URLSearchParams.prototype).filter(symbol => symbol.description === "nodejs.util.inspect.custom"); print(new URLSearchParams("a=1"), custom);
+const found = Reflect.ownKeys(ReadableStream.prototype).find(key => typeof key === "symbol" && key.description === "nodejs.util.inspect.custom"); print(new ReadableStream(), found);
+console.log("goes on");`,
   },
   "a custom inspector in what nobody catches": { source: `throw { [Symbol.for("nodejs.util.inspect.custom")]() { return "not asked"; } };`, exitCode: 1 },
   "a URL that nobody catches": { source: `Promise.reject(new URL("https://example.com/a?b=c"));`, exitCode: 1 },
@@ -126,7 +123,6 @@ const found = Reflect.ownKeys(ReadableStream.prototype).find(key => typeof key =
   "a timer function spread": { source: `const copy = { ...setTimeout }; const [custom] = Object.getOwnPropertySymbols(copy); console.log(String(custom), await copy[custom](1, "spread"));` },
   "a timer function handed on": { source: `function describe(timer) { return Object.values(Object.getOwnPropertyDescriptors(Object.assign({}, timer))).length + Reflect.ownKeys(Object.assign({}, timer)).length; } console.log(describe(setInterval), describe(setImmediate));` },
   "util.promisify of a timer": { source: `import { promisify } from "node:util"; console.log(await promisify(setTimeout)(1, "promisified"));` },
-  "Bun.validate, safeValidate, parse and schema with a plan that is a text": { source: `const plan = JSON.stringify([0, [[2, "string", null, [["pattern", "^[a-z]+$"]]]], []]); console.log(Bun.validate("ab", plan), typeof Bun.safeValidate("A1", plan), Bun.parse('"ab"', plan), typeof Bun.schema(plan)["~standard"].validate);` },
   "Bun.build with a plugin": {
     source: `const built = await Bun.build({ entrypoints: ["./entry.js"], plugins: [{ name: "text", setup(build) { build.onResolve({ filter: /^virtual$/ }, () => ({ path: "virtual", namespace: "made" })); build.onLoad({ filter: /.*/, namespace: "made" }, () => ({ contents: "export default 'from a plugin'", loader: "js" })); } }] }); console.log(built.success, (await built.outputs[0].text()).includes("from a plugin"));`,
     files: { "entry.js": `import text from "virtual"; console.log(text);` },

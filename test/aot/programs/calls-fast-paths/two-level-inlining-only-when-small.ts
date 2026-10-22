@@ -1,13 +1,13 @@
 // What a built-in calls of what it was handed is taken in two copies deep, where it is small. Sizes, and what a callback calls itself, go by every copy.
 //
 // A small callback comes along with the copy of the function that wrote it.
-// IR= 0 copiesSmallCallback CallDirect f\d+ \(v\d+, v\d+\)$
+// IR= 0 copiesSmallCallback CallDirect \(v\d+, v\d+\) function=f\d+
 // A large one stays a call there: forEach calls it in two places. So it does where the function that wrote it stands alone: the limit is that of a copy.
-// IR= 2 copiesLargeCallback CallDirect f\d+ \(v\d+, v\d+\)$
-// IR= 2 sumOfLarge CallDirect f\d+ \(v\d+, v\d+\)$
+// IR= 2 copiesLargeCallback CallDirect \(v\d+, v\d+\) function=f\d+
+// IR= 2 sumOfLarge CallDirect \(v\d+, v\d+\) function=f\d+
 // What a small callback calls is three copies deep: the callback is taken in, in two places of each of two copies, and what it calls, which takes three arguments, stays a call in each.
-// IR= 0 copiesCallbackThatCalls CallDirect f\d+ \(v\d+, v\d+\)$
-// IR= 4 copiesCallbackThatCalls CallDirect f\d+ \(v\d+, v\d+, v\d+\)$
+// IR= 0 copiesCallbackThatCalls CallDirect \(v\d+, v\d+\) function=f\d+
+// IR= 4 copiesCallbackThatCalls CallDirect \(v\d+, v\d+, v\d+\) function=f\d+
 declare const console: any;
 
 function sumOfSmall(numbers: number[]): number {

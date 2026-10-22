@@ -12,30 +12,30 @@
 //
 // json-parse-*.test.ts name the programs that parse by a type while the collector runs, and ask for a collection at every such
 // allocation, or at every second: there none may run out of time.
-//   JSC=.. SEMA=.. PLAIN=.. python3 test/aot/shell/collector-stress.py [--young] strings/search     one program
+//   JSC=.. TESTAOT=.. FRONT_END=.. PLAIN=.. python3 test/aot/shell/collector-stress.py [--young] strings/search     one program
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
+import { isASAN, isDebug, isLinux } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { unsupported } from "../run-programs";
-import { jsc, python, sema, whyNoScriptRuns } from "../shell/tools";
+import { partInShare, unsupported } from "../run-programs";
+import { python, scriptEnvironment, scriptSkipReason } from "../shell/tools";
 
 export function collectorStress(collections: "full" | "young", part: number, parts: number) {
-  const whySkipped = whyNoScriptRuns ?? (isLinux && process.arch === "x64" ? undefined : "it is run on Linux x64, which shows the most");
-  if (whySkipped && !unsupported) console.error(`SKIPPED: test/aot/collector-stress/${collections}-${part}.test.ts: ${whySkipped}`);
+  const skipReason = scriptSkipReason ?? (isLinux && process.arch === "x64" ? undefined : "it is run on Linux x64, which shows the most");
+  if (skipReason && !unsupported) console.error(`SKIPPED: test/aot/collector-stress/${collections}-${part}.test.ts: ${skipReason}`);
 
-  test.skipIf(!!whySkipped)(
+  test.skipIf(!!skipReason)(
     `the programs answer the same under ${collections} collections all the time (part ${part} of ${parts})`,
     async () => {
-      const share = `${part}/${parts * (isDebug ? 10 : isASAN ? 3 : 1)}`;
-      await using stress = Bun.spawn({
+      const share = isDebug || isASAN ? `${part}/${parts * (isDebug ? 10 : 3)}` : partInShare(part, parts, 10);
+      await using script = Bun.spawn({
         cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--part", share, "all"],
-        env: { ...bunEnv, JSC: jsc!, SEMA: sema!, PLAIN: bunExe() },
+        env: scriptEnvironment(),
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([stress.stdout.text(), stress.stderr.text(), stress.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
       const lines = stdout.split("\n").filter(line => line !== "");
       expect(stderr).toBe("");
       expect(lines.at(-1)).toMatch(/^[1-9][0-9]* programs, [0-9]+ fail under stress alone, [0-9]+ run out of time$/);
@@ -47,22 +47,22 @@ export function collectorStress(collections: "full" | "young", part: number, par
 }
 
 export function collectorStressOn(collections: "full" | "young", every: 1 | 2 | 3, programs: string[]) {
-  const where = ["every", "every second", "every third"][every - 1] + " allocation that leaves the fast path";
-  const whySkipped =
-    whyNoScriptRuns ?? (!isLinux || process.arch !== "x64" ? "it is run on Linux x64, which shows the most" : isASAN || isDebug ? "this build is too slow for a collection at every allocation" : undefined);
-  if (whySkipped && !unsupported) console.error(`SKIPPED: ${programs.length} programs with a ${collections} collection at ${where}: ${whySkipped}`);
+  const frequency = ["every", "every second", "every third"][every - 1] + " allocation that leaves the fast path";
+  const skipReason =
+    scriptSkipReason ?? (!isLinux || process.arch !== "x64" ? "it is run on Linux x64, which shows the most" : isASAN || isDebug ? "this build is too slow for a collection at every allocation" : undefined);
+  if (skipReason && !unsupported) console.error(`SKIPPED: ${programs.length} programs with a ${collections} collection at ${frequency}: ${skipReason}`);
 
-  test.skipIf(!!whySkipped)(
-    `${programs.length} programs answer the same with a ${collections} collection at ${where}`,
+  test.skipIf(!!skipReason)(
+    `${programs.length} programs answer the same with a ${collections} collection at ${frequency}`,
     async () => {
-      await using stress = Bun.spawn({
+      await using script = Bun.spawn({
         cmd: [python!, join(import.meta.dir, "..", "shell", "collector-stress.py"), "-j", String(Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism()), ...(collections === "young" ? ["--young"] : []), "--every", String(every), ...programs],
-        env: { ...bunEnv, JSC: jsc!, SEMA: sema!, PLAIN: bunExe() },
+        env: scriptEnvironment(),
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([stress.stdout.text(), stress.stderr.text(), stress.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([script.stdout.text(), script.stderr.text(), script.exited]);
       expect(stderr).toBe("");
       expect(stdout.split("\n").filter(line => line !== "")).toEqual([`${programs.length} programs, 0 fail under stress alone, 0 run out of time`]);
       expect(exitCode).toBe(0);

@@ -10,6 +10,7 @@ use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
 use bun_url::URL;
+use bun_removable_features::{Feature, is_removed};
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
 use super::server_body::ServerInitContext;
@@ -562,13 +563,6 @@ fn validate_route_name(global: &JSGlobalObject, path: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub(crate) fn has_bundler() -> bool {
-    unsafe extern "C" {
-        safe fn Bun__hasBundler() -> bool;
-    }
-    Bun__hasBundler()
-}
-
 fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<JSValue>> {
     for key in ["routes", "static"] {
         if let Some(routes) = arg.get(global, key)? {
@@ -590,6 +584,9 @@ impl ServerConfig {
     ) -> JsResult<ServerConfig> {
         let vm = arguments.vm;
         let env = vm.env_loader();
+        // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
+        // of the default one. Taken first: it is for this one call, even when an option throws.
+        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
 
         let mut args = ServerConfig {
             development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
@@ -888,22 +885,47 @@ impl ServerConfig {
                 });
             }
 
+            if bake_pages && !init_ctx.framework_router_list.is_empty() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "\"bun bake\" does not support a route with \"dir\" and \"style\". Add a framework to bake.config.ts instead."
+                )));
+            }
+
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
             if (!init_ctx.dedupe_html_bundle_map.is_empty()
-                || !init_ctx.framework_router_list.is_empty())
-                && (has_bundler() || !args.development.is_hmr_enabled())
+                || !init_ctx.framework_router_list.is_empty()
+                || bake_pages)
+                && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
                     // SAFETY: `bun_vm()` returns the live VM for this global;
                     // we need `&mut Resolver` for `Framework::auto`.
+                    let mut bundler_options = crate::bake::SplitBundlerOptions::default();
+                    let bake_framework = global.bun_vm().bake_framework.get();
                     let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = crate::bake::Framework::auto(
-                        resolver,
-                        core::mem::take(&mut init_ctx.framework_router_list),
-                    );
+                    let framework = match bake_framework {
+                        Some(object) if bake_pages => {
+                            match crate::bake::Framework::from_js(
+                                object,
+                                global,
+                                &mut bundler_options,
+                            ) {
+                                Ok(framework) => framework,
+                                Err(err) => {
+                                    bundler_options.destroy_plugin();
+                                    return Err(err);
+                                }
+                            }
+                        }
+                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
+                        _ => crate::bake::Framework::auto(
+                            resolver,
+                            core::mem::take(&mut init_ctx.framework_router_list),
+                        ),
+                    };
 
                     let mut user_options = crate::bake::UserOptions {
                         arena: bun_alloc::Arena::new(),
@@ -911,7 +933,7 @@ impl ServerConfig {
                             bun_paths::fs::FileSystem::instance().top_level_dir(),
                         ),
                         framework,
-                        bundler_options: Default::default(),
+                        bundler_options,
                     };
 
                     let o = &vm.transpiler.options.transform_options;
@@ -1071,9 +1093,9 @@ impl ServerConfig {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
                     }
-                    if !has_bundler() {
+                    if is_removed(Feature::Bundler) {
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "app: this executable was built with --compile-trim-runtime, without the bundler and the development server, because the program neither calls Bun.build nor imports an HTML file"
+                            "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
                         )));
                     }
                     if args.bake.is_some() {

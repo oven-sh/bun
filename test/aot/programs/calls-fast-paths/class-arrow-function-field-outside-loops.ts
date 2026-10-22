@@ -1,7 +1,7 @@
-// A call of an arrow-function field of a class is a guarded direct call in a function without loops too, so it is inlined and the argument's type reaches JSON.stringify.
-// IR= 1 respond IsClosureOf v[0-9]+ f[0-9]+
-// IR= 1 respond frame 1 .*JSON.stringify
-// IR= 1 respond Call v[0-9]+, v[0-9]+ \(v[0-9]+\)
+// A call of an arrow-function field of a class is a direct call in a function without loops too, so it is inlined and the argument's type reaches JSON.stringify.
+// IR= 0 respond CallMethod
+// IR= 1 respond  = (JSONWriterOpen|CallBuiltin .* overload=JSONStringify/).*#[0-9]+$
+// IR= 0 respond  = Call v[0-9]+, v[0-9]+ \(v[0-9]+\)(?!.* isFallback)
 interface Item {
   id: number;
   title: string;

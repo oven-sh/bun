@@ -31,10 +31,10 @@ use bun_paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions, bytes_left_out,
-    discard_early_template_copy, modules_removed_by, set_trim, start_copying_template,
-    target_base_public_path, to_executable, trim_report,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
+    target_base_public_path, to_executable,
 };
+use bun_standalone_graph::executable_request::ExecutableAdditions;
 use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -46,6 +46,9 @@ use crate::api::output_file_jsc::OutputFileJsc as _;
 use crate::node::fs::{self as node_fs, NodeFS, args as fs_args};
 use crate::node::types::{FileSystemFlags, PathLike, PathOrFileDescriptor, StringOrBuffer};
 use crate::server::html_bundle;
+
+#[path = "compile_ahead_of_time.rs"]
+mod compile_ahead_of_time;
 
 /// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
@@ -150,9 +153,6 @@ impl Drop for JSBundleCompletionTask {
         if let Some(plugin) = self.plugins.take() {
             // The FFI handle stashed at construction.
             Plugin::destroy(plugin.as_ptr());
-        }
-        if self.config.compile.is_some() {
-            discard_early_template_copy();
         }
     }
 }
@@ -278,6 +278,13 @@ fn executable_entry_point_name(executable_path: &[u8]) -> &[u8] {
     basename.strip_suffix(b".exe").unwrap_or(basename)
 }
 
+/// `BundleOptions::type_check`. `Config::from_js` has thrown where the type checker is removed.
+fn check_types(checked: options::TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool {
+    bun_removable_features::removable_body!(Check, Abort, {
+        crate::cli::check_command::check_for_bun_build(checked, log)
+    })
+}
+
 impl JSBundleCompletionTask {
     /// Returns true if the promises were handled and resolved from
     /// BundlePlugin.ts; false means the caller should resolve immediately.
@@ -367,6 +374,11 @@ impl JSBundleCompletionTask {
             .as_ref()
             .expect("Unexpected: No compile options provided");
 
+        if compile_options.aot.is_some() {
+            // `compile_ahead_of_time` wrote the executable on the bundle thread.
+            return CompileResult::Success;
+        }
+
         let entry_point_index: usize = 'brk: {
             for (i, output_file) in output_files.iter().enumerate() {
                 if output_file.output_kind == OutputKind::EntryPoint
@@ -389,7 +401,6 @@ impl JSBundleCompletionTask {
                 &compile_options.assets,
                 entry_key,
                 output_files,
-                false,
             ) {
                 return CompileResult::fail_fmt(format_args!("{}", msg));
             }
@@ -453,7 +464,23 @@ impl JSBundleCompletionTask {
             flags |= StandaloneFlags::DISABLE_AUTOLOAD_PACKAGE_JSON;
         }
 
-        set_trim(compile_options.trim.clone());
+        let trim_plan = match compile_ahead_of_time::plan_bundle_trimming(
+            compile_options,
+            output_files,
+            // SAFETY: as for `to_executable` below.
+            unsafe { &mut *self.env },
+            flags,
+        ) {
+            Ok(plan) => plan,
+            Err(message) => {
+                return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(&message)));
+            }
+        };
+        let mut additions = ExecutableAdditions {
+            trim: trim_plan.as_ref(),
+            ..Default::default()
+        };
+
         let result = match to_executable(
             &compile_options.compile_target,
             output_files,
@@ -475,7 +502,6 @@ impl JSBundleCompletionTask {
                 copyright: opt_box(&compile_options.windows_copyright.list),
             },
             &compile_options.exec_argv.list,
-            crate::cli::arguments::is_option_of_a_compiled_executable,
             if compile_options.executable_path.list.is_empty() {
                 None
             } else {
@@ -484,44 +510,21 @@ impl JSBundleCompletionTask {
             flags,
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
-                crash_if_interpreter_is_used: compile_options.crash_if_interpreter_is_used,
-                ..Default::default()
             },
+            &mut additions,
         ) {
             Ok(r) => r,
             Err(err) => {
                 return CompileResult::fail_fmt(format_args!("{}", bstr::BStr::new(err.name())));
             }
         };
-
-        let report = trim_report();
-        if matches!(result, CompileResult::Success) && compile_options.trim.log && !report.names_left_out.is_empty() {
-            let listed = |names: &[Vec<u8>]| bstr::BString::from(names.join(&b", "[..]));
-            let mut note = |text: String| {
-                self.log.add_msg(bun_ast::Msg {
-                    kind: bun_ast::Kind::Note,
-                    data: bun_ast::range_data(None, bun_ast::Range::NONE, text.into_bytes()),
-                    ..Default::default()
-                });
-            };
-            note(format!(
-                "compile.trim: {:.1} MB of the runtime left out: {}",
-                bytes_left_out() as f64 / 1e6,
-                listed(&report.names_left_out),
-            ));
-            if !report.libraries_left_out.is_empty() {
-                let what_went = if compile_options.compile_target.os == OperatingSystem::Windows { "whose code was left out" } else { "left out" };
-                note(format!(
-                    "compile.trim: native libraries {}: {}",
-                    what_went,
-                    listed(&report.libraries_left_out),
-                ));
-            }
-            note(format!(
-                "compile.trim: native libraries in the executable: {}",
-                listed(&report.libraries_left_in),
-            ));
-        }
+        compile_ahead_of_time::add_notes(
+            &mut self.log,
+            crate::cli::build_command::collect_trim_log_lines(
+                &additions.details,
+                &compile_options.trim,
+            ),
+        );
 
         if matches!(result, CompileResult::Success) {
             let entry = &mut output_files[entry_point_index];
@@ -627,7 +630,9 @@ impl JSBundleCompletionTask {
         result
     }
 
+    #[inline(never)]
     pub(crate) fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+        bun_removable_features::removable_definition!(Bundler, Self::on_complete_anytask);
         // SAFETY: `ctx` is the live heap allocation (fn contract).
         unsafe {
             (*ctx).abort_handle.leave();
@@ -1080,22 +1085,6 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
-        transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
-        transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
-        transpiler.options.aot_explain_to_log = true;
-        transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
-        transpiler.options.modules_removed_by_trim = (config.compile.as_ref()).map_or_else(Vec::new, |compile| {
-            let template = &compile.executable_path.list;
-            modules_removed_by(&compile.trim, Some(&template[..]).filter(|path| !path.is_empty()))
-        });
-        transpiler.options.compile_function_source =
-            (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
-        transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
-        if let Some(compile) = &config.compile {
-            let executable_path = &compile.executable_path.list;
-            start_copying_template(&compile.compile_target, (!executable_path.is_empty()).then_some(&executable_path[..]));
-        }
-        transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
         if let Some(compile) = &config.compile {
@@ -1149,29 +1138,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.min_chunk_size = config.min_chunk_size;
         transpiler.options.fold_chunks = config.fold_chunks;
         transpiler.options.module_preload = config.module_preload;
-        transpiler.options.type_check = config
-            .check
-            .then_some(crate::cli::check_command::check_for_bun_build as options::TypeCheck);
-        transpiler.options.emit_declarations = (config.dts && config.compile.is_none())
-            .then_some(crate::cli::check_command::declarations_for_bun_build as options::EmitDeclarations);
-        let unsupported = [
-            (config.minify.syntax || config.minify.whitespace || config.minify.identifiers, "minify"),
-            (config.code_splitting, "splitting"),
-            (config.format != options::Format::Esm, "a format other than esm"),
-            (transpiler.options.source_map == options::SourceMapOption::Inline, "an inline source map"),
-        ];
-        let emits_declarations = config.dts && config.compile.is_none();
-        let has_typescript_entry_point = !config.entry_points.keys().iter().all(|path| crate::cli::build_command::is_javascript_path(path));
-        transpiler.options.skips_sound_files_for = unsupported.iter().find(|(is_set, _)| *is_set && emits_declarations && has_typescript_entry_point).map(|(_, option)| *option);
-        if emits_declarations && transpiler.options.skips_sound_files_for.is_none() && has_typescript_entry_point {
-            transpiler.options.emit_declarations = Some(crate::cli::check_command::sound_declarations_for_build);
-            transpiler.options.write_sound_files = Some(crate::cli::check_command::sound_files_for_build);
-            transpiler.options.rolls_up_declarations = !config.is_root_given;
-            if transpiler.options.source_map == options::SourceMapOption::None {
-                transpiler.options.drops_source_maps = true;
-                transpiler.options.source_map = options::SourceMapOption::External;
-            }
-        }
+        transpiler.options.type_check = config.check.then_some(check_types as options::TypeCheck);
         let compile_to_standalone_html = 'brk: {
             if config.compile.is_none() || config.target != bun_ast::Target::Browser {
                 break 'brk false;
@@ -1232,27 +1199,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.configure_linker();
         transpiler.configure_defines()?;
 
-        if let Some(compile) = config.compile.as_ref().filter(|_| transpiler.options.compiles_ahead_of_time()) {
-            if let Some(why) = crate::cli::aot::why_cannot_be_carried(
-                &compile.compile_target,
-                // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
-                unsafe { &mut *self.env },
-                Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
-            ) {
-                self.log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!("compile.aot: {}", bstr::BStr::new(&why)),
-                );
-                return Err(bun_bundler::Error::BuildFailed);
-            }
-        }
-
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)
                 if config.bytecode
-                    && !transpiler.options.compiles_ahead_of_time()
                     && (!compile.compile_target.is_default()
                         || !compile.executable_path.list.is_empty()) =>
             {
@@ -1423,6 +1373,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         // never-written-through `&mut` is UB under Stacked Borrows. Keep it raw
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
+
+        if self.compiles_ahead_of_time() {
+            return self.compile_ahead_of_time(transpiler, bump, event_loop, worker_pool);
+        }
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;

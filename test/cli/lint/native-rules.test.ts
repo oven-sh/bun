@@ -797,6 +797,98 @@ describe.concurrent("rule options", () => {
   });
 });
 
+describe.concurrent("react/jsx-newline", () => {
+  const id = "react/jsx-newline";
+  const component = (children: string) => `export const C = ({ time, now }) => (\n  <div>\n${children}\n  </div>\n);\n`;
+  const onOneLine = component("    took {time} at {now}");
+
+  test("only offers a fix when there's a line break to double", async () => {
+    const files = { "a.jsx": onOneLine, "b.jsx": component("    {time}\n    {now}"), ...bunfig({ [id]: "error" }) };
+    const { stdout } = await lint(files, ["-f", "json", "a.jsx", "b.jsx"]);
+    const results = JSON.parse(stdout) as { messages: { ruleId: string; line: number; fix?: { text: string } }[] }[];
+    expect(results.map(it => it.messages.filter(it => it.ruleId === id).map(it => [it.line, it.fix?.text]))).toEqual([
+      [[3, undefined]],
+      [[4, "\n\n    "]],
+    ]);
+  });
+
+  test("--fix doesn't claim to have fixed two expressions on one line", async () => {
+    const { stdout, stderr, exitCode } = await lint({ "a.jsx": onOneLine, ...bunfig({ [id]: "error" }) }, [
+      "--fix",
+      "-f",
+      "unix",
+      "a.jsx",
+    ]);
+    expect(stdout).toContain(`a.jsx:3:20: JSX element should start in a new line [Error/${id}]`);
+    expect(stderr).not.toContain("Circular fixes");
+    expect(stderr).not.toContain("Fixed");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// oxlint renames in all of these cases, which merges two different variables into one.
+describe.concurrent("unicorn/catch-error-name only renames when `error` isn't already in use", () => {
+  const id = "unicorn/catch-error-name";
+  type Fix = { range: [number, number]; text: string };
+
+  /** Returns, for each report, `code` with its fix applied, or `null` if it has no fix. */
+  async function renamed(code: string) {
+    const { stdout } = await lint({ "a.mjs": code, ...bunfig({ [id]: "error" }) }, ["-f", "json", "a.mjs"]);
+    const [{ messages }] = JSON.parse(stdout) as { messages: { ruleId: string; fix?: Fix }[] }[];
+    return messages
+      .filter(it => it.ruleId === id)
+      .map(({ fix }) => (fix ? code.slice(0, fix.range[0]) + fix.text + code.slice(fix.range[1]) : null));
+  }
+
+  test.each([
+    ["the block assigns to an outer `error`", "let error;\ntry {\n  f();\n} catch (e) {\n  error = e;\n}\ng(error);\n"],
+    [
+      "a function in the block does",
+      "let error;\ntry {\n  f();\n} catch (e) {\n  g(() => (error = e));\n}\ng(error);\n",
+    ],
+    ["the function passed to .catch() does", "let error;\np.catch(e => {\n  error = e;\n});\ng(error);\n"],
+    ["the second function passed to .then() reads it", "let error;\np.then(undefined, e => g(e, error));\n"],
+    [
+      "the block reads the enclosing function's `error` parameter",
+      "function f(error) {\n  try {\n    g();\n  } catch (e) {\n    h(error, e);\n  }\n}\nf();\n",
+    ],
+    ["the block reads a global", "try {\n  f();\n} catch (e) {\n  g(e, error);\n}\n"],
+    [
+      "an inner block that uses the caught error declares `error`",
+      "try {\n  f();\n} catch (e) {\n  {\n    const error = 1;\n    g(e, error);\n  }\n}\n",
+    ],
+    [
+      "an inner function that uses the caught error has an `error` parameter",
+      "try {\n  f();\n} catch (e) {\n  g(error => h(e, error));\n}\n",
+    ],
+    ["the catch block declares `error`", "try {\n  f();\n} catch (e) {\n  const error = 1;\n  g(error);\n}\n"],
+    ["the function itself declares `error`", "p.catch(e => {\n  const error = g(e);\n  return error;\n});\n"],
+  ])("no fix: %s", async (_, code) => {
+    expect(await renamed(code)).toEqual([null]);
+  });
+
+  test.each([
+    [
+      "nothing else is named `error`",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n}\n",
+    ],
+    [
+      "an outer `error` isn't used in the block",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (e) {\n    h(e);\n  }\n}\nf();\n",
+      "function f(error) {\n  try {\n    g(error);\n  } catch (error) {\n    h(error);\n  }\n}\nf();\n",
+    ],
+    [
+      "an inner `error` doesn't enclose a use of the caught error",
+      "try {\n  f();\n} catch (e) {\n  g(e);\n  h(error => error);\n}\n",
+      "try {\n  f();\n} catch (error) {\n  g(error);\n  h(error => error);\n}\n",
+    ],
+    ["`{ e }` keeps its key", "p.catch(e => g({ e }));\n", "p.catch(error => g({ e: error }));\n"],
+  ])("a fix: %s", async (_, code, fixed) => {
+    expect(await renamed(code)).toEqual([fixed]);
+  });
+});
+
 describe.concurrent("comments", () => {
   const rules = bunfig({
     "unicorn/no-null": "error",
@@ -1566,6 +1658,15 @@ describe.concurrent("unknown rules", () => {
       "vue/no-dupe-keys",
       `"vue/no-dupe-keys" is not supported\n  bun lint has no vue rules. To run eslint-plugin-vue, add it to plugins in [lint]`,
     ],
+    // --rules lists these, but only an ESLint config can specify which files are JSON or Markdown.
+    [
+      "json/no-duplicate-keys",
+      `"json/no-duplicate-keys" needs an ESLint config\n  Set language: "json/json" for the files in an eslint.config.js`,
+    ],
+    [
+      "markdown/no-empty-links",
+      `"markdown/no-empty-links" needs an ESLint config\n  Set language: "markdown/commonmark" for the files in an eslint.config.js`,
+    ],
   ];
 
   test.each(cases)("%s is rejected", async (written, said, saidToFlag = said) => {
@@ -1704,6 +1805,25 @@ describe.concurrent("invalid rule settings", () => {
     });
   });
 
+  test.each(["eqeqeq:", "eqeqeq: ", "no-var: error, eqeqeq:", "eqeqeq: [, smart]", "", " ", "{}"])(
+    "--rule %j is rejected: it has a rule without a severity, or no rule",
+    async value => {
+      expect(await lint({ ...source, ...bunfig({ eqeqeq: "error" }) }, ["--rule", value])).toEqual({
+        stdout: "",
+        stderr: `error: Invalid value for option 'rule' - expected type Object, received value: ${value}.\nnote: run 'bun lint --help' for more information\n`,
+        exitCode: 2,
+      });
+    },
+  );
+
+  test("the error for a bad --rule doesn't point at the bunfig.toml line that sets the same rule", async () => {
+    expect(await lint({ ...source, ...bunfig({ eqeqeq: "warn" }) }, ["--rule", "eqeqeq: null"])).toEqual({
+      stdout: "",
+      stderr: `error: null is not a valid severity for eqeqeq\n  Expected "off", "warn", or "error"\n`,
+      exitCode: 2,
+    });
+  });
+
   test("options aren't validated when the rule is off", async () => {
     const { stderr, exitCode } = await lint({ ...source, ...bunfig({ eqeqeq: ["off", "smrt"] }) }, ["-f", "json"]);
     expect(stderr).not.toContain("error:");
@@ -1737,6 +1857,14 @@ describe.concurrent("ESLint and oxlint configs keep their own behavior", () => {
     ]);
     expect(problems(inFlat.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
     expect(problems(inLegacy.stdout)).toEqual(["a.js:2 no-debugger", "a.js:4 no-debugger"]);
+  });
+
+  test("with an ESLint config, eslint/no-var in a disable comment isn't treated as no-var", async () => {
+    const code =
+      "var a = 1; // eslint-disable-line eslint/no-var\nvar b = 2; // eslint-disable-line no-var\nexport { a, b };\n";
+    const { stdout } = await lint({ "a.js": code, ...flat({ "no-var": "error" }) }, ["-f", "json"]);
+    expect(problems(stdout)).toEqual(["a.js:1 eslint/no-var", "a.js:1 no-var"]);
+    expect(stdout).toContain("Definition for rule 'eslint/no-var' was not found.");
   });
 
   test("an ESLint config still has to declare its plugins", async () => {

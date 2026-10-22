@@ -1,6 +1,6 @@
 // A getter on a prototype that defines, on the object it is read of, the property it stands for: a method bound at the first read. The read is of a kind of object that inherits an accessor, whatever the getter then does to the object: the run time is asked once for the kind, not once for each object.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
-const visits = () => count("operationAOTGetByNameAndCache");
+const visits = () => count("operationAOTGetByIdAndCache");
 class Schema {
   constructor(kind) { this.kind = kind; }
 }

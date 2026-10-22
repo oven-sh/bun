@@ -1,11 +1,11 @@
-// --aot locks the prototypes of Request, Response, Blob, Headers, URL and URLSearchParams: every way to change them is refused. Their constructors, their global names and the prototypes of other host classes stay as in plain Bun.
+// --aot locks the prototypes of Request, Response, Blob, Headers, URL and URLSearchParams: every way to change them is refused, and the attributes of their members read as in plain Bun. Buffer.prototype keeps its members, its prototype and its missing index keys, and takes other names and the program's own symbols. The constructors and global names of the six classes and the prototypes of other host classes stay as in plain Bun.
 const lines: string[] = [];
 function say(label: string, work: () => unknown) {
   let text: string;
   try {
     text = String(work());
   } catch (error) {
-    text = "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+    text = "throws " + (error as Error).constructor.name;
   }
   lines.push(label + ": " + text);
 }
@@ -26,10 +26,10 @@ const unlocked: Row[] = [
   ["TextDecoder", TextDecoder, "decode", "encoding"],
   ["FormData", FormData, "get", "get"],
   ["EventTarget", EventTarget, "addEventListener", "addEventListener"],
-  ["Buffer", Buffer, "readInt8", "parent"],
 ];
+const membersFixed: Row[] = [["Buffer", Buffer, "readInt8", "parent"]];
 
-for (const [name, constructor, method, getter] of [...locked, ...unlocked]) {
+for (const [name, constructor, method, getter] of [...locked, ...unlocked, ...membersFixed]) {
   const prototype = constructor.prototype as Record<PropertyKey, unknown>;
   const before = prototype[method];
   const keysBefore = Reflect.ownKeys(prototype).map(String).join();

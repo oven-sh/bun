@@ -1,4 +1,4 @@
-// What --aot fixes of a function that is compiled (the prototype of a generator function, caller, arguments) it does not fix of one that is made of text at run time.
+// What --aot fixes of a function that is compiled (the prototype of a generator function, caller, arguments) it does not fix of one that is made of text at run time. One row differs from plain Bun: constant text is compiled with the program, so `caller` and `arguments` of the two functions made of it are null.
 const GeneratorFunction = Object.getPrototypeOf(function* () {}).constructor;
 const AsyncGeneratorFunction = Object.getPrototypeOf(async function* () {}).constructor;
 const made = [

@@ -1,0 +1,8 @@
+port = "8080"
+retries = 3
+name = 7
+tags = ["a", 1]
+
+[origin]
+y = "2"
+x = "1"

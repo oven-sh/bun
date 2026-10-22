@@ -1,0 +1,14 @@
+# A function without a written result returns the union of what its returned expressions are.
+results.js:3 returns `same` = { id?: any; }[]
+results.js:7 predicted `same(x)` = { id?: any; }[]
+results.js:7 predicted `same(x).length` = number
+results.js:10 returns `either` = string | number
+results.js:12 returns `member` = number
+results.js:14 returns `through` = number
+results.js:16 returns `again` = number
+results.js:18 returns `first` = number
+results.js:20 returns `second` = number
+results.js:22 returns `last` = number
+results.js:24 returns `fallback` = string
+results.js:26 returns `nothing` = any
+results.js:28 returns `later` = Promise<any>

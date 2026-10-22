@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDirWithBunTypes } from "harness";
 import { test } from "./supported";
 
-const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: [] as string[], strict: true };
+const options = { target: "ESNext", module: "Preserve", moduleResolution: "bundler", noEmit: true, types: ["bun"], strict: true };
 
 async function run(cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({ cmd: [bunExe(), ...args], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -11,7 +11,7 @@ async function run(cwd: string, ...args: string[]) {
 }
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
-const errors = (said: string) => [...said.matchAll(/^(\S+)\((\d+),\d+\): error (TS\d+)/gm)].map(match => `${match[1]}:${match[2]} ${match[3]}`).sort();
+const errors = (said: string) => [...said.matchAll(/^error: (TS\d+): .*\n +at \S*?(test\/\S+?):(\d+):\d+$/gm)].map(match => `${match[2]}:${match[3]} ${match[1]}`).sort();
 
 const project = {
   "tsconfig.json": JSON.stringify({ compilerOptions: options, include: ["test"] }),
@@ -31,7 +31,7 @@ const project = {
 };
 
 test("globals of a package that only another file of the project imports are declared, with and without a neighbor that imports it", async () => {
-  using dir = tempDir("globals-of-packages", project);
+  using dir = tempDirWithBunTypes("globals-of-packages", project);
   const alone = await run(String(dir), "test", "--aot", "./test/uses.test.ts");
   expect(errors(alone.said)).toEqual([]);
   expect(passed(alone.said)).toEqual(["uses"]);
@@ -39,11 +39,11 @@ test("globals of a package that only another file of the project imports are dec
   expect(errors(together.said)).toEqual([]);
   expect(passed(together.said)).toEqual(["imports", "uses"]);
   const checked = await run(String(dir), "check", "--aot", "test/uses.test.ts");
-  expect(errors(checked.said)).toEqual([]);
+  expect({ errors: errors(checked.said), exitCode: checked.exitCode }).toEqual({ errors: [], exitCode: 0 });
 }, 60_000);
 
 test("what a module of such a package declares for itself is not global", async () => {
-  using dir = tempDir("globals-of-packages", {
+  using dir = tempDirWithBunTypes("globals-of-packages", {
     ...project,
     "test/uses.test.ts": `import { expect, test } from "bun:test";\nconst d: NotGlobal = { d: 1 };\ntest("never runs", () => {\n  expect(d.d).toBe(1);\n});\n`,
   });

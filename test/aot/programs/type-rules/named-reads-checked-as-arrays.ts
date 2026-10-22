@@ -1,6 +1,6 @@
 // What is read by a name out of a value whose type says nothing is held to an array type, with or without undefined and null.
 class Heir extends Array<number> { sum(): number { let s = 0; for (const n of this) s += n; return s } }
-function message(error: unknown): string { return error instanceof Error ? error.name + ": " + error.message.split("\n")[0].replace(/ \(bun --aot: [^)]*\)/, "") : String(error) }
+function message(error: unknown): string { return error instanceof Error ? error.name : String(error) }
 function attempt(what: string, f: () => unknown) { try { console.log(what, String(f())) } catch (error) { console.log(what, "|", message(error)) } }
 function show(list: readonly unknown[] | null | undefined): string { return list == null ? String(list) : list.length + ":" + Array.prototype.join.call(list, "/") }
 

@@ -1,6 +1,4 @@
-// In a compiled executable `spyOn` refuses a locked built-in. Compiled code calls such a built-in without looking it up, so a spy on it would never be called.
-// IR+ ScanPlainURL
-// IR+ FindPlainQueryValue
+// In a compiled executable `spyOn` refuses a fixed member of a built-in. Compiled code calls such a member without looking it up, so a spy on it would never be called. Math.floor is fixed like the members of the prototypes.
 import { spyOn } from "bun:test";
 
 const joined = (list: number[]) => list.join("-");
@@ -17,7 +15,7 @@ function attempt(label: string, lay: () => { mock: { calls: unknown[] }; mockRes
     console.log(label + ": " + before + ", spied: " + call() + ", calls " + spy.mock.calls.length);
     spy.mockRestore();
   } catch (error) {
-    console.log(label + ": " + before + ", throws " + (error as Error).name + ": " + (error as Error).message);
+    console.log(label + ": " + before + ", throws " + (error as Error).name);
   }
   console.log(label + " afterwards: " + call());
 }

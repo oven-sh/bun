@@ -1,5 +1,5 @@
 // An array, Map or Set kept in a class field or an object-literal property with an inferred type may hold external data of another type. Reading its elements must behave as in plain JavaScript; the container keeps its class.
-// IR+ CallBuiltin v\d+ Array\.indexOf#
+// IR+ CallBuiltin v\d+ \(.*\) overload=ArrayPrototypeIndexOf/
 const data = JSON.parse('{"t":"abc"}') as { t: number };
 const say = (label: string, f: () => unknown): void => { let r: string; try { const v = f(); r = typeof v + " " + (typeof v === "object" ? JSON.stringify(v) : String(v)); } catch (e) { r = "throws " + (e as Error).constructor.name; } console.log(label + " ==> " + r); };
 class Initialized { list = [data.t]; }

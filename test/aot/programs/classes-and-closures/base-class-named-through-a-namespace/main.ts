@@ -1,8 +1,8 @@
 // A class named as a member of a namespace is the class the member is bound to: it has a layout, and so have the classes that extend it.
-// IR+ ^  field "side"
-// IR+ ^  field "edge"
-// IR+ ^  field "extra"
-// IR- ^  field "unplaced"
+// IR+ ^layout L[0-9]+ .*\{name="side" declared=
+// IR+ ^layout L[0-9]+ .*\{name="edge" declared=
+// IR+ ^layout L[0-9]+ .*\{name="extra" declared=
+// IR- ^layout L[0-9]+ .*\{name="unplaced" declared=
 import * as Shapes from './shapes'
 import { Nested } from './nested'
 import * as Late from './late'

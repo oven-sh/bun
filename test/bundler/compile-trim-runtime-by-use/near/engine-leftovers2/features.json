@@ -1,1 +1,1 @@
-{"features": ["jit", "text"], "keptToday": true}
+{"features": ["JIT", "RuntimeTranspiler"], "keptToday": true}

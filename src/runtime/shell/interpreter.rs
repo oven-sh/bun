@@ -252,6 +252,9 @@ pub(crate) enum OutputNeedsIOSafeGuard {
     OutputNeedsIo,
 }
 
+/// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
+pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
+
 // ────────────────────────────────────────────────────────────────────────────
 // Interpreter
 // ────────────────────────────────────────────────────────────────────────────
@@ -1292,7 +1295,7 @@ impl Interpreter {
             let this_jsvalue = self.this_jsvalue.get();
             if this_jsvalue != JSValue::ZERO {
                 if self.failed() {
-                    // `fail` already rejected the promise.
+                    // The trampoline that ran `fail` rejects the promise.
                     self.keep_alive.with_mut(|k| k.disable());
                     self.deref_root_shell_and_io_if_needed(true);
                 } else if let Some(resolve) = JSShellInterpreter::resolve_get_cached(this_jsvalue) {
@@ -1369,9 +1372,12 @@ impl Interpreter {
         self.flags.get().failed()
     }
 
-    /// Node `id` threw and holds nothing in flight: kill the subprocesses, wind the tree down, then reject (the rejection runs JS, so it comes last).
-    pub(crate) fn fail(&self, id: NodeId) -> Yield {
-        let rejection = self.take_failure();
+    /// Node `id` threw and holds nothing in flight: kill the subprocesses and wind the tree down.
+    /// The first failure fills `rejection`, which the trampoline passes to `reject` once it holds no node.
+    pub(crate) fn fail(&self, id: NodeId, rejection: &mut Option<Rejection>) -> Yield {
+        if let Some(first) = self.take_failure() {
+            *rejection = Some(first);
+        }
         if self.failed() {
             let node_count = self.nodes.get().len();
             for i in 0..node_count {
@@ -1385,25 +1391,26 @@ impl Interpreter {
             .node(id)
             .base()
             .map_or(NodeId::INTERPRETER, |b| b.parent);
-        let y = self.child_done(parent, id, 1);
-        if let Some((reject, error)) = rejection {
-            let global_this = self
-                .global_this_ref()
-                .expect("take_failure returned a rejection on the Js path");
-            let _entered = self.event_loop.entered();
-            global_this.bun_vm().event_loop_mut().run_callback(
-                self.task_context(),
-                reject,
-                global_this,
-                crate::jsc::JSValue::UNDEFINED,
-                &[error],
-            );
-        }
-        y
+        self.child_done(parent, id, 1)
+    }
+
+    /// Runs JS, which can turn the event loop and free any node of the script.
+    pub(crate) fn reject(&self, (reject, error): Rejection) {
+        let global_this = self
+            .global_this_ref()
+            .expect("take_failure returned a rejection on the Js path");
+        let _entered = self.event_loop.entered();
+        global_this.bun_vm().event_loop_mut().run_callback(
+            self.task_context(),
+            reject,
+            global_this,
+            crate::jsc::JSValue::UNDEFINED,
+            &[error],
+        );
     }
 
     /// Take the pending exception and set `failed`; `Some` when the promise still has to be rejected.
-    fn take_failure(&self) -> Option<(crate::jsc::JSValue, crate::jsc::JSValue)> {
+    fn take_failure(&self) -> Option<Rejection> {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
 

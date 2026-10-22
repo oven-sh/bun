@@ -930,16 +930,14 @@ pub(crate) mod serialize {
                 dest.write_str(b":host")?;
                 if let Some(sel) = selector {
                     dest.write_char(b'(')?;
-                    let ctx = dest.ctx;
-                    serialize_selector(sel, dest, ctx, false)?;
+                    serialize_selector(sel, dest, context, false)?;
                     dest.write_char(b')')?;
                 }
                 return Ok(());
             }
             Component::Slotted(selector) => {
                 dest.write_str(b"::slotted(")?;
-                let ctx = dest.ctx;
-                serialize_selector(selector, dest, ctx, false)?;
+                serialize_selector(selector, dest, context, false)?;
                 dest.write_char(b')')?;
             }
             _ => {

@@ -419,7 +419,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
+    JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }

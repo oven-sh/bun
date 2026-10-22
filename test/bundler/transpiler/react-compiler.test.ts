@@ -3369,6 +3369,8 @@ describe("bundler", () => {
     ForWithContinue ["5,1,2",[5,1,2]] ["6,1,2",[6,1,2]] ["6,1,2",[6,1,2]]*
     useFormErrors [false,[[],[]]] [true,[["That name is already taken"],[]]] [true,[["That name is already taken"],[]]]* [true,[[],["Pick an X variable"]]] [true,[["That name is already taken"],["Pick an X variable"]]]
     useBareParam [1,["b"]] [2,["b"]] [2,["b"]]* ["X",[]]
+    UpdateInFrontOfInnerBlock ["c1:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]] ["c2:2",[{"b":1},{"b":1}]]*
+    UpdateInFrontOfInnerBlockNoJoin [1,["c1",{"b":1}]] [1,["c2",{"b":1}]] [1,["c2",{"b":1}]]*
     ReadThenReassign [2,["x"]] [3,["x"]] [3,["x"]]*
     CounterInLoop [1,[3]] [1,[3]]* [0,[1,2]]
     AssignedBeforeLoop ["i:b",[1,2]] ["j:b",[1,2]]* ["j:3",[3]]
@@ -3554,6 +3556,29 @@ describe("bundler", () => {
             return { label, list };
           }
 
+          // In the next two the block of each <i> is in the block of rows and depends on b alone, so it does not run
+          // again for a new c. The index++ in front of it has to run all the same.
+          const start = globalThis.start ?? 0;
+          function UpdateInFrontOfInnerBlock({ b, c, k }) {
+            let label = c;
+            let index = start;
+            const rows = [];
+            if (b === 2) label = "two";
+            rows.push(<i key={index++} b={b} />);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={label + ":" + index} list={rows} />;
+          }
+
+          function UpdateInFrontOfInnerBlockNoJoin({ b, c, k }) {
+            let index = start;
+            const rows = [];
+            rows.push(c);
+            rows.push(<i key={index++} b={b} />);
+            if (k === 1) index = -1;
+            return <div label={index} list={rows} />;
+          }
+
           // The block reads label, so it is an input. Its slot has to keep the value that label came in with.
           function ReadThenReassign(p) {
             let label = p.count;
@@ -3693,6 +3718,9 @@ describe("bundler", () => {
           );
           const flagOff = { flag: false, x: "X", b: "b" };
           run(useBareParam, [flagOff, 1], [flagOff, 2], [flagOff, 2], [{ flag: true, x: "X", b: "b" }, 3]);
+          const updates = [{ b: 1, k: 0, c: "c1" }, { b: 1, k: 0, c: "c2" }, { b: 1, k: 0, c: "c2" }];
+          run(UpdateInFrontOfInnerBlock, ...updates);
+          run(UpdateInFrontOfInnerBlockNoJoin, ...updates);
           run(
             ReadThenReassign,
             { count: 1, flag: true, b: "x" },

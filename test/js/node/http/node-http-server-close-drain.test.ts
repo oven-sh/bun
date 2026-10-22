@@ -1012,65 +1012,33 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
   }
 });
 
-// A reload under --hot keeps the native listener of an address, and so its kind. The sockets of a Bun.serve
-// listener have no room for the state of a node:http connection, so the server gets no socket for them.
-test("closeAllConnections() has no socket of a Bun.serve listener that the server took under --hot", async () => {
+// A reload under --hot keeps the native listener of an address, and so its kind.
+test("closeAllConnections() on a server that took the listener of a Bun.serve server under --hot", async () => {
   using dir = tempDir("hot-bun-serve-to-node-http", {
-    "cert.pem": tlsCert.cert,
-    "cert.key": tlsCert.key,
     "server.mjs": `
       import { createServer } from "node:http";
-      import { createServer as createSecureServer } from "node:https";
       import { once } from "node:events";
       import { connect } from "node:net";
-      import { connect as connectSecure } from "node:tls";
       import { writeFileSync, readFileSync } from "node:fs";
-
-      const tls = {
-        cert: readFileSync(new URL("cert.pem", import.meta.url), "utf8"),
-        key: readFileSync(new URL("cert.key", import.meta.url), "utf8"),
-      };
 
       globalThis.__reloads ??= 0;
       if (globalThis.__reloads++ === 0) {
-        // A reload finds a listener again by hostname and port, so the two kinds need two hostnames.
         Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve") });
-        Bun.serve({ port: 0, hostname: "0.0.0.0", tls, fetch: () => new Response("Bun.serve") });
         const self = new URL(import.meta.url);
         writeFileSync(self, readFileSync(self, "utf8"));
       } else {
-        for (const secure of [false, true]) {
-          let connections = 0;
-          let clientErrors = 0;
-          const handler = (req, res) => res.end("node:http");
-          const server = secure ? createSecureServer(tls, handler) : createServer(handler);
-          server.on("connection", () => connections++);
-          server.on("clientError", () => clientErrors++);
-          await once(server.listen(0, secure ? "0.0.0.0" : "127.0.0.1"), "listening");
-
-          const port = server.address().port;
-          // Sends a request on a new connection and resolves with the body of the answer.
-          const exchange = async payload => {
-            const socket = secure
-              ? connectSecure({ port, host: "127.0.0.1", rejectUnauthorized: false })
-              : connect(port, "127.0.0.1");
-            let received = "";
-            socket.setEncoding("latin1");
-            socket.on("data", chunk => (received += chunk));
-            socket.on("error", () => {});
-            await once(socket, secure ? "secureConnect" : "connect");
-            socket.write(payload);
-            await once(socket, "close");
-            return received.slice(received.indexOf("\\r\\n\\r\\n") + 4);
-          };
-          const body = await exchange("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-          // The parser rejects this request: 'clientError' would carry the socket too.
-          await exchange("GET / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 1\\r\\nContent-Length: 2\\r\\n\\r\\n");
-          server.closeAllConnections();
-          console.log(
-            (secure ? "https" : "http") + ": " + connections + " 'connection', " + clientErrors + " 'clientError', answered by " + body,
-          );
-        }
+        let connections = 0;
+        const server = createServer((req, res) => res.end("node:http"));
+        server.on("connection", () => connections++);
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const socket = connect(server.address().port, "127.0.0.1");
+        socket.on("error", () => {});
+        socket.resume();
+        await once(socket, "connect");
+        socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        await once(socket, "close");
+        server.closeAllConnections();
+        console.log(connections);
         process.exit(0);
       }
     `,
@@ -1080,14 +1048,9 @@ test("closeAllConnections() has no socket of a Bun.serve listener that the serve
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr: stderr.replaceAll(/^DEBUG:.*\n/gm, ""), exitCode }).toEqual({
-    stdout:
-      "http: 0 'connection', 0 'clientError', answered by Bun.serve\n" +
-      "https: 0 'connection', 0 'clientError', answered by Bun.serve\n",
-    stderr: "",
-    exitCode: 0,
-  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
 });

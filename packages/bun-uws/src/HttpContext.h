@@ -34,6 +34,7 @@
 #include <span>
 #include <array>
 #include <mutex>
+#include <openssl/ssl.h>
 
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
@@ -320,6 +321,24 @@ private:
         return us_socket_close(s, 0, nullptr);
     }
 
+    /* A TLS send that the kernel rejected ends the write side too, and the next writable event closes the socket.
+     * Like Node, node:https still dispatches the requests that came with this read. */
+    template <bool IsNodeHttp>
+    static bool isShutDownByOwner(us_socket_t *s) {
+        if constexpr (SSL && IsNodeHttp) {
+            if (us_socket_ssl_send_rejected(s) && !(SSL_get_shutdown((const ssl_st *) us_socket_get_native_handle(s)) & SSL_SENT_SHUTDOWN)) {
+                return false;
+            }
+        }
+        return us_socket_is_shut_down(s);
+    }
+
+    /* Not for the body of an accepted Upgrade request: its last chunk starts a tunnel. */
+    static bool readsBodyBehindOwnFin(HttpResponseData<SSL> *httpResponseData) {
+        return (httpResponseData->state & (HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED | HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY)) == HttpResponseData<SSL>::HTTP_NODE_HALF_CLOSED
+            && httpResponseData->inStream != nullptr;
+    }
+
     template <bool IsNodeHttp>
     static us_socket_t *onData(us_socket_t *s, char *data, int length) {
         // ref the socket to make sure we process it entirely before it is closed
@@ -334,10 +353,10 @@ private:
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
         HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
 
-        /* Do not accept any data while in shutdown state. A node:http tunnel is half-open: it still reads after socket.end(). */
+        /* Do not accept any data while in shutdown state. node:http is half-open: a tunnel and the body of the request in flight still read after socket.end(). */
         bool isHalfOpenTunnel = false;
         if constexpr (IsNodeHttp) isHalfOpenTunnel = httpResponseData->isConnectRequest;
-        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel) {
+        if (us_socket_is_shut_down((us_socket_t *) s) && !isHalfOpenTunnel && !readsBodyBehindOwnFin(httpResponseData)) {
             /* Balance the us_socket_ref above — every other return path
              * reaches the unref via returnedData. */
             us_socket_unref(s);
@@ -598,7 +617,7 @@ private:
             }
 
             /* We absolutely have to terminate parsing if shutdown */
-            if (us_socket_is_shut_down((us_socket_t *) s)) {
+            if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) s) && !readsBodyBehindOwnFin(httpResponseData)) {
                 return nullptr;
             }
 
@@ -690,7 +709,7 @@ private:
                 }
 
                 /* We absolutely have to terminate parsing if shutdown */
-                if (us_socket_is_shut_down((us_socket_t *) user)) {
+                if (isShutDownByOwner<IsNodeHttp>((us_socket_t *) user) && (fin || !readsBodyBehindOwnFin(httpResponseData))) {
                     /* node:http: this socket can be a tunnel that still reads. Its bytes are not for a body that ended. */
                     if constexpr (IsNodeHttp) {
                         if (fin) {

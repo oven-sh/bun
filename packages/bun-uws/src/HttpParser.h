@@ -588,7 +588,8 @@ struct HttpResponseData;
          * chunked) is only partially received. Used by onEnd to surface a
          * mid-body FIN as HPE_INVALID_EOF_STATE like Node's parser.finish(). */
         bool hasIncompleteRequestBody() const {
-            return remainingStreamingBytes != 0;
+            /* A data handler that stops the parse at the last chunk leaves STATE_IS_TRAILERS_DONE. */
+            return remainingStreamingBytes != 0 && remainingStreamingBytes != STATE_IS_TRAILERS_DONE;
         }
 
         /* Header fields one request can carry: HttpRequest::headers also holds the request line in slot 0 and a sentinel after the last field. */

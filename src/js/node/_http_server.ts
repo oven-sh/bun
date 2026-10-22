@@ -1141,7 +1141,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // Set in time only because end() defers the 'finish' emit to a
           // process.nextTick (see ServerResponse.prototype.end) and nothing
           // between the 'request' emit and here drains the tick queue.
-          http_res[kDispatcherDetached] = true;
+          http_res[kDetachedFrom] = socket;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
@@ -1524,9 +1524,9 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
-// Set when the dispatcher already detached a synchronously-finished response,
+// The socket the dispatcher already detached a synchronously-finished response from,
 // so the 'finish' listener does not detach/advance the pipeline a second time.
-const kDispatcherDetached = Symbol("kDispatcherDetached");
+const kDetachedFrom = Symbol("kDetachedFrom");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -2298,12 +2298,17 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
-function _writeHead(statusCode, reason, obj, response) {
+function validateStatusCode(statusCode) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
   if (statusCode < 100 || statusCode > 999) {
     throw $ERR_HTTP_INVALID_STATUS_CODE(require("internal/util/inspect").format("%s", originalStatusCode));
   }
+  return statusCode;
+}
+
+function _writeHead(statusCode, reason, obj, response) {
+  statusCode = validateStatusCode(statusCode);
 
   if (typeof reason === "string") {
     // writeHead(statusCode, reasonPhrase[, headers])
@@ -2423,6 +2428,8 @@ function ServerResponse(req, options): void {
   this.chunkedEncoding = false;
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
+// A response whose own statusCode was deleted sends 200, as in Node.js.
+ServerResponse.prototype.statusCode = 200;
 
 // ServerResponse stores its outgoing headers the same way Node.js does (the
 // kOutHeaders map inherited from OutgoingMessage). Right before the headers
@@ -2689,14 +2696,15 @@ function emitResponseFinish() {
   // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
   // the response's own socket (set by assignSocket, cleared only by
   // detachSocket) still references the connection then.
-  const socket = this.req?.socket ?? this.socket;
+  const detachedFrom = this[kDetachedFrom];
+  const socket = detachedFrom ?? this.req?.socket ?? this.socket;
   // Node's clearIncoming: a request that ended before its response did. Any other one is cleared at its EOF.
   const parser = socket?.parser;
   if (parser != null && parser.incoming === req && req.readableEnded) parser.incoming = null;
   onResponseFinishHandleSocket(socket?.server, socket, this);
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
-  if (this[kDispatcherDetached]) return;
+  if (detachedFrom !== undefined) return;
   if (socket != null) this.detachSocket(socket);
   advanceResponsePipeline(socket?.server, socket);
 }
@@ -3103,7 +3111,7 @@ function accountQueuedHeaderBytes(res, queued) {
 function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol]);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (!res._hasBody) {
@@ -3134,7 +3142,7 @@ function bufferPipelinedWrite(res, queued, chunk, encoding, callback) {
 function bufferPipelinedEnd(res, queued, chunk, encoding, callback) {
   callWriteHeadIfObservable(res, res[headerStateSymbol], true);
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
-    updateHasBody(res, res.statusCode);
+    updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
   accountQueuedHeaderBytes(res, queued);
   if (chunk && !res._hasBody) {
@@ -3506,8 +3514,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     callback = undefined;
   }
 
-  // Node's write_() drops the chunk of a destroyed response, and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
-  if (chunk && this.destroyed && !this.finished) chunk = undefined;
+  // Node's write_() drops the chunk of a destroyed response before _implicitHeader(), and end() goes on: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L951-L964
+  const droppedChunk = !!chunk && this.destroyed && !this.finished;
+  if (droppedChunk) chunk = undefined;
 
   if (hasServerResponseFinished(this, chunk, callback, true)) {
     return this;
@@ -3533,7 +3542,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {
@@ -3561,12 +3570,16 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   const headerState = this[headerStateSymbol];
-  callWriteHeadIfObservable(this, headerState, true);
+  if (!droppedChunk) callWriteHeadIfObservable(this, headerState, true);
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
     // Socket already gone: like Node, 'prefinish' fires but 'finish' never does, and the close of the socket aborts the request.
-    this._header = " ";
+    // Node's _implicitHeader() ran unless the chunk was dropped above, so the head counts as sent like on the normal path below.
+    if (!droppedChunk || headerState !== NodeHTTPHeaderState.none) {
+      this[headerStateSymbol] = NodeHTTPHeaderState.sent;
+      this._header = " ";
+    }
     this.finished = true;
     process.nextTick(markResponseEndedNT, this);
     this.emit("prefinish");
@@ -3595,7 +3608,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
       } catch (e) {
         releaseRenderedHeaders(renderedHeaders);
         // Mirror the old two-call flow's headersSent semantics: errors from
-        // the write-head phase (the batch's upfront gate, status validation,
+        // the write-head phase (the batch's upfront gate, argument validation,
         // headers-already-sent) leave the state unset; anything after that
         // point threw with headers already on the wire, exactly like
         // handle.end throwing after handle.writeHead succeeded.
@@ -3604,6 +3617,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
           code !== "ERR_STREAM_ALREADY_FINISHED" &&
           code !== "ERR_HTTP_HEADERS_SENT" &&
           code !== "ERR_INVALID_CHAR" &&
+          code !== "ERR_INVALID_ARG_TYPE" &&
           !(e instanceof RangeError)
         ) {
           this[headerStateSymbol] = sentState;
@@ -3647,7 +3661,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   return this;
 };
 
-// 'finish' waits a tick: the dispatcher sets kDispatcherDetached after a sync handler returns, and 'finish' reads it.
+// 'finish' waits a tick: the dispatcher sets kDetachedFrom after a sync handler returns, and 'finish' reads it.
 function queueResponseFinished(res, callback) {
   res._callPendingCallbacks();
   process.nextTick(emitResponseFinished, res, callback);
@@ -3743,7 +3757,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     // the header state without deriving _hasBody and a later body write to
     // a 204/304 would reach the wire chunk-framed with no terminator.
     // updateHasBody only ever clears _hasBody, so this is idempotent.
-    updateHasBody(this, this.statusCode);
+    updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
   if (chunk && !this._hasBody) {
     if (this[kRejectNonStandardBodyWrites]) {

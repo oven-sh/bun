@@ -1268,6 +1268,13 @@ bool extractP1363(const Buffer<const unsigned char>& buf,
     unsigned char* dest,
     size_t n);
 
+// Verifies an Ed25519 signature and rejects a small-order public key or R,
+// in canonical or non-canonical encoding. Every Ed25519 verify in Bun must go
+// through this function.
+bool ed25519Verify(const Buffer<const unsigned char>& publicKey,
+    const Buffer<const unsigned char>& signature,
+    const Buffer<const unsigned char>& message);
+
 DataPointer hkdf(const Digest& md,
     const Buffer<const unsigned char>& key,
     const Buffer<const unsigned char>& info,

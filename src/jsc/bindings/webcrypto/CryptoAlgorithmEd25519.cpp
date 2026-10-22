@@ -33,6 +33,7 @@
 #include <wtf/CrossThreadCopier.h>
 
 // -- BUN --
+#include "ncrypto.h"
 #include <openssl/curve25519.h>
 
 namespace WebCore {
@@ -55,13 +56,13 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmEd25519::platformSign(const CryptoKe
 
 static ExceptionOr<bool> verifyEd25519(const Vector<uint8_t>& key, size_t keyLengthInBytes, const Vector<uint8_t>& signature, const Vector<uint8_t> data)
 {
-    if (key.size() != ED25519_PUBLIC_KEY_LEN || keyLengthInBytes != ED25519_PUBLIC_KEY_LEN)
+    if (keyLengthInBytes != ED25519_PUBLIC_KEY_LEN)
         return false;
 
-    if (signature.size() != keyLengthInBytes * 2)
-        return false;
-
-    return ED25519_verify(data.begin(), data.size(), signature.begin(), key.begin()) == 1;
+    return ncrypto::ed25519Verify(
+        { key.begin(), key.size() },
+        { signature.begin(), signature.size() },
+        { data.begin(), data.size() });
 }
 
 ExceptionOr<bool> CryptoAlgorithmEd25519::platformVerify(const CryptoKeyOKP& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)

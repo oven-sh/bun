@@ -30,6 +30,12 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
+import {
+  ED25519_IDENTITY,
+  ED25519_SMALL_ORDER_POINTS,
+  hexBytes,
+  zeroSignatureWithR,
+} from "../../web/crypto/ed25519-small-order";
 
 function readFile(...args: [path: string, encoding: BufferEncoding]) {
   const result = fs.readFileSync(...args);
@@ -1832,6 +1838,69 @@ test("Ed25519 should work", async () => {
     const okay = verify(undefined, Buffer.from("foo"), publicKey, signature);
     expect(okay).toBeTrue();
   }
+});
+
+// https://github.com/oven-sh/bun/issues/46252
+describe("Ed25519 verify rejects small-order points", () => {
+  const jwkKey = (hex: string) =>
+    createPublicKey({
+      key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(hexBytes(hex)).toString("base64url") },
+      format: "jwk",
+    });
+
+  test("a small-order public key imports but verifies nothing", () => {
+    const results: Record<string, boolean> = {};
+    for (const { name, hex, message } of ED25519_SMALL_ORDER_POINTS) {
+      const key = jwkKey(hex);
+      expect(key.asymmetricKeyType).toBe("ed25519");
+      results[name] = verify(null, Buffer.from(message), key, zeroSignatureWithR(ED25519_IDENTITY));
+    }
+    expect(results).toEqual(Object.fromEntries(ED25519_SMALL_ORDER_POINTS.map(p => [p.name, false])));
+  });
+
+  test("a small-order R is rejected", () => {
+    const results: Record<string, boolean> = {};
+    for (const { name, hex, messageAsR } of ED25519_SMALL_ORDER_POINTS) {
+      if (messageAsR === undefined) continue;
+      results[name] = verify(null, Buffer.from(messageAsR), jwkKey(hex), zeroSignatureWithR(hex));
+    }
+    expect(Object.keys(results)).toHaveLength(8);
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(name => [name, false])));
+  });
+
+  test("every key input form and the callback form reject the identity key", async () => {
+    const keyObject = jwkKey(ED25519_IDENTITY);
+    const message = Buffer.from("any message at all");
+    const signature = zeroSignatureWithR(ED25519_IDENTITY);
+    const pem = keyObject.export({ format: "pem", type: "spki" }) as string;
+    const der = keyObject.export({ format: "der", type: "spki" }) as Buffer;
+    expect(createPublicKey(pem).equals(keyObject)).toBeTrue();
+
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    verify(null, message, keyObject, signature, (err, result) => (err ? reject(err) : resolve(result)));
+
+    expect({
+      keyObject: verify(null, message, keyObject, signature),
+      pem: verify(null, message, pem, signature),
+      der: verify(null, message, { key: der, format: "der", type: "spki" }, signature),
+      cryptoKey: verify(null, message, keyObject.toCryptoKey("Ed25519", false, ["verify"]), signature),
+      callback: await promise,
+    }).toEqual({ keyObject: false, pem: false, der: false, cryptoKey: false, callback: false });
+  });
+
+  test("a real signature still verifies and a digest is still rejected", async () => {
+    const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+    const message = Buffer.from("hello");
+    const signature = sign(null, message, privateKey);
+    expect(verify(null, message, publicKey, signature)).toBeTrue();
+    const { promise, resolve, reject } = Promise.withResolvers<boolean>();
+    verify(null, message, publicKey, signature, (err, result) => (err ? reject(err) : resolve(result)));
+    expect(await promise).toBeTrue();
+    const tampered = Buffer.from(signature);
+    tampered[0] ^= 1;
+    expect(verify(null, message, publicKey, tampered)).toBeFalse();
+    expect(() => verify("sha256", message, publicKey, signature)).toThrow();
+  });
 });
 
 test("ECDSA should work", async () => {

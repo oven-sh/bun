@@ -1216,7 +1216,13 @@ it.each([null, false, 0, 5, "x", { context: 5 }])(
     server.listen(0);
     await once(server, "listening");
     const port = (server.address() as AddressInfo).port;
-    const client = connect({ port, host: "127.0.0.1", servername: "a.example.com", rejectUnauthorized: false });
+    const client = connect({
+      port,
+      host: "127.0.0.1",
+      servername: "a.example.com",
+      ca: COMMON_CERT.cert,
+      checkServerIdentity: () => undefined,
+    });
     await once(client, "secureConnect");
     client.end();
     server.close();
@@ -1467,7 +1473,7 @@ it("destroying the connection while an asynchronous SNICallback is pending does 
   expect(true).toBe(true);
 });
 
-describe("bytes behind the ClientHello while an SNICallback is pending", () => {
+describe("bytes after the ClientHello while an SNICallback is pending", () => {
   // The first flight of `openssl s_client -tls1_3 -servername tenant.test -sess_in <ticket> -early_data <file>` with
   // another server's ticket: a ClientHello that offers early data, a ChangeCipherSpec and one record of early data.
   const earlyDataFlight = Buffer.from(
@@ -4389,7 +4395,9 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names on a TLS socket ove
     return connect({
       socket: clientSide,
       servername,
-      rejectUnauthorized: false,
+      // ca1 issued agent1, and agent2 is self-signed.
+      ca: [fixture("ca1-cert.pem"), agent(2).cert],
+      checkServerIdentity: () => undefined,
       minVersion: version,
       maxVersion: version,
     }).on("close", () => serverSide.destroy());

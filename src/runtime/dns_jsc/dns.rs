@@ -5923,6 +5923,10 @@ impl Resolver {
     }
 
     pub(crate) fn set_connect_result_order(order: &[u8]) {
+        // The order and the DNS cache are process-wide, so a Worker must not change them for the other threads.
+        if !VirtualMachine::get().is_main_thread {
+            return;
+        }
         if let Some(order) = Order::from_string(order) {
             internal::set_connect_order(order);
         }

@@ -6068,8 +6068,10 @@ impl VirtualMachine {
             // global makes the next file's call a no-op and dispatches
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
-            // The next file's `node:tls` starts with no override, so native clients must too.
-            if rare.tls_default_ca.take().is_some() {
+            // The next file's `node:tls` starts from the stock defaults, so native clients must too.
+            let had_ca = rare.tls_default_ca.take().is_some();
+            let had_ciphers = rare.tls_default_ciphers.take().is_some();
+            if had_ca || had_ciphers {
                 rare.drop_client_tls_defaults();
             }
         }

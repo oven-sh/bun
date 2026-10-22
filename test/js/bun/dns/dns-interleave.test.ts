@@ -475,4 +475,31 @@ describe.concurrent("dns result order applies to fetch() and Bun.connect()", () 
       exitCode: 0,
     });
   });
+
+  test("dns.setDefaultResultOrder() in a Worker only changes that Worker's dns.lookup() default", async () => {
+    const { out, stderr, exitCode } = await run(/* js */ `
+      const { once } = require("node:events");
+      const { Worker } = require("node:worker_threads");
+      dnsCacheSeed("cached.test", ["::1", "127.0.0.1"]);
+      const before = Bun.dns.getCacheStats().size;
+      const worker = new Worker(
+        \`
+        const dns = require("node:dns");
+        dns.setDefaultResultOrder("ipv4first");
+        require("node:worker_threads").parentPort.postMessage(dns.getDefaultResultOrder());
+        \`,
+        { eval: true },
+      );
+      const [inWorker] = await once(worker, "message");
+      await worker.terminate();
+      const after = Bun.dns.getCacheStats().size;
+      const order = dnsCacheSeed("order.test", ["::1", "::1", "127.0.0.1", "127.0.0.1"]);
+      console.log(JSON.stringify({ inWorker, onMain: require("node:dns").getDefaultResultOrder(), before, after, order }));
+    `);
+    expect({ out, stderr, exitCode }).toEqual({
+      out: { inWorker: "ipv4first", onMain: "verbatim", before: 1, after: 1, order: [6, 4, 6, 4] },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

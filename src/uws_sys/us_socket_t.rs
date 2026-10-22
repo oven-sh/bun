@@ -84,6 +84,10 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
+    pub(crate) fn drain_reads(&mut self) {
+        c::us_socket_drain_reads(self);
+    }
+
     pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
@@ -577,6 +581,7 @@ mod c {
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_drain_reads(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
             code: CloseCode,

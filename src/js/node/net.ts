@@ -2808,6 +2808,9 @@ function drainOnreadTailNT(socket) {
 }
 
 Socket.prototype.resume = function resume() {
+  // Node's Readable.resume() ignores a destroyed stream. Ours also waits for 'end', which destroy() doesn't emit.
+  if (this.destroyed) return this;
+
   // Schedule the Readable flow tick first so its read() runs while
   // kOnreadDraining is still set and does not queue a second drain: Node's
   // override sets handle.reading synchronously for the same reason.

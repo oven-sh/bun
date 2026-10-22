@@ -458,7 +458,7 @@ Server.prototype.unref = function () {
 
 Server.prototype.closeAllConnections = function () {
   http1Fallback?.closeAllHttp1Connections(this);
-  // Like Node, the listener, the sockets handed to 'connect' and 'upgrade' listeners and the TLS connections still in their handshake stay.
+  // Like Node, this skips the listener, sockets handed to 'connect' / 'upgrade' listeners, and TLS connections still in their handshake.
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
@@ -1262,7 +1262,7 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle, secu
   const onServerName = listenerGeneration.onServerName;
   if (onServerName) {
     socketHandle.onservername = onServerName;
-    // `this` of the SNICallback.
+    // The SNICallback's `this`.
     socketHandle.data = socket;
   }
 
@@ -1683,7 +1683,7 @@ function getNodeHTTPServerSocket() {
       handle.onclose = this.#onClose.bind(this);
       handle.duplex = this;
 
-      // onServerConnection() arms the http timeouts of a TLS connection at 'secureConnection'.
+      // onServerConnection() arms a TLS connection's http timeouts at 'secureConnection'.
       const handshaking = !!listenerGeneration.tls && !handle.secureEstablished;
       if (handshaking) this[kHandshaking] = true;
       else this.on("timeout", onNodeHTTPServerSocketTimeout);
@@ -2092,7 +2092,7 @@ function getNodeHTTPServerSocket() {
           return (this[kHandle] ?? this.#peer)?.peerCertVerified === true;
         }
 
-        // The X.509 verification error code of a requested client certificate that did not verify.
+        // The X.509 error code when the requested client certificate failed verification.
         get authorizationError() {
           if (!this.#listenerGeneration.tls.requestCert) return null;
           return (this[kHandle] ?? this.#peer)?.authorizationError ?? null;
@@ -2265,7 +2265,7 @@ function inheritFromTLSSocket() {
     prototype,
     Object.create(TLSSocketPrototype, Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype)),
   );
-  // TLSSocket's methods read this._handle, which stays null here because net.Socket would drive the connection through it.
+  // TLSSocket's methods read this._handle. It's null on these sockets, because net.Socket would drive the connection through it.
   for (const name of [
     "getPeerCertificate",
     "getPeerX509Certificate",

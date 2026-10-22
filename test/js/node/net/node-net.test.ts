@@ -1,6 +1,6 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, jest } from "bun:test";
 import {
   blackholePortSource,
   bunEnv,
@@ -39,7 +39,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { duplexPair } from "node:stream";
+import { Duplex, duplexPair } from "node:stream";
 import { connect as tlsConnect, TLSSocket } from "node:tls";
 import { getSystemErrorMap } from "node:util";
 
@@ -4135,7 +4135,6 @@ describe("bytesWritten", () => {
   });
 
   it("counts a write during which the transport destroys the socket", async () => {
-    const { Duplex } = require("node:stream");
     let onClientWrite: (() => void) | undefined;
     const side = (peer: () => any, onWrite?: () => void) =>
       new Duplex({
@@ -4152,7 +4151,7 @@ describe("bytesWritten", () => {
     );
     const serverSide = side(() => clientSide);
     const server = new TLSSocket(serverSide, { isServer: true, ...tlsCert }).on("error", () => {});
-    const client = require("node:tls").connect({ socket: clientSide, ca: tlsCert.cert, servername: "localhost" });
+    const client = tlsConnect({ socket: clientSide, ca: tlsCert.cert, servername: "localhost" });
     try {
       await once(client, "secureConnect");
       onClientWrite = () => client.destroy();
@@ -4162,6 +4161,28 @@ describe("bytesWritten", () => {
     } finally {
       client.destroy();
       server.destroy();
+    }
+  });
+
+  // A unix socket, because there the first send after the peer closed already fails.
+  it.skipIf(isWindows)("counts a write the kernel refused", async () => {
+    const closed = Promise.withResolvers<[string | undefined, number]>();
+    const server = createServer({ allowHalfOpen: true }, socket => {
+      let code: string | undefined;
+      socket.on("error", () => {});
+      socket.on("close", () => closed.resolve([code, socket.bytesWritten]));
+      socket.on("end", () => socket.write(Buffer.alloc(82), (err: any) => (code = err?.code)));
+      socket.resume();
+    });
+    const path = join(socket_domain, "refused.sock");
+    await once(server.listen(path), "listening");
+    try {
+      connect(path).on("connect", function (this: Socket) {
+        this.destroy();
+      });
+      expect(await closed.promise).toEqual(["EPIPE", 82]);
+    } finally {
+      server.close();
     }
   });
 
@@ -4407,6 +4428,35 @@ it.concurrent.skipIf(!isLinux).each(["client", "accepted"])(
   },
 );
 
+// Linux only: elsewhere the peer's reset can reach the client as a read error before a send fails.
+it.skipIf(!isLinux)("delivers the reply of a peer that closed mid-upload before the write fails", async () => {
+  const reply = Buffer.alloc(59642, "r");
+  const server = createServer(socket => {
+    socket.on("error", () => {});
+    socket.end(reply, () => socket.destroy());
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    const client = connect((server.address() as any).port, "127.0.0.1");
+    const events: string[] = [];
+    let received = 0;
+    client.on("data", chunk => {
+      if (received === 0) events.push("data");
+      received += chunk.length;
+    });
+    client.on("error", (err: any) => events.push(`error ${err.code} ${err.syscall}`));
+    client.write(Buffer.alloc(8 << 20), (err: any) => events.push(`write ${err?.code}`));
+    const hadError = await new Promise(resolve => client.once("close", resolve));
+    expect({ received, events, hadError }).toEqual({
+      received: reply.length,
+      events: ["data", "write EPIPE", "error EPIPE write"],
+      hadError: true,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 describe("destroy()", () => {
   const code = (name: string, events: string[]) => (err?: any) => void events.push(`${name} ${err?.code}`);
 
@@ -4422,6 +4472,18 @@ describe("destroy()", () => {
     await expect(finished).rejects.toMatchObject({ code: "ERR_STREAM_PREMATURE_CLOSE" });
     await closed;
     expect(events).toEqual([]);
+  });
+
+  it("makes a later resume() a no-op", async () => {
+    using pair = await connectToPausedPeer();
+    const resumed = jest.fn();
+    pair.socket.pause();
+    pair.socket.destroy();
+    await once(pair.socket, "close");
+    pair.socket.on("resume", resumed).resume();
+    // 'resume' would come on the next tick.
+    await new Promise(resolve => setImmediate(resolve));
+    expect([resumed.mock.calls.length, pair.socket.readableFlowing]).toEqual([0, false]);
   });
 
   it("cancels the write in flight after 'error'", async () => {

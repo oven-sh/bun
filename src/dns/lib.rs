@@ -462,7 +462,7 @@ impl Order {
         })
     }
 
-    /// The address family `fetch()` and `Bun.connect()` dial first. Process-wide, like the DNS cache they share.
+    /// The address family `fetch()` and `Bun.connect()` dial first. Process-wide, like the DNS cache they share, and set only by the CLI flag and the main thread.
     pub fn for_connect() -> Order {
         match CONNECT_ORDER.load(Ordering::SeqCst) {
             4 => Order::Ipv4first,

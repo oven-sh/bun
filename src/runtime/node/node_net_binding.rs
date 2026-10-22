@@ -49,6 +49,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             connection: JsCell::new(None),
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
+            closing: Cell::new(uws::NewSocketHandler::DETACHED),
             bytes_written: Cell::new(0),
             bytes_read: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),

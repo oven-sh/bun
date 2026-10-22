@@ -782,6 +782,8 @@ int us_socket_set_tos(us_socket_r s, int tos);
 int us_socket_get_tos(us_socket_r s);
 void us_socket_resume(us_socket_r s);
 void us_socket_pause(us_socket_r s);
+/* Dispatches on_data for what the kernel already holds, unless paused. For an owner about to report a failed send and close. */
+void us_socket_drain_reads(us_socket_r s);
 
 #ifdef __cplusplus
 }

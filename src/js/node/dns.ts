@@ -104,7 +104,7 @@ declare namespace defaultResultOrder {
 function setDefaultResultOrder(order) {
   validateOrder(order);
   defaultResultOrder.value = order;
-  // fetch() and Bun.connect() resolve through the native DNS cache, not dns.lookup().
+  // fetch() and Bun.connect() resolve through the native DNS cache, not dns.lookup(). No-op in a Worker.
   setConnectResultOrder(order);
 }
 

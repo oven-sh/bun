@@ -7297,6 +7297,11 @@ declare module "bun" {
 
   interface TLSUpgradeOptions<Data> {
     data?: Data;
+    /**
+     * TLS configuration for the upgraded socket.
+     *
+     * On a client socket, an object that sets no option, such as `{}`, is the same as `true`.
+     */
     tls: TLSOptions | boolean;
     socket: SocketHandler<Data>;
   }

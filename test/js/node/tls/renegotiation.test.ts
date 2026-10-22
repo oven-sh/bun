@@ -1412,7 +1412,7 @@ it.concurrent(
 );
 
 const duplexes = ["a Duplex", "a Duplex that emits 'drain' in its write()"] as const;
-it.concurrent.each(duplexes)("a write made in the middle of a renegotiation leaves once, over %s", async duplexKind => {
+it.concurrent.each(duplexes)("sends a write made in the middle of a renegotiation once, over %s", async duplexKind => {
   const tcp = netConnect(quiet.staysOpen, "127.0.0.1");
   tcp.on("error", () => {});
   const APPLICATION_DATA = 23;

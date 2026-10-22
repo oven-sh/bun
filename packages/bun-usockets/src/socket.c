@@ -913,6 +913,20 @@ void us_socket_pause(struct us_socket_t *s) {
     s->flags.is_paused = 1;
 }
 
+void us_socket_drain_reads(struct us_socket_t *s) {
+#ifdef _WIN32
+    const int recv_flags = MSG_PUSH_IMMEDIATE;
+#else
+    const int recv_flags = MSG_DONTWAIT;
+#endif
+    char *buf = s->group->loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+    int length;
+    while (s && !us_socket_is_closed(s) && !s->flags.is_paused &&
+           (length = bsd_recv(us_poll_fd(&s->p), buf, LIBUS_RECV_BUFFER_LENGTH, recv_flags)) > 0) {
+        s = us_internal_socket_follow_adopted(s->ssl ? us_internal_ssl_on_data(s, buf, length) : us_dispatch_data(s, buf, length));
+    }
+}
+
 void us_socket_resume(struct us_socket_t *s) {
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;

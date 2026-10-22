@@ -197,7 +197,7 @@
 "generic_body_not_generic:src/runtime/server/mod.rs" = 2
 "generic_body_not_generic:src/runtime/server/server_body.rs" = 1
 "generic_body_not_generic:src/runtime/shell/Builtin.rs" = 1
-"generic_body_not_generic:src/runtime/socket/Listener.rs" = 1
+"generic_body_not_generic:src/runtime/socket/Listener.rs" = 2
 "generic_body_not_generic:src/runtime/socket/socket_body.rs" = 8
 "generic_body_not_generic:src/runtime/test_runner/expect.rs" = 1
 "generic_body_not_generic:src/runtime/webcore/Blob.rs" = 2

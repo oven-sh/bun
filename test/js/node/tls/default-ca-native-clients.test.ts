@@ -60,7 +60,7 @@ async function run(body: string, extraEnv?: { SSL_CERT_FILE: "good" }) {
 
 const refused = { fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", ws: "REFUSED" };
 
-test.concurrent("the default list is trusted, and not before it is set", async () => {
+test.concurrent("trusts the default list only after it's set", async () => {
   const result = await run(`
     const before = await report();
     tls.setDefaultCACertificates([good]);
@@ -69,7 +69,7 @@ test.concurrent("the default list is trusted, and not before it is set", async (
   expect(result).toEqual({ before: refused, after: { fetch: "OK", ws: "OK" } });
 });
 
-test.concurrent("replacing the list refuses new connections", async () => {
+test.concurrent("refuses new connections after the list is replaced", async () => {
   const result = await run(`
     tls.setDefaultCACertificates([good]);
     const first = await report();
@@ -77,6 +77,20 @@ test.concurrent("replacing the list refuses new connections", async () => {
     console.log(JSON.stringify({ first, second: await report() }));
   `);
   expect(result).toEqual({ first: { fetch: "OK", ws: "OK" }, second: refused });
+});
+
+test.concurrent("fetch follows NODE_TLS_REJECT_UNAUTHORIZED when it changes after the list is set", async () => {
+  const result = await run(`
+    tls.setDefaultCACertificates([other]);
+    const close = { headers: { connection: "close" } };
+    const verdicts = [await viaFetch(close)];
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    verdicts.push(await viaFetch(close));
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "1";
+    verdicts.push(await viaFetch(close));
+    console.log(JSON.stringify(verdicts));
+  `);
+  expect(result).toEqual([refused.fetch, "OK", refused.fetch]);
 });
 
 test.concurrent("an empty list trusts nothing", async () => {
@@ -101,7 +115,7 @@ test.concurrent("an empty list trusts nothing", async () => {
   });
 });
 
-test.concurrent("an empty default also covers an empty ca beside other options", async () => {
+test.concurrent("an empty default list also applies to an empty ca next to other options", async () => {
   const result = await run(
     `
     tls.setDefaultCACertificates([]);
@@ -113,7 +127,7 @@ test.concurrent("an empty default also covers an empty ca beside other options",
   expect(result).toEqual({ fetch: "DEPTH_ZERO_SELF_SIGNED_CERT", ws: "REFUSED" });
 });
 
-test.concurrent("a certificate failure carries its code on cause", async () => {
+test.concurrent("sets error.cause.code on a certificate failure", async () => {
   const result = await run(`
     const error = await fetch(server.url).catch(e => e);
     console.log(JSON.stringify({ code: error.code, cause: error.cause?.code }));
@@ -157,7 +171,7 @@ test.concurrent("TLS options without ca still use the default list", async () =>
   expect(result).toEqual({ fetch: "OK", ws: "OK" });
 });
 
-test.concurrent("a worker keeps its own default", async () => {
+test.concurrent("a worker has its own default list", async () => {
   const result = await run(`
     tls.setDefaultCACertificates([good]);
     const worker = new Worker(URL.createObjectURL(new Blob([\`

@@ -837,13 +837,6 @@ describe.concurrent("socket", () => {
         }),
       );
 
-      expect(() =>
-        socket.upgradeTLS({
-          ...handlers,
-          tls: {},
-        }),
-      ).toThrow();
-
       expect(handlers.socket.close).not.toHaveBeenCalled();
       expect(handlers.socket.error).not.toHaveBeenCalled();
       expect(handlers.socket.data).not.toHaveBeenCalled();
@@ -7640,6 +7633,34 @@ describe.concurrent("Bun.connect with a tls object that sets no option", () => {
     });
   });
 
+  it("upgradeTLS({ tls: {} }) upgrades a client socket and still throws on a server socket", async () => {
+    const accepted = Promise.withResolvers<Socket>();
+    const firstChunk = Promise.withResolvers<Buffer>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open: socket => accepted.resolve(socket),
+        data: (_socket, chunk) => firstChunk.resolve(chunk),
+        error() {},
+      },
+    });
+    const client = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: { data() {}, error() {} },
+    });
+    const handlers = { data() {}, error() {} };
+    const [, upgraded] = client.upgradeTLS({ tls: {}, socket: handlers });
+    try {
+      expect((await firstChunk.promise)[0]).toBe(CLIENT_HELLO_RECORD);
+      const server = await accepted.promise;
+      expect(() => server.upgradeTLS({ tls: {}, socket: handlers })).toThrow('Expected "tls" option');
+    } finally {
+      upgraded.terminate();
+    }
+  });
+
   it("Bun.listen({ tls: {} }) still listens without TLS", async () => {
     const received = Promise.withResolvers<string>();
     using listener = Bun.listen({
@@ -7700,3 +7721,72 @@ it.concurrent("end(data) from a drain handler sends the tail it queues", async (
   expect(endReturned).toBe(payload.length - took);
   expect(Buffer.concat(received).equals(payload)).toBe(true);
 });
+
+describe.concurrent.each(["listen", "connect"] as const)(
+  "terminate() on a Bun.%s TLS socket whose peer stopped reading",
+  side => {
+    const payload = Buffer.alloc(256 * 1024);
+
+    it.each([
+      ["write() and end()", ["close"]],
+      ["write() and close()", ["close"]],
+      ["shutdown(true) and write()", ["end", "close"]],
+    ] as const)("closes the socket after %s", async (route, expected) => {
+      const events: string[] = [];
+      const opened = Promise.withResolvers<Socket<unknown>>();
+      const peerOpened = Promise.withResolvers<Socket<unknown>>();
+      const ended = Promise.withResolvers<void>();
+      const underTest: SocketHandler = {
+        open: socket => opened.resolve(socket),
+        data() {},
+        end() {
+          events.push("end");
+          ended.resolve();
+        },
+        close: (_socket, error) => void events.push(error ? `close ${(error as any).code}` : "close"),
+        error: (_socket, error) => void events.push(`error ${(error as any).code}`),
+      };
+      const peerHandlers: SocketHandler = {
+        open(socket) {
+          socket.pause();
+          peerOpened.resolve(socket);
+        },
+        data() {},
+        error() {},
+      };
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: tls.key, cert: tls.cert },
+        socket: side === "listen" ? underTest : peerHandlers,
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ca: tls.cert },
+        socket: side === "connect" ? underTest : peerHandlers,
+      });
+      const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
+      try {
+        // Small buffers on both ends, so part of the TLS records stays in user space until the peer reads.
+        setSocketOptions(socket, 1, 4096);
+        setSocketOptions(peer, 2, 4096);
+        if (route === "shutdown(true) and write()") {
+          socket.shutdown(true);
+          socket.write(payload);
+          await ended.promise;
+          // The socket starts its own close once the `end` dispatch is over.
+          await new Promise(resolve => setImmediate(resolve));
+        } else {
+          socket.write(payload);
+          if (route === "write() and end()") socket.end();
+          else socket.close();
+        }
+        socket.terminate();
+        expect(events).toEqual([...expected]);
+      } finally {
+        peer.terminate();
+      }
+    });
+  },
+);

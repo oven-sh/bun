@@ -342,6 +342,8 @@ pub(in crate::socket) fn install_sni_alpn_selector(ctx: *mut boringssl_sys::SSL_
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) socket: Cell<uws::NewSocketHandler<SSL>>,
+    /// A TLS socket whose close still waits for the peer. `socket` is detached by then, so `terminate()` closes this one.
+    pub(crate) closing: Cell<uws::NewSocketHandler<SSL>>,
     /// `SSL_CTX` this client connection was opened with. Server-accepted
     /// sockets and plain TCP leave this `None` (the Listener / SecureContext
     /// owns the ref there).
@@ -973,6 +975,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_value: JSValue,
         fatal_send_errno: i32,
     ) -> JsResult<()> {
+        // What the peer sent before it closed is still in the kernel, and the close below would drop it.
+        self.socket.get().drain_reads();
         // Without an `error` handler this would be an uncaught exception, which a peer could cause by disconnecting early.
         if !handlers.on_error().is_empty() {
             let global = handlers.global_object;
@@ -1436,6 +1440,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.detach_native_callback();
 
         socket.close(code);
+        self.keep_if_still_closing(socket);
+    }
+
+    /// A TLS close can wait for the peer to read or to answer. Keeps that socket for `terminate()`.
+    fn keep_if_still_closing(&self, socket: SocketHandler<SSL>) {
+        if SSL && matches!(socket.socket, uws::InternalSocket::Connected(_)) && !socket.is_closed()
+        {
+            self.closing.set(socket);
+        }
     }
 
     /// Discard a still-live native socket so this wrapper can be reused for a
@@ -2305,6 +2318,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // ext-slot/owner pin) - release it and detach so nothing further
         // dispatches either. mark_inactive is not needed: handlers being
         // null means the previous teardown already ran it.
+        this.closing.set(SocketHandler::<SSL>::DETACHED);
         if !this.has_handlers() {
             this.detach_native_callback();
             this.socket.set(SocketHandler::<SSL>::DETACHED);
@@ -3220,8 +3234,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        // JS fails a write whose send was fatal (`wrote < -1`), so a later flush must not send its bytes.
-        if buffer_unwritten_data && wrote >= -1 {
+        if buffer_unwritten_data && wrote < -1 {
+            // JS fails this write, so a later flush must not send its bytes. `bytesWritten` counts them, as in Node.
+            self.bytes_written
+                .set(self.bytes_written.get() + bytes.len() as u64);
+        } else if buffer_unwritten_data {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -3350,6 +3367,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
         this.close_and_detach(uws::CloseCode::Failure);
+        this.closing
+            .replace(SocketHandler::<SSL>::DETACHED)
+            .close(uws::CloseCode::Failure);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3388,6 +3408,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // defer behind its ciphertext write spill (`ssl_close_after_spill`).
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
+        this.keep_if_still_closing(socket);
         let _ = global;
         this.poll_ref.with_mut(|p| {
             p.unref(bun_io::posix_event_loop::get_vm_ctx(
@@ -3670,7 +3691,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                     tls_js,
                     is_server,
                 )?;
-            } else if tls_js.to_boolean() {
+            }
+            // `true`, or a client's object that sets no option, as in `Bun.connect`.
+            if ssl_opts.is_none() && (tls_js.is_boolean() || !is_server) {
                 ssl_opts = Some(crate::socket::tls_true_defaults(handlers.vm, is_server));
             }
             let cfg = ssl_opts
@@ -3753,6 +3776,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
+            closing: Cell::new(uws::NewSocketHandler::DETACHED),
             bytes_written: Cell::new(0),
             bytes_read: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -3879,6 +3903,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
+            closing: Cell::new(uws::NewSocketHandler::DETACHED),
             // Same fd as the TCP wrapper it replaces, so the count carries over.
             bytes_written: Cell::new(this.bytes_written.get()),
             bytes_read: Cell::new(this.bytes_read.get()),
@@ -5104,6 +5129,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: Default::default(),
+        closing: Cell::new(uws::NewSocketHandler::DETACHED),
         bytes_written: Cell::new(0),
         bytes_read: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),

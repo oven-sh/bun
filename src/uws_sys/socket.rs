@@ -485,6 +485,13 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
+    /// Dispatches `on_data` for what the kernel already holds, unless the socket is paused.
+    pub fn drain_reads(&self) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).drain_reads();
+        }
+    }
+
     // ── timeouts ────────────────────────────────────────────────────────────
 
     /// Splits >240s onto the minute-granularity long-timeout wheel.

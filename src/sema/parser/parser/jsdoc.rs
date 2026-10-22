@@ -264,7 +264,7 @@ struct KeptType {
 
 /// Collects the types that the tree of a comment with `tags` keeps. jsdoc.go drops some of what it parses, and
 /// `reparse` only reparses some of what it keeps.
-fn kept_types<'t>(tags: &'t [syntax::Tag<'t>], kept: &mut SmallVec<[KeptType; 8]>) {
+fn kept_types<'t>(tags: &'t [syntax::Tag<'t>], kept: &mut SmallVec<[KeptType; 32]>) {
     // The tags that are inside another tag.
     let mut open: SmallVec<[(&'t [syntax::Tag<'t>], bool); 4]> = SmallVec::new();
     open.push((tags, false));
@@ -1318,7 +1318,7 @@ impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS
         attached: &Attached<'a>,
         from: usize,
     ) -> usize {
-        let mut kept: SmallVec<[KeptType; 8]> = SmallVec::new();
+        let mut kept: SmallVec<[KeptType; 32]> = SmallVec::new();
         for doc in &attached.docs {
             kept_types(&doc.tags, &mut kept);
         }

@@ -9,7 +9,7 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
-use bun_install::install::{self as Install, DependencyID, ExtractData};
+use bun_install::install::{self as Install, DependencyID, ExtractData, PackageID};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
@@ -31,6 +31,8 @@ pub struct ExtractTarball {
     /// story as `cache_dir`).
     pub(crate) temp_dir: Fd,
     pub(crate) dependency_id: DependencyID,
+    /// `invalid_package_id` while the resolver has no package for the tarball yet.
+    pub(crate) package_id: PackageID,
     /// The value of `PackageManager::skips_verify`, which the cache lookup also uses.
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
@@ -186,6 +188,17 @@ pub(crate) fn uses_streaming_extraction() -> bool {
 }
 
 impl ExtractTarball {
+    /// The package that the tarball is for. A linker queues a download once, for the first
+    /// dependency that reaches the package, and the isolated linker resolves a peer itself. So
+    /// `resolutions[dependency_id]` can be another package, or none.
+    pub(crate) fn package(&self, resolutions: &[PackageID]) -> PackageID {
+        if self.package_id != Install::invalid_package_id {
+            return self.package_id;
+        }
+        (resolutions.get(self.dependency_id as usize).copied())
+            .unwrap_or(Install::invalid_package_id)
+    }
+
     /// Derive the display name and a filesystem-safe basename for this
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical

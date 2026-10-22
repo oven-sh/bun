@@ -234,6 +234,7 @@ impl ErasedCallbacks {
         ctx: *mut (),
         task_id: Task::Id,
         dependency_id: DependencyID,
+        package_id: PackageID,
         name: &[u8],
         resolution: &bun_install::Resolution,
         err: crate::Error,
@@ -242,7 +243,6 @@ impl ErasedCallbacks {
         manager.mark_network_task_failed(task_id);
         // A linker queues a tarball once, for the first dependency that reaches it.
         let is_required = if self.has_on_extract {
-            let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
             manager.is_package_required(dependency_id, package_id)
         } else {
             manager.is_network_task_required(task_id)
@@ -251,7 +251,6 @@ impl ErasedCallbacks {
             return Some(is_required);
         }
         if !self.is_store_installer {
-            let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
             (self.on_package_download_error_pkg)(ctx, package_id, name, resolution, err, url);
         } else if is_required {
             (self.on_package_download_error_store)(ctx, task_id, name, resolution, err, url);
@@ -741,7 +740,13 @@ fn run_tasks_erased(
                             log_mark,
                             failure,
                         )? {
-                            fail_update_requests(manager, task.task_id, name, None, is_required);
+                            fail_update_requests(
+                                manager,
+                                task.task_id,
+                                name,
+                                INVALID_PACKAGE_ID,
+                                is_required,
+                            );
                         }
                     }
 
@@ -838,7 +843,13 @@ fn run_tasks_erased(
                         failure,
                     )? {
                         let is_unanswered = is_required && retry;
-                        fail_update_requests(manager, task.task_id, name, None, is_unanswered);
+                        fail_update_requests(
+                            manager,
+                            task.task_id,
+                            name,
+                            INVALID_PACKAGE_ID,
+                            is_unanswered,
+                        );
                     }
 
                     return_network_task(task_ptr);
@@ -1009,6 +1020,7 @@ fn run_tasks_erased(
                 // path below allocates its own Task.
                 task.discard_unused_streaming_state(manager);
 
+                let package_id = extract.package(&manager.lockfile.buffers.resolutions);
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
                     let Some(is_required) = cb.dispatch_tarball_error(
@@ -1016,6 +1028,7 @@ fn run_tasks_erased(
                         extract_ctx,
                         task.task_id,
                         extract.dependency_id,
+                        package_id,
                         extract.name.slice(),
                         &extract.resolution,
                         err,
@@ -1040,7 +1053,7 @@ fn run_tasks_erased(
                         manager,
                         task.task_id,
                         extract.name.slice(),
-                        Some(extract.dependency_id),
+                        package_id,
                         is_required,
                     );
 
@@ -1057,6 +1070,7 @@ fn run_tasks_erased(
                         extract_ctx,
                         task.task_id,
                         extract.dependency_id,
+                        package_id,
                         extract.name.slice(),
                         &extract.resolution,
                         match response.status_code {
@@ -1100,7 +1114,7 @@ fn run_tasks_erased(
                         manager,
                         task.task_id,
                         extract.name.slice(),
-                        Some(extract.dependency_id),
+                        package_id,
                         // The manifest just listed this version, so an error status for its tarball
                         // counts as no response. It says nothing about the package's other
                         // versions.
@@ -1296,7 +1310,7 @@ fn run_tasks_erased(
                     }
                 };
                 let dependency_id = tarball.dependency_id;
-                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+                let mut package_id = tarball.package(&manager.lockfile.buffers.resolutions);
                 // SAFETY: `tarball` borrows `task.request` which is reborrowed
                 // `&mut` below; the backing `StringOrTinyString` lives in the
                 // pooled `Task` for the whole iteration and is not mutated.
@@ -1322,6 +1336,7 @@ fn run_tasks_erased(
                         extract_ctx,
                         task.id,
                         dependency_id,
+                        package_id,
                         alias,
                         resolution,
                         err,
@@ -1337,7 +1352,7 @@ fn run_tasks_erased(
                         err.name(),
                         bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                     );
-                    fail_update_requests(manager, task.id, alias, Some(dependency_id), false);
+                    fail_update_requests(manager, task.id, alias, package_id, false);
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1885,7 +1900,7 @@ fn forget_failed_git_task(
     task_id: Task::Id,
     name: &[u8],
 ) -> TaskCallbackList {
-    fail_update_requests(this, task_id, name, None, false);
+    fail_update_requests(this, task_id, name, INVALID_PACKAGE_ID, false);
     let _ = this.network_dedupe_map.remove(&task_id);
     this.task_queue.remove(&task_id).unwrap_or_default()
 }
@@ -1996,7 +2011,9 @@ pub(crate) fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
     package_name: &[u8],
-    tarball_dependency_id: Option<DependencyID>,
+    // `INVALID_PACKAGE_ID` if the download is not a tarball's, or the resolver has no package for
+    // the tarball yet.
+    tarball_package_id: PackageID,
     unanswered: bool,
 ) {
     if this.subcommand == Subcommand::Remove {
@@ -2011,11 +2028,9 @@ pub(crate) fn fail_update_requests(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
     // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
-    let package_id = tarball_dependency_id
-        .and_then(|id| resolutions.get(id as usize).copied())
-        .filter(|&package_id| package_id != INVALID_PACKAGE_ID);
     let was_for = |id: DependencyID| {
-        package_id.is_some_and(|package_id| resolutions.get(id as usize) == Some(&package_id))
+        (tarball_package_id != INVALID_PACKAGE_ID
+            && resolutions.get(id as usize) == Some(&tarball_package_id))
             || waiters.iter().any(|waiter| {
                 matches!(
                     waiter,
@@ -2155,6 +2170,7 @@ pub fn generate_network_task_for_tarball<'a>(
         cache_dir,
         temp_dir,
         dependency_id,
+        package_id: package.meta.id,
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,

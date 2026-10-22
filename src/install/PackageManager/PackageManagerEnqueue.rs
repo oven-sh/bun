@@ -377,6 +377,7 @@ pub fn enqueue_tarball_for_reading(
         this,
         task_id,
         dependency_id,
+        package_id,
         alias,
         path,
         resolution,
@@ -2394,7 +2395,16 @@ fn bind_row_without_manifest(
                 }
                 if !this.has_created_network_task(task_id, dependency.behavior.is_required()) {
                     let dep_name = this.lockfile.str_detached(&dependency.name);
-                    let task = enqueue_local_tarball(this, task_id, id, dep_name, url, &res, None);
+                    let task = enqueue_local_tarball(
+                        this,
+                        task_id,
+                        id,
+                        invalid_package_id,
+                        dep_name,
+                        url,
+                        &res,
+                        None,
+                    );
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 return Ok(());
@@ -2487,7 +2497,7 @@ fn report_manifest_failure(
                 .for_each(|msg| msg.kind = kind);
         }
     }
-    run_tasks::fail_update_requests(this, task_id, name, None, is_unanswered);
+    run_tasks::fail_update_requests(this, task_id, name, invalid_package_id, is_unanswered);
 }
 
 /// Logs why `get_or_put_resolved_package` failed. The caller has to report an `Err` itself.
@@ -2868,6 +2878,7 @@ fn enqueue_local_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
     dependency_id: DependencyID,
+    package_id: PackageID,
     name: &[u8],
     path: &[u8],
     resolution: &Resolution,
@@ -2905,6 +2916,7 @@ fn enqueue_local_tarball(
                     cache_dir: get_cache_directory(this),
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
+                    package_id,
                     integrity: locked_integrity.copied().unwrap_or_default(),
                     stays_unpinned: locked_integrity.is_some() && !this.pins_tarballs(),
                     url: stored_string(path),

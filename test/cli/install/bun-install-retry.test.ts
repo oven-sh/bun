@@ -1284,6 +1284,7 @@ describe.concurrent("a failed download that several dependencies share", () => {
 
   async function project(linker: string, packages: Pkg[], files: Record<string, string> = {}) {
     const gone = new Set<string>();
+    const corrupt = new Set<string>();
     const tarballs = new Map<string, Uint8Array>();
     for (const pkg of packages) {
       tarballs.set(
@@ -1296,7 +1297,8 @@ describe.concurrent("a failed download that several dependencies share", () => {
       fetch(request) {
         const { origin, pathname } = new URL(request.url);
         const tarball = tarballs.get(pathname);
-        if (tarball) return gone.has(pathname) ? new Response("gone", { status: 404 }) : new Response(tarball);
+        if (tarball && gone.has(pathname)) return new Response("gone", { status: 404 });
+        if (tarball) return new Response(corrupt.has(pathname) ? "not a tarball" : tarball);
         const versions = packages.filter(pkg => pkg.name === pathname.slice(1));
         if (versions.length === 0) return new Response("unexpected", { status: 404 });
         return Response.json({
@@ -1316,17 +1318,20 @@ describe.concurrent("a failed download that several dependencies share", () => {
       "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url.href, linker } }),
     });
     let errorLines: string[] = [];
+    const breakTarball = (broken: Set<string>, name: string, version: string) => {
+      rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+      rmSync(join(String(dir), ".bun-cache"), { recursive: true, force: true });
+      broken.add(`/${name}-${version}.tgz`);
+    };
     return {
       dir: String(dir),
       url: (name: string, version: string) => `${registry.url.href}${name}-${version}.tgz`,
       /** Of the last install. */
       errorLines: () => errorLines,
       /** From now on nothing is installed or cached, and this tarball is a 404. */
-      loseTarball(name: string, version: string) {
-        rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
-        rmSync(join(String(dir), ".bun-cache"), { recursive: true, force: true });
-        gone.add(`/${name}-${version}.tgz`);
-      },
+      loseTarball: (name: string, version: string) => breakTarball(gone, name, version),
+      /** Like `loseTarball`, but the registry answers with bytes that bun.lock doesn't have the hash of. */
+      corruptTarball: (name: string, version: string) => breakTarball(corrupt, name, version),
       async install(root: object, ...args: string[]) {
         await writeFile(join(String(dir), "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", ...root }));
         await using proc = spawn({
@@ -1356,6 +1361,10 @@ describe.concurrent("a failed download that several dependencies share", () => {
   const installed = { errors: 0, warnings: 0, failed: false, exitCode: 0 };
   const leftOut = { errors: 0, warnings: 1, failed: false, exitCode: 0 };
   const baz = { name: "baz", version: "1.0.0" };
+  const optionalPeerOnRuntime = {
+    peerDependencies: { runtime: "^1.1.0" },
+    peerDependenciesMeta: { runtime: { optional: true } },
+  };
 
   describe.each(["hoisted", "isolated"])("%s", linker => {
     // `b` resolves baz first and asks for its tarball, `a` finds baz resolved: the download that
@@ -1450,6 +1459,53 @@ describe.concurrent("a failed download that several dependencies share", () => {
       expect(await p.install(root)).toEqual(installed);
       p.loseTarball("baz", "1.0.0");
       expect(await p.install(root)).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+    });
+
+    // plugin ships inside vbundle, where nothing provides runtime. The isolated linker links a peer to the nearest
+    // dependency of that name, which is the root's runtime, and it walks the devDependency vbundle first. So it asks
+    // for runtime through the optional peer of plugin, whatever that peer resolves to in bun.lock.
+    describe.each([
+      // 3.0.0 is outside the peer's range, so the peer resolves to no package.
+      ["that resolves to no package", "3.0.0", { peerDependencies: { plugin: "2.0.0" } }],
+      ["that resolves to the package", "1.1.0", { dependencies: { plugin: "2.0.0" }, ...optionalPeerOnRuntime }],
+    ])("a package that the linker asks for through a peer %s", (_, version, y) => {
+      const runtime = { name: "runtime", version };
+      const packages = [
+        runtime,
+        { name: "plugin", version: "2.0.0", ...optionalPeerOnRuntime },
+        { name: "y", version: "1.0.0", ...y },
+        { name: "y", version: "2.0.0" },
+        {
+          name: "vbundle",
+          version: "1.0.0",
+          dependencies: { plugin: "2.0.0", y: "1.0.0" },
+          bundleDependencies: ["plugin"],
+        },
+      ];
+      const root = { dependencies: { runtime: version, y: "2.0.0" }, devDependencies: { vbundle: "1.0.0" } };
+
+      it("is installed from bun.lock with an empty cache", async () => {
+        using p = await project(linker, packages);
+        expect(await p.install(root)).toEqual(installed);
+        rmSync(join(p.dir, "node_modules"), { recursive: true });
+        rmSync(join(p.dir, ".bun-cache"), { recursive: true });
+        expect(await p.install(root, "--frozen-lockfile")).toEqual(installed);
+        expect(await file(join(p.dir, "node_modules", "runtime", "package.json")).json()).toEqual(runtime);
+      });
+
+      it("is an error when the root requires it and the download fails", async () => {
+        using p = await project(linker, packages);
+        expect(await p.install(root)).toEqual(installed);
+        p.loseTarball("runtime", version);
+        expect(await p.install(root, "--frozen-lockfile")).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+      });
+
+      it("is an error when the root requires it and the tarball is not the locked one", async () => {
+        using p = await project(linker, packages);
+        expect(await p.install(root)).toEqual(installed);
+        p.corruptTarball("runtime", version);
+        expect(await p.install(root, "--frozen-lockfile")).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+      });
     });
   });
 

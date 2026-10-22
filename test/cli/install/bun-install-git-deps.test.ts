@@ -610,6 +610,68 @@ test.concurrent.each([
   },
 );
 
+// Every ref of such a repository has the same root directory, so a download for another ref finds the package that the
+// lockfile has. That package then takes the ref that was downloaded: the lockfile names what package.json names.
+test.concurrent.each([
+  ["bun install after package.json moves to another ref", "v1", "v1", ["install"]],
+  // bun.lock used to save the end of the root directory's name (`lib`) where the ref is
+  ["bun update of a package that an earlier version saved", "v2", "lib", ["update", nameOf("a")]],
+] as const)(
+  "%s locks a github: tarball without a commit in its root by the new ref",
+  async (_, was, saved, command) => {
+    using dir = tempDir("github-root-without-commit-ref", {});
+    const root = String(dir);
+    const tarballs: Record<string, Uint8Array> = {
+      v1: await tarballOf("my-lib", packageFiles(nameOf("a"), "v1")),
+      v2: await tarballOf("my-lib", packageFiles(nameOf("a"), "v2")),
+    };
+    const requests: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(pathname);
+        const tarball = tarballs[pathname.replace("/repos/scope/pkg-a/tarball/", "")];
+        return tarball ? new Response(tarball) : new Response("not found", { status: 404 });
+      },
+    });
+    const env = { GITHUB_API_URL: `http://localhost:${server.port}` };
+    const project = writeProject(root, { [nameOf("a")]: "github:scope/pkg-a#v2" });
+    // The lockfile of an install that downloaded the ref `was`.
+    writeFileSync(
+      join(project, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "project", dependencies: { [nameOf("a")]: `github:scope/pkg-a#${was}` } } },
+        packages: {
+          [nameOf("a")]: [`${nameOf("a")}@github:scope/pkg-a#${saved}`, {}, "my-lib", integrityOf(tarballs[was])],
+        },
+      }),
+    );
+
+    const moved = await runBun(project, join(root, "cache"), env, ...command);
+    expect(diagnostics(moved.stderr)).toEqual([]);
+    expect(await lockedPackages(project)).toEqual({
+      [nameOf("a")]: [`${nameOf("a")}@github:scope/pkg-a#v2`, {}, "my-lib", integrityOf(tarballs.v2)],
+    });
+    expect(moved.exitCode).toBe(0);
+
+    rmSync(join(project, "node_modules"), { recursive: true, force: true });
+    const again = await runInstall(project, join(root, "empty-cache"), env, "--frozen-lockfile");
+    expect(diagnostics(again.stderr)).toEqual([]);
+    expect({
+      requests,
+      installed: await installedVersionOf(project, nameOf("a")),
+      exitCode: again.exitCode,
+    }).toEqual({
+      requests: ["/repos/scope/pkg-a/tarball/v2", "/repos/scope/pkg-a/tarball/v2"],
+      installed: "v2",
+      exitCode: 0,
+    });
+  },
+);
+
 // If a part of a GitHub dependency couldn't be found in the form that the URL parser returns, it was left empty. An
 // empty committish installed the default branch, and an empty owner requested `/repos//<repo>/`. Now such a dependency
 // fails to resolve.

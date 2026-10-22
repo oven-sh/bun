@@ -424,6 +424,8 @@ it("saves a commit after the `#` of a git or GitHub package only when its tag ha
     ["dot", "github:o/dot#main", "pkg.root", "github:o/dot#main", "github:o/dot#pkg.root"],
     ["ref", "github:o/ref#rel-20240115", "rel-20240115", "github:o/ref#rel-20240115", "github:o/ref#20240115"],
     ["none", "github:o/none", "my-lib", "github:o/none", "github:o/none#lib"],
+    // the tag is the ref itself: a row from another lockfile, also when the ref ends like a commit
+    ["same", "github:o/same#fix-0a1b2c3", "fix-0a1b2c3", "github:o/same#fix-0a1b2c3", "github:o/same#0a1b2c3"],
     ["tag", "git+http://localhost:1/tag.git#v1.0.0", "v1.0.0", "git+http://localhost:1/tag.git#v1.0.0"],
     // Bun before 1.4 misreads these bytes after the `#`, so such a ref is not saved
     ["slash", "github:o/slash#feature/x", "my-lib", "github:o/slash#lib"],

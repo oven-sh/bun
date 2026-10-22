@@ -277,7 +277,8 @@ impl RepositoryExt for Repository {
     fn locked_committish<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
         let committish = self.committish.slice(buf);
         let resolved = self.resolved.slice(buf);
-        if resolved.is_empty() {
+        // A row from another lockfile has the committish of that lockfile as its `resolved`.
+        if resolved.is_empty() || resolved == committish {
             return committish;
         }
         let tail = resolved_tail(resolved);

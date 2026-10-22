@@ -3676,6 +3676,7 @@ declare module "bun" {
      * {@link BuildArtifact} of kind `"metafile-json"` or `"metafile-markdown"` to
      * {@link BuildOutput.outputs} (except when `compile` makes an executable).
      * Without an `outdir`, nothing is written and the artifact holds the content.
+     * An empty path is the same as no path.
      *
      * The `bun build --metafile=<path>` and `--metafile-md=<path>` CLI flags are
      * different: their paths are relative to the working directory.

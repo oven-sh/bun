@@ -887,6 +887,13 @@ describe("Bun.build metafile artifacts", () => {
       ["{ json }", cwd => ({ metafile: { json: join(cwd, "meta.json") } }), ["metafile-json"]],
       ["{ markdown }", cwd => ({ metafile: { markdown: join(cwd, "meta.md") } }), ["metafile-markdown"]],
       ["{ json, markdown }", cwd => ({ metafile: both(cwd) }), ["metafile-json", "metafile-markdown"]],
+      // An empty path is the same as no path.
+      ['"" (no artifact)', () => ({ metafile: "" }), []],
+      [
+        '{ json: "", markdown }',
+        cwd => ({ metafile: { json: "", markdown: join(cwd, "meta.md") } }),
+        ["metafile-markdown"],
+      ],
       [
         "{ json, markdown } set by a plugin",
         cwd => ({ plugins: [{ name: "config", setup: build => void (build.config.metafile = both(cwd)) }] }),

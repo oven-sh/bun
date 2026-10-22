@@ -696,7 +696,7 @@ function cppExtraMemorySize(type: ClassType, caller: "heapSnapshot" | "gc", obje
   ].join(" + ");
 }
 
-/** `visitChildren` reads the struct in the cell, so it is there before `finishCreation`, whose fence lets a marking thread see the cell. */
+/** `finishCreation` and `visitChildren` read the struct in the cell, so it is stored before the fence of `finishCreation`. */
 const gcReadsPayload = (type: ClassType) => !type.refCounted && type.estimatedSize;
 
 /** The cell: JSDestructibleObject | the internal fields | the pointer to the struct of a refCounted class, or the struct itself. */
@@ -1670,7 +1670,7 @@ unsafe impl bindgen::JsCreateWithStructure for ${rustPath} {
         // SAFETY: ${refCounted ? "the object takes over the ref." : "forwarded."}
         unsafe { ${
           refCounted
-            ? `bindgen::JsWrapper::from_extern(${symbolName(type, "createWithStructure")}(heap.global_ptr(), structure, wrapped.into_raw().cast()), heap)`
+            ? `bindgen::JsWrapper::from_extern(${symbolName(type, "createWithStructure")}(heap.global().as_mut_ptr(), structure, wrapped.into_raw().cast()), heap)`
             : "bindgen::JsWrapper::create_with_structure(heap, structure, wrapped)"
         } }
     }

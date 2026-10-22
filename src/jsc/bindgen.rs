@@ -51,9 +51,8 @@ impl<'a> JsHeap<'a> {
         self.global_object()
     }
 
-    #[doc(hidden)]
     #[inline(always)]
-    pub fn global_ptr(&self) -> *mut JSGlobalObject {
+    fn global_ptr(&self) -> *mut JSGlobalObject {
         self.global_object().as_mut_ptr()
     }
 

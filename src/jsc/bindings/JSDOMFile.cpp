@@ -73,14 +73,13 @@ public:
         RETURN_IF_EXCEPTION(scope, {});
 
         void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
-        RETURN_IF_EXCEPTION(scope, {});
-
+        // Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `ptr`.
         if (!ptr) [[unlikely]] {
-            return JSValue::encode(JSC::jsUndefined());
+            EXCEPTION_ASSERT(scope.exception());
+            return {};
         }
 
-        return JSValue::encode(
-            JSBlob::create(vm, structure, ptr));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBlob::create(vm, structure, ptr)));
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

@@ -613,13 +613,9 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     }
     // Printing the file unchanged can already give different bytes. That alone isn't a reason to
     // write it.
-    match on_disk.print(on_disk.root) {
-        Ok(reprinted) => *reprinted == *printed,
-        Err(err) => {
-            bun_core::pretty_errorln!("package.json failed to write due to error {}", err.name());
-            Global::crash();
-        }
-    }
+    on_disk
+        .print(on_disk.root)
+        .is_ok_and(|reprinted| *reprinted == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

@@ -795,6 +795,12 @@ fn tuple_element_info(file: FileId, hir: &hir::File, elem: &TupleElem) -> ElemFl
     })
 }
 
+/// True if `pos` is at or after the `{` of the body of `f`, which is a block.
+fn is_in_body_of(hir: &hir::File, f: FnId, pos: u32) -> bool {
+    let open_brace = hir.start(hir.node(f).with(Part::Body));
+    open_brace != 0 && pos >= open_brace
+}
+
 impl<'p, 's> Checker<'p, 's> {
     // ───────────────────────────── type parameters in scope ─────────────────────────────
 
@@ -1020,14 +1026,9 @@ impl<'p, 's> Checker<'p, 's> {
             match s.kind {
                 ScopeKind::Block => return self.type_params_in_scope(file, scope).len(),
                 ScopeKind::Fn(f) => {
-                    // A function's body shares its scope with the signature, so the body's start
-                    // position distinguishes them.
-                    if let FnBody::Block(stmts) = hir[f].body
-                        && hir
-                            .ids(stmts)
-                            .next()
-                            .is_some_and(|first| pos >= hir[first].start)
-                    {
+                    // A function's body shares its scope with the signature, so the `{` of the body distinguishes
+                    // them. A JSDoc comment of the first statement is in the body too.
+                    if matches!(hir[f].body, FnBody::Block(_)) && is_in_body_of(hir, f, pos) {
                         return self.type_params_in_scope(file, scope).len();
                     }
                     // The separate scope for a function expression's name isn't a block.
@@ -1220,10 +1221,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && hir[f].type_params.is_empty()
                 && self.takes_context(file, f).is_some()
                 && match hir[f].body {
-                    FnBody::Block(stmts) => hir
-                        .ids(stmts)
-                        .next()
-                        .is_some_and(|first| pos >= hir[first].start),
+                    FnBody::Block(_) => is_in_body_of(hir, f, pos),
                     FnBody::Expr(body) => pos >= hir[body].pos,
                     FnBody::None => false,
                 }
@@ -3283,13 +3281,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             TypeNodeKind::Fn(func) => {
                 let mapper = self.identity_mapper_for_node(file, scope, node);
-                let range = (hir[node].pos, hir[node].end);
-                let first_request = self.first_request_of_anonymous_type(file, scope, range);
-                let key = TypeKey::Fns {
-                    decls: &[(file, func)],
-                    mapper,
-                };
-                self.intern_key_as(key, first_request)
+                self.fns_type(&[(file, func)], mapper)
             }
             TypeNodeKind::Object(members) => {
                 // `emptyTypeLiteralType`, unless it's the body of an alias.
@@ -3370,6 +3362,11 @@ impl<'p, 's> Checker<'p, 's> {
                 has_type_arguments,
                 expr,
             } => {
+                // `checkExpressionWithTypeArguments`: `c.checkSourceElements(node.TypeArguments())`. For a type query
+                // that `checkSourceFile` visits, `check_type_node_worker` has done that.
+                if has_type_arguments && self.is_resolved_on_request_at(file, hir[node].pos) {
+                    self.check_type_nodes(file, args);
+                }
                 // `getTypeFromTypeQueryNode`: `getRegularTypeOfLiteralType(getWidenedType(t))`
                 // `checkExpressionWithTypeArguments` isn't a `checkExpressionCached`, so the
                 // resolutions that request the node don't hide any loop from the operand.
@@ -3395,8 +3392,9 @@ impl<'p, 's> Checker<'p, 's> {
                 if !has_type_arguments {
                     return ty;
                 }
-                let args = self.type_arguments_of_instantiation(ty, file, args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::TypeNode(file, node))
+                let args = self.types_from_nodes(file, args);
+                let node = InstantiationExpression::TypeNode(file, node);
+                self.with_type_arguments(ty, Some(args), node)
             }
             TypeNodeKind::Import { .. } => self.get_type_from_import_type_node(file, scope, node),
             TypeNodeKind::Ref { .. } => {
@@ -3503,9 +3501,8 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 return ty;
             }
-            let args = self.type_arguments_of_instantiation(ty, file, args);
             let node = InstantiationExpression::TypeNode(file, node);
-            return self.with_type_arguments(ty, &args, node);
+            return self.with_type_arguments(ty, None, node);
         }
         let AliasTarget::Symbol(sym) = self.resolve_symbol(symbol) else {
             return TypeId::ERROR;
@@ -5004,6 +5001,14 @@ impl<'p, 's> Checker<'p, 's> {
             };
             if read.has(i) {
                 let is_asked = read.asks_for(i);
+                // `getTypeOfInstantiatedSymbol`: `instantiateType(c.getTypeOfSymbol(links.target), links.mapper)`
+                if (is_asked || parameter.rest)
+                    && (self.types().object_flags(parameter.ty))
+                        .contains(ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION)
+                    && self.has_type_arguments_of_signature(file, func, mapper)
+                {
+                    self.resolve_names_under_own_type_parameters(parameter.ty);
+                }
                 let ty = self.instantiate_parameter(&parameter, mapper, maps_this_only, is_asked);
                 out.push(SigParam { ty, ..parameter });
             }

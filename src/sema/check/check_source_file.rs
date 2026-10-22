@@ -1213,7 +1213,7 @@ impl<'s> Checker<'_, 's> {
     }
 
     /// `checkSourceElements` for type nodes.
-    fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
+    pub(super) fn check_type_nodes(&mut self, file: FileId, nodes: IdList<TypeNodeId>) {
         for node in self.hir(file).ids(nodes) {
             self.check_type_node(file, node);
         }

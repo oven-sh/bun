@@ -389,23 +389,30 @@ impl Checker<'_, '_> {
     }
 
     /// `checkTypeForDuplicateIndexSignatures`: 2374 for the declarations of the `__index` of the class, the interface or
-    /// the type literal of `file` that has `members`. `checkClassOrInterfaceForDuplicateIndexSignatures` checks a type
-    /// once: here where the first of those declarations is.
+    /// the type literal of `file` that has `members`.
+    ///
+    /// `checkClassOrInterfaceForDuplicateIndexSignatures` checks a type once, at the first of its declarations that
+    /// `checkSourceFile` visits. Here every one that is visited checks it. Each reports the same errors, and the check
+    /// of a later file reports none in an earlier one.
     pub(super) fn check_type_for_duplicate_index_signatures(
         &mut self,
         file: FileId,
         members: Span<MemberId>,
     ) {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
-        for first in members.iter() {
-            let id = bound.member_symbol[first.idx()];
-            if hir[first].kind != MemberKind::IndexSignature || id.is_none() {
+        // The `__index` of the instance side, and that of the static side of a class.
+        let mut checked: SmallVec<[SymbolId; 2]> = SmallVec::new();
+        for member in members.iter() {
+            let id = bound.member_symbol[member.idx()];
+            if hir[member].kind != MemberKind::IndexSignature
+                || id.is_none()
+                || checked.contains(&id)
+            {
                 continue;
             }
+            checked.push(id);
             let symbol = bound.symbol(id);
-            if symbol.decls.first() != Some(&Decl::Member(first))
-                || symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED)
-            {
+            if symbol.decls.len() < 2 && !symbol.flags.contains(SymFlags::MERGED) {
                 continue;
             }
             let index_symbol = files.sym(file, id);

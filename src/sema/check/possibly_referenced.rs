@@ -11,7 +11,7 @@
 //! (`File::type_arguments_of_import_types`). So this module resolves those, where checker.go does.
 
 use super::*;
-use crate::bind::ScopeId;
+use crate::bind::{Decl, FnOwner, MemberOwner, ScopeId, SymbolId};
 use smallvec::SmallVec;
 
 /// `tp` of `isTypeParameterPossiblyReferenced`: a type parameter that has one declaration, in the file of the syntax.
@@ -48,24 +48,10 @@ impl Checker<'_, '_> {
                     origin: Origin::TypeLiteral(file, node) | Origin::Mapped(file, node),
                     ..
                 } => declarations.push((file, self.hir(file).node(node))),
-                TypeData::Fns { decls, .. } => {
-                    for &(file, func) in decls.iter() {
-                        let hir = self.hir(file);
-                        let declaration = hir.node(func);
-                        let is_filtered = matches!(
-                            hir.kind(declaration),
-                            Kind::FunctionType
-                                | Kind::ConstructorType
-                                | Kind::MethodDeclaration
-                                | Kind::MethodSignature
-                        );
-                        // `SymbolFlagsFunction`: every type parameter in scope stays.
-                        if !is_filtered {
-                            return;
-                        }
-                        declarations.push((file, declaration));
-                    }
-                }
+                TypeData::Fns { decls, .. } => match self.declarations_of_fns(decls) {
+                    Some(of_symbol) => declarations = of_symbol,
+                    None => return,
+                },
                 TypeData::Synth(shape) => match shape.instantiation_expression {
                     Some(InstantiationExpression::TypeNode(file, node)) => {
                         declarations.push((file, self.hir(file).node(node)));
@@ -81,14 +67,7 @@ impl Checker<'_, '_> {
         let Some(&(file, first)) = declarations.first() else {
             return;
         };
-        let is_unchecked = |c: &Self, &(file, declaration): &(FileId, Node)| {
-            let hir = c.hir(file);
-            let end = c.end_of_node(file, declaration);
-            (hir.type_arguments_of_import_types()).intersect(hir.start(declaration), end)
-        };
-        if !declarations.iter().any(|it| is_unchecked(self, it))
-            || !self.names_resolved_at_instantiation.insert((file, first))
-        {
+        if !self.names_resolved_at_instantiation.insert((file, first)) {
             return;
         }
         let hir = self.hir(file);
@@ -120,6 +99,138 @@ impl Checker<'_, '_> {
                 }
             }
         }
+    }
+
+    /// `instantiateType(ty, m)` where tsgo has a mapper `m` that can map every type parameter to itself: the type
+    /// arguments of a signature or of a type reference can be the declaration's own type parameters. `instantiate`
+    /// takes such a mapper for none, and `getObjectTypeInstantiation` resolves names the first time whatever the
+    /// mapper maps: see `resolve_names_at_first_instantiation`.
+    #[inline]
+    pub(super) fn resolve_names_under_own_type_parameters(&mut self, ty: TypeId) {
+        let resolves_names = ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
+        if self.types().object_flags(ty).contains(resolves_names) {
+            // Only type parameters are looked up in a mapper, so the pair maps nothing.
+            let mapper = self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)]);
+            self.instantiate(ty, mapper);
+        }
+    }
+
+    /// True if a signature of `func` that has `mapper` is an instantiation: `getSignatureInstantiation` has given it
+    /// type arguments for the type parameters of `func`, or of its class if it is a constructor.
+    pub(super) fn has_type_arguments_of_signature(
+        &self,
+        file: FileId,
+        func: FnId,
+        mapper: MapperId,
+    ) -> bool {
+        if mapper == MapperId::IDENTITY {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let of_class = match (hir[func].kind, bound.fns[func.idx()].owner) {
+            (FnKind::Constructor, FnOwner::Member(m)) => match bound.member_owner[m.idx()] {
+                MemberOwner::Class(class) => hir[class].type_params,
+                _ => Span::default(),
+            },
+            _ => Span::default(),
+        };
+        let own = hir[func].type_params;
+        (self.types().mapping(mapper).iter()).any(|pair| {
+            self.is_declared_among(pair.0, file, own)
+                || self.is_declared_among(pair.0, file, of_class)
+        })
+    }
+
+    /// `t.symbol.Declarations` for the type of the function-likes `decls`, if `getObjectTypeInstantiation` filters the
+    /// type parameters in scope by what those declarations reference: the symbol is a method, or the `__type` of a
+    /// function type or a constructor type. `None` for a function, where every type parameter in scope stays.
+    pub(super) fn declarations_of_fns(
+        &self,
+        decls: &[(FileId, FnId)],
+    ) -> Option<SmallVec<[(FileId, Node); 2]>> {
+        let mut declarations: SmallVec<[(FileId, Node); 2]> = SmallVec::new();
+        for &(file, func) in decls {
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            let is_filtered = matches!(
+                hir.kind(hir.node(func)),
+                Kind::FunctionType
+                    | Kind::ConstructorType
+                    | Kind::MethodDeclaration
+                    | Kind::MethodSignature
+            );
+            if !is_filtered {
+                return None;
+            }
+            let symbol = match bound.fns[func.idx()].owner {
+                FnOwner::Member(m) => bound.member_symbol[m.idx()],
+                _ => SymbolId::NONE,
+            };
+            if symbol.is_none() {
+                declarations.push((file, hir.node(func)));
+                continue;
+            }
+            // `decls` has no implementation of overloads, which is a declaration of the symbol too.
+            for &declaration in bound.symbol(symbol).decls {
+                if let Decl::Member(m) = declaration
+                    && hir[m].kind == MemberKind::Method
+                    && hir[m].func.is_some()
+                    && !declarations.contains(&(file, hir.node(hir[m].func)))
+                {
+                    declarations.push((file, hir.node(hir[m].func)));
+                }
+            }
+        }
+        Some(declarations)
+    }
+
+    /// `FirstRequest::RESOLVES_NAMES_AT_INSTANTIATION` for the type of the function-likes `decls`: see
+    /// `first_request_of_anonymous_type`. It depends on nothing else, so every request for that type gives the same.
+    pub(super) fn first_request_of_fns(&mut self, decls: &[(FileId, FnId)]) -> FirstRequest {
+        // FOR SPEED: most files have no import type with type arguments.
+        let mut files = decls.iter().map(|&(file, _)| self.hir(file));
+        if files.all(|hir| hir.type_arguments_of_import_types().is_empty()) {
+            return FirstRequest::NONE;
+        }
+        let Some(declarations) = self.declarations_of_fns(decls) else {
+            return FirstRequest::NONE;
+        };
+        let mut first_request = FirstRequest::NONE;
+        for (file, declaration) in declarations {
+            let (hir, bound) = (self.hir(file), self.bound(file));
+            let func = hir.function_of(declaration);
+            if func.is_none() {
+                continue;
+            }
+            let scope = bound.scopes[bound.fns[func.idx()].scope.idx()].parent;
+            let function = &hir[func];
+            // The types that JSDoc tags give a signature are in a comment before it.
+            let in_comments = (function.params.iter().map(|p| hir[p].ty))
+                .chain([function.ret, function.this_ty(hir)])
+                .chain([hir.jsdoc_type(JsDocTypeOwner::Fn(func))])
+                .filter(|node| node.is_some())
+                .map(|node| (hir[node].pos, hir[node].end));
+            let type_parameters = function.type_params.iter().map(|tp| {
+                let node = hir.node(tp);
+                (hir.start(node), self.end_of_node(file, node))
+            });
+            let own = (hir.start(declaration), self.end_of_node(file, declaration));
+            let ranges: SmallVec<[(u32, u32); 8]> = std::iter::once(own)
+                .chain(in_comments)
+                .chain(type_parameters)
+                .collect();
+            for range in ranges {
+                let of_range = self.first_request_of_anonymous_type(file, scope, range);
+                first_request = first_request.with(of_range);
+            }
+        }
+        first_request
+    }
+
+    /// The type of the function-likes `decls`, the signatures of one symbol, with `mapper` for the type parameters in
+    /// scope.
+    pub(super) fn fns_type(&mut self, decls: &[(FileId, FnId)], mapper: MapperId) -> TypeId {
+        let first_request = self.first_request_of_fns(decls);
+        self.intern_key_as(TypeKey::Fns { decls, mapper }, first_request)
     }
 
     /// `instantiateType(baseType, mapper)` of `resolveObjectTypeMembers`, for a reference to `target` whose members are
@@ -306,6 +417,9 @@ impl Checker<'_, '_> {
                     return !has_return_type && !matches!(function.body, FnBody::None)
                         || (function.type_params.iter())
                             .any(|p| self.contains_reference(file, tp, hir.node(p)))
+                        // `node.Parameters()` begins with the `this` parameter.
+                        || function.this_param.is_some()
+                            && self.contains_reference(file, tp, hir.node(function.this_param))
                         || (function.params.iter())
                             .any(|p| self.contains_reference(file, tp, hir.node(p)))
                         || has_return_type
@@ -328,16 +442,6 @@ impl Checker<'_, '_> {
     ) -> bool {
         let hir = self.hir(file);
         let scope = self.bound(file).type_scope[node.idx()];
-        let mut names = hir.texts(name);
-        if names.next() == Some(tp.name)
-            && names.next().is_none()
-            && self
-                .files()
-                .resolve_name(file, scope, tp.name, SymFlags::TYPE)
-                == Some(tp.symbol)
-        {
-            return true;
-        }
         // `links.resolvedSymbol`: with the type of the node its name is resolved.
         let is_resolved = self
             .p
@@ -345,14 +449,22 @@ impl Checker<'_, '_> {
             .get(&self.task, &(file, node))
             .is_some()
             || self.stack.contains(&Query::TypeNode(file, node));
-        // Whatever reports that the name does not resolve belongs to the node.
+        // `resolveTypeReferenceName(node, SymbolFlagsType, false /*ignoreErrors*/)`: it references what it finds, and
+        // whatever reports that the name does not resolve belongs to the node.
         if !is_resolved
             && (hir.type_arguments_of_import_types()).contain(hir[node].pos)
             && (self.resolve_type_reference_name(file, scope, name, true)).is_none()
         {
             self.type_from_node(file, node);
+            return false;
         }
-        false
+        let mut names = hir.texts(name);
+        names.next() == Some(tp.name)
+            && names.next().is_none()
+            && self
+                .files()
+                .resolve_name(file, scope, tp.name, SymFlags::TYPE)
+                == Some(tp.symbol)
     }
 
     /// `getResolvedSymbol(firstIdentifier)` for the type query `node`, whose first identifier is `e`, the `name`.

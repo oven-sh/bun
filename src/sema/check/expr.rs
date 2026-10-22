@@ -1920,7 +1920,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.precheck_type_nodes(file, type_args);
                 let ty = self.type_of_expr(file, expr);
                 let args = self.types_from_nodes(file, type_args);
-                self.with_type_arguments(ty, &args, InstantiationExpression::Expr(file, e))
+                self.with_type_arguments(ty, Some(args), InstantiationExpression::Expr(file, e))
             }
             ExprKind::Jsx(j) => {
                 let is_fragment = hir[j].tag.is_none();
@@ -3972,10 +3972,7 @@ impl<'p, 's> Checker<'p, 's> {
         let scope = self.bound(file).fns[func.idx()].scope;
         let parent = self.bound(file).scopes[scope.idx()].parent;
         let mapper = self.identity_mapper_with_adopted(file, parent);
-        self.intern_key(TypeKey::Fns {
-            decls: &[(file, func)],
-            mapper,
-        })
+        self.fns_type(&[(file, func)], mapper)
     }
 
     /// `contextuallyCheckFunctionExpressionOrObjectLiteralMethod`

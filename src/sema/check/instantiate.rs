@@ -1706,6 +1706,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().instantiation_class(ty) == InstantiationClass::Unchanged {
             return ty;
         }
+        let resolves_names = ObjectFlags::RESOLVES_NAMES_AT_INSTANTIATION;
+        if self.types().object_flags(ty).contains(resolves_names)
+            && self.has_type_arguments_of_signature(file, func, mapper)
+        {
+            self.resolve_names_under_own_type_parameters(ty);
+        }
         match self.steps_of_sig_mapper(file, func, mapper) {
             Some((first, second)) => {
                 let open = self.instantiate(ty, first);

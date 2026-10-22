@@ -5,6 +5,7 @@ use super::relate::Relation;
 use super::*;
 use crate::bind::{Decl, FnOwner, MemberOwner, Parent, ScopeId, ScopeKind};
 use smallvec::{SmallVec, smallvec};
+use std::cell::OnceCell;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedCall {
@@ -2080,59 +2081,26 @@ impl<'p, 's> Checker<'p, 's> {
         self.index_type_of_type(rest_type, TypeId::NUMBER)
     }
 
-    /// The types of `nodes`, the type arguments of a type query or an import type that instantiate `ty`, for
-    /// `with_type_arguments`. `getInstantiatedSignatures` asks `checkTypeArguments` for them only where a signature takes
-    /// that many, and `checkImportType` checks none of them.
-    pub(super) fn type_arguments_of_instantiation(
-        &mut self,
-        ty: TypeId,
-        file: FileId,
-        nodes: IdList<TypeNodeId>,
-    ) -> Vec<TypeId> {
-        match self.has_signature_taking_type_arguments(ty, nodes.len()) {
-            true => self.types_from_nodes(file, nodes),
-            false => vec![TypeId::ERROR; nodes.len()],
-        }
-    }
-
-    /// Whether `getInstantiatedTypePart` finds a signature in `ty` that takes `count` type arguments.
-    fn has_signature_taking_type_arguments(&mut self, ty: TypeId, count: usize) -> bool {
-        if ty == TypeId::SILENT_NEVER || self.is_any(ty) {
-            return false;
-        }
-        if let TypeData::Union(parts) | TypeData::Intersection(parts) = self.data(ty) {
-            return (parts.iter()).any(|&p| self.has_signature_taking_type_arguments(p, count));
-        }
-        if self.is_deferred(ty) {
-            let constraint = self.base_constraint(ty);
-            return constraint != ty && self.has_signature_taking_type_arguments(constraint, count);
-        }
-        let Some(members) = self.members(ty) else {
-            return false;
-        };
-        let signatures = members.call_signatures().iter();
-        let mut signatures = signatures.chain(members.construct_signatures());
-        signatures.any(|&sig| {
-            let params = self.sig_type_params(sig);
-            !params.is_empty() && self.has_correct_type_argument_arity(&params, count)
-        })
-    }
-
     /// `getInstantiationExpressionType`, `f<Args>` without a call: `ty` restricted to the
     /// signatures that accept that many type arguments, instantiated with them. `node` is its node,
     /// which the created object types store.
+    ///
+    /// `args`: the types of the type arguments, where `checkExpressionWithTypeArguments` has checked them. It's `None`
+    /// for an import type. `resolveImportSymbolType` checks none of them, so `checkTypeArguments` is the first to ask
+    /// for their types, and only for a signature that takes that many.
     pub fn with_type_arguments(
         &mut self,
         ty: TypeId,
-        args: &[TypeId],
+        args: Option<Vec<TypeId>>,
         node: InstantiationExpression,
     ) -> TypeId {
         if ty == TypeId::SILENT_NEVER || self.is_error_type(ty) {
             return ty;
         }
+        let args = args.map_or_else(OnceCell::new, OnceCell::from);
         // `hasSomeApplicableSignature`, `nonApplicableType`
         let mut found = (false, None);
-        let result = self.instantiated_type(ty, args, node, &mut found);
+        let result = self.instantiated_type(ty, &args, node, &mut found);
         let error_type = if found.0 { found.1 } else { Some(ty) };
         if let Some(error_type) = error_type
             && let Some(loc) = self.range_of_type_argument_list(node)
@@ -2210,7 +2178,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn instantiated_type(
         &mut self,
         ty: TypeId,
-        args: &[TypeId],
+        args: &OnceCell<Vec<TypeId>>,
         node: InstantiationExpression,
         found: &mut (bool, Option<TypeId>),
     ) -> TypeId {
@@ -2228,7 +2196,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn instantiated_type_part(
         &mut self,
         ty: TypeId,
-        args: &[TypeId],
+        args: &OnceCell<Vec<TypeId>>,
         node: InstantiationExpression,
         own: &mut (bool, bool),
         found: &mut (bool, Option<TypeId>),
@@ -2260,6 +2228,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !members.has_signatures() {
             return ty;
         }
+        let (file, nodes) = self.type_argument_nodes(node);
         // Also returns true if the result equals `sigs` (`core.Same`).
         let actual = |c: &mut Self, sigs: &[SigId]| -> (ArenaVec<'s, SigId>, bool) {
             let mut out = ArenaVec::new_in(c.arena);
@@ -2268,11 +2237,18 @@ impl<'p, 's> Checker<'p, 's> {
                 let sig = c.instantiate_sig(sig, members.mapper);
                 let params = c.sig_type_params(sig);
                 // `getInstantiatedSignatures`: the empty list of `f<>` fits every generic signature.
-                if params.is_empty() || !c.has_correct_type_argument_arity(&params, args.len()) {
+                if params.is_empty() || !c.has_correct_type_argument_arity(&params, nodes.len()) {
                     is_same = false;
                     continue;
                 }
-                let error_nodes = Some(c.type_argument_nodes(node));
+                let args = match args.get() {
+                    Some(args) => args,
+                    None => {
+                        let types = c.types_from_nodes(file, nodes);
+                        args.get_or_init(|| types)
+                    }
+                };
+                let error_nodes = Some((file, nodes));
                 let Some(filled) = c.check_type_arguments(sig, &params, args, error_nodes) else {
                     out.push(sig);
                     continue;

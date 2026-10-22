@@ -842,10 +842,7 @@ impl<'p, 's> Checker<'p, 's> {
                     mapper = self.identity_mapper(file, parent);
                     // `checkFunctionExpressionOrObjectLiteralMethod`: the type of a function expression is the type of its symbol.
                     if matches!(self.bound(file).fns[f.idx()].owner, FnOwner::Expr(_)) {
-                        return self.intern_key(TypeKey::Fns {
-                            decls: &[(file, f)],
-                            mapper,
-                        });
+                        return self.fns_type(&[(file, f)], mapper);
                     }
                     break;
                 }

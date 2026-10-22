@@ -255,7 +255,14 @@ impl Checker<'_, '_> {
         }
         // An index signature's type is bound twice, so a declaration in it is listed twice.
         let decls = bound.symbol(symbol).decls;
-        if decls.first() != Some(&Decl::TypeParam(param)) || decls.iter().all(|d| *d == decls[0]) {
+        // The first one that `checkSourceFile` visits.
+        let is_visited = |declaration: &&Decl| match **declaration {
+            Decl::TypeParam(p) => !self.is_resolved_on_request_at(file, hir[p].pos),
+            _ => true,
+        };
+        if decls.iter().find(is_visited) != Some(&Decl::TypeParam(param))
+            || decls.iter().all(|d| *d == decls[0])
+        {
             return;
         }
         // `areTypeParametersIdentical`

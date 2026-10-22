@@ -1634,10 +1634,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let key = if identity == mapper {
                     ty
                 } else {
-                    self.intern_key(TypeKey::Fns {
-                        decls,
-                        mapper: identity,
-                    })
+                    self.fns_type(decls, identity)
                 };
                 let resolved = self.shape_memo(key, |c| {
                     let mut shape = Shape::new_in(self.arena);
@@ -6723,18 +6720,7 @@ impl<'p, 's> Checker<'p, 's> {
                     .map(|&(f, m)| (f, self.hir(f)[m].func))
                     .collect();
                 let mapper = self.identity_mapper_for_fns(file, parent, &declarations);
-                let mut first_request = FirstRequest::NONE;
-                for &(f, m) in &members {
-                    let declaration = &self.hir(f)[m];
-                    let range = (declaration.start, declaration.loc.end);
-                    let of_declaration = self.first_request_of_anonymous_type(f, parent, range);
-                    first_request = first_request.with(of_declaration);
-                }
-                let key = TypeKey::Fns {
-                    decls: &decls,
-                    mapper,
-                };
-                self.intern_key_as(key, first_request)
+                self.fns_type(&decls, mapper)
             }
             MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
                 let getter = members

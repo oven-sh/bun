@@ -936,7 +936,10 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     },
     command:
       os === "windows"
-        ? `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.ts ${args.join(" ")}`
+        ? [
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 cargo run --locked --release --manifest-path .\\test\\fixtures\\subprocess-late-stdio\\Cargo.toml --target-dir .\\build\\stdio-fixture -- --generate "%CD%\\test\\js\\bun\\spawn\\subprocess-late-stdio.generated.test.ts" || exit /b 1`,
+            `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 node .\\scripts\\runner.node.ts ${args.join(" ")}`,
+          ]
         : os === "darwin"
           ? // The command hook installed on the tart hosts (scripts/darwin-ci/hooks/command.ts)
             // recognises a test step by this file name. runner.node.mjs only

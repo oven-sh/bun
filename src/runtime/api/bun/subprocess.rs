@@ -568,8 +568,11 @@ impl Subprocess<'_> {
         let exited = this.has_exited();
         // The stream is the script's that reads the property.
         let context = global_this.bun_vm().context_of_caller_no_frame();
-        this.stderr
-            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
+        let result = this
+            .stderr
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited));
+        this.update_has_pending_activity();
+        result
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -599,8 +602,12 @@ impl Subprocess<'_> {
         let exited = this.has_exited();
         // The stream is the script's that reads the property.
         let context = global_this.bun_vm().context_of_caller_no_frame();
-        this.stdout
-            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
+        let result = this
+            .stdout
+            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited));
+        // A late stream transfer detaches the callback that would downgrade this root.
+        this.update_has_pending_activity();
+        result
     }
 
     #[bun_jsc::host_fn(getter)]

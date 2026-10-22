@@ -75,11 +75,10 @@ const CSI: &str = concat!("\x1b", "[");
 // Colors — Color::RESET, Color::CYAN, … resolve unchanged
 use bun_core::output::ansi as Color;
 
-/// `bun_core::pretty!` on the unbuffered writer that the other REPL prints use.
+/// Like `bun_core::pretty!`, but unbuffered as the other REPL prints, and colored by `use_colors`.
 macro_rules! pretty {
-    ($($arg:tt)*) => {{
-        let colors = Output::enable_ansi_colors_stdout();
-        let _ = bun_core::write_pretty!(Output::writer(), colors, $($arg)*);
+    ($repl:expr, $($arg:tt)*) => {{
+        let _ = bun_core::write_pretty!(Output::writer(), $repl.use_colors, $($arg)*);
     }};
 }
 
@@ -599,27 +598,44 @@ enum ReplResult {
 }
 
 fn cmd_help(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    pretty!("\n<b>REPL Commands:<r>\n");
+    pretty!(repl, "\n<b>REPL Commands:<r>\n");
     for cmd in &ReplCommand::ALL {
-        pretty!("  <cyan>{:<12}<r> {}\n", BStr::new(cmd.name), cmd.help);
+        pretty!(
+            repl,
+            "  <cyan>{:<12}<r> {}\n",
+            BStr::new(cmd.name),
+            cmd.help
+        );
     }
-    pretty!("\n<b>Keybindings:<r>\n");
-    pretty!("  <cyan>Ctrl+A<r>       Move to start of line\n");
-    pretty!("  <cyan>Ctrl+E<r>       Move to end of line\n");
-    pretty!("  <cyan>Ctrl+B/F<r>     Move backward/forward one character\n");
-    pretty!("  <cyan>Alt+B/F<r>      Move backward/forward one word\n");
-    pretty!("  <cyan>Ctrl+U<r>       Delete to start of line\n");
-    pretty!("  <cyan>Ctrl+K<r>       Delete to end of line\n");
-    pretty!("  <cyan>Ctrl+W<r>       Delete word backward\n");
-    pretty!("  <cyan>Ctrl+D<r>       Delete character / Exit if line empty\n");
-    pretty!("  <cyan>Ctrl+L<r>       Clear screen\n");
-    pretty!("  <cyan>Ctrl+T<r>       Swap characters\n");
-    pretty!("  <cyan>Up/Down<r>      Navigate history\n");
-    pretty!("  <cyan>Tab<r>          Auto-complete / accept suggestion\n");
-    pretty!("  <cyan>Right/End<r>    Accept inline suggestion\n");
-    pretty!("\n<b>Special Variables:<r>\n");
-    pretty!("  <cyan>_<r>            Last expression result\n");
-    pretty!("  <cyan>_error<r>       Last error\n");
+    pretty!(repl, "\n<b>Keybindings:<r>\n");
+    pretty!(repl, "  <cyan>Ctrl+A<r>       Move to start of line\n");
+    pretty!(repl, "  <cyan>Ctrl+E<r>       Move to end of line\n");
+    pretty!(
+        repl,
+        "  <cyan>Ctrl+B/F<r>     Move backward/forward one character\n"
+    );
+    pretty!(
+        repl,
+        "  <cyan>Alt+B/F<r>      Move backward/forward one word\n"
+    );
+    pretty!(repl, "  <cyan>Ctrl+U<r>       Delete to start of line\n");
+    pretty!(repl, "  <cyan>Ctrl+K<r>       Delete to end of line\n");
+    pretty!(repl, "  <cyan>Ctrl+W<r>       Delete word backward\n");
+    pretty!(
+        repl,
+        "  <cyan>Ctrl+D<r>       Delete character / Exit if line empty\n"
+    );
+    pretty!(repl, "  <cyan>Ctrl+L<r>       Clear screen\n");
+    pretty!(repl, "  <cyan>Ctrl+T<r>       Swap characters\n");
+    pretty!(repl, "  <cyan>Up/Down<r>      Navigate history\n");
+    pretty!(
+        repl,
+        "  <cyan>Tab<r>          Auto-complete / accept suggestion\n"
+    );
+    pretty!(repl, "  <cyan>Right/End<r>    Accept inline suggestion\n");
+    pretty!(repl, "\n<b>Special Variables:<r>\n");
+    pretty!(repl, "  <cyan>_<r>            Last expression result\n");
+    pretty!(repl, "  <cyan>_error<r>       Last error\n");
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
 }
@@ -671,7 +687,7 @@ fn cmd_load(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     };
 
-    pretty!("<d>Loading {}...<r>\n", BStr::new(filename));
+    pretty!(repl, "<d>Loading {}...<r>\n", BStr::new(filename));
     repl.evaluate_and_print(&content);
     ReplResult::SkipEval
 }
@@ -709,7 +725,7 @@ fn cmd_save(repl: &mut Repl, args: &[u8]) -> ReplResult {
         }
     }
 
-    pretty!("<green>Session saved to {}<r>\n", BStr::new(filename));
+    pretty!(repl, "<green>Session saved to {}<r>\n", BStr::new(filename));
     ReplResult::SkipEval
 }
 
@@ -717,7 +733,10 @@ fn cmd_editor(repl: &mut Repl, _: &[u8]) -> ReplResult {
     if repl.input_mode == InputMode::Multiline {
         return ReplResult::SkipEval;
     }
-    pretty!("<d>// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)<r>\n");
+    pretty!(
+        repl,
+        "<d>// Entering editor mode (Ctrl+D to finish, Ctrl+C to cancel)<r>\n"
+    );
     repl.input_mode = InputMode::Editor;
     repl.editor_buffer.clear();
     ReplResult::SkipEval
@@ -732,7 +751,7 @@ fn cmd_break(repl: &mut Repl, _: &[u8]) -> ReplResult {
 }
 
 fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
-    pretty!("\n<b>Command History:<r>\n");
+    pretty!(repl, "\n<b>Command History:<r>\n");
     let start = if repl.history.entries.len() > 20 {
         repl.history.entries.len() - 20
     } else {
@@ -740,7 +759,7 @@ fn cmd_history(repl: &mut Repl, _: &[u8]) -> ReplResult {
     };
     for (i, entry) in repl.history.entries[start..].iter().enumerate() {
         let i = i + start;
-        pretty!("  <d>{:>4}<r>  {}\n", i + 1, BStr::new(entry));
+        pretty!(repl, "  <d>{:>4}<r>  {}\n", i + 1, BStr::new(entry));
     }
     repl.print(format_args!("\n"));
     ReplResult::SkipEval
@@ -2239,6 +2258,7 @@ impl<'a> Repl<'a> {
         // Print welcome message
         self.print(format_args!("Welcome to Bun v{}\n", VERSION));
         pretty!(
+            self,
             "Type <cyan>.copy [code]<r> to copy to clipboard. <cyan>.help<r> for more info.\n\n"
         );
 
@@ -2463,7 +2483,7 @@ impl<'a> Repl<'a> {
                 }
             } else {
                 self.print_error(format_args!("Unknown command: {}\n", BStr::new(cmd_name)));
-                pretty!("Type <cyan>.help<r> for available commands\n");
+                pretty!(self, "Type <cyan>.help<r> for available commands\n");
                 self.line_editor.clear();
                 self.refresh_line();
                 return Ok(());
@@ -2522,7 +2542,7 @@ impl<'a> Repl<'a> {
         self.leave_input(if cancels_line { b"^C" } else { b"" });
         match self.input_mode {
             InputMode::Editor => {
-                pretty!("<d>// Editor mode cancelled<r>\n");
+                pretty!(self, "<d>// Editor mode cancelled<r>\n");
                 self.input_mode = InputMode::Normal;
                 self.editor_buffer.clear();
             }
@@ -2540,7 +2560,7 @@ impl<'a> Repl<'a> {
             }
             InputMode::Normal => {
                 self.ctrl_c_pressed = true;
-                pretty!("<d>(press Ctrl+C again to exit, or Ctrl+D)<r>\n");
+                pretty!(self, "<d>(press Ctrl+C again to exit, or Ctrl+D)<r>\n");
             }
         }
         self.history.reset_position();
@@ -2581,7 +2601,7 @@ impl<'a> Repl<'a> {
             } else if matches.len() > 1 {
                 self.leave_input(b"");
                 for m in &matches {
-                    pretty!("  <cyan>{}<r>\n", BStr::new(m));
+                    pretty!(self, "  <cyan>{}<r>\n", BStr::new(m));
                 }
                 self.refresh_line();
             }
@@ -2692,7 +2712,7 @@ impl<'a> Repl<'a> {
                 if item.is_string() {
                     match item.to_utf8(global) {
                         Ok(slice) => {
-                            pretty!("  <cyan>{}<r>\n", BStr::new(slice.slice()));
+                            pretty!(self, "  <cyan>{}<r>\n", BStr::new(slice.slice()));
                         }
                         Err(_) => {
                             global.clear_exception();
@@ -2706,7 +2726,7 @@ impl<'a> Repl<'a> {
             self.refresh_line();
         } else {
             self.leave_input(b"");
-            pretty!("<d>{} completions<r>\n", len);
+            pretty!(self, "<d>{} completions<r>\n", len);
             self.refresh_line();
         }
     }

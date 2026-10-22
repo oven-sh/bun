@@ -492,7 +492,12 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("prints its own messages without escape sequences on a pipe", async () => {
+    // The messages follow the REPL's own color decision, like the prompt and the values do.
+    // FORCE_COLOR only turns on the global one, which console.log reads.
+    test.each([
+      ["on a pipe", { NO_COLOR: undefined }],
+      ["on a pipe with FORCE_COLOR", { NO_COLOR: undefined, FORCE_COLOR: "1" }],
+    ])("prints its own messages without escape sequences %s", async (_name, env) => {
       using dir = tempDir("repl-plain-messages", { "empty.js": "" });
       const empty = path.join(String(dir), "empty.js");
       const saved = path.join(String(dir), "saved.js");
@@ -500,7 +505,7 @@ describe.concurrent("Bun REPL", () => {
         // At the start of a line, 0x04 (Ctrl+D) runs the lines of .editor and 0x03 (Ctrl+C) cancels it.
         `.help\n.nope\n.load ${empty}\n1 + 1\n.save ${saved}\n.history\n.editor\n2 + 2\n\x04.editor\n\x03.exit\n`,
         // Without the NO_COLOR that runRepl sets: a pipe alone turns the colors off.
-        { env: { NO_COLOR: undefined } },
+        { env },
       );
       expect(stdout).toBe(stripAnsi(stdout));
       expect(outputs).toEqual([

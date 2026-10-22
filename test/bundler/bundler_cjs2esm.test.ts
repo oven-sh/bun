@@ -2937,6 +2937,31 @@ describe("bundler", () => {
       stdout: "42 REMOVE_react-is",
     },
   });
+  // The rule looks at the file of the declaration only. With the same
+  // `Object.defineProperty` in another file, the declaration reads the
+  // export, as `Held.count` does on main. Node prints 42 for both. CommonJS
+  // output lifts nothing, and prints 42.
+  for (const format of ["esm", "cjs"] as const) {
+    itBundled(`cjs2esm/NamespaceDestructuringReadsTheExportWhenAnotherFileHoldsTheObject_${format}`, {
+      files: {
+        "/entry.js": /* js */ `
+          require("./holder.js");
+          const Held = require("react-is");
+          const { count } = Held;
+          console.log(count, Held.count);
+        `,
+        "/holder.js": /* js */ `
+          const Other = require("react-is");
+          Object.defineProperty(Other, "count", { value: 42 });
+        `,
+        ...counterPackage("react-is"),
+      },
+      format,
+      run: {
+        stdout: format === "esm" ? "0 0" : "42 42",
+      },
+    });
+  }
   // The holder can have another name than the local of the declaration: a
   // second local of the package, a `require()` call in an expression, or
   // `.default` of a lifted module, which is the object itself.

@@ -2385,9 +2385,8 @@ describe("bundler", () => {
     },
   });
   // The same for another name of the same object in the file: a second
-  // import of the module that is used as a value, `export * as`, an export
-  // of the object that arrives through `export * from`, `import()`, and a
-  // copy of the object that another declaration takes (`sub`).
+  // import of the module that is used as a value, `export * as`, `import()`,
+  // and a copy of the object that another declaration takes (`sub`).
   itBundled("dce/DestructuringOfImportNamespaceReadsAnObjectThatAnotherNameHolds", {
     files: {
       "/entry.js": /* js */ `
@@ -2398,15 +2397,12 @@ describe("bundler", () => {
         import * as imported from './imported.js'
         import * as outer from './outer.js'
         import * as inner from './inner.js'
-        import * as starred from './starred.js'
-        export * from './barrel.js'
         const { a } = first
         const { b } = reexported
         const { c } = imported
         const { sub } = outer
         const { one } = inner
-        const { d } = starred
-        console.log(a, Object.keys(second).join(), b, c, Object.keys(sub).join(), one, d)
+        console.log(a, Object.keys(second).join(), b, c, Object.keys(sub).join(), one)
         import('./imported.js').then(ns => console.log(Object.keys(ns).join()))
       `,
       "/second-star.js": /* js */ `
@@ -2420,26 +2416,68 @@ describe("bundler", () => {
         export const one = 1
         export const two = 2
       `,
-      "/barrel.js": `export * as viaStar from './starred.js'`,
-      "/starred.js": `export const d = 4`,
     },
     format: "esm",
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      for (const [key, name] of Object.entries({
-        a: "second_star",
-        b: "reexported",
-        c: "imported",
-        one: "inner",
-        d: "starred",
-      })) {
+      for (const [key, name] of Object.entries({ a: "second_star", b: "reexported", c: "imported", one: "inner" })) {
         expect(code).toMatch(new RegExp(`\\{ ${key}(: \\w+)? \\} = exports_${name};`));
       }
       expect(code).toContain("sub = exports_inner");
       expect(code).not.toContain("exports_outer");
     },
     run: {
-      stdout: "1 a,z 2 3 one,two 1 4\nc",
+      stdout: "1 a,z 2 3 one,two 1\nc",
+    },
+  });
+  // A file with `export * from` can export a namespace object through it:
+  // barrel.js has `export * as viaStar`. No declaration of such a file takes
+  // copies, also not one over another module.
+  itBundled("dce/DestructuringOfImportNamespaceInAFileWithExportStar", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as starred from './starred.js'
+        import * as other from './other.js'
+        export * from './barrel.js'
+        const { d } = starred
+        const { e } = other
+        console.log(d, e)
+      `,
+      "/barrel.js": `export * as viaStar from './starred.js'`,
+      "/starred.js": `export const d = 4`,
+      "/other.js": `export const e = 5`,
+    },
+    format: "esm",
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/\{ d(: \w+)? \} = exports_starred;/);
+      expect(code).toMatch(/\{ e(: \w+)? \} = exports_other;/);
+    },
+    run: {
+      stdout: "4 5",
+    },
+  });
+  // An empty pattern reads nothing, so it is not a use of the namespace that
+  // keeps the declaration next to it as written.
+  itBundled("dce/DestructuringOfImportNamespaceNextToAnEmptyPattern", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as ns from './lib.js'
+        const {} = ns
+        const { a } = ns
+        console.log(a)
+      `,
+      "/lib.js": /* js */ `
+        export const a = 1
+        export const REMOVE_lib = 'unused'
+      `,
+    },
+    dce: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("exports_lib");
+    },
+    run: {
+      stdout: "1",
     },
   });
   // The part with the declaration keeps its place in the order of the chunks:
@@ -2647,6 +2685,48 @@ describe("bundler", () => {
     run: {
       stdout: "mid runs\n1",
     },
+  });
+  // The index of a package with no side effects runs only for what is used
+  // from it. `import 'polyfill'` of the index ran on main only because the
+  // declaration kept the namespace object of the index. `UI.Button` and
+  // `import { Button }` do not run it on main. A use of `UI` as a value in
+  // the same file keeps the object, and the import runs.
+  const indexWithAnImportOfItsOwn = {
+    "/node_modules/ui/package.json": `{ "name": "ui", "type": "module", "sideEffects": false }`,
+    "/node_modules/ui/index.js": /* js */ `
+      import 'polyfill'
+      export * from './button.js'
+    `,
+    "/node_modules/ui/button.js": `export const Button = 'Button'`,
+    "/node_modules/polyfill/package.json": `{ "name": "polyfill", "type": "module" }`,
+    "/node_modules/polyfill/index.js": `console.log('polyfill runs')`,
+  };
+  itBundled("dce/DestructuringOfImportNamespaceDoesNotRunTheIndexOfAPackageWithNoSideEffects", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as UI from 'ui'
+        const { Button } = UI
+        console.log(Button)
+      `,
+      "/member.js": /* js */ `
+        import * as UI from 'ui'
+        console.log(UI.Button)
+      `,
+      "/holder.js": /* js */ `
+        import * as UI from 'ui'
+        const { Button } = UI
+        console.log(Button, Object.keys(UI).join())
+      `,
+      ...indexWithAnImportOfItsOwn,
+    },
+    entryPoints: ["/entry.js", "/member.js", "/holder.js"],
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/entry.js", stdout: "Button" },
+      { file: "/out/member.js", stdout: "Button" },
+      { file: "/out/holder.js", stdout: "polyfill runs\nButton Button" },
+    ],
   });
   // `pkg` has no side effects and its index only re-exports, so index.js is
   // in an output only for its namespace object. A holder of that object in
@@ -2995,9 +3075,11 @@ describe("bundler", () => {
       stdout: "1 2",
     },
   });
-  // The same for the file of a key behind a barrel with no side effects. In
-  // lodash.js the read is next to a use of `exports` that the parser does
-  // record (the check that lodash-es has), so that declaration takes copies.
+  // The same for the file of a key behind a barrel with no side effects, and
+  // for a module with a use of `exports` that the parser does record in a
+  // statement that tree shaking removes (`unusedCheck`). isBuffer.js has the
+  // checks of lodash-es: they use `module` too, so that declaration stays as
+  // written.
   itBundled("dce/DestructuringOfImportNamespaceOfABarrelOverAModuleThatReadsExports", {
     files: {
       "/entry.js": /* js */ `
@@ -3005,10 +3087,21 @@ describe("bundler", () => {
         const { a } = ns
         console.log(a)
       `,
+      "/dead.js": /* js */ `
+        import * as ns from './checked.js'
+        const { a, b } = ns
+        console.log(a, b)
+      `,
       "/lodash.js": /* js */ `
         import * as _ from 'lodash-like'
         const { map, isBuffer } = _
         console.log(map([1], x => x + 1).join(), isBuffer(1))
+      `,
+      "/checked.js": /* js */ `
+        export const a = 1
+        export const b = 2
+        export function unusedCheck() { return typeof exports }
+        if (typeof require !== 'undefined' && exports.legacy) console.log('never')
       `,
       "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module", "sideEffects": false }`,
       "/node_modules/pkg/index.js": /* js */ `
@@ -3019,6 +3112,7 @@ describe("bundler", () => {
       "/node_modules/pkg/leaf.js": /* js */ `
         export const a = 1
         export const b = 2
+        export function unusedCheck() { return typeof exports }
         if (typeof require !== 'undefined' && exports.legacy) console.log('never')
       `,
       "/node_modules/lodash-like/package.json": `{ "name": "lodash-like", "type": "module", "sideEffects": false }`,
@@ -3028,19 +3122,23 @@ describe("bundler", () => {
       `,
       "/node_modules/lodash-like/isBuffer.js": /* js */ `
         var freeExports = typeof exports == 'object' && exports && !exports.nodeType && exports
-        export default function isBuffer() { return !!freeExports && false }
+        var freeModule = freeExports && typeof module == 'object' && module && !module.nodeType && module
+        var moduleExports = freeModule && freeModule.exports === freeExports
+        export default function isBuffer() { return !!moduleExports && false }
       `,
       "/node_modules/lodash-like/map.js": `export default function map(array, fn) { return array.map(fn) }`,
     },
-    entryPoints: ["/entry.js", "/lodash.js"],
+    entryPoints: ["/entry.js", "/dead.js", "/lodash.js"],
     outdir: "/out",
     format: "esm",
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toMatch(/\{ a(: \w+)? \} = exports_pkg;/);
-      api.expectFile("/out/lodash.js").not.toMatch(/\} = exports_/);
+      api.expectFile("/out/dead.js").toMatch(/\{ a(: \w+)?, b(: \w+)? \} = exports_checked;/);
+      api.expectFile("/out/lodash.js").toMatch(/\{ map(: \w+)?, isBuffer(: \w+)? \} = exports_lodash_like;/);
     },
     run: [
       { file: "/out/entry.js", stdout: "1" },
+      { file: "/out/dead.js", stdout: "1 2" },
       { file: "/out/lodash.js", stdout: "2 false" },
     ],
   });
@@ -3230,10 +3328,11 @@ describe("bundler", () => {
       stdout: "0 7 5 0 1",
     },
   });
-  // With tree shaking off a module is one part. A part with another
-  // statement, or with more than one declarator, prints as written. The part
-  // of required.js has only the declarations: the parser made the
-  // `require()` an import, in a part of its own.
+  // With tree shaking off nothing is bound, and each declaration prints as
+  // written: next to other statements (entry.js), in a part that holds only
+  // declarations (required.js: the parser made the `require()` an import,
+  // in a part of its own), and as the one statement of a file (call.js,
+  // empty.js).
   itBundled("dce/DestructuringOfImportNamespaceTreeShakingOff", {
     files: {
       ...manyDeclarators,
@@ -3242,25 +3341,37 @@ describe("bundler", () => {
         export const { count } = R, { inc } = R
         export const { count: again } = R
       `,
+      "/call.js": `export const { count: fromCall } = require('react')`,
+      "/empty.js": `const {} = require('react')`,
       "/node_modules/react/index.js": /* js */ `
         exports.count = 0
         exports.inc = function () { exports.count++ }
       `,
     },
-    entryPoints: ["/entry.js", "/required.js"],
+    entryPoints: ["/entry.js", "/required.js", "/call.js", "/empty.js"],
     outdir: "/out",
     format: "esm",
     treeShaking: false,
+    runtimeFiles: {
+      "/out/check.js": /* js */ `
+        import { count, inc, again } from './required.js'
+        import { fromCall } from './call.js'
+        import './empty.js'
+        inc()
+        console.log(count, again, fromCall)
+      `,
+    },
     onAfterBundle(api) {
       api.expectFile("/out/entry.js").toContain("{ count: count2 } = exports_lib, { inner: inner2 } = exports_lib2");
       const required = api.readFile("/out/required.js");
       expect(required).toContain("{ count } = exports_react, { inc } = exports_react;");
       expect(required).toContain("{ count: again } = exports_react;");
+      api.expectFile("/out/call.js").toMatch(/\{ count: fromCall \} = \(?exports_react\)?;/);
     },
-    run: {
-      file: "/out/entry.js",
-      stdout: "0 7 5 0 1",
-    },
+    run: [
+      { file: "/out/entry.js", stdout: "0 7 5 0 1" },
+      { file: "/out/check.js", stdout: "0 0 0" },
+    ],
   });
   // The keys of one declaration bind together. Each of them keeps its
   // export, also a key that nothing reads: `neverRead` here, and `second`

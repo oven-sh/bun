@@ -4767,6 +4767,10 @@ impl<'a> LinkerContext<'a> {
 
         let id = source_index as usize;
         let binds = self.options.output_format != Format::InternalBakeDev;
+        // A file with `export * from` can export a namespace object through it, and a lifted one that keeps its wrapper assigns the object to `module.exports`.
+        let binds_patterns = binds
+            && self.options.tree_shaking
+            && self.graph.ast.items_export_star_import_records()[id].is_empty();
         // Code in a direct eval() can reference any binding, so the parser's verdict on each part stands.
         let has_direct_eval = self.graph.ast.items_module_scope()[id].contains_direct_eval;
         let parts_len = self.graph.ast.items_parts()[id].len();
@@ -4786,7 +4790,7 @@ impl<'a> LinkerContext<'a> {
                 self.graph.ast.items_parts_mut()[id].as_mut_slice()[part_index].tag =
                     bun_ast::PartTag::NamespaceDestructuring;
                 part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
-                if binds {
+                if binds_patterns {
                     pattern_parts.push(part_index as u32);
                 }
             }
@@ -5168,6 +5172,7 @@ impl<'a> LinkerContext<'a> {
             let bun_ast::ExprData::EString(key) = &property.key.data else {
                 return None;
             };
+            // `slice8` reads one UTF-8 segment.
             if !key.is_utf8() || key.next.is_some() {
                 return None;
             }
@@ -5179,9 +5184,6 @@ impl<'a> LinkerContext<'a> {
             // An inherited key (`hasOwnProperty`) or a missing one reads off the object.
             let index = resolved_exports.get_index(name)?;
             names.push(bun_ast::StoreStr::new(&resolved_exports.keys()[index]));
-        }
-        if names.is_empty() {
-            return None;
         }
 
         // All or nothing: one key that is not a binding to copy keeps the pattern.
@@ -5209,61 +5211,38 @@ impl<'a> LinkerContext<'a> {
                 )),
             });
         }
-        let copies = Stmt::alloc(
-            S::Local {
-                kind: local.kind,
-                is_export: local.is_export,
-                origin: local.origin,
-                decls,
-            },
-            stmt.loc,
-        );
+        // An empty pattern reads nothing and leaves no statement.
+        let copies = (!names.is_empty()).then(|| {
+            Stmt::alloc(
+                S::Local {
+                    kind: local.kind,
+                    is_export: local.is_export,
+                    origin: local.origin,
+                    decls,
+                },
+                stmt.loc,
+            )
+        });
         Some(NamespacePatternPlan {
             part_index,
             base,
             target_source,
             namespace: target.import_ref,
             names,
-            copies: bun_ast::StoreSlice::new_mut(
-                self.arena().alloc_slice_fill_iter(core::iter::once(copies)),
-            ),
+            copies: bun_ast::StoreSlice::new_mut(self.arena().alloc_slice_fill_iter(copies)),
         })
     }
 
     /// Sets `held` for each planned target whose namespace object this file reaches in another way than the planned declarations.
     fn mark_held_namespaces(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
         plans: &[NamespacePatternPlan],
         imports_to_bind: &crate::RefImportData,
-        member_resolutions: &mut ImportMemberResolutions,
+        member_resolutions: &ImportMemberResolutions,
         held: &mut HashMap<Ref, bool>,
     ) {
         let id = source_index as usize;
-        // An export that arrives through `export * from` is the namespace object when the other file has `export * as x from`.
-        let all_named_imports = self.graph.ast.items_named_imports();
-        let resolved_exports = &self.graph.meta.items_resolved_exports()[id];
-        let star_exports: Vec<bun_ast::StoreStr> = resolved_exports
-            .keys()
-            .iter()
-            .zip(resolved_exports.values())
-            .filter(|(_, export)| {
-                let from = export.data.source_index.get();
-                from != source_index
-                    && all_named_imports
-                        .get(from as usize)
-                        .is_some_and(|imports| imports.contains(&export.data.import_ref))
-            })
-            .map(|(alias, _)| bun_ast::StoreStr::new(alias))
-            .collect();
-        for alias in star_exports {
-            self.resolve_import_member((source_index, alias), member_resolutions);
-            if let Some(Some(member)) = member_resolutions.get(&(source_index, alias))
-                && let Some(is_held) = held.get_mut(&member.r#ref)
-            {
-                *is_held = true;
-            }
-        }
         // `held` has the `exports_ref` of each target. A second local, `X.default` of a lifted module, a key that is a namespace: all are bound to it.
         let namespace_of = |symbol: Ref| {
             imports_to_bind
@@ -5291,14 +5270,8 @@ impl<'a> LinkerContext<'a> {
             }
         }
         let exports_refs = self.graph.ast.items_exports_ref();
-        let records = self.graph.ast.items_import_records()[id].as_slice();
-        // A lifted file that keeps its wrapper prints `module.exports = exports_x` for its `export * from`.
-        let assigns_module_exports = self.graph.meta.items_flags()[id].wrap == WrapKind::Cjs
-            && self.graph.ast.items_flags()[id].contains(AstFlags::COMMONJS_LIFTED_TO_ESM);
-        let export_stars = self.graph.ast.items_export_star_import_records()[id].slice();
-        for (record_index, record) in records.iter().enumerate() {
-            if (matches!(record.kind, ImportKind::Dynamic | ImportKind::Require)
-                || (assigns_module_exports && export_stars.contains(&(record_index as u32))))
+        for record in self.graph.ast.items_import_records()[id].as_slice() {
+            if matches!(record.kind, ImportKind::Dynamic | ImportKind::Require)
                 && let Some(exports_ref) = exports_refs.get(record.source_index.get() as usize)
                 && let Some(is_held) = held.get_mut(exports_ref)
             {
@@ -5306,6 +5279,7 @@ impl<'a> LinkerContext<'a> {
             }
         }
         // `plans` is in part order.
+        debug_assert!(plans.is_sorted_by_key(|plan| plan.part_index));
         let mut planned = plans.iter().peekable();
         for (part_index, part) in self.graph.ast.items_parts()[id]
             .as_slice()
@@ -5350,18 +5324,18 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// The file prints its own `exports` object where the parser recorded no use of it: `module.exports` as a value, or `exports.name` in an ES module that assigns no such name and has no other use of `exports`.
+    /// The file prints its own `exports` object where the parser recorded no use of it: `module.exports` as a value, or `exports.name` of a name that an ES module never assigns.
     fn prints_own_exports_object(&self, source_index: crate::IndexInt) -> bool {
         let id = source_index as usize;
-        let flags = self.graph.ast.items_flags()[id];
+        let exports = self.graph.ast.items_commonjs_named_exports()[id].values();
+        // A file that stays an ES module or is lifted has all of its `exports.name` assigned, or none: the first one tells.
+        debug_assert!(
+            exports.first().is_none_or(|export| export.needs_decl)
+                || exports.iter().all(|export| !export.needs_decl)
+        );
         // `USES_MODULE_REF` is also set for `module.exports.name = value` and for `typeof module`.
-        flags.contains(AstFlags::USES_MODULE_REF)
-            // A file that stays an ES module or is lifted has all of its `exports.name` assigned, or none: the first one tells.
-            || (!flags.contains(AstFlags::USES_EXPORTS_REF)
-                && self.graph.ast.items_commonjs_named_exports()[id]
-                    .values()
-                    .first()
-                    .is_some_and(|export| export.needs_decl))
+        self.graph.ast.items_flags()[id].contains(AstFlags::USES_MODULE_REF)
+            || exports.first().is_some_and(|export| export.needs_decl)
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

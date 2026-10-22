@@ -791,6 +791,15 @@ describe("the end of a body on a stream with no flow-control credit left", () =>
       // From here on the client drops every datagram from the server: no
       // MAX_STREAM_DATA and no MAX_DATA can raise a limit.
       deafen: () => blockList.addAddress(listener.address!.address),
+      // How many datagrams from the server the client dropped, once it
+      // dropped one. The server acknowledges what the client sends, so it
+      // sends one. Nothing reports a dropped datagram, so this looks once per
+      // turn of the event loop until the session is gone.
+      async dropped() {
+        const turn = () => new Promise(resolve => setImmediate(resolve));
+        while (endpoint.stats.packetsBlocked === 0n && (await Promise.race([turn(), closed])) !== "closed");
+        return Number(endpoint.stats.packetsBlocked);
+      },
       async [Symbol.asyncDispose]() {
         session.destroy();
         serverSession.destroy();
@@ -863,6 +872,9 @@ describe("the end of a body on a stream with no flow-control credit left", () =>
       await peers.until(() => peers.got.get(stream.id) === body.byteLength);
       stream.writer.endSync();
       expect(await Promise.race([peers.ended(), peers.noEnd()])).toEqual([body.byteLength]);
+      // The client dropped what the server sent after the block. So the end
+      // did not leave with new credit.
+      expect(await peers.dropped()).toBeGreaterThan(0);
     },
   );
 
@@ -886,6 +898,62 @@ describe("the end of a body on a stream with no flow-control credit left", () =>
     await answered.promise;
     expect(await Promise.race([answer, peers.noEnd(peers.server)])).toBe(0);
   });
+
+  // A stream with credit keeps lsquic's write event. In a stream handler its
+  // FIN is not with lsquic yet when endSync() returns.
+  test("gives the end to lsquic in the call only when the stream has no credit", async () => {
+    const script = `
+      import { createPrivateKey } from "node:crypto";
+      import { readFileSync } from "node:fs";
+      import { join } from "node:path";
+      import { connect, listen, QuicEndpoint } from "node:quic";
+      const { getQuicStreamState } = (await import("internal/quic/quic")).default;
+
+      const keysDir = process.env.QUIC_KEYS_DIR;
+      const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
+      const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+      const noCredit = { initialMaxStreamDataBidiLocal: 0, initialMaxStreamDataBidiRemote: 0 };
+      const finSent = {};
+      for (const [name, limits] of [["credit", {}], ["noCredit", noCredit]]) {
+        const answered = Promise.withResolvers();
+        const server = await listen(
+          session => {
+            session.closed.catch(() => {});
+            session.onstream = stream => {
+              stream.closed.catch(() => {});
+              stream.writer.endSync();
+              answered.resolve(getQuicStreamState(stream).finSent);
+            };
+          },
+          { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["quic-test"], transportParams: { maxIdleTimeout: 30 } },
+        );
+        const client = await connect(server.address, {
+          endpoint: new QuicEndpoint(),
+          alpn: "quic-test",
+          servername: "localhost",
+          verifyPeer: "manual",
+          transportParams: { maxIdleTimeout: 30, ...limits },
+        });
+        client.closed.catch(() => {});
+        await client.opened;
+        const stream = await client.createBidirectionalStream();
+        stream.closed.catch(() => {});
+        stream.writer.endSync();
+        finSent[name] = await answered.promise;
+      }
+      console.log(JSON.stringify(finSent));
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--expose-internals", "-e", script],
+      env: { ...bunEnv, QUIC_KEYS_DIR: keysDir },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify({ credit: false, noCredit: true }) + "\n");
+    expect(exitCode).toBe(0);
+  }, 30_000);
 
   test("waits for credit when a byte of the body is still queued", async () => {
     await using peers = await setup({ server: noStreamCredit });

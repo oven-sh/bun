@@ -373,6 +373,7 @@ WTF::String formatStackTrace(
     const auto offset = [&]() -> unsigned {
         return sb.hasOverflowed() ? 0 : sb.length();
     };
+    bool encounteredStrictFrame = false;
 
     // Pass 2: format. Everything except (display line/col, source_url) is
     // re-derived from `frame`; only the remap output is read from pass 1.
@@ -416,7 +417,7 @@ WTF::String formatStackTrace(
         }
 
         JSC::CollectedStackFrame collectedFrame;
-        unsigned newKeywordLength = flags & static_cast<unsigned int>(FunctionNameFlags::Constructor) ? 4 : 0;
+        unsigned newKeywordLength = (flags & static_cast<unsigned int>(FunctionNameFlags::Constructor)) && !functionName.isEmpty() ? "new "_s.length() : 0;
         collectedFrame.functionNameLength = functionName.length() - newKeywordLength;
         collectedFrame.sourceURLLength = sourceURLForFrame.length();
 
@@ -471,7 +472,8 @@ WTF::String formatStackTrace(
         if (collectedFrames && !Zig::isImplementationVisibilityPrivate(frame)) {
             JSCStackFrame callSiteFrame(vm, frame);
             collectedFrame.sourceID = callSiteFrame.sourceID();
-            collectedFrame.flags = CallSite::flagsOf(callSiteFrame);
+            collectedFrame.flags = CallSite::flagsOf(callSiteFrame, encounteredStrictFrame);
+            encounteredStrictFrame = collectedFrame.flags & static_cast<unsigned int>(CallSite::Flags::IsStrict);
             collectedFrames->append(collectedFrame);
         }
     }
@@ -620,10 +622,7 @@ static JSObject* errorPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalOb
 static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<StackFrame>& stackTrace, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorInstance)
 {
     JSC::JSGlobalObject* lexicalGlobalObject = errorInstance->globalObject();
-    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    if (!globalObject) {
-        globalObject = defaultGlobalObject(vm);
-    }
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* prepareStackTrace = errorPrepareStackTrace(vm, globalObject, lexicalGlobalObject);
@@ -648,7 +647,7 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, Vector<JSC::CollectedStackFrame>& collectedFrames)
 {
 
-    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // ErrorInstance::reconcileWeakReferencesAtGCEnd calls this from Heap::runEndPhase, which nulls
     // the current thread's atom string table and runs on whichever thread conducts the GC.
     // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
     // so install the VM's table for the duration; the mutator is suspended for the whole
@@ -679,7 +678,6 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
         result = WTF::emptyString();
-        collectedFrames.clear();
     }
 
     line_in = line.oneBasedInt();
@@ -691,10 +689,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 JSC::JSValue computeCollectedErrorInfoToJSValue(JSC::VM& vm, const String& stackString, const Vector<JSC::CollectedStackFrame>& collectedFrames, JSObject* errorInstance)
 {
     JSC::JSGlobalObject* lexicalGlobalObject = errorInstance->globalObject();
-    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    if (!globalObject) {
-        globalObject = defaultGlobalObject(vm);
-    }
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* prepareStackTrace = errorPrepareStackTrace(vm, globalObject, lexicalGlobalObject);
@@ -704,11 +699,8 @@ JSC::JSValue computeCollectedErrorInfoToJSValue(JSC::VM& vm, const String& stack
     }
 
     MarkedArgumentBuffer callSites;
-    bool encounteredStrictFrame = false;
     for (auto& collectedFrame : collectedFrames) {
-        CallSite* callSite = CallSite::create(lexicalGlobalObject, globalObject->callSiteStructure(), stackString, collectedFrame, encounteredStrictFrame);
-        encounteredStrictFrame = callSite->isStrict();
-        callSites.append(callSite);
+        callSites.append(CallSite::create(lexicalGlobalObject, globalObject->callSiteStructure(), stackString, collectedFrame));
     }
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
     RETURN_IF_EXCEPTION(scope, jsUndefined());

@@ -51,11 +51,18 @@ static WTF::String sourceURLPlaceholder(const JSC::CollectedStackFrame& collecte
     return "[unknown]"_s;
 }
 
-unsigned int CallSite::flagsOf(JSCStackFrame& stackFrame)
+unsigned int CallSite::flagsOf(JSCStackFrame& stackFrame, bool encounteredStrictFrame)
 {
+    /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
+     * "To maintain restrictions imposed on strict mode functions, frames that have a
+     * strict mode function and all frames below (its caller etc.) are not allow to access
+     * their receiver and function objects. For those frames, getFunction() and getThis()
+     * will return undefined.".
+     * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
+
     unsigned int flags = 0;
     JSC::CodeBlock* codeBlock = stackFrame.codeBlock();
-    if (codeBlock && codeBlock->ownerExecutable()->isInStrictContext()) {
+    if (encounteredStrictFrame || (codeBlock && codeBlock->ownerExecutable()->isInStrictContext())) {
         flags |= static_cast<unsigned int>(Flags::IsStrict);
     } else {
         // isToplevel() needs the real callee: m_function is undefined when the callee is hidden.
@@ -85,25 +92,10 @@ unsigned int CallSite::flagsOf(JSCStackFrame& stackFrame)
     return flags;
 }
 
-void CallSite::setFlags(unsigned int flags, bool encounteredStrictFrame)
-{
-    /* From v8's "Stack Trace API" (https://github.com/v8/v8/wiki/Stack-Trace-API):
-     * "To maintain restrictions imposed on strict mode functions, frames that have a
-     * strict mode function and all frames below (its caller etc.) are not allow to access
-     * their receiver and function objects. For those frames, getFunction() and getThis()
-     * will return undefined.".
-     * Thus, if we've already encountered a strict frame, we'll treat our frame as strict too. */
-    if (encounteredStrictFrame) {
-        flags |= static_cast<unsigned int>(Flags::IsStrict);
-        flags &= ~static_cast<unsigned int>(Flags::IsSloppyFunctionCall);
-    }
-    m_flags = flags;
-}
-
 void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame)
 {
     Base::finishCreation(vm);
-    setFlags(flagsOf(stackFrame), encounteredStrictFrame);
+    m_flags = flagsOf(stackFrame, encounteredStrictFrame);
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
     m_thisValue.set(vm, this, JSC::jsUndefined());
@@ -126,10 +118,10 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     }
 }
 
-void CallSite::finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame)
+void CallSite::finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame)
 {
     Base::finishCreation(vm);
-    setFlags(collectedFrame.flags, encounteredStrictFrame);
+    m_flags = collectedFrame.flags;
 
     m_thisValue.set(vm, this, JSC::jsUndefined());
     m_function.set(vm, this, JSC::jsUndefined());

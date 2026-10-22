@@ -993,8 +993,8 @@ async function collect() {
   await tick();
   Bun.gc(true);
 }
-// graph.run(...args) under a function that is garbage once it returns, and a WeakRef that tells when it
-// is collected. Its frame is not one of the graphs' modules, so graphFrames() leaves it out.
+// graph.run(...args) under a function that is garbage once it returns, and a WeakRef that tells whether it
+// was collected. Its frame is not one of the graphs' modules, so graphFrames() leaves it out.
 const underDeadFrame = (graph, args) => {
   const deadFrame = new Function("graph", "args", '"use strict"; try { return graph.run(...args); } finally {}');
   return [...deadFrame(graph, args), new WeakRef(deadFrame)];
@@ -1066,10 +1066,10 @@ const graphFrames = stack =>
     .filter((line, index) => index === 0 || /[\\/](origin|other)\.mjs:/.test(line))
     .map(line => line.replace(/\(?[^()]*[\\/]((?:origin|other)\.mjs:\d+:\d+)\)?/, "$1"));
 
-// How a first read finds a stack.
+// How a first read finds a stack: already a string ("early") if a collection found the dead frame's function dead.
 const firstReadPath = ([, , deadFrame]) => (deadFrame.deref() === undefined ? "early" : "on access");
 
-// Whether a prepareStackTrace installed for the first read of the error's twin is consulted.
+// Whether a prepareStackTrace installed for the first read of the pair's second error is consulted.
 function consultsPrepareStackTrace([, twin]) {
   let consulted = false;
   const builtin = Error.prepareStackTrace;

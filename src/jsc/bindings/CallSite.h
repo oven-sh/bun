@@ -53,17 +53,16 @@ public:
         return callSite;
     }
 
-    // For a frame a collection found dead. getFunction() is undefined, and the position is the one in stackString.
-    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame)
+    // For a frame of a trace that a collection formatted. getFunction() is undefined, and the position is the one in stackString.
+    static CallSite* create(JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame)
     {
         auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
-        callSite->finishCreation(vm, stackString, collectedFrame, encounteredStrictFrame);
+        callSite->finishCreation(vm, stackString, collectedFrame);
         return callSite;
     }
 
-    // The Flags of a frame with no strict frame above it.
-    static unsigned int flagsOf(JSCStackFrame& stackFrame);
+    static unsigned int flagsOf(JSCStackFrame& stackFrame, bool encounteredStrictFrame);
 
     DECLARE_INFO;
 
@@ -111,8 +110,7 @@ private:
     }
 
     void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
-    void finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame, bool encounteredStrictFrame);
-    void setFlags(unsigned int flags, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, const WTF::String& stackString, const JSC::CollectedStackFrame& collectedFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

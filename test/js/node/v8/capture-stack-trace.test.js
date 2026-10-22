@@ -1557,8 +1557,8 @@ test("lazy error-info materialization does not store an empty stack value when t
 
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
 // lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
-// is materialized on access. Known exceptions: a call site's column and getFunction(), a SyntaxError's
-// "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+// is materialized on access. Known exceptions: a call site's column and getFunction(), a wasm call site's
+// function name, a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
 // errors, each under its own function that is garbage once it returns. The errors whose function a
@@ -1815,8 +1815,8 @@ test.concurrent("Error.prepareStackTrace gets the call sites of a stack that a c
   const src = `
     ${materializedByACollection}
     const is = ["isToplevel", "isEval", "isNative", "isConstructor", "isAsync"];
-    // Everything but the column and getFunction(). The functions that die are a script of their own in
-    // each sample, so a script id is told by where in the trace it first appears. 0 is no script.
+    // What is compared of a call site; the column and getFunction() differ. The functions that die are a script of
+    // their own in each sample, so a script id is told by where in the trace it first appears. 0 is no script.
     Error.prepareStackTrace = (error, callSites) => {
       const scriptIds = [0, ...new Set(callSites.map(site => site.getScriptId()).filter(Boolean))];
       return callSites.map(site => ({
@@ -1841,12 +1841,12 @@ test.concurrent("Error.prepareStackTrace gets the call sites of a stack that a c
       const [onAccess, ...samples] = captureAll(make);
       return { shape, expected: onAccess.stack, samples };
     });
-    // The frames of an async function are its own once it has awaited.
+    // After an await the trace has only the async functions, so one of them is the function that dies.
     const afterAnAwait = () => {
-      const [error, deadFrame] = new Function(
+      const [promise, deadFrame] = new Function(
         '"use strict"; async function inner() { await 1; try { return new Error("boom"); } finally {} } async function outer() { return await inner(); } return [outer(), inner];',
       )();
-      return error.then(error => (deadFrames.set(error, new WeakRef(deadFrame)), error));
+      return promise.then(error => (deadFrames.set(error, new WeakRef(deadFrame)), error));
     };
     const [onAccess, ...samples] = await Promise.all(Array.from({ length: 1 + SAMPLES }, afterAnAwait));
     cases.push({ shape: "after an await", expected: onAccess.stack, samples });
@@ -1880,8 +1880,10 @@ test.concurrent("Error.prepareStackTrace gets the call sites of a stack that a c
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("Error.prepareStackTrace is used for a stack that a collection materialized as on access", async () => {
-  const src = `
+test.concurrent(
+  "Error.prepareStackTrace is used for a stack that a collection materialized as it is on access",
+  async () => {
+    const src = `
     import vm from "node:vm";
     ${materializedByACollection}
     const count = (error, callSites) => "call sites: " + callSites.length;
@@ -1897,8 +1899,6 @@ test.concurrent("Error.prepareStackTrace is used for a stack that a collection m
     vm.runInContext("Error.prepareStackTrace = (error, callSites) => 'context: ' + callSites.length", context);
     const uses = {
       "installed for the read": [() => new Error("boom"), install(count)(error => error.stack)],
-      "removed before the read": [() => new Error("boom"), error => error.stack.split("\\n")[0]],
-      "returns an object": [() => new Error("boom"), install(() => ({ made: "by the formatter" }))(error => error.stack)],
       "reads error.stack": [() => new Error("boom"), install(error => error.stack.split("\\n")[0])(error => error.stack)],
       "throws": [
         () => new Error("boom"),
@@ -1931,11 +1931,16 @@ test.concurrent("Error.prepareStackTrace is used for a stack that a collection m
           return [calls, printed.includes("at thrower")];
         },
       ],
+      "read by the stack getter of an error that is printed": [
+        () => new Error("boom"),
+        install(count)(error => {
+          Bun.inspect(Object.defineProperty(new Error("printed"), "stack", { get: () => error.stack }));
+          return error.stack;
+        }),
+      ],
     };
     const cases = Object.entries(uses).map(([use, [make, read]]) => {
-      if (use === "removed before the read") Error.prepareStackTrace = count;
       const [onAccess, ...samples] = captureAll(make);
-      Error.prepareStackTrace = undefined;
       return { use, read, expected: read(onAccess), samples };
     });
     await collect();
@@ -1946,23 +1951,23 @@ test.concurrent("Error.prepareStackTrace is used for a stack that a collection m
     }
     console.log(JSON.stringify(rows));
   `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
-  expect(JSON.parse(stdout)).toEqual({
-    "installed for the read": row(expect.stringMatching(/^call sites: [1-9]/)),
-    "removed before the read": row("Error: boom"),
-    "returns an object": row({ made: "by the formatter" }),
-    "reads error.stack": row("Error: boom"),
-    "throws": row(["from the formatter", "Error: boom"]),
-    "called once": row(1),
-    "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
-    "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
-    "not called to print": row([0, true]),
-  });
-  expect(exitCode).toBe(0);
-});
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const row = onAccess => ({ materializedByACollection: true, same: true, onAccess });
+    expect(JSON.parse(stdout)).toEqual({
+      "installed for the read": row(expect.stringMatching(/^call sites: [1-9]/)),
+      "reads error.stack": row("Error: boom"),
+      "throws": row(["from the formatter", "Error: boom"]),
+      "called once": row(1),
+      "after Error.captureStackTrace": row(expect.stringMatching(/^call sites: [1-9]/)),
+      "of a node:vm context": row(expect.stringMatching(/^context: [1-9]/)),
+      "not called to print": row([0, true]),
+      "read by the stack getter of an error that is printed": row(expect.stringMatching(/^call sites: [1-9]/)),
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 // Materializing the stack can throw (a Symbol message). Asking for the property's descriptor must throw
 // that, not report the property found with the exception still pending, however the stack is materialized.

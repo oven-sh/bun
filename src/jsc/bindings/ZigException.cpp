@@ -36,7 +36,6 @@
 #include "JavaScriptCore/JSObjectInlines.h"
 
 #include "wtf/Assertions.h"
-#include "wtf/SetForScope.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "wtf/text/StringView.h"
 #include "wtf/text/WTFString.h"
@@ -586,8 +585,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
         // so in this case, we parse the stack trace as a string
 
         // Frames that are alive print without a call to Error.prepareStackTrace, so ones a collection formatted do too.
-        bool& isInsideErrorPrepareStackTraceCallback = defaultGlobalObject(err->globalObject())->isInsideErrorPrepareStackTraceCallback;
-        SetForScope withoutPrepareStackTrace(isInsideErrorPrepareStackTraceCallback, isInsideErrorPrepareStackTraceCallback || !err->stackTrace());
+        err->clearCollectedStackFrames();
 
         // This one intentionally calls getters.
         JSC::JSValue stackValue = obj->getIfPropertyExists(global, vm.propertyNames->stack);

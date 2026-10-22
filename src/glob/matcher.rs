@@ -3882,11 +3882,12 @@ impl Parsed {
     #[inline(never)]
     fn walk(&self, glob: &[u8], path: &[u8], mode: Mode, is_kept: bool) -> Option<bool> {
         let is_windows = mode.is_windows();
-        let Some(first) = self.take_front(glob, self.top, path, is_windows) else {
+        let Some(after_front) = self.take_front(glob, self.top, path, is_windows) else {
             return Some(false);
         };
-        if self.first_group != u32::MAX && !self.may_start_at(self.first_group, glob, path, first)
-            || path.len() >= Program::IS_LONG && !self.may_pass_first_group(glob, path, first)
+        if self.first_group != u32::MAX
+            && !self.may_start_at(self.first_group, glob, path, after_front)
+            || path.len() >= Program::IS_LONG && !self.may_pass_first_group(glob, path, after_front)
         {
             return Some(false);
         }
@@ -3927,11 +3928,11 @@ impl Parsed {
             };
             match program.cache(glob, is_windows, path.len()) {
                 Some(cache) => (
-                    cache.matches(program, glob, path, first as usize, dots),
+                    cache.matches(program, glob, path, after_front as usize, dots),
                     true,
                 ),
                 None => {
-                    let on = program.on(glob, path, first as usize, is_windows, dots);
+                    let on = program.on(glob, path, after_front as usize, is_windows, dots);
                     (on.walk(), on.has_separator_for_class.get())
                 }
             }

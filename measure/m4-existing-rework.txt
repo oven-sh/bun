@@ -1,0 +1,39 @@
+##### folder-first: syscalls base=242 pr=236; failed base=41 pr=37
+    base: second exit 0 (4 packages installed [139.00ms])   pr: second exit 0 (4 packages installed [156.00ms])
+    close/ok                 base=49   pr=48  
+    linkat/ENOENT            base=2    pr=0   
+    mkdirat/ENOENT           base=12   pr=9   
+    openat/ok                base=44   pr=43  
+    symlink/ENOENT           base=2    pr=3   
+##### folder-again: syscalls base=161 pr=161; failed base=20 pr=20
+    base: second exit 0 (Done! Checked 5 packages (no changes) [149.00ms])   pr: second exit 0 (Done! Checked 5 packages (no changes) [138.00ms])
+##### force-off: syscalls base=220 pr=217; failed base=29 pr=26
+    base: second exit 0 (3 packages installed [84.00ms])   pr: second exit 0 (3 packages installed [59.00ms])
+    linkat/ENOENT            base=2    pr=0   
+    mkdirat/ENOENT           base=1    pr=0   
+##### force-on: syscalls base=262 pr=259; failed base=39 pr=36
+    base: second exit 0 (3 packages installed [156.00ms])   pr: second exit 0 (3 packages installed [172.00ms])
+    linkat/ENOENT            base=2    pr=0   
+    mkdirat/ENOENT           base=8    pr=7   
+##### copyfile-cold: syscalls base=257 pr=257; failed base=39 pr=39
+    base: second exit 0 (3 packages installed [159.00ms])   pr: second exit 0 (3 packages installed [249.00ms])
+    mkdirat/ENOENT           base=7    pr=8   
+    symlink/ENOENT           base=3    pr=2   
+##### copyfile-cold-on: syscalls base=265 pr=265; failed base=46 pr=46
+    base: second exit 0 (3 packages installed [216.00ms])   pr: second exit 0 (3 packages installed [139.00ms])
+##### hardlink-cold: syscalls base=192 pr=191; failed base=36 pr=35
+    base: second exit 0 (3 packages installed [120.00ms])   pr: second exit 0 (3 packages installed [142.00ms])
+    linkat/ENOENT            base=2    pr=0   
+    mkdirat/EEXIST           base=0    pr=1   
+    mkdirat/ENOENT           base=9    pr=8   
+    symlink/ENOENT           base=2    pr=3   
+##### hardlink-cold-on: syscalls base=200 pr=197; failed base=43 pr=40
+    base: second exit 0 (3 packages installed [152.00ms])   pr: second exit 0 (3 packages installed [180.00ms])
+    linkat/ENOENT            base=2    pr=0   
+    mkdirat/ENOENT           base=9    pr=8   
+##### folder-first: total base=[242 242 242 242 242 ] pr=[236 236 236 236 238 ]; failed base=[41 41 41 41 41 ] pr=[37 37 37 37 39 ]
+##### folder-again: total base=[161 161 161 161 161 ] pr=[161 161 161 161 161 ]; failed base=[20 20 20 20 20 ] pr=[20 20 20 20 20 ]
+##### force-off: total base=[220 220 220 220 220 ] pr=[217 217 217 217 217 ]; failed base=[29 29 29 29 29 ] pr=[26 26 26 26 26 ]
+##### force-on: total base=[262 262 262 262 262 ] pr=[259 259 259 259 259 ]; failed base=[39 39 39 39 39 ] pr=[36 36 36 36 36 ]
+##### copyfile-cold: total base=[257 257 257 257 257 ] pr=[257 257 257 257 257 ]; failed base=[39 39 39 39 39 ] pr=[39 39 39 39 39 ]
+##### copyfile-cold-on: total base=[265 265 265 265 267 ] pr=[265 265 265 265 267 ]; failed base=[46 46 46 46 48 ] pr=[46 46 46 46 48 ]

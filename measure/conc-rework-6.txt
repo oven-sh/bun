@@ -1,0 +1,6 @@
+=== shape=dirs procs=6 rounds=60 ===
+bun-base shape=dirs procs=6: 9 of 360 processes exited non-zero; rounds with an incomplete tree: 0 of 60; of those with every process at exit 0: 0
+bun-pr shape=dirs procs=6: 23 of 360 processes exited non-zero; rounds with an incomplete tree: 5 of 60; of those with every process at exit 0: 0
+=== shape=flat procs=6 rounds=60 ===
+bun-base shape=flat procs=6: 37 of 360 processes exited non-zero; rounds with an incomplete tree: 6 of 60; of those with every process at exit 0: 0
+bun-pr shape=flat procs=6: 21 of 360 processes exited non-zero; rounds with an incomplete tree: 6 of 60; of those with every process at exit 0: 0

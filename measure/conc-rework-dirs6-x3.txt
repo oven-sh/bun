@@ -1,0 +1,29 @@
+=== dirs procs=6 rounds=40 (run 1) ===
+bun-base shape=dirs procs=6: 9 of 240 processes exited non-zero; rounds with an incomplete tree: 2 of 40; of those with every process at exit 0: 0
+     11 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (mkdir)
+      5 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (link)
+      1 EEXIST: File exists: failed to create './node_modules/.bun' (mkdir)
+bun-pr shape=dirs procs=6: 4 of 240 processes exited non-zero; rounds with an incomplete tree: 0 of 40; of those with every process at exit 0: 0
+      2 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p95/lib" (mkdir)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p20/lib" (mkdir)
+=== dirs procs=6 rounds=40 (run 2) ===
+bun-base shape=dirs procs=6: 3 of 240 processes exited non-zero; rounds with an incomplete tree: 0 of 40; of those with every process at exit 0: 0
+      3 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+bun-pr shape=dirs procs=6: 10 of 240 processes exited non-zero; rounds with an incomplete tree: 2 of 40; of those with every process at exit 0: 0
+      3 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules" (mkdir)
+      2 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      2 EEXIST: File exists: failed to create './node_modules/.bun' (mkdir)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p98/lib" (mkdir)
+=== dirs procs=6 rounds=40 (run 3) ===
+bun-base shape=dirs procs=6: 11 of 240 processes exited non-zero; rounds with an incomplete tree: 1 of 40; of those with every process at exit 0: 0
+      4 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      3 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (mkdir)
+      3 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (link)
+      1 EEXIST: File exists: failed to create './node_modules/.bun' (mkdir)
+bun-pr shape=dirs procs=6: 5 of 240 processes exited non-zero; rounds with an incomplete tree: 0 of 40; of those with every process at exit 0: 0
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p60/lib" (mkdir)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p59/lib" (mkdir)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p53/lib" (mkdir)
+      1 EEXIST: File exists: failed to link package: pN@1.0.0 (link)

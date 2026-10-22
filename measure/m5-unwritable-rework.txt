@@ -1,0 +1,225 @@
+##### chmod hardlink bun-base
+    ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    ENOENT: No such file or directory: failed to link package: other@1.0.0 (link)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### chmod hardlink bun-pr
+    EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### chmod copyfile bun-base
+    EPERM: Operation not permitted: failed to link package: plain@1.0.0 (copyfile)
+    EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### chmod copyfile bun-pr
+    EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### foreign hardlink bun-base
+    ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    ENOENT: No such file or directory: failed to link package: other@1.0.0 (link)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### foreign hardlink bun-pr
+    EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### foreign copyfile bun-base
+    EPERM: Operation not permitted: failed to link package: plain@1.0.0 (copyfile)
+    EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### foreign copyfile bun-pr
+    EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### romount hardlink bun-base
+    ENOENT: No such file or directory: failed to link package: other@1.0.0 (link)
+    ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### romount hardlink bun-pr
+    EROFS: Read-only file system: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EROFS: Read-only file system: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### romount copyfile bun-base
+    EROFS: Read-only file system: failed to link package: plain@1.0.0 (copyfile)
+    EROFS: Read-only file system: failed to link package: other@1.0.0 (copyfile)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### romount copyfile bun-pr
+    EROFS: Read-only file system: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    EROFS: Read-only file system: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    Failed to install 2 packages
+    [T] done
+    exit 1
+##### chmod base: second exit 1 ([107.00ms] done)
+    linkat into <cache>/links: 2; calls naming <cache>/links: 22 (failed: 22)
+            2 linkat(12, "package.json", -100, "<T>/cache/links/plain@1.0.0-H.tmp-X/node_modules/plain/package.json") = -1 ENOENT
+            3 mkdirat(-100, "<T>/cache/links") = -1 EACCES
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X/node_modules") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X/node_modules/other/lib") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-X") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-X/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-X/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X/node_modules/other", 0x98000) = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-X") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-X") = -1 ENOENT
+    | ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    | EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    | Failed to install 2 packages
+##### chmod pr: second exit 1 ([143.00ms] done)
+    linkat into <cache>/links: 0; calls naming <cache>/links: 14 (failed: 14)
+            2 mkdirat(-100, "<T>/cache/links") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    | note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    | EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links" (mkdir)
+    | Failed to install 2 packages
+##### links-ro base: second exit 1 ([117.00ms] done)
+    linkat into <cache>/links: 2; calls naming <cache>/links: 19 (failed: 19)
+            2 linkat(10, "package.json", -100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain/package.json") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other/lib") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other", 0x98000) = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    | EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    | Failed to install 2 packages
+##### links-ro pr: second exit 1 ([67.00ms] done)
+    linkat into <cache>/links: 0; calls naming <cache>/links: 12 (failed: 12)
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links/plain@1.0.0-H.tmp-H" (mkdir)
+    | note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    | EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links/other@1.0.0-H.tmp-H" (mkdir)
+    | Failed to install 2 packages
+##### links-ro-copy base: second exit 1 ([102.00ms] done)
+    linkat into <cache>/links: 0; calls naming <cache>/links: 14 (failed: 14)
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other", 0x98000) = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain", 0x98000) = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    | EPERM: Operation not permitted: failed to link package: plain@1.0.0 (copyfile)
+    | Failed to install 2 packages
+##### links-ro-copy pr: second exit 1 ([91.00ms] done)
+    linkat into <cache>/links: 0; calls naming <cache>/links: 14 (failed: 14)
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = -1 ENOENT
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other", 0x98000) = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain", 0x98000) = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links/plain@1.0.0-H.tmp-H" (mkdir)
+    | note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    | EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links/other@1.0.0-H.tmp-H" (mkdir)
+    | Failed to install 2 packages
+##### force-complete base: second exit 1 ([127.00ms] done)
+    linkat into <cache>/links: 2; calls naming <cache>/links: 17 (failed: 17)
+            2 linkat(10, "package.json", -100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain/package.json") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            2 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other/lib") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            1 openat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other", 0x98000) = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | ENOENT: No such file or directory: failed to link package: plain@1.0.0 (link)
+    | EPERM: Operation not permitted: failed to link package: other@1.0.0 (copyfile)
+    | Failed to install 2 packages
+##### force-complete pr: second exit 1 ([134.00ms] done)
+    linkat into <cache>/links: 0; calls naming <cache>/links: 10 (failed: 10)
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H/node_modules/other") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 EACCES
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules") = -1 ENOENT
+            1 mkdirat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H/node_modules/plain") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/other@1.0.0-H.tmp-H") = -1 ENOENT
+            2 unlinkat(-100, "<T>/cache/links/plain@1.0.0-H.tmp-H") = -1 ENOENT
+    | EACCES: Permission denied: failed to link package: plain@1.0.0: cannot create "<T>/cache/links/plain@1.0.0-H.tmp-H" (mkdir)
+    | note: the global store is "<T>/cache/links". set globalStore = false under [install] in bunfig.toml to install without it
+    | EACCES: Permission denied: failed to link package: other@1.0.0: cannot create "<T>/cache/links/other@1.0.0-H.tmp-H" (mkdir)
+    | Failed to install 2 packages
+##### warm-ro base: second exit 0 (2 packages installed [145.00ms])
+    linkat into <cache>/links: 0; calls naming <cache>/links: 4 (failed: 0)
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = 0
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = 0
+            1 symlink("<T>/cache/links/other@1.0.0-H", "<T>/app/node_modules/.bun/other@1.0.0") = 0
+            1 symlink("<T>/cache/links/plain@1.0.0-H", "<T>/app/node_modules/.bun/plain@1.0.0") = 0
+##### warm-ro pr: second exit 0 (2 packages installed [155.00ms])
+    linkat into <cache>/links: 0; calls naming <cache>/links: 4 (failed: 0)
+            1 newfstatat(-100, "<T>/cache/links/other@1.0.0-H") = 0
+            1 newfstatat(-100, "<T>/cache/links/plain@1.0.0-H") = 0
+            1 symlink("<T>/cache/links/other@1.0.0-H", "<T>/app/node_modules/.bun/other@1.0.0") = 0
+            1 symlink("<T>/cache/links/plain@1.0.0-H", "<T>/app/node_modules/.bun/plain@1.0.0") = 0

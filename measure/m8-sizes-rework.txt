@@ -1,0 +1,16 @@
+== tmp/bun-debug-base
+$1 = 0
+$2 = 152
+$3 = 768
+No symbol 'bun_install::isolated_install::LinkError' in current context
+$4 = 40
+')' expected
+')' expected
+== build/debug/bun-debug
+$1 = 0
+$2 = 152
+$3 = 768
+$4 = 0
+$5 = 40
+')' expected
+')' expected

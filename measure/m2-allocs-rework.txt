@@ -1,0 +1,70 @@
+base flat off N=4: hits=28 [second exit 0] Breakpoint 1 at 0xeaf9c26: bun_sys::error::Error::with_path. (9 locations)
+base flat off N=8: hits=42 [second exit 0] Breakpoint 1 at 0xeaf9c26: bun_sys::error::Error::with_path. (9 locations)
+pr flat off N=4: hits=28 [second exit 0] Breakpoint 1 at 0xeafc426: bun_sys::error::Error::with_path. (9 locations)
+pr flat off N=8: hits=34 [second exit 0] Breakpoint 1 at 0xeafc426: bun_sys::error::Error::with_path. (9 locations)
+base flat on N=4: hits=35 [second exit 0] Breakpoint 1 at 0xeaf9c26: bun_sys::error::Error::with_path. (9 locations)
+base flat on N=8: hits=63 [second exit 0] Breakpoint 1 at 0xeaf9c26: bun_sys::error::Error::with_path. (9 locations)
+pr flat on N=4: hits=37 [second exit 0] Breakpoint 1 at 0xeafc426: bun_sys::error::Error::with_path. (9 locations)
+pr flat on N=8: hits=53 [second exit 0] Breakpoint 1 at 0xeafc426: bun_sys::error::Error::with_path. (9 locations)
+
+### hits by caller
+=== base flat off N=4
+      9 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      4 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      4 bun_sys::posix_impl::linkat<bun_core::util::Fd, bun_core::util::Fd> <- bun_install::isolated_install::hardlinker::Hardlinker::link
+      2 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== pr flat off N=4
+     11 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      4 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      4 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== base flat off N=8
+     16 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      8 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      8 bun_sys::posix_impl::linkat<bun_core::util::Fd, bun_core::util::Fd> <- bun_install::isolated_install::hardlinker::Hardlinker::link
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      1 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== pr flat off N=8
+     16 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      8 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      1 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== base flat on N=4
+      9 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      4 bun_sys::posix_impl::unlinkat_with_flags <- bun_sys::dir::unlinkat_a
+      4 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      4 bun_sys::posix_impl::linkat<bun_core::util::Fd, bun_core::util::Fd> <- bun_install::isolated_install::hardlinker::Hardlinker::link
+      4 bun_sys::posix_impl::fstatat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::fstatat
+      1 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== pr flat on N=4
+     14 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      4 bun_sys::posix_impl::unlinkat_with_flags <- bun_sys::dir::unlinkat_a
+      4 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      4 bun_sys::posix_impl::fstatat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::fstatat
+      2 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== base flat on N=8
+     19 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      8 bun_sys::posix_impl::unlinkat_with_flags <- bun_sys::dir::unlinkat_a
+      8 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      8 bun_sys::posix_impl::linkat<bun_core::util::Fd, bun_core::util::Fd> <- bun_install::isolated_install::hardlinker::Hardlinker::link
+      8 bun_sys::posix_impl::fstatat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::fstatat
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      3 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat
+=== pr flat on N=8
+     18 bun_sys::posix_impl::mkdirat <- bun_sys::posix_impl::mkdir_recursive_at_mode
+      8 bun_sys::posix_impl::unlinkat_with_flags <- bun_sys::dir::unlinkat_a
+      8 bun_sys::posix_impl::readlink <- bun_install::isolated_install::symlinker::Symlinker::ensure
+      8 bun_sys::posix_impl::fstatat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::fstatat
+      7 bun_sys::posix_impl::openat <- core::result::Result<bun_core::util::Fd, i32>::map_err<bun_core::util::Fd, i32, bun_sys::error::Error, bun_sys::posix_impl::openat
+      2 bun_sys::posix_impl::symlink <- bun_install::isolated_install::symlinker::Symlinker::symlink
+      1 bun_sys::posix_impl::lstat <- core::result::Result<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32>::map_err<libc::unix::linux_like::linux::gnu::b64::x86_64::stat, i32, bun_sys::error::Error, bun_sys::posix_impl::lstat

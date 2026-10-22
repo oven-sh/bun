@@ -1,0 +1,15 @@
+=== shape=dirs procs=4 rounds=60 ===
+bun-base shape=dirs procs=4: 7 of 240 processes exited non-zero; rounds with an incomplete tree: 3 of 60; of those with every process at exit 0: 0
+      5 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (mkdir)
+      2 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+bun-pr shape=dirs procs=4: 3 of 240 processes exited non-zero; rounds with an incomplete tree: 2 of 60; of those with every process at exit 0: 0
+      2 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0: cannot create "node_modules/.bun/pN@1.0.0/node_modules/p53/lib" (mkdir)
+=== shape=flat procs=4 rounds=60 ===
+bun-base shape=flat procs=4: 10 of 240 processes exited non-zero; rounds with an incomplete tree: 6 of 60; of those with every process at exit 0: 0
+      9 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      1 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (link)
+bun-pr shape=flat procs=4: 13 of 240 processes exited non-zero; rounds with an incomplete tree: 7 of 60; of those with every process at exit 0: 0
+      8 EEXIST: File exists: failed to link package: pN@1.0.0 (link)
+      5 ENOENT: No such file or directory: failed to link package: pN@1.0.0 (link)
+      1 EEXIST: File exists: failed to create './node_modules/.bun' (mkdir)

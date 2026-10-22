@@ -1,0 +1,47 @@
+##### on-warm run 1: base[exit 0 ; 8 packages installed [93.00ms] ] pr[exit 0 ; 8 packages installed [107.00ms] ]
+  lines base=83 pr=83; diff lines: 0
+##### on-warm run 2: base[exit 0 ; 8 packages installed [107.00ms] ] pr[exit 0 ; 8 packages installed [115.00ms] ]
+  lines base=83 pr=83; diff lines: 0
+##### on-noop run 1: base[exit 0 ; Done! Checked 9 packages (no changes) [124.00ms] ] pr[exit 0 ; Done! Checked 9 packages (no changes) [79.00ms] ]
+  lines base=75 pr=75; diff lines: 0
+##### on-noop run 2: base[exit 0 ; Done! Checked 9 packages (no changes) [135.00ms] ] pr[exit 0 ; Done! Checked 9 packages (no changes) [194.00ms] ]
+  lines base=75 pr=75; diff lines: 0
+##### off-noop run 1: base[exit 0 ; Done! Checked 9 packages (no changes) [166.00ms] ] pr[exit 0 ; Done! Checked 9 packages (no changes) [84.00ms] ]
+  lines base=74 pr=74; diff lines: 0
+##### off-noop run 2: base[exit 0 ; Done! Checked 9 packages (no changes) [120.00ms] ] pr[exit 0 ; Done! Checked 9 packages (no changes) [100.00ms] ]
+  lines base=74 pr=74; diff lines: 0
+##### hoisted-cold run 1: base[exit 0 ; 8 packages installed [124.00ms] ] pr[exit 0 ; 8 packages installed [131.00ms] ]
+  lines base=115 pr=115; diff lines: 5
+18,20c18,19
+<       8 getdents64(fd=13) = N
+<       2 getdents64(fd=14) = N
+<       4 getdents64(fd=15) = N
+---
+>       6 getdents64(fd=13) = N
+>       8 getdents64(fd=15) = N
+##### hoisted-cold run 2: base[exit 0 ; 8 packages installed [141.00ms] ] pr[exit 0 ; 8 packages installed [179.00ms] ]
+  lines base=116 pr=116; diff lines: 6
+18,19c18
+<       4 getdents64(fd=13) = N
+<       2 getdents64(fd=14) = N
+---
+>       8 getdents64(fd=13) = N
+21,22c20
+<       2 getdents64(fd=18) = N
+<       2 getdents64(fd=20) = N
+---
+>       2 getdents64(fd=16) = N
+##### hoisted-cold run 1: base[exit 0 ; 8 packages installed [117.00ms] ] pr[exit 0 ; 8 packages installed [138.00ms] ]
+  lines base=115 pr=115; diff lines: 0
+##### hoisted-cold run 2: base[exit 0 ; 8 packages installed [65.00ms] ] pr[exit 0 ; 8 packages installed [185.00ms] ]
+  lines base=115 pr=116; diff lines: 2
+41c41
+<       1 openat(-100, "/sys/devices/system/cpu/online", 0x80000) = N
+---
+>       2 openat(-100, "/sys/devices/system/cpu/online", 0x80000) = N
+##### hoisted-cold run 3: base[exit 0 ; 8 packages installed [232.00ms] ] pr[exit 0 ; 8 packages installed [203.00ms] ]
+  lines base=116 pr=115; diff lines: 2
+41c41
+<       2 openat(-100, "/sys/devices/system/cpu/online", 0x80000) = N
+---
+>       1 openat(-100, "/sys/devices/system/cpu/online", 0x80000) = N

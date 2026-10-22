@@ -1,0 +1,11 @@
+hoist: exit 0,  175 pass,  0 fail,  (93s)
+bun-prune: exit 0,  176 pass,  0 fail,  1 skip (94s)
+bun-install-git-deps: exit 0,  201 pass,  0 fail,  1 skip (89s)
+bun-install-staging: exit 0,  51 pass,  0 fail,  (40s)
+isolated-install: exit 0,  301 pass,  0 fail,  6 skip (133s)
+cpu run 1: (pass) lifecycle scripts > does not use 100% cpu > install [1921.72ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > install [2016.72ms] (pass) lifecycle scripts > does not use 100% cpu > bun pm trust [2381.88ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > bun pm trust [2362.57ms]  
+cpu run 2: (pass) lifecycle scripts > does not use 100% cpu > install [2012.86ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > install [2056.41ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > bun pm trust [2123.68ms] (pass) lifecycle scripts > does not use 100% cpu > bun pm trust [2183.44ms]  
+cpu run 3: (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > install [1889.13ms] (pass) lifecycle scripts > does not use 100% cpu > install [2031.74ms] (pass) lifecycle scripts > does not use 100% cpu > bun pm trust [2296.97ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > bun pm trust [2307.86ms]  
+cpu run 4: (pass) lifecycle scripts > does not use 100% cpu > install [1987.82ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > install [1994.85ms] (pass) lifecycle scripts > does not use 100% cpu > bun pm trust [2174.14ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > bun pm trust [2153.39ms]  
+cpu run 5: (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > install [1969.86ms] (pass) lifecycle scripts > does not use 100% cpu > install [2169.83ms] (pass) lifecycle scripts > does not use 100% cpu > bun pm trust [2491.41ms] (pass) lifecycle scripts (waiter thread) > does not use 100% cpu > bun pm trust [2449.74ms]  
+DONE

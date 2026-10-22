@@ -1,0 +1,161 @@
+##### base flat off-cold
+N=4: exit 0 ; 4 packages installed [120.00ms]    [/tmp/nochange-cost/fx.A0eMbh/sc.log]
+N=8: exit 0 ; 8 packages installed [172.00ms]    [/tmp/nochange-cost/fx.G1XMPG/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/-ENOENT               N4=4    N8=8    per-package=1
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=8    N8=16   per-package=2
+  mkdirat/ok                   N4=15   N8=27   per-package=3
+  openat/ok                    N4=18   N8=22   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### pr flat off-cold
+N=4: exit 0 ; 4 packages installed [135.00ms]    [/tmp/nochange-cost/fx.gHe7Hw/sc.log]
+N=8: exit 0 ; 8 packages installed [220.00ms]    [/tmp/nochange-cost/fx.1hw7i8/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=8    N8=16   per-package=2
+  mkdirat/ok                   N4=15   N8=27   per-package=3
+  openat/ok                    N4=18   N8=22   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### base flat on-cold
+N=4: exit 0 ; 4 packages installed [128.00ms]    [/tmp/nochange-cost/fx.7dLbNd/sc.log]
+N=8: exit 0 ; 8 packages installed [171.00ms]    [/tmp/nochange-cost/fx.Hk5UKv/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/-ENOENT               N4=4    N8=8    per-package=1
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=9    N8=17   per-package=2
+  mkdirat/ok                   N4=16   N8=28   per-package=3
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=17   N8=21   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1
+##### pr flat on-cold
+N=4: exit 0 ; 4 packages installed [140.00ms]    [/tmp/nochange-cost/fx.Achikf/sc.log]
+N=8: exit 0 ; 8 packages installed [157.00ms]    [/tmp/nochange-cost/fx.ll2fzL/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=9    N8=17   per-package=2
+  mkdirat/ok                   N4=16   N8=28   per-package=3
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=17   N8=21   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1
+##### base scoped off-cold
+N=4: exit 0 ; 4 packages installed [173.00ms]    [/tmp/nochange-cost/fx.1O9ZwG/sc.log]
+N=8: exit 0 ; 8 packages installed [178.00ms]    [/tmp/nochange-cost/fx.1VupE9/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/-ENOENT               N4=4    N8=8    per-package=1
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=13   N8=25   per-package=3
+  mkdirat/ok                   N4=21   N8=37   per-package=4
+  openat/ok                    N4=18   N8=22   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### pr scoped off-cold
+N=4: exit 0 ; 4 packages installed [168.00ms]    [/tmp/nochange-cost/fx.4TTezb/sc.log]
+N=8: exit 0 ; 8 packages installed [149.00ms]    [/tmp/nochange-cost/fx.M2sj4A/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=13   N8=25   per-package=3
+  mkdirat/ok                   N4=21   N8=37   per-package=4
+  openat/ok                    N4=18   N8=22   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### base scoped on-cold
+N=4: exit 0 ; 4 packages installed [163.00ms]    [/tmp/nochange-cost/fx.3G4bO2/sc.log]
+N=8: exit 0 ; 8 packages installed [143.00ms]    [/tmp/nochange-cost/fx.htKFz9/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/-ENOENT               N4=4    N8=8    per-package=1
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=14   N8=26   per-package=3
+  mkdirat/ok                   N4=22   N8=38   per-package=4
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=17   N8=21   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1
+##### pr scoped on-cold
+N=4: exit 0 ; 4 packages installed [131.00ms]    [/tmp/nochange-cost/fx.clHIDt/sc.log]
+N=8: exit 0 ; 8 packages installed [153.00ms]    [/tmp/nochange-cost/fx.GcYTSI/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=10   N8=18   per-package=2
+  linkat/ok                    N4=8    N8=16   per-package=2
+  mkdirat/-ENOENT              N4=14   N8=26   per-package=3
+  mkdirat/ok                   N4=22   N8=38   per-package=4
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=17   N8=21   per-package=1
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1
+##### base dirs off-cold
+N=4: exit 0 ; 4 packages installed [163.00ms]    [/tmp/nochange-cost/fx.2sqXKD/sc.log]
+N=8: exit 0 ; 8 packages installed [197.00ms]    [/tmp/nochange-cost/fx.pFmPmb/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=26   N8=50   per-package=6
+  linkat/ok                    N4=16   N8=32   per-package=4
+  mkdirat/-ENOENT              N4=12   N8=24   per-package=3
+  mkdirat/ok                   N4=23   N8=43   per-package=5
+  openat/ok                    N4=26   N8=38   per-package=3
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### pr dirs off-cold
+N=4: exit 0 ; 4 packages installed [197.00ms]    [/tmp/nochange-cost/fx.s3nBYb/sc.log]
+N=8: exit 0 ; 8 packages installed [333.00ms]    [/tmp/nochange-cost/fx.7h9dMI/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=26   N8=50   per-package=6
+  linkat/ok                    N4=16   N8=32   per-package=4
+  mkdirat/-ENOENT              N4=8    N8=16   per-package=2
+  mkdirat/ok                   N4=23   N8=43   per-package=5
+  openat/ok                    N4=26   N8=39   per-package=3.25
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=8    N8=16   per-package=2
+##### base dirs on-cold
+N=4: exit 0 ; 4 packages installed [149.00ms]    [/tmp/nochange-cost/fx.nsoxis/sc.log]
+N=8: exit 0 ; 8 packages installed [207.00ms]    [/tmp/nochange-cost/fx.9hgf5K/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=26   N8=50   per-package=6
+  linkat/ok                    N4=16   N8=32   per-package=4
+  mkdirat/-ENOENT              N4=13   N8=25   per-package=3
+  mkdirat/ok                   N4=24   N8=44   per-package=5
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=25   N8=37   per-package=3
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1
+##### pr dirs on-cold
+N=4: exit 0 ; 4 packages installed [142.00ms]    [/tmp/nochange-cost/fx.g1raKL/sc.log]
+N=8: exit 0 ; 8 packages installed [230.00ms]    [/tmp/nochange-cost/fx.XtyzJP/sc.log]
+  faccessat/ok                 N4=4    N8=8    per-package=1
+  getdents64/ok                N4=26   N8=50   per-package=6
+  linkat/ok                    N4=16   N8=32   per-package=4
+  mkdirat/-EEXIST              N4=1    N8=0    per-package=-0.25
+  mkdirat/-ENOENT              N4=10   N8=17   per-package=1.75
+  mkdirat/ok                   N4=24   N8=44   per-package=5
+  newfstatat/-ENOENT           N4=5    N8=9    per-package=1
+  openat/ok                    N4=25   N8=37   per-package=3
+  readlink/-ENOENT             N4=4    N8=8    per-package=1
+  renameat/ok                  N4=4    N8=8    per-package=1
+  symlink/ok                   N4=12   N8=24   per-package=3
+  unlinkat/-ENOENT             N4=4    N8=8    per-package=1

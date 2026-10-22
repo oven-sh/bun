@@ -2770,33 +2770,52 @@ impl<'p, 's> Checker<'p, 's> {
         // When nothing is being rechecked, no mode is carried, so `is_checked_type_only` tracks it
         // down from this node.
         let outside = self.type_only_node.replace((file, e));
+        let begun = self.begin_check_in_flow_loop();
         let ty = if self.is_rechecking() {
             self.check_expression_ex(file, e, check_mode)
         } else {
             self.check_expression_again(file, e)
         };
-        self.check_expression_in_flow_loop(file, e);
+        self.check_expression_in_flow_loop(file, e, begun);
         self.type_only_node = outside;
         ty
+    }
+
+    /// Call before `type_of_expr(e)`. Returns the argument for `check_expression_in_flow_loop`, which visits `e` a
+    /// second time. The two are one `checkExpression` call, so the second visit finds the types of the first.
+    pub(super) fn begin_check_in_flow_loop(&mut self) -> Option<CheckInFlowLoop> {
+        let check = (!self.flow_loops.is_empty()).then_some(CheckInFlowLoop {
+            work: self.work,
+            height: self.stack.len(),
+        });
+        std::mem::replace(&mut self.check_in_flow_loop, check)
     }
 
     /// Call after `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is
     /// dropped. While a loop is being analyzed it reports based on the types the loop has collected so far. The walk,
     /// with the final types, doesn't report those errors: `last = last.next = node` after `last === null` assigns to
     /// `never`.
-    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
-        if !self.is_in_flow_loop() {
-            return;
+    pub(super) fn check_expression_in_flow_loop(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        begun: Option<CheckInFlowLoop>,
+    ) {
+        if self.is_in_flow_loop() {
+            let reported = self.reported.len();
+            let cuts = self.interruptions();
+            let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+            self.check_expression(file, e);
+            self.is_checking_in_flow_loop = outer;
+            // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
+            // which drop them, and the task that completes the check becomes the owner.
+            if cuts == self.interruptions() {
+                self.log_reported_in_flow_loop(reported, file, e);
+            }
         }
-        let reported = self.reported.len();
-        let cuts = self.interruptions();
-        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
-        self.check_expression(file, e);
-        self.is_checking_in_flow_loop = outer;
-        // A check that was cut short hasn't reported everything. Its diagnostics stay with the frames in progress,
-        // which drop them, and the task that completes the check becomes the owner.
-        if cuts == self.interruptions() {
-            self.log_reported_in_flow_loop(reported, file, e);
+        self.check_in_flow_loop = begun;
+        if begun.is_none() && !self.checked_in_flow_loop.is_empty() {
+            self.checked_in_flow_loop.clear();
         }
     }
 

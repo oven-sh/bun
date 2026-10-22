@@ -1033,14 +1033,14 @@ To configure a registry for a particular scope (for example, `@myorg/<package>`)
 ```toml title="bunfig.toml" icon="settings"
 [install.scopes]
 # registry as string
-myorg = "https://username:password@registry.myorg.com/"
+"@myorg1" = "https://username:password@registry.myorg.com/"
 
 # registry with username/password
 # you can reference environment variables
-# myorg = { username = "myusername", password = "$npm_password", url = "https://registry.myorg.com/" }
+"@myorg2" = { username = "myusername", password = "$NPM_PASS", url = "https://registry.myorg.com/" }
 
 # registry with token
-# myorg = { token = "$npm_token", url = "https://registry.myorg.com/" }
+"@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
 ### `install.ca` and `install.cafile`

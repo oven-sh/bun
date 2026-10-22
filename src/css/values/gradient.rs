@@ -456,6 +456,15 @@ impl LinearGradient {
     }
 }
 
+/// Parses the `at <position>` clause of a radial or conic gradient.
+///
+/// The spec grammar is `<position>`. Like lightningcss, this still reads the three-component
+/// form of `<bg-position>`, which is invalid here, and prints it with two components.
+fn parse_at_position(input: &mut Parser) -> Result<Position> {
+    input.expect_ident_matching(b"at")?;
+    Position::parse_bg_position(input)
+}
+
 /// A CSS [`radial-gradient()`](https://www.w3.org/TR/css-images-3/#radial-gradients) or `repeating-radial-gradient()`.
 #[derive(PartialEq)]
 pub struct RadialGradient {
@@ -473,12 +482,7 @@ impl RadialGradient {
     fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<RadialGradient> {
         // todo_stuff.depth
         let shape = input.try_parse(EndingShape::parse).ok();
-        let position = input
-            .try_parse(|input_: &mut css::Parser| -> Result<Position> {
-                input_.expect_ident_matching(b"at")?;
-                Position::parse(input_)
-            })
-            .ok();
+        let position = input.try_parse(parse_at_position).ok();
 
         if shape.is_some() || position.is_some() {
             input.expect_comma()?;
@@ -572,10 +576,7 @@ impl ConicGradient {
             Angle::parse_with_unitless_zero(i)
         });
 
-        let position = input.try_parse(|i: &mut css::Parser| -> Result<Position> {
-            i.expect_ident_matching(b"at")?;
-            Position::parse(i)
-        });
+        let position = input.try_parse(parse_at_position);
 
         if angle.is_ok() || position.is_ok() {
             input.expect_comma()?;

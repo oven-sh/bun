@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
+  attrTest,
   cssTest,
   indoc,
   minify_error_test_with_options,
@@ -7539,6 +7540,219 @@ describe("css tests", () => {
       }
       `,
     );
+  });
+
+  // transform-origin, perspective-origin and mask-position each parse with their own grammar. The valid
+  // and invalid values are those of the web-platform-tests parsing suites (css/css-transforms/parsing
+  // and css/css-masking/parsing). A value that a property does not take prints as written.
+  describe("transform-origin", () => {
+    // [as written, printed with minify]. A row runs in upper case, and a percentage has a spelling
+    // that only a typed value shortens, so a row fails when the value is not typed.
+    const valid = [
+      // A side keyword prints as `0` or `100%`.
+      ["left", "0"],
+      ["center", "50%"],
+      ["right", "100%"],
+      ["top", "top"],
+      ["bottom", "bottom"],
+      ["-4.0%", "-4%"],
+      ["left center", "0"],
+      ["center top", "top"],
+      ["top center", "top"],
+      ["center left", "0"],
+      ["bottom right", "100% 100%"],
+      ["left 10px", "0 10px"],
+      ["40px top", "40px 0"],
+      ["center 50px", "50% 50px"],
+      // `50%` is `center`. A `center` in the second place is left out.
+      ["0% 0%", "0 0"],
+      ["50% 50%", "50%"],
+      ["left 50%", "0"],
+      ["50% top", "top"],
+      ["left 100%", "0 100%"],
+      // lightningcss 1.33.0 keeps the keyword in these three: `right -4%`, `right 10px`, `10px bottom`.
+      ["right -4%", "100% -4%"],
+      ["right 10px", "100% 10px"],
+      ["10px bottom", "10px 100%"],
+      // A z offset follows two components. Both components stay, also a `center`.
+      ["-1px bottom 5px", "-1px 100% 5px"],
+      ["center left 6px", "0 50% 6px"],
+      ["bottom right 7px", "100% 100% 7px"],
+      ["-4.0% -2px -3px", "-4% -2px -3px"],
+      ["left top 10px", "0 0 10px"],
+      ["top left 10px", "0 0 10px"],
+      ["center center 10px", "50% 50% 10px"],
+      ["center top 10px", "50% 0 10px"],
+      ["left top 0", "0 0"],
+    ];
+    // These rows stay as written, and they pass without the typed value too. The keywords are in
+    // upper case, so a row fails when a parser takes the value.
+    const asWritten = [
+      // A side keyword takes no offset, the z offset is a length, and it cannot follow one
+      // component. lightningcss 1.33.0 prints `10px 0` for `left 10px top`.
+      "1px 2px 3%",
+      "1px 2px LEFT",
+      "1px 2px 3px 4px",
+      "1px LEFT",
+      "TOP 1px",
+      "RIGHT LEFT",
+      "TOP BOTTOM",
+      "BOTTOM 10% RIGHT 20%",
+      "RIGHT 30% TOP -60px",
+      "RIGHT 20px BOTTOM 30px",
+      "LEFT 10px TOP",
+      "LEFT TOP 10%",
+      // A value with a math function is valid, but the length parser that every typed property
+      // shares folds some of these wrongly: `margin-left:rem(10px,3em)` prints `0`.
+      "LEFT calc(1px + 2em)",
+      "LEFT rem(10px,3em)",
+      "LEFT max(1px + 2em)",
+      "RIGHT min(10% + 1px)",
+      "LEFT TOP hypot(-3px)",
+      "LEFT TOP round(up,7px,-2px)",
+      // A number needs a unit. The shared length parser reads `10` as `10px`.
+      "10 20",
+      "LEFT TOP 5",
+      "LEFT TOP calc(0)",
+    ];
+    for (const [written, printed] of valid) {
+      minify_test(`.foo{transform-origin:${written.toUpperCase()}}`, `.foo{transform-origin:${printed}}`);
+    }
+    for (const written of asWritten) {
+      minify_test(`.foo{transform-origin:${written}}`, `.foo{transform-origin:${written}}`);
+    }
+
+    // Without minify, `center` stays a keyword.
+    cssTest(".foo { transform-origin: LEFT TOP }", ".foo { transform-origin: 0 0; }");
+    cssTest(".foo { transform-origin: CENTER CENTER 10PX }", ".foo { transform-origin: center center 10px; }");
+
+    // Every spelling of the three properties used to parse as the keywords of the `position` property.
+    const spellings = [
+      "transform-origin",
+      "-webkit-transform-origin",
+      "-moz-transform-origin",
+      "-ms-transform-origin",
+      "-o-transform-origin",
+      "perspective-origin",
+      "-webkit-perspective-origin",
+      "-moz-perspective-origin",
+      "mask-position",
+      "-webkit-mask-position",
+    ];
+    for (const property of spellings) {
+      minify_test(`.foo{${property}:LEFT TOP}`, `.foo{${property}:0 0}`);
+      for (const keyword of ["STATIC", "RELATIVE", "ABSOLUTE", "FIXED", "STICKY", "-WEBKIT-STICKY"]) {
+        minify_test(`.foo{${property}:${keyword}}`, `.foo{${property}:${keyword}}`);
+      }
+    }
+
+    // Equal values merge, and the value is typed in every place that takes a declaration.
+    minify_test(".a{transform-origin:left top}.b{transform-origin:LEFT TOP}", ".a,.b{transform-origin:0 0}");
+    minify_test(".foo{transform-origin:LEFT TOP 10PX!important}", ".foo{transform-origin:0 0 10px!important}");
+    minify_test(
+      "@keyframes k{from{transform-origin:LEFT TOP}to{transform-origin:RIGHT BOTTOM 10PX}}",
+      "@keyframes k{0%{transform-origin:0 0}to{transform-origin:100% 100% 10px}}",
+    );
+    minify_test("@page{transform-origin:LEFT TOP}", "@page{transform-origin:0 0}");
+    minify_test(
+      "@container style(transform-origin: LEFT TOP){.a{color:red}}",
+      "@container style(transform-origin:0 0){.a{color:red}}",
+    );
+    test("style attribute: transform-origin: LEFT TOP", () => {
+      expect(attrTest("transform-origin: LEFT TOP", "", true)).toBe("transform-origin:0 0");
+    });
+
+    // A browser drops the second declaration, so the first one must stay.
+    minify_test(
+      ".foo{transform-origin:LEFT TOP 10PX;transform-origin:LEFT 10px TOP}",
+      ".foo{transform-origin:0 0 10px;transform-origin:LEFT 10px TOP}",
+    );
+  });
+
+  describe("perspective-origin and mask-position", () => {
+    // [as written, printed with minify]. The text is what lightningcss 1.33.0 prints. A row runs in
+    // upper case, as in the block above.
+    const valid = [
+      ["+10%", "10%"],
+      ["+20% 30px", "20% 30px"],
+      ["30px center", "30px"],
+      ["40px top", "40px 0"],
+      ["bottom right", "100% 100%"],
+      ["center", "50%"],
+      ["center 50px", "50% 50px"],
+      ["center bottom", "bottom"],
+      ["center center", "50%"],
+      ["center left", "0"],
+      ["left", "0"],
+      ["left bottom", "0 100%"],
+      ["left center", "0"],
+      ["right 40%", "right 40%"],
+      ["10px bottom", "10px bottom"],
+      ["top", "top"],
+      ["top center", "top"],
+      ["50% 50%", "50%"],
+      ["0% 0%", "0 0"],
+      // The four-value form.
+      ["bottom 10% right 20%", "right 20% bottom 10%"],
+      ["right 30% top 60px", "right 30% top 60px"],
+      ["left 10px top 20px", "10px 20px"],
+    ];
+    // These rows stay as written, and they pass without the typed value too. The keywords are in
+    // upper case, so a row fails when a parser takes the value.
+    const asWritten = [
+      "AUTO",
+      "1px 2px 3px",
+      "LEFT RIGHT",
+      "BOTTOM 10% TOP 20%",
+      // Only background-position takes the three-value form. lightningcss 1.33.0 prints `50% 2px`
+      // for `center top 2px`.
+      "CENTER LEFT 1px",
+      "CENTER TOP 2px",
+      "RIGHT 3% CENTER",
+      "LEFT 4px TOP",
+      "RIGHT TOP 5px",
+      "BOTTOM 6% CENTER",
+      "BOTTOM 7% LEFT",
+      "BOTTOM RIGHT 8%",
+      // A math function and a number without a unit, as in the block above.
+      "LEFT calc(1px + 2em)",
+      "LEFT mod(10px,3em)",
+      "RIGHT rem(10%,3%)",
+      "10 20",
+    ];
+    for (const property of ["perspective-origin", "mask-position"]) {
+      for (const [written, printed] of valid) {
+        minify_test(`.foo{${property}:${written.toUpperCase()}}`, `.foo{${property}:${printed}}`);
+      }
+      for (const written of asWritten) {
+        minify_test(`.foo{${property}:${written}}`, `.foo{${property}:${written}}`);
+      }
+    }
+    cssTest(".foo { perspective-origin: CENTER }", ".foo { perspective-origin: center; }");
+
+    // mask-position takes a list. One three-value item makes the whole list invalid.
+    minify_test(".foo{mask-position:BOTTOM LEFT, RIGHT 20%}", ".foo{mask-position:0 100%,right 20%}");
+    minify_test(".foo{mask-position:TOP, CENTER, LEFT}", ".foo{mask-position:top,50%,0}");
+    minify_test(".foo{mask-position:LEFT TOP, LEFT TOP 10px}", ".foo{mask-position:LEFT TOP,LEFT TOP 10px}");
+    // Chrome takes the three-value form for the -webkit- alias. It stays as written.
+    minify_test(".foo{-webkit-mask-position:LEFT TOP 10px}", ".foo{-webkit-mask-position:LEFT TOP 10px}");
+    minify_test(".foo{-webkit-mask-position:LEFT 10PX TOP 20PX}", ".foo{-webkit-mask-position:10px 20px}");
+
+    // background-position and the mask shorthand still take the three-value form.
+    minify_test(".foo{background-position:LEFT TOP 10PX}", ".foo{background-position:0 10px}");
+    minify_test(".foo{mask:url(a.png) LEFT TOP 10PX}", ".foo{mask:url(a.png) 0 10px}");
+
+    // Known wrong, and the same in lightningcss: a gradient takes a `<position>` after `at`. The
+    // three-value form is still read there and printed with two values, which a browser accepts.
+    for (const gradient of [
+      "radial-gradient(circle at LEFT TOP 10px,red,blue)", // today: radial-gradient(circle at 0 10px,red,#00f)
+      "conic-gradient(at LEFT TOP 10px,red,blue)", // today: conic-gradient(at 0 10px,red,#00f)
+    ]) {
+      test.todo(`.foo{background:${gradient}}`, () => {
+        const css = minify_test_with_options(`.foo{background:${gradient}}`, "");
+        expect(css).toBe(`.foo{background:${gradient}}`);
+      });
+    }
   });
 
   describe("color-scheme", () => {

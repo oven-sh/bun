@@ -15,7 +15,23 @@ pub struct Position {
 }
 
 impl Position {
+    /// Parses a [`<position>`](https://drafts.csswg.org/css-values-4/#typedef-position):
+    /// one, two or four components.
+    ///
+    /// lightningcss parses a `<bg-position>` everywhere. Stylo's `Position::parse`
+    /// (`style/values/specified/position.rs`) rejects the three-component form in the same way.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Position> {
+        let position = Position::parse_bg_position(input)?;
+        // A side offset on one axis only is the three-component form.
+        if position.x.has_offset() != position.y.has_offset() {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+        Ok(position)
+    }
+
+    /// Parses a [`<bg-position>`](https://drafts.csswg.org/css-backgrounds-3/#typedef-bg-position):
+    /// a `<position>`, or the three-component form (`left 10px top`).
+    pub(crate) fn parse_bg_position(input: &mut css::Parser) -> CssResult<Position> {
         // Try parsing a horizontal position first
         if let Ok(horizontal_pos) = input.try_parse(HorizontalPosition::parse) {
             match horizontal_pos {
@@ -347,6 +363,16 @@ impl<S: protocol::Parse + protocol::ToCss + Clone + PartialEq> PositionComponent
             }
         }
         false
+    }
+
+    fn has_offset(&self) -> bool {
+        matches!(
+            self,
+            PositionComponent::Side(PositionComponentSide {
+                offset: Some(_),
+                ..
+            })
+        )
     }
 
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {

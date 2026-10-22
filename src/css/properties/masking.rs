@@ -151,7 +151,8 @@ impl Mask {
             }
 
             if position.is_none() {
-                if let Ok(value) = input.try_parse(Position::parse) {
+                // `<position>` in the spec. Chrome also reads the three-component form here.
+                if let Ok(value) = input.try_parse(Position::parse_bg_position) {
                     position = Some(value);
                     size = input
                         .try_parse(|i: &mut css::Parser| -> css::Result<BackgroundSize> {

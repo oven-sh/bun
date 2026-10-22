@@ -4,9 +4,11 @@ use bun_alloc::ArenaVecExt as _;
 
 use crate::css_properties::{Property, PropertyIdTag};
 use crate::css_values::angle::Angle;
+use crate::css_values::gradient::GradientSideKeyword;
 use crate::css_values::length::{LengthPercentage, LengthValue as Length};
 use crate::css_values::number::CSSNumberFns;
 use crate::css_values::percentage::NumberOrPercentage;
+use crate::css_values::position::{HorizontalPositionKeyword, VerticalPositionKeyword};
 use crate::prefixes;
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, Result, Token, VendorPrefix,
@@ -661,6 +663,143 @@ impl Perspective {
     }
 }
 
+/// A value for the [transform-origin](https://drafts.csswg.org/css-transforms-1/#transform-origin-property) property.
+///
+/// lightningcss parses a `<position>` here, which reads the z offset of `left top 10px` as an
+/// offset from the top. This type and its parser follow Stylo's `TransformOrigin`
+/// (`style/values/specified/transform.rs`).
+#[derive(Clone, PartialEq)]
+pub struct TransformOrigin {
+    /// The x offset.
+    pub(crate) x: OriginComponent<HorizontalPositionKeyword>,
+    /// The y offset.
+    pub(crate) y: OriginComponent<VerticalPositionKeyword>,
+    /// The z offset.
+    pub(crate) z: Length,
+}
+
+impl TransformOrigin {
+    pub(crate) fn parse(input: &mut Parser) -> Result<Self> {
+        use OriginComponent::{Center, Side};
+
+        let (x, y) = if let Ok(x) = input.try_parse(OriginComponent::parse) {
+            if let Ok(y) = input.try_parse(OriginComponent::parse) {
+                (x, y)
+            } else if matches!(x, Center)
+                && let Ok(side) = input.try_parse(HorizontalPositionKeyword::parse)
+            {
+                // `center left`: the `center` is the y component.
+                (Side(side), Center)
+            } else {
+                // A z offset cannot follow one component.
+                return Ok(TransformOrigin {
+                    x,
+                    y: Center,
+                    z: Length::zero(),
+                });
+            }
+        } else {
+            // `top` or `bottom` comes first. Only a keyword can follow as the x component.
+            let y = Side(VerticalPositionKeyword::parse(input)?);
+            let Ok(x) = input.try_parse(OriginComponent::parse_keyword) else {
+                return Ok(TransformOrigin {
+                    x: Center,
+                    y,
+                    z: Length::zero(),
+                });
+            };
+            (x, y)
+        };
+        let z = input
+            .try_parse(Length::parse)
+            .unwrap_or_else(|_| Length::zero());
+        Ok(TransformOrigin { x, y, z })
+    }
+
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        let has_z = !self.z.is_zero();
+        if !has_z {
+            // A missing second component is `center`.
+            if self.y.is_center() {
+                return self.x.to_css(dest);
+            }
+            if self.x.is_center()
+                && let OriginComponent::Side(side) = &self.y
+            {
+                // `top` and `bottom` are shorter than `50% 0` and `50% 100%`.
+                return side.to_css(dest);
+            }
+        }
+        self.x.to_css(dest)?;
+        dest.write_char(b' ')?;
+        self.y.to_css(dest)?;
+        if has_z {
+            dest.write_char(b' ')?;
+            self.z.to_css(dest)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
+        self.clone()
+    }
+}
+
+/// The x or the y offset of a [`TransformOrigin`]. Unlike a `<position>` component, a side
+/// keyword takes no offset.
+#[derive(Clone, PartialEq)]
+pub enum OriginComponent<S> {
+    /// The `center` keyword.
+    Center,
+    /// A length or percentage from the left or the top edge.
+    Length(LengthPercentage),
+    /// A side keyword.
+    Side(S),
+}
+
+impl<S: GradientSideKeyword> OriginComponent<S> {
+    fn parse(input: &mut Parser) -> Result<Self> {
+        if let Ok(keyword) = input.try_parse(Self::parse_keyword) {
+            return Ok(keyword);
+        }
+        LengthPercentage::parse(input).map(OriginComponent::Length)
+    }
+
+    fn parse_keyword(input: &mut Parser) -> Result<Self> {
+        if input
+            .try_parse(|i| i.expect_ident_matching(b"center"))
+            .is_ok()
+        {
+            return Ok(OriginComponent::Center);
+        }
+        S::parse(input).map(OriginComponent::Side)
+    }
+
+    /// Writes the shortest form: a side keyword is `0` or `100%`.
+    fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
+        match self {
+            OriginComponent::Center => {
+                if dest.minify {
+                    dest.write_str("50%")
+                } else {
+                    dest.write_str("center")
+                }
+            }
+            OriginComponent::Length(lp) if lp.is_zero() => dest.write_char(b'0'),
+            OriginComponent::Length(lp) => lp.to_css(dest),
+            OriginComponent::Side(side) => side.into_length_percentage().to_css(dest),
+        }
+    }
+
+    fn is_center(&self) -> bool {
+        match self {
+            OriginComponent::Center => true,
+            OriginComponent::Length(LengthPercentage::Percentage(p)) => p.v == 0.5,
+            _ => false,
+        }
+    }
+}
+
 /// A value for the [translate](https://drafts.csswg.org/css-transforms-2/#propdef-translate) property.
 #[derive(Clone, PartialEq)]
 pub enum Translate {
@@ -952,6 +1091,7 @@ crate::css_eql_partialeq!(
     TransformList,
     Transform,
     Perspective,
+    TransformOrigin,
     Translate,
     Rotate,
     Scale

@@ -1925,7 +1925,10 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 

@@ -329,6 +329,42 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["--isolate", ["--isolate"], {}],
+    // One worker takes all three files (scale-up gated), so the second and third come after the worker's own swap.
+    ["--parallel worker", ["--parallel=2"], { BUN_TEST_PARALLEL_SCALE_MS: "60000" }],
+  ])("a test file's macros are loaded again for each file (%s)", async (_, args, env) => {
+    const files: Record<string, string> = {
+      "macro.ts": `
+        let calls = 0;
+        export function mark(name: string) { return name + ":" + ++calls; }
+      `,
+    };
+    const names = ["a", "b", "c"];
+    for (const name of names) {
+      files[`required-${name}.ts`] = `
+        import { mark } from "./macro.ts" with { type: "macro" };
+        export const required = mark("required-${name}");
+      `;
+      files[`${name}.test.ts`] = `
+        import { test, expect } from "bun:test";
+        import { mark } from "./macro.ts" with { type: "macro" };
+        const marks = [mark("${name}"), mark("${name}"), require("./required-${name}.ts").required];
+        test("${name}", () => { expect(marks).toEqual(["${name}:1", "${name}:2", "required-${name}:3"]); });
+      `;
+    }
+    using dir = tempDir("isolate-macro", files);
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      args,
+      names.map(name => `./${name}.test.ts`),
+      { ...bunEnv, ...env },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   // The cached module record carries each name as Latin-1 or UTF-16; the second file links from that record.
   test("with --isolate, cached module records keep short, Latin-1 and UTF-16 names", async () => {
     using dir = tempDir("isolate-module-names", {
@@ -2298,13 +2334,13 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
 describe.concurrent("--isolate: collects globals pinned by leaked handles", () => {
   const LEAK_FILE_COUNT = 8;
 
-  function makeLeakFixture(dirt: string): Record<string, string> {
+  function makeLeakFixture(dirt: string | ((i: number) => string)): Record<string, string> {
     const files: Record<string, string> = {};
     for (let i = 1; i <= LEAK_FILE_COUNT; i++) {
       files[`file_${i}.test.js`] = `
         import { test, expect } from "bun:test";
         import { heapStats } from "bun:jsc";
-        ${dirt}
+        ${typeof dirt === "string" ? dirt : dirt(i)}
         test("leak-${i}", () => {
           Bun.gc(true);
           Bun.gc(true);
@@ -2441,6 +2477,23 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
         monitorEventLoopDelay({ resolution: 1 }).enable();
       `),
     );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // A macro that no later file loads again is never replaced, so each file has its own.
+  test("a macro left loaded", async () => {
+    using dir = tempDir("isolate-leak-macro", {
+      ...makeLeakFixture(
+        i => `
+        import { macro${i} } from "./macro.ts" with { type: "macro" };
+        macro${i}();
+      `,
+      ),
+      "macro.ts": Array.from(
+        { length: LEAK_FILE_COUNT },
+        (_, i) => `export const macro${i + 1} = () => ${i + 1};`,
+      ).join("\n"),
+    });
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   });
 

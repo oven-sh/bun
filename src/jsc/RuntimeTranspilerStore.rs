@@ -759,7 +759,7 @@ impl TranspilerJob {
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // is intentionally leaked for the long-lived `vm.transpiler`, but here
+        // stays with the long-lived `vm.transpiler`, but here
         // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
         // MUST free what `parse_maybe` allocates or every dynamic `import()`
         // leaks one `Box<MacroContext>` (require-cache.test.ts "files

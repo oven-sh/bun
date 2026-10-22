@@ -72,6 +72,7 @@ export type NativeCreateQuery<QueryHandle> = (
   pendingValue: SQLResultArray<unknown>,
   bigint: boolean,
   simple: boolean,
+  describe: boolean,
 ) => QueryHandle;
 
 type OnConnected = (err: Error | null, connection: any) => void;
@@ -484,6 +485,7 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
 {
   public readonly connectionInfo: Bun.SQL.__internal.DefinedPostgresOrMySQLOptions;
   public readonly supportsReservedConnections = true;
+  public readonly supportsDescribe: boolean = false;
 
   abstract readonly createNativeConnection: NativeCreateConnection<ConnectionHandle>;
   protected abstract readonly createNativeQuery: NativeCreateQuery<QueryHandle>;
@@ -582,7 +584,10 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
   }
 
   createQueryHandle(sql: string, values: unknown[], flags: number) {
+    const describe = !!(flags & SQLQueryFlags.describe);
+    // a describe() starts no transaction
     if (
+      !describe &&
       !(flags & SQLQueryFlags.allowUnsafeTransaction) &&
       this.connectionInfo.max !== 1 &&
       isUnsafeTransactionStart(sql)
@@ -599,7 +604,9 @@ abstract class BaseSQLAdapter<ConnectionHandle extends NativeConnection, QueryHa
       values,
       new SQLResultArray(),
       !!(flags & SQLQueryFlags.bigint),
-      !!(flags & SQLQueryFlags.simple),
+      // .describe().simple(): the statement is described, not run
+      !describe && !!(flags & SQLQueryFlags.simple),
+      describe,
     );
   }
 

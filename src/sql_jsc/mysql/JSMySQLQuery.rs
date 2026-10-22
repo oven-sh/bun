@@ -61,6 +61,7 @@ impl JSMySQLQuery {
             pending_value,
             bigint,
             simple,
+            describe: _,
         } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {

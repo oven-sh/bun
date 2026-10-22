@@ -1912,6 +1912,16 @@ impl PostgresSQLConnection {
             // Replies go to the requests in queue order: nothing is written past this one.
             StatementStatus::Parsing => return false,
             StatementStatus::Prepared => {
+                if req.flags.get().describe_only {
+                    // Parsed again under a new name: a stale statement would fail a transaction.
+                    let replacement = self.statements.with_mut(|cache| {
+                        cache.replace(req.query.to_utf8().slice(), statement, || {
+                            self.take_prepared_statement_id()
+                        })
+                    });
+                    req.statement.set(Some(replacement));
+                    return true;
+                }
                 if self.has_request_in_flight() && !self.can_pipeline() {
                     return false;
                 }
@@ -1955,8 +1965,9 @@ impl PostgresSQLConnection {
                 if self.has_request_in_flight() {
                     return false;
                 }
-                let describe_first =
-                    req.flags.get().describe_first && !statement.signature.fields.is_empty();
+                let flags = req.flags.get();
+                let describe_first = flags.describe_only
+                    || (flags.describe_first && !statement.signature.fields.is_empty());
                 if !describe_first && !self.stage(&req, values, statement.parameter_types()) {
                     return true;
                 }
@@ -2138,7 +2149,18 @@ impl PostgresSQLConnection {
                         request.on_result(b"", self.global(), true);
                         self.discard_request(&request);
                     } else if request.status.get() == QueryStatus::Preparing {
-                        request.status.set(QueryStatus::Pending);
+                        if request.flags.get().describe_only
+                            && request
+                                .statement_mut()
+                                .is_some_and(|s| s.status == StatementStatus::Prepared)
+                        {
+                            self.count(&request, RequestCounter::None);
+                            request.on_described(self.global());
+                            self.discard_request(&request);
+                        } else {
+                            // Its Bind follows, or a retry parses its statement again.
+                            request.status.set(QueryStatus::Pending);
+                        }
                     }
                 }
                 self.advance();

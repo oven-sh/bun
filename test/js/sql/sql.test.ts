@@ -1856,17 +1856,16 @@ if (isDockerServiceEnabled("postgres_plain")) {
     //   return ['x', (await sql.unsafe('select 1 as x').values()).columns[0].name]
     // })
 
-    // t('unsafe describe', async() => {
-    //   const q = 'insert into test values (1)'
-    //   await sql`create table test(a int unique)`
-    //   await sql.unsafe(q).describe()
-    //   const x = await sql.unsafe(q).describe()
-    //   return [
-    //     q,
-    //     x.string,
-    //     await sql`drop table test`
-    //   ]
-    // })
+    test("unsafe describe", async () => {
+      await using sql = postgres(options);
+      const q = "insert into test values (1)";
+      await sql`create temporary table test(a int unique)`;
+      await sql.unsafe(q).describe();
+      // The second time the connection has the statement: only a Describe goes out.
+      const x = await sql.unsafe(q).describe();
+      expect(x).toEqual({ string: q, types: [], columns: [] });
+      expect(await sql`select count(*)::int as n from test`).toEqual([{ n: 0 }]);
+    });
 
     test("simple query using unsafe with multiple statements", async () => {
       const result = await sql.unsafe("select 1 as x;select 2 as x");
@@ -3427,52 +3426,48 @@ if (isDockerServiceEnabled("postgres_plain")) {
     //   (await sql`select 1`).slice() instanceof Array
     // ])
 
-    // t('Describe', async() => {
-    //   const type = (await sql`select ${ 1 }::int as x`.describe()).types[0]
-    //   return [23, type]
-    // })
+    test("Describe", async () => {
+      await using sql = postgres(options);
+      const type = (await sql`select ${1}::int as x`.describe()).types[0];
+      expect(type).toBe(23);
+    });
 
-    // t('Describe a statement', async() => {
-    //   await sql`create table tester (name text, age int)`
-    //   const r = await sql`select name, age from tester where name like $1 and age > $2`.describe()
-    //   return [
-    //     '25,23/name:25,age:23',
-    //     `${ r.types.join(',') }/${ r.columns.map(c => `${c.name}:${c.type}`).join(',') }`,
-    //     await sql`drop table tester`
-    //   ]
-    // })
+    test("Describe a statement", async () => {
+      await using sql = postgres(options);
+      await sql`create temporary table tester (name text, age int)`;
+      const r = await sql`select name, age from tester where name like $1 and age > $2`.describe();
+      expect(`${r.types.join(",")}/${r.columns.map(c => `${c.name}:${c.type}`).join(",")}`).toBe(
+        "25,23/name:25,age:23",
+      );
+      expect(r.string).toBe("select name, age from tester where name like $1 and age > $2");
+    });
 
-    // t('Include table oid and column number in column details', async() => {
-    //   await sql`create table tester (name text, age int)`
-    //   const r = await sql`select name, age from tester where name like $1 and age > $2`.describe()
-    //   const [{ oid }] = await sql`select oid from pg_class where relname = 'tester'`
+    test("Include table oid and column number in column details", async () => {
+      await using sql = postgres(options);
+      await sql`create temporary table tester (name text, age int)`;
+      const r = await sql`select name, age from tester where name like $1 and age > $2`.describe();
+      const [{ oid }] = await sql`select 'tester'::regclass::oid as oid`;
+      expect(r.columns).toEqual([
+        { name: "name", type: 25, table: oid, number: 1 },
+        { name: "age", type: 23, table: oid, number: 2 },
+      ]);
+    });
 
-    //   return [
-    //     `table:${oid},number:1|table:${oid},number:2`,
-    //     `${ r.columns.map(c => `table:${c.table},number:${c.number}`).join('|') }`,
-    //     await sql`drop table tester`
-    //   ]
-    // })
+    test("Describe a statement without parameters", async () => {
+      await using sql = postgres(options);
+      await sql`create temporary table tester (name text, age int)`;
+      const r = await sql`select name, age from tester`.describe();
+      expect(`${r.types.length},${r.columns.length}`).toBe("0,2");
+    });
 
-    // t('Describe a statement without parameters', async() => {
-    //   await sql`create table tester (name text, age int)`
-    //   const r = await sql`select name, age from tester`.describe()
-    //   return [
-    //     '0,2',
-    //     `${ r.types.length },${ r.columns.length }`,
-    //     await sql`drop table tester`
-    //   ]
-    // })
-
-    // t('Describe a statement without columns', async() => {
-    //   await sql`create table tester (name text, age int)`
-    //   const r = await sql`insert into tester (name, age) values ($1, $2)`.describe()
-    //   return [
-    //     '2,0',
-    //     `${ r.types.length },${ r.columns.length }`,
-    //     await sql`drop table tester`
-    //   ]
-    // })
+    test("Describe a statement without columns", async () => {
+      await using sql = postgres(options);
+      await sql`create temporary table tester (name text, age int)`;
+      const r = await sql`insert into tester (name, age) values ($1, $2)`.describe();
+      expect(`${r.types.length},${r.columns.length}`).toBe("2,0");
+      // Described, not run.
+      expect(await sql`select count(*)::int as n from tester`).toEqual([{ n: 0 }]);
+    });
 
     // t('Large object', async() => {
     //   const file = rel('index.js')

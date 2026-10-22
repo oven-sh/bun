@@ -1,4 +1,4 @@
-import type { DatabaseAdapter, SQLHelper } from "./shared.ts";
+import type { DatabaseAdapter, SQLHelper, SQLStatementDescription } from "./shared.ts";
 
 const _resolve = Symbol("resolve");
 const _reject = Symbol("reject");
@@ -260,6 +260,20 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     return this.#setMode(SQLQueryResultMode.values);
   }
 
+  /// The server describes the statement: it resolves with its parameter types and columns, and never runs.
+  describe(): Promise<SQLStatementDescription> {
+    if (this[_queryStatus] & SQLQueryStatus.executed || this[_flags] & SQLQueryFlags.copy) {
+      throw $ERR_INVALID_STATE("describe() must be called before the query starts");
+    }
+    if (!this[_adapter].supportsDescribe) {
+      this.reject(new Error("describe() is not supported by this adapter (PostgreSQL only)"));
+      return this as Promise<unknown> as Promise<SQLStatementDescription>;
+    }
+    // sql.unsafe(text) without values is simple, and a simple query runs
+    this[_flags] = (this[_flags] & ~SQLQueryFlags.simple) | SQLQueryFlags.describe;
+    return this as Promise<unknown> as Promise<SQLStatementDescription>;
+  }
+
   /// The server takes no parameters in a COPY, so nothing is lost with the simple protocol.
   #copyStream(writable: boolean) {
     const adapter = this[_adapter];
@@ -269,7 +283,7 @@ class Query<T, Handle extends BaseQueryHandle<any>> extends PublicPromise<T> {
     if (adapter.copyStream === undefined) {
       throw new Error("readable() and writable() are not supported by this adapter (PostgreSQL only)");
     }
-    if (this[_queryStatus] & SQLQueryStatus.executed) {
+    if (this[_queryStatus] & SQLQueryStatus.executed || this[_flags] & SQLQueryFlags.describe) {
       throw $ERR_INVALID_STATE("readable() and writable() must be called before the query starts");
     }
     this[_flags] |= SQLQueryFlags.simple | SQLQueryFlags.copy;
@@ -347,6 +361,8 @@ enum SQLQueryFlags {
   /// the handler gets no handle: it finds the text (sql.file()) and calls setText()
   deferredText = 1 << 6,
   copy = 1 << 9,
+  /// describe(): the statement is parsed and described, never run
+  describe = 1 << 10,
 }
 /// Bits 7 and 8 of the flags: the SQLQueryResultMode asked for before the handle exists.
 const resultModeShift = 7;

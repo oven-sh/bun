@@ -472,6 +472,28 @@ result.statement.types; // [23], the parameter types that the server reported
 - `columns` lists every column, including the duplicate names that a row object cannot hold.
 - The runs of one prepared statement share one `statement` object, so treat it as read-only.
 
+### Describe a query (PostgreSQL)
+
+`.describe()` asks the server for the parameter types and the columns of a statement, without running it. It resolves with the same `{ string, types, columns }` object as `result.statement`. A code generator or a schema check can describe an `INSERT` or a `DELETE` safely, and a query whose parameters have no values yet.
+
+```ts
+// SQL read from a file, with placeholders and no values
+const description = await sql.unsafe("SELECT id, email FROM users WHERE id = $1").describe();
+
+description.string; // "SELECT id, email FROM users WHERE id = $1"
+description.types; // [23], the parameter types that the server reported
+description.columns; // [{ name: "id", type: 23, table: 16388, number: 1 }, { name: "email", type: 25, table: 16388, number: 2 }]
+
+// A tagged template: the types come from the values, as in a run
+const { types } = await sql`INSERT INTO users (name, age) VALUES (${"Alice"}, ${30})`.describe();
+```
+
+- `columns` is `[]` for a statement that returns no rows.
+- `string` is the text that Bun sends: a tagged template has `$1 ` for each value, with a space after it.
+- The server rejects a text with several statements, as it does for a prepared query.
+- Each call parses the text again, so the description is of the schema as it is now. The prepared runs of the same text that follow use the statement it parsed. A `sql.unsafe(text)` without values runs as a simple query and does not.
+- Call it before the query starts. MySQL and SQLite reject it.
+
 ---
 
 ## Column name transforms

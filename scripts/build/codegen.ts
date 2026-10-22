@@ -484,9 +484,16 @@ function emitCompressedEmbeds({ n, cfg, o, dirStamp }: Ctx): void {
     // Files that are read together share a frame. The Rust side relies on the order.
     {
       name: "lint/plugin-host.js",
-      inputs: ["paths.js", "ast.js", "scope.js", "processor.js", "eslint.js", "prettier.js", "main.js"].map(file =>
-        resolve(cfg.cwd, "src/lint/js_plugin/worker", file),
-      ),
+      inputs: [
+        "paths.js",
+        "ast.js",
+        "scope.js",
+        "processor.js",
+        "eslint.js",
+        "prettier.js",
+        "svelte.js",
+        "main.js",
+      ].map(file => resolve(cfg.cwd, "src/lint/js_plugin/worker", file)),
     },
     {
       name: "lint/config-scripts.js",

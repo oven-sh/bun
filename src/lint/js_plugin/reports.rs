@@ -4,18 +4,19 @@
 //! else. A string is its byte length as a `u32`, then UTF-8 in which an unpaired surrogate takes three bytes.
 //!
 //! - A report: `u32` rule, `u32` flags, `f64` line, column, endLine and endColumn, `u32` number of suggestions, the message, the
-//!   `messageId` if [`HAS_ID`], the fix if [`HAS_FIX`], the suggestions.
+//!   `messageId` if [`HAS_ID`], the fix if [`HAS_FIX`], the suggestions, listener provenance as JSON if [`HAS_CONTEXT`].
 //! - A fix: `f64` start and end, the text.
 //! - A suggestion: `u32` flags, `desc`, the `messageId` if [`HAS_ID`], `data` as JSON if [`HAS_DATA`], the fix.
 
 use super::host::{Report, Suggested};
+use super::units::Units;
 use crate::fix::Fix;
 use crate::span::Span;
-use bun_core::strings::Utf16OffsetTable;
 
 const HAS_ID: u32 = 1;
 const HAS_FIX: u32 = 2;
 const HAS_DATA: u32 = 4;
+const HAS_CONTEXT: u32 = 8;
 
 /// The bytes left to read.
 struct Reader<'a>(&'a [u8]);
@@ -46,7 +47,7 @@ impl<'a> Reader<'a> {
     }
 
     /// `Some(None)` means its range isn't two numbers.
-    fn fix(&mut self, offsets: &Utf16OffsetTable) -> Option<Option<Fix>> {
+    fn fix(&mut self, offsets: &Units) -> Option<Option<Fix>> {
         let (start, end, text) = (self.number()?, self.number()?, self.string()?);
         // The byte order mark is at -1.
         let at = |it: f64| match it < 0.0 {
@@ -60,7 +61,7 @@ impl<'a> Reader<'a> {
     }
 
     /// `Some(None)` means it has no valid fix.
-    fn suggestion(&mut self, offsets: &Utf16OffsetTable) -> Option<Option<Suggested>> {
+    fn suggestion(&mut self, offsets: &Units) -> Option<Option<Suggested>> {
         let flags = self.word()?;
         let message = self.string()?.to_vec();
         let message_id = match flags & HAS_ID {
@@ -79,7 +80,7 @@ impl<'a> Reader<'a> {
         }))
     }
 
-    fn report(&mut self, offsets: &Utf16OffsetTable) -> Option<Report> {
+    fn report(&mut self, offsets: &Units) -> Option<Report> {
         let (rule, flags) = (self.word()?, self.word()?);
         let (line, column) = (self.number()?, self.number()?);
         let end = (self.number()?, self.number()?);
@@ -97,6 +98,12 @@ impl<'a> Reader<'a> {
         for _ in 0..suggestions {
             suggested.extend(self.suggestion(offsets)?);
         }
+        let reported_on = if flags & HAS_CONTEXT != 0 {
+            let json = crate::json::parse(self.string()?);
+            super::processor::reported_on(json.as_ref(), |it| offsets.to_bytes(it))
+        } else {
+            None
+        };
         Some(Report {
             rule,
             message,
@@ -106,6 +113,7 @@ impl<'a> Reader<'a> {
             end: line_or_column(end.0).zip(line_or_column(end.1)),
             fix,
             suggestions: suggested,
+            reported_on,
         })
     }
 }
@@ -122,7 +130,7 @@ fn line_or_column(number: f64) -> Option<u32> {
 }
 
 /// Appends the reports in `bytes` to `reports`.
-pub(super) fn read(bytes: &[u8], offsets: &Utf16OffsetTable, reports: &mut Vec<Report>) {
+pub(super) fn read(bytes: &[u8], offsets: &Units, reports: &mut Vec<Report>) {
     let mut reader = Reader(bytes);
     while !reader.0.is_empty() {
         match reader.report(offsets) {

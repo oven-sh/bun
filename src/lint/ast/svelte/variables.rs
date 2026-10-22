@@ -1226,6 +1226,16 @@ impl<'a> File<'a> {
         (id != NONE).then_some(SvelteReference { file: self, id })
     }
 
+    /// Every view reference, by index.
+    pub(crate) fn svelte_references_by_index(
+        &'a self,
+    ) -> impl Iterator<Item = SvelteReference<'a>> + 'a {
+        let count = self
+            .svelte_variables()
+            .map_or(0, |it| it.references.len() as u32);
+        (0..count).map(move |id| SvelteReference { file: self, id })
+    }
+
     /// Every view reference, sorted by its start in the component.
     pub fn svelte_references(&'a self) -> impl Iterator<Item = SvelteReference<'a>> + 'a {
         let count = self

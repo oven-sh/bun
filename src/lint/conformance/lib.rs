@@ -15,6 +15,10 @@
 //! `oxlint/` has the tests for rules ported from oxlint, with what the oxlint executable reports. oxlint doesn't print
 //! its fixes, so those cases compare the code after `--fix`, then with `--fix-suggestions` added, then with
 //! `--fix-dangerously` added.
+//!
+//! `svelte/` has eslint-plugin-svelte's tests: components linted the way `bun lint` lints a component with
+//! svelte-eslint-parser, with what ESLint reports, including the severity, the suppressed messages, and the code after
+//! all `--fix` passes.
 
 #![forbid(unsafe_code)]
 
@@ -25,7 +29,8 @@ use bun_format_conformance::write_file;
 pub use bun_format_conformance::{Bundle, read_file, write_line};
 use compare::oxlint_problem;
 pub use compare::{
-    Counts, Edit, Outcome, Problem, Reported, Suggested, expected_messages, problem_of, string_of,
+    Counts, Edit, Linted, Outcome, Problem, Reported, Suggested, expected_messages, problem_of,
+    string_of,
 };
 
 use bstr::BStr;
@@ -76,6 +81,11 @@ pub trait Host: Sync {
     /// The messages for a case. `None` if it can't be linted that way.
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>>;
 
+    /// The reports for a case that's a Svelte component, and the `--fix` output. `None` if it can't be linted that way.
+    fn lint_component(&self, _case: &Case<'_>) -> Option<Linted> {
+        None
+    }
+
     /// Calls `work` with each number below `count`, on `threads` threads.
     fn for_each(&self, threads: usize, count: usize, work: &(dyn Fn(usize) + Sync));
 }
@@ -111,6 +121,9 @@ pub struct Flags<'a> {
     pub extract: bool,
     /// `--in-order`: fails a case whose messages match the recorded ones but in a different order.
     pub in_order: bool,
+    /// `--svelte-plugin=<module>`: the eslint-plugin-svelte module whose `svelte/compiler` recorded the cases of rules
+    /// that compile a component (`"skip": "svelte/compiler"`). Otherwise those cases are skipped.
+    pub svelte_plugin: Option<&'a [u8]>,
 }
 
 impl<'a> Flags<'a> {
@@ -140,6 +153,7 @@ impl<'a> Flags<'a> {
             projects: flag(b"projects"),
             extract: has(b"extract"),
             in_order: has(b"in-order"),
+            svelte_plugin: flag(b"svelte-plugin"),
         }
     }
 }
@@ -154,7 +168,7 @@ const SUITES: [(&str, &str); 5] = [
 ];
 
 /// The directories in a suite that contain rule tests.
-const PLUGINS: [(&str, Plugin); 19] = [
+const PLUGINS: [(&str, Plugin); 20] = [
     ("eslint", Plugin::Eslint),
     ("typescript-eslint", Plugin::TypeScript),
     ("react-hooks", Plugin::ReactHooks),
@@ -172,16 +186,18 @@ const PLUGINS: [(&str, Plugin); 19] = [
     ("jest", Plugin::Jest),
     ("vitest", Plugin::Vitest),
     ("prettier", Plugin::Prettier),
+    ("svelte", Plugin::Svelte),
     ("json", Plugin::Json),
     ("markdown", Plugin::Markdown),
 ];
 
 /// The bundle directories that are written to disk.
-const PROJECTS: [&[u8]; 6] = [
+const PROJECTS: [&[u8]; 7] = [
     b"import-project/",
     b"oxlint-import-project/",
     b"n-project/",
     b"prettier-project/",
+    b"svelte-project/",
     b"typescript-eslint-project/",
     b"node_modules/",
 ];
@@ -196,6 +212,7 @@ fn project_of(plugin: Plugin, is_oxlint_suite: bool) -> &'static [u8] {
         _ if is_oxlint_suite => b"oxlint-import-project",
         Plugin::Node => b"n-project",
         Plugin::Prettier => b"prettier-project",
+        Plugin::Svelte => b"svelte-project",
         _ => b"import-project",
     }
 }
@@ -325,11 +342,16 @@ enum Kind {
     WithTestOnlyRules,
     InProject,
     Typed,
+    /// A Svelte component.
+    Component,
 }
 
-fn kind_of(entry: &RuleEntry, case: &Json, is_oxlint_suite: bool) -> Kind {
+fn kind_of(entry: &RuleEntry, case: &Json, is_oxlint_suite: bool, compiles_svelte: bool) -> Kind {
     let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
+    let is_component = (string_of(case, b"filename")).is_some_and(|it| it.ends_with(b".svelte"));
     match string_of(case, b"skip") {
+        None if is_component && entry.meta.plugin == Plugin::Svelte => Kind::Component,
+        Some(b"svelte/compiler") if compiles_svelte && is_component => Kind::Component,
         Some(skip) if test_only_rules::is_known(skip) => Kind::WithTestOnlyRules,
         // `@typescript-eslint/parser` without its services.
         None | Some(b"parser: custom") if is_type_aware => Kind::Typed,
@@ -410,6 +432,30 @@ fn run_case(
             lint(&absolute, LintContext::Standalone, None).ok_or(())?
         }
         Kind::Plain => lint(filename, LintContext::Standalone, None).ok_or(())?,
+        Kind::Component => {
+            // A file in the project, where the rules find its `package.json` and `svelte.config.js`.
+            let project = flags.projects.map(|it| [it, b"/svelte-project"].concat());
+            let path = match &project {
+                Some(project) => [&project[..], b"/", filename].concat(),
+                None => filename.to_vec(),
+            };
+            let linted = host.lint_component(&Case {
+                code,
+                path: &path,
+                config: &config,
+                lint_context: project
+                    .as_deref()
+                    .map_or(LintContext::Standalone, LintContext::Project),
+                prepare: None,
+            });
+            return Ok(compare::component_problem(
+                entry,
+                code,
+                linted.ok_or(())?,
+                case,
+                counts,
+            ));
+        }
         Kind::WithTestOnlyRules => {
             let rules = test_only_rules::Enabled::in_code(code);
             let messages = lint(
@@ -614,7 +660,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             entry, json, tally, ..
         } = it;
         for (index, case) in cases_of(json).iter().enumerate() {
-            let kind = kind_of(entry, case, is_oxlint_suite);
+            let kind = kind_of(entry, case, is_oxlint_suite, flags.svelte_plugin.is_some());
             if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
                 tally.skipped += 1;
                 continue;

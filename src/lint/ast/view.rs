@@ -257,6 +257,14 @@ impl View {
         merge(written, &self.tokens)
     }
 
+    /// The tokens of `scanned` that are in copies of the file's code.
+    pub(crate) fn copies(&self, scanned: &[RawToken]) -> Vec<RawToken> {
+        let copied = scanned
+            .iter()
+            .filter(|it| it.start < self.trailer && self.is_copy(it.start));
+        copied.copied().collect()
+    }
+
     /// The comments of `scanned` that rules see: none that glue opens, plus the line comments that end scripts.
     pub(crate) fn comments(&self, scanned: Vec<RawToken>) -> Vec<RawToken> {
         let written = scanned.into_iter().filter(|it| {

@@ -8,6 +8,14 @@ use bun_lint::runner::RuleEntry;
 use bun_lint::utils::sort;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+/// The reports for a component: the messages, the ones comments suppress, and the code after all fix passes, if they
+/// change it.
+pub struct Linted {
+    pub messages: Vec<LintMessage>,
+    pub suppressed: Vec<LintMessage>,
+    pub output: Option<Vec<u8>>,
+}
+
 /// The messages reported for a case's code, and the code after one pass of fixes.
 pub struct Outcome {
     pub messages: Vec<Reported>,
@@ -35,7 +43,7 @@ fn fix_of(message: &LintMessage) -> Option<&Fix> {
 }
 
 /// The parts of a message that are compared.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Reported {
     /// `None` for the rule under test. Empty for the linter itself.
     pub rule_id: Option<BString>,
@@ -49,13 +57,13 @@ pub struct Reported {
 }
 
 /// ESLint's `fix`: a range in UTF-16 code units, and its replacement text.
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Edit {
     pub range: (i64, i64),
     pub text: BString,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Suggested {
     pub message_id: BString,
     pub desc: BString,
@@ -164,11 +172,18 @@ fn expected_edit(of: &Json) -> Option<Edit> {
 
 /// The messages ESLint reported for `case`.
 pub fn expected_messages(case: &Json) -> Vec<Reported> {
-    let messages = case
-        .get(b"messages")
-        .and_then(Json::as_array)
-        .unwrap_or_default();
-    let reported = messages.iter().map(|it| Reported {
+    recorded_in(case, b"messages").map(|it| it.0).collect()
+}
+
+/// The messages of `case` at `key`, `messages` or `suppressed`, each with its JSON.
+fn recorded_in<'c>(case: &'c Json, key: &[u8]) -> impl Iterator<Item = (Reported, &'c Json)> {
+    let messages = case.get(key).and_then(Json::as_array).unwrap_or_default();
+    messages.iter().map(|it| (reported_of(it), it))
+}
+
+/// A message as ESLint recorded it.
+fn reported_of(it: &Json) -> Reported {
+    Reported {
         rule_id: it
             .get(b"ruleId")
             .map(|id| id.as_str().unwrap_or_default().into()),
@@ -190,8 +205,7 @@ pub fn expected_messages(case: &Json) -> Vec<Reported> {
             output: text_of(it, b"output"),
         })
         .collect(),
-    });
-    reported.collect()
+    }
 }
 
 /// Counters other than the failing cases.
@@ -321,6 +335,85 @@ pub(crate) fn oxlint_problem(
         before = expected;
     }
     (counts.cases_with_held_back_fix).fetch_add(usize::from(has_held_back_fix), Ordering::Relaxed);
+    None
+}
+
+/// A message as [`Reported`] has it, with its severity and how and why each comment suppresses it.
+type Judged = (Reported, u32, Vec<BString>);
+
+/// What's wrong with the reports for a component: [`problem_of`], where `output` is the code after all fix passes, then
+/// the messages with their severities, then the suppressed messages, compared as sets with the same fields each.
+pub(crate) fn component_problem(
+    entry: &'static RuleEntry,
+    code: &[u8],
+    linted: Linted,
+    case: &Json,
+    counts: &Counts,
+) -> Option<Problem> {
+    let Linted {
+        messages,
+        suppressed,
+        output,
+    } = linted;
+    let outcome = Outcome {
+        output,
+        ..Outcome::new(entry, code, &messages)
+    };
+    if let Some(problem) = problem_of(Some(outcome), case, counts) {
+        return Some(problem);
+    }
+    let recorded = |key: &[u8]| -> Vec<Judged> {
+        let mut all: Vec<Judged> = recorded_in(case, key)
+            .map(|(reported, it)| {
+                let suppressions = (it.get(b"suppressions").and_then(Json::as_array))
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|it| {
+                        [text_of(it, b"kind"), text_of(it, b"justification")]
+                            .join(&b' ')
+                            .into()
+                    })
+                    .collect();
+                let severity = number_of(it, b"severity").unwrap_or(0);
+                (reported, severity, suppressions)
+            })
+            .collect();
+        sort::sort_unstable(&mut all);
+        all
+    };
+    let reported = |messages: &[LintMessage]| -> Vec<Judged> {
+        let mut all: Vec<Judged> = (messages.iter())
+            .map(|it| {
+                let suppressions = (it.suppressions.iter())
+                    .map(|it| {
+                        let kind: &[u8] = match it.kind {
+                            bun_lint::linter::SuppressionKind::Directive => b"directive",
+                            bun_lint::linter::SuppressionKind::File => b"file",
+                        };
+                        [kind, &it.justification[..]].join(&b' ').into()
+                    })
+                    .collect();
+                let reported = Reported::new(entry, code, it);
+                (reported, it.severity as u32, suppressions)
+            })
+            .collect();
+        sort::sort_unstable(&mut all);
+        all
+    };
+    let (expected, actual) = (recorded(b"messages"), reported(&messages));
+    if expected != actual {
+        return Some(Problem {
+            summary: "severities differ",
+            details: format!("  expected: {expected:?}\n  actual: {actual:?}"),
+        });
+    }
+    let (expected, actual) = (recorded(b"suppressed"), reported(&suppressed));
+    if expected != actual {
+        return Some(Problem {
+            summary: "suppressed messages differ",
+            details: format!("  expected: {expected:?}\n  actual: {actual:?}"),
+        });
+    }
     None
 }
 

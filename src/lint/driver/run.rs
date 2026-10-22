@@ -169,18 +169,24 @@ enum Needs {
     Engine,
     /// A rule or processor for which the engine has to run the config file and everything it imports.
     Configuration,
+    /// A Svelte component or module whose [residual](crate::svelte::Residual) has ESLint's parser create a TypeScript
+    /// program. Each lane keeps its own programs: see [`Work::typed`].
+    Typed,
     /// Something that makes an engine's memory grow: a file of at least [`HEAVY`] bytes, or ESLint's own `Linter` with
-    /// a parser that builds a TypeScript program, which takes gigabytes.
+    /// another parser that builds a TypeScript program, which takes gigabytes.
     Heavy,
 }
 
 /// The files that are linted without types, as a work queue for the threads that have a VM.
 struct Files<'f> {
     heavy: &'f [&'f Target],
+    /// [`Needs::Typed`], largest first.
+    typed: &'f [&'f Target],
     /// Files that need a VM, largest first.
     with_engine: &'f [&'f Target],
     plain: &'f [&'f Target],
     next_heavy: AtomicUsize,
+    next_typed: AtomicUsize,
     /// `handed_out` counts the `with_engine` files handed out so far. `ends` counts how many of them came from the
     /// start and how many from the end.
     handed_out: AtomicUsize,
@@ -206,6 +212,15 @@ impl Work for Files<'_> {
         next.map(|target| (self.lint)(target)).is_some()
     }
 
+    fn has_typed(&self) -> bool {
+        self.next_typed.load(Ordering::Relaxed) < self.typed.len()
+    }
+
+    fn typed(&self) -> bool {
+        let next = (self.typed).get(self.next_typed.fetch_add(1, Ordering::Relaxed));
+        next.map(|target| (self.lint)(target)).is_some()
+    }
+
     fn light(&self, realm: usize) -> bool {
         if self.handed_out.fetch_add(1, Ordering::Relaxed) >= self.with_engine.len() {
             return self.lint_plain();
@@ -228,16 +243,39 @@ impl Work for Files<'_> {
     }
 }
 
-fn needs(target: &Target) -> Needs {
+/// `typed_by_comments` holds the paths of the files whose comments make their residual typed
+/// ([`crate::svelte::is_typed_by_comments`]).
+fn needs(target: &Target, typed_by_comments: &FxHashSet<&[u8]>) -> Needs {
     let Status::Matched(config) = &target.status else {
         return Needs::Nothing;
     };
+    // On a natively linted component, ESLint runs only the rules that only it can run, plus every other JavaScript
+    // plugin rule. It's only asked for a TypeScript program for the ones that read types. If it runs none, the
+    // JavaScript plugin rules run in a native engine.
+    let is_component = crate::svelte::is_native(&target.path, config);
+    let residual = match is_component {
+        true => crate::svelte::Residual::of(config),
+        false => (crate::svelte::is_script(&target.path, config))
+            .then(|| crate::svelte::Residual::for_script(config))
+            .flatten(),
+    };
+    let has_hosted_rules = is_component && crate::svelte::has_hosted_rules(config);
+    match &residual {
+        _ if typed_by_comments.contains(&target.path[..]) => return Needs::Typed.or_heavy(target),
+        None if is_component && !has_hosted_rules => return Needs::Nothing,
+        Some(residual) if residual.is_typed => return Needs::Typed.or_heavy(target),
+        // A hosted rule that asks for parser services runs in ESLint, which then creates a program.
+        _ if has_hosted_rules && config.language.wants_types => {
+            return Needs::Typed.or_heavy(target);
+        }
+        _ => {}
+    }
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
     let route = target.route();
     if route == Route::Language {
         return Needs::Nothing;
     }
-    if route != Route::Native && config.language.wants_types {
+    if route != Route::Native && config.language.wants_types && !is_component {
         return Needs::Heavy;
     }
     let processor = config
@@ -572,6 +610,25 @@ impl Run<'_> {
                 listed: None,
             });
         }
+        if crate::svelte::route(&path, config) == Some(true) && crate::svelte::is_reproduced(&text)
+        {
+            let file = (display_path, &path[..]);
+            let result = context.lint_component(&loaded, file, text, config, &on_circular_fixes);
+            return Ok(Linted {
+                files: usize::from(result.is_some()),
+                results: result.into_iter().collect(),
+                listed: None,
+            });
+        }
+        if let Some(config) = context.svelte.config_for_script(&path, config) {
+            let file = (display_path, &path[..]);
+            let result = context.lint_script(&loaded, file, text, &config, &on_circular_fixes);
+            return Ok(Linted {
+                files: usize::from(result.is_some()),
+                results: result.into_iter().collect(),
+                listed: None,
+            });
+        }
         // With another parser, whether the text can be parsed here is only known once it's read.
         if matches!(route, Route::Processor | Route::Language | Route::Eslint)
             || config.language.parser == Parser::Other
@@ -801,14 +858,31 @@ impl Run<'_> {
             };
             loader.warn(&[b"Skipped ", &count, rules, remedy, them]);
         }
+        // The components' typed programs are checked together. If one is rejected, ESLint lints the component with
+        // types.
+        let refused = context.prefill_types_of(
+            &supported,
+            &|target, config| loader.wants_types(&target.loaded, config),
+            &|count, work| pool.for_each(count, 1, work),
+        );
+        // A program is only created on a lane, so these are found before any file is linted.
+        let typed_by_comments: FxHashSet<&[u8]> = (supported.iter())
+            .filter(|it| {
+                crate::svelte::is_typed_by_comments(it, self.options.inline_config)
+                    || refused.contains(&it.path)
+            })
+            .map(|it| &it.path[..])
+            .collect();
+        let needs = |target: &Target| needs(target, &typed_by_comments);
         let with_engine = (supported.iter()).filter(|it| needs(it) != Needs::Nothing);
-        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Heavy);
+        let shared = with_engine.clone().filter(|it| needs(it) < Needs::Typed);
         let size: u64 = shared.map(|it| it.size).sum();
+        let typed = (without_types.iter()).filter(|it| needs(it) == Needs::Typed);
         // Files that a rule may hand back to its package's JavaScript version.
         let may_need_realm =
             (supported.iter()).filter(|it| may_be_handed_back(it) && it.size < HEAVY as u64);
         let count = with_engine.count() + may_need_realm.clone().count();
-        (context.js_plugins).expect(count, size, pool.threads());
+        (context.js_plugins).expect(count, size, typed.count(), pool.threads());
         (context.js_plugins).may_need_realm(may_need_realm.map(|it| it.size).sum());
         if !with_types.is_empty() {
             if !is_oxlint {
@@ -834,7 +908,8 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
-        let (heavy, with_engine) = with_engine.split_at(count(Needs::Heavy));
+        let (typed, with_engine) = with_engine.split_at(count(Needs::Typed));
+        let (heavy, typed) = typed.split_at(count(Needs::Heavy));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
@@ -845,9 +920,11 @@ impl Run<'_> {
         };
         let files = Files {
             heavy,
+            typed,
             with_engine,
             plain,
             next_heavy: AtomicUsize::new(0),
+            next_typed: AtomicUsize::new(0),
             handed_out: AtomicUsize::new(0),
             ends: Default::default(),
             next_plain: AtomicUsize::new(0),
@@ -865,7 +942,7 @@ impl Run<'_> {
                 while worker + context.js_plugins.busy() < pool.threads() && files.lint_plain() {}
             });
         };
-        match heavy.is_empty() && with_engine.is_empty() {
+        match heavy.is_empty() && typed.is_empty() && with_engine.is_empty() {
             true => lint_plain(),
             // No VM could start. Lint them here anyway, so that each one fails with the reason.
             false
@@ -1052,6 +1129,7 @@ impl Run<'_> {
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let (unread, needs_eslint) = (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
+        let svelte = crate::svelte::Shared::default();
         let formatter =
             crate::fmt::ForRules::new(environment, options.bun_format_defaults.as_deref());
         let only = (options.only.as_ref()).map(|it| git::Files::read(it, environment, true));
@@ -1096,6 +1174,8 @@ impl Run<'_> {
             formatter: &formatter,
             inferred: inferred.as_ref(),
             timing: &timing,
+            svelte: &svelte,
+            environment,
         };
         if let Some(file) = &options.print_config {
             let file_name: &[u8] = match file.is_empty() {

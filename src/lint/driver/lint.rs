@@ -22,6 +22,7 @@ use bun_lint::linter::{
     is_parse_error, is_redeclaration, may_be_misread, redeclarations,
 };
 use bun_lint::rule::{Kind, Plugin};
+use bun_lint::span::Span;
 use bun_lint_graph::Graph;
 use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
@@ -91,6 +92,10 @@ pub(crate) struct Context<'c, 'm> {
     /// Holds a file's lists while it's linted. They're freed one by one when the file is done, because a separate heap
     /// per file would start with fresh pages every time.
     pub(crate) memory: &'c Session,
+    /// State shared by the natively linted Svelte components.
+    pub(crate) svelte: &'c crate::svelte::Shared,
+    /// For the typed programs of components, which are built as they're linted.
+    pub(crate) environment: &'c crate::run::Environment<'c>,
 }
 
 /// ESLint's `ruleFilter`.
@@ -110,7 +115,7 @@ pub(crate) enum Fixes {
 
 /// Selects the rules to run.
 #[derive(Copy, Clone, Default)]
-enum Which<'h> {
+pub(crate) enum Which<'h> {
     /// The config's rules.
     #[default]
     All,
@@ -122,7 +127,7 @@ enum Which<'h> {
 
 /// Overrides for linting a text differently from a plain file.
 #[derive(Copy, Clone, Default)]
-struct How<'h> {
+pub(crate) struct How<'h> {
     /// See [`LintOptions::again`].
     again: Option<Again<'h>>,
     fixes: Fixes,
@@ -137,6 +142,58 @@ struct How<'h> {
     rules: Which<'h>,
     /// True if the text is the output of a fix pass.
     is_fixed: bool,
+    /// Set if it's the program a Svelte component is lowered to.
+    component: Option<Component<'h>>,
+    /// See [`LintOptions::residual`], in positions of what's linted.
+    residual: Option<&'h [LintMessage]>,
+}
+
+/// The program a Svelte component has been lowered to: see [`crate::svelte`]. Only native rules run on it.
+#[derive(Copy, Clone)]
+pub(crate) struct Component<'h> {
+    /// The language of its scripts.
+    pub(crate) kind: ScriptKind,
+    /// See [`LintOptions::is_synthetic`].
+    pub(crate) is_synthetic: &'h (dyn Fn(Span) -> bool + Sync),
+    /// The part of it that rules see: [`File::view`].
+    pub(crate) view: &'h bun_lint::ast::view::View,
+    /// The component, and the component nodes that the program's scopes stand for: [`File::svelte`].
+    pub(crate) svelte: (
+        &'h bun_lint::ast::svelte::Component,
+        &'h bun_lint::ast::svelte::Lowered,
+    ),
+    /// [`File::svelte_shared`], if eslint-plugin-svelte's processor is configured. It needs every message's position.
+    pub(crate) shared: Option<&'h bun_lint::ast::svelte::shared::Shared>,
+    /// [`File::svelte_compiler`]
+    pub(crate) compiler: Option<&'h bun_lint::svelte_compiler::Compiler<'h>>,
+    /// [`File::has_types_elsewhere`]
+    pub(crate) has_types_elsewhere: bool,
+}
+
+impl<'h> How<'h> {
+    /// For a component's program. For `again`, see [`LintOptions::again`]. For `residual`, see
+    /// [`LintOptions::residual`], in program positions.
+    pub(crate) fn component(
+        component: Component<'h>,
+        again: Option<Again<'h>>,
+        residual: Option<&'h [LintMessage]>,
+    ) -> How<'h> {
+        How {
+            again,
+            component: Some(component),
+            residual,
+            ..How::default()
+        }
+    }
+
+    /// For a text in the language `kind` that's only parsed.
+    pub(crate) fn parsed_as(kind: ScriptKind) -> How<'h> {
+        How {
+            script: Some((kind, &no_rule)),
+            rules: Which::None,
+            ..How::default()
+        }
+    }
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -399,19 +456,20 @@ impl Context<'_, '_> {
     }
 
     /// Like [`Self::verify`], for a block that a processor found in a file. The file's path is the first
-    /// `physical_path_len` bytes of `path`. `None` if the block [may be misread](may_be_misread), in which case no rule
-    /// ran.
+    /// `physical_path_len` bytes of `path`. For `residual`, see [`LintOptions::residual`]. `None` if the block [may be
+    /// misread](may_be_misread), in which case no rule ran.
     pub(crate) fn verify_block_if_read(
         &self,
         path: &[u8],
         physical_path_len: usize,
         text: &[u8],
         config: &ResolvedConfig,
-        fixes: Fixes,
+        (fixes, residual): (Fixes, Option<&[LintMessage]>),
     ) -> Option<LintResult> {
         let how = How {
             fixes,
             physical_path_len: Some(physical_path_len),
+            residual,
             ..How::default()
         };
         Some(self.verify_as(path, text, config, &how)).filter(|it| !it.needs_another_linter)
@@ -506,6 +564,7 @@ impl Context<'_, '_> {
             messages,
             suppressed: std::mem::take(&mut result.suppressed),
             run_keys: std::mem::take(&mut result.run_keys),
+            processed: std::mem::take(&mut result.processed),
             ..LintResult::default()
         };
         let again = Again {
@@ -517,9 +576,19 @@ impl Context<'_, '_> {
             ..How::default()
         };
         let framework = Framework::of(&path).filter(|_| config.language.is_oxlint);
+        let is_component = crate::svelte::is_native(&path, &config);
+        let loaded = result.linted.as_ref().and_then(|it| it.loaded.clone());
+        // If ESLint linted the component the first time, it lints it again.
         let mut linted = match framework {
             // Its scripts are linted one by one, so all the rules run again.
             Some(framework) => self.verify_scripts(framework, &path, &text, &config),
+            None if is_component => match &loaded {
+                Some(loaded) => {
+                    self.verify_component_with(loaded, &path, &text, &config, None, Some(again))
+                }
+                None => (self.verify_component(&path, &text, &config, Some(again), None, None))
+                    .unwrap_or_default(),
+            },
             None => self.verify_as(&path, &text, &config, &how),
         };
         if !type_errors.is_empty() {
@@ -536,6 +605,21 @@ impl Context<'_, '_> {
             true => {
                 let mut verify = |text: &[u8], is_fixed: bool| match framework {
                     Some(framework) => self.verify_scripts(framework, &path, text, &config),
+                    None if is_component => match &loaded {
+                        Some(loaded) => {
+                            let residual = self.component_residual(&config, text, &path);
+                            self.verify_component_with(
+                                loaded,
+                                &path,
+                                text,
+                                &config,
+                                residual.as_deref(),
+                                None,
+                            )
+                        }
+                        None => (self.verify_component(&path, text, &config, None, None, None))
+                            .unwrap_or_default(),
+                    },
                     None => self.verify_pass(&path, text, &config, is_fixed),
                 };
                 let text = (text, was_fixed);
@@ -551,7 +635,7 @@ impl Context<'_, '_> {
 
     /// Parses `text` as the file at `path` on the calling thread, and calls `then` with the file. `then` gets `None` if the
     /// code is nested too deeply.
-    fn parse(
+    pub(crate) fn parse(
         &self,
         path: &[u8],
         text: &[u8],
@@ -565,7 +649,12 @@ impl Context<'_, '_> {
         let how = config.language.parse_options(path);
         let (script_kind, text) = match as_what.in_language {
             Some(_) => (Some(ScriptKind::Js), &b""[..]),
-            None => (as_what.script.map(|it| it.0).or(how.script_kind), text),
+            None => (
+                (as_what.script.map(|it| it.0))
+                    .or_else(|| as_what.component.map(|it| it.kind))
+                    .or(how.script_kind),
+                text,
+            ),
         };
         bun_sema_parser::with_summary(
             how.dialect,
@@ -597,14 +686,26 @@ impl Context<'_, '_> {
                     None => file,
                 };
                 file.set_modules(self.modules);
-                // Given the component's file name, the formatter would print one of its scripts as a component.
-                if as_what.script.is_none() {
+                // Given the component's file name, the formatter would print one of its scripts as a component, and a
+                // component's program isn't the source text.
+                if as_what.script.is_none() && as_what.component.is_none() {
                     file.set_formatter(self.formatter, as_what.physical_path_len);
                 }
                 if let Some(inferred) = self.inferred {
                     file.set_inferred_globals(inferred);
                 }
                 file.set_later_script(as_what.is_later_script);
+                if let Some(component) = as_what.component {
+                    file.set_view(component.view);
+                    file.set_svelte(component.svelte.0, component.svelte.1);
+                    file.set_types_elsewhere(component.has_types_elsewhere);
+                    if let Some(shared) = component.shared {
+                        file.set_svelte_shared(shared);
+                    }
+                    if let Some(compiler) = component.compiler {
+                        file.set_svelte_compiler(compiler);
+                    }
+                }
                 then(Some(&file));
             },
         );
@@ -621,7 +722,7 @@ impl Context<'_, '_> {
         self.parse_again_as(path, text, config, &How::default(), then);
     }
 
-    fn parse_again_as(
+    pub(crate) fn parse_again_as(
         &self,
         path: &[u8],
         text: &[u8],
@@ -659,7 +760,7 @@ impl Context<'_, '_> {
         result
     }
 
-    fn verify_parsed<'f>(
+    pub(crate) fn verify_parsed<'f>(
         &self,
         file: &'f File<'f>,
         config: &ResolvedConfig,
@@ -676,7 +777,9 @@ impl Context<'_, '_> {
         }
         let options = self.lint_options();
         // Help on demand lints the text a second time. That only works for a file that's linted in one piece.
-        let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
+        let is_whole = as_what.script.is_none()
+            && as_what.physical_path_len.is_none()
+            && as_what.component.is_none();
         let is_for_help = matches!(as_what.rules, Which::WithHelp(_));
         let defers_help = self.help_on_demand && is_whole && !is_for_help;
         let options = LintOptions {
@@ -691,9 +794,16 @@ impl Context<'_, '_> {
             wants_fix_texts: options.wants_fix_texts || as_what.physical_path_len.is_some(),
             wants_help: options.wants_help && !defers_help,
             wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
-            wants_positions: options.wants_positions || as_what.physical_path_len.is_some(),
-            // JavaScript rules have no help, so there's no reason to run them again.
-            js_plugins: options.js_plugins.filter(|_| !is_for_help),
+            wants_positions: options.wants_positions
+                || as_what.physical_path_len.is_some()
+                || as_what.component.is_some_and(|it| it.shared.is_some()),
+            // JavaScript rules have no help, so there's no reason to run them again. They also don't run on a
+            // component's program, which isn't the input they expect.
+            js_plugins: (options.js_plugins).filter(|_| {
+                !is_for_help && as_what.component.is_none() && as_what.residual.is_none()
+            }),
+            is_synthetic: as_what.component.map(|it| it.is_synthetic),
+            residual: as_what.residual,
             parse_again: Some(parse_again),
             physical_path_len: as_what.physical_path_len,
             rule_filter: match (as_what.rules, as_what.script) {
@@ -827,6 +937,7 @@ impl Context<'_, '_> {
             run_keys: result.run_keys,
             messages: result.messages,
             suppressed: result.suppressed,
+            processed: result.processed,
             thrown: result.thrown,
             had_types: false,
             is_fixed,
@@ -835,6 +946,7 @@ impl Context<'_, '_> {
             linted: Some(Linted {
                 config: Arc::clone(config),
                 has_source: !is_fixed && counts.errors + counts.warnings > 0,
+                loaded: None,
             }),
             deprecated: None,
         }
@@ -894,6 +1006,19 @@ impl Context<'_, '_> {
                 &mut |text, _| self.verify_scripts(framework, &target.path, text, config),
             )));
         }
+        // ESLint lints a component whose blocks aren't read the same way here.
+        if crate::svelte::route(&target.path, config) == Some(true)
+            && crate::svelte::is_reproduced(&text)
+        {
+            let file = (display_path, &target.path[..]);
+            let loaded = &target.loaded;
+            return Ok(self.lint_component(loaded, file, text, config, on_circular_fixes));
+        }
+        if let Some(config) = self.svelte.config_for_script(&target.path, config) {
+            let file = (display_path, &target.path[..]);
+            let loaded = &target.loaded;
+            return Ok(self.lint_script(loaded, file, text, &config, on_circular_fixes));
+        }
         // With another parser, whether the file can be parsed here is only known once it's read.
         if target.route() != Route::Native || config.language.parser == Parser::Other {
             return Ok(self.verify_processed_text(
@@ -915,7 +1040,7 @@ impl Context<'_, '_> {
     }
 }
 
-fn too_deep() -> LintMessage {
+pub(crate) fn too_deep() -> LintMessage {
     LintMessage {
         rule_id: None,
         severity: Severity::Error,

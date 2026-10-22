@@ -65,7 +65,30 @@ pub(super) fn svelte_type(tag: SvelteTag) -> NodeType {
     }
 }
 
+/// True if nodes of `node_type` only exist in a component's ESTree.
+pub(crate) fn is_svelte_type(node_type: NodeType) -> bool {
+    node_type.name().starts_with("Svelte")
+}
+
 impl<'a> VNode<'a> {
+    /// svelte-eslint-parser's `Program` for the component whose program is `file`.
+    #[inline]
+    pub(crate) fn svelte_program(file: &'a File<'a>) -> VNode<'a> {
+        VNode::new(file, Part::Svelte(0))
+    }
+
+    /// The node `id` of the component whose program is `file`.
+    #[inline]
+    pub(crate) fn from_svelte(file: &'a File<'a>, id: SvelteId) -> VNode<'a> {
+        VNode::new(file, Part::Svelte(id.0))
+    }
+
+    /// The `CatchClause` of the `try` statement `statement`.
+    #[inline]
+    pub(crate) fn catch_clause(statement: crate::ast::Stmt<'a>) -> VNode<'a> {
+        VNode::new(statement, Part::Catch)
+    }
+
     /// The component node it is.
     pub(crate) fn svelte(self) -> Option<SvelteNode<'a>> {
         match self.part {
@@ -321,6 +344,68 @@ impl<'a> Children<'a> {
 }
 
 // ───────────────────────────── text ─────────────────────────────
+
+/// The component spans of svelte-eslint-parser's `HTMLText` tokens for markup texts and attribute values: one token per
+/// whitespace run and per non-whitespace run, for each text in its tree (`extractTextTokens`). Excludes `<style>`,
+/// which is one token. In component order.
+pub(crate) fn svelte_text_tokens<'a>(file: &'a File<'a>) -> Vec<Span> {
+    let Some(component) = file.svelte() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let left_out = left_out_texts(file, component);
+    for tag in [SvelteTag::Text, SvelteTag::Literal] {
+        for id in component.ids_of(tag) {
+            let Some(node) = file.svelte_node(id) else {
+                continue;
+            };
+            let parent = node.parent();
+            let is_left_out = left_out.binary_search(&id.0).is_ok();
+            if parent.is_some_and(|it| it.tag() == SvelteTag::StyleElement) || is_left_out {
+                continue;
+            }
+            let (text, start) = (node.text(), node.span().start);
+            let blank_at =
+                |it: usize| strings::js_whitespace_len(text.get(it..).unwrap_or_default());
+            let mut at = 0;
+            while at < text.len() {
+                let blank = blank_at(at) > 0;
+                let mut end = at;
+                while end < text.len() && (blank_at(end) > 0) == blank {
+                    end += match blank {
+                        true => blank_at(end),
+                        false => bun_core::lexer::char_and_size(text, end).1.max(1),
+                    };
+                }
+                out.push(Span::new(start + at as u32, start + end as u32));
+                at = end;
+            }
+        }
+    }
+    crate::utils::sort::sort_by_key(&mut out, |it| it.start);
+    out
+}
+
+/// The indices of the texts that aren't in the tree, in order: the whitespace texts at either end of a trimming block's
+/// children.
+fn left_out_texts<'a>(file: &'a File<'a>, component: &Component) -> Vec<u32> {
+    let mut out = Vec::new();
+    for id in TRIMS.into_iter().flat_map(|tag| component.ids_of(tag)) {
+        let Some(block) = file.svelte_node(id) else {
+            continue;
+        };
+        let kept = kept(block);
+        for (at, (role, child)) in (0..).zip(block.children()) {
+            if let (Role::Children, Child::Node(text)) = (role, child)
+                && !kept.contains(&at)
+            {
+                out.push(text.0);
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
 
 /// The `value` of a `SvelteText`, a `SvelteLiteral` or a `SvelteHTMLComment`.
 pub(super) fn text_value<'a>(v: VNode<'a>) -> Option<&'a [u8]> {

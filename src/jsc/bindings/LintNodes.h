@@ -28,8 +28,9 @@ struct LintNodeState {
         OxlintJavaScript,
     };
     static constexpr size_t layoutKinds = 4;
-    // The last has those of `Oxlint`.
-    static constexpr size_t visitorKeyKinds = 3;
+    // `OxlintJavaScript` has those of `Oxlint`. After `Oxlint`: those of svelte-eslint-parser with typescript-estree and with
+    // espree.
+    static constexpr size_t visitorKeyKinds = 5;
     // What is in a property, if it isn't the field with that number.
     enum What : uint32_t {
         Type = 0xF0,
@@ -106,8 +107,8 @@ struct LintNodeState {
     JSC::JSString* knownString(JSC::VM&, LintHost*, uint32_t index);
     // What the nodes inherit from.
     JSC::JSObject* prototype(JSC::VM&, JSC::JSGlobalObject*, LintHost*, LayoutKind);
-    // `sourceCode.visitorKeys`
-    JSC::JSObject* visitorKeys(JSC::JSGlobalObject*, LintHost*, LayoutKind);
+    // `sourceCode.visitorKeys`. `isSvelte`: those of svelte-eslint-parser with the parser of `kind`.
+    JSC::JSObject* visitorKeys(JSC::JSGlobalObject*, LintHost*, LayoutKind, bool isSvelte = false);
     std::optional<uint8_t> typeNamed(const WTF::String&) const;
 
     // The caller holds the host's cell lock: `load` changes the sizes.

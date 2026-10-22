@@ -29,6 +29,8 @@ pub fn program() -> impl Iterator<Item = &'static [u8]> {
             "\0",
             include_str!("worker/prettier.js"),
             "\0",
+            include_str!("worker/svelte.js"),
+            "\0",
             include_str!("worker/main.js"),
         )
         .as_bytes()

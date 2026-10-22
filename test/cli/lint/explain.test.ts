@@ -44,6 +44,7 @@ interface Listed {
   default: boolean;
   docs_url: string;
   id: string;
+  requires_types: boolean;
   aliases: string[];
   description: string;
   kind: "problem" | "suggestion" | "layout" | null;
@@ -74,7 +75,7 @@ describe.concurrent("--rules -f json", () => {
     const rules = await listRules();
     expect(rules.length).toBeGreaterThan(1000);
     expect([...new Set(rules.map(it => Object.keys(it).join()))]).toEqual([
-      "scope,value,category,type_aware,fix,default,docs_url,id,aliases,description,kind,deprecated,on_by_default,modes,schema,default_options,languages,package",
+      "scope,value,category,type_aware,fix,default,docs_url,id,requires_types,aliases,description,kind,deprecated,on_by_default,modes,schema,default_options,languages,package",
     ]);
     expect(rules.find(it => it.id === "@typescript-eslint/no-floating-promises")).toEqual({
       scope: "typescript",
@@ -85,6 +86,7 @@ describe.concurrent("--rules -f json", () => {
       default: true,
       docs_url: base + "typescript/no-floating-promises",
       id: "@typescript-eslint/no-floating-promises",
+      requires_types: true,
       aliases: ["typescript-eslint/no-floating-promises", "typescript/no-floating-promises"],
       description: frontmatter("typescript/no-floating-promises").description,
       kind: "problem",
@@ -95,6 +97,11 @@ describe.concurrent("--rules -f json", () => {
       default_options: [expect.objectContaining({ ignoreVoid: true, ignoreIIFE: false })],
       languages: [],
       package: null,
+    });
+    // It reads types when the config creates a program, and runs without them.
+    expect(rules.find(it => it.id === "svelte/require-store-reactive-access")).toMatchObject({
+      type_aware: true,
+      requires_types: false,
     });
     expect(rules.find(it => it.id === "json/no-duplicate-keys")).toMatchObject({
       scope: "json",
@@ -175,6 +182,7 @@ describe.concurrent("--rules -f json", () => {
       "promise": "promise",
       "react": "react",
       "react_perf": "react-perf",
+      "svelte": "svelte",
       "typescript": "typescript",
       "unicorn": "unicorn",
       "vitest": "vitest",
@@ -287,11 +295,19 @@ describe.concurrent("--explain", () => {
   test("summarizes the default severity, fixability, aliases and related rules", async () => {
     const third = async (rule: string) =>
       (await lint({}, ["--explain", rule], { COLUMNS: "200" })).stdout.split("\n\n")[2];
-    const rules = ["no-debugger", "prefer-const", "typescript/no-floating-promises", "no-unused-vars", "jest/no-hooks"];
+    const rules = [
+      "no-debugger",
+      "prefer-const",
+      "typescript/no-floating-promises",
+      "svelte/require-store-reactive-access",
+      "no-unused-vars",
+      "jest/no-hooks",
+    ];
     expect(await Promise.all(rules.map(third))).toEqual([
       "On by default as an error. Also called eslint/no-debugger.",
       "On by default as a warning, fixable. Also called eslint/prefer-const.",
       "Off by default, needs types. Also called typescript-eslint/no-floating-promises, typescript/no-floating-promises.",
+      "Off by default, fixable, uses types when available.",
       "On by default as a warning. Also called eslint/no-unused-vars. See also @typescript-eslint/no-unused-vars.",
       "Off by default. See also bun:test/no-hooks, vitest/no-hooks.",
     ]);

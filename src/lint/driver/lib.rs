@@ -40,6 +40,9 @@ pub mod rules;
 mod rulesdir;
 mod run;
 mod suppressions;
+mod svelte;
+mod svelte_context;
+mod svelte_summary;
 mod typed;
 
 /// A linter with every rule registered.

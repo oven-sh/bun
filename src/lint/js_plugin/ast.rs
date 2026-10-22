@@ -3,7 +3,8 @@
 //! The nodes are numbered in ESLint's traversal order: a node before its children, the fields in visitor key order. The
 //! `Program` is 0. Each node has its type, its range, its parent, and one word for each field that the table in
 //! [`crate::estree`] lists for the type in the file's dialect, in table order. So the position of a node's words
-//! follows from the types of the nodes before it.
+//! follows from the types of the nodes before it. Nodes that aren't in any field can follow the tree
+//! ([`Writer::write_detached`]), and the header's last word says how many.
 //!
 //! A word is a [`Tag`] in its low 4 bits and a number above them. Most strings are slices of the file's text and are
 //! sent as offsets.
@@ -11,13 +12,14 @@
 //! The message is [`HEADER`] words with the lengths of the parts, then the parts in the order of [`Tree`]'s fields: the
 //! 8-byte numbers first, the bytes last.
 
+use super::units::Units;
 use super::wire;
 use crate::ast::File;
 use crate::code_path;
-use crate::estree::{Dialect, NodeType, Nodes, Object, Sink, VNode, Value};
+use crate::estree::{Dialect, Field, NodeType, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
-use bun_core::strings::Utf16OffsetTable;
+use rustc_hash::FxHashMap;
 
 /// The meaning of the number in a word.
 #[derive(Copy, Clone)]
@@ -46,6 +48,8 @@ enum Tag {
     Template = 10,
     /// The offset in `lists` of one word: a `bigint`'s digits.
     BigInt = 11,
+    /// The position of a list of strings in `lists`: its length, then a word for each.
+    Strings = 12,
 }
 
 #[inline]
@@ -61,6 +65,8 @@ const TRUE: u32 = word(Tag::Constant, 3);
 const TEXT: u32 = word(Tag::Constant, 4);
 /// The node's text without its first and last characters.
 const INNER_TEXT: u32 = word(Tag::Constant, 5);
+/// An undefined field that must be present even in a layout that can leave it out.
+const PRESENT_UNDEFINED: u32 = word(Tag::Constant, 6);
 
 /// Frequent strings that aren't at the start of their node. Sorted.
 pub(super) const STRINGS: &[&str] = &[
@@ -143,6 +149,10 @@ pub(super) struct Numbered<'a> {
     pub(super) parents: Vec<u32>,
     /// See [`Tree::twice`].
     pub(super) twice: Vec<u32>,
+    /// The number of `nodes` in the tree: see [`Writer::write_detached`].
+    pub(super) reachable: usize,
+    /// The node each node after the tree is a copy of.
+    pub(super) copied: Vec<u32>,
 }
 
 const HEADER: usize = 8;
@@ -189,9 +199,11 @@ struct Pending<'a> {
 
 pub(super) struct Writer<'a, 's> {
     text: &'a [u8],
+    /// The text of the component whose program the file is, if the tree is svelte-eslint-parser's. Empty otherwise.
+    component: &'a [u8],
     dialect: Dialect,
     shortens_nodes: bool,
-    offsets: &'s Utf16OffsetTable,
+    offsets: &'s Units<'s>,
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
@@ -201,6 +213,12 @@ pub(super) struct Writer<'a, 's> {
     extra_units: u32,
     /// A stack: the last entry is written next.
     open: Vec<Pending<'a>>,
+    /// The number of nodes in the tree. The ones after it are in no other node's field ([`Writer::write_detached`]).
+    reachable: usize,
+    /// The node each node after the tree is a copy of.
+    copied: Vec<u32>,
+    /// While those are written: the tree's nodes, keyed to their numbers.
+    known: Option<FxHashMap<VNode<'a>, u32>>,
 }
 
 /// Writes a node's fields.
@@ -208,6 +226,8 @@ struct Fields<'w, 'a, 's> {
     writer: &'w mut Writer<'a, 's>,
     id: u32,
     span: Span,
+    /// True if `span` is in the component's text.
+    is_in_component: bool,
     /// The length of [`Writer::open`] before this node.
     open_before: usize,
 }
@@ -243,12 +263,18 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
 
     #[inline]
     fn str(&mut self, value: &'a [u8]) {
-        let word = self.writer.string(value, self.span);
+        let word = self.writer.string(value, self.span, self.is_in_component);
         self.put(word);
     }
 
     #[inline(never)]
     fn node(&mut self, node: VNode<'a>) {
+        if let Some(known) = &self.writer.known {
+            let word = known
+                .get(&node)
+                .map_or(UNDEFINED, |&it| word(Tag::Node, it as usize));
+            return self.put(word);
+        }
         let at = self.writer.tree.fields.len() as u32;
         self.put(UNDEFINED);
         // In espree, both names of `import { a }` are the same node.
@@ -270,6 +296,11 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
         let (lists, open) = (&mut self.writer.tree.lists, &mut self.writer.open);
         let at = lists.len();
         lists.push(0);
+        if let Some(known) = &self.writer.known {
+            lists.extend((*nodes).map(|it| it.and_then(|it| known.get(&it)).copied().unwrap_or(0)));
+            lists[at] = (lists.len() - at - 1) as u32;
+            return self.put(word(Tag::List, at));
+        }
         for node in *nodes {
             if let Some(node) = node {
                 open.push(Pending {
@@ -285,28 +316,32 @@ impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
     }
 
     fn other(&mut self, value: &Value<'a>) {
-        let word = self.writer.other(value, self.span);
+        let word = self.writer.other(value, self.span, self.is_in_component);
         self.put(word);
     }
 }
 
 impl<'a> Numbered<'a> {
+    /// The tree, without the nodes that are in no field.
     pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        let reachable = self.reachable;
         code_path::estree::Tree {
-            nodes: &self.nodes,
-            types: &self.types,
-            parents: &self.parents,
+            nodes: self.nodes.get(..reachable).unwrap_or_default(),
+            types: self.types.get(..reachable).unwrap_or_default(),
+            parents: self.parents.get(..reachable).unwrap_or_default(),
             twice: &self.twice,
         }
     }
 }
 
 impl<'a> Writer<'a, '_> {
+    /// The tree, without the nodes that are in no field.
     pub(super) fn view(&self) -> code_path::estree::Tree<'_, 'a> {
+        let reachable = self.reachable;
         code_path::estree::Tree {
-            nodes: &self.nodes,
-            types: &self.tree.types,
-            parents: &self.tree.parents,
+            nodes: self.nodes.get(..reachable).unwrap_or_default(),
+            types: self.tree.types.get(..reachable).unwrap_or_default(),
+            parents: self.tree.parents.get(..reachable).unwrap_or_default(),
             twice: &self.tree.twice,
         }
     }
@@ -322,7 +357,25 @@ impl<'a> Writer<'a, '_> {
             types: self.tree.types,
             parents: self.tree.parents,
             twice: self.tree.twice,
+            reachable: self.reachable,
+            copied: self.copied,
         }
+    }
+
+    /// Writes a copy of each node in `copied` after the tree, in no other node's field and with the `Program` as its
+    /// parent, like svelte-eslint-parser's `{ ...node }`: their fields hold the tree's nodes.
+    fn write_detached(&mut self, copied: Vec<u32>) {
+        self.reachable = self.nodes.len();
+        if !copied.is_empty() {
+            self.known = Some(self.nodes.iter().copied().zip(0..).collect());
+            for &id in &copied {
+                if let Some(&node) = self.nodes.get(id as usize) {
+                    self.write_node(node, 0);
+                }
+            }
+            self.known = None;
+        }
+        self.copied = copied;
     }
 
     /// Writes `node` and queues its children. Returns its number.
@@ -330,7 +383,7 @@ impl<'a> Writer<'a, '_> {
         let id = self.tree.types.len() as u32;
         let (node_type, span) = node.type_and_span();
         self.nodes.push(node);
-        if !self.selectors.is_empty() {
+        if !self.selectors.is_empty() && self.known.is_none() {
             let es_node = EsNode::of(node, node_type);
             for (selector, matches) in self.selectors.iter().zip(&mut self.matches) {
                 if selector.is_some_and(|it| it.matches(es_node)) {
@@ -339,12 +392,24 @@ impl<'a> Writer<'a, '_> {
             }
         }
         self.tree.types.push(node_type as u8);
-        self.tree.starts.push(self.offsets.to_utf16(span.start));
-        self.tree.ends.push(self.offsets.to_utf16(span.end));
+        let is_in_component = node.is_in_component();
+        let (start, end) = match is_in_component {
+            true => (
+                self.offsets.text_to_utf16(span.start),
+                self.offsets.text_to_utf16(span.end),
+            ),
+            false => (
+                self.offsets.to_utf16(span.start),
+                self.offsets.end_to_utf16(span.start, span.end),
+            ),
+        };
+        self.tree.starts.push(start);
+        self.tree.ends.push(end);
         self.tree.parents.push(parent);
         let open_before = self.open.len();
         let without_typescript =
             self.dialect == Dialect::Espree || (self.shortens_nodes && is_short(node_type));
+        let fields_before = self.tree.fields.len();
         node_type.emit_fields(
             node,
             without_typescript,
@@ -352,9 +417,38 @@ impl<'a> Writer<'a, '_> {
                 writer: self,
                 id,
                 span,
+                is_in_component,
                 open_before,
             },
         );
+        // svelte-eslint-parser removes the synthetic annotation of an await/let pattern, including the property itself.
+        if !without_typescript
+            && matches!(
+                node_type,
+                NodeType::Identifier | NodeType::ObjectPattern | NodeType::ArrayPattern
+            )
+        {
+            let removes_annotation = self.offsets.is_in_component()
+                && node.parent_in_component().is_some_and(|parent| {
+                    matches!(
+                        parent.node_type(),
+                        NodeType::SvelteAwaitThenBlock | NodeType::SvelteAwaitCatchBlock
+                    ) || (parent.node_type() == NodeType::SvelteDirective
+                        && matches!(parent.field(Field::Kind), Value::Str(b"Let")))
+                });
+            let annotation = node_type
+                .fields()
+                .iter()
+                .filter(|it| !it.is_hidden && !it.is_espree_only)
+                .position(|it| it.field == Field::TypeAnnotation);
+            if !removes_annotation
+                && let Some(word) =
+                    annotation.and_then(|at| self.tree.fields.get_mut(fields_before + at))
+                && *word == UNDEFINED
+            {
+                *word = PRESENT_UNDEFINED;
+            }
+        }
         // The first child has to be popped first.
         self.open[open_before..].reverse();
         id
@@ -382,20 +476,36 @@ impl<'a> Writer<'a, '_> {
         }
     }
 
-    /// The word for a `RegExp`, a `bigint` or an object in a field of the node at `span`.
-    fn other(&mut self, value: &Value<'a>, span: Span) -> u32 {
+    /// The word for a `RegExp`, a `bigint` or an object in a field of the node at `span`, which is in the component's
+    /// text if `is_in_component`.
+    fn other(&mut self, value: &Value<'a>, span: Span, is_in_component: bool) -> u32 {
         match *value {
-            Value::Regex { pattern, flags } => self.pair(Tag::RegExp, Some(pattern), flags, span),
+            Value::Regex { pattern, flags } => {
+                self.pair(Tag::RegExp, Some(pattern), flags, span, is_in_component)
+            }
             Value::BigInt(digits) => {
-                let digits = self.string(digits, span);
+                let digits = self.string(digits, span, is_in_component);
                 self.tree.lists.push(digits);
                 word(Tag::BigInt, self.tree.lists.len() - 1)
             }
-            Value::Object(Object::Regex { pattern, flags }) => {
-                self.pair(Tag::RegExpParts, Some(pattern), flags, span)
-            }
+            Value::Object(Object::Regex { pattern, flags }) => self.pair(
+                Tag::RegExpParts,
+                Some(pattern),
+                flags,
+                span,
+                is_in_component,
+            ),
             Value::Object(Object::Template { cooked, raw }) => {
-                self.pair(Tag::Template, cooked, raw, span)
+                self.pair(Tag::Template, cooked, raw, span, is_in_component)
+            }
+            Value::Object(object @ Object::Modifiers(_)) => {
+                let words: Vec<u32> = (object.strings())
+                    .map(|it| self.string(it, span, is_in_component))
+                    .collect();
+                let list = self.tree.lists.len();
+                self.tree.lists.push(words.len() as u32);
+                self.tree.lists.extend_from_slice(&words);
+                word(Tag::Strings, list)
             }
             _ => UNDEFINED,
         }
@@ -410,12 +520,19 @@ impl<'a> Writer<'a, '_> {
         word(Tag::Number, self.tree.numbers.len() - 1)
     }
 
-    fn pair(&mut self, tag: Tag, first: Option<&[u8]>, second: &[u8], span: Span) -> u32 {
-        let second_word = self.string(second, span);
+    fn pair(
+        &mut self,
+        tag: Tag,
+        first: Option<&[u8]>,
+        second: &[u8],
+        span: Span,
+        is_in_component: bool,
+    ) -> u32 {
+        let second_word = self.string(second, span, is_in_component);
         let first_word = match first {
             None => NULL,
             Some(first) if first == second => second_word,
-            Some(first) => self.string(first, span),
+            Some(first) => self.string(first, span, is_in_component),
         };
         self.tree
             .lists
@@ -423,10 +540,35 @@ impl<'a> Writer<'a, '_> {
         word(tag, self.tree.lists.len() - 2)
     }
 
-    /// The word for a string in a field of the node at `span`.
-    fn string(&mut self, value: &[u8], span: Span) -> u32 {
-        let whole = self
-            .text
+    /// The position of the bytes `value`, if they're in the file's or the component's text, in UTF-16 code units.
+    fn place_of(&self, value: &[u8]) -> Option<(u32, u32)> {
+        let value = value.as_ptr_range();
+        let offset_in = |text: &[u8]| {
+            let text = text.as_ptr_range();
+            let is_inside = text.start <= value.start && value.end <= text.end;
+            is_inside.then(|| (value.start.addr() - text.start.addr()) as u32)
+        };
+        let len = (value.end.addr() - value.start.addr()) as u32;
+        if let Some(start) = offset_in(self.text) {
+            return Some((
+                self.offsets.to_utf16(start),
+                self.offsets.end_to_utf16(start, start + len),
+            ));
+        }
+        let start = offset_in(self.component)?;
+        Some((
+            self.offsets.text_to_utf16(start),
+            self.offsets.text_to_utf16(start + len),
+        ))
+    }
+
+    /// The word for a string in a field of the node at `span`, which is in the component's text if `is_in_component`.
+    fn string(&mut self, value: &[u8], span: Span, is_in_component: bool) -> u32 {
+        let text = match is_in_component {
+            true => self.component,
+            false => self.text,
+        };
+        let whole = text
             .get(span.start as usize..span.end as usize)
             .unwrap_or_default();
         if value == whole {
@@ -442,19 +584,12 @@ impl<'a> Writer<'a, '_> {
         {
             return word(Tag::Known, at);
         }
-        let start_in_text = match whole.starts_with(value) {
-            true => Some(span.start),
-            false => {
-                let (text, value) = (self.text.as_ptr_range(), value.as_ptr_range());
-                let is_inside = text.start <= value.start && value.end <= text.end;
-                is_inside.then(|| (value.start.addr() - text.start.addr()) as u32)
-            }
+        let place = match whole.starts_with(value) {
+            true => whole.get(..value.len()).and_then(|it| self.place_of(it)),
+            false => self.place_of(value),
         };
-        let (start, end) = match start_in_text {
-            Some(start) => (
-                self.offsets.to_utf16(start),
-                self.offsets.to_utf16(start + value.len() as u32),
-            ),
+        let (start, end) = match place {
+            Some(place) => place,
             None if bun_core::strings::wtf8_has_surrogate(value) => return self.units(value),
             None => {
                 let start = self.extra_units;
@@ -535,11 +670,13 @@ pub(super) fn is_short(node_type: NodeType) -> bool {
 /// Walks `file`'s tree, numbers the nodes, and records which ones match `selectors`.
 pub(super) fn walk<'a, 's>(
     file: &'a File<'a>,
-    offsets: &'s Utf16OffsetTable,
+    offsets: &'s Units<'s>,
     selectors: &'s [Option<&'s Selector>],
 ) -> Writer<'a, 's> {
+    let component = file.svelte().filter(|_| offsets.is_in_component());
     let mut writer = Writer {
         text: file.text(),
+        component: component.map_or(&[][..], |it| it.text()),
         dialect: Dialect::of(file),
         shortens_nodes: shortens_nodes(file),
         offsets,
@@ -549,6 +686,9 @@ pub(super) fn walk<'a, 's>(
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
+        reachable: 0,
+        copied: Vec::new(),
+        known: None,
     };
     let nodes = file.text().len() / 8;
     writer.nodes.reserve(nodes);
@@ -557,7 +697,17 @@ pub(super) fn walk<'a, 's>(
     writer.tree.ends.reserve(nodes);
     writer.tree.parents.reserve(nodes);
     writer.tree.fields.reserve(nodes * 3);
-    writer.run(VNode::program(file));
+    writer.run(match component {
+        Some(_) => VNode::svelte_program(file),
+        None => VNode::program(file),
+    });
+    let copied = match component {
+        Some(_) => {
+            super::scopes::svelte::copied_identifiers(file, &writer.nodes, &writer.tree.parents)
+        }
+        None => Vec::new(),
+    };
+    writer.write_detached(copied);
     writer
 }
 
@@ -573,7 +723,7 @@ impl Writer<'_, '_> {
             tree.numbers.len() as u32,
             tree.extra.len() as u32,
             alternates.len() as u32,
-            0,
+            (self.nodes.len() - self.reachable) as u32,
         ];
         wire::words(out, &header);
         for number in &tree.numbers {

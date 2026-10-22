@@ -9,14 +9,16 @@ use super::engine::Vm;
 use super::host::Host;
 use super::processor::{FindRule, read_messages};
 use super::wire::{self, result};
-use crate::linter::{LintMessage, write_json};
+use crate::linter::{LintMessage, ThrownWhile, write_json};
 use crate::options::Json;
+use bun_core::strings;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Call kinds, numbered after those in `processor.rs`.
 mod call {
     /// `flags`, the [`Configuration`](super::Configuration)'s id, the path's length, the length of the path's prefix
-    /// that is the file's path on disk, the path, the text.
+    /// that is the file's path on disk, the length of the names of the rules that run, the path, those names, each
+    /// followed by a line break, the text.
     pub(super) const LINT: u32 = 20;
     /// JSON: `[id, run, configuration]`.
     pub(super) const CONFIGURE: u32 = 21;
@@ -25,6 +27,9 @@ mod call {
 /// First bytes of a call's result, numbered after those in `processor.rs`.
 const NEEDS_CONFIGURATION: u8 = b'4';
 pub(super) const NOT_INSTALLED: u8 = b'5';
+/// What a traced rule in [`Text::only`] threw: the id of the rule ESLint was setting up, or nothing once every rule is
+/// set up, then a line break and the message.
+const THROWN_BY_RULES: u8 = b'8';
 
 pub(super) const PLUGIN_PROTOCOL_ERROR: &[u8] =
     b"Internal error while running JavaScript plugins. This is a bug in Bun.";
@@ -67,6 +72,19 @@ pub struct Text<'t> {
     pub text: &'t [u8],
     /// ESLint's `disableFixes`.
     pub without_fixes: bool,
+    /// Only these rules run, and unused disable comments aren't reported: the reports are merged with the native rules'
+    /// reports for the same file, and the comments are applied to the result. `None` means all.
+    pub only: Option<&'t [Box<[u8]>]>,
+    /// True if the parser creates no TypeScript program even though the config asks for one, because none of the
+    /// running rules reads types.
+    pub without_types: bool,
+}
+
+/// The flags of [`call::LINT`].
+mod flag {
+    pub(super) const WITHOUT_FIXES: u32 = 1;
+    pub(super) const ONLY: u32 = 2;
+    pub(super) const WITHOUT_TYPES: u32 = 4;
 }
 
 /// The result of ESLint's `Linter` for a text.
@@ -83,12 +101,13 @@ pub struct Linted {
 pub enum EslintFailure {
     /// The project has no `eslint`.
     NotInstalled,
-    Thrown(Vec<u8>),
+    /// The thrown message, and when it was thrown, if known.
+    Thrown(Vec<u8>, Option<ThrownWhile>),
 }
 
 impl From<Vec<u8>> for EslintFailure {
     fn from(message: Vec<u8>) -> EslintFailure {
-        EslintFailure::Thrown(message)
+        EslintFailure::Thrown(message, None)
     }
 }
 
@@ -109,6 +128,16 @@ impl Host<'_> {
             match returned.split_first() {
                 Some((&result::DONE, json)) => return Ok(json.to_vec()),
                 Some((&result::FAILED, why)) => return Err(why.to_vec().into()),
+                Some((&THROWN_BY_RULES, said)) => {
+                    let Some((rule, why)) = strings::split_once_char(said, b'\n') else {
+                        break;
+                    };
+                    let thrown_while = match rule {
+                        [] => ThrownWhile::AfterSetUp,
+                        rule => ThrownWhile::SettingUp(rule.into()),
+                    };
+                    return Err(EslintFailure::Thrown(why.to_vec(), Some(thrown_while)));
+                }
                 Some((&NEEDS_CONFIGURATION, _)) => {}
                 _ => break,
             }
@@ -143,17 +172,27 @@ impl Host<'_> {
         file: Text,
         find_rule: &FindRule,
     ) -> Result<Linted, EslintFailure> {
-        let mut message = Vec::with_capacity(16 + file.path.len() + file.text.len());
+        let mut names = Vec::new();
+        for name in file.only.unwrap_or_default() {
+            names.extend_from_slice(name);
+            names.push(b'\n');
+        }
+        let flags = (u32::from(file.without_fixes) * flag::WITHOUT_FIXES)
+            | (u32::from(file.only.is_some()) * flag::ONLY)
+            | (u32::from(file.without_types) * flag::WITHOUT_TYPES);
+        let mut message = Vec::with_capacity(20 + file.path.len() + names.len() + file.text.len());
         wire::words(
             &mut message,
             &[
-                u32::from(file.without_fixes),
+                flags,
                 configuration.id,
                 file.path.len() as u32,
                 file.physical_path_len as u32,
+                names.len() as u32,
             ],
         );
         message.extend_from_slice(file.path);
+        message.extend_from_slice(&names);
         message.extend_from_slice(file.text);
         self.count_eslint_run();
         let mut returned = Err(PLUGIN_PROTOCOL_ERROR.to_vec().into());

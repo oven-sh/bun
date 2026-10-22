@@ -9,9 +9,7 @@ namespace Zig {
 class GlobalObject;
 }
 namespace Bun {
-// Once a module has linked, JSC never asks for its record again unless the
-// provider is shared across globals (--isolate). JSC runs the evaluate hook
-// once per module body, so freeing the record there leaves a plain `bun run`
-// with none per loaded module.
+// Frees a linked module's record from its evaluate hook (JSC runs that hook
+// once per module); a provider shared across globals (--isolate) keeps it.
 void releaseModuleInfoAfterLink(JSC::VM&, Zig::GlobalObject*, JSC::JSValue moduleRecordValue);
 }

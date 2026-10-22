@@ -872,8 +872,7 @@ pub mod analyze_transpiled_module {
             Ok(())
         }
 
-        /// The finalized record's self-contained wire form (string table, then
-        /// body), serialized once and shared by the cache entry and the runtime.
+        /// The record's wire form, serialized once for the cache entry and the runtime.
         pub fn serialized(&mut self) -> Option<&[u8]> {
             if !self.finalized && self.finalize().is_err() {
                 return None;

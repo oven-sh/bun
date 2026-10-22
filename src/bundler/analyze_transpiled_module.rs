@@ -130,9 +130,7 @@ pub struct ModuleInfoDeserialized {
     pub flags: Flags,
 }
 
-/// Records alive right now: created by `create_owned` / `create_with_table`,
-/// freed by `deinit`. `bun:internal-for-testing` reads it so a test can check
-/// that a loaded graph freed every record.
+/// Records alive right now, read by `bun:internal-for-testing`.
 pub static LIVE_COUNT: AtomicI32 = AtomicI32::new(0);
 
 /// Where a record's names come from: a self-contained record carries its own

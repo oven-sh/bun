@@ -549,11 +549,12 @@ test.skipIf(!isASAN)(
       "main.ts": `
         for (let i = 0; i < ${workers}; i++) {
           const worker = new Worker(new URL("./worker.ts", import.meta.url).href);
-          await new Promise<void>(resolve => {
+          await new Promise<void>((resolve, reject) => {
             worker.onmessage = () => {
               worker.terminate();
               resolve();
             };
+            worker.onerror = event => reject(event.error ?? new Error(event.message));
           });
         }
         console.log("done");

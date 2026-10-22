@@ -222,9 +222,8 @@ extern "C" JSModuleRecord* Bun__createPrelinkedModuleRecordForPipeline(Zig::Glob
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" bool Bun__validateRuntimeModuleInfo();
 
-// Debug builds cross-check every record against JSC's own analysis.
-// BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO=1 runs the same check in a
-// release build.
+// Cross-check every record against JSC's own analysis: always in debug, in
+// release under BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO=1.
 static bool shouldValidateModuleInfo()
 {
 #if BUN_DEBUG
@@ -266,19 +265,13 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
             promise->fulfill(vm, prelinked);
             RELEASE_AND_RETURN(scope, JSValue::encode(promise));
         }
-        // Outside an executable a transpiled provider always carries its record
-        // until releaseModuleInfoAfterLink: reaching this parse means it was
-        // released too early.
+        // Outside an executable, a record missing here was released too early.
         ASSERT_WITH_MESSAGE(Bun__hasStandaloneModuleGraph(), "BunTranspiledModule provider without module_info: %s", moduleKey.utf8().legacyCStringPointer());
         RELEASE_AND_RETURN(scope, fallbackParse(globalObject, moduleLoader, moduleKey, sourceCode, promise));
     }
 
-    // module_info stays on the provider until the module evaluates (or, under
-    // --isolate, until ~SourceProvider): JSC analyzes the same JSSourceCode more
-    // than once (the require(esm) sync replay re-issues makeModule on an entry
-    // whose modulePromise is still pending; --isolate reuses providers across
-    // globals), and every call must produce the same record. See
-    // releaseModuleInfoAfterLink.
+    // Not consumed here: the require(esm) sync replay and --isolate analyze the
+    // same source again before it evaluates. releaseModuleInfoAfterLink frees it.
     auto* moduleInfo = provider->m_moduleInfo;
     auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleLoader, moduleKey, sourceCode, moduleInfo);
     RETURN_IF_EXCEPTION(scope, rejectWithCaughtExceptionOrPending(vm, scope, promise));

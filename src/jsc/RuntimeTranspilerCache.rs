@@ -74,8 +74,7 @@ bun_core::declare_scope!(cache, visible);
 /// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
 /// participates in the features hash.
 /// Version 41: `case` and `default` are mapped.
-/// Version 42: ModuleInfo is written for every runtime ESM transpile, not only
-/// under --isolate; older entries have an empty esm_record (#7384).
+/// Version 42: Every runtime ESM entry carries an esm_record, not only those written under --isolate.
 const EXPECTED_VERSION: u32 = 42;
 
 /// Source files smaller than this are not written to / read from the on-disk

@@ -5819,8 +5819,7 @@ impl VirtualMachine {
             .unwrap_or(false)
     }
 
-    /// `Bun__analyzeTranspiledModule`: cross-check every record against JSC's
-    /// own analysis in a release build (debug builds always do).
+    /// Cross-check every record against JSC's own analysis in a release build.
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__validateRuntimeModuleInfo() -> bool {
         bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_VALIDATE_RUNTIME_MODULE_INFO::get()

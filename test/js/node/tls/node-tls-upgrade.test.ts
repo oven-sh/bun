@@ -654,6 +654,36 @@ test.each([
   }
 });
 
+test("new TLSSocket(stream) with no options wraps a plain object that has the methods of a stream", async () => {
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(accepted => {
+    sockets.push(accepted);
+    accepted.on("error", () => {});
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const raw = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  sockets.push(raw);
+  try {
+    await once(raw, "connect");
+    const stream = plainObjectStream(raw);
+    const firstWrite = Promise.withResolvers<Buffer>();
+    const write = stream.write as (chunk: Buffer, ...rest: unknown[]) => boolean;
+    stream.write = (chunk: Buffer, ...rest: unknown[]) => {
+      firstWrite.resolve(chunk);
+      return write(chunk, ...rest);
+    };
+    const client = new tls.TLSSocket(stream as unknown as net.Socket);
+    client.on("error", firstWrite.reject);
+    client.on("close", () => firstWrite.reject(new Error("closed before a write")));
+    // @ts-expect-error node starts the handshake of a constructor wrap here
+    client._start();
+    // A ClientHello, which is a handshake record (type 22), leaves through the object.
+    expect((await firstWrite.promise)[0]).toBe(22);
+  } finally {
+    closeAll(server, sockets);
+  }
+});
+
 test("what is no stream is refused with a TypeError, as in Node", () => {
   const server = tls.createServer(certs);
   const refused = (wrap: (value: unknown) => unknown) =>

@@ -637,13 +637,13 @@ function TLSSocket(socket?, options?) {
   this.encrypted = true;
 
   const isDuplex = socket instanceof Duplex;
-  // The first argument can also be the options. It is a stream when options follow it, or when it is an EventEmitter.
-  const isOtherStream = !isDuplex && socket && (options !== undefined || socket instanceof EventEmitter);
+  // The first argument can also be the options. It is a stream when it has the methods of one.
+  const isOtherStream = !isDuplex && !!socket && hasStreamMethods(socket);
   // Node throws when it wraps what is no stream.
-  if (isOtherStream && !hasStreamMethods(socket)) {
+  if (!isDuplex && !isOtherStream && socket && (options !== undefined || socket instanceof EventEmitter)) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
-  const isNetSocketOrDuplex = isDuplex || !!isOtherStream;
+  const isNetSocketOrDuplex = isDuplex || isOtherStream;
 
   // A wrapped socket keeps its allowHalfOpen and drops onread: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
   if (isNetSocketOrDuplex) {

@@ -10,10 +10,11 @@ use bun_http::{
     Method,
 };
 use bun_io::KeepAlive;
+use bun_jsc::AbortSignalRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
-use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
+use bun_s3_signing::credentials::{MultiPartUploadOptions, S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_threading::thread_pool;
@@ -137,16 +138,22 @@ pub(crate) struct S3HttpSimpleTask {
     /// request still queued or in flight fails promptly and comes back.
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) abort_handle: bun_jsc::AbortHandle,
+    /// The JS object of the followed signal: `signal.reason` lives only through it.
+    pub(crate) signal_object: bun_jsc::StrongOptional,
+    /// See [`S3SimpleRequestOptions::late_abort_fails`].
+    pub(crate) late_abort_fails: bool,
+    /// Captured before the request is queued: the abort path asks the HTTP thread by id, while
+    /// that thread may be overwriting `http`.
+    pub(crate) async_http_id: u32,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
 }
 
 bun_jsc::impl_abort_handle_owner!(S3HttpSimpleTask, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not
-    // run); `http` is initialised before the task is armed.
+    // SAFETY: trait contract — `this` is live (armed ⇒ its response has not run).
     unsafe {
         (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-        bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+        bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
     }
 });
 
@@ -235,6 +242,7 @@ impl S3HttpSimpleTask {
         let parsed;
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
+            message = http_error_message(err);
             has_error_code = true;
         } else {
             let bytes = self.response_buffer.list.as_slice();
@@ -273,6 +281,7 @@ impl S3HttpSimpleTask {
         let parsed;
         if let Some(err) = self.result.fail {
             code = err.name().as_bytes();
+            message = http_error_message(err);
         } else {
             let bytes = self.response_buffer.list.as_slice();
             if !bytes.is_empty() {
@@ -313,6 +322,13 @@ impl S3HttpSimpleTask {
         // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
 
+        // The signal fired after the HTTP thread was done with the request: aborted all the same.
+        if this.late_abort_fails
+            && this.result.is_success()
+            && this.signal_store.aborted.load(Ordering::Relaxed)
+        {
+            this.result.fail = Some(bun_http::Error::Aborted);
+        }
         if !this.result.is_success() {
             this.error_with_body(ErrorType::Failure)?;
             return Ok(());
@@ -536,13 +552,34 @@ pub(crate) struct S3SimpleRequestOptions<'a> {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
+    /// See [`MultiPartUploadOptions::idle_timeout_seconds`].
+    pub(crate) idle_timeout_seconds: Option<u32>,
+    /// The `signal` of the operation this request belongs to: it aborts the request.
+    pub(crate) signal: Option<AbortSignalRef>,
+    /// A response that arrives after `signal` fired is delivered as `Aborted`. Off for the
+    /// requests of a `MultiPartUpload`: the upload reports the abort itself, and needs the
+    /// response (the id of an upload the store created, which it then removes).
+    pub(crate) late_abort_fails: bool,
 }
 
-impl<'a> Default for S3SimpleRequestOptions<'a> {
-    fn default() -> Self {
+/// What every request of an operation carries from its handle, client, or call options.
+#[derive(Clone, Copy)]
+pub(crate) struct RequestConfig {
+    pub(crate) options: MultiPartUploadOptions,
+    pub(crate) request_payer: bool,
+}
+
+impl<'a> S3SimpleRequestOptions<'a> {
+    /// The only constructor: a request cannot leave without its config and signal.
+    pub(crate) fn new(
+        path: &'a [u8],
+        method: Method,
+        config: &RequestConfig,
+        signal: Option<AbortSignalRef>,
+    ) -> Self {
         Self {
-            path: b"",
-            method: Method::GET,
+            path,
+            method,
             search_params: None,
             content_type: None,
             content_disposition: None,
@@ -552,8 +589,39 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
             range: None,
             acl: None,
             storage_class: None,
-            request_payer: false,
+            request_payer: config.request_payer,
+            idle_timeout_seconds: config.options.idle_timeout_seconds,
+            signal,
+            late_abort_fails: true,
         }
+    }
+}
+
+/// The HTTP client options of one S3 request.
+pub(crate) fn http_options(
+    vm: &VirtualMachine,
+    signals: bun_http::signals::Signals,
+    idle_timeout_seconds: Option<u32>,
+) -> HttpOptions<'static> {
+    HttpOptions {
+        verbose: Some(vm.get_verbose_fetch()),
+        reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+        tls_props: crate::socket::http_client_defaults(vm),
+        signals: Some(signals),
+        disable_timeout: Some(idle_timeout_seconds == Some(0)),
+        idle_timeout_seconds,
+        ..Default::default()
+    }
+}
+
+/// The message of a failure the HTTP client reports (no response body to read one from).
+pub(crate) fn http_error_message(err: bun_http::Error) -> &'static [u8] {
+    match err {
+        bun_http::Error::Timeout => {
+            b"The request timed out: the connection was idle for longer than the timeout"
+        }
+        bun_http::Error::Aborted => b"The request was aborted",
+        _ => b"an unexpected error has occurred",
     }
 }
 
@@ -676,6 +744,9 @@ pub(crate) fn execute_simple_s3_request(
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        signal_object: bun_jsc::StrongOptional::empty(),
+        late_abort_fails: options.late_abort_fails,
+        async_http_id: 0,
         context: Default::default(),
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
@@ -704,8 +775,9 @@ pub(crate) fn execute_simple_s3_request(
         None
     };
     let vm = VirtualMachine::get();
-    let verbose = vm.get_verbose_fetch();
-    let reject_unauthorized = vm.get_tls_reject_unauthorized();
+    // SAFETY: `task_ptr` outlives the request; the store is only read
+    // through these pointers by the HTTP client.
+    let signals = unsafe { (*task_ptr).signal_store.to() };
     let async_http = AsyncHTTP::init(
         options.method,
         url,
@@ -722,18 +794,15 @@ pub(crate) fn execute_simple_s3_request(
         FetchRedirect::Follow,
         HttpOptions {
             http_proxy,
-            verbose: Some(verbose),
-            reject_unauthorized: Some(reject_unauthorized),
-            tls_props: crate::socket::http_client_defaults(vm),
-            // SAFETY: `task_ptr` outlives the request; the store is only read
-            // through these pointers by the HTTP client.
-            signals: Some(unsafe { (*task_ptr).signal_store.to() }),
-            ..Default::default()
+            ..http_options(vm, signals, options.idle_timeout_seconds)
         },
     );
     // SAFETY: `task_ptr` is still the sole pointer (the HTTP thread only sees it after
     // `schedule` below); scoped exclusive write of the `http` field.
-    unsafe { (*task_ptr).http.write(async_http) };
+    unsafe {
+        (*task_ptr).async_http_id = async_http.async_http_id;
+        (*task_ptr).http.write(async_http);
+    }
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = thread_pool::Batch::default();
@@ -747,6 +816,12 @@ pub(crate) fn execute_simple_s3_request(
         (*task_ptr).http_ticket = Some(vm.ticket());
         (*task_ptr).context = context.id();
         bun_jsc::AbortHandle::arm_owner(task_ptr, context);
+        if let Some(signal) = options.signal {
+            (*task_ptr)
+                .signal_object
+                .set(vm.global(), signal.to_js(vm.global()));
+            bun_jsc::AbortHandle::follow_owner(task_ptr, signal);
+        }
     }
     bun_http::HTTPThread::schedule(batch);
     Ok(())

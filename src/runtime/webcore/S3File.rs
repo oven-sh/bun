@@ -2,7 +2,7 @@ use crate::node::{PathLike, PathOrBlob};
 use crate::webcore::blob::store::{S3Ext as _, Store, StoreExt as _};
 use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
-use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
+use crate::webcore::s3::client::error_jsc;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
@@ -131,7 +131,8 @@ fn parse_s3_path_or_blob(
 
 /// Turns a parsed argument into an S3 blob: eats the options argument,
 /// rejects file-descriptor paths, and constructs the env-credentialed store
-/// for path arguments. Returns the blob together with the options it consumed.
+/// for path arguments. An S3 blob argument gets a copy with the options applied.
+/// Returns the blob together with the options it consumed.
 fn resolve_s3_blob(
     global: &JSGlobalObject,
     args: &mut bun_jsc::call_frame::ArgumentsSlice,
@@ -148,7 +149,23 @@ fn resolve_s3_blob(
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             Ok((Box::new(blob), options))
         }
-        PathOrBlob::Blob(blob) => Ok((blob, options)),
+        PathOrBlob::Blob(blob) => match options {
+            Some(opts) if opts.is_object() => {
+                let s3 = blob.store.get().as_ref().unwrap().data.as_s3();
+                let merged = construct_s3_file_with_s3_credentials_and_options(
+                    global,
+                    s3.pathlike.clone(),
+                    options,
+                    s3.get_credentials(),
+                    s3.options,
+                    s3.acl,
+                    s3.storage_class,
+                    s3.request_payer,
+                )?;
+                Ok((Box::new(merged), options))
+            }
+            _ => Ok((blob, options)),
+        },
     }
 }
 
@@ -222,11 +239,15 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to get size";
-    let mut blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
+    let (blob, options) = match parse_s3_path_or_blob(global, &mut args, error_message)? {
         PathOrBlob::Blob(blob) => return Ok(blob.get_size(global)),
-        path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
+        path => resolve_s3_blob(global, &mut args, path, error_message)?,
     };
-    S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
+    S3BlobStatTask::size(
+        &global.js_thread_of_caller(callframe),
+        &blob,
+        error_jsc::get_signal(options, global)?,
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -236,11 +257,13 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), callframe.arguments());
 
     let error_message = "Expected a S3 or path to check if it exists";
-    let blob = match parse_s3_path_or_blob(global, &mut args, error_message)? {
-        PathOrBlob::Blob(blob) => return blob.get_exists(global, callframe),
-        path => resolve_s3_blob(global, &mut args, path, error_message)?.0,
-    };
-    S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
+    let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    S3BlobStatTask::exists(
+        &global.js_thread_of_caller(callframe),
+        &blob,
+        error_jsc::get_signal(options, global)?,
+    )
 }
 
 fn construct_s3_file_internal_store(
@@ -364,11 +387,65 @@ pub(crate) struct S3BlobStatTask {
     // can outlive the constructing frame while reads stay safe.
     global: bun_ptr::BackRef<JSGlobalObject>,
     store: RefPtr<Store>,
+    signal: Option<bun_jsc::AbortSignalRef>,
 }
 
 impl S3BlobStatTask {
     fn new(init: S3BlobStatTask) -> *mut S3BlobStatTask {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    fn rejection(&self, err: &s3::Error::S3Error, global: &JSGlobalObject) -> JSValue {
+        error_jsc::s3_rejection_with_async_stack(
+            err,
+            self.signal.as_ref(),
+            global,
+            Some(self.store.data.as_s3().path()),
+            self.promise.get(),
+        )
+    }
+
+    /// Sends the HEAD request behind `exists()`, `size()` and `stat()`.
+    fn start(
+        cx: &bun_jsc::JsThread<'_>,
+        blob: &Blob,
+        verb: &str,
+        signal: Option<bun_jsc::AbortSignalRef>,
+        callback: fn(s3::S3StatResult, *mut core::ffi::c_void) -> JsResult<()>,
+    ) -> JsResult<JSValue> {
+        let store = match s3_store(blob, cx.global(), verb) {
+            Ok(store) => store,
+            Err(err) => {
+                return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
+                    cx.global(),
+                    err,
+                )?
+                .to_js());
+            }
+        };
+        if let Some(rejected) = error_jsc::rejected_if_aborted(signal.as_ref(), cx.global()) {
+            return Ok(rejected);
+        }
+        let this = S3BlobStatTask::new(S3BlobStatTask {
+            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
+            store,
+            global: bun_ptr::BackRef::new(cx.global()),
+            signal: signal.clone(),
+        });
+        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
+        // callback below. Scoped shared access.
+        let task = unsafe { &*this };
+        let (promise, s3_store) = (task.promise.value(), task.store.data.as_s3());
+        s3::stat(
+            s3_store.get_credentials(),
+            cx.context(),
+            s3_store.path(),
+            callback,
+            this.cast::<core::ffi::c_void>(),
+            &s3_store.request_config(),
+            signal,
+        )?;
+        Ok(promise)
     }
 
     fn on_s3_exists_resolved(
@@ -393,12 +470,7 @@ impl S3BlobStatTask {
                 this.promise.resolve(global, JSValue::TRUE)?;
             }
             s3::S3StatResult::Failure(err) => {
-                let value = s3_error_to_js_with_async_stack(
-                    &err,
-                    global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
-                );
+                let value = this.rejection(&err, global);
                 this.promise.reject(global, Ok(value))?;
             }
         }
@@ -418,12 +490,7 @@ impl S3BlobStatTask {
                     .resolve(global, JSValue::js_number(stat_result.size as f64))?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
-                let value = s3_error_to_js_with_async_stack(
-                    &err,
-                    global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
-                );
+                let value = this.rejection(&err, global);
                 this.promise.reject(global, Ok(value))?;
             }
         }
@@ -453,65 +520,53 @@ impl S3BlobStatTask {
                 this.promise.resolve(global, s3_stat)?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
-                let value = s3_error_to_js_with_async_stack(
-                    &err,
-                    global,
-                    Some(this.store.data.as_s3().path()),
-                    this.promise.get(),
-                );
+                let value = this.rejection(&err, global);
                 this.promise.reject(global, Ok(value))?;
             }
         }
         Ok(())
     }
 
-    /// Sends the HEAD request behind `exists()`, `size()` and `stat()`.
-    fn start(
+    pub(crate) fn exists(
         cx: &bun_jsc::JsThread<'_>,
         blob: &Blob,
-        verb: &str,
-        callback: fn(s3::S3StatResult, *mut core::ffi::c_void) -> JsResult<()>,
+        signal: Option<bun_jsc::AbortSignalRef>,
     ) -> JsResult<JSValue> {
-        let store = match s3_store(blob, cx.global(), verb) {
-            Ok(store) => store,
-            Err(err) => {
-                return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
-                    cx.global(),
-                    err,
-                )?
-                .to_js());
-            }
-        };
-        let this = S3BlobStatTask::new(S3BlobStatTask {
-            promise: bun_jsc::JSPromiseStrong::init(cx.global()),
-            store,
-            global: bun_ptr::BackRef::new(cx.global()),
-        });
-        // SAFETY: `this` is a freshly leaked Box; sole pointer until handed to the s3
-        // callback below. Scoped shared access.
-        let task = unsafe { &*this };
-        let (promise, s3_store) = (task.promise.value(), task.store.data.as_s3());
-        s3::stat(
-            s3_store.get_credentials(),
-            cx.context(),
-            s3_store.path(),
-            callback,
-            this.cast::<core::ffi::c_void>(),
-            s3_store.request_payer,
-        )?;
-        Ok(promise)
+        Self::start(
+            cx,
+            blob,
+            "exists",
+            signal,
+            S3BlobStatTask::on_s3_exists_resolved,
+        )
     }
 
-    pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
-        Self::start(cx, blob, "exists", S3BlobStatTask::on_s3_exists_resolved)
+    pub(crate) fn stat(
+        cx: &bun_jsc::JsThread<'_>,
+        blob: &Blob,
+        signal: Option<bun_jsc::AbortSignalRef>,
+    ) -> JsResult<JSValue> {
+        Self::start(
+            cx,
+            blob,
+            "stat",
+            signal,
+            S3BlobStatTask::on_s3_stat_resolved,
+        )
     }
 
-    pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
-        Self::start(cx, blob, "stat", S3BlobStatTask::on_s3_stat_resolved)
-    }
-
-    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
-        Self::start(cx, blob, "size", S3BlobStatTask::on_s3_size_resolved)
+    pub(crate) fn size(
+        cx: &bun_jsc::JsThread<'_>,
+        blob: &Blob,
+        signal: Option<bun_jsc::AbortSignalRef>,
+    ) -> JsResult<JSValue> {
+        Self::start(
+            cx,
+            blob,
+            "size",
+            signal,
+            S3BlobStatTask::on_s3_size_resolved,
+        )
     }
 
     // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
@@ -655,7 +710,12 @@ pub(crate) fn get_stat(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), this)
+    let options = callframe.arguments().first().copied();
+    S3BlobStatTask::stat(
+        &global.js_thread_of_caller(callframe),
+        this,
+        error_jsc::get_signal(options, global)?,
+    )
 }
 
 #[bun_jsc::host_fn]
@@ -666,8 +726,12 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 
     let error_message = "Expected a S3 or path to get size";
     let path_or_blob = parse_s3_path_or_blob(global, &mut args, error_message)?;
-    let (blob, _options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
-    S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
+    let (blob, options) = resolve_s3_blob(global, &mut args, path_or_blob, error_message)?;
+    S3BlobStatTask::stat(
+        &global.js_thread_of_caller(callframe),
+        &blob,
+        error_jsc::get_signal(options, global)?,
+    )
 }
 
 pub(crate) fn construct_internal_js(

@@ -582,7 +582,7 @@ impl BlobExt for Blob {
             // credentials ref out and stash `path` as a raw `*const [u8]`
             // whose backing store is kept alive by the same `t.blob` now
             // owned by the heap task.
-            let (cred, path, payer);
+            let (cred, path, config);
             {
                 let s3 = t
                     .blob
@@ -592,7 +592,7 @@ impl BlobExt for Blob {
                     .as_s3();
                 cred = s3.get_credentials().clone();
                 path = std::ptr::from_ref::<[u8]>(s3.path());
-                payer = s3.request_payer;
+                config = s3.request_config();
             }
             // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
             // it stays valid until `Task::done` deinits the blob in the callback.
@@ -612,7 +612,7 @@ impl BlobExt for Blob {
                     len,
                     Task::<H>::cb,
                     t_ptr,
-                    payer,
+                    &config,
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
@@ -621,7 +621,7 @@ impl BlobExt for Blob {
                     path,
                     Task::<H>::cb,
                     t_ptr,
-                    payer,
+                    &config,
                 )?;
             }
             return Ok(());
@@ -1336,9 +1336,11 @@ impl BlobExt for Blob {
     // This mostly means 'can it be read?'
     fn get_exists(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         if self.is_s3() {
+            let options = callframe.arguments().first().copied();
             return crate::webcore::s3_file::S3BlobStatTask::exists(
                 &global_this.js_thread_of_caller(callframe),
                 self,
+                s3_client::error_jsc::get_signal(options, global_this)?,
             );
         }
         Ok(JSPromise::resolved_promise_value(
@@ -1378,6 +1380,21 @@ impl BlobExt for Blob {
             };
 
             let path = s3.path();
+            let signal = match s3_client::error_jsc::get_signal(extra_options, cx.global()) {
+                Ok(signal) => signal,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        cx.global(),
+                        err,
+                    )?
+                    .to_js());
+                }
+            };
+            if let Some(rejected) =
+                s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
+            {
+                return Ok(rejected);
+            }
 
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload.
@@ -1400,6 +1417,7 @@ impl BlobExt for Blob {
                 aws_options.content_encoding.as_deref(),
                 None,
                 aws_options.request_payer,
+                signal,
                 None,
                 core::ptr::null_mut(),
             );
@@ -1609,6 +1627,7 @@ impl BlobExt for Blob {
 
                 let credentials_with_options =
                     s3.get_credentials_with_options(Some(options), global_this)?;
+                let signal = s3_client::error_jsc::get_signal(Some(options), global_this)?;
                 // `defer credentialsWithOptions.deinit()` → Drop handles slices.
                 // `writable_stream` adopts the dup'd ref by value; the
                 // MultiPartUpload derefs on done.
@@ -1622,6 +1641,7 @@ impl BlobExt for Blob {
                     content_encoding_str.as_ref().map(|s| s.slice()),
                     credentials_with_options.storage_class,
                     credentials_with_options.request_payer,
+                    signal,
                 );
             }
 
@@ -1629,12 +1649,13 @@ impl BlobExt for Blob {
                 s3.get_credentials().clone(),
                 path,
                 &global_this.js_thread(context),
-                Default::default(),
+                s3.options,
                 self.content_type_or_mime_type(),
                 None,
                 None,
                 None,
                 s3.request_payer,
+                None,
             );
         }
 
@@ -4258,11 +4279,28 @@ fn write_file_with_empty_source_to_destination(
                         .to_js());
                     }
                 };
+            let signal = match s3_client::error_jsc::get_signal(options.extra_options, cx.global())
+            {
+                Ok(signal) => signal,
+                Err(err) => {
+                    return Ok(JSPromise::rejected_promise_with_caught_exception(
+                        cx.global(),
+                        err,
+                    )?
+                    .to_js());
+                }
+            };
+            if let Some(rejected) =
+                s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
+            {
+                return Ok(rejected);
+            }
 
             struct Wrapper {
                 promise: jsc::JSPromiseStrong,
                 store: RefPtr<Store>,
                 global: bun_ptr::BackRef<JSGlobalObject>,
+                signal: Option<bun_jsc::AbortSignalRef>,
             }
             impl Wrapper {
                 fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
@@ -4274,8 +4312,9 @@ fn write_file_with_empty_source_to_destination(
                             this.promise.resolve(global, JSValue::js_number(0.0))?
                         }
                         S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                            let err_js = s3_client::error_jsc::s3_rejection_with_async_stack(
                                 &err,
+                                this.signal.as_ref(),
                                 global,
                                 this.store.get_path(),
                                 this.promise.get(),
@@ -4299,12 +4338,17 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.content_encoding.as_deref(),
                 aws_options.acl,
                 aws_options.storage_class,
-                aws_options.request_payer,
+                &s3_client::RequestConfig {
+                    options: aws_options.options,
+                    request_payer: aws_options.request_payer,
+                },
+                signal.clone(),
                 Wrapper::resolve,
                 bun_core::heap::into_raw(Box::new(Wrapper {
                     promise,
                     store: destination_store.clone(),
                     global: bun_ptr::BackRef::new(cx.global()),
+                    signal,
                 }))
                 .cast::<c_void>(),
             )?;
@@ -4470,6 +4514,19 @@ pub(crate) fn write_file_with_source_destination(
                 );
             }
         };
+        let signal = match s3_client::error_jsc::get_signal(options.extra_options, cx.global()) {
+            Ok(signal) => signal,
+            Err(err) => {
+                return Ok(
+                    JSPromise::rejected_promise_with_caught_exception(cx.global(), err)?.to_js(),
+                );
+            }
+        };
+        if let Some(rejected) =
+            s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
+        {
+            return Ok(rejected);
+        }
         match &source_store.data {
             store::Data::Bytes(bytes) => {
                 if bytes.len() as usize > S3::MultiPartUploadOptions::MAX_SINGLE_UPLOAD_SIZE {
@@ -4498,6 +4555,7 @@ pub(crate) fn write_file_with_source_destination(
                             aws_options.content_encoding.as_deref(),
                             None,
                             aws_options.request_payer,
+                            signal,
                             None,
                             core::ptr::null_mut(),
                         );
@@ -4515,6 +4573,7 @@ pub(crate) fn write_file_with_source_destination(
                         store: RefPtr<Store>,
                         promise: jsc::JSPromiseStrong,
                         global: bun_ptr::BackRef<JSGlobalObject>,
+                        signal: Option<bun_jsc::AbortSignalRef>,
                     }
                     impl Wrapper {
                         fn resolve(
@@ -4534,8 +4593,9 @@ pub(crate) fn write_file_with_source_destination(
                                 }
                                 S3UploadResult::Failure(err) => {
                                     let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                                        s3_client::error_jsc::s3_rejection_with_async_stack(
                                             &err,
+                                            this.signal.as_ref(),
                                             global,
                                             this.store.get_path(),
                                             this.promise.get(),
@@ -4558,12 +4618,17 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.content_encoding.as_deref(),
                         aws_options.acl,
                         aws_options.storage_class,
-                        aws_options.request_payer,
+                        &s3_client::RequestConfig {
+                            options: aws_options.options,
+                            request_payer: aws_options.request_payer,
+                        },
+                        signal.clone(),
                         Wrapper::resolve,
                         bun_core::heap::into_raw(Box::new(Wrapper {
                             store: source_store.clone(),
                             promise,
                             global: bun_ptr::BackRef::new(cx.global()),
+                            signal,
                         }))
                         .cast::<c_void>(),
                     )?;
@@ -4589,7 +4654,7 @@ pub(crate) fn write_file_with_source_destination(
                         s3.path(),
                         stream,
                         cx,
-                        s3.options,
+                        aws_options.options,
                         aws_options.acl,
                         aws_options.storage_class,
                         destination_blob.content_type_or_mime_type(),
@@ -4597,6 +4662,7 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.content_encoding.as_deref(),
                         None,
                         aws_options.request_payer,
+                        signal,
                         None,
                         core::ptr::null_mut(),
                     );
@@ -4847,6 +4913,14 @@ pub(crate) fn write_file_internal(
                         let s3 = dest_store.data.as_s3();
                         let aws_options =
                             s3.get_credentials_with_options(options.extra_options, cx.global())?;
+                        let signal =
+                            s3_client::error_jsc::get_signal(options.extra_options, cx.global())?;
+                        if let Some(rejected) =
+                            s3_client::error_jsc::rejected_if_aborted(signal.as_ref(), cx.global())
+                        {
+                            destination_blob.detach();
+                            return Ok(ControlFlow::Break(rejected));
+                        }
                         // SAFETY: exclusive borrow scoped to the call (may run JS).
                         let _ = unsafe { (*body_value).to_readable_stream(cx) }?;
                         let readable_opt = get_stream().or_else(|| {
@@ -4880,6 +4954,7 @@ pub(crate) fn write_file_internal(
                                 aws_options.content_encoding.as_deref(),
                                 None,
                                 aws_options.request_payer,
+                                signal,
                                 None,
                                 core::ptr::null_mut(),
                             )?));
@@ -5592,7 +5667,7 @@ impl S3BlobDownloadTask {
                 len,
                 s3_cb,
                 this.cast::<c_void>(),
-                s3_store.request_payer,
+                &s3_store.request_config(),
             )?;
         } else if blob.size.get() == MAX_SIZE {
             crate::webcore::__s3_client::download(
@@ -5601,7 +5676,7 @@ impl S3BlobDownloadTask {
                 path,
                 s3_cb,
                 this.cast::<c_void>(),
-                s3_store.request_payer,
+                &s3_store.request_config(),
             )?;
         } else {
             let len: usize = usize::try_from(blob.size.get()).expect("int cast");
@@ -5614,7 +5689,7 @@ impl S3BlobDownloadTask {
                 Some(len),
                 s3_cb,
                 this.cast::<c_void>(),
-                s3_store.request_payer,
+                &s3_store.request_config(),
             )?;
         }
         Ok(promise)

@@ -5,7 +5,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
+use bun_jsc::{CommonString, JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
 
 use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
@@ -207,6 +207,35 @@ pub(crate) fn get_credentials_with_options(
                     ));
                 } else {
                     new_credentials.options.retry = retry as u8;
+                }
+            }
+            // `timeout` in ms, with `fetch()`'s rules: `false`, `0` and a non-finite number turn it off.
+            if let Some(timeout) =
+                opts.get_common_string(global_object, CommonString::FetchOptionTimeout)?
+            {
+                if timeout.is_boolean() {
+                    new_credentials.options.idle_timeout_seconds =
+                        if timeout.as_boolean() { None } else { Some(0) };
+                } else if timeout.is_number() {
+                    let ms = timeout.as_number();
+                    if ms < 0.0 {
+                        return Err(global_object.throw_range_error(
+                            ms,
+                            RangeErrorOptions {
+                                min: 0,
+                                field_name: b"timeout",
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                    new_credentials.options.idle_timeout_seconds = if ms.is_finite() && ms > 0.0 {
+                        Some((ms / 1000.0).ceil().min(u32::MAX as f64) as u32)
+                    } else {
+                        Some(0)
+                    };
+                } else if !timeout.is_null() {
+                    return Err(global_object
+                        .throw_invalid_property_type_value(b"timeout", b"number", timeout));
                 }
             }
             if let Some(acl) =

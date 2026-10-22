@@ -13,10 +13,9 @@ use crate::node::types::PathOrFileDescriptorSerializeTag;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue, JsResult};
 use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
-use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
-    S3ListObjectsResult,
+    RequestConfig, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
+    S3ListObjectsResult, error_jsc,
 };
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
@@ -67,6 +66,8 @@ pub(crate) trait S3Ext {
         options: Option<JSValue>,
         global_object: &JSGlobalObject,
     ) -> JsResult<S3CredentialsWithOptions>;
+    /// What a request on this handle carries.
+    fn request_config(&self) -> RequestConfig;
     /// `store` is the heap `Store` that owns `self` (`self == &store.data.S3`).
     /// It's an owned ref because reading the options runs user JS, which can detach the store from its Blob.
     fn unlink(
@@ -248,6 +249,13 @@ impl FileExt for File {
 }
 
 impl S3Ext for S3 {
+    fn request_config(&self) -> RequestConfig {
+        RequestConfig {
+            options: self.options,
+            request_payer: self.request_payer,
+        }
+    }
+
     fn get_credentials_with_options(
         &self,
         options: Option<JSValue>,
@@ -281,6 +289,7 @@ impl S3Ext for S3 {
             // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
             // wrapper can outlive the constructing frame while reads stay safe.
             global: bun_ptr::BackRef<JSGlobalObject>,
+            signal: Option<bun_jsc::AbortSignalRef>,
         }
 
         impl Wrapper {
@@ -301,21 +310,27 @@ impl S3Ext for S3 {
                     S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
                         // Split borrows: `reject` takes `&mut promise`, so
                         // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
+                        let err_val = error_jsc::s3_rejection_with_async_stack(
+                            &err,
+                            self_.signal.as_ref(),
                             global_object,
                             self_.store.get_path(),
                             self_.promise.get(),
                         );
-                        self_.promise.reject(global_object, err_val)?;
+                        self_.promise.reject(global_object, Ok(err_val))?;
                     }
                 }
                 Ok(())
             }
         }
 
+        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
+        let signal = error_jsc::get_signal(extra_options, cx.global())?;
+        if let Some(rejected) = error_jsc::rejected_if_aborted(signal.as_ref(), cx.global()) {
+            return Ok(rejected);
+        }
         let promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         s3_client::delete(
@@ -327,9 +342,14 @@ impl S3Ext for S3 {
                 promise,
                 store,
                 global: bun_ptr::BackRef::new(cx.global()),
+                signal: signal.clone(),
             }))
             .cast::<c_void>(),
-            aws_options.request_payer,
+            &RequestConfig {
+                options: aws_options.options,
+                request_payer: aws_options.request_payer,
+            },
+            signal,
         )?;
 
         Ok(value)
@@ -354,6 +374,7 @@ impl S3Ext for S3 {
             resolved_list_options: S3ListObjectsOptions,
             // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
             global: bun_ptr::BackRef<JSGlobalObject>,
+            signal: Option<bun_jsc::AbortSignalRef>,
         }
 
         impl Wrapper {
@@ -378,12 +399,14 @@ impl S3Ext for S3 {
                     S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
                         // Split borrows: `reject` takes `&mut promise`, so
                         // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
+                        let err_val = error_jsc::s3_rejection_with_async_stack(
+                            &err,
+                            self_.signal.as_ref(),
                             global_object,
                             self_.store.get_path(),
                             self_.promise.get(),
                         );
-                        self_.promise.reject(global_object, err_val)?;
+                        self_.promise.reject(global_object, Ok(err_val))?;
                     }
                 }
                 Ok(())
@@ -395,12 +418,16 @@ impl S3Ext for S3 {
         if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
             return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
         }
-        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
-        let value = promise.value();
         let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
         let options = s3_client::get_list_objects_options_from_js(cx.global(), list_options)?;
+        let signal = error_jsc::get_signal(extra_options, cx.global())?;
+        if let Some(rejected) = error_jsc::rejected_if_aborted(signal.as_ref(), cx.global()) {
+            return Ok(rejected);
+        }
+        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let value = promise.value();
 
         // Box the wrapper first so the options live on the heap, then hand a
         // borrow to `list_objects` (which only reads them synchronously to
@@ -411,6 +438,7 @@ impl S3Ext for S3 {
             store,
             resolved_list_options: options,
             global: bun_ptr::BackRef::new(cx.global()),
+            signal: signal.clone(),
         }));
 
         s3_client::list_objects(
@@ -421,6 +449,11 @@ impl S3Ext for S3 {
             unsafe { &(*wrapper).resolved_list_options },
             Wrapper::resolve,
             wrapper.cast::<c_void>(),
+            &RequestConfig {
+                options: aws_options.options,
+                request_payer: aws_options.request_payer,
+            },
+            signal,
         )?;
 
         Ok(value)

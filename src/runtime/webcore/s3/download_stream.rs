@@ -10,7 +10,7 @@ use bun_io::KeepAlive;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 
-use crate::webcore::s3::xml_response;
+use crate::webcore::s3::{simple_request as s3_simple_request, xml_response};
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
@@ -121,6 +121,7 @@ impl S3HttpDownloadStreamingTask {
             // SAFETY: fn contract.
             if let Some(req_err) = unsafe { (*this).request_error } {
                 code = req_err.name().as_bytes();
+                message = s3_simple_request::http_error_message(req_err);
             } else {
                 // SAFETY: fn contract; the buffer is not touched again before the callback
                 // returns, and `message` is not used after it.

@@ -9,6 +9,7 @@ use crate::webcore::jsc as bun_jsc;
 use bun_collections::VecExt;
 use bun_sys as syscall;
 
+use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::streams;
 use crate::webcore::{self, Blob, ByteBlobLoader, ByteStream, FileReader};
 
@@ -580,7 +581,7 @@ impl ReadableStream {
                     } else {
                         None
                     },
-                    s3.request_payer,
+                    &s3.request_config(),
                     cx,
                 )
             }

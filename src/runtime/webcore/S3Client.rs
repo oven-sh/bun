@@ -5,7 +5,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
-use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
+use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass, error_jsc};
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -442,13 +442,17 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (blob, _) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "check if it exists",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::exists(&global.js_thread_of_caller(callframe), &blob)
+        S3File::S3BlobStatTask::exists(
+            &global.js_thread_of_caller(callframe),
+            &blob,
+            error_jsc::get_signal(options, global)?,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -457,13 +461,17 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (mut blob, _) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "check the size of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::size(&global.js_thread_of_caller(callframe), &mut blob)
+        S3File::S3BlobStatTask::size(
+            &global.js_thread_of_caller(callframe),
+            &blob,
+            error_jsc::get_signal(options, global)?,
+        )
     }
 
     #[bun_jsc::host_fn(method)]
@@ -472,13 +480,17 @@ impl S3Client {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let (blob, _) = ptr.blob_and_options(
+        let (blob, options) = ptr.blob_and_options(
             global,
             callframe,
             "check the stat of",
             MissingPathError::MissingOrInvalid,
         )?;
-        S3File::S3BlobStatTask::stat(&global.js_thread_of_caller(callframe), &blob)
+        S3File::S3BlobStatTask::stat(
+            &global.js_thread_of_caller(callframe),
+            &blob,
+            error_jsc::get_signal(options, global)?,
+        )
     }
 
     #[bun_jsc::host_fn(method)]

@@ -24,7 +24,6 @@ pub(crate) use bun_s3_signing::error as Error;
 // re-export hub.
 #[path = "error_jsc.rs"]
 pub(crate) mod error_jsc;
-pub(crate) use error_jsc::S3ErrorJsc;
 pub(crate) use error_jsc::get_js_sign_error;
 pub(crate) use error_jsc::s3_error_to_js;
 pub(crate) use error_jsc::throw_sign_error;
@@ -35,12 +34,14 @@ use bun_s3_signing::credentials::encode_uri_component;
 
 pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
+pub(crate) use crate::webcore::s3::simple_request::RequestConfig;
 pub(crate) use crate::webcore::s3::simple_request::S3DeleteResult;
 pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
 pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
 pub(crate) use crate::webcore::s3::simple_request::S3UploadResult;
+use bun_jsc::AbortSignalRef;
 
 use crate::webcore::s3::simple_request as s3_simple_request;
 
@@ -63,18 +64,13 @@ pub(crate) fn stat(
     path: &[u8],
     callback: fn(S3StatResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    request_payer: bool,
+    config: &RequestConfig,
+    signal: Option<AbortSignalRef>,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
-        s3_simple_request::Options {
-            path,
-            method: bun_http::Method::HEAD,
-            body: b"",
-            request_payer,
-            ..Default::default()
-        },
+        s3_simple_request::Options::new(path, bun_http::Method::HEAD, config, signal),
         s3_simple_request::Callback::Stat(callback),
         callback_context,
     )
@@ -86,18 +82,12 @@ pub(crate) fn download(
     path: &[u8],
     callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    request_payer: bool,
+    config: &RequestConfig,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
-        s3_simple_request::Options {
-            path,
-            method: bun_http::Method::GET,
-            body: b"",
-            request_payer,
-            ..Default::default()
-        },
+        s3_simple_request::Options::new(path, bun_http::Method::GET, config, None),
         s3_simple_request::Callback::Download(callback),
         callback_context,
     )
@@ -111,7 +101,7 @@ pub(crate) fn download_slice(
     size: Option<usize>,
     callback: fn(S3DownloadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    request_payer: bool,
+    config: &RequestConfig,
 ) -> JsResult<()> {
     let range: Option<Vec<u8>> = 'brk: {
         if let Some(size_) = size {
@@ -135,12 +125,8 @@ pub(crate) fn download_slice(
         this,
         context,
         s3_simple_request::Options {
-            path,
-            method: bun_http::Method::GET,
-            body: b"",
             range: range.map(Vec::into_boxed_slice),
-            request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new(path, bun_http::Method::GET, config, None)
         },
         s3_simple_request::Callback::Download(callback),
         callback_context,
@@ -153,18 +139,13 @@ pub(crate) fn delete(
     path: &[u8],
     callback: fn(S3DeleteResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-    request_payer: bool,
+    config: &RequestConfig,
+    signal: Option<AbortSignalRef>,
 ) -> JsResult<()> {
     s3_simple_request::execute_simple_s3_request(
         this,
         context,
-        s3_simple_request::Options {
-            path,
-            method: bun_http::Method::DELETE,
-            body: b"",
-            request_payer,
-            ..Default::default()
-        },
+        s3_simple_request::Options::new(path, bun_http::Method::DELETE, config, signal),
         s3_simple_request::Callback::Delete(callback),
         callback_context,
     )
@@ -176,6 +157,8 @@ pub(crate) fn list_objects(
     list_options: &S3ListObjectsOptions,
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
+    config: &RequestConfig,
+    signal: Option<AbortSignalRef>,
 ) -> JsResult<()> {
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
@@ -304,6 +287,9 @@ pub(crate) fn list_objects(
         poll_ref: bun_io::KeepAlive::init(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
+        signal_object: bun_jsc::StrongOptional::empty(),
+        late_abort_fails: true,
+        async_http_id: 0,
         context: Default::default(),
     }));
     // SAFETY: just allocated, non-null
@@ -348,14 +334,16 @@ pub(crate) fn list_objects(
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            tls_props: crate::socket::http_client_defaults(vm),
-            signals: Some(task.signal_store.to()),
-            ..Default::default()
+            ..s3_simple_request::http_options(
+                vm,
+                task.signal_store.to(),
+                config.options.idle_timeout_seconds,
+            )
         },
     ));
 
+    // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
+    task.async_http_id = unsafe { task.http.assume_init_ref() }.async_http_id;
     // queue http request
     bun_http::http_thread::init(&Default::default());
     let mut batch = bun_threading::thread_pool::Batch::default();
@@ -366,7 +354,14 @@ pub(crate) fn list_objects(
     task.http_ticket = Some(VirtualMachine::get().ticket());
     task.context = context.id();
     // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
+    unsafe {
+        bun_jsc::AbortHandle::arm_owner(task_ptr, context);
+        if let Some(signal) = signal {
+            task.signal_object
+                .set(vm.global(), signal.to_js(vm.global()));
+            bun_jsc::AbortHandle::follow_owner(task_ptr, signal);
+        }
+    }
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
@@ -381,7 +376,8 @@ pub(crate) fn upload(
     content_encoding: Option<&[u8]>,
     acl: Option<ACL>,
     storage_class: Option<StorageClass>,
-    request_payer: bool,
+    config: &RequestConfig,
+    signal: Option<AbortSignalRef>,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
@@ -389,16 +385,13 @@ pub(crate) fn upload(
         this,
         context,
         s3_simple_request::Options {
-            path,
-            method: bun_http::Method::PUT,
             body: content,
             content_type,
             content_disposition,
             content_encoding,
             acl,
             storage_class,
-            request_payer,
-            ..Default::default()
+            ..s3_simple_request::Options::new(path, bun_http::Method::PUT, config, signal)
         },
         s3_simple_request::Callback::Upload(callback),
         callback_context,
@@ -418,12 +411,12 @@ pub(crate) fn writable_stream(
     content_encoding: Option<&[u8]>,
     storage_class: Option<StorageClass>,
     request_payer: bool,
+    signal: Option<AbortSignalRef>,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
+    // Local callback wrapper. `uploaded`, `path` and `signal` are read off the upload.
     fn wrapper_callback(
         result: S3UploadResult,
-        uploaded: u64,
-        path: &[u8],
+        task: &MultiPartUpload,
         sink: &mut NetworkSink,
     ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
@@ -432,34 +425,35 @@ pub(crate) fn writable_stream(
             .global_this
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
-        if sink.end_promise.has_value() || sink.flush_promise.has_value() {
-            // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
-            let event_loop = global.bun_vm().as_mut().event_loop();
-            // SAFETY: event_loop is initialised for the lifetime of the VM.
-            // RAII: `enter()` now, `exit()` on drop.
-            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
-            match result {
-                S3UploadResult::Success => {
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(global, JSValue::js_number(0.0))?;
-                    }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise
-                            .resolve(global, JSValue::js_number(uploaded as f64))?;
-                    }
+        // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
+        let event_loop = global.bun_vm().as_mut().event_loop();
+        // SAFETY: event_loop is initialised for the lifetime of the VM.
+        // RAII: `enter()` now, `exit()` on drop.
+        let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+        match result {
+            S3UploadResult::Success => {
+                if sink.flush_promise.has_value() {
+                    sink.flush_promise
+                        .resolve(global, JSValue::js_number(0.0))?;
                 }
-                S3UploadResult::Failure(err) => {
-                    let js_err = s3_error_to_js(&err, global, Some(path));
-                    if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(global, Ok(js_err))?;
-                    }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(global, Ok(js_err))?;
-                    }
-                    if !sink.done {
-                        sink.abort();
-                    }
+                if sink.end_promise.has_value() {
+                    sink.end_promise
+                        .resolve(global, JSValue::js_number(task.uploaded_bytes.get() as f64))?;
+                }
+            }
+            S3UploadResult::Failure(err) => {
+                let js_err =
+                    error_jsc::s3_rejection(&err, task.signal.as_ref(), global, Some(&task.path));
+                // Every `end()` or `flush()` from here on rejects with it.
+                sink.upstream_error.set(global, js_err);
+                if sink.flush_promise.has_value() {
+                    sink.flush_promise.reject(global, Ok(js_err))?;
+                }
+                if sink.end_promise.has_value() {
+                    sink.end_promise.reject(global, Ok(js_err))?;
+                }
+                if !sink.done {
+                    sink.abort();
                 }
             }
         }
@@ -477,9 +471,7 @@ pub(crate) fn writable_stream(
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, task.uploaded_bytes.get(), &task.path, unsafe {
-            &mut *sink
-        });
+        let r = wrapper_callback(result, task, unsafe { &mut *sink });
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -507,6 +499,7 @@ pub(crate) fn writable_stream(
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
+        signal,
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload (the VM owns the heap that owns the JS objects
@@ -557,6 +550,11 @@ pub(crate) fn writable_stream(
     // `source` defaults to `SourceHandle::None`; no stream is attached on the
     // `writer()` path, so ready/close/start are no-ops.
     debug_assert!(sink.source.is_dead());
+    // Last: a signal that fired already fails the upload here, and `end()` reports it.
+    if let Some(signal) = &task.signal {
+        // SAFETY: as `arm_owner` above.
+        unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };
+    }
     Ok(sink.to_js(cx.global()))
 }
 
@@ -678,8 +676,14 @@ impl S3UploadStreamWrapper {
                 // JS error it stashed on the sink (preserves `.code` /
                 // `.name`) over the generic `UnknownError` passed to `fail()`.
                 let stashed = self_.sink_mut().and_then(|s| s.upstream_error.try_swap());
-                let js_err = stashed
-                    .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
+                let js_err = stashed.unwrap_or_else(|| {
+                    error_jsc::s3_rejection(
+                        err,
+                        self_.task.signal.as_ref(),
+                        &global,
+                        Some(self_.path.slice()),
+                    )
+                });
                 js_err.ensure_still_alive();
                 let mut is_native = false;
                 if let Some(sink) = self_.sink_mut() {
@@ -815,26 +819,39 @@ pub(crate) fn upload_stream(
     content_encoding: Option<&[u8]>,
     proxy: Option<&[u8]>,
     request_payer: bool,
+    signal: Option<AbortSignalRef>,
     callback: Option<fn(S3UploadResult, *mut c_void)>,
     callback_context: *mut c_void,
 ) -> JsResult<JSValue> {
+    // Refused before an upload exists: the completion, which owns `callback_context`, is
+    // told here, since no upload will tell it.
+    let refuse = |message: &'static str, js_err: JSValue| -> JSValue {
+        if let Some(callback) = callback {
+            callback(
+                S3UploadResult::Failure(Error::S3Error {
+                    code: b"UnknownError",
+                    message: message.as_bytes(),
+                }),
+                callback_context,
+            );
+        }
+        bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js()
+    };
     if readable_stream.is_disturbed(cx.global()) {
-        return Ok(bun_jsc::JSPromise::rejected_promise(
-            cx.global(),
-            cx.global()
-                .create_error_instance(format_args!("ReadableStream is already disturbed")),
-        )
-        .to_js());
+        const MESSAGE: &str = "ReadableStream is already disturbed";
+        return Ok(refuse(
+            MESSAGE,
+            cx.global().create_error_instance(format_args!("{MESSAGE}")),
+        ));
     }
 
     match readable_stream.ptr {
         ReadableStreamPtr::Invalid => {
-            return Ok(bun_jsc::JSPromise::rejected_promise(
-                cx.global(),
-                cx.global()
-                    .create_error_instance(format_args!("ReadableStream is invalid")),
-            )
-            .to_js());
+            const MESSAGE: &str = "ReadableStream is invalid";
+            return Ok(refuse(
+                MESSAGE,
+                cx.global().create_error_instance(format_args!("{MESSAGE}")),
+            ));
         }
         // The File/Bytes payload types
         // differ (`*FileReader` vs `*ByteStream`), so the arms are
@@ -860,7 +877,7 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+                return Ok(refuse("ReadableStream ended with an error", js_err));
             }
         }
         ReadableStreamPtr::File(_) => {
@@ -884,7 +901,7 @@ pub(crate) fn upload_stream(
                 });
                 let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                return Ok(bun_jsc::JSPromise::rejected_promise(cx.global(), js_err).to_js());
+                return Ok(refuse("ReadableStream ended with an error", js_err));
             }
         }
         _ => {}
@@ -927,6 +944,7 @@ pub(crate) fn upload_stream(
         credentials,
         poll_ref: JsCell::new(KeepAlive::init()),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
+        signal,
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
         // outlives every MultiPartUpload. Dereference to `&'static` for storage.
@@ -973,6 +991,11 @@ pub(crate) fn upload_stream(
     // SAFETY: freshly heap-allocated; exclusive access here.
     let ctx = unsafe { &mut *ctx_ptr };
     task.callback_context.set(ctx_ptr.cast::<c_void>());
+    // After `callback_context`: the completion has somewhere to go.
+    if let Some(signal) = &task.signal {
+        // SAFETY: as `arm_owner` above.
+        unsafe { bun_jsc::AbortHandle::follow_owner(task_ptr, signal.clone()) };
+    }
 
     // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -1126,7 +1149,7 @@ fn download_stream(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    request_payer: bool,
+    config: &RequestConfig,
     callback: fn(
         chunk: &MutableString,
         has_more: bool,
@@ -1166,7 +1189,7 @@ fn download_stream(
         &bun_s3_signing::SignOptions {
             path,
             method: bun_http::Method::GET,
-            request_payer,
+            request_payer: config.request_payer,
             content_hash: None,
             content_md5: None,
             search_params: None,
@@ -1264,8 +1287,6 @@ fn download_stream(
     task.signals = task.signal_store.to_with_backpressure();
 
     let vm = VirtualMachine::get();
-    let verbose = vm.get_verbose_fetch();
-    let reject_unauthorized = vm.get_tls_reject_unauthorized();
 
     task.http.write(bun_http::AsyncHTTP::init(
         bun_http::Method::GET,
@@ -1283,11 +1304,7 @@ fn download_stream(
         bun_http::FetchRedirect::Follow,
         bun_http::async_http::Options {
             http_proxy,
-            verbose: Some(verbose),
-            signals: Some(task.signals),
-            reject_unauthorized: Some(reject_unauthorized),
-            tls_props: crate::socket::http_client_defaults(vm),
-            ..Default::default()
+            ..s3_simple_request::http_options(vm, task.signals, config.options.idle_timeout_seconds)
         },
     ));
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
@@ -1471,7 +1488,7 @@ pub(crate) fn readable_stream(
     path: &[u8],
     offset: usize,
     size: Option<usize>,
-    request_payer: bool,
+    config: &RequestConfig,
     cx: &bun_jsc::JsThread<'_>,
 ) -> JsResult<JSValue> {
     // SAFETY (JSC_BORROW): `global_this` outlives the wrapper (it owns the JS heap that
@@ -1516,7 +1533,7 @@ pub(crate) fn readable_stream(
         path,
         offset,
         size,
-        request_payer,
+        config,
         S3DownloadStreamWrapper::opaque_callback,
         wrapper.cast::<c_void>(),
     );

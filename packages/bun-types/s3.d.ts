@@ -293,6 +293,33 @@ declare module "bun" {
     retry?: number;
 
     /**
+     * The socket idle timeout of each request, in milliseconds, as for `fetch()`.
+     * The timer resets whenever bytes are sent or received on the connection.
+     * Once the request is fully sent it is the deadline for the response
+     * headers, and it resets on each chunk of the body after that. A request
+     * fails with an `S3Error` whose `code` is `"Timeout"` when the timer fires.
+     * It is not a deadline for the whole request: a transfer that keeps moving
+     * is not cut off. The timer runs on a 4 second wheel, so a short value fires
+     * a few seconds late.
+     *
+     * `false` and `0` turn the timeout off. When it is not set, the process-wide
+     * HTTP idle timeout applies (5 minutes, `BUN_CONFIG_HTTP_IDLE_TIMEOUT`).
+     *
+     * Each request of an operation gets its own timeout. A multipart upload is
+     * several requests (create, each part, complete), and each of them can be
+     * retried `retry` times, each time with a fresh timeout. Use `signal` for a
+     * bound on the whole operation.
+     *
+     * @example
+     * ```ts
+     * // Fail when the endpoint stalls for 10 seconds
+     * const s3 = new Bun.S3Client({ bucket: "my-bucket", timeout: 10_000 });
+     * await s3.file("object.txt", { timeout: 2_000 }).text();
+     * ```
+     */
+    timeout?: number | false;
+
+    /**
      * The Content-Type of the file.
      * Automatically set based on file extension when possible.
      *
@@ -408,6 +435,30 @@ declare module "bun" {
      * @deprecated The size of the internal buffer in bytes. Defaults to 5 MiB. Use `partSize` and `queueSize` instead.
      */
     highWaterMark?: number;
+  }
+
+  /**
+   * Options of one S3 operation: {@link S3Options} and an `AbortSignal` for it.
+   */
+  interface S3RequestOptions extends S3Options {
+    /**
+     * Aborts the operation when the signal fires. The promise rejects with
+     * `signal.reason`, so `AbortSignal.timeout(ms)` gives a `TimeoutError` and
+     * bounds the whole operation, retries included. The parts of a multipart
+     * upload that are already on the server are removed with one
+     * `AbortMultipartUpload` request, which is bounded by `timeout`, not by the
+     * signal.
+     *
+     * Reads (`text()`, `arrayBuffer()`, `stream()`, `new Response(file)`) take no
+     * signal: they are bounded by the `timeout` of the handle. To cancel a read,
+     * use `fetch("s3://bucket/key", { signal })` or cancel the reader of `stream()`.
+     *
+     * @example
+     * ```ts
+     * const stat = await s3.stat("object.txt", { signal: AbortSignal.timeout(5_000) });
+     * ```
+     */
+    signal?: AbortSignal;
   }
 
   /**
@@ -581,7 +632,7 @@ declare module "bun" {
      * }
      * ```
      */
-    writer(options?: S3Options): NetworkSink;
+    writer(options?: S3RequestOptions): NetworkSink;
 
     /**
      * Gets a readable stream of the file's content.
@@ -669,8 +720,10 @@ declare module "bun" {
      *   console.error("Error checking file:", err);
      * }
      * ```
+     *
+     * @param options An `AbortSignal` for the request
      */
-    exists(): Promise<boolean>;
+    exists(options?: Pick<S3RequestOptions, "signal">): Promise<boolean>;
 
     /**
      * Uploads data to S3.
@@ -725,7 +778,7 @@ declare module "bun" {
         | S3File
         | Blob
         | Archive,
-      options?: S3Options,
+      options?: S3RequestOptions,
     ): Promise<number>;
 
     /**
@@ -787,8 +840,10 @@ declare module "bun" {
      *   console.error("Failed to delete file:", err);
      * }
      * ```
+     *
+     * @param options S3 credentials and configuration options, and an `AbortSignal`
      */
-    delete(): Promise<void>;
+    delete(options?: S3RequestOptions): Promise<void>;
 
     /**
      * Alias for `delete()`, matching the Node.js `fs` API naming.
@@ -803,9 +858,10 @@ declare module "bun" {
     /**
      * Get the stat of the file.
      *
+     * @param options An `AbortSignal` for the request
      * @returns Promise resolving to {@link S3Stats}
      */
-    stat(): Promise<S3Stats>;
+    stat(options?: Pick<S3RequestOptions, "signal">): Promise<S3Stats>;
   }
 
   interface S3ListObjectsOptions {
@@ -1059,7 +1115,7 @@ declare module "bun" {
         | Blob
         | File
         | Archive,
-      options?: S3Options,
+      options?: S3RequestOptions,
     ): Promise<number>;
 
     /**
@@ -1112,7 +1168,7 @@ declare module "bun" {
         | Blob
         | File
         | Archive,
-      options?: S3Options,
+      options?: S3RequestOptions,
     ): Promise<number>;
 
     /**
@@ -1203,7 +1259,7 @@ declare module "bun" {
      * }
      * ```
      */
-    unlink(path: string, options?: S3Options): Promise<void>;
+    unlink(path: string, options?: S3RequestOptions): Promise<void>;
 
     /**
      * Delete a file from the bucket.
@@ -1226,7 +1282,7 @@ declare module "bun" {
      * }
      * ```
      */
-    static unlink(path: string, options?: S3Options): Promise<void>;
+    static unlink(path: string, options?: S3RequestOptions): Promise<void>;
 
     /**
      * Delete a file from the bucket.
@@ -1250,7 +1306,7 @@ declare module "bun" {
      * }
      * ```
      */
-    delete(path: string, options?: S3Options): Promise<void>;
+    delete(path: string, options?: S3RequestOptions): Promise<void>;
 
     /**
      * Delete a file from the bucket.
@@ -1274,7 +1330,7 @@ declare module "bun" {
      * }
      * ```
      */
-    static delete(path: string, options?: S3Options): Promise<void>;
+    static delete(path: string, options?: S3RequestOptions): Promise<void>;
 
     /**
      * Get the size of a file in bytes, using a HEAD request.
@@ -1295,7 +1351,7 @@ declare module "bun" {
      * }
      * ```
      */
-    size(path: string, options?: S3Options): Promise<number>;
+    size(path: string, options?: S3RequestOptions): Promise<number>;
 
     /**
      * Get the size of a file in bytes, using a HEAD request.
@@ -1316,7 +1372,7 @@ declare module "bun" {
      * }
      * ```
      */
-    static size(path: string, options?: S3Options): Promise<number>;
+    static size(path: string, options?: S3RequestOptions): Promise<number>;
 
     /**
      * Check if a file exists in the bucket, using a HEAD request.
@@ -1343,7 +1399,7 @@ declare module "bun" {
      * }
      * ```
      */
-    exists(path: string, options?: S3Options): Promise<boolean>;
+    exists(path: string, options?: S3RequestOptions): Promise<boolean>;
 
     /**
      * Check if a file exists in the bucket, using a HEAD request.
@@ -1370,7 +1426,7 @@ declare module "bun" {
      * }
      * ```
      */
-    static exists(path: string, options?: S3Options): Promise<boolean>;
+    static exists(path: string, options?: S3RequestOptions): Promise<boolean>;
 
     /**
      * Get the stat of a file in an S3-compatible storage service.
@@ -1384,7 +1440,7 @@ declare module "bun" {
      * const stat = await bucket.stat("my-file.txt");
      * ```
      */
-    stat(path: string, options?: S3Options): Promise<S3Stats>;
+    stat(path: string, options?: S3RequestOptions): Promise<S3Stats>;
 
     /**
      * Get the stat of a file in an S3-compatible storage service.
@@ -1398,7 +1454,7 @@ declare module "bun" {
      * const stat = await S3Client.stat("my-file.txt", credentials);
      * ```
      */
-    static stat(path: string, options?: S3Options): Promise<S3Stats>;
+    static stat(path: string, options?: S3RequestOptions): Promise<S3Stats>;
 
     /**
      * Returns some or all (up to 1,000) of the objects in a bucket with each request.
@@ -1435,7 +1491,10 @@ declare module "bun" {
      */
     list(
       input?: S3ListObjectsOptions | null,
-      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
+      options?: Pick<
+        S3RequestOptions,
+        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "timeout" | "signal"
+      >,
     ): Promise<S3ListObjectsResponse>;
 
     /**
@@ -1473,7 +1532,10 @@ declare module "bun" {
      */
     static list(
       input?: S3ListObjectsOptions | null,
-      options?: Pick<S3Options, "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint">,
+      options?: Pick<
+        S3RequestOptions,
+        "accessKeyId" | "secretAccessKey" | "sessionToken" | "region" | "bucket" | "endpoint" | "timeout" | "signal"
+      >,
     ): Promise<S3ListObjectsResponse>;
   }
 

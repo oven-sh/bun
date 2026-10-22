@@ -477,19 +477,21 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── timeouts ────────────────────────────────────────────────────────────
 
-    /// Splits >240s onto the minute-granularity long-timeout wheel.
+    /// Splits >240s onto the minute-granularity long-timeout wheel. Whole
+    /// minutes, rounded up: uSockets pads each wheel by one tick, so the
+    /// timer never fires before `seconds`.
     pub fn set_timeout(&self, seconds: c_uint) {
         on_socket!(self.socket;
             connected s => if seconds > 240 {
                 s.set_timeout(0);
-                s.set_long_timeout(seconds / 60);
+                s.set_long_timeout(seconds.div_ceil(60));
             } else {
                 s.set_timeout(seconds);
                 s.set_long_timeout(0);
             },
             connecting c => if seconds > 240 {
                 c.timeout(0);
-                c.long_timeout(seconds / 60);
+                c.long_timeout(seconds.div_ceil(60));
             } else {
                 c.timeout(seconds);
                 c.long_timeout(0);

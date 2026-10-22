@@ -97,9 +97,33 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) {
     return c->kind;
 }
 
+/* The sweep advances the group's timestamp once per LIBUS_TIMEOUT_GRANULARITY
+ * seconds, at a phase unrelated to when a socket arms its timer. A socket
+ * armed for ceil(seconds / 4) ticks therefore fires up to one full tick early:
+ * for seconds <= 4 that is the very next sweep, with no idle time at all. Arm
+ * for one tick more, so the deadline is never before `seconds`, and at most
+ * one tick past `seconds` rounded up to a whole tick. 240 ticks is the most
+ * the wheel holds (one more wraps to the next sweep), so 957 seconds and
+ * above keep the old window: up to one tick early. */
+static inline unsigned char us_internal_timeout_stamp(unsigned char timestamp, unsigned int seconds) {
+    unsigned int ticks = (seconds + 7) >> 2;
+    if (ticks > 240) ticks = 240;
+    return (unsigned char) (((unsigned int) timestamp + ticks) % 240);
+}
+
+/* Same on the minute wheel: its counter advances once per 15 sweeps, so a
+ * stamp of `minutes` fires up to one full minute early. The counter sits on
+ * its value for 15 sweeps, so a stamp equal to it fires at the next sweep:
+ * 239 is the most this wheel holds. */
+static inline unsigned char us_internal_long_timeout_stamp(unsigned char long_timestamp, unsigned int minutes) {
+    unsigned int ticks = minutes + 1;
+    if (ticks > 239) ticks = 239;
+    return (unsigned char) (((unsigned int) long_timestamp + ticks) % 240);
+}
+
 __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, unsigned int seconds) {
     if (seconds) {
-        s->timeout = ((unsigned int)s->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        s->timeout = us_internal_timeout_stamp(s->group->timestamp, seconds);
     } else {
         s->timeout = 255;
     }
@@ -107,7 +131,7 @@ __attribute__((always_inline)) void us_socket_timeout(struct us_socket_t *s, uns
 
 void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int seconds) {
     if (seconds) {
-        c->timeout = ((unsigned int)c->group->timestamp + ((seconds + 3) >> 2)) % 240;
+        c->timeout = us_internal_timeout_stamp(c->group->timestamp, seconds);
     } else {
         c->timeout = 255;
     }
@@ -115,7 +139,7 @@ void us_connecting_socket_timeout(struct us_connecting_socket_t *c, unsigned int
 
 __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s, unsigned int minutes) {
     if (minutes) {
-        s->long_timeout = ((unsigned int)s->group->long_timestamp + minutes) % 240;
+        s->long_timeout = us_internal_long_timeout_stamp(s->group->long_timestamp, minutes);
     } else {
         s->long_timeout = 255;
     }
@@ -123,7 +147,7 @@ __attribute__((always_inline)) void us_socket_long_timeout(struct us_socket_t *s
 
 void us_connecting_socket_long_timeout(struct us_connecting_socket_t *c, unsigned int minutes) {
     if (minutes) {
-        c->long_timeout = ((unsigned int)c->group->long_timestamp + minutes) % 240;
+        c->long_timeout = us_internal_long_timeout_stamp(c->group->long_timestamp, minutes);
     } else {
         c->long_timeout = 255;
     }

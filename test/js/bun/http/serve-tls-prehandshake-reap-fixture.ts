@@ -10,7 +10,7 @@
 import net from "node:net";
 
 const N = Number(process.env.N || 300);
-const DEADLINE_MS = Number(process.env.DEADLINE_MS || 22000);
+const DEADLINE_MS = Number(process.env.DEADLINE_MS || 30000);
 
 const server = Bun.serve({
   port: 0,
@@ -38,10 +38,11 @@ for (let i = 0; i < N; i++) {
   socks.push(s);
 }
 
-// The idle timeout is 10s and the sweep granularity is 4s, so a correctly
-// behaving server closes every connection by ~16s; the deadline leaves margin
-// for debug builds. The race here is won or lost at a single sweep tick, so a
-// server that has not reaped them all by the deadline never will.
+// The idle timeout is 10s on a 4s sweep, armed one sweep past ceil(10 / 4),
+// so a correctly behaving server closes every connection by ~16s after the
+// first socket links (a debug build observed 17.5 to 20s); the deadline leaves
+// margin. The race here is won or lost at a single sweep tick, so a server
+// that has not reaped them all by the deadline never will.
 await Promise.race([allSettled.promise, Bun.sleep(DEADLINE_MS)]);
 
 console.log(JSON.stringify({ opened, held: held.size }));

@@ -3438,7 +3438,8 @@ it.concurrent(
   async () => {
     using server = Bun.serve({
       port: 0,
-      idleTimeout: 8, // uws precision is in seconds, and lower than 4 seconds is not reliable its timer is not that accurate
+      // The timer moves in 4 s steps: 4 fires 4 to 8 s into the 10 s stall.
+      idleTimeout: 4,
       async fetch(req) {
         const url = new URL(req.url);
         return new Response(
@@ -3472,6 +3473,126 @@ it.concurrent(
   },
   15_000,
 );
+
+// The idle timer runs on a 4 s sweep whose phase is unrelated to when a
+// connection arms it. Each test below keeps one other connection open, with
+// its own timer off, so the sweep is already running when the connection
+// under test arrives. Without the fix, that sweep cut the connection with no
+// idle time at all (#46211).
+describe.concurrent("idleTimeout never fires before its seconds of inactivity", () => {
+  // One raw HTTP/1.1 GET on its own connection. Resolves with the response head, or with the
+  // error name and how long after the request the connection was cut.
+  function rawGet(port: number, path: string): Promise<{ head: string } | { cut: string; afterMs: number }> {
+    return new Promise(resolve => {
+      const socket = net.connect(port, "127.0.0.1");
+      const sentAt = performance.now();
+      let received = "";
+      socket.setEncoding("utf8");
+      socket.on("connect", () => socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\n\r\n`));
+      socket.on("data", chunk => {
+        received += chunk;
+        if (received.includes("\r\n\r\n")) {
+          socket.destroy();
+          resolve({ head: received.split("\r\n")[0] });
+        }
+      });
+      const cut = (reason: string) => () => resolve({ cut: reason, afterMs: Math.round(performance.now() - sentAt) });
+      socket.on("error", err => cut((err as NodeJS.ErrnoException).code ?? err.name)());
+      socket.on("end", cut("end"));
+    });
+  }
+
+  function serveWithAnchor(idleTimeout: number, fetch: (req: Request) => Promise<Response> | Response) {
+    const released = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout,
+      async fetch(req, server) {
+        if (new URL(req.url).pathname === "/anchor") {
+          server.timeout(req, 0);
+          await released.promise;
+          return new Response();
+        }
+        return fetch(req);
+      },
+    });
+    const anchor = net.connect(server.port, "127.0.0.1");
+    anchor.write("GET /anchor HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    return {
+      server,
+      async [Symbol.asyncDispose]() {
+        released.resolve();
+        anchor.destroy();
+        await server.stop(true);
+      },
+    };
+  }
+
+  it(
+    "a response that streams every 100 ms is never cut with idleTimeout: 1",
+    async () => {
+      let cancelled = false;
+      await using anchored = serveWithAnchor(1, () => {
+        let sent = 0;
+        let timer: Timer;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              timer = setInterval(() => {
+                controller.enqueue("x\n");
+                // 5 s is past the first sweep after the connection arms its timer.
+                if (++sent === 50) {
+                  clearInterval(timer);
+                  controller.close();
+                }
+              }, 100);
+            },
+            cancel() {
+              clearInterval(timer);
+              cancelled = true;
+            },
+          }),
+        );
+      });
+      const res = await fetch(anchored.server.url);
+      expect(await res.text()).toBe("x\n".repeat(50));
+      expect(cancelled).toBe(false);
+    },
+    15_000,
+  );
+
+  it(
+    "a request whose handler takes 600 ms is answered with idleTimeout: 4",
+    async () => {
+      await using anchored = serveWithAnchor(4, async () => {
+        await Bun.sleep(600);
+        return new Response("ok");
+      });
+      // Back to back for more than one sweep period, so at least one request straddles a sweep.
+      const results: Awaited<ReturnType<typeof rawGet>>[] = [];
+      const until = performance.now() + 5_000;
+      while (performance.now() < until) results.push(await rawGet(anchored.server.port, "/"));
+      expect(results).toEqual(results.map(() => ({ head: "HTTP/1.1 200 OK" })));
+    },
+    15_000,
+  );
+
+  it(
+    "a silent request is cut no earlier than idleTimeout: 4 seconds",
+    async () => {
+      const never = Promise.withResolvers<Response>();
+      await using anchored = serveWithAnchor(4, () => never.promise);
+      // Land between two sweeps, so an early fire lands well before 4 s.
+      await Bun.sleep(2_000);
+      const result = await rawGet(anchored.server.port, "/");
+      if (!("cut" in result)) throw new Error(`answered: ${result.head}`);
+      // Two sweeps after arming: at least 4 s, at most 8 s plus scheduling.
+      expect(result.afterMs).toBeGreaterThanOrEqual(4_000);
+      expect(result.afterMs).toBeLessThan(9_000);
+    },
+    20_000,
+  );
+});
 
 it.concurrent(
   "should reset timeout after writes",
@@ -3573,7 +3694,7 @@ it.concurrent(
       TLS_CERT: tls.cert,
       TLS_KEY: tls.key,
       N: "300",
-      DEADLINE_MS: "22000",
+      DEADLINE_MS: "30000",
     });
     expect(result).toSpawn();
     const { opened, held } = JSON.parse(result.stdout);

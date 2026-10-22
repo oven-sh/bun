@@ -6863,6 +6863,9 @@ declare module "bun" {
      * To reset the timeout, call this function again.
      *
      * When a timeout happens, the `timeout` callback is called and the socket is closed.
+     *
+     * The timer moves in 4 second steps. The timeout never fires before
+     * `seconds`, and it can fire up to two steps (8 seconds) later.
      */
     timeout(seconds: number): void;
 

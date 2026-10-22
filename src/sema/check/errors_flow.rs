@@ -194,10 +194,8 @@ impl Checker<'_, '_> {
             // A getter without a symbol: the setter's parameter annotation, falling back to the type inferred from the
             // body.
             Some(self.return_type_of_fn(file, func))
-        } else if self.p.files.options.no_implicit_returns {
-            None
         } else {
-            return;
+            None
         };
         if let Some(t) = declared
             && (self.maybe_void(t) || self.is_any(t) || t.is_undefined())

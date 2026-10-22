@@ -10299,6 +10299,47 @@ export const inferredFirst = (shape: Shape) => {
       expect(exitCode).toBe(1);
     });
 
+    test("asks whether the end of a function without a return type can be reached", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+type Shape = { kind: "a" } | { kind: "b" };
+export function declaration(shape: Shape) {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      break;
+  }
+}
+export class Methods {
+  method(shape: Shape) {
+    fail();
+    while (c && c) {}
+    switch (shape.kind) {
+      case "a":
+        break;
+    }
+  }
+  returnsVoid(shape: Shape): void {
+    fail();
+    while (c && c) {}
+    switch (shape.kind) {
+      case "a":
+        break;
+    }
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(7,17): error TS2339: Property 'kind' does not exist on type 'never'.
+        a.ts(16,19): error TS2339: Property 'kind' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

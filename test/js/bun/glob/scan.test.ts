@@ -24,7 +24,18 @@ import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, isLinux, isRoot, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isRoot,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1151,7 +1162,8 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
     const cwd = path.join(String(dir), "top");
     const result = norm(Array.from(new Glob("**/*.txt").scanSync({ cwd, followSymlinks: true })));
-    expect(result).toEqual(["file.txt", "loop/file.txt"]);
+    // Windows still goes into the link once (see the `describe` below).
+    expect(result).toEqual(isWindows ? ["file.txt", "loop/file.txt"] : ["file.txt"]);
 
     using shared = tempDir("glob-scan-symlink-shared-target", {
       "realdir/file.txt": "x",
@@ -1183,7 +1195,451 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     fs.symlinkSync(".", path.join(String(dir), "top", "loop"), "dir");
     const cwd = path.join(String(dir), "top");
     const result = await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true }));
-    expect(norm(result)).toEqual(["file.txt", "loop/file.txt"]);
+    expect(norm(result)).toEqual(isWindows ? ["file.txt", "loop/file.txt"] : ["file.txt"]);
+  });
+
+  // A link back up leads to a directory that a `**` already walks: the
+  // directory where the `**` starts, or one below it on the way down. The `**`
+  // does not continue into it, as `find -L` does not. Every name below it is a
+  // longer name for a file that the `**` already gives.
+  //
+  // Not on Windows: a directory listing has no file id there, and the cost of
+  // a query per directory is not measured yet.
+  describe.skipIf(isWindows)("** with followSymlinks and a link back up", () => {
+    const scan = (cwd: string, pattern = "**/*.txt", opts: GlobScanOptions = {}) =>
+      norm(Array.from(new Glob(pattern).scanSync({ cwd, followSymlinks: true, ...opts })));
+    const link = (target: string, ...at: string[]) => fs.symlinkSync(target, path.join(...at), "dir");
+    const relativeTo = (root: string, names: string[]) => norm(names.map(name => path.relative(root, name)));
+
+    // d1/d2/d3/d4 below `root`, with a file and a link to the parent in each.
+    function buildLadder(root: string) {
+      const files = ["t0.txt"];
+      let at = root;
+      let relative = "";
+      for (let i = 1; i <= 4; i++) {
+        at = path.join(at, `d${i}`);
+        relative += `d${i}/`;
+        fs.mkdirSync(at);
+        fs.writeFileSync(path.join(at, `t${i}.txt`), "x");
+        link("..", at, "up");
+        files.push(`${relative}t${i}.txt`);
+      }
+      return files.sort();
+    }
+
+    test("every directory has a link to its parent", async () => {
+      using dir = tempDir("glob-scan-symlink-ladder", { "t0.txt": "x" });
+      const cwd = String(dir);
+      const files = buildLadder(cwd);
+      expect(scan(cwd)).toEqual(files);
+      expect(norm(await Array.fromAsync(new Glob("**/*.txt").scan({ cwd, followSymlinks: true })))).toEqual(files);
+      expect(relativeTo(cwd, scan(cwd, "**/*.txt", { absolute: true }))).toEqual(files);
+      expect(relativeTo(cwd, scan(cwd, path.join(cwd, "**/*.txt")))).toEqual(files);
+      expect(relativeTo("..", scan(path.join(cwd, "d1"), "../**/*.txt"))).toEqual(files);
+    });
+
+    test("the ** starts below the cwd", () => {
+      using dir = tempDir("glob-scan-symlink-ladder-prefix", { "t0.txt": "x" });
+      const cwd = String(dir);
+      const files = buildLadder(cwd);
+      // The `**` starts at `d1` and does not walk the cwd yet: it reads `d1/up`,
+      // and no other name gives `t0.txt`. `d1/up/d1` is where it started.
+      expect(scan(cwd, "d1/**/*.txt")).toEqual(
+        [...files.filter(file => file.startsWith("d1/")), "d1/up/t0.txt"].sort(),
+      );
+      // `d1/up` is the cwd, and the `**` starts there: it gives every file once.
+      expect(scan(cwd, "d1/up/**/*.txt")).toEqual(files.map(file => `d1/up/${file}`).sort());
+      expect(scan(cwd, "d1/up/**/*.txt", { followSymlinks: false })).toEqual(files.map(file => `d1/up/${file}`).sort());
+    });
+
+    test("a link that a component after the ** names is read for that component", () => {
+      using dir = tempDir("glob-scan-symlink-ladder-named", { "t0.txt": "x" });
+      const cwd = String(dir);
+      buildLadder(cwd);
+      expect(scan(cwd, "**/up/*.txt")).toEqual([
+        "d1/d2/d3/d4/up/t3.txt",
+        "d1/d2/d3/up/t2.txt",
+        "d1/d2/up/t1.txt",
+        "d1/up/t0.txt",
+      ]);
+      expect(scan(cwd, "**/*/*.txt")).toEqual([
+        "d1/d2/d3/d4/t4.txt",
+        "d1/d2/d3/d4/up/t3.txt",
+        "d1/d2/d3/t3.txt",
+        "d1/d2/d3/up/t2.txt",
+        "d1/d2/t2.txt",
+        "d1/d2/up/t1.txt",
+        "d1/t1.txt",
+        "d1/up/t0.txt",
+      ]);
+    });
+
+    test("a directory below a followed link that is the walk root", () => {
+      using dir = tempDir("glob-scan-symlink-up", { "proj/a.txt": "x", "sib/b.txt": "x" });
+      link("..", String(dir), "proj", "up");
+      const proj = path.join(String(dir), "proj");
+      // `up` is the parent of the walk root: the `**` does not walk it yet, so
+      // it is listed. `up/proj` is the walk root again.
+      expect(scan(proj)).toEqual(["a.txt", "up/sib/b.txt"]);
+      expect(relativeTo(proj, scan(String(dir), path.join(proj, "**/*.txt")))).toEqual(["a.txt", "up/sib/b.txt"]);
+      // Here the `**` starts at `up`, and `up/proj` is not a directory it walks.
+      expect(scan(proj, "up/**/*.txt")).toEqual(["up/proj/a.txt", "up/sib/b.txt"]);
+      expect(scan(proj, "up/**/*.txt", { followSymlinks: false })).toEqual(["up/proj/a.txt", "up/sib/b.txt"]);
+    });
+
+    test("packages that link to each other in a circle", () => {
+      using dir = tempDir("glob-scan-symlink-circle", { "a/src/foo.txt": "x", "b/src/bar.txt": "x" });
+      for (const [from, to] of [
+        ["a", "b"],
+        ["b", "c"],
+        ["c", "a"],
+      ]) {
+        fs.mkdirSync(path.join(String(dir), from, "node_modules"), { recursive: true });
+        link(path.join("..", "..", to), String(dir), from, "node_modules", to);
+      }
+      expect(scan(path.join(String(dir), "a"))).toEqual(["node_modules/b/src/bar.txt", "src/foo.txt"]);
+      // From the root no package is on the way down, so each is entered
+      // through the links until the circle closes.
+      expect(scan(String(dir))).toEqual([
+        "a/node_modules/b/src/bar.txt",
+        "a/src/foo.txt",
+        "b/node_modules/c/node_modules/a/src/foo.txt",
+        "b/src/bar.txt",
+        "c/node_modules/a/node_modules/b/src/bar.txt",
+        "c/node_modules/a/src/foo.txt",
+      ]);
+    });
+
+    test("a package that links to itself", () => {
+      using dir = tempDir("glob-scan-symlink-self-package", {
+        "package.json": "{}",
+        "node_modules/dep/package.json": "{}",
+      });
+      link("..", String(dir), "node_modules", "self");
+      // The `**` starts at `node_modules`. No other name gives the package's
+      // own file, so the link is followed. `self/node_modules` is a repeat.
+      expect(scan(String(dir), "node_modules/**/package.json")).toEqual([
+        "node_modules/dep/package.json",
+        "node_modules/self/package.json",
+      ]);
+      expect(scan(String(dir), "**/package.json")).toEqual(["node_modules/dep/package.json", "package.json"]);
+    });
+
+    test("a ** below another **", () => {
+      using dir = tempDir("glob-scan-symlink-two-globstars", { "index.js": "", "examples/basic/main.js": "" });
+      fs.mkdirSync(path.join(String(dir), "examples", "basic", "node_modules"));
+      link(path.join("..", "..", ".."), String(dir), "examples", "basic", "node_modules", "lib");
+      // Only the second `**` gives the files of `lib`, so it goes into it once.
+      expect(scan(String(dir), "**/node_modules/**/*.js")).toEqual([
+        "examples/basic/node_modules/lib/examples/basic/main.js",
+        "examples/basic/node_modules/lib/index.js",
+      ]);
+      expect(scan(String(dir), "**/*.js")).toEqual(["examples/basic/main.js", "index.js"]);
+    });
+
+    test("two links to the walk root", () => {
+      using dir = tempDir("glob-scan-symlink-two-loops", { "file.txt": "x" });
+      link(".", String(dir), "x");
+      link(".", String(dir), "y");
+      expect(scan(String(dir))).toEqual(["file.txt"]);
+    });
+
+    test("a link to a directory below a followed link", () => {
+      using dir = tempDir("glob-scan-symlink-below-link", { "d0/d1/f.txt": "x" });
+      link(".", String(dir), "d0", "d1", "self");
+      link("d0", String(dir), "l0");
+      expect(scan(String(dir))).toEqual(["d0/d1/f.txt", "l0/d1/f.txt"]);
+      expect(scan(String(dir), "l0/**/*.txt")).toEqual(["l0/d1/f.txt"]);
+    });
+
+    test("a directory below a second link that is the target of the first", () => {
+      using dir = tempDir("glob-scan-symlink-target-again", { "a/T/f.txt": "x" });
+      link("..", String(dir), "a", "T", "up");
+      link(path.join("a", "T"), String(dir), "L");
+      expect(scan(String(dir))).toEqual(["L/f.txt", "a/T/f.txt"]);
+      expect(scan(String(dir), "L/**/*.txt")).toEqual(["L/f.txt"]);
+      expect(scan(String(dir), "L/**", { onlyFiles: false })).toEqual(["L/f.txt", "L/up", "L/up/T"]);
+    });
+
+    test("the name of the link still matches", () => {
+      using dir = tempDir("glob-scan-symlink-name", { "follow/target/file.txt": "x" });
+      const follow = path.join(String(dir), "follow");
+      link(path.join(follow, "target"), follow, "link");
+      link(follow, follow, "cycle");
+      const names = ["cycle", "link", "link/file.txt", "target", "target/file.txt"];
+      expect(scan(follow, "**", { onlyFiles: false })).toEqual(names);
+      expect(scan(String(dir), "follow/**", { onlyFiles: false })).toEqual(names.map(name => `follow/${name}`));
+    });
+
+    test("a link that another component matches is read", () => {
+      using dir = tempDir("glob-scan-symlink-named", { "top/file.txt": "x" });
+      link(".", String(dir), "top", "loop");
+      const top = path.join(String(dir), "top");
+      expect(scan(top, "*/*.txt")).toEqual(["loop/file.txt"]);
+      expect(scan(top, "loop/*.txt")).toEqual(["loop/file.txt"]);
+      expect(scan(top, "loop/**/*.txt")).toEqual(["loop/file.txt"]);
+      expect(scan(String(dir), "**/loop/*.txt")).toEqual(["top/loop/file.txt"]);
+    });
+
+    // The rule, written a second time: `**/*` gives every name below the cwd,
+    // and goes into a directory unless its real path is on the way down to it.
+    test("**/* on generated trees is the walk that does not enter a directory it is already inside", () => {
+      function rng(seed: number) {
+        let s = seed >>> 0;
+        return () => {
+          s = (Math.imul(s ^ (s >>> 15), 2246822507) + 0x9e3779b9) >>> 0;
+          s = (Math.imul(s ^ (s >>> 13), 3266489909) + 0x85ebca6b) >>> 0;
+          return ((s ^= s >>> 16) >>> 0) / 4294967296;
+        };
+      }
+
+      function walk(cwd: string) {
+        const entries: { name: string; file: boolean; hidden: boolean }[] = [];
+        const list = (dir: string, real: string, relative: string, hidden: boolean, way: string[]) => {
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const at = path.join(dir, entry.name);
+            const stat = entry.isSymbolicLink() ? fs.statSync(at, { throwIfNoEntry: false }) : entry;
+            const isHidden = hidden || entry.name.startsWith(".");
+            entries.push({ name: relative + entry.name, file: !!stat?.isFile(), hidden: isHidden });
+            if (!stat?.isDirectory()) continue;
+            const realEntry = entry.isSymbolicLink() ? fs.realpathSync(at) : path.join(real, entry.name);
+            if (!way.includes(realEntry))
+              list(at, realEntry, `${relative}${entry.name}/`, isHidden, [...way, realEntry]);
+          }
+        };
+        list(cwd, cwd, "", false, [cwd]);
+        return entries;
+      }
+
+      // Directories up to 4 deep, a file in most, and 3 to 7 links: to `.`,
+      // `..`, `../..`, nothing, a file, or another directory.
+      function build(root: string, random: () => number) {
+        const pick = <T>(from: T[]) => from[Math.floor(random() * from.length)];
+        const dirs = ["."];
+        for (let i = 3 + Math.floor(random() * 5); i > 0; i--) {
+          const name = random() < 0.15 ? `.h${Math.floor(random() * 2)}` : `d${Math.floor(random() * 3)}`;
+          const dir = path.posix.join(pick(dirs), name);
+          if (dir.split("/").length > 4 || dirs.includes(dir)) continue;
+          fs.mkdirSync(path.join(root, dir));
+          dirs.push(dir);
+        }
+        for (const dir of dirs) {
+          if (random() < 0.8) fs.writeFileSync(path.join(root, dir, `f${Math.floor(random() * 2)}.txt`), "x");
+        }
+        for (let i = 3 + Math.floor(random() * 5); i > 0; i--) {
+          const at = path.join(root, pick(dirs));
+          const name = path.join(
+            at,
+            random() < 0.15 ? `.h${Math.floor(random() * 2)}` : `l${Math.floor(random() * 3)}`,
+          );
+          if (fs.lstatSync(name, { throwIfNoEntry: false })) continue;
+          const kind = random();
+          let target = kind < 0.1 ? "." : kind < 0.3 ? ".." : kind < 0.37 ? "../.." : kind < 0.41 ? "missing" : "";
+          if (target === "") {
+            const to = kind < 0.45 ? path.join(root, "f0.txt") : path.join(root, pick(dirs));
+            target = random() < 0.7 ? path.relative(at, to) || "." : to;
+          }
+          // Not above the tree: the walk would leave it.
+          if (!(path.resolve(at, target) + path.sep).startsWith(root + path.sep)) target = ".";
+          fs.symlinkSync(target, name);
+        }
+        return random() < 0.7 ? root : path.join(root, pick(dirs));
+      }
+
+      using dir = tempDir("glob-scan-symlink-generated", {});
+      const base = fs.realpathSync(String(dir));
+      for (let seed = 1; seed <= (isDebug || isASAN ? 25 : 100); seed++) {
+        const root = path.join(base, `s${seed}`);
+        fs.mkdirSync(root);
+        const cwd = build(root, rng(seed * 104729));
+        const entries = walk(cwd);
+        for (const dot of [true, false]) {
+          for (const onlyFiles of [true, false]) {
+            const names = Array.from(new Glob("**/*").scanSync({ cwd, followSymlinks: true, dot, onlyFiles }));
+            expect({ seed, dot, onlyFiles, names: norm(names) }).toEqual({
+              seed,
+              dot,
+              onlyFiles,
+              names: entries
+                .filter(entry => (dot || !entry.hidden) && (!onlyFiles || entry.file))
+                .map(entry => entry.name)
+                .sort(),
+            });
+          }
+        }
+      }
+    });
+
+    // A walk with links and no link back up tells its directories apart from
+    // the listings it reads anyway.
+    const strace = isLinux ? Bun.which("strace") : null;
+    test.skipIf(!strace)("a walk with no link back up makes no stat call", async () => {
+      using dir = tempDir("glob-scan-symlink-syscalls", {
+        "app/m.js": "",
+        "store/p0/lib/i.js": "",
+        "store/p1/lib/i.js": "",
+      });
+      link(path.join("..", "store", "p0"), String(dir), "app", "l0");
+      link(path.join("..", "store", "p1"), String(dir), "app", "l1");
+      const app = path.join(fs.realpathSync(String(dir)), "app");
+      const trace = path.join(String(dir), "trace.log");
+      await using proc = Bun.spawn({
+        cmd: [
+          strace!,
+          "-f",
+          "-y",
+          "-o",
+          trace,
+          "-e",
+          "trace=stat,lstat,fstat,newfstatat,statx",
+          bunExe(),
+          "-e",
+          `console.log([...new Bun.Glob("**/*.js").scanSync({ cwd: ${JSON.stringify(app)}, followSymlinks: true })].sort().join())`,
+        ],
+        env: {
+          ...bunEnv,
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: "detect_leaks=0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stats = (await Bun.file(trace).text()).split("\n").filter(line => line.includes(app));
+      expect({ stdout: stdout.trim(), stats, exitCode }, stderr).toEqual({
+        stdout: "l0/lib/i.js,l1/lib/i.js,m.js",
+        stats: [],
+        exitCode: 0,
+      });
+    });
+
+    // A filesystem can give no inode number for `.` in a listing, or the same
+    // number in every directory (libfuse without `use_ino`). The walk then
+    // tells directories apart with `fstat`. An LD_PRELOAD shim rewrites the
+    // number after the real getdents64(2) returns. It also sets the length of
+    // the first record of the directory `malformed` to 0: the search for `.`
+    // ends there, and the walk fails as it does without that search.
+    const cc = isLinux ? Bun.which("cc") || Bun.which("gcc") || Bun.which("clang") : null;
+    test.skipIf(!cc)("a listing that does not tell directories apart gives the same names", async () => {
+      const shim = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <limits.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+static long (*next_syscall)(long, ...);
+
+long syscall(long nr, ...) {
+  va_list ap;
+  va_start(ap, nr);
+  long a1 = va_arg(ap, long), a2 = va_arg(ap, long), a3 = va_arg(ap, long);
+  long a4 = va_arg(ap, long), a5 = va_arg(ap, long), a6 = va_arg(ap, long);
+  va_end(ap);
+  if (!next_syscall) next_syscall = dlsym(RTLD_NEXT, "syscall");
+  long rc = next_syscall(nr, a1, a2, a3, a4, a5, a6);
+  const char *dot_ino = getenv("GLOB_TEST_DOT_INO");
+  if (nr != SYS_getdents64 || rc <= 0 || !dot_ino) return rc;
+
+  // struct linux_dirent64 { u64 d_ino; s64 d_off; u16 d_reclen; u8 d_type; char d_name[]; }
+  enum { RECLEN_OFFSET = 16, NAME_OFFSET = 19 };
+  unsigned char *buf = (unsigned char *)a2;
+
+  char link[64], path[PATH_MAX];
+  snprintf(link, sizeof link, "/proc/self/fd/%d", (int)a1);
+  ssize_t n = readlink(link, path, sizeof path - 1);
+  if (n > 0) {
+    path[n] = 0;
+    if (strcmp(strrchr(path, '/') + 1, "malformed") == 0) {
+      memset(buf + RECLEN_OFFSET, 0, sizeof(uint16_t));
+      return rc;
+    }
+  }
+
+  uint64_t ino = strtoull(dot_ino, NULL, 0);
+  for (long at = 0; at < rc;) {
+    uint16_t reclen;
+    memcpy(&reclen, buf + at + RECLEN_OFFSET, sizeof reclen);
+    if (buf[at + NAME_OFFSET] == '.' && buf[at + NAME_OFFSET + 1] == 0) memcpy(buf + at, &ino, sizeof ino);
+    at += reclen;
+  }
+  return rc;
+}
+`;
+      using dir = tempDir("glob-scan-symlink-dot-ino", {
+        "shim.c": shim,
+        "ladder/t0.txt": "x",
+        "package/package.json": "{}",
+        "package/node_modules/dep/package.json": "{}",
+        "links/app/m.txt": "x",
+        "links/store/p0/lib/i.txt": "x",
+        "links/store/p1/lib/i.txt": "x",
+        "malformed/a.txt": "x",
+      });
+      const root = String(dir);
+      buildLadder(path.join(root, "ladder"));
+      link("..", root, "package", "node_modules", "self");
+      link(path.join("..", "store", "p0"), root, "links", "app", "l0");
+      link(path.join("..", "p1"), root, "links", "store", "p0", "l1");
+      link(path.join("..", "..", "app"), root, "links", "store", "p1", "app");
+      const scans = [
+        ["ladder", "**/*.txt"],
+        ["ladder", "d1/**/*.txt"],
+        ["ladder", "**/up/*.txt"],
+        ["ladder", "**/*/**/*.txt"],
+        ["package", "node_modules/**/package.json"],
+        ["package", "**/package.json"],
+        ["links/app", "**/*.txt"],
+        ["links", "**/*.txt"],
+        ["malformed", "**"],
+      ].map(([cwd, pattern]) => [path.join(root, cwd), pattern]);
+      const names: (string[] | string)[] = scans.map(([cwd, pattern]) => scan(cwd, pattern));
+      expect([names[0].length, names.at(-1)]).toEqual([5, ["a.txt"]]);
+      names[names.length - 1] = "EIO";
+
+      const shimPath = path.join(root, "shim.so");
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, path.join(root, "shim.c"), "-ldl"],
+        env: bunEnv,
+        stderr: "inherit",
+      });
+      expect(await compile.exited).toBe(0);
+
+      const run = async (dotIno: string) => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const scan = ([cwd, pattern]) => {
+              try {
+                return [...new Bun.Glob(pattern).scanSync({ cwd, followSymlinks: true })].sort();
+              } catch (e) {
+                return e.code;
+              }
+            };
+            console.log(JSON.stringify(JSON.parse(process.env.GLOB_TEST_SCANS).map(scan)));`,
+          ],
+          env: {
+            ...bunEnv,
+            LD_PRELOAD: [shimPath, bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+            GLOB_TEST_DOT_INO: dotIno,
+            GLOB_TEST_SCANS: JSON.stringify(scans),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { dotIno, stdout: stdout.trim(), stderr, exitCode };
+      };
+      for (const { stderr, ...result } of await Promise.all(["0", "0xffffffff"].map(run))) {
+        expect(result, stderr).toEqual({ dotIno: result.dotIno, stdout: JSON.stringify(names), exitCode: 0 });
+      }
+    });
   });
 
   test("async scan resolves a literal path through a symlink", async () => {

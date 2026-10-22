@@ -161,6 +161,16 @@ pub mod dir_iterator {
 
     const BUF_SIZE: usize = 8192;
 
+    /// What the first read of a listing tells about the directory itself.
+    pub enum FirstRead {
+        /// The inode number in its `.` record.
+        Dot(u64),
+        /// The read has no `.` record with an inode number.
+        NoDot,
+        /// The read returned no record: the listing is complete.
+        Empty,
+    }
+
     /// Native-encoding directory entry returned by `WrappedIterator::next()`.
     ///
     /// `name` is a
@@ -375,26 +385,28 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
+        /// Reads the next records into `buf`. Returns `false` at the end of the directory.
+        #[inline(always)]
+        fn fill(&mut self, dir: Fd) -> Result<bool> {
+            // glibc doesn't expose getdents64; go straight to the syscall.
+            // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
+            let rc = unsafe {
+                super::linux_syscall::getdents64(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE)
+            };
+            if rc < 0 {
+                return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
+            }
+            if rc == 0 {
+                return Ok(false);
+            }
+            self.index = 0;
+            self.end_index = rc as usize;
+            Ok(true)
+        }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
-                if self.index >= self.end_index {
-                    // glibc doesn't expose getdents64; go straight to the syscall.
-                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        super::linux_syscall::getdents64(
-                            dir.native(),
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                        )
-                    };
-                    if rc < 0 {
-                        return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
-                    }
-                    if rc == 0 {
-                        return Ok(None);
-                    }
-                    self.index = 0;
-                    self.end_index = rc as usize;
+                if self.index >= self.end_index && !self.fill(dir)? {
+                    return Ok(None);
                 }
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
@@ -432,50 +444,51 @@ pub mod dir_iterator {
                 received_eof: false,
             }
         }
+        /// Reads the next records into `buf`. Returns `false` at the end of the directory.
+        #[inline(always)]
+        fn fill(&mut self, dir: Fd) -> Result<bool> {
+            if self.received_eof {
+                return Ok(false);
+            }
+
+            // getdirentries64() writes to the last 4 bytes of the
+            // buffer to indicate EOF. If that value is not zero, we
+            // have reached the end of the directory and can skip the
+            // extra syscall. The wrapper zeroes those bytes before
+            // each attempt.
+            // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
+            const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
+            const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
+            self.received_eof = false;
+
+            // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
+            let n = unsafe {
+                super::getdirentries64(dir, self.buf.as_mut_ptr(), BUF_SIZE, &raw mut self.seek)
+            }?;
+            if n == 0 {
+                self.received_eof = true;
+                return Ok(false);
+            }
+            self.index = 0;
+            self.end_index = n;
+            // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
+            // and the kernel may have overwritten it with the EOF flag —
+            // either way the 4 bytes are initialized.
+            let flag = unsafe {
+                self.buf
+                    .as_mut_ptr()
+                    .add(BUF_SIZE - 4)
+                    .cast::<[u8; 4]>()
+                    .read()
+            };
+            let flag = u32::from_ne_bytes(flag);
+            self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
+            Ok(true)
+        }
         fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
-                if self.index >= self.end_index {
-                    if self.received_eof {
-                        return Ok(None);
-                    }
-
-                    // getdirentries64() writes to the last 4 bytes of the
-                    // buffer to indicate EOF. If that value is not zero, we
-                    // have reached the end of the directory and can skip the
-                    // extra syscall. The wrapper zeroes those bytes before
-                    // each attempt.
-                    // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
-                    const GETDIRENTRIES64_EXTENDED_BUFSIZE: usize = 1024;
-                    const _: () = assert!(BUF_SIZE >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
-                    self.received_eof = false;
-
-                    // SAFETY: buf is valid for BUF_SIZE bytes; seek is a valid *mut i64.
-                    let n = unsafe {
-                        super::getdirentries64(
-                            dir,
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                            &raw mut self.seek,
-                        )
-                    }?;
-                    if n == 0 {
-                        self.received_eof = true;
-                        return Ok(None);
-                    }
-                    self.index = 0;
-                    self.end_index = n;
-                    // SAFETY: we explicitly zeroed `[BUF_SIZE-4..BUF_SIZE)` above
-                    // and the kernel may have overwritten it with the EOF flag —
-                    // either way the 4 bytes are initialized.
-                    let flag = unsafe {
-                        self.buf
-                            .as_mut_ptr()
-                            .add(BUF_SIZE - 4)
-                            .cast::<[u8; 4]>()
-                            .read()
-                    };
-                    let flag = u32::from_ne_bytes(flag);
-                    self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
+                if self.index >= self.end_index && !self.fill(dir)? {
+                    return Ok(None);
                 }
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
@@ -509,28 +522,34 @@ pub mod dir_iterator {
                 end_index: 0,
             }
         }
-        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
+        /// Reads the next records into `buf`. Returns `false` at the end of the directory.
+        #[inline(always)]
+        fn fill(&mut self, dir: Fd) -> Result<bool> {
             unsafe extern "C" {
                 fn getdents(fd: libc::c_int, buf: *mut u8, nbytes: usize) -> isize;
             }
+            // SAFETY: buf is valid for BUF_SIZE bytes.
+            let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
+            if rc < 0 {
+                let e = super::last_errno();
+                // FreeBSD reports ENOENT when iterating an unlinked
+                // but still-open directory.
+                if e == libc::ENOENT {
+                    return Ok(false);
+                }
+                return Err(Error::from_code_int(e, Tag::getdents64));
+            }
+            if rc == 0 {
+                return Ok(false);
+            }
+            self.index = 0;
+            self.end_index = rc as usize;
+            Ok(true)
+        }
+        fn next(&mut self, dir: Fd) -> Result<Option<IteratorResult>> {
             loop {
-                if self.index >= self.end_index {
-                    // SAFETY: buf is valid for BUF_SIZE bytes.
-                    let rc = unsafe { getdents(dir.native(), self.buf.as_mut_ptr(), BUF_SIZE) };
-                    if rc < 0 {
-                        let e = super::last_errno();
-                        // FreeBSD reports ENOENT when iterating an unlinked
-                        // but still-open directory.
-                        if e == libc::ENOENT {
-                            return Ok(None);
-                        }
-                        return Err(Error::from_code_int(e, Tag::getdents64));
-                    }
-                    if rc == 0 {
-                        return Ok(None);
-                    }
-                    self.index = 0;
-                    self.end_index = rc as usize;
+                if self.index >= self.end_index && !self.fill(dir)? {
+                    return Ok(None);
                 }
                 let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
                     return dirent::end_walk(&mut self.end_index, Tag::getdents64);
@@ -770,6 +789,40 @@ pub mod dir_iterator {
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
             self.state.next(self.dir)
+        }
+        /// Makes the first read of the listing and tells what it says about
+        /// the directory itself. `next()` then returns the entries of that
+        /// read and does not repeat it. Call it before the first `next()`.
+        ///
+        /// Two listings of one directory give the same `Dot` number. Two
+        /// directories can give it too (two devices), and it is not always
+        /// `st_ino` (an overlay across two filesystems). So compare it only
+        /// with the `Dot` of another listing, and confirm a match with `fstat`.
+        /// On Windows the listing has no file id: this reads nothing and
+        /// gives `NoDot`.
+        pub fn first_read(&mut self) -> Result<FirstRead> {
+            #[cfg(unix)]
+            {
+                let state = &mut self.state;
+                if state.index >= state.end_index && !state.fill(self.dir)? {
+                    return Ok(FirstRead::Empty);
+                }
+                // As in `record_at`: a count above the buffer is malformed, and
+                // `next()` reports it.
+                if state.end_index > BUF_SIZE {
+                    return Ok(FirstRead::NoDot);
+                }
+                // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
+                let filled = unsafe { state.buf.filled(state.end_index) };
+                Ok(match dirent::dot_ino::<dirent::Native>(filled) {
+                    Some(ino) => FirstRead::Dot(ino),
+                    None => FirstRead::NoDot,
+                })
+            }
+            #[cfg(windows)]
+            {
+                Ok(FirstRead::NoDot)
+            }
         }
     }
 

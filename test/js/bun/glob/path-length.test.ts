@@ -161,11 +161,11 @@ describe.skipIf(isWindows)("Glob path length", () => {
     expect(scanStderr).not.toContain("panic");
     expect(scanStderr).not.toContain("Segmentation fault");
     expect(scanCode).toBe(0);
-    // The walker descends a directory symlink that resolves to a directory it
-    // is already inside exactly once, so the scan completes with the symlink
-    // entry and its single nested visit instead of growing work_item.path
-    // toward MAX_PATH_BYTES.
-    expect(scanStdout.trim()).toBe("OK:2");
+    // `**` does not continue into a directory symlink that resolves to a
+    // directory the walk is already inside, so the scan completes with the
+    // symlink entry alone instead of growing work_item.path toward
+    // MAX_PATH_BYTES.
+    expect(scanStdout.trim()).toBe("OK:1");
   });
 
   for (const component of ["..", "."] as const) {

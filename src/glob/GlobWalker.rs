@@ -82,6 +82,10 @@ pub trait Accessor {
     fn statat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
     /// Like statat but does not follow symlinks.
     fn lstatat(handle: Self::Handle, path: &ZStr) -> Maybe<Stat>;
+    /// The stat of the open directory `handle` itself.
+    fn fstat(handle: Self::Handle) -> Maybe<Stat> {
+        Self::statat(handle, ZStr::from_slice_with_nul(b".\0"))
+    }
     fn close(handle: Self::Handle) -> Option<SysError>;
 }
 
@@ -92,6 +96,11 @@ pub trait AccessorDirIter {
     fn iterate(dir: Self::Handle) -> Self;
     fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
         // default: no-op (only SyscallAccessor on Windows uses this)
+    }
+    /// `bun_sys::dir_iterator::WrappedIterator::first_read`. Called before
+    /// the first `next()`.
+    fn first_read(&mut self) -> Maybe<DirIterator::FirstRead> {
+        Ok(DirIterator::FirstRead::NoDot)
     }
 }
 
@@ -156,6 +165,11 @@ impl AccessorDirIter for SyscallDirIter {
     fn set_name_filter(&mut self, filter: Option<&[u16]>) {
         self.value.set_name_filter(filter);
     }
+
+    #[inline]
+    fn first_read(&mut self) -> Maybe<DirIterator::FirstRead> {
+        self.value.first_read()
+    }
 }
 
 impl Accessor for SyscallAccessor {
@@ -187,6 +201,10 @@ impl Accessor for SyscallAccessor {
         }
         #[cfg(not(windows))]
         Syscall::lstatat(handle.value, path)
+    }
+
+    fn fstat(handle: SyscallHandle) -> Maybe<Stat> {
+        Syscall::fstat(handle.value)
     }
 
     fn openat(handle: SyscallHandle, path: &ZStr) -> Result<Maybe<SyscallHandle>, Error> {
@@ -264,6 +282,16 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) workbuf: Vec<WorkItem<A>>,
 
     followed_links: Vec<FollowedLink>,
+    /// Whether `**` can go through a symlink back into a directory it already
+    /// walks: `follow_symlinks`, a `**` in the pattern, and an accessor that
+    /// lists symlinks as symlinks. Such a walk keeps `ancestors`.
+    ///
+    /// Not on Windows: its listing has no file id, so telling two directories
+    /// apart costs a query per directory, and that cost is not measured yet.
+    tracks_ancestors: bool,
+    /// The directories the walk listed on the way from its root to the one it
+    /// lists now. `WorkItem::ancestors_len` restores it.
+    ancestors: Vec<Ancestor>,
 
     is_ignored: IgnoreFilterFn,
 
@@ -498,6 +526,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         }
 
         self.cwd_fd = cwd_fd;
+        self.walker.ancestors.clear();
 
         let trans = if was_absolute {
             self.transition_to_dir_iter_state::<false>(root_work_item)?
@@ -740,7 +769,101 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             at_cwd,
         });
 
+        if self.walker.tracks_ancestors {
+            // A root that starts with `..` is not opened by the work item's
+            // path, and its path can be as long.
+            let opened_by_item_path = !ROOT && dir_path_len == work_item_path.len();
+            self.enter_listing(
+                work_item.path,
+                opened_by_item_path,
+                work_item.followed_links_len,
+            );
+        }
+
         Ok(Ok(()))
+    }
+
+    /// The gate of a walk that `tracks_ancestors`, on the listing that
+    /// `transition_to_dir_iter_state` built and before its first entry.
+    ///
+    /// A `**` does not continue into a directory it already walks: one that
+    /// is on the way down from the walk root, and in which that `**` was
+    /// active. Every name below it is a longer name for a file that the `**`
+    /// gives from there. What another component matched is read, and so is a
+    /// directory that only another `**` walks.
+    fn enter_listing(
+        &mut self,
+        item_path: Box<[u8]>,
+        opened_by_item_path: bool,
+        item_followed_links_len: u32,
+    ) {
+        let IterState::Directory(dir) = &mut self.iter_state else {
+            unreachable!()
+        };
+        let fd = dir.fd;
+        let dot_ino = match dir.iter.first_read() {
+            Ok(DirIterator::FirstRead::Dot(dot_ino)) => dot_ino,
+            Ok(DirIterator::FirstRead::Empty) => {
+                self.iter_state = IterState::GetNext;
+                self.close_disallowing_cwd(fd);
+                return;
+            }
+            // After an error `next()` makes the read again and reports it.
+            Ok(DirIterator::FirstRead::NoDot) | Err(_) => 0,
+        };
+        let mut id: Option<(u64, u64)> = None;
+        // Only a followed link leads back to a directory on the way down.
+        if !self.walker.followed_links.is_empty()
+            && let Some(lister) = self.walker.ancestors.last()
+        {
+            let continuing = self
+                .walker
+                .continuing_globstars(&lister.active, &dir.active);
+            if continuing.find_first_set().is_some() {
+                // The link rule already has the stat of a nested link's target.
+                if self.walker.followed_links.len() == item_followed_links_len as usize + 1
+                    && let Some(FollowedLink::Target(stat)) = self.walker.followed_links.last()
+                {
+                    id = stat_id(stat);
+                }
+                let repeated =
+                    self.walker
+                        .repeated_globstars(&continuing, dot_ino, &mut id, fd, self.cwd_fd);
+                if let Some(repeated) = repeated
+                    && let Some(lister) = self.walker.ancestors.last()
+                {
+                    let mut child = self.walker.eval_dir_impl::<false>(
+                        &lister.active,
+                        strings::basename(work_item_logical_path(&item_path)),
+                        &mut false,
+                    );
+                    let mut it = continuing.iterator::<true, true>();
+                    while let Some(idx) = it.next() {
+                        if !repeated.is_set(idx) {
+                            child.set(idx);
+                        }
+                    }
+                    if child.find_first_set().is_none() {
+                        self.iter_state = IterState::GetNext;
+                        self.close_disallowing_cwd(fd);
+                        return;
+                    }
+                    dir.active = child;
+                }
+            }
+        }
+        self.walker.ancestors.push(Ancestor {
+            dot_ino,
+            id,
+            path: if dir.at_cwd {
+                Box::default()
+            } else if opened_by_item_path {
+                item_path
+            } else {
+                Box::from(dir.dir_path().as_bytes())
+            },
+            active: dir.active.clone().expect("OOM: ComponentSet::clone"),
+        });
     }
 
     /// Compute an optional NtQueryDirectoryFile FileName filter for the current
@@ -807,7 +930,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     // exact followed-link ancestor chain of this work item.
                     self.walker
                         .followed_links
-                        .truncate(work_item.followed_links_len);
+                        .truncate(work_item.followed_links_len as usize);
+                    self.walker
+                        .ancestors
+                        .truncate(work_item.ancestors_len as usize);
                     if let Some(link) = work_item.followed_link.take() {
                         self.walker.followed_links.push(link);
                     }
@@ -1279,10 +1405,31 @@ pub struct WorkItem<A: Accessor> {
     pub(crate) fd: Option<A::Handle>,
     /// `followed_links.len()` when this item was pushed: the length of its
     /// followed-link ancestor chain, restored by truncation when it is popped.
-    followed_links_len: usize,
+    followed_links_len: u32,
+    /// `ancestors.len()` when this item was pushed, restored the same way.
+    ancestors_len: u32,
     /// The followed link this item descends into, pushed onto `followed_links`
     /// (after the truncation above) when it is popped.
     followed_link: Option<FollowedLink>,
+}
+
+/// A directory the walk listed on the way from its root to the one it lists now.
+struct Ancestor {
+    /// The number its listing gave for the directory itself
+    /// (`FirstRead::Dot`). 0: none.
+    dot_ino: u64,
+    /// `(st_dev, st_ino)`, once a comparison needed it.
+    id: Option<(u64, u64)>,
+    /// The path the walk opens it by, for that stat. Empty: the cwd handle itself.
+    path: Box<[u8]>,
+    /// The components its entries are evaluated against.
+    active: ComponentSet,
+}
+
+/// `(st_dev, st_ino)`. A filesystem that gives no inode number tells nothing.
+#[inline]
+fn stat_id(stat: &Stat) -> Option<(u64, u64)> {
+    (stat.st_ino != 0).then_some((stat.st_dev as u64, stat.st_ino as u64))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1300,6 +1447,7 @@ impl<A: Accessor> WorkItem<A> {
             entry_start: 0,
             fd: None,
             followed_links_len: 0,
+            ancestors_len: 0,
             followed_link: None,
         }
     }
@@ -1465,6 +1613,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             workbuf: Vec::new(),
             follow_matched_symlinks: false,
             followed_links: Vec::new(),
+            tracks_ancestors: false,
+            ancestors: Vec::new(),
             is_ignored: ignore_filter_fn.unwrap_or(dummy_filter_false),
             _accessor: core::marker::PhantomData,
         };
@@ -1480,6 +1630,13 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             this.component_shapes
                 .push(Shape::of(component.pattern_slice(&this.pattern)));
         }
+        this.tracks_ancestors = follow_symlinks
+            && !A::ENTRY_KIND_FOLLOWS_SYMLINKS
+            && !IS_WINDOWS
+            && this
+                .pattern_components
+                .iter()
+                .any(|component| component.syntax_hint == SyntaxHint::Double);
 
         // copy arena after all allocations are successful
 
@@ -1826,6 +1983,18 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Returns the child's active set (union of all recursion targets).
     /// Sets `add` if any index says the directory itself is a match.
     fn eval_dir(&self, active: &ComponentSet, entry_name: &[u8], add: &mut bool) -> ComponentSet {
+        self.eval_dir_impl::<true>(active, entry_name, add)
+    }
+
+    /// `GLOBSTAR_CONTINUES = false` leaves out the `**` that goes on into the
+    /// entry. What another component matched stays, and so does a `**` that
+    /// starts below it.
+    fn eval_dir_impl<const GLOBSTAR_CONTINUES: bool>(
+        &self,
+        active: &ComponentSet,
+        entry_name: &[u8],
+        add: &mut bool,
+    ) -> ComponentSet {
         let mut child = self.make_set();
         let comps = &self.pattern_components;
         let len: u32 = u32::try_from(comps.len()).expect("int cast");
@@ -1849,11 +2018,15 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 is_last,
                 &mut add_this,
             ) {
-                child.set(self.normalize_idx(idx + bump) as usize);
+                // `bump == 0` is a `**` that stays for the entry's children.
+                if bump != 0 || GLOBSTAR_CONTINUES {
+                    child.set(self.normalize_idx(idx + bump) as usize);
+                }
                 // At `**/X` boundaries, keep the outer `**` alive unless
                 // idx+2 is itself `**` (whose recursion already covers it)
                 // or the entry is hidden (a `**` must not traverse dotdirs).
                 if bump == 2
+                    && GLOBSTAR_CONTINUES
                     && !hidden
                     && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double
                 {
@@ -2017,9 +2190,91 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// Single push site: snapshots the followed-link ancestor chain (and the
     /// link `item` itself descends into) so the pop site can restore it.
     fn push_work_item(&mut self, mut item: WorkItem<A>, followed_link: Option<FollowedLink>) {
-        item.followed_links_len = self.followed_links.len();
+        item.followed_links_len = self.followed_links.len() as u32;
+        item.ancestors_len = self.ancestors.len() as u32;
         item.followed_link = followed_link;
         self.workbuf.push(item);
+    }
+
+    /// The `**` components of `lister`, the set of a directory, that go on in
+    /// `active`, the set of one of its entries (`eval_dir`).
+    fn continuing_globstars(&self, lister: &ComponentSet, active: &ComponentSet) -> ComponentSet {
+        let mut continuing = self.make_set();
+        let mut it = lister.iterator::<true, true>();
+        while let Some(idx) = it.next() {
+            if self.pattern_components[idx].syntax_hint == SyntaxHint::Double && active.is_set(idx)
+            {
+                continuing.set(idx);
+            }
+        }
+        continuing
+    }
+
+    /// The components of `continuing` that were active in an ancestor which
+    /// is the open directory `fd`. `dot_ino` is the number the listing of
+    /// `fd` gave (0: none). `id` is its `(st_dev, st_ino)` when a stat
+    /// already gave it, and is filled when this asks for it.
+    fn repeated_globstars(
+        &mut self,
+        continuing: &ComponentSet,
+        dot_ino: u64,
+        id: &mut Option<(u64, u64)>,
+        fd: A::Handle,
+        cwd_fd: A::Handle,
+    ) -> Option<ComponentSet> {
+        let mut repeated: Option<ComponentSet> = None;
+        for ancestor in &mut self.ancestors {
+            // Two listings of one directory give one number. Two directories
+            // can give one too, so a stat confirms an equal pair.
+            if dot_ino != 0 && ancestor.dot_ino != 0 && dot_ino != ancestor.dot_ino {
+                continue;
+            }
+            if !ancestor.active.has_intersection(continuing) {
+                continue;
+            }
+            let own = match *id {
+                Some(own) => own,
+                None => {
+                    let own = A::fstat(fd).ok().as_ref().and_then(stat_id)?;
+                    *id.insert(own)
+                }
+            };
+            let theirs = match ancestor.id {
+                Some(theirs) => theirs,
+                None => {
+                    let Some(theirs) = Self::stat_ancestor(cwd_fd, &ancestor.path) else {
+                        continue;
+                    };
+                    *ancestor.id.insert(theirs)
+                }
+            };
+            if own != theirs {
+                continue;
+            }
+            let repeated = repeated.get_or_insert_with(|| {
+                ComponentSet::init_empty(self.pattern_components.len())
+                    .expect("OOM: ComponentSet::init_empty")
+            });
+            let mut it = continuing.iterator::<true, true>();
+            while let Some(idx) = it.next() {
+                if ancestor.active.is_set(idx) {
+                    repeated.set(idx);
+                }
+            }
+        }
+        repeated
+    }
+
+    /// `(st_dev, st_ino)` of a directory the walk listed and closed, by the
+    /// path the walk opens it by. Empty: the cwd handle.
+    fn stat_ancestor(cwd_fd: A::Handle, path: &[u8]) -> Option<(u64, u64)> {
+        let stat = if path.is_empty() {
+            A::fstat(cwd_fd)
+        } else {
+            let path = dupe_z(work_item_logical_path(path));
+            A::statat(cwd_fd, ZStr::from_slice_with_nul(&path))
+        };
+        stat.ok().as_ref().and_then(stat_id)
     }
 
     /// Identify `Pending` ancestors in place (each is stat'd at most once) so

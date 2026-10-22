@@ -9310,6 +9310,10 @@ declare module "bun" {
     /**
      * Whether to traverse descendants of symbolic link directories.
      *
+     * `**` does not go into a directory that it is already inside: a link that
+     * leads back up matches, and the scan does not traverse it again. On
+     * Windows the scan traverses such a link once.
+     *
      * @default false
      */
     followSymlinks?: boolean;

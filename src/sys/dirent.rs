@@ -160,6 +160,25 @@ pub fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
     })
 }
 
+/// Returns the inode number in the `.` record of `filled`, the part of the buffer that the first
+/// read of a directory wrote. Returns `None` if that read has no `.` record, if the filesystem
+/// gives it no number, or if a record before it is malformed. `parse` reports a malformed record.
+pub fn dot_ino<L: Layout>(filled: &[u8]) -> Option<u64> {
+    let mut rest = filled;
+    loop {
+        let header = rest.get(..L::D_NAME)?;
+        let reclen = usize::from(u16::from_ne_bytes(*header.get(D_RECLEN..)?.first_chunk()?));
+        // `reclen` is at least the header size, so every turn moves on.
+        let name_field = rest.get(L::D_NAME..reclen)?;
+        // `parse` reads a name as C does, up to its first NUL.
+        if let [b'.', 0, ..] = *name_field {
+            let ino = u64::from_ne_bytes(*header.get(D_INO..)?.first_chunk()?);
+            return (ino != 0).then_some(ino);
+        }
+        rest = rest.get(reclen..)?;
+    }
+}
+
 /// Sentinel `end_index` for a walk that hit a malformed record. It's larger than any cursor, so the
 /// walker never refills, and larger than any buffer, so `record_at` never parses.
 const ENDED: usize = usize::MAX;

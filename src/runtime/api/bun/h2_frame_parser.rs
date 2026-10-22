@@ -2479,22 +2479,7 @@ impl H2FrameParser {
         extra: JSValue,
         extra2: JSValue,
     ) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
-            return;
-        };
-        let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
-            return;
-        };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        extra2.ensure_still_alive();
-        let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra, extra2],
-        );
+        self.dispatch_values(event, [value, extra, extra2]);
     }
 
     pub(crate) fn dispatch_with_3_extra(
@@ -2505,23 +2490,24 @@ impl H2FrameParser {
         extra2: JSValue,
         extra3: JSValue,
     ) {
+        self.dispatch_values(event, [value, extra, extra2, extra3]);
+    }
+
+    fn dispatch_values<const N: usize>(&self, event: JSH2FrameParser::Gc, values: [JSValue; N]) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
-        value.ensure_still_alive();
-        extra.ensure_still_alive();
-        extra2.ensure_still_alive();
-        extra3.ensure_still_alive();
+        let mut args = [ctx_value; 5];
+        args[1..=N].copy_from_slice(&values);
+        for value in values {
+            value.ensure_still_alive();
+        }
         let _dispatch = self.enter_dispatch();
-        let _ = self.handlers.get().call_event_handler(
-            event,
-            this_value,
-            ctx_value,
-            &[ctx_value, value, extra, extra2, extra3],
-        );
+        let handlers = self.handlers.get();
+        let _ = handlers.call_event_handler(event, this_value, ctx_value, &args[..=N]);
     }
 
     /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node

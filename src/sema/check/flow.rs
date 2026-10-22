@@ -8328,7 +8328,7 @@ impl<'p, 's> Checker<'p, 's> {
         if info.end.is_some() && info.end != UNREACHABLE && self.is_reachable(file, info.end) {
             return None;
         }
-        let returned = self.check_expression_cached_again(file, body);
+        let returned = self.outside_flow_loops(|c| c.check_expression_cached_again(file, body));
         if !self.is_boolean(returned) {
             return None;
         }

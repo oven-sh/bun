@@ -10814,6 +10814,47 @@ export function g(z: Letter) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the body of a function without the loops in progress to infer a type predicate", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  for (;;) {
+    y = list.find(item => item === x) ?? y;
+    if (next[y] === x) continue;
+  }
+}
+export function g() {
+  let x: Letter = "a";
+  let z: Letter = "b";
+  while (next[x] === z) {
+    x = list.find(item => item === z) ?? z;
+  }
+  const probe: never = x;
+}
+export function notInTheTest() {
+  let x: Letter = "a";
+  let z: Letter = "b";
+  while (list.length) {
+    x = list.find(item => item === z) ?? z;
+  }
+  const probe: never = x;
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(18,9): error TS2322: Type 'Letter' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'.
+        a.ts(26,9): error TS2322: Type '"a" | "b"' is not assignable to type 'never'.
+          Type '"a"' is not assignable to type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

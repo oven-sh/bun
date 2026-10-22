@@ -18,7 +18,8 @@ pub struct Meta {
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
-    /// In former padding: an older `bun.lockb` reads back as `Libc::NONE` (not declared).
+    /// Stored in what used to be padding, so an older `bun.lockb` reads back as `Libc::NONE` (not
+    /// declared).
     pub(crate) libc: Libc,
     pub(crate) _padding_libc: u8,
 

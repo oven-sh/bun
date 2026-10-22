@@ -232,6 +232,17 @@ export const shapes: Record<string, Shape> = {
         c.close(new Error("source failed"));
       }),
   },
+  // The consumer's rejection is the only report: a stray unhandled rejection fails the test run.
+  "sync pull: close(error), then throws it": {
+    expect: { error: "source failed" },
+    make: t =>
+      direct(t, c => {
+        const error = new Error("source failed");
+        c.write("partial");
+        c.close(error);
+        throw error;
+      }),
+  },
 };
 
 // Each falsy argument as the first close(): a clean close, not close(error).

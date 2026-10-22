@@ -59,6 +59,9 @@ pub(crate) struct FileSystemRouterType {
     /// the client graph, and the client entry gets them from `route` of `bun:bake/client`, to hydrate
     /// the server's HTML. Not with server components.
     pub(crate) client_pages: bool,
+    /// `clientPages.serverExports`: the exports of a page that run on the server only. The browser
+    /// build of a page drops them, and the imports that only they use.
+    pub(crate) server_exports: Vec<Utf8Bytes<'static>>,
 }
 
 /// A "Framework" is simply a set of bundler options that a framework author
@@ -78,7 +81,7 @@ pub(super) fn resolve_path(
     r: &mut bun_resolver::Resolver,
     path: &[u8],
 ) -> Result<Utf8Bytes<'static>, bun_resolver::Error> {
-    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
     let result = r.resolve(top_level_dir, path, bun_ast::ImportKind::Stmt)?;
     // No path: disabled, by a "browser" map for example.
     let text = result
@@ -126,11 +129,27 @@ impl Framework {
             .map(|rfr| bt::ReactFastRefresh {
                 import_source: rfr.import_source.as_ref().into(),
             });
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+        let client_page_dirs = self
+            .file_system_router_types
+            .iter()
+            .filter(|fsr| fsr.client_pages)
+            .map(|fsr| bt::ClientPageDir {
+                dir: Box::<[u8]>::from(bun_paths::resolve_path::join_abs::<
+                    bun_paths::platform::Auto,
+                >(top_level_dir, &fsr.root)),
+                server_exports: fsr
+                    .server_exports
+                    .iter()
+                    .map(|name| Box::<[u8]>::from(name.as_ref()))
+                    .collect(),
+            })
+            .collect();
         bt::Framework::new(
             built_in_modules,
             server_components,
             react_fast_refresh,
-            self.is_built_in_react,
+            client_page_dirs,
         )
     }
 
@@ -161,15 +180,18 @@ impl Framework {
                 b"server components runtime",
             );
         }
-        for fsr in self.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = Utf8Bytes::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
-                    top_level_dir,
-                    &fsr.root,
-                )
-                .to_vec(),
-            );
+        for (i, fsr) in self.file_system_router_types.iter_mut().enumerate() {
+            match resolve_dir_option(&fsr.root) {
+                Some(root) => fsr.root = Utf8Bytes::Owned(root),
+                None => {
+                    bun_core::Output::err(
+                        "ENAMETOOLONG",
+                        "Failed to resolve 'fileSystemRouterTypes[{}].root' for framework",
+                        (i,),
+                    );
+                    had_errors = true;
+                }
+            }
             if let Some(entry_client) = &mut fsr.entry_client {
                 Self::resolve_helper(
                     &self.built_in_modules,
@@ -223,6 +245,18 @@ impl Framework {
             }
         }
     }
+}
+
+/// Joins a directory option onto the working directory.
+/// Returns `None` if the result is too long for `Resolver::read_dir_info`.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Vec<u8>> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let resolved = bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
+        bun_resolver::fs::FileSystem::get().top_level_dir(),
+        &mut buf[..bun_paths::MAX_PATH_BYTES - 1],
+        &[dir],
+    )?;
+    Some(bun_paths::string_paths::without_trailing_slash_windows_path(resolved).to_vec())
 }
 
 impl Framework {
@@ -442,9 +476,38 @@ impl Framework {
                 let layouts = fsr_opts
                     .get_boolean_strict(global, "layouts")?
                     .unwrap_or(false);
-                let client_pages = fsr_opts
-                    .get_boolean_strict(global, "clientPages")?
-                    .unwrap_or(false);
+                // `clientPages: true`, or `clientPages: { serverExports: [...] }`.
+                let (client_pages, server_exports) = match fsr_opts.get(global, "clientPages")? {
+                    None => (false, Vec::new()),
+                    Some(v) if v.is_boolean() => (v.as_boolean(), Vec::new()),
+                    Some(v) if v.is_object() => {
+                        let not_a_list = || {
+                            global.throw_invalid_arguments(format_args!(
+                                "'fileSystemRouterTypes[{}].clientPages.serverExports' must be an array of export names",
+                                i
+                            ))
+                        };
+                        let list = match v.get(global, "serverExports")? {
+                            Some(list) if list.is_array() => list,
+                            _ => return Err(not_a_list()),
+                        };
+                        let mut names = Vec::new();
+                        let mut it_2 = list.array_iterator(global)?;
+                        while let Some(item) = it_2.next()? {
+                            if !item.is_string() {
+                                return Err(not_a_list());
+                            }
+                            names.push(item.to_utf8(global)?);
+                        }
+                        (true, names)
+                    }
+                    Some(_) => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'fileSystemRouterTypes[{}].clientPages' must be a boolean or an object",
+                            i
+                        )));
+                    }
+                };
                 // The client entry point is what loads the pages in the browser.
                 if client_pages && client_entry_point.is_none() {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -541,6 +604,7 @@ impl Framework {
                     ignore_dirs,
                     allow_layouts: layouts,
                     client_pages,
+                    server_exports,
                 });
                 i += 1;
             }

@@ -1,19 +1,20 @@
-//! A JSON file as a source file: `parseJSONText`.
+//! Parses a JSON file as a source file (`parseJSONText`).
 
 use super::Parser;
 use crate::token::T;
 use bun_sema::hir::*;
 
 impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
-    /// `parseJSONText`, at the first token: the value of the file. `bindSourceFileIfExternalModule`:
-    /// the file is an `export =` of it. What is no JSON is left to `bun_sema::json::validate_json`.
+    /// `parseJSONText`. Called at the first token. Parses the file's value and returns it as an `export =` statement,
+    /// which is how `bindSourceFileIfExternalModule` treats a JSON file. Reporting invalid JSON is left to
+    /// `bun_sema::json::validate_json`.
     pub(crate) fn json_text(&mut self) -> StmtId {
         let start = self.pos();
         let base = self.s.ids.len();
-        // No list of statements is open.
+        // No statement list is open.
         self.lists = 0;
         while self.token() != T::Eof {
-            let is_no_name = |p: &mut Self| {
+            let is_not_property_name = |p: &mut Self| {
                 p.next();
                 p.token() != T::Colon
             };
@@ -21,9 +22,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 T::OpenBracket | T::True | T::False | T::Null => true,
                 T::Minus => self.look_ahead(|p| {
                     p.next();
-                    p.token() == T::Number && is_no_name(p)
+                    p.token() == T::Number && is_not_property_name(p)
                 }),
-                T::Number | T::String => self.look_ahead(is_no_name),
+                T::Number | T::String => self.look_ahead(is_not_property_name),
                 _ => false,
             };
             let expression = match self.token() {
@@ -58,13 +59,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.finish_expr(ExprKind::Array(elements), start)
             }
         };
-        // It is written nowhere.
+        // The statement is synthetic, so it has no range in the text.
         let id = StmtId(self.f.stmts.len() as u32);
         self.f.stmts.push(Stmt {
             kind: StmtKind::ExportAssign(value),
             start: 0,
             loc: TextRange::default(),
-            modifiers: Span::EMPTY,
         });
         id
     }

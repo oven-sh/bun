@@ -392,6 +392,21 @@ impl Scripts {
     }
 }
 
+/// The version that a lockfile records for a fetched package. See `Lockfile::recorded_version`.
+#[derive(Clone, Copy)]
+pub enum RecordedVersion<'a> {
+    /// A registry package: the version in its resolution.
+    Registry(&'a Semver::Version),
+    /// A tarball row at the URL that a registry serves its name from: the version in that URL.
+    RegistryTarball(&'a [u8]),
+    /// A tarball, git or GitHub package: the `version` of its package.json, as written there.
+    PackageJson(&'a [u8]),
+    /// A tarball, git or GitHub package whose package.json declares no version.
+    Unversioned,
+    /// A tarball, git or GitHub row that no bun with this record has resolved or extracted.
+    Unknown,
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // LoadResult
 // ────────────────────────────────────────────────────────────────────────────
@@ -515,7 +530,7 @@ impl<'a> LoadResult<'a> {
         matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Pnpm)
     }
 
-    pub(crate) fn migrated_from(&self) -> Option<&'static str> {
+    pub fn migrated_from(&self) -> Option<&'static str> {
         match self {
             LoadResult::Ok(LoadResultOk { migrated, .. }) => match migrated {
                 Migrated::None => None,
@@ -829,7 +844,7 @@ impl Lockfile {
     }
 
     /// Returns `None` for git, tarball and unversioned workspace packages, which have no version to
-    /// compare.
+    /// compare. What `recorded_version` has for them is written after the resolver ran.
     pub(crate) fn package_version(&self, id: PackageID) -> Option<Semver::Version> {
         let resolution = &self.packages.items_resolution()[id as usize];
         match resolution.tag {
@@ -840,6 +855,26 @@ impl Lockfile {
                 .copied(),
             _ => None,
         }
+    }
+
+    /// `None` for the root, a workspace, a `link:` and every `file:` folder, also one inside a fetched package.
+    #[inline]
+    pub(crate) fn recorded_version(&self, id: PackageID) -> Option<RecordedVersion<'_>> {
+        let resolution = &self.packages.items_resolution()[id as usize];
+        if resolution.tag == ResolutionTag::Npm {
+            return Some(RecordedVersion::Registry(&resolution.npm().version));
+        }
+        if !resolution.tag.records_package_json_version() {
+            return None;
+        }
+        let meta = &self.packages.items_meta()[id as usize];
+        Some(
+            match meta.recorded_version(self.buffers.string_bytes.as_slice()) {
+                None => RecordedVersion::Unknown,
+                Some([]) => RecordedVersion::Unversioned,
+                Some(version) => RecordedVersion::PackageJson(version),
+            },
+        )
     }
 
     /// Returns true for an optional peer, and for a peer without an override that's bound to a

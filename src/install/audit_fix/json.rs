@@ -81,6 +81,24 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
         );
     }
 
+    out.extend_from_slice(b"],\"pinned\":[");
+    let found_by_install = outcome.map_or(&[][..], |outcome| &outcome.pinned[..]);
+    for (i, copy) in plan.pinned.iter().chain(found_by_install).enumerate() {
+        comma(&mut out, i);
+        out.extend_from_slice(b"{\"name\":");
+        s(&mut out, &copy.name);
+        out.extend_from_slice(b",\"version\":");
+        s(&mut out, &copy.from);
+        out.extend_from_slice(b",\"resolution\":");
+        s(&mut out, &copy.resolution);
+        out.extend_from_slice(b",\"advisories\":[");
+        for (j, token) in copy.ignore_tokens.iter().enumerate() {
+            comma(&mut out, j);
+            s(&mut out, token);
+        }
+        out.extend_from_slice(b"]}");
+    }
+
     out.extend_from_slice(b"],\"manifestUnavailable\":[");
     for (i, unavailable) in plan.manifest_unavailable.iter().enumerate() {
         comma(&mut out, i);
@@ -125,6 +143,16 @@ pub(super) fn write(plan: &FixPlan, outcome: Option<&FixOutcome>, dry_run: bool)
         } else {
             s(&mut out, &group.reason);
         }
+        out.push(b'}');
+    }
+
+    out.extend_from_slice(b"],\"noVersion\":[");
+    for (i, package) in plan.no_version.iter().enumerate() {
+        comma(&mut out, i);
+        out.extend_from_slice(b"{\"name\":");
+        s(&mut out, &package.name);
+        out.extend_from_slice(b",\"resolution\":");
+        s(&mut out, &package.resolution);
         out.push(b'}');
     }
 

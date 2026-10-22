@@ -346,13 +346,7 @@ function close(stream, err, cb) {
   const fastPath: FileSink | true = stream[kWriteStreamFastPath];
   if (fastPath && fastPath !== true) {
     stream.fd = null;
-    let maybePromise;
-    try {
-      maybePromise = fastPath.end(err);
-    } catch (e) {
-      cb(err || e);
-      return;
-    }
+    const maybePromise = fastPath.end(err);
     thenIfPromise(maybePromise, () => {
       cb(err);
     });

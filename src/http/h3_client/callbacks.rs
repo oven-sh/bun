@@ -310,6 +310,7 @@ extern "C" fn on_stream_writable(s: *mut quic::Stream) {
 }
 
 /// RFC 9114 §8.1: the server did no application processing.
+/// `US_QUIC_H3_REQUEST_REJECTED` in quic.h.
 const H3_REQUEST_REJECTED: u64 = 0x10B;
 
 extern "C" fn on_stream_close(s: *mut quic::Stream) {
@@ -317,7 +318,7 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     let Some(stream) = stream_of(s) else { return };
     *s.ext::<Stream>() = None;
     stream.qstream = None;
-    stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED;
+    stream.peer_rejected = s.reset_code() == H3_REQUEST_REJECTED || s.refused_by_goaway();
     bun_core::scoped_log!(
         h3_client,
         "stream_close status={} delivered={}",

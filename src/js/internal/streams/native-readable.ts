@@ -12,6 +12,7 @@ const transferToNativeReadable = $newCppFunction(
   1,
 );
 const { errorOrDestroy } = require("internal/streams/destroy");
+const { reportUncaughtException } = require("internal/shared");
 
 const kRefCount = Symbol("refCount");
 const kCloseState = Symbol("closeState");
@@ -37,6 +38,8 @@ interface NativeReadable extends NodeReadable {
     buffer: unknown[];
     bufferIndex: number;
     length: number;
+    errorEmitted: boolean;
+    emitClose: boolean;
   };
   $bunNativePtr: NativePtr | undefined;
   $start?: typeof ensureConstructed;
@@ -65,7 +68,12 @@ interface NativePtr {
 
 let debugId = 0;
 
-function constructNativeReadable(readableStream: ReadableStream, options): NativeReadable {
+// "libuv-handle": child.stdout and child.stderr, net.Sockets in Node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L335-L337
+function constructNativeReadable(
+  readableStream: ReadableStream,
+  options,
+  nodeSource: "libuv-handle" | "webstream",
+): NativeReadable {
   $assert(typeof readableStream === "object" && readableStream instanceof ReadableStream, "Invalid readable stream");
   const bunNativePtr = (readableStream as any).$bunNativePtr;
   // A closed stream with nothing left to read has no native handle, so read() ends it immediately.
@@ -73,7 +81,7 @@ function constructNativeReadable(readableStream: ReadableStream, options): Nativ
 
   const stream = new Readable(options) as NativeReadable;
   stream._read = read;
-  stream._destroy = destroy;
+  stream._destroy = nodeSource === "libuv-handle" ? destroyHandle : destroy;
 
   if (!!$debug) {
     stream.debugId = ++debugId;
@@ -271,6 +279,30 @@ function destroy(this: NativeReadable, error: any, cb: () => void) {
   if (cb) {
     // `_destroy` reports its error through the callback.
     process.nextTick(cb, error);
+  }
+}
+
+// As in net.Socket, an 'error' emit that throws does not lose 'close': https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L897-L906
+function destroyHandle(this: NativeReadable, error: any, cb: (error?: any) => void) {
+  if (error) {
+    const finish = cb;
+    cb = () => {
+      // Runs right before the tick that finish() queues, which then has only 'close' left to emit.
+      process.nextTick(emitError, this, error);
+      finish(error);
+    };
+  }
+  destroy.$call(this, error, cb);
+}
+
+function emitError(stream: NativeReadable, error: any) {
+  const state = stream._readableState;
+  state.errorEmitted = true;
+  try {
+    stream.emit("error", error);
+  } catch (e) {
+    // Node exits at a fatal error, so no 'close' listener runs after one.
+    if (!reportUncaughtException(e)) state.emitClose = false;
   }
 }
 

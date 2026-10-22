@@ -88,7 +88,7 @@ class EventTarget;
 }
 
 extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
+extern "C" bool Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 

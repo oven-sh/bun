@@ -1540,7 +1540,7 @@ describe("frames from another place", () => {
   });
 
   test("an error with frames of its own keeps them when native code rejects with it", async () => {
-    // Nothing reads the error before the rejection. A read formats the frames, and then a different test stops the attach.
+    // Nothing reads the error before the rejection. A read formats the frames, and then that mark stops the attach.
     const error = makeSource();
     expect(await rejectWhileAwaited(error, read)).toBe(error);
     expect(error.stack).toContain("at makeSource");
@@ -1640,15 +1640,15 @@ describe("frames from another place", () => {
   // An error with no frame list captured nothing (a limit that is not a number), or it holds its stack as a string:
   // a structuredClone() copy, or an error whose frames a collection formatted.
   test("a structuredClone() copy keeps its stack when native code rejects with it", async () => {
-    const original = makeDestination();
-    // Nothing reads the copy before the rejection: a read puts the string on the copy, and then it is materialized.
+    const original = makeSource();
+    // Nothing reads the copy before the rejection. A read puts the string on the copy, and then that mark stops the attach.
     const copy = structuredClone(original);
     expect(await rejectWhileAwaited(copy, read)).toBe(copy);
     expect(copy.stack).toBe(original.stack);
   });
 
   test("a structuredClone() copy keeps its stack when it aborts a fetch()", async () => {
-    const original = makeDestination();
+    const original = makeSource();
     const copy = structuredClone(original);
     expect(await abortFetchWhileAwaited(copy)).toBe(copy);
     expect(copy.stack).toBe(original.stack);
@@ -1805,7 +1805,7 @@ describe("frames from another place", () => {
 
   test("Error.appendStackTrace adds no frames to a structuredClone() copy, which holds its stack as a string", () => {
     const original = makeDestination();
-    // Nothing reads the copy before the call: a read puts the string on the copy, and then a different test returns.
+    // Nothing reads the copy before the call. A read puts the string on the copy, and then that mark returns first.
     const copy = structuredClone(original);
     const source = makeSource();
     Error.appendStackTrace(source, copy);

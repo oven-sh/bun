@@ -298,7 +298,7 @@ function connectionListener(this: Server, socket) {
 }
 
 function secureConnectionListener(this: Server, socket) {
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket) return;
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
   connectionListenerHTTP1(this, socket);
 }
 

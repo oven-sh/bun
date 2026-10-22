@@ -4186,6 +4186,21 @@ describe("bytesWritten", () => {
     }
   });
 
+  it.each([
+    ["client", "destroy"],
+    ["client", "resetAndDestroy"],
+    ["accepted", "destroy"],
+    ["accepted", "resetAndDestroy"],
+  ] as const)("counts bytes still queued when the %s socket calls %s()", async (side, method) => {
+    using pair = await connectToPausedPeer();
+    const socket = side === "client" ? pair.socket : pair.peer;
+    writeUntilQueued(socket);
+    const written = socket.bytesWritten;
+    socket[method]();
+    await once(socket, "close");
+    expect(socket.bytesWritten).toBe(written);
+  });
+
   it("still reports the count after the peer resets the connection", async () => {
     const closed = Promise.withResolvers<Socket>();
     const server = createServer(socket => {
@@ -4429,15 +4444,20 @@ it.concurrent.skipIf(!isLinux).each(["client", "accepted"])(
 );
 
 // Linux only: elsewhere the peer's reset can reach the client as a read error before a send fails.
-it.skipIf(!isLinux)("delivers the reply of a peer that closed mid-upload before the write fails", async () => {
+describe.skipIf(!isLinux)("a peer that replied and closed mid-upload", () => {
   const reply = Buffer.alloc(59642, "r");
-  const server = createServer(socket => {
-    socket.on("error", () => {});
-    socket.end(reply, () => socket.destroy());
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  try {
-    const client = connect((server.address() as any).port, "127.0.0.1");
+  async function listen() {
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.end(reply, () => socket.destroy());
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return { port: (server.address() as any).port as number, [Symbol.dispose]: () => void server.close() };
+  }
+
+  it("gets its reply delivered before the write fails", async () => {
+    using server = await listen();
+    const client = connect(server.port, "127.0.0.1");
     const events: string[] = [];
     let received = 0;
     client.on("data", chunk => {
@@ -4452,9 +4472,37 @@ it.skipIf(!isLinux)("delivers the reply of a peer that closed mid-upload before 
       events: ["data", "write EPIPE", "error EPIPE write"],
       hadError: true,
     });
-  } finally {
-    server.close();
-  }
+  });
+
+  it.each([
+    ["nothing", ["data", "error EPIPE", "close"]],
+    ["terminate", ["data", "close"]],
+    ["end", ["data", "close"]],
+  ] as const)("Bun.connect: error() never follows close() when data() calls %s", async (method, expected) => {
+    using server = await listen();
+    const events: string[] = [];
+    const closed = Promise.withResolvers<void>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: {
+        open: socket => void socket.end(Buffer.alloc(8 << 20)),
+        data(socket) {
+          if (!events.includes("data")) events.push("data");
+          if (method !== "nothing") socket[method]();
+        },
+        error: (socket, err: any) => void events.push(`error ${err.code}`),
+        close() {
+          events.push("close");
+          closed.resolve();
+        },
+      },
+    });
+    await closed.promise;
+    // A late error() would come in the same dispatch as close().
+    await new Promise(resolve => setImmediate(resolve));
+    expect(events).toEqual([...expected]);
+  });
 });
 
 describe("destroy()", () => {

@@ -303,19 +303,15 @@ impl Listener {
         // `--hot` runs the module again while the previous run's listener still holds the address.
         let hot_key = hot_reload_key(&socket_config);
         let hot_run = VirtualMachine::get().hot_reload_counter;
-        if let Some(previous) = hot_key
+        let stale = hot_key
             .as_deref()
             .and_then(|key| VirtualMachine::get().as_mut().hot_map()?.get_entry(key))
             .filter(|entry| entry.tag == HOT_MAP_TAG_LISTENER)
             // SAFETY: `do_stop` and `deinit` remove the entry, so a registered listener is live.
             .map(|entry| unsafe { &*entry.ptr.cast::<Listener>() })
             // This run's own listener isn't stale. Binding again fails with EADDRINUSE, which port probes rely on.
-            .filter(|previous| previous.hot_run.get() != hot_run)
-        {
-            // Its connections stay open and run the new handlers.
-            previous
-                .handlers
-                .copy_callbacks_from(cx.global(), &socket_config.handlers);
+            .filter(|previous| previous.hot_run.get() != hot_run);
+        if let Some(previous) = stale {
             // With the same options it keeps listening, so no connection is refused. TLS options can't be compared.
             let unchanged = !ssl_enabled
                 && !previous.ssl
@@ -323,6 +319,9 @@ impl Listener {
                 && previous.allow_half_open == allow_half_open
                 && previous.context == cx.context().id();
             if let Some(this_value) = previous.this_value.get().try_get().filter(|_| unchanged) {
+                previous
+                    .handlers
+                    .copy_callbacks_from(cx.global(), &socket_config.handlers);
                 let default_data = socket_config.default_data;
                 previous.strong_data.with_mut(|data| {
                     if default_data.is_empty() {
@@ -334,8 +333,14 @@ impl Listener {
                 previous.hot_run.set(hot_run);
                 return Ok(this_value);
             }
-            Listener::do_stop(previous, false);
         }
+        // Frees the address. The stale listener's connections stay open and run the new handlers.
+        let stop_stale = |handlers: &Handlers| {
+            if let Some(previous) = stale {
+                previous.handlers.copy_callbacks_from(cx.global(), handlers);
+                Listener::do_stop(previous, false);
+            }
+        };
 
         #[cfg(windows)]
         if port.is_none() {
@@ -398,6 +403,7 @@ impl Listener {
                         .strong_data
                         .set(Strong::create(default_data, cx.global()));
                 }
+                stop_stale(&this_ref.handlers);
                 // TODO: server_name is not supported on named pipes, I belive its , lets wait for
                 // someone to ask for it
 
@@ -559,6 +565,8 @@ impl Listener {
                 }
             }
         }
+        // Only the bind can fail from here, so a run with a broken certificate leaves the stale listener serving.
+        stop_stale(&this_ref.handlers);
         let kind: uws::SocketKind = if ssl_enabled {
             uws::SocketKind::BunListenerTls
         } else {

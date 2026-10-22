@@ -905,6 +905,29 @@ describe("https.Server wraps a socket passed to emit('connection') in TLS", () =
     await frontClosed.promise;
   });
 
+  test.each(["connect", "upgrade"])(
+    "emit('secureConnection') parses HTTP on its own '%s' socket, which is already decrypted",
+    async event => {
+      await using server = https.createServer(identity, (req, res) => res.end(`${req.url} ${req.socket.encrypted}`));
+      server.on(event, (_req, socket) => {
+        socket.write("HTTP/1.1 200 OK\r\n\r\n");
+        server.emit("secureConnection", socket);
+      });
+      const client = tls.connect({ port: await listen(server), host: "127.0.0.1", ...verified });
+      client.write(
+        event === "connect"
+          ? "CONNECT agent1:443 HTTP/1.1\r\nHost: agent1:443\r\n\r\n"
+          : "GET / HTTP/1.1\r\nHost: agent1\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\n",
+      );
+      await once(client, "data");
+      let response = "";
+      client.on("data", chunk => (response += chunk));
+      client.write("GET /tunneled HTTP/1.1\r\nHost: agent1\r\nConnection: close\r\n\r\n");
+      await once(client, "close");
+      expect(response).toEndWith("\r\n\r\n/tunneled true");
+    },
+  );
+
   test.each([
     ["calls 'clientError' listeners", true],
     ["destroys the socket without a 'clientError' listener", false],

@@ -1344,6 +1344,16 @@ it("--hot does not emit beforeExit to the listeners of a failed run", async () =
   expect(await runner.exited).toBe(0);
 });
 
+// Yields complete lines, whatever the chunk boundaries are.
+async function* lines(stream: AsyncIterable<Uint8Array>) {
+  let buffered = "";
+  for await (const chunk of stream) {
+    const parts = (buffered + Buffer.from(chunk).toString()).split("\n");
+    buffered = parts.pop()!;
+    yield* parts;
+  }
+}
+
 // https://github.com/oven-sh/bun/issues/26036
 it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
   "should let Bun.listen() take over the previous run's %s address",
@@ -1381,15 +1391,6 @@ it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
       stdin: "ignore",
     });
 
-    // Yields complete lines, whatever the chunk boundaries are.
-    async function* lines(stream: AsyncIterable<Uint8Array>) {
-      let buffered = "";
-      for await (const chunk of stream) {
-        const parts = (buffered + Buffer.from(chunk).toString()).split("\n");
-        buffered = parts.pop()!;
-        yield* parts;
-      }
-    }
     const runs = lines(runner.stdout);
     const nextRun = async () => JSON.parse((await runs.next()).value!);
 
@@ -1402,11 +1403,18 @@ it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
           ...("unix" in address ? { unix: join(String(dir), address.unix) } : address),
           tls: transport === "tls" ? { ca: cert } : undefined,
           socket: { data: (_socket, chunk) => void writer.write(chunk), close: () => void writer.close() },
+        }).catch(error => {
+          if (error.code !== "ECONNREFUSED") throw error;
         });
+        // A TLS listener binds again on every run, so nothing listens for an instant. That run reports itself next.
+        if (!socket) {
+          await nextRun();
+          continue;
+        }
         const replies = lines(stream.readable);
         const nextReply = async () => (await replies.next()).value;
         const greeting = await nextReply();
-        // A TLS listener binds again on every run, which drops a connection it hasn't accepted yet.
+        // Binding again also drops a connection the old listening socket hasn't accepted yet.
         if (greeting !== undefined) return { socket, greeting, nextReply };
       }
     }
@@ -1427,6 +1435,58 @@ it.each(isWindows ? ["tcp", "tls"] : ["tcp", "unix", "tls"])(
 
     first.socket.end();
     second.socket.end();
+  },
+  timeout,
+);
+
+it(
+  "should keep the previous run's Bun.listen() serving when the new one has a broken certificate",
+  async () => {
+    const source = (cert: string) => `
+      const generation = (globalThis.generation = (globalThis.generation ?? 0) + 1);
+      if (!globalThis.port) {
+        const probe = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        globalThis.port = probe.port;
+        probe.stop(true);
+      }
+      let threw = false;
+      try {
+        Bun.listen({
+          hostname: "127.0.0.1",
+          port: globalThis.port,
+          tls: ${JSON.stringify({ key: tls.key, cert })},
+          socket: { open: socket => void socket.end("run " + generation), data() {} },
+        });
+      } catch {
+        threw = true;
+      }
+      console.log(JSON.stringify({ port: globalThis.port, threw }));
+    `;
+    using dir = tempDir("hot-listen-broken", { "index.ts": source(tls.cert) });
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", "run", "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    const runs = lines(runner.stdout);
+    const { port, threw } = JSON.parse((await runs.next()).value!);
+    expect(threw).toBe(false);
+
+    const broken = "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n";
+    writeFileSync(join(String(dir), "index.ts"), source(broken));
+    expect(JSON.parse((await runs.next()).value!).threw).toBe(true);
+
+    const { promise: greeting, resolve, reject } = Promise.withResolvers<string>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port,
+      tls: { ca: tls.cert },
+      socket: { data: (_socket, chunk) => resolve(chunk.toString()), error: (_socket, error) => reject(error) },
+    });
+    expect(await greeting).toBe("run 1");
   },
   timeout,
 );

@@ -977,6 +977,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     ) -> JsResult<()> {
         // What the peer sent before it closed is still in the kernel, and the close below would drop it.
         self.socket.get().drain_reads();
+        if self.socket.get().is_closed() {
+            // A data handler closed the socket, so `close` already ran and `error` must not follow it.
+            return Ok(());
+        }
         // Without an `error` handler this would be an uncaught exception, which a peer could cause by disconnecting early.
         if !handlers.on_error().is_empty() {
             let global = handlers.global_object;
@@ -1433,8 +1437,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
         let socket = self.socket.get();
-        self.buffered_data_for_node_net
-            .with_mut(|b| b.clear_and_free());
+        self.discard_queued_writes();
 
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
@@ -1851,8 +1854,9 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let callback = handlers.on_end();
         if callback.is_empty() {
-            // `on_writable` sends `end(data)`'s queued tail, then closes.
+            // `on_writable` sends the queued bytes, then closes.
             if this.buffered_data_for_node_net.get().len() > 0 {
+                this.update_flags(|f| f.insert(Flags::END_AFTER_FLUSH));
                 return Ok(());
             }
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));

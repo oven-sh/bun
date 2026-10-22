@@ -343,6 +343,13 @@ static void us_internal_dispatch_ready_polls(struct us_loop_t *loop, int first) 
                 break;
             }
         }
+        /* A nested tick resumes an outer pass's batch, and that pass dispatched this entry's bits with its earlier entry. */
+        for (int j = first - 1; !merged && j >= 0; j--) {
+            if (GET_READY_POLL(loop, j) == poll) {
+                coalesced[i] = (struct kevent_flags){ .skip = 1 };
+                merged = 1;
+            }
+        }
         if (!merged) {
             coalesced[i] = bits;
         }

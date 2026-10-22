@@ -5033,19 +5033,19 @@ Reo=
   });
 });
 
+// A connection that the peer answers: the events that were due before it
+// have run by the time it resolves.
+async function pendingEventsDone() {
+  const server = net.createServer(socket => socket.end("x"));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
+  await once(socket, "data");
+  socket.destroy();
+  server.close();
+}
+
 // What a TLS socket does on Windows is not measured.
 describe("shutdown(true)", () => {
-  // A connection that the peer answers: the events that were due before it
-  // have run by the time it resolves.
-  async function pendingEventsDone() {
-    const server = net.createServer(socket => socket.end("x"));
-    await once(server.listen(0, "127.0.0.1"), "listening");
-    const socket = net.connect((server.address() as net.AddressInfo).port, "127.0.0.1");
-    await once(socket, "data");
-    socket.destroy();
-    server.close();
-  }
-
   type Role = "connected" | "accepted";
   type Subject = { role: Role; allowHalfOpen: boolean; secure: boolean; handshakeDone: boolean };
 
@@ -7727,11 +7727,15 @@ describe.concurrent.each(["listen", "connect"] as const)(
   side => {
     const payload = Buffer.alloc(256 * 1024);
 
-    it.each([
+    const routes = [
       ["write() and end()", ["close"]],
       ["write() and close()", ["close"]],
       ["shutdown(true) and write()", ["end", "close"]],
-    ] as const)("closes the socket after %s", async (route, expected) => {
+    ] as const;
+    // On Windows shutdown(true) brings no `end`, so the socket never starts a close of its own.
+    const measured = routes.filter(([route]) => !isWindows || route !== "shutdown(true) and write()");
+
+    it.each(measured)("closes the socket after %s", async (route, expected) => {
       const events: string[] = [];
       const opened = Promise.withResolvers<Socket<unknown>>();
       const peerOpened = Promise.withResolvers<Socket<unknown>>();
@@ -7774,7 +7778,8 @@ describe.concurrent.each(["listen", "connect"] as const)(
         if (route === "shutdown(true) and write()") {
           socket.shutdown(true);
           socket.write(payload);
-          await ended.promise;
+          const noEnd = pendingEventsDone().then(() => Promise.reject(new Error("shutdown(true) brought no end")));
+          await Promise.race([ended.promise, noEnd]);
           // The socket starts its own close once the `end` dispatch is over.
           await new Promise(resolve => setImmediate(resolve));
         } else {

@@ -333,11 +333,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         let (argument, _) = crate::bind::require_call_argument(hir, hir[d].init)?;
         // `rewriteModuleSpecifier`
         self.result_has_external_module_indicator = true;
-        let (start, end) = (
-            hir[argument].pos as usize,
-            self.c.end_of_expr(self.file(), argument) as usize,
-        );
-        let specifier = &hir.text[start..end];
+        let specifier = self.c.get_text_of_node(self.file(), hir.node(argument));
         match hir[hir[d].pat].kind {
             // `const x = require("something")` -> `import x = require("something")`
             PatKind::Ident(name) => {
@@ -443,9 +439,9 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             }
             let name_text = match hir[target].kind {
                 // `getLiteralTextOfNode`
-                ExprKind::Index { index, .. } => hir.text
-                    [hir[index].pos as usize..self.c.end_of_expr(file, index) as usize]
-                    .to_vec(),
+                ExprKind::Index { index, .. } => {
+                    self.c.get_text_of_node(file, hir.node(index)).to_vec()
+                }
                 _ if bun_core::lexer::is_identifier(self.name(name)) => self.name(name).to_vec(),
                 _ => super::super::print::quoted(self.name(name), b'"', false),
             };

@@ -324,7 +324,7 @@ macro_rules! node_vectors {
 
         impl<S: Storage> FileIn<S> {
             /// True if every node fits in a handle and every id fits in `ROW_BITS` bits.
-            pub(crate) fn has_room_for_handles(&self) -> bool {
+            pub fn has_room_for_handles(&self) -> bool {
                 let rows = 1 $(+ self.$field.len())*;
                 rows + self.fns.len() + self.classes.len() + self.modules.len() < 1 << ROW_BITS
             }

@@ -1,6 +1,7 @@
 // when we don't want to use @cInclude, we can just stick wrapper functions here
 #include "root.h"
 #include <cstdio>
+#include <cstdlib>
 
 #if !OS(WINDOWS)
 #include <wtf/WTFConfig.h>
@@ -31,6 +32,23 @@
 #include <wtf/Threading.h>
 #endif // !OS(WINDOWS)
 #include <lshpack.h>
+
+// Runs before Output and the Windows env block are initialized, so it uses the CRT.
+extern "C" [[noreturn]] void bun_abort_missing_simd()
+{
+#if CPU(X86_64)
+    fputs("error: this CPU is missing SSE4.2 support, which Bun requires.\n"
+          "  If this is a VM, enable host CPU passthrough (e.g. -cpu host for QEMU/KVM).\n",
+        stderr);
+#else
+    fputs("error: this CPU is missing SIMD support that Bun requires.\n", stderr);
+#endif
+    if (const char* forced = getenv("SIMDUTF_FORCE_IMPLEMENTATION")) {
+        fprintf(stderr, "  note: SIMDUTF_FORCE_IMPLEMENTATION is set to \"%s\"\n", forced);
+    }
+    fflush(stderr);
+    exit(134);
+}
 
 // Error condition is encoded as max int32_t.
 // The only error in this function is ESRCH (no process found)
@@ -274,6 +292,72 @@ extern "C" ssize_t bun_close_range(unsigned int start, unsigned int end, unsigne
 {
     return syscall(__NR_close_range, start, end, flags);
 }
+
+#if CPU(X86_64) || CPU(ARM64)
+#include <atomic>
+#include <ucontext.h>
+
+#ifndef SYS_SECCOMP
+#define SYS_SECCOMP 1
+#endif
+
+extern "C" void Bun__onPosixSignal(int signalNumber);
+
+static std::atomic<bool> forwardSIGSYSToJS { false };
+
+// A SECCOMP_RET_TRAP policy (Android) reports a blocked syscall with SIGSYS instead of an
+// errno. Turn it into the ENOSYS return that the callers (close_range, pidfd_open, ...) handle.
+static void onSIGSYS(int sig, siginfo_t* info, void* context)
+{
+    if (info->si_code == SYS_SECCOMP && context) {
+        ucontext_t* uc = static_cast<ucontext_t*>(context);
+#if CPU(X86_64)
+        uc->uc_mcontext.gregs[REG_RAX] = -ENOSYS;
+#else
+        uc->uc_mcontext.regs[0] = static_cast<unsigned long long>(-ENOSYS);
+#endif
+        return;
+    }
+
+    // Otherwise it was sent with kill(2).
+    if (forwardSIGSYSToJS.load(std::memory_order_relaxed)) {
+        Bun__onPosixSignal(sig);
+        return;
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+static void installSIGSYSHandler()
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = onSIGSYS;
+    // SA_RESTART matches installForwardSignalHandler, for a SIGSYS sent with kill(2).
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSYS, &sa, nullptr);
+}
+
+// BunProcess.cpp routes process.on("SIGSYS") through onSIGSYS instead of replacing it.
+// Returns false on targets without onSIGSYS, where the caller installs its own handler.
+extern "C" bool Bun__forwardSIGSYSToJS(bool enabled)
+{
+    forwardSIGSYSToJS.store(enabled, std::memory_order_relaxed);
+    if (enabled)
+        installSIGSYSHandler();
+    return true;
+}
+#else
+static void installSIGSYSHandler()
+{
+}
+
+extern "C" bool Bun__forwardSIGSYSToJS(bool)
+{
+    return false;
+}
+#endif // CPU(X86_64) || CPU(ARM64)
 #else // OS(FREEBSD)
 // FreeBSD 12.2+ libc has close_range; 14.0+ supports CLOSE_RANGE_CLOEXEC
 // (same value 1<<2 as Linux). Passing flags through means execveZ-failure
@@ -322,7 +406,7 @@ extern "C" void on_before_reload_process_posix()
     }
 
     // Reset caught dispositions so a SIGTERM arriving between here and execve isn't queued-then-
-    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/RT/sigThreadSuspendResume are left
+    // lost. Inherited SIG_IGN is left alone. SIGSEGV/SIGBUS/SIGSYS/RT/sigThreadSuspendResume are left
     // for execve to reset atomically — resetting them here races JSC's sampler/GC threads fatally.
     struct sigaction sa {};
     sa.sa_handler = SIG_DFL;
@@ -331,7 +415,7 @@ extern "C" void on_before_reload_process_posix()
         if (s == SIGKILL || s == SIGSTOP || s == SIGSEGV || s == SIGBUS)
             continue;
 #if OS(LINUX)
-        if (s == g_wtfConfig.sigThreadSuspendResume)
+        if (s == g_wtfConfig.sigThreadSuspendResume || s == SIGSYS)
             continue;
 #endif
 #ifdef SIGRTMIN
@@ -403,6 +487,9 @@ extern "C" int __wrap_pthread_create(pthread_t* thread, const pthread_attr_t* at
 #endif // !OS(WINDOWS)
 
 #define LSHPACK_MAX_HEADER_SIZE 65536
+// ls-hpack is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts.
+static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_next_idx) == sizeof(char*) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
 
 // Lazily heap-allocated so it doesn't land in the .tls section on Windows
 // (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
@@ -636,11 +723,13 @@ extern "C" void bun_restore_stdio()
 }
 
 #if !OS(WINDOWS)
+// Implemented by bun_core::Global::raise_default_action.
+extern "C" [[noreturn]] void Bun__raiseDefaultAction(int sig);
+
 extern "C" void onExitSignal(int sig)
 {
     bun_restore_stdio();
-    signal(sig, SIG_DFL);
-    raise(sig);
+    Bun__raiseDefaultAction(sig);
 }
 #endif
 
@@ -689,6 +778,25 @@ extern "C" int __cxa_atexit(void (*)(void*), void*, void*);
 extern "C" struct mach_header __dso_handle;
 #endif
 
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
+static NEVER_INLINE void openDevNullIfStdioIsClosed(int fd)
+{
+    // Don't use isatty() here. It also fails with EBADF on an open O_PATH descriptor.
+    if (fcntl(fd, F_GETFD) != -1 || errno != EBADF)
+        return;
+
+    bun_is_stdio_null[fd] = 1;
+    int devNullFd;
+    do {
+        devNullFd = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
+    } while (devNullFd < 0 && errno == EINTR);
+
+    // Every lower fd is open, so open() must return `fd`.
+    if (devNullFd != fd) [[unlikely]]
+        abort();
+}
+#endif
+
 extern "C" void bun_initialize_process()
 {
     // Disable printf() buffering. We buffer it ourselves.
@@ -696,6 +804,9 @@ extern "C" void bun_initialize_process()
     setvbuf(stderr, nullptr, _IONBF, 0);
 
 #if OS(LINUX)
+    // A seccomp policy may trap bun_close_range.
+    installSIGSYSHandler();
+
     // Prevent leaking inherited file descriptors on Linux
     // This is less of an issue for macOS due to posix_spawn
     // This is best effort, not all linux kernels support close_range or CLOSE_RANGE_CLOEXEC
@@ -707,39 +818,13 @@ extern "C" void bun_initialize_process()
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
-    int devNullFd_ = -1;
     bool anyTTYs = false;
-
-    const auto setDevNullFd = [&](int target_fd) -> void {
-        bun_is_stdio_null[target_fd] = 1;
-        if (devNullFd_ == -1) {
-            do {
-                devNullFd_ = open("/dev/null", O_RDWR | O_CLOEXEC, 0);
-            } while (devNullFd_ < 0 and errno == EINTR);
-        };
-
-        if (devNullFd_ == target_fd) {
-            devNullFd_ = -1;
-            return;
-        }
-
-        ASSERT(devNullFd_ != -1);
-        int err;
-        do {
-            err = dup2(devNullFd_, target_fd);
-        } while (err < 0 && errno == EINTR);
-
-        if (err != 0) [[unlikely]] {
-            abort();
-        }
-    };
 
     for (int fd = 0; fd < 3; fd++) {
         int result = isatty(fd);
         if (result == 0) {
             if (errno == EBADF) [[unlikely]] {
-                // the fd is invalid, let's make sure it's always valid
-                setDevNullFd(fd);
+                openDevNullIfStdioIsClosed(fd);
             }
         } else {
             bun_stdio_tty[fd] = 1;
@@ -753,11 +838,6 @@ extern "C" void bun_initialize_process()
                 anyTTYs = true;
             }
         }
-    }
-
-    ASSERT(devNullFd_ == -1 || devNullFd_ > 2);
-    if (devNullFd_ > 2) {
-        close(devNullFd_);
     }
 
     // Restore TTY state on exit
@@ -1020,13 +1100,19 @@ extern "C" int ffi_fileno(FILE* file)
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 #include <signal.h>
 #include <pthread.h>
+#include <wtf/Lock.h>
 
-// Note: We only ever use bun.spawnSync on the main thread.
-extern "C" int64_t Bun__currentSyncPID = 0;
-static int Bun__pendingSignalToSend = 0;
+// The handler below can run on any thread while the spawning thread stores the pid.
+extern "C" std::atomic<int64_t> Bun__currentSyncPID { 0 }; // `AtomicI64` on the Rust side.
+static_assert(std::atomic<int64_t>::is_always_lock_free);
+static std::atomic<int> Bun__pendingSignalToSend { 0 };
 static struct sigaction previous_actions[NSIG];
+// Bun.openInEditor runs spawnSync on detached threads, so register and unregister can overlap.
+static WTF::Lock signalForwardingLock;
+static int signalForwardingDepth = 0;
 
-// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N]).
+// npm's signal list minus SIGIOT/SIGPOLL (aliases of SIGABRT/SIGIO; listing both would overwrite previous_actions[N])
+// and minus SIGSYS, which the kernel raises for the process's own syscall.
 // https://github.com/npm/cli/blob/fefd509992a05c2dfddbe7bc46931c42f1da69d7/workspaces/arborist/lib/signals.js#L26-L57
 #define FOR_EACH_POSIX_SIGNAL(M) \
     M(SIGABRT);                  \
@@ -1039,7 +1125,6 @@ static struct sigaction previous_actions[NSIG];
     M(SIGXFSZ);                  \
     M(SIGUSR2);                  \
     M(SIGTRAP);                  \
-    M(SIGSYS);                   \
     M(SIGQUIT);                  \
     M(SIGIO);
 
@@ -1061,45 +1146,40 @@ static struct sigaction previous_actions[NSIG];
     FOR_EACH_LINUX_ONLY_SIGNAL(M)
 #endif
 
-static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
-{
-    sigset_t restore_mask;
-    sigset_t mask;
-    sigemptyset(&mask);
-    sigaddset(&mask, sig);
-    sigemptyset(&restore_mask);
-    sigaddset(&restore_mask, sig);
-    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
-    kill(pid, sig);
-    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
-}
-
+// The spawning thread stores the pid, then reads the pending signal. The handler stores the signal, then loads
+// the pid. At least one of them sees the other's store, and the exchange ensures only one of them sends the signal.
 extern "C" void Bun__sendPendingSignalIfNecessary()
 {
-    int sig = Bun__pendingSignalToSend;
-    Bun__pendingSignalToSend = 0;
-    int pid = Bun__currentSyncPID;
+    int sig = Bun__pendingSignalToSend.exchange(0);
+    int64_t pid = Bun__currentSyncPID.load();
     if (sig == 0 || pid == 0)
         return;
 
-    Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid, sig);
+    kill(pid, sig);
 }
 
 extern "C" void Bun__registerSignalsForForwarding()
 {
-    Bun__pendingSignalToSend = 0;
+    WTF::Locker locker { signalForwardingLock };
+    if (signalForwardingDepth++ != 0)
+        return;
+
+    Bun__pendingSignalToSend.store(0);
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sigemptyset(&sa.sa_mask);
     // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
     sa.sa_flags = 0;
     sa.sa_handler = [](int sig) {
-        if (Bun__currentSyncPID == 0) {
-            Bun__pendingSignalToSend = sig;
-            return;
+        int64_t pid = Bun__currentSyncPID.load();
+        if (pid == 0) {
+            Bun__pendingSignalToSend.store(sig);
+            pid = Bun__currentSyncPID.load();
+            if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
+                return;
         }
 
-        Bun__forwardSignalFromParentToChildAndRestorePreviousAction(Bun__currentSyncPID, sig);
+        kill(pid, sig);
     };
 
 #define REGISTER_SIGNAL(SIG)                                 \
@@ -1113,7 +1193,11 @@ extern "C" void Bun__registerSignalsForForwarding()
 
 extern "C" void Bun__unregisterSignalsForForwarding()
 {
-    Bun__currentSyncPID = 0;
+    Bun__currentSyncPID.store(0);
+
+    WTF::Locker locker { signalForwardingLock };
+    if (--signalForwardingDepth != 0)
+        return;
 
 #define UNREGISTER_SIGNAL(SIG)                                \
     if (sigaction(SIG, &previous_actions[SIG], NULL) == -1) { \
@@ -1185,10 +1269,18 @@ struct BlobHeader {
 
 #if OS(DARWIN)
 
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
+    // A corrupt file can claim any length, so check it against the section size from the load command.
+    unsigned long sectionSize = 0;
+    uint8_t* sectionData = getsectiondata(&_mh_execute_header, "__BUN", "__bun", &sectionSize);
+    if (!sectionData || sectionSize < sizeof(uint64_t)) return nullptr;
+    if (BUN_COMPILED.size > sectionSize - sizeof(uint64_t)) return nullptr;
     return &BUN_COMPILED.size;
 }
 
@@ -1231,7 +1323,15 @@ static bool initializePESection()
         if (memcmp(sectionHeader->Name, ".bun\0\0\0\0", 8) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
+            // A corrupt file can claim any length, but only VirtualSize bytes are mapped.
+            uint64_t sectionSize = sectionHeader->Misc.VirtualSize;
+            if (sectionSize < sizeof(uint64_t)) return false;
+
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            uint64_t embeddedLength;
+            memcpy(&embeddedLength, sectionData, sizeof(embeddedLength));
+            if (embeddedLength > sectionSize - sizeof(uint64_t)) return false;
+
             pe_section_size = (uint64_t*)sectionData;
             pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
             return true;

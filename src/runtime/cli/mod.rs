@@ -447,6 +447,16 @@ pub(crate) mod help_command {
     /// The spacing between commands is intentional.
     macro_rules! print_cli_helptext {
         ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
+            if lint_command::IS_ENABLED {
+                print_cli_helptext!(
+                    @lint "  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint\n",
+                    $printer, $prefix, $args $(, $extra)*
+                )
+            } else {
+                print_cli_helptext!(@lint "", $printer, $prefix, $args $(, $extra)*)
+            }
+        };
+        (@lint $lint:literal, $printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
             $printer!(
                 concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
@@ -456,8 +466,7 @@ pub(crate) mod help_command {
             <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
-  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
+", $lint, "  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -874,7 +883,8 @@ pub(crate) mod command {
             };
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_of_the_project(b"lint") {
+            let is_enabled = super::lint_command::IS_ENABLED;
+            return match !is_enabled || super::script_or_command::is_of_the_project(b"lint") {
                 true => Tag::AutoCommand,
                 false => Tag::LintCommand,
             };
@@ -1825,12 +1835,12 @@ To create a project with the official Next.js scaffolding tool, run
 
         for arg in bun::argv() {
             if arg == b"--hash" {
-                let mut path_buf = bun_paths::path_buffer_pool::get();
-                path_buf[..entry.len()].copy_from_slice(entry);
-                path_buf[entry.len()] = 0;
-                // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
-                let lockfile_path = bun_core::ZStr::from_buf(&path_buf[..], entry.len());
-                let file = match bun_sys::File::open(lockfile_path, bun_sys::O::RDONLY, 0) {
+                let file = match bun_sys::File::openat(
+                    bun_sys::Fd::cwd(),
+                    &entry[..],
+                    bun_sys::O::RDONLY,
+                    0,
+                ) {
                     Ok(f) => f,
                     Err(err) => {
                         Output::err(err, "failed to open lockfile", ());
@@ -1925,7 +1935,10 @@ Flags:
   <cyan>--cwd <blue>\\<path\\><r>            Set the working directory
   <cyan>--env-file <blue>\\<file\\><r>       Load environment variables from the specified file(s)
   <cyan>--minimum-release-age <blue>\\<seconds\\><r>  Only install packages published at least N seconds ago (security feature)
+  <cyan>--registry <blue>\\<url\\><r>        Install from a specific registry
+  <cyan>--ca <blue>\\<cert\\><r>, <cyan>--cafile <blue>\\<path\\><r>  Trust a Certificate Authority signing certificate during installation
   <cyan>--trust<r>                Run the lifecycle scripts of the package and of ALL of its dependencies during installation
+  <cyan>--ignore-scripts<r>       Run no lifecycle scripts during installation
   <cyan>--verbose<r>              Enable verbose output during installation
   <cyan>--silent<r>               Suppress output during installation
 

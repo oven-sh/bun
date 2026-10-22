@@ -76,6 +76,8 @@ fn extract_identifiers_from_pattern<'a>(pattern: Expr<'a>, mut visit: impl FnMut
     while let Some(pattern) = stack.pop() {
         match pattern.kind() {
             ExprKind::Ident(_) => visit(pattern),
+            // In parentheses ESTree has an expression, not a pattern.
+            _ if pattern.is_parenthesized() => {}
             ExprKind::Object(properties) => stack.extend(properties.iter().filter_map(Prop::value)),
             ExprKind::Array(elements) => stack.extend(elements),
             ExprKind::Spread(argument) => stack.push(argument),
@@ -105,7 +107,9 @@ fn get_code_path_start_scope<'a>(
     scope: Scope<'a>,
     code_path_start_scopes: &IdSet<Scope<'a>>,
 ) -> Option<Scope<'a>> {
-    scope.chain().find(|it| code_path_start_scopes.contains(*it))
+    scope
+        .chain()
+        .find(|it| code_path_start_scopes.contains(*it))
 }
 
 /// True if `reference` is in a decorator of a parameter of a function nested in `scope`'s code path. Such a decorator

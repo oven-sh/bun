@@ -18692,5 +18692,47 @@
       "generated_131.ts": "export {}\ntype Json = string | Json[];\ntype ValidateJSON<T> = ((...args: Array<any>) => any) extends T ? never : { [K in keyof T]: ValidateJSON<T[K]> };\ntype Check<T> = T extends ValidateJSON<T> ? { a?: 1 } : { a?: 2 };\ntype Box<T> = { v: T };\ntype Opt<T> = T extends string ? { s: T } : { n: T };\ndeclare function take(data: Json): void;\ndeclare function takeN(data: number): void;\ndeclare const j: Json;\ndeclare class C<T = unknown> { constructor(p0: (x: T) => void, p1: Check<T[]>, ...r: T[]); value: T }\nnew C<Json>(1, j).value;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"], \"jsx\": \"preserve\" } }\n"
     }
+  },
+  "export-from-without-a-module-specifier-where-declarations-are-emitted": {
+    "files": {
+      "between.ts": "export const b = 1;\nexport * from\nexport const c = 2;\n",
+      "cast.js": "export * from /** @type {any} */ ( )\n",
+      "from.ts": "export * from\n",
+      "globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "m.ts": "export const a = 1;\n",
+      "named.ts": "export { a } from // which module\n",
+      "namespace.ts": "export * as ns from\r\n",
+      "star.ts": "export *\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"noEmit\": true, \"declaration\": true, \"allowJs\": true } }\n",
+      "type.ts": "export type *\n"
+    }
+  },
+  "export-from-a-module-specifier-in-parentheses-in-a-referenced-project": {
+    "files": {
+      "app/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "app/main.ts": "import \"../lib/closed\";\nimport \"../lib/nested\";\nimport \"../lib/open\";\nimport \"../lib/half\";\nimport \"../lib/lines\";\nimport \"../lib/operand\";\nexport const planted: number = \"x\";\n",
+      "app/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true }, \"references\": [{ \"path\": \"../lib\" }] }\n",
+      "lib/closed.ts": "export * from (\"./m\")\n",
+      "lib/globals.d.ts": "interface Array<T> {}\ninterface Boolean {}\ninterface CallableFunction {}\ninterface Function {}\ninterface IArguments {}\ninterface NewableFunction {}\ninterface Number {}\ninterface Object {}\ninterface RegExp {}\ninterface String {}\ndeclare var console: { log(...args: unknown[]): void };\n",
+      "lib/half.ts": "export * from ((\"./m\")\n",
+      "lib/lines.ts": "export * from (\n  \"./m\" // the module\n)\n",
+      "lib/m.ts": "export const a = 1;\n",
+      "lib/nested.ts": "export { a } from ((  \"./m\"  ));\n",
+      "lib/open.ts": "export * from (\"./m\"\n",
+      "lib/operand.ts": "export * from (1 + (2))\n",
+      "lib/tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"noLib\": true, \"types\": [], \"skipLibCheck\": true, \"composite\": true } }\n",
+      "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
+    },
+    "build": true
+  },
+  "inferred-type-is-a-module-in-a-nested-node-modules": {
+    "files": {
+      "a.ts": "import { K, viaImportType, viaNamespace } from \"outer\";\nexport const a = viaImportType();\nexport const b = viaNamespace();\nexport const c = new K().m;\nexport class D { m(x: typeof import(\"outer/node_modules/inner\")) { return x; } }\n",
+      "node_modules/outer/package.json": "{ \"name\": \"outer\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/index.d.ts": "import * as inner from \"inner\";\nexport declare function viaImportType(): typeof import(\"inner\");\nexport declare function viaNamespace(): typeof inner;\nexport declare class K { m(x: import(\"inner\").Inner): typeof import(\"inner\"); }\n",
+      "node_modules/outer/node_modules/inner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
+    }
   }
 }

@@ -3885,9 +3885,9 @@ where
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
         }
-        // A 206 answers a Range: header (sendfile.total > 0), and a `.slice()` with status 200 or a Content-Range.
-        needs_content_range =
-            needs_content_range && (sendfile.total > 0 || has_content_range || status == 200);
+        // A 206 answers a Range: header (sendfile.total > 0), and a `.slice()` with status 200 or 206 or a Content-Range.
+        needs_content_range = needs_content_range
+            && (sendfile.total > 0 || has_content_range || status == 200 || status == 206);
         if needs_content_range {
             status = 206;
         }

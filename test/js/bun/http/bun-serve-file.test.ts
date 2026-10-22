@@ -95,6 +95,8 @@ describe("Bun.file in serve routes", () => {
       },
       "/slice-handler-content-range": () =>
         new Response(partialSlice(), { headers: { "Content-Range": "bytes 5-9/16" } }),
+      "/slice-handler-206": () => new Response(partialSlice(), { status: 206 }),
+      "/slice-handler-206-headers": () => new Response(partialSlice(), { status: 206, headers: { "X-Custom": "1" } }),
       "/slice-handler-status": () => new Response(partialSlice(), { status: 201 }),
       "/slice-handler-status-headers": () =>
         new Response(partialSlice(), { status: 201, headers: { "X-Custom": "1" } }),
@@ -780,7 +782,7 @@ describe("Bun.file in serve routes", () => {
         return { status: res.status, contentRange: res.headers.get("Content-Range"), body: await res.text() };
       };
       const partial = { status: 206, contentRange: "bytes 5-9/*", body: "56789" };
-      // A status of its own stays, and gets no Content-Range.
+      // Another status stays, and gets no Content-Range.
       const created = { status: 201, contentRange: null, body: "56789" };
       expect({
         "no headers": await serve("/slice-handler"),
@@ -788,6 +790,8 @@ describe("Bun.file in serve routes", () => {
         "headers read": await serve("/slice-handler-headers-read"),
         "copy": await serve("/slice-handler-copy"),
         "Content-Range": await serve("/slice-handler-content-range"),
+        "status 206": await serve("/slice-handler-206"),
+        "status 206 and headers": await serve("/slice-handler-206-headers"),
         "status": await serve("/slice-handler-status"),
         "status and headers": await serve("/slice-handler-status-headers"),
       }).toEqual({
@@ -796,6 +800,8 @@ describe("Bun.file in serve routes", () => {
         "headers read": partial,
         "copy": partial,
         "Content-Range": { ...partial, contentRange: "bytes 5-9/16" },
+        "status 206": partial,
+        "status 206 and headers": partial,
         "status": created,
         "status and headers": created,
       });

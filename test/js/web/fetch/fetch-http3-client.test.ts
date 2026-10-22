@@ -987,17 +987,39 @@ test("a response header set over the size limit fails that request and no other 
   expect(heldRequests).toBe(1);
 });
 
-test("rejects a request header value that is too long to send", async () => {
-  // lsxpack holds the length of a value in 16 bits.
-  const outcome = await fetch(`${base}/headers-echo`, {
-    ...h3,
-    headers: { "x-value": Buffer.alloc(70_000, "v").toString() },
-  }).then(
-    res => res.status,
-    err => err.code,
+test("a response header value of more than 64 KB is delivered, up to the size limit", async () => {
+  await using origin = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    fetch(req) {
+      const length = Number(new URL(req.url).pathname.slice(1));
+      return new Response(null, { headers: { "x-value": Buffer.alloc(length, "v").toString() } });
+    },
+  });
+  // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field.
+  const rest = [...(await fetch(`${origin.url}0`, h3)).headers].reduce(
+    (size, [name, value]) => size + name.length + value.length + 32,
+    ":status".length + "200".length + 32,
   );
-  expect(outcome).toBe("HTTP3HeaderEncodingError");
-  expect(await fetch(`${base}/hello`, h3).then(res => res.text())).toBe("hello over h3");
+  const atTheLimit = 256 * 1024 - rest;
+  const outcome = (length: number) =>
+    fetch(`${origin.url}${length}`, h3).then(
+      res => res.headers.get("x-value") === Buffer.alloc(length, "v").toString(),
+      err => err.code,
+    );
+  expect({
+    value70000: await outcome(70_000),
+    atTheLimit: await outcome(atTheLimit),
+    overTheLimit: await outcome(atTheLimit + 1),
+    after: await outcome(1),
+  }).toEqual({
+    value70000: true,
+    atTheLimit: true,
+    overTheLimit: "ResponseHeadersTooLarge",
+    after: true,
+  });
 });
 
 // Stale-session retry: a request bound on session A when A's conn closes
@@ -1162,6 +1184,9 @@ test.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns re
 // reports the failure and does not send it again (RFC 9110 section 9.2.2), as
 // over HTTP/1.1.
 test.each(["POST", "PATCH"])("does not send a %s again after it was written", async method => {
+  // Its own pool: a connection left over from a server that had the same port is not reused.
+  using session = new Bun.FetchSession();
+  const h3 = { protocol: "http3", tls: { rejectUnauthorized: false }, session } as const;
   const hits: string[] = [];
   const received = Promise.withResolvers<void>();
   const release = Promise.withResolvers<void>();
@@ -1215,6 +1240,7 @@ test.each(["POST", "PATCH"])("does not send a %s again after it was written", as
 // that lists only a reserved version, so the handshake fails before the request
 // is written. Each connection attempt uses a new connection ID.
 test.each(["GET", "POST"])("sends a %s again once if the connection failed before it was written", async method => {
+  using session = new Bun.FetchSession();
   const attempts = new Set<string>();
   const server = await Bun.udpSocket({
     hostname: "127.0.0.1",
@@ -1243,7 +1269,7 @@ test.each(["GET", "POST"])("sends a %s again once if the connection failed befor
   });
   try {
     const init = method === "GET" ? {} : { method, body: "payload" };
-    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init }).catch(e => e.code);
+    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init, session }).catch(e => e.code);
     expect(outcome).toBe("HTTP3HandshakeFailed");
     expect(attempts.size).toBe(2);
   } finally {
@@ -1254,10 +1280,14 @@ test.each(["GET", "POST"])("sends a %s again once if the connection failed befor
 // The origin can also end the stream itself, with the connection still up. A
 // second send then reaches the same origin and its handler runs again. Only
 // H3_REQUEST_REJECTED says that the origin did not process the request
-// (RFC 9114 section 4.1.1).
+// (RFC 9114 section 4.1.1). An origin that shuts down sends it, so that request
+// goes to a new connection. Any other one stays on the connection it was on.
 describe("the origin ended the stream with no final response", () => {
   const encoder = new TextEncoder();
-  const listenOrigin = (endWithoutResponse: (stream: any) => void, received: string[]) =>
+  const listenOrigin = (
+    endWithoutResponse: (stream: any) => void,
+    received: { methods: string[]; sessions: Set<unknown> },
+  ) =>
     listen(
       async (session: any) => {
         session.onstream = (stream: any) => stream.closed.catch(() => {});
@@ -1268,8 +1298,9 @@ describe("the origin ended the stream with no final response", () => {
         transportParams: { maxIdleTimeout: 5 },
         async onheaders(this: any, headers: Record<string, string>) {
           for await (const _ of this);
-          received.push(headers[":method"]);
-          if (received.length === 1) return endWithoutResponse(this);
+          received.methods.push(headers[":method"]);
+          received.sessions.add(this.session);
+          if (received.methods.length === 1) return endWithoutResponse(this);
           this.sendHeaders({ ":status": "200" });
           this.writer.writeSync(encoder.encode("ok"));
           this.writer.endSync();
@@ -1284,46 +1315,125 @@ describe("the origin ended the stream with no final response", () => {
   };
 
   test.each([
-    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, { outcome: "HTTP3StreamReset", received: ["POST"] }],
-    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, { outcome: "ok", received: ["PUT", "PUT"] }],
-    ["a 103 and the end of the stream", "POST", interimOnly, { outcome: "HTTP3StreamReset", received: ["POST"] }],
-    ["a 103 and the end of the stream", "PUT", interimOnly, { outcome: "ok", received: ["PUT", "PUT"] }],
-    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, { outcome: "ok", received: ["POST", "POST"] }],
-    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, { outcome: "ok", received: ["PUT", "PUT"] }],
-  ])("%s: %s", async (_name, method, endWithoutResponse, expected) => {
-    const received: string[] = [];
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, "HTTP3StreamReset", ["POST"], true],
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, "ok", ["PUT", "PUT"], true],
+    ["a 103 and the end of the stream", "POST", interimOnly, "HTTP3StreamReset", ["POST"], true],
+    ["a 103 and the end of the stream", "PUT", interimOnly, "ok", ["PUT", "PUT"], true],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, "ok", ["POST", "POST"], false],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, "ok", ["PUT", "PUT"], false],
+  ])("%s: %s", async (_name, method, endWithoutResponse, expectedOutcome, methods, oneConnection) => {
+    using session = new Bun.FetchSession();
+    const received = { methods: [] as string[], sessions: new Set() };
     const origin = await listenOrigin(endWithoutResponse, received);
     try {
-      const outcome = await fetch(`https://127.0.0.1:${origin.address!.port}/`, { ...h3, method, body: "one order" })
+      const init = { ...h3, session, method, body: "one order" };
+      const outcome = await fetch(`https://127.0.0.1:${origin.address!.port}/`, init)
         .then(r => r.text())
         .catch(e => e.code);
-      expect({ outcome, received }).toEqual(expected);
+      expect({ outcome, methods: received.methods, oneConnection: received.sessions.size === 1 }).toEqual({
+        outcome: expectedOutcome,
+        methods,
+        oneConnection,
+      });
     } finally {
       // Not close(): it waits for the session that fetch() keeps in its pool.
       await origin.destroy();
     }
   });
+});
 
-  test("Bun.serve could not send the response headers: POST", async () => {
-    let handled = 0;
-    await using origin = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      http1: false,
-      async fetch(req) {
-        await req.text();
-        handled++;
-        // lsxpack holds the length of a value in 16 bits.
-        return new Response("body", { headers: { "x-value": Buffer.alloc(70_000, "v").toString() } });
+// A server that shuts down gracefully sends a GOAWAY with the id of the first
+// request that it did not accept (RFC 9114 section 5.2). It did not process a
+// request above that id, which is safe to send again whatever its method. The
+// request at the id is not: some servers name the last request they accepted.
+// The relay lets two requests leave the client without reaching A.
+// A is a node:quic server because it can end the connection after the GOAWAY.
+test.each([
+  ["POST", "HTTP3StreamReset", ["a /below", "b /above"]],
+  ["PUT", "b", ["a /below", "b /above", "b /at", "b /below"]],
+])("sends a %s above the id of the server's GOAWAY again", async (method, otherOutcome, expected) => {
+  using pool = new Bun.FetchSession();
+  const applied: string[] = [];
+  const accepted = Promise.withResolvers<void>();
+  let session: any;
+  const a = await listen(
+    async (incoming: any) => {
+      incoming.onstream = (stream: any) => stream.closed.catch(() => {});
+      await incoming.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+      transportParams: { maxIdleTimeout: 5 },
+      async onheaders(this: any, headers: Record<string, string>) {
+        for await (const _ of this);
+        applied.push(`a ${headers[":path"]}`);
+        session = this.session;
+        accepted.resolve();
       },
-    });
-    const outcome = await fetch(origin.url, { ...h3, method: "POST", body: "one order" }).then(
-      res => res.status,
+    },
+  );
+  await using b = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch(req) {
+      await req.text();
+      applied.push(`b ${new URL(req.url).pathname}`);
+      return new Response("b");
+    },
+  });
+  const body = Buffer.alloc(2_000, "x");
+  const written = Promise.withResolvers<void>();
+  let origin = a.address!.port;
+  let client = { port: 0, address: "" };
+  let bytesForB = 0;
+  const firstInitial = new Map<string, Buffer | null>();
+  const back = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: { data: (_socket, packet) => void front.send(packet, client.port, client.address) },
+  });
+  const front = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(_socket, packet, port, address) {
+        client = { port, address };
+        if (origin === b.port && (bytesForB += packet.length) > 2 * body.length) written.resolve();
+        // A ClientHello takes two Initial packets, and a server that reads the first one
+        // alone answers with a Retry. It gets the first two of a connection together.
+        if ((packet[0] & 0xf0) === 0xc0) {
+          const sourceId = packet.subarray(7 + packet[5], 7 + packet[5] + packet[6 + packet[5]]).toString("hex");
+          const first = firstInitial.get(sourceId);
+          if (first === undefined) return void firstInitial.set(sourceId, Buffer.from(packet));
+          if (first) back.send(first, origin, "127.0.0.1");
+          firstInitial.set(sourceId, null);
+        }
+        back.send(packet, origin, "127.0.0.1");
+      },
+    },
+  });
+  const send = (path: string) =>
+    fetch(`https://127.0.0.1:${front.port}${path}`, { ...h3, session: pool, method, body }).then(
+      res => res.text(),
       err => err.code,
     );
-    expect({ outcome, handled }).toEqual({ outcome: "HTTP3StreamReset", handled: 1 });
-  });
+  try {
+    const below = send("/below");
+    await accepted.promise;
+    origin = b.port!;
+    const at = send("/at");
+    const above = send("/above");
+    await written.promise;
+    session.close().catch(() => {});
+    expect(await above).toBe("b");
+    session.destroy(undefined, { code: 0x100, type: "application" });
+    expect(await Promise.all([below, at])).toEqual([otherOutcome, otherOutcome]);
+    expect(applied.sort()).toEqual(expected);
+  } finally {
+    front.close();
+    back.close();
+    await a.destroy();
+  }
 });
 
 // Subprocess so the experimental flag is process-scoped and the in-process

@@ -889,10 +889,11 @@ async function withCustomServer(
     send: (cmd: string) => void,
     waitForStderr: (re: RegExp) => Promise<RegExpMatchArray>,
   ) => Promise<void>,
+  args: string[] = [],
 ) {
   using dir = tempDir("serve-http3-custom", { "server.mjs": script });
   const proc = Bun.spawn({
-    cmd: [bunExe(), "server.mjs"],
+    cmd: [bunExe(), ...args, "server.mjs"],
     cwd: String(dir),
     env: bunEnv,
     stdout: "inherit",
@@ -1555,6 +1556,54 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("server.stop(true) after server.stop() closes the H3 connections that are still draining", async () => {
+    using dir = tempDir("serve-http3-stop-twice", {
+      "server.mjs": `
+        const server = Bun.serve({
+          port: 0, tls: ${JSON.stringify(tls)}, http3: true, http1: false,
+          fetch() {
+            console.error("HELD");
+            return new Promise(() => {});
+          },
+        });
+        console.error("PORT=" + server.port);
+        process.stdin.once("data", () => {
+          server.stop();
+          server.stop(true);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.mjs"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdin: "pipe",
+    });
+    let buf = "";
+    const r = proc.stderr.getReader();
+    const waitFor = async (text: string) => {
+      while (!buf.includes(text)) {
+        const { value, done } = await r.read();
+        if (done) break;
+        buf += new TextDecoder().decode(value);
+      }
+    };
+    await waitFor("PORT=");
+    const port = Number(buf.match(/PORT=(\d+)/)![1]);
+    const held = fetchH3(port, "/", { method: "POST", body: "held" }).then(
+      res => res.status,
+      err => err.code,
+    );
+    await waitFor("HELD");
+    r.releaseLock();
+    proc.stdin!.write("stop\n");
+    proc.stdin!.end();
+    expect(await held).toBe("HTTP3StreamReset");
+    // No process.exit() in the script: the connection no longer holds the loop.
+    expect(await proc.exited).toBe(0);
+  });
+
   // The HEADERS of the first response on a connection wait for the QPACK encoder
   // stream, and lsquic takes no DATA until they are out. A small streamed body is
   // therefore written, and the response ended, from the stream's writable
@@ -1969,50 +2018,79 @@ describe("Bun.serve HTTP/3 request validation", () => {
     });
   });
 
-  test("a response whose headers can't be sent fails its request and no other on the connection", async () => {
-    const held = Promise.withResolvers<void>();
-    const release = Promise.withResolvers<void>();
-    let heldRequests = 0;
-    await using server = Bun.serve({
-      port: 0,
-      tls,
-      http3: true,
-      async fetch(req) {
-        const { pathname } = new URL(req.url);
-        if (pathname === "/held") {
-          heldRequests++;
-          held.resolve();
-          await release.promise;
-          return new Response("held");
-        }
-        const headers = new Headers();
-        // lsxpack holds the length of a value in 16 bits.
-        if (pathname === "/value") headers.set("x-value", Buffer.alloc(70_000, "v").toString());
-        // lsquic encodes a header block into 64 KB, and "~" is sent as it is.
-        else for (let i = 0; i < 20; i++) headers.set(`x-field-${i}`, Buffer.alloc(4_000, "~").toString());
-        if (req.method === "HEAD") return new Response(null, { headers });
-        return new Response("body", { headers });
-      },
-    });
-    const outcome = (path: string, method = "GET") =>
-      fetchH3(server.port!, path, { method }).then(
-        res => res.status,
-        err => err.code,
-      );
-
-    const other = fetchH3(server.port!, "/held");
-    await held.promise;
-    for (const path of ["/value", "/block"]) {
-      expect({ path, GET: await outcome(path), HEAD: await outcome(path, "HEAD") }).toEqual({
-        path,
-        GET: "HTTP3StreamReset",
-        HEAD: "HTTP3StreamReset",
+  test("header blocks and values of more than 64 KB arrive intact in both directions, up to the size limit", async () => {
+    const limit = 250_000;
+    await withCustomServer(
+      `
+      const server = Bun.serve({
+        port: 0,
+        tls: ${JSON.stringify(tls)},
+        http3: true,
+        fetch(req) {
+          const headers = new Headers();
+          let size = 0;
+          for (const [name, value] of req.headers) {
+            size += name.length + value.length + 32;
+            if (name.startsWith("x-field-")) headers.set(name, value);
+          }
+          return new Response(String(size), { headers });
+        },
       });
-    }
-    release.resolve();
-    expect(await (await other).text()).toBe("held");
-    // A closed connection would have sent it again on a new one.
-    expect(heldRequests).toBe(1);
+      console.error("PORT=" + server.port);
+      process.stdin.on("data", () => {});
+      ${STOP_ON_STDIN_END}
+      `,
+      async port => {
+        const echo = async (sent: Record<string, string>) => {
+          const res = await fetchH3(port, "/", { headers: sent });
+          const received = Object.fromEntries([...res.headers].filter(([name]) => name.startsWith("x-field-")));
+          // Not toEqual(sent): a mismatch would print the values.
+          return { status: res.status, intact: Bun.deepEquals(received, sent) };
+        };
+        const block: Record<string, string> = {};
+        // QPACK sends "~" as it is.
+        for (let i = 0; i < 30; i++) block[`x-field-${i}`] = String(i).padEnd(4_000, "~");
+        expect({
+          block: await echo(block),
+          value70000: await echo({ "x-field-0": Buffer.alloc(70_000, "v").toString() }),
+          value200000: await echo({ "x-field-0": Buffer.alloc(200_000, "~").toString() }),
+          name70000: await echo({ ["x-field-" + Buffer.alloc(70_000, "n")]: "v" }),
+        }).toEqual({
+          block: { status: 200, intact: true },
+          value70000: { status: 200, intact: true },
+          value200000: { status: 200, intact: true },
+          name70000: { status: 200, intact: true },
+        });
+
+        // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field. The
+        // server saw :authority as Host, and :method, :scheme and :path count too.
+        const own =
+          Number(await (await fetchH3(port, "/")).text()) +
+          (":authority".length - "host".length) +
+          (":method".length + "GET".length + 32) +
+          (":scheme".length + "https".length + 32) +
+          (":path".length + "/".length + 32);
+        const oneValue = (size: number) =>
+          fetchH3(port, "/", {
+            headers: { "x-field-0": Buffer.alloc(size - own - ("x-field-0".length + 32), "v").toString() },
+          }).then(
+            res => res.status,
+            err => err.code,
+          );
+        expect({
+          atTheLimit: await oneValue(limit),
+          overTheLimit: await oneValue(limit + 1),
+          farOverTheLimit: await oneValue(limit * 3),
+          after: (await fetchH3(port, "/")).status,
+        }).toEqual({
+          atTheLimit: 200,
+          overTheLimit: 431,
+          farOverTheLimit: "HTTP3StreamReset",
+          after: 200,
+        });
+      },
+      [`--max-http-header-size=${limit}`],
+    );
   });
 
   test("request.url falls back to the :path when :authority is not a valid host", async () => {

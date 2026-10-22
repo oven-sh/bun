@@ -1792,8 +1792,10 @@ pub enum WrapMode {
 ///
 /// 1. For all Components (which is defined as any top-level function/function variable, that is
 ///    named with a capital letter; see `isComponentishName`), register them to the runtime using
-///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.handleReactRefreshRegister`
-///    HOC components are also registered, but only through a special case for `export default`
+///    `$RefreshReg$(ComponentFunction, "Component");`. Implemented in `p.emit_react_refresh_register`.
+///    A component can also be the value of calls around a function, as in `memo(forwardRef(fn))`
+///    or `withRouter(fn)`. `p.register_react_refresh_wrapper` registers the function, the value of
+///    each call, and the binding.
 ///
 /// 2. For all functions which call a Hook (a hook is an identifier matching /^use[A-Z]/):
 ///     a. Outside of the function, create a signature function `const _s = $RefreshSig$();`
@@ -1824,8 +1826,15 @@ pub struct ReactRefresh<'a> {
     pub(crate) register_used: bool,
     pub(crate) signature_used: bool,
 
-    /// $RefreshReg$ is called on all top-level variables that are
-    /// components, as well as HOCs found in the `export default` clause.
+    /// Set when a function is registered under its own binding. The dev server then lets the
+    /// module accept its own updates, if every export looks like a component at run time.
+    /// A wrapper call does not set it. That run-time test does not know which exports are
+    /// registered, so a module that starts to accept its own updates because of `memo(fn)`
+    /// would stop showing edits to an export that is not registered, such as a class.
+    pub(crate) function_registered: bool,
+
+    /// $RefreshReg$ is called on all top-level variables that are components,
+    /// and on the default export when it is one.
     pub(crate) register_ref: Ref,
 
     /// $RefreshSig$ is called to create a signature function, which is
@@ -1862,35 +1871,54 @@ pub struct ReactRefresh<'a> {
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
     pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
 
-    /// This is the most recently generated `_s` call. This is used to compare
-    /// against seen calls to plain identifiers when in "export default" and in
-    /// "const Component =" to know if an expression had been wrapped in a hook
-    /// signature function.
-    pub(crate) latest_signature_ref: Ref,
-
-    _phantom: core::marker::PhantomData<&'a ()>,
+    /// The components registered so far under a module-scope name, newest first.
+    /// `hoc(Name)` is registered only when `Name` is in this list.
+    pub(crate) registered: Option<&'a RegisteredComponent<'a>>,
 }
+
+// `P` holds one of these for every file, with or without React Fast Refresh.
+const _: () = assert!(core::mem::size_of::<ReactRefresh<'static>>() <= 56);
 
 impl<'a> Default for ReactRefresh<'a> {
     fn default() -> Self {
         Self {
             register_used: false,
             signature_used: false,
+            function_registered: false,
             register_ref: Ref::NONE,
             create_signature_ref: Ref::NONE,
             force_reset: false,
             last_hook_seen: None,
             hook_ctx_storage: None,
-            latest_signature_ref: Ref::NONE,
-            _phantom: core::marker::PhantomData,
+            registered: None,
         }
     }
+}
+
+pub(crate) struct RegisteredComponent<'a> {
+    pub(crate) binding: Ref,
+    /// The hook signature of its function, when that function calls hooks.
+    pub(crate) signature: Option<crate::p::ReactRefreshSignature>,
+    pub(crate) next: Option<&'a RegisteredComponent<'a>>,
 }
 
 pub struct HookContext {
     pub(crate) hasher: Wyhash,
     pub(crate) signature_cb: Ref,
     pub(crate) user_hooks: ArrayHashMap<Ref, Expr>,
+}
+
+impl<'a> ReactRefresh<'a> {
+    pub(crate) fn registered_component(&self, binding: Ref) -> Option<&'a RegisteredComponent<'a>> {
+        let mut entry = self.registered;
+        while let Some(component) = entry {
+            if component.binding == binding {
+                return Some(component);
+            }
+            entry = component.next;
+        }
+        None
+    }
 }
 
 impl ReactRefresh<'_> {

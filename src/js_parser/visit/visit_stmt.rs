@@ -540,47 +540,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data.default_name = p.create_default_name(expr.loc);
                 }
 
-                let should_emit_temp_var = p.options.features.react_fast_refresh
-                    && match expr.data {
-                        js_ast::ExprData::EArrow(_) => true,
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                id.ref_ == p.react_refresh.latest_signature_ref
-                            }
-                            _ => false,
-                        },
-                        _ => false,
-                    };
-                if should_emit_temp_var {
-                    // declare a temporary ref for this
+                let component = if p.options.features.react_fast_refresh {
+                    p.react_refresh_component(*expr)
+                } else {
+                    None
+                };
+                if let Some(component) = component {
+                    // > const default_export = memo(fn);
+                    // > $RefreshReg$(default_export, "App.tsx:default%memo");
+                    // > export default default_export;
                     let temp_id = p.generate_temp_ref(Some(b"default_export"));
-                    VecExt::append(&mut p.cur_scope().generated, temp_id);
+                    p.record_declared_symbol(temp_id);
 
-                    let value_expr = *expr;
-                    stmts.push(Stmt::alloc(
-                        S::Local {
-                            kind: S::Kind::KConst,
-                            decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(
-                                    p.arena,
-                                    B::Identifier { r#ref: temp_id },
-                                    stmt.loc,
-                                ),
-                                value: Some(value_expr),
-                            }]),
-                            ..Default::default()
-                        },
-                        stmt.loc,
-                    ));
-
-                    *expr = Expr::init_identifier(temp_id, stmt.loc);
-
-                    p.emit_react_refresh_register(
+                    let mut value_expr = *expr;
+                    let declaration_index = stmts.len();
+                    p.register_react_refresh_component(
                         stmts,
-                        b"default",
+                        component,
+                        &mut value_expr,
                         temp_id,
+                        b"default",
                         ReactRefreshExportKind::Default,
                     )?;
+                    stmts.insert(
+                        declaration_index,
+                        Stmt::alloc(
+                            S::Local {
+                                kind: S::Kind::KConst,
+                                decls: G::DeclList::from_slice(&[G::Decl {
+                                    binding: Binding::alloc(
+                                        p.arena,
+                                        B::Identifier { r#ref: temp_id },
+                                        stmt.loc,
+                                    ),
+                                    value: Some(value_expr),
+                                }]),
+                                ..Default::default()
+                            },
+                            stmt.loc,
+                        ),
+                    );
+
+                    *expr = Expr::init_identifier(temp_id, stmt.loc);
                 }
 
                 if p.options.features.server_components.wraps_exports() {
@@ -1088,6 +1089,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut rr: Result<(), Error> = Ok(());
         if p.options.features.react_fast_refresh {
+            let mut signature = None;
             if let Some(hook) = react_hook_data.as_mut() {
                 let signature_cb = hook.signature_cb;
                 stmts.push(p.get_react_refresh_hook_signal_decl(signature_cb));
@@ -1102,17 +1104,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     },
                     bun_ast::Loc::EMPTY,
                 ));
+                signature = Self::react_refresh_signature(init);
             }
 
             if p.current_scope == p.module_scope {
                 // Restore hook_ctx_storage/is_control_flow_dead before propagating Err so the
                 // stack-local `react_hook_data` ptr is never left in p.react_refresh on the OOM path.
-                rr = p.handle_react_refresh_register(
-                    stmts,
-                    original_name,
-                    name_ref,
-                    ReactRefreshExportKind::Named,
-                );
+                rr = p.handle_react_refresh_register(stmts, original_name, name_ref, signature);
             }
         }
 
@@ -1320,38 +1318,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts.push(*stmt);
 
         if p.options.features.react_fast_refresh && p.current_scope == p.module_scope {
-            for decl in data.decls.slice() {
-                'try_register: {
-                    let Some(val) = decl.value else {
-                        break 'try_register;
-                    };
-                    match val.data {
-                        // Assigning a component to a local.
-                        js_ast::ExprData::EArrow(_) | js_ast::ExprData::EFunction(_) => {}
-
-                        // A wrapped component.
-                        js_ast::ExprData::ECall(call) => match call.target.data {
-                            js_ast::ExprData::EIdentifier(id) => {
-                                if id.ref_ != p.react_refresh.latest_signature_ref {
-                                    break 'try_register;
-                                }
-                            }
-                            _ => break 'try_register,
-                        },
-                        _ => break 'try_register,
-                    }
-                    let id = match decl.binding.data {
-                        js_ast::binding::Data::BIdentifier(b) => b.r#ref,
-                        _ => break 'try_register,
-                    };
-                    let original_name = p.symbols[id.inner_index() as usize].original_name.slice();
-                    p.handle_react_refresh_register(
-                        stmts,
-                        original_name,
-                        id,
-                        ReactRefreshExportKind::Named,
-                    )?;
+            for decl in data.decls.slice_mut() {
+                let js_ast::binding::Data::BIdentifier(binding) = decl.binding.data else {
+                    continue;
+                };
+                let Some(value) = decl.value.as_mut() else {
+                    continue;
+                };
+                let original_name = p.symbols[binding.r#ref.inner_index() as usize]
+                    .original_name
+                    .slice();
+                if !ReactRefresh::is_componentish_name(original_name) {
+                    continue;
                 }
+                let Some(component) = p.react_refresh_component(*value) else {
+                    continue;
+                };
+                p.register_react_refresh_component(
+                    stmts,
+                    component,
+                    value,
+                    binding.r#ref,
+                    original_name,
+                    ReactRefreshExportKind::Named,
+                )?;
             }
         }
 

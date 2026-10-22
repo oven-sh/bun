@@ -695,7 +695,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 })?;
         }
 
-        if p.options.features.react_fast_refresh && p.react_refresh.register_used {
+        if p.options.features.react_fast_refresh && p.react_refresh.function_registered {
             self.stmts.push(Stmt::alloc(
                 S::SExpr {
                     value: Expr::init(

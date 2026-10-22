@@ -901,7 +901,7 @@ struct HttpResponseData;
         template <bool IsNodeHttp>
         static inline ConsumeRequestLineResult consumeRequestLine(char *data, char *end, HttpRequest::Header &header, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
             /* req.url can be three times as long as the target, and has to fit a string. */
-            if (IsNodeHttp && !maxHeaderSize) {
+            if (IsNodeHttp && (!maxHeaderSize || maxHeaderSize > INT32_MAX / 3)) {
                 maxHeaderSize = INT32_MAX / 3;
             }
             /* Scan until single SP, assume next is / (origin request) */

@@ -471,8 +471,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
       stderr: expect.any(String),
     });
     expect(exitCode).toBe(0);
-  }, // Sending 32 MB on a debug build can exceed the default 5 s timeout.
-  30_000);
+  }, 30_000); // Sending 32 MB on a debug build can exceed the default 5 s timeout.
 
   test("a second write before drain releases the pin on the first buffer", async () => {
     let detachedAfterSecondWrite: boolean | undefined;

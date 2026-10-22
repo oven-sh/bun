@@ -3755,6 +3755,13 @@ describe("expect()", () => {
       expect(a1).not.toMatchObject({ 1: 1 });
       expect(a1).toMatchObject(a1);
     });
+
+    test("does not write asymmetric matchers into the received object", () => {
+      const received = { message: "needs /account", list: ["one", "two"] };
+      expect(received).toMatchObject({ message: expect.stringContaining("needs"), list: ["one", expect.any(String)] });
+      expect(received.message).toBe("needs /account");
+      expect(received.list[1]).toBe("two");
+    });
   });
 
   describe("toMatch()", () => {

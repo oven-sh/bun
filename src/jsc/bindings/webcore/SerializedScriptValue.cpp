@@ -30,6 +30,7 @@
 #include "BunString.h"
 // #include "BlobRegistry.h"
 // #include "ByteArrayPixelBuffer.h"
+#include "CryptoAlgorithmChaCha20Poly1305.h"
 #include "CryptoKeyAES.h"
 #include "CryptoKeyAKP.h"
 #include "CryptoKeyEC.h"
@@ -3093,11 +3094,12 @@ private:
         if (!CryptoKeyRSA::isValidRSAAlgorithm(algorithm))
             return false;
 
+        // Only an RSAES-PKCS1-v1_5 key has no hash, and nothing can create one.
         int32_t isRestrictedToHash;
-        CryptoAlgorithmIdentifier hash = CryptoAlgorithmIdentifier::SHA_1;
-        if (!read(isRestrictedToHash))
+        if (!read(isRestrictedToHash) || !isRestrictedToHash)
             return false;
-        if (isRestrictedToHash && !readHashAlgorithm(hash))
+        CryptoAlgorithmIdentifier hash;
+        if (!readHashAlgorithm(hash))
             return false;
 
         CryptoKeyAsymmetricTypeSubtag type;
@@ -3246,6 +3248,8 @@ private:
             return false;
         Vector<uint8_t> keyData;
         if (!read(keyData))
+            return false;
+        if (algorithm == CryptoAlgorithmIdentifier::ChaCha20_Poly1305 && keyData.size() * 8 != CryptoAlgorithmChaCha20Poly1305::s_keyLengthBits)
             return false;
         result = CryptoKeyRaw::create(algorithm, WTF::move(keyData), usages, extractable);
         return true;

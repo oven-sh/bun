@@ -2031,6 +2031,36 @@ test.concurrent("it should detect duplicate workspace dependencies", async () =>
   expect(await exited).toBe(1);
 });
 
+// `bun add` edits its copy of the member's package.json before the install. The file on disk is still the old text.
+test.concurrent("bun add reports a duplicate workspace name at its position in the file on disk", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    // With a glob, the order that the directory lists the members in decides which one gets the error.
+    write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/pkg1", "packages/pkg2"] })),
+    // `name` is after `dependencies`, so the new dependency moves it in the copy that has the edit.
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      `{\n  "dependencies": {\n    "a-dep": "1.0.10"\n  },\n  "name": "pkg1"\n}\n`,
+    ),
+    write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify({ name: "pkg1" })),
+  ]);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "no-deps"],
+    cwd: join(packageDir, "packages", "pkg1"),
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+  expect({
+    error: stderr.match(/error: Workspace name "pkg1" already exists\n\s+at .*pkg2.package\.json:(\d+:\d+)/)?.[1],
+    note: stderr.match(/note: Package name is also declared here\n\s+at .*pkg1.package\.json:(\d+:\d+)/)?.[1],
+    exitCode,
+  }).toEqual({ error: "1:9", note: "5:11", exitCode: 1 });
+});
+
 // Auto-install reads the project from the folder of the script, not from the root.
 test.concurrent("a script that imports a missing package reports two workspaces with the same name", async () => {
   using ctx = await setupTest();

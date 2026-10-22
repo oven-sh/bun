@@ -93,8 +93,6 @@ static void flushPartialResponseBeforeClose(us_socket_t* socket)
     }
 }
 
-static bool isTunnel(const JSNodeHTTPServerSocket* self);
-
 void JSNodeHTTPServerSocket::close()
 {
     if (socket) {
@@ -116,10 +114,6 @@ void JSNodeHTTPServerSocket::close()
         }
         // Forceful: code 0 defers the fd close until a close_notify reply that a half-open peer never sends.
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
-        // TLS holds the close behind the bytes it has left. As in Node, destroy() does not keep the process alive for them.
-        if (is_ssl && isTunnel(this)) {
-            reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelSending(false);
-        }
     }
 }
 

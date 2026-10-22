@@ -1628,11 +1628,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let count = self.sending_tunnel_count.get();
         // `AsyncSocketData::filteredSendingTunnel` pairs every +5 with one -5.
         debug_assert!(sending || count > 0);
-        let count = if sending {
-            count + 1
-        } else {
-            count.saturating_sub(1)
-        };
+        let count = if sending { count + 1 } else { count - 1 };
         self.sending_tunnel_count.set(count);
         self.sending_tunnel_ref.with_mut(|keep_alive| {
             if count > 0 {

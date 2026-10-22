@@ -2161,13 +2161,14 @@ describe.concurrent.each([
     );
   });
 
+  // The peer reads: TLS holds the close behind the bytes that it has left.
   test("does not keep the process alive once it is destroyed", async () => {
     const listener = whenReadsHaveStopped(
       "server.close();",
       `result.left = socket.writableLength > 0;
        socket.destroy();`,
     );
-    expect(await runTunnel(proto, event, listener, "client.write(full); client.pause();")).toEqual(
+    expect(await runTunnel(proto, event, listener, "client.write(full); client.resume();")).toEqual(
       exitedWith({ left: true }),
     );
   });
@@ -2194,6 +2195,7 @@ describe.concurrent.each([
   });
 });
 
+// The WebSocket closes the connection, so that only what the tunnel left behind can keep the process alive.
 test.concurrent.each(["http", "https"])(
   "%s: a tunnel with bytes left to send does not keep the process alive once a WebSocket adopts its connection",
   async proto => {
@@ -2203,8 +2205,11 @@ test.concurrent.each(["http", "https"])(
       ${writeUntilBytesAreLeftToSend}
       result.left = socket.writableLength > 0;
       const wss = new (require("ws").WebSocketServer)({ noServer: true });
-      wss.handleUpgrade(req, socket, Buffer.alloc(0), () => (result.adopted = true));`;
-    expect(await runTunnel(proto, "upgrade", listener, "client.pause();")).toEqual(
+      wss.handleUpgrade(req, socket, Buffer.alloc(0), ws => {
+        result.adopted = true;
+        ws.terminate();
+      });`;
+    expect(await runTunnel(proto, "upgrade", listener, "client.resume();")).toEqual(
       exitedWith({ left: true, adopted: true }),
     );
   },
@@ -2260,64 +2265,69 @@ describe.concurrent("https: a tunnel with bytes that only TLS holds", () => {
   });
 });
 
-// The FIN of end() waits behind what TLS holds. The peer reads up to the FIN and stays connected.
+// The FIN of end() waits behind what TLS holds. The peer reads up to the FIN and does not close.
+// At the end of the stream, 'finish' destroys the socket, and TLS holds that close behind its bytes too.
 describe.each([
   ["server.close()", ""],
   ["server.unref() and server.close()", "server.unref();"],
-])("https: a tunnel whose reads stopped, after %s", (_, unref) => {
-  test.concurrent.each([64 * 1024, 1024 * 1024])(
-    "sends the %d bytes of end() and then does not keep the process alive",
-    async size => {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const server = require("node:https").createServer(${JSON.stringify(tlsCert)});
+])("https: after %s", (_, unref) => {
+  test.concurrent.each([
+    ["whose reads stopped", 64 * 1024],
+    ["whose reads stopped", 1024 * 1024],
+    ["at the end of the stream", 256 * 1024],
+  ])("a tunnel %s sends the %d bytes of end() and then does not keep the process alive", async (reads, size) => {
+    const atEnd = reads === "at the end of the stream";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const server = require("node:https").createServer(${JSON.stringify(tlsCert)});
            server.on("connect", (req, socket) => {
              socket.write("HTTP/1.1 200 OK\\r\\n\\r\\n");
              ${unref}
              server.close();
+             if (${atEnd}) socket.resume();
              const hold = setInterval(() => {
-               if (socket.readableLength < ${highWaterMark}) return;
+               if (${atEnd} ? !socket.readableEnded : socket.readableLength < ${highWaterMark}) return;
                clearInterval(hold);
                ${shrinkSendBuffer}
                socket.end(Buffer.alloc(${size}, "x"));
              }, 1);
            });
            server.listen(0, "127.0.0.1", () => console.log(server.address().port));`,
-        ],
-        env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      let port = "";
-      for await (const chunk of proc.stdout) {
-        port += Buffer.from(chunk).toString();
-        if (port.includes("\n")) break;
-      }
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let port = "";
+    for await (const chunk of proc.stdout) {
+      port += Buffer.from(chunk).toString();
+      if (port.includes("\n")) break;
+    }
 
-      const client = tls.connect({
-        port: Number(port),
-        host: "127.0.0.1",
-        rejectUnauthorized: false,
-        allowHalfOpen: true,
-      });
-      using _ = { [Symbol.dispose]: () => void client.destroy() };
-      const ended = Promise.withResolvers<void>();
-      client.on("error", ended.reject).on("close", () => ended.reject(new Error("closed before the FIN")));
-      client.on("end", ended.resolve);
-      let received = 0;
-      client.once("data", () => {
-        client.on("data", chunk => (received += chunk.length));
-        client.write(Buffer.alloc(highWaterMark, "a"));
-      });
-      client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
-      await ended.promise;
+    const client = tls.connect({
+      port: Number(port),
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      allowHalfOpen: true,
+    });
+    using _ = { [Symbol.dispose]: () => void client.destroy() };
+    const ended = Promise.withResolvers<void>();
+    client.on("error", ended.reject).on("close", () => ended.reject(new Error("closed before the FIN")));
+    client.on("end", ended.resolve);
+    let received = 0;
+    client.once("data", () => {
+      client.on("data", chunk => (received += chunk.length));
+      if (atEnd) client.end();
+      else client.write(Buffer.alloc(highWaterMark, "a"));
+    });
+    client.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    await ended.promise;
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect({ received, stderr, exitCode }).toEqual({ received: size, stderr: "", exitCode: 0 });
-    },
-  );
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ received, stderr, exitCode }).toEqual({ received: size, stderr: "", exitCode: 0 });
+  });
 });
 
 // A listener with nothing to send ends its side in the listener. It still reads: an http.Server

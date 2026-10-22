@@ -1,6 +1,6 @@
 import { setSocketOptions } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import https from "node:https";
@@ -181,8 +181,9 @@ describe.each(["http", "https"] as const)("%s: the request body behind the FIN o
   ];
 
   // TLS holds a part of the response, and the FIN behind it. Without TLS uWS holds that part, and closes behind it.
+  // Windows takes a write whole whatever the send buffer: the response is out at once, and uWS closes behind it.
   test
-    .skipIf(protocol === "http")
+    .skipIf(protocol === "http" || isWindows)
     .concurrent("the body reaches the request behind a response that the send buffer does not take whole", async () => {
       const { promise, resolve } = Promise.withResolvers<ReturnType<typeof observe>>();
       await using server = createServer((req, res) => {

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
+// `bun build --compile --bytecode` reads + rewrites a full standalone
+// executable (~1 GB under debug+ASAN) and the 18 compile cases queue behind a
+// 4-slot semaphore, so the tail tests' wall clock is (queue depth × per-compile
+// time) and easily clears the 5s default.
+const compileTimeout = isDebug ? 180_000 : undefined;
 
 async function run(cmd: string[], cwd: string) {
   await using proc = Bun.spawn({
@@ -124,25 +129,29 @@ for (const b_file of b_files) {
         });
 
         describe.each(["run", "compile", "build"])("%s", mode => {
-          test.concurrent("works", async () => {
-            let result: { stdout: string; stderr: string; exitCode: number };
-            if (mode === "compile") {
-              result = await compileAndRun(dir, dir + "/c.ts");
-            } else if (mode === "build") {
-              const build_result = await Bun.build({
-                entrypoints: [dir + "/c.ts"],
-                outdir: dir + "/dist",
-              });
-              expect(build_result.success).toBe(true);
-              result = await run([bunExe(), "run", dir + "/dist/c.js"], dir);
-            } else {
-              result = await run([bunExe(), "run", "c.ts"], dir);
-            }
+          test.concurrent(
+            "works",
+            async () => {
+              let result: { stdout: string; stderr: string; exitCode: number };
+              if (mode === "compile") {
+                result = await compileAndRun(dir, dir + "/c.ts");
+              } else if (mode === "build") {
+                const build_result = await Bun.build({
+                  entrypoints: [dir + "/c.ts"],
+                  outdir: dir + "/dist",
+                });
+                expect(build_result.success).toBe(true);
+                result = await run([bunExe(), "run", dir + "/dist/c.js"], dir);
+              } else {
+                result = await run([bunExe(), "run", "c.ts"], dir);
+              }
 
-            const parsedOutput = JSON.parse(result.stdout.trim());
-            expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
-            expect(result.exitCode).toBe(0);
-          });
+              const parsedOutput = JSON.parse(result.stdout.trim());
+              expect(parsedOutput).toEqual({ my_value: "2", my_only: "3" });
+              expect(result.exitCode).toBe(0);
+            },
+            mode === "compile" ? compileTimeout : undefined,
+          );
         });
       });
     }
@@ -307,14 +316,18 @@ describe("check ownkeys from a star import", () => {
   };
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    test.concurrent("works", async () => {
-      const result =
-        mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
+    test.concurrent(
+      "works",
+      async () => {
+        const result =
+          mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
 
-      expect(result.stderr.trim()).toBe("");
-      expect(JSON.parse(result.stdout.trim())).toEqual(expected);
-      expect(result.exitCode).toBe(0);
-    });
+        expect(result.stderr.trim()).toBe("");
+        expect(JSON.parse(result.stdout.trim())).toEqual(expected);
+        expect(result.exitCode).toBe(0);
+      },
+      mode === "compile" ? compileTimeout : undefined,
+    );
   });
 });
 
@@ -430,13 +443,17 @@ describe("import only used in decorator (#8439)", () => {
   });
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    test.concurrent("works", async () => {
-      const result =
-        mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
+    test.concurrent(
+      "works",
+      async () => {
+        const result =
+          mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
 
-      expect(result.stderr.trim()).toBe("");
-      expect(result.exitCode).toBe(0);
-    });
+        expect(result.stderr.trim()).toBe("");
+        expect(result.exitCode).toBe(0);
+      },
+      mode === "compile" ? compileTimeout : undefined,
+    );
   });
 });
 

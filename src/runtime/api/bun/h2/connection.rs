@@ -11,6 +11,7 @@ use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
+use crate::api::h2_frame_parser_body::has_edge_whitespace;
 use bun_collections::HashMap;
 use bun_http_types::parse_content_length_strict;
 use std::num::NonZeroU32;
@@ -1295,7 +1296,8 @@ impl Connection {
                                 && self.local_settings.enable_connect_protocol == 0;
                             // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
                             // malformed, so `:path: ""` never counts as a present :path (§8.3.1:
-                            // `:path` "MUST NOT be empty" for http/https).
+                            // `:path` "MUST NOT be empty" for http/https). JS drops a field with
+                            // whitespace at an edge of its value, so it is not a present one either.
                             if seen_regular
                                 || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
@@ -1303,6 +1305,7 @@ impl Connection {
                                 || protocol_disabled
                                 || is_trailer
                                 || value_b.is_empty()
+                                || has_edge_whitespace(value_b)
                             {
                                 malformed = true;
                             }
@@ -1318,7 +1321,9 @@ impl Connection {
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
-                                b"host" if is_request => saw_host = true,
+                                b"host" if is_request && !has_edge_whitespace(value_b) => {
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {

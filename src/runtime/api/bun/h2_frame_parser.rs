@@ -613,6 +613,12 @@ pub(crate) fn is_malformed_field_value(value: &[u8]) -> bool {
     strings::contains_any(value, b"\0\r\n")
 }
 
+/// RFC 9113 §8.2.1: a field value does not start or end with SP or HTAB.
+#[inline]
+pub(crate) fn has_edge_whitespace(value: &[u8]) -> bool {
+    matches!(value.first(), Some(b' ' | b'\t')) || matches!(value.last(), Some(b' ' | b'\t'))
+}
+
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
 bun_core::comptime_string_map! {

@@ -9,6 +9,7 @@
  * values below were recorded from Node v26.5.1.
  */
 import assert from "node:assert";
+import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import http from "node:http";
@@ -421,6 +422,469 @@ describe('server.maxHeadersCount, emit("connection") only', () => {
   });
 });
 
+// Node sets up the parser of a connection in the server's own listener: of 'connection' for
+// http.Server, of 'secureConnection' for https.Server. The parser keeps the maxHeadersCount,
+// maxHeaderSize, insecureHTTPParser and httpValidation that the server has at that moment.
+type ParserOption = {
+  name: string;
+  test: (name: string, fn: () => Promise<void>) => unknown;
+  // The value that rejects `probe`, and the value that accepts it.
+  tighten: (server: http.Server) => void;
+  loosen: (server: http.Server) => void;
+  probe: string;
+  rejected: string;
+};
+const badRequest = "HTTP/1.1 400 Bad Request";
+const headerOverflow = "HTTP/1.1 431 Request Header Fields Too Large";
+// A request that every value accepts.
+const plain = requestHead(2, { close: false });
+// llhttp accepts this value byte only with lenient header parsing.
+const lenientProbe = requestHead(3, { close: false, extra: ["X-Lenient: a\x08b"] });
+const insecureHTTPParser: ParserOption = {
+  name: "insecureHTTPParser",
+  test,
+  tighten: server => void ((server as any).insecureHTTPParser = false),
+  loosen: server => void ((server as any).insecureHTTPParser = true),
+  probe: lenientProbe,
+  rejected: badRequest,
+};
+const httpValidation: ParserOption = {
+  name: "httpValidation",
+  test,
+  tighten: server => void ((server as any).httpValidation = "strict"),
+  loosen: server => void ((server as any).httpValidation = "relaxed"),
+  probe: lenientProbe,
+  rejected: badRequest,
+};
+// Over a limit of 1024 bytes, under the default of 16 KiB.
+const largeProbe = requestHead(3, { close: false, extra: [`X-Large: ${Buffer.alloc(4000, "a").toString()}`] });
+const parserOptions: ParserOption[] = [
+  {
+    name: "maxHeadersCount",
+    test: rejectTest,
+    tighten: server => void (server.maxHeadersCount = 3),
+    loosen: server => void (server.maxHeadersCount = null),
+    probe: requestHead(6, { close: false }),
+    rejected: headerOverflow,
+  },
+  {
+    name: "maxHeaderSize",
+    test,
+    tighten: server => void ((server as any).maxHeaderSize = 1024),
+    loosen: server => void ((server as any).maxHeaderSize = undefined),
+    probe: largeProbe,
+    rejected: headerOverflow,
+  },
+  insecureHTTPParser,
+  httpValidation,
+];
+
+// A connection that stays open between requests. request() resolves with the status line of
+// the next response, and with "" when the server closed the connection without one.
+function keepAlive(socket: net.Socket | ReturnType<typeof duplexPair>[0], connectEvent?: string) {
+  let received = "";
+  let closed = false;
+  let wake = () => {};
+  const ready = connectEvent ? once(socket, connectEvent) : Promise.resolve();
+  socket.setEncoding("latin1");
+  socket.on("data", chunk => {
+    received += chunk;
+    wake();
+  });
+  socket.on("error", () => {});
+  for (const event of ["end", "close"]) {
+    socket.on(event, () => {
+      closed = true;
+      wake();
+    });
+  }
+  return {
+    async request(payload: string) {
+      await ready;
+      const start = received.length;
+      socket.write(payload);
+      for (;;) {
+        const response = received.slice(start);
+        // Every 200 of these servers has the body "ok". Their error responses have no body.
+        const complete = response.startsWith(ok) ? response.endsWith("\r\n\r\nok") : response.includes("\r\n\r\n");
+        if (complete || closed) return statusLine(response);
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    },
+    close: () => void socket.destroy(),
+  };
+}
+type Client = ReturnType<typeof keepAlive>;
+
+type Setup = {
+  name: string;
+  // The event of the server's own listener in Node.
+  ownEvent: "connection" | "secureConnection";
+  // A listener that a program prepends to `ownEvent` runs before the parser is set up.
+  prependedRunsFirst: boolean;
+  createServer: (listener?: http.RequestListener) => http.Server;
+  connect: (server: http.Server) => Promise<Client>;
+  close: (server: http.Server) => void;
+};
+const answer: http.RequestListener = (req, res) => void res.end("ok");
+const connectTo = (secure: boolean) => async (server: http.Server) => {
+  const port = await listen(server);
+  return secure
+    ? keepAlive(
+        tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] }),
+        "secureConnect",
+      )
+    : keepAlive(net.connect(port, "127.0.0.1"), "connect");
+};
+const http1: Setup = {
+  name: "http.Server, listen()",
+  ownEvent: "connection",
+  prependedRunsFirst: true,
+  createServer: (listener = answer) => http.createServer(listener),
+  connect: connectTo(false),
+  close: server => void server.close(),
+};
+const https1: Setup = {
+  name: "https.Server, listen()",
+  ownEvent: "secureConnection",
+  // Bun's https.Server has no listener of its own on 'secureConnection': it reads the options between
+  // 'connection' and 'secureConnection', so before every listener of 'secureConnection'.
+  prependedRunsFirst: !process.versions.bun,
+  createServer: (listener = answer) => https.createServer({ cert, key }, listener),
+  connect: connectTo(true),
+  close: server => void server.close(),
+};
+const emitted: Setup = {
+  name: 'http.Server, emit("connection")',
+  ownEvent: "connection",
+  prependedRunsFirst: true,
+  createServer: (listener = answer) => http.createServer(listener),
+  connect: async server => {
+    const [client, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    return keepAlive(client);
+  },
+  close: () => {},
+};
+
+// Runs `body` with a server and closes the server and every connection behind it.
+async function withServer(
+  setup: Setup,
+  body: (server: http.Server, connect: () => Promise<Client>) => Promise<void>,
+  listener?: http.RequestListener,
+) {
+  const server = setup.createServer(listener);
+  const clients: Client[] = [];
+  try {
+    await body(server, async () => {
+      const client = await setup.connect(server);
+      clients.push(client);
+      return client;
+    });
+  } finally {
+    for (const client of clients) client.close();
+    setup.close(server);
+  }
+}
+
+// Runs `script` with this runtime and resolves with what it printed.
+async function run(args: string[], script: string) {
+  const child = spawn(process.execPath, [...args, "-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+  let stdout = "";
+  child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+  const [exitCode] = await once(child, "close");
+  return { stdout, exitCode };
+}
+
+describe("a connection keeps the parser options that its server had when it opened", () => {
+  for (const setup of [http1, https1, emitted]) {
+    const { ownEvent } = setup;
+    describe(setup.name, () => {
+      for (const option of parserOptions) {
+        option.test(`${option.name}: a tighter value applies to the next connection, not to an open one`, async () => {
+          await withServer(setup, async (server, connect) => {
+            option.loosen(server);
+            const open = await connect();
+            assert.strictEqual(await open.request(option.probe), ok);
+            option.tighten(server);
+            assert.strictEqual(await open.request(option.probe), ok);
+            assert.strictEqual(await (await connect()).request(option.probe), option.rejected);
+            // Also behind the connection that took the new value.
+            assert.strictEqual(await open.request(option.probe), ok);
+          });
+        });
+
+        option.test(`${option.name}: a looser value applies to the next connection, not to an open one`, async () => {
+          await withServer(setup, async (server, connect) => {
+            option.tighten(server);
+            const open = await connect();
+            assert.strictEqual(await open.request(plain), ok);
+            option.loosen(server);
+            assert.strictEqual(await (await connect()).request(option.probe), ok);
+            assert.strictEqual(await open.request(option.probe), option.rejected);
+          });
+        });
+
+        // The server's own listener is the first one of its event: a listener that a program adds
+        // with on() runs behind it, and one that it adds with prependListener() runs before it.
+        option.test(
+          `${option.name}: a '${ownEvent}' listener added with on() sets it for later connections only`,
+          async () => {
+            await withServer(setup, async (server, connect) => {
+              option.loosen(server);
+              server.on(ownEvent, () => option.tighten(server));
+              assert.strictEqual(await (await connect()).request(option.probe), ok);
+              assert.strictEqual(await (await connect()).request(option.probe), option.rejected);
+            });
+          },
+        );
+
+        option.test(
+          `${option.name}: a '${ownEvent}' listener added with prependListener() sets it for ${
+            setup.prependedRunsFirst ? "its connection" : "later connections only"
+          }`,
+          async () => {
+            await withServer(setup, async (server, connect) => {
+              option.loosen(server);
+              server.prependListener(ownEvent, () => option.tighten(server));
+              const first = setup.prependedRunsFirst ? option.rejected : ok;
+              assert.strictEqual(await (await connect()).request(option.probe), first);
+              assert.strictEqual(await (await connect()).request(option.probe), option.rejected);
+            });
+          },
+        );
+      }
+
+      // The parser of a connection reads the trailer section of a chunked request with the same options, and
+      // req.rawTrailers has what it accepted.
+      for (const option of [insecureHTTPParser, httpValidation]) {
+        const chunked =
+          "POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\nX-T: a\x08b\r\n\r\n";
+        const trailer = ["X-T", "a\x08b"];
+        // Answers when the request has ended, and records its trailers.
+        const record = (rawTrailers: string[][]): http.RequestListener => {
+          return (req, res) => {
+            req.resume().on("end", () => {
+              rawTrailers.push(req.rawTrailers);
+              res.end("ok");
+            });
+          };
+        };
+
+        test(`${option.name}: a tighter value does not reach the trailers of an open connection`, async () => {
+          const rawTrailers: string[][] = [];
+          await withServer(
+            setup,
+            async (server, connect) => {
+              option.loosen(server);
+              const open = await connect();
+              assert.strictEqual(await open.request(chunked), ok);
+              option.tighten(server);
+              assert.strictEqual(await open.request(chunked), ok);
+              assert.strictEqual(await (await connect()).request(chunked), badRequest);
+              assert.deepStrictEqual(rawTrailers, [trailer, trailer]);
+            },
+            record(rawTrailers),
+          );
+        });
+
+        test(`${option.name}: a looser value reaches the trailers of the next connection`, async () => {
+          const rawTrailers: string[][] = [];
+          await withServer(
+            setup,
+            async (server, connect) => {
+              option.tighten(server);
+              const open = await connect();
+              assert.strictEqual(await open.request(plain), ok);
+              option.loosen(server);
+              assert.strictEqual(await (await connect()).request(chunked), ok);
+              assert.strictEqual(await open.request(chunked), badRequest);
+              assert.deepStrictEqual(rawTrailers, [[], trailer]);
+            },
+            record(rawTrailers),
+          );
+        });
+      }
+    });
+  }
+
+  // Node's own listener reads the options when it runs, also when a program calls it late.
+  describe(`${emitted.name}: a late call of the server's own listener`, () => {
+    for (const option of parserOptions) {
+      option.test(`${option.name}: the connection takes the value of that moment`, async () => {
+        await withServer(emitted, async (server, connect) => {
+          const own = server.listeners("connection");
+          server.removeAllListeners("connection");
+          option.loosen(server);
+          const announced = once(server, "connection");
+          const response = (await connect()).request(option.probe);
+          const [socket] = await announced;
+          option.tighten(server);
+          for (const listener of own) listener.call(server, socket);
+          assert.strictEqual(await response, option.rejected);
+        });
+      });
+    }
+  });
+
+  // An https.Server sets up the parser behind the handshake, so behind every listener of 'connection'.
+  describe("https.Server, listen(): listeners of 'connection'", () => {
+    for (const option of parserOptions) {
+      option.test(`${option.name}: a listener added with on() sets it for its connection`, async () => {
+        await withServer(https1, async (server, connect) => {
+          option.loosen(server);
+          server.on("connection", () => option.tighten(server));
+          assert.strictEqual(await (await connect()).request(option.probe), option.rejected);
+        });
+      });
+    }
+
+    // httpolyglot serves http and https on one port this way: it takes the last 'connection' listener
+    // of an https.Server away and calls it itself, after a look at the first byte of the connection.
+    test("a program that removes the server's 'connection' listener and calls it itself gets an answer", async () => {
+      await withServer(https1, async (server, connect) => {
+        const listeners = server.listeners("connection");
+        const tlsHandler = listeners[listeners.length - 1];
+        server.removeListener("connection", tlsHandler as (...args: unknown[]) => void);
+        server.on("connection", function onConnection(this: http.Server, socket: net.Socket) {
+          const data = socket.read(1);
+          if (data === null) return void socket.once("readable", () => onConnection.call(this, socket));
+          socket.unshift(data);
+          if (data[0] < 32 || data[0] >= 127) tlsHandler.call(this, socket);
+          else (http as any)._connectionListener.call(this, socket);
+        });
+        assert.strictEqual(await (await connect()).request(plain), ok);
+      });
+    });
+
+    // PROXY protocol wrappers (findhit-proxywrap, @kldzj/proxy-protocol) put their own listener around each
+    // listener of 'secureConnection'. It makes the address getters of the socket read socket._parent.
+    test("a program that wraps the listeners of 'secureConnection' still reads the address of the peer", async () => {
+      const server = https.createServer({ cert, key }, (req, res) => void res.end(String(req.socket.remoteAddress)));
+      for (const listener of server.listeners("secureConnection")) {
+        server.removeListener("secureConnection", listener as (...args: unknown[]) => void);
+        server.on("secureConnection", function (this: https.Server, socket: tls.TLSSocket) {
+          const parent = (socket as any)._parent;
+          Object.defineProperty(socket, "remoteAddress", { configurable: true, get: () => parent.remoteAddress });
+          listener.call(this, socket);
+        });
+      }
+      try {
+        const response = await exchange(await listen(server), requestHead(2), true);
+        assert.deepStrictEqual(
+          [statusLine(response), response.slice(response.indexOf("\r\n\r\n") + 4)],
+          [ok, "127.0.0.1"],
+        );
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  // Before, an assignment to httpAllowHalfOpen sent the lenient flags of that moment to every connection.
+  test("an assignment to httpAllowHalfOpen does not change the parser of an open connection", async () => {
+    await withServer(http1, async (server, connect) => {
+      const open = await connect();
+      assert.strictEqual(await open.request(plain), ok);
+      insecureHTTPParser.loosen(server);
+      (server as any).httpAllowHalfOpen = true;
+      assert.strictEqual(await open.request(lenientProbe), badRequest);
+    });
+  });
+
+  test("the options are own data properties of the server", () => {
+    for (const server of [http.createServer(), https.createServer({ cert, key })]) {
+      const descriptors = Object.getOwnPropertyDescriptors(server) as Record<string, PropertyDescriptor>;
+      const data = (value: unknown) => ({ value, writable: true, enumerable: true, configurable: true });
+      assert.deepStrictEqual(
+        {
+          maxHeadersCount: descriptors.maxHeadersCount,
+          maxHeaderSize: descriptors.maxHeaderSize,
+          insecureHTTPParser: descriptors.insecureHTTPParser,
+          httpValidation: descriptors.httpValidation,
+        },
+        {
+          maxHeadersCount: data(null),
+          maxHeaderSize: data(undefined),
+          insecureHTTPParser: data(undefined),
+          httpValidation: data(undefined),
+        },
+      );
+    }
+  });
+
+  test("the server's own listener is the only one of its event", () => {
+    const count = (server: http.Server) => [
+      server.listenerCount("connection"),
+      server.listenerCount("secureConnection"),
+    ];
+    assert.deepStrictEqual(count(http.createServer()), [1, 0]);
+    // Bun's https.Server has none on 'secureConnection'.
+    assert.deepStrictEqual(count(https.createServer({ cert, key })), [1, process.versions.bun ? 0 : 1]);
+  });
+
+  // With --insecure-http-parser a server that sets no option is lenient, for each connection that opens under the flag.
+  test("--insecure-http-parser is the default of each connection", async () => {
+    const { stdout, exitCode } = await run(
+      ["--insecure-http-parser"],
+      `
+      const http = require("node:http");
+      const net = require("node:net");
+      const warnings = [];
+      process.on("warning", warning => warnings.push(warning.message));
+      const tick = () => new Promise(resolve => setImmediate(resolve));
+      const lenient = "GET / HTTP/1.1\\r\\nHost: x\\r\\nX-Lenient: a\\bb\\r\\nConnection: close\\r\\n\\r\\n";
+      const chunked = "POST / HTTP/1.1\\r\\nHost: x\\r\\nTransfer-Encoding: chunked\\r\\nConnection: close\\r\\n\\r\\n0\\r\\nX-T: a\\bb\\r\\n\\r\\n";
+      let rawTrailers;
+      const server = http.createServer((req, res) => {
+        req.resume().on("end", () => {
+          rawTrailers = req.rawTrailers;
+          res.end("ok");
+        });
+      });
+      // The status line of the answer to a request on a new connection.
+      const send = payload =>
+        new Promise(resolve => {
+          const socket = net.connect(server.address().port, "127.0.0.1", () => socket.write(payload));
+          let received = "";
+          socket.setEncoding("latin1").on("data", chunk => (received += chunk));
+          socket.on("close", () => resolve(received.slice(0, received.indexOf("\\r\\n"))));
+        });
+      server.listen(0, "127.0.0.1", async () => {
+        const seen = {};
+        await tick();
+        seen.warningsBeforeTheFirstConnection = warnings.length;
+        seen.lenientValue = await send(lenient);
+        await tick();
+        seen.warnings = warnings;
+        seen.trailer = [await send(chunked), rawTrailers];
+        server.insecureHTTPParser = false;
+        seen.afterInsecureHTTPParserFalse = await send(lenient);
+        server.insecureHTTPParser = undefined;
+        server.httpValidation = "strict";
+        seen.afterHttpValidationStrict = await send(lenient);
+        console.log(JSON.stringify(seen));
+        process.exit(0);
+      });
+      `,
+    );
+    assert.deepStrictEqual(
+      { exitCode, seen: exitCode === 0 ? JSON.parse(stdout) : stdout },
+      {
+        exitCode: 0,
+        seen: {
+          warningsBeforeTheFirstConnection: 0,
+          lenientValue: ok,
+          warnings: ["Using insecure HTTP parsing"],
+          trailer: [ok, ["X-T", "a\bb"]],
+          afterInsecureHTTPParserFalse: badRequest,
+          afterHttpValidationStrict: badRequest,
+        },
+      },
+    );
+  });
+});
+
 // The client is unchanged: res.headers is cut at req.maxHeadersCount and nothing fails.
 test("a response over ClientRequest.maxHeadersCount is truncated, not rejected", async () => {
   const server = net.createServer(socket => {
@@ -535,11 +999,294 @@ describe("HTTPParser maxHeaderPairs", () => {
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExe } = await import("harness");
+  const { bunEnv, bunExe, nodeExe, tempDir } = await import("harness");
   const node = nodeExe();
 
+  // Node sets up no parser for a connection that its own listener does not see, and that connection gets no
+  // answer. Here the native parser reads it, as before: with the options that its server has behind the event.
+  describe("a connection that the server's own listener does not see", () => {
+    for (const setup of [http1, https1]) {
+      for (const option of parserOptions) {
+        test(`${setup.name}, ${option.name}: the own listener is removed`, async () => {
+          await withServer(setup, async (server, connect) => {
+            server.removeAllListeners("connection");
+            option.loosen(server);
+            const open = await connect();
+            assert.strictEqual(await open.request(option.probe), ok);
+            option.tighten(server);
+            assert.strictEqual(await (await connect()).request(option.probe), option.rejected);
+            assert.strictEqual(await open.request(option.probe), ok);
+          });
+        });
+      }
+
+      // In Node the other server sets up its parser on the socket too, and the request to an http.Server gets 431.
+      test(`${setup.name}: the own listener of another server does not set the options`, async () => {
+        await withServer(setup, async (server, connect) => {
+          const other = http.createServer(answer);
+          other.maxHeadersCount = 3;
+          server.prependListener("connection", socket => void other.emit("connection", socket));
+          assert.strictEqual(await (await connect()).request(requestHead(6, { close: false })), ok);
+        });
+      });
+    }
+
+    test("something throws before the options of the connection are set", async () => {
+      const { stdout, exitCode } = await run(
+        [],
+        `
+        const http = require("node:http");
+        const https = require("node:https");
+        const net = require("node:net");
+        const tls = require("node:tls");
+        const { readFileSync } = require("node:fs");
+        const fixtures = ${JSON.stringify(fixtures)};
+        const secureOptions = { cert: readFileSync(fixtures + "/cert.pem"), key: readFileSync(fixtures + "/cert.key") };
+        const uncaught = [];
+        process.on("uncaughtException", error => uncaught.push(error.message.startsWith("from ") ? error.message : "other"));
+        const throws = message => () => {
+          throw new Error(message);
+        };
+        const sixFields = "GET / HTTP/1.1\\r\\nHost: x\\r\\nA: 1\\r\\nB: 2\\r\\nC: 3\\r\\nConnection: close\\r\\n\\r\\n";
+        // The status line of the answer to six fields on a new connection of a server that allows three.
+        // It is "" when the server closes the connection without an answer.
+        const answer = (configure, secure = false) =>
+          new Promise(resolve => {
+            const listener = (req, res) => res.end("ok");
+            const server = secure ? https.createServer(secureOptions, listener) : http.createServer(listener);
+            server.maxHeadersCount = 3;
+            // What it returns runs when the server listens.
+            const configureListening = configure(server);
+            server.listen(0, "127.0.0.1", () => {
+              if (typeof configureListening === "function") configureListening();
+              const port = server.address().port;
+              const socket = secure
+                ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+                : net.connect(port, "127.0.0.1");
+              socket.once(secure ? "secureConnect" : "connect", () => socket.write(sixFields));
+              let received = "";
+              socket.setEncoding("latin1").on("data", chunk => (received += chunk));
+              socket.on("error", () => {});
+              socket.on("close", () => {
+                server.close();
+                resolve(received.slice(0, received.indexOf("\\r\\n")));
+              });
+            });
+          });
+        (async () => {
+          const seen = {};
+          try {
+            seen.listenerThrows = await answer(server => server.prependListener("connection", throws("from a listener")));
+            // The constructor of the socket throws for this timeout.
+            seen.noSocket = await answer(server => (server.timeout = -1));
+            seen.gateThrows = await answer(server =>
+              Object.defineProperty(server, "maxConnections", { get: throws("from maxConnections") }),
+            );
+            // Nothing can read the options of this server, so its connection is closed.
+            seen.optionThrows = await answer(server => () => {
+              Object.defineProperty(server, "maxHeadersCount", { get: throws("from maxHeadersCount") });
+            });
+            // Node still emits 'secureConnection' behind a 'connection' listener that throws.
+            seen.secureConnections = 0;
+            seen.secureListenerThrows = await answer(server => {
+              server.on("connection", throws("from a listener of https"));
+              server.on("secureConnection", () => seen.secureConnections++);
+            }, true);
+          } catch (error) {
+            seen.failed = String(error);
+          }
+          seen.uncaught = uncaught;
+          console.log(JSON.stringify(seen));
+          process.exit(0);
+        })();
+        `,
+      );
+      assert.deepStrictEqual(
+        { exitCode, seen: exitCode === 0 ? JSON.parse(stdout) : stdout },
+        {
+          exitCode: 0,
+          seen: {
+            listenerThrows: headerOverflow,
+            noSocket: headerOverflow,
+            gateThrows: headerOverflow,
+            optionThrows: "",
+            secureConnections: 0,
+            secureListenerThrows: headerOverflow,
+            uncaught: [
+              "from a listener",
+              "other",
+              "from maxConnections",
+              "from maxHeadersCount",
+              "from a listener of https",
+            ],
+          },
+        },
+      );
+    });
+  });
+
+  // Node aborts for a maxHeaderSize that is not a number.
+  test("a maxHeaderSize that is a string is the number that it spells", async () => {
+    await withServer(http1, async (server, connect) => {
+      (server as any).maxHeaderSize = "1024";
+      assert.strictEqual(await (await connect()).request(largeProbe), headerOverflow);
+      (server as any).maxHeaderSize = "8192";
+      assert.strictEqual(await (await connect()).request(largeProbe), ok);
+    });
+  });
+
+  // Node has no setter for http.maxHeaderSize.
+  test("a server without maxHeaderSize takes the limit of the process when a connection opens", async () => {
+    const processLimit = http.maxHeaderSize;
+    try {
+      await withServer(http1, async (server, connect) => {
+        const open = await connect();
+        assert.strictEqual(await open.request(largeProbe), ok);
+        (http as any).maxHeaderSize = 1024;
+        assert.strictEqual(await (await connect()).request(largeProbe), headerOverflow);
+        assert.strictEqual(await open.request(largeProbe), ok);
+        (http as any).maxHeaderSize = processLimit;
+        assert.strictEqual(await (await connect()).request(largeProbe), ok);
+      });
+    } finally {
+      (http as any).maxHeaderSize = processLimit;
+    }
+  });
+
+  describe("bun --hot", () => {
+    // Reads the lines that a process prints.
+    function lines(stdout: ReadableStream<Uint8Array>) {
+      const reader = stdout.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      return async () => {
+        while (!buffered.includes("\n")) {
+          const { value, done } = await reader.read();
+          if (done) throw new Error(`the process ended after ${JSON.stringify(buffered)}`);
+          buffered += decoder.decode(value, { stream: true });
+        }
+        const line = buffered.slice(0, buffered.indexOf("\n"));
+        buffered = buffered.slice(line.length + 1);
+        return line;
+      };
+    }
+
+    // A reload keeps the native listener and its connections. The next module is a new http.Server.
+    test("a connection keeps the parser options of the module that it opened under", async () => {
+      using dir = tempDir("hot-node-http-parser-options", {
+        "server.mjs": `
+          import { createServer } from "node:http";
+          import { once } from "node:events";
+          import { writeFileSync, readFileSync } from "node:fs";
+
+          globalThis.__reloads ??= 0;
+          const generation = globalThis.__reloads++;
+          const server = createServer((req, res) => {
+            if (req.url === "/reload") {
+              const self = new URL(import.meta.url);
+              writeFileSync(self, readFileSync(self, "utf8"));
+            }
+            res.end("ok");
+          });
+          if (generation > 0) server.maxHeadersCount = 3;
+          await once(server.listen(0, "127.0.0.1"), "listening");
+          console.log(generation + " " + server.address().port);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "server.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const line = lines(proc.stdout);
+      const port = Number((await line()).split(" ")[1]);
+      const connect = () => keepAlive(net.connect(port, "127.0.0.1"), "connect");
+      const sixFields = requestHead(6, { close: false });
+      const open = connect();
+      try {
+        assert.strictEqual(await open.request(sixFields), ok);
+        assert.strictEqual(await connect().request("GET /reload HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"), ok);
+        assert.strictEqual(await line(), `1 ${port}`);
+        assert.strictEqual(await open.request(sixFields), ok);
+        assert.strictEqual(await connect().request(sixFields), headerOverflow);
+      } finally {
+        open.close();
+      }
+    });
+
+    // A reload keeps the native listener of an address, and so its kind. The sockets of a Bun.serve listener have
+    // the smaller block: a node:http server gets none of them, so it writes no option to them.
+    test("a server with an option that takes the listener of a Bun.serve server gets none of its connections", async () => {
+      using dir = tempDir("hot-bun-serve-to-node-http-options", {
+        "cert.pem": cert,
+        "cert.key": key,
+        "server.mjs": `
+          import { createServer } from "node:http";
+          import { createServer as createSecureServer } from "node:https";
+          import { once } from "node:events";
+          import { connect } from "node:net";
+          import { connect as connectSecure } from "node:tls";
+          import { writeFileSync, readFileSync } from "node:fs";
+
+          const tls = {
+            cert: readFileSync(new URL("cert.pem", import.meta.url), "utf8"),
+            key: readFileSync(new URL("cert.key", import.meta.url), "utf8"),
+          };
+
+          globalThis.__reloads ??= 0;
+          if (globalThis.__reloads++ === 0) {
+            // A reload finds a listener again by hostname and port, so the two kinds need two hostnames.
+            Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve") });
+            Bun.serve({ port: 0, hostname: "0.0.0.0", tls, fetch: () => new Response("Bun.serve") });
+            const self = new URL(import.meta.url);
+            writeFileSync(self, readFileSync(self, "utf8"));
+          } else {
+            for (const secure of [false, true]) {
+              let connections = 0;
+              const handler = (req, res) => res.end("node:http");
+              const server = secure ? createSecureServer(tls, handler) : createServer(handler);
+              server.maxHeadersCount = 3;
+              server.on("connection", () => connections++);
+              await once(server.listen(0, secure ? "0.0.0.0" : "127.0.0.1"), "listening");
+
+              const port = server.address().port;
+              const socket = secure
+                ? connectSecure({ port, host: "127.0.0.1", rejectUnauthorized: false })
+                : connect(port, "127.0.0.1");
+              let received = "";
+              socket.setEncoding("latin1");
+              socket.on("data", chunk => (received += chunk));
+              socket.on("error", () => {});
+              await once(socket, secure ? "secureConnect" : "connect");
+              socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nA: 1\\r\\nB: 2\\r\\nC: 3\\r\\nConnection: close\\r\\n\\r\\n");
+              await once(socket, "close");
+              const body = received.slice(received.indexOf("\\r\\n\\r\\n") + 4);
+              console.log((secure ? "https" : "http") + ": " + connections + " " + body);
+            }
+            process.exit(0);
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "server.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      assert.deepStrictEqual(
+        { stdout, stderr: stderr.replaceAll(/^DEBUG:.*\n/gm, ""), exitCode },
+        { stdout: "http: 0 Bun.serve\nhttps: 0 Bun.serve\n", stderr: "", exitCode: 0 },
+      );
+    });
+  });
+
   describe("Node.js compatibility", () => {
-    (node ? test : test.skip)("all tests pass in Node.js", async () => {
+    // The first start of Node after a build reads its binary from the disk: up to 14 s on a slow machine.
+    (node ? test : test.skip)("all tests pass in Node.js", { timeout: 60_000 }, async () => {
       // A direct run, not `node --test`: the runner mode forks a second node
       // process per file. node:test still exits non-zero on any failure.
       await using proc = Bun.spawn({

@@ -59,8 +59,6 @@ const {
   drainMicrotasks,
   setServerCustomOptions,
   setServerAppFlags,
-  setServerMaxHeadersCount,
-  getMaxHTTPHeaderSize,
   fakeSocketSymbol,
   kOutHeaders,
   onDataIncomingMessage,
@@ -89,11 +87,12 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+// On a connection that onServerConnection announces: the server that still has to give it its parser options.
+const kAwaitsParserOptions = Symbol("http.server.socketAwaitsParserOptions");
 function closeHandle(handle) {
   if (!handle.closed) handle.close();
 }
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
-const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
 // node.http trace events ('http.server.request' b/e). The agent module is
 // created when a server listens, and emission is gated per-request on the
@@ -279,18 +278,38 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
-// Node registers connectionListener on every http.Server so `server.emit("connection", socket)`
-// works for foreign Duplex sockets. The native listener handles its own sockets end to end;
-// this picks up the rest. https://github.com/nodejs/node/blob/main/lib/_http_server.js
+// Node's own listener sets up the parser: https://github.com/nodejs/node/blob/v26.12.0/lib/_http_server.js#L789-L823
 function connectionListener(this: Server, socket) {
+  if (socket != null && typeof socket === "object") socket.server = this;
   // A tunnel socket that was handed to 'connect'/'upgrade' has left the native listener: re-emitted, it is a connection like any other.
-  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) return;
+  if (NodeHTTPServerSocket && socket instanceof NodeHTTPServerSocket && !socket[kHandedOff]) {
+    // Node's https.Server has this listener on 'secureConnection': onServerConnection reads the options of one behind 'connection'.
+    if (!this[isTlsSymbol]) setAwaitedParserOptions(this, socket);
+    return;
+  }
   (http1Fallback ??= require("internal/http1_server_fallback")).connectionListenerHTTP1(this, socket, {
     http1Options: {
       IncomingMessage: this[kIncomingMessage],
       ServerResponse: this[kServerResponse],
     },
   });
+}
+
+// Once, and only for a connection that `server` announces: another server's listener can see the socket too.
+function setAwaitedParserOptions(server: Server, socket) {
+  if (socket[kAwaitsParserOptions] !== server) return;
+  setNativeParserOptions(server, socket[kHandle]);
+  socket[kAwaitsParserOptions] = undefined;
+}
+
+// A connection starts with the header limit of the process, strict, with no field count: that needs no call.
+function setNativeParserOptions(server: Server, handle) {
+  const maxHeaderSize = server.maxHeaderSize || 0;
+  const lenientFlags = serverLenientFlags(server);
+  const maxHeadersCount = nativeMaxHeadersCount(server.maxHeadersCount);
+  if (handle && (maxHeaderSize !== 0 || lenientFlags !== 0 || maxHeadersCount !== 0)) {
+    handle.setParserOptions(maxHeaderSize, lenientFlags, maxHeadersCount);
+  }
 }
 
 type NodeHTTPServer = import("node:http").Server;
@@ -308,14 +327,10 @@ function Server(options, callback): void {
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
 
-  this.prependListener("connection", socket => {
-    if (socket != null && typeof socket === "object") socket.server = this;
-  });
-
   this._unref = false;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
-  defineMaxHeadersCount(this);
+  this.maxHeadersCount = null;
   defineHttpAllowHalfOpen(this);
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
@@ -1159,7 +1174,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
   }
 };
 
-// Pushes the per-server parser/handler options down to the native listener.
+// Pushes the per-server handler options down to the native listener.
 // Always sets strict method validation, for node.js compatibility.
 function applyServerCustomOptions(server: Server) {
   const handle = server[serverSymbol];
@@ -1168,13 +1183,10 @@ function applyServerCustomOptions(server: Server) {
     handle,
     server.requireHostHeader,
     true,
-    serverLenientFlags(server),
-    typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
     onServerClientError.bind(server, server[kListenerGeneration]),
     onServerConnection.bind(server, server[kListenerGeneration]),
     !!server.httpAllowHalfOpen,
   );
-  setServerMaxHeadersCount(handle, nativeMaxHeadersCount(server.maxHeadersCount));
 }
 
 // Resolution: httpValidation > explicit insecureHTTPParser > --insecure-http-parser. Native
@@ -1197,7 +1209,7 @@ function httpAllowHalfOpenSet(this: Server, value) {
   const next = !!value;
   if (previous === next) return;
   const handle = this[serverSymbol];
-  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, serverLenientFlags(this), next);
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, next);
 }
 
 // Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.
@@ -1218,28 +1230,6 @@ function nativeMaxHeadersCount(maxHeadersCount) {
   return maxHeaderPairs > 0 ? maxHeaderPairs >>> 1 : 0;
 }
 
-function maxHeadersCountGet(this: Server) {
-  return this[kMaxHeadersCount];
-}
-
-// Node reads `server.maxHeadersCount` for every new connection, so a value assigned after listen() goes to the native parser.
-function maxHeadersCountSet(this: Server, value) {
-  this[kMaxHeadersCount] = value;
-  const handle = this[serverSymbol];
-  if (handle) setServerMaxHeadersCount(handle, nativeMaxHeadersCount(value));
-}
-
-// Node.js keeps maxHeadersCount as an own enumerable property of the server.
-function defineMaxHeadersCount(server: Server) {
-  server[kMaxHeadersCount] = null;
-  Object.defineProperty(server, "maxHeadersCount", {
-    configurable: true,
-    enumerable: true,
-    get: maxHeadersCountGet,
-    set: maxHeadersCountSet,
-  });
-}
-
 // Native callback fired when the server accepts a connection (for TLS, when
 // its handshake completes), before any request bytes - like Node.js's
 // net.Server 'connection' / tls.Server 'secureConnection' events.
@@ -1249,51 +1239,63 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     return;
   }
   const isTLS = !!this[tlsSymbol];
-  const socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS, listenerGeneration);
+  let socket;
+  try {
+    socket = new (getNodeHTTPServerSocket())(this, socketHandle, isTLS, listenerGeneration);
+    socket[kAwaitsParserOptions] = this;
 
-  // Node's net.Server accept path refuses at maxConnections and emits 'drop'; the native
-  // listener bypasses that, so gate it here. `>` (not Node's `>=`) because the constructor
-  // above already tracked this socket in the count.
-  const maxConnections = this.maxConnections;
-  const tracked = this[kTrackedConnections];
-  if (maxConnections != null && (tracked?.size ?? 0) > maxConnections) {
-    tracked?.delete(socket);
-    const data = {
-      localAddress: socket.localAddress,
-      localPort: socket.localPort || socketHandle.localPort,
-      localFamily: socket.localFamily,
-      remoteAddress: socket.remoteAddress,
-      remotePort: socket.remotePort,
-      remoteFamily: socket.remoteFamily || "IPv4",
-    };
-    socket.destroy();
-    this.emit("drop", data);
-    return;
-  }
+    // Node's net.Server refuses at maxConnections and emits 'drop'. `>`, not its `>=`: the constructor counted this socket.
+    const maxConnections = this.maxConnections;
+    const tracked = this[kTrackedConnections];
+    if (maxConnections != null && (tracked?.size ?? 0) > maxConnections) {
+      tracked?.delete(socket);
+      const data = {
+        localAddress: socket.localAddress,
+        localPort: socket.localPort || socketHandle.localPort,
+        localFamily: socket.localFamily,
+        remoteAddress: socket.remoteAddress,
+        remotePort: socket.remotePort,
+        remoteFamily: socket.remoteFamily || "IPv4",
+      };
+      socket.destroy();
+      this.emit("drop", data);
+      return;
+    }
 
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2338-L2346
-  const blockList = this.blockList;
-  if (blockList) {
-    const remoteAddress = socket.remoteAddress;
-    const addressType = isIP(remoteAddress);
-    if (addressType) {
-      let blocked = true;
-      try {
-        blocked = !!blockList.check(remoteAddress, `ipv${addressType}`);
-      } finally {
-        if (blocked) {
-          tracked?.delete(socket);
-          socket.destroy();
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2338-L2346
+    const blockList = this.blockList;
+    if (blockList) {
+      const remoteAddress = socket.remoteAddress;
+      const addressType = isIP(remoteAddress);
+      if (addressType) {
+        let blocked = true;
+        try {
+          blocked = !!blockList.check(remoteAddress, `ipv${addressType}`);
+        } finally {
+          if (blocked) {
+            tracked?.delete(socket);
+            socket.destroy();
+          }
         }
+        if (blocked) return;
       }
-      if (blocked) return;
+    }
+
+    // Node's listeners of 'connection' see socket.parser populated.
+    socket.parser = createServerParserShim(socket);
+    this.emit("connection", socket);
+  } finally {
+    // The native parser reads the connection also when the own listener is gone or something above threw.
+    let hasOptions = false;
+    try {
+      if (socket === undefined) setNativeParserOptions(this, socketHandle);
+      else setAwaitedParserOptions(this, socket);
+      hasOptions = true;
+    } finally {
+      // Without them it would read the connection with the limits of a server that sets none.
+      if (!hasOptions) closeHandle(socketHandle);
     }
   }
-
-  // Node's connectionListener attaches the HTTPParser (socket.parser) before
-  // emitting 'connection'; expose the shim here so listeners see it populated.
-  socket.parser = createServerParserShim(socket);
-  this.emit("connection", socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
   }
@@ -1671,7 +1673,8 @@ function getNodeHTTPServerSocket() {
     [kHandoffResponse] = undefined;
     [kDestroySoon] = false;
     [kHandedOff] = false;
-    server: Server;
+    [kAwaitsParserOptions] = undefined;
+    declare server: Server;
     _httpMessage;
     _secureEstablished = false;
     // Node's connectionListener sets socket._paused when it stops reading a
@@ -4229,8 +4232,8 @@ function storeHTTPOptions(options) {
         "cannot be used with options.insecureHTTPParser",
       );
     }
-    this.httpValidation = httpValidation;
   }
+  this.httpValidation = httpValidation;
 
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).

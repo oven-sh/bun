@@ -241,11 +241,17 @@ static std::string* requestTrailersFor(us_socket_t* socket)
     return &httpResponseData->nodeHttpRequestTrailers;
 }
 
+template<bool SSL>
+static bool usesLenientHeaders(us_socket_t* socket)
+{
+    return ((uWS::NodeHttpResponseData<SSL>*)us_socket_ext(socket))->useInsecureHTTPParser;
+}
+
 /* Move the connection's captured trailer section out, returning its (ptr, length)
  * through a thread-local buffer that stays valid until the next call on this
  * thread. Called by NodeHTTPResponse at the request's body fin, still inside the
  * parser, so a pipelined request cannot overwrite or inherit another's trailers. */
-extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out)
+extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_t* socket, const char** out, bool* lenientHeaders)
 {
     *out = nullptr;
     if (!socket || us_socket_is_closed(socket)) {
@@ -255,6 +261,7 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
     if (trailers->empty()) {
         return 0;
     }
+    *lenientHeaders = is_ssl ? usesLenientHeaders<true>(socket) : usesLenientHeaders<false>(socket);
     static thread_local std::string taken;
     taken = std::move(*trailers);
     trailers->clear();
@@ -471,6 +478,28 @@ bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64
         return isRequestTimedOutImpl<true>(socket, headersTimeoutMs, requestTimeoutMs);
     }
     return isRequestTimedOutImpl<false>(socket, headersTimeoutMs, requestTimeoutMs);
+}
+
+template<bool SSL>
+static void setParserOptionsImpl(us_socket_t* socket, uint64_t maxHeaderSize, uint8_t lenientFlags, uint32_t maxHeadersCount)
+{
+    auto* httpResponseData = reinterpret_cast<uWS::NodeHttpResponseData<SSL>*>(us_socket_ext(socket));
+    httpResponseData->maxHeaderSize = maxHeaderSize ? maxHeaderSize : BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+    httpResponseData->maxHeadersCount = maxHeadersCount;
+    httpResponseData->useInsecureHTTPParser = (lenientFlags & 1) != 0;
+    httpResponseData->useLenientTransferEncoding = (lenientFlags & 2) != 0;
+}
+
+void JSNodeHTTPServerSocket::setParserOptions(uint64_t maxHeaderSize, uint8_t lenientFlags, uint32_t maxHeadersCount)
+{
+    if (!socket || upgraded || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (is_ssl) {
+        setParserOptionsImpl<true>(socket, maxHeaderSize, lenientFlags, maxHeadersCount);
+    } else {
+        setParserOptionsImpl<false>(socket, maxHeaderSize, lenientFlags, maxHeadersCount);
+    }
 }
 
 bool JSNodeHTTPServerSocket::isAuthorized() const

@@ -1,6 +1,6 @@
 const { isIPv4 } = require("internal/net/isIP");
 
-const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, drainMicrotasks } = $cpp(
+const { setServerCustomOptions, setServerAppFlags, drainMicrotasks } = $cpp(
   "NodeHTTP.cpp",
   "createNodeHTTPInternalBinding",
 ) as {
@@ -8,19 +8,16 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, dra
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
-    maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
+    httpAllowHalfOpen?: boolean,
   ) => void;
   setServerAppFlags: (
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
-  setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
   drainMicrotasks: () => void;
 };
 
@@ -140,12 +137,9 @@ function emitEOFIncomingMessageOuter(self) {
   // handle at its body fin, so pipelined requests can neither inherit nor
   // overwrite another request's trailers.
   // Trailers can only follow a chunked request body: a no-body request has
-  // none, so skip the native call (and the socket/server option walk) for the
-  // common GET/HEAD case.
+  // none, so skip the native call for the common GET/HEAD case.
   if (self[kHandle] !== undefined && !self[noBodySymbol]) {
-    // The lenient (insecureHTTPParser) value bytes must match what the parser
-    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
-    const rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    const rawTrailers = self[kHandle].takeRequestTrailers();
     if (rawTrailers !== undefined) {
       self._addHeaderLines(rawTrailers, rawTrailers.length);
     }
@@ -579,7 +573,6 @@ export {
   setMaxHTTPHeaderSize,
   setServerAppFlags,
   setServerCustomOptions,
-  setServerMaxHeadersCount,
   tlsSymbol,
   utcDate,
 };

@@ -1668,7 +1668,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         &mut self,
         require_host_header: bool,
         use_strict_method_validation: bool,
-        lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
         if let Some(app) = self.app {
@@ -1676,23 +1675,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             bun_opaque::opaque_deref_mut(app).set_flags(
                 require_host_header,
                 use_strict_method_validation,
-                lenient_http_flags,
                 http_allow_half_open,
             );
-        }
-    }
-
-    pub(crate) fn set_max_http_header_size(&mut self, max_header_size: u64) {
-        if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app).set_max_http_header_size(max_header_size);
-        }
-    }
-
-    pub(crate) fn set_max_headers_count(&mut self, max_headers_count: u32) {
-        if let Some(app) = self.app {
-            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-            bun_opaque::opaque_deref_mut(app).set_max_headers_count(max_headers_count);
         }
     }
 

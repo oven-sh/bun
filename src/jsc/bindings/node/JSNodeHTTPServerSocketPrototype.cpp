@@ -48,6 +48,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStop);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReadStart);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetParserOptions);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketCloseWhenDrained);
@@ -94,6 +95,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "readStart"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketReadStart, 0 } },
     { "setResponseTrailers"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetResponseTrailers, 1 } },
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
+    { "setParserOptions"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetParserOptions, 3 } },
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
     { "closeWhenDrained"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketCloseWhenDrained, 0 } },
@@ -218,6 +220,36 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut, (JSC::
     uint64_t requestTimeoutMs = std::isfinite(requestTimeout) && requestTimeout > 0 ? static_cast<uint64_t>(std::min(requestTimeout, kMaxDoubleBelowU64)) : 0;
 
     return JSValue::encode(JSC::jsBoolean(thisObject->isRequestTimedOut(headersTimeoutMs, requestTimeoutMs)));
+}
+
+// Node's static_cast<uint64_t>(double) is undefined for these: NaN or below 1 selects the default limit (0), 2^64 or more selects none.
+static uint64_t maxHTTPHeaderSizeFromNumber(double value)
+{
+    if (!(value >= 1)) return 0;
+    if (value >= 18446744073709551616.0) return UINT64_MAX;
+    return static_cast<uint64_t>(value);
+}
+
+// setParserOptions(maxHeaderSize, lenientFlags, maxHeadersCount)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetParserOptions, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
+    double maxHeaderSize = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    int32_t lenientFlags = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    uint32_t maxHeadersCount = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    thisObject->setParserOptions(maxHTTPHeaderSizeFromNumber(maxHeaderSize), static_cast<uint8_t>(lenientFlags & 0x3), maxHeadersCount);
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 // node:http HTTP/1.1 pipelining: make a queued pipelined response the

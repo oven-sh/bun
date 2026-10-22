@@ -34,11 +34,6 @@ struct HttpFlags {
     bool usingCustomExpectHandler: 1 = false;
     bool requireHostHeader: 1 = true;
     bool useStrictMethodValidation: 1 = false;
-    /* node:http parser leniency. Two llhttp lenient bits: useInsecureHTTPParser = LENIENT_HEADERS
-     * ("relaxed"+"insecure"); useLenientTransferEncoding = LENIENT_TRANSFER_ENCODING ("insecure"
-     * only). TE+CL conflict, chunked-size/CRLF, version, header-token checks stay enforced. */
-    bool useInsecureHTTPParser: 1 = false;
-    bool useLenientTransferEncoding: 1 = false;
     /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
@@ -83,9 +78,6 @@ private:
     OnSocketDataCallback onSocketData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
-
-    uint64_t maxHeaderSize = 0; // 0 means no limit
-    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via

@@ -816,24 +816,10 @@ public:
         return std::move(*this);
     }
 
-    /* lenientHttpFlags: bit 0 = lenient header values (llhttp LENIENT_HEADERS),
-     * bit 1 = lenient transfer-encoding (llhttp LENIENT_TRANSFER_ENCODING). */
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, uint8_t lenientHttpFlags, bool httpAllowHalfOpen) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
-        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = (lenientHttpFlags & 1) != 0;
-        httpContext->getSocketContextData()->flags.useLenientTransferEncoding = (lenientHttpFlags & 2) != 0;
         httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
-        return std::move(*this);
-    }
-
-    TemplatedApp &&setMaxHTTPHeaderSize(uint64_t maxHeaderSize) {
-        httpContext->getSocketContextData()->maxHeaderSize = maxHeaderSize;
-        return std::move(*this);
-    }
-
-    TemplatedApp &&setMaxHeadersCount(uint32_t maxHeadersCount) {
-        httpContext->getSocketContextData()->maxHeadersCount = maxHeadersCount;
         return std::move(*this);
     }
 

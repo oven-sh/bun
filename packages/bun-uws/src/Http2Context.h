@@ -638,10 +638,9 @@ struct Http2Context {
 
     Loop *loop = nullptr;
     /* The HttpContextData<SSL> we take connections from: its filter handlers
-     * count our connections too, and its flags/limits apply to us. */
+     * count our connections too, and its flags apply to us. */
     void *parent = nullptr;
     HttpFlags *parentFlags = nullptr;
-    uint64_t *parentMaxHeaderSize = nullptr;
     void (*notifyParentClosed)(void *parent, us_socket_t *s, bool filteredOpen, bool filteredAccept) = nullptr;
     void (*detachFromParent)(void *parent, Http2Context *ctx) = nullptr;
     /* Seconds without traffic in either direction before a connection is
@@ -668,7 +667,7 @@ struct Http2Context {
     }
 
     uint32_t maxHeaderListSize() {
-        uint64_t v = parentMaxHeaderSize && *parentMaxHeaderSize ? *parentMaxHeaderSize : (BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : http2::DEFAULT_MAX_HEADER_LIST_SIZE);
+        uint64_t v = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE ? BUN_DEFAULT_MAX_HTTP_HEADER_SIZE : http2::DEFAULT_MAX_HEADER_LIST_SIZE;
         return v > 0xffffff ? 0xffffff : (uint32_t) v;
     }
 
@@ -694,7 +693,6 @@ struct Http2Context {
     void attach(HttpContextData<SSL> *data, bool allowHttp1) {
         parent = data;
         parentFlags = &data->flags;
-        parentMaxHeaderSize = &data->maxHeaderSize;
         data->http2Context = this;
         data->allowHttp1 = allowHttp1;
         detachFromParent = [](void *p, Http2Context *ctx) { ctx->detach((HttpContextData<SSL> *) p); };
@@ -723,7 +721,6 @@ struct Http2Context {
         }
         parent = nullptr;
         parentFlags = nullptr;
-        parentMaxHeaderSize = nullptr;
         notifyParentClosed = nullptr;
         detachFromParent = nullptr;
     }

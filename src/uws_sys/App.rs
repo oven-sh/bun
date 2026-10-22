@@ -129,7 +129,6 @@ impl<const SSL: bool> App<SSL> {
         &mut self,
         require_host_header: bool,
         use_strict_method_validation: bool,
-        lenient_http_flags: u8,
         http_allow_half_open: bool,
     ) {
         c::uws_app_set_flags(
@@ -137,17 +136,8 @@ impl<const SSL: bool> App<SSL> {
             self.as_raw(),
             require_host_header,
             use_strict_method_validation,
-            lenient_http_flags,
             http_allow_half_open,
         )
-    }
-
-    pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
-        c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
-    }
-
-    pub fn set_max_headers_count(&mut self, max_headers_count: u32) {
-        c::uws_app_set_max_headers_count(Self::SSL_FLAG, self.as_raw(), max_headers_count)
     }
 
     pub fn clear_routes(&mut self) {
@@ -529,18 +519,7 @@ pub mod c {
             app: &mut uws_app_t,
             require_host_header: bool,
             use_strict_method_validation: bool,
-            lenient_http_flags: u8,
             http_allow_half_open: bool,
-        );
-        pub(crate) safe fn uws_app_set_max_http_header_size(
-            ssl: i32,
-            app: &mut uws_app_t,
-            max_header_size: u64,
-        );
-        pub(crate) safe fn uws_app_set_max_headers_count(
-            ssl: i32,
-            app: &mut uws_app_t,
-            max_headers_count: u32,
         );
         pub(crate) fn uws_app_get(
             ssl: i32,

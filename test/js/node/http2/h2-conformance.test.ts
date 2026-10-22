@@ -2067,8 +2067,8 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
     });
   });
 
-  // A server-sent reset is charged only when it cancels a request the handler was given. Each
-  // late DATA frame below is answered with RST_STREAM(STREAM_CLOSED), which cancels nothing.
+  // A server-sent reset is charged only when it cancels a request the handler was given. The
+  // late DATA frames below are dropped.
   const lateData = Buffer.concat(
     Array.from({ length: 1200 }, () => encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"))),
   );
@@ -2687,5 +2687,96 @@ describe("received field values (RFC 9113 §8.2.1, §8.3)", () => {
       ["headers", { ":status": 199 }],
       ["response", { ":status": 999 }],
     ]);
+  });
+});
+
+describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
+  const resets = (frames: Frame[]) =>
+    frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);
+  const isPingAck = (f: Frame) => f.type === FrameType.PING && (f.flags & 0x1) !== 0;
+  const credit = (frames: Frame[]) =>
+    frames
+      .filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0)
+      .reduce((sum, f) => sum + f.payload.readUInt32BE(0), 0);
+  const small = encodeFrame(FrameType.DATA, 0, 1, Buffer.from("x"));
+  const large = encodeFrame(FrameType.DATA, 0, 1, Buffer.alloc(16_384));
+
+  // Each entry closes stream 1 of a server and resolves to the resets that this takes.
+  const closings: Record<string, (c: RawH2) => Promise<number[][]>> = {
+    "the server reset": async c => {
+      // The DATA behind the one that draws the reset arrives in the same read.
+      c.send(
+        Buffer.concat([
+          encodeFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST", CONTENT_LENGTH_5)),
+          encodeFrame(FrameType.DATA, 0, 1, Buffer.from("hello!")),
+          small,
+          small,
+        ]),
+      );
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      return [[1, ErrorCode.PROTOCOL_ERROR]];
+    },
+    "the server answered": async c => {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      return [];
+    },
+  };
+
+  test.each(Object.keys(closings))("that %s is dropped and goes back to the connection window", async name => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.on("end", () => {
+        if (stream.destroyed) return;
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      stream.resume();
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const expected = await closings[name](c);
+      const before = expected.length ? 8 : 0;
+      c.send(Buffer.concat([small, large, large, large]));
+      await c.waitFor(() => credit(c.frames) >= 3 * 16_384);
+      expect(credit(c.frames)).toBe(before + 1 + 3 * 16_384);
+      // A stream that nobody opened is not a closed one.
+      c.sendFrame(FrameType.DATA, 0, 99, Buffer.from("x"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 101, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 101);
+      expect(resets(c.frames)).toEqual([...expected, [99, ErrorCode.STREAM_CLOSED]]);
+      expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("that the client canceled is dropped", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("response", () => req.close(http2.constants.NGHTTP2_CANCEL));
+      const closed = new Promise(resolve => req.on("close", resolve));
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      raw.socket!.write(Buffer.concat([...Array(50).fill(small), encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8))]));
+      await raw.waitFor(isPingAck);
+      expect(resets(raw.frames).filter(([, code]) => code !== ErrorCode.CANCEL)).toEqual([]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
   });
 });

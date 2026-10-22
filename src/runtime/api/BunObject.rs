@@ -81,7 +81,7 @@ use bun_zlib as zlib;
 
 use crate::node;
 use crate::test_runner::jest::Jest;
-use crate::valkey_jsc::js_valkey::SubscriptionCtx;
+use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -138,12 +138,6 @@ mod static_adapters {
         // `marked_argument_buffer_wrap!` (the C-ABI shim is exported separately
         // by the macro); call it directly.
         crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT(g, cf)
-    }
-    pub(super) fn shell_interpreter_create(
-        g: &JSGlobalObject,
-        cf: &CallFrame,
-    ) -> JsResult<JSValue> {
-        crate::shell::interpreter::create_shell_interpreter(g, cf)
     }
 }
 
@@ -252,21 +246,15 @@ pub(crate) mod bun_object {
         BunObject_callback_udpSocket => super::static_adapters::udp_socket,
         BunObject_callback_write => crate::webcore::blob::write_file,
     }
-    // `createParsedShellScript` / `createShellInterpreter` go through the same
-    // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
-    // are already `JSHostFnZig`-shaped).
+    // Its body is already `JSHostFnZig`-shaped, so it goes through the same `to_js_host_call` thunk as the callbacks above.
     export_callbacks! {
         BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
     }
     // --- Callbacks ---
 
     // --- Lazy property callbacks ---
     export_lazy_prop_callbacks! {
-        BunObject_lazyPropCb_Archive => super::get_archive_constructor,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
-        BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
-        BunObject_lazyPropCb_Image => super::get_image_constructor,
         BunObject_lazyPropCb_markdown => super::get_markdown_object,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
@@ -276,11 +264,8 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
-        BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
         BunObject_lazyPropCb_s3 => super::get_s3_default_client,
-        BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
         BunObject_lazyPropCb_valkey => super::get_valkey_default_client,
-        BunObject_lazyPropCb_Terminal => super::get_terminal_constructor,
     }
     // --- Lazy property callbacks ---
 
@@ -1206,25 +1191,16 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
 fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     // The server is the calling script's.
     let context = global_object.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_object.bun_vm().as_mut();
-    let mut config: crate::server::ServerConfig = 'brk: {
-        let mut args = ArgumentsSlice::init(vm, arguments);
-
-        let config = crate::server::ServerConfig::from_js(
-            global_object,
-            &mut args,
-            crate::server::server_config::FromJSOptions {
-                allow_bake_config: bun_core::FeatureFlags::bake(),
-                is_fetch_required: true,
-                previous_fetch: false,
-                previous_routes: false,
-            },
-        )?;
-
-        break 'brk config;
-    };
+    let mut config = crate::server::ServerConfig::from_js(
+        global_object,
+        callframe.argument(0),
+        crate::server::server_config::FromJSOptions {
+            allow_bake_config: bun_core::FeatureFlags::bake(),
+            is_fetch_required: true,
+            previous_fetch: false,
+            previous_routes: false,
+        },
+    )?;
 
     // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
     // past that point the raw-`JSValue` handler shadows have no GC root until
@@ -1239,7 +1215,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let _handler_pins: [bun_jsc::js_value::Protected; 10] =
         crate::server::protect_handler_shadows(&config);
 
-    // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
@@ -1249,6 +1224,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
     // is round-trippable through `serve` again on hot-reload.
     use crate::server::{AnyServer, AnyServerTag};
+    use bun_jsc::JsCellRefExt as _;
     use bun_jsc::rare_data::HotMapEntry;
 
     if config.allow_hot {
@@ -1261,14 +1237,14 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 macro_rules! reload {
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
-                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
+                        let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
                         // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
-                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
+                        unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1293,18 +1269,15 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `init` returned a live heap-allocated server pointer.
-            let server_ref: &mut $ServerType = unsafe { &mut *server };
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
             let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
+            // SAFETY: `listen` frees the server only when it throws.
+            let server_ref: &$ServerType = unsafe { &*server };
             let obj = <$ServerType>::ptr_to_js(server, global_object);
             if route_list_object != JSValue::ZERO {
-                // NOTE: `ServerType.js.routeListSetCached` (codegen
-                // `.classes.ts`) — routed through the typed helper in
-                // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
             // Mirror the handler callbacks into the wrapper's WriteBarrier
@@ -1312,31 +1285,35 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
             // The async-context wrap is applied here (not in `from_js`) so the
             // freshly-allocated wrapper fn is rooted by the slot immediately.
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_request_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_error,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_error_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_node_http_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_node_http_request_set,
-            );
+            server_ref.config.with_mut(|config| {
+                crate::server::wrap_handler_slot(
+                    &mut config.on_request,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_request_set,
+                );
+                crate::server::wrap_handler_slot(
+                    &mut config.on_error,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_error_set,
+                );
+                crate::server::wrap_handler_slot(
+                    &mut config.on_node_http_request,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_node_http_request_set,
+                );
+            });
             // Skip the 7-slot write when there's no websocket config: the
             // slots default ZERO so `write_ws_handler_slots`'s clear path
             // would be 7 wasted FFI calls.
-            if server_ref.config.websocket.is_some() {
+            if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref.js_value.set_strong(obj, global_object);
+            server_ref
+                .js_value
+                .with_mut(|js_value| js_value.set_strong(obj, global_object));
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1353,12 +1330,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
-            if server_ref.config.allow_hot {
+            if server_ref.config.get().allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
-                        &server_ref.config.id,
+                        &server_ref.config.get().id,
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),
@@ -1503,24 +1480,8 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
     }
 }
 
-fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::webcore::fetch::FetchSession>(global_this)
-}
-
 fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     crate::api::markdown_object::create(global_this)
-}
-
-fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
-}
-
-fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
-}
-
-fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
 }
 
 fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
@@ -1582,7 +1543,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         &global_this.js_thread(vm.root_context()),
-        &[JSValue::UNDEFINED],
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
     ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
@@ -1593,7 +1555,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+    let valkey = valkey.into_raw();
+    let as_js = js_RedisClient::to_js(valkey, global_this);
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.
@@ -1610,14 +1573,6 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     }
 
     as_js
-}
-
-fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::valkey_jsc::JSValkeyClient>(global_this)
-}
-
-fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::bun_terminal_body::js::get_constructor(global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

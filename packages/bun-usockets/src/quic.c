@@ -34,6 +34,10 @@ extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl
 
 extern size_t BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
+/* lsquic is built with the same width, see lsxpackDefines in scripts/build/deps/lshpack.ts. */
+_Static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(struct lsxpack_header, chain_next_idx) == sizeof(char *) + 24,
+    "LSXPACK_MAX_STRLEN must be UINT32_MAX");
+
 #define US_QUIC_READ_BUF (16 * 1024)
 /* A header set over max_size or max_fields fails its stream. One over this
  * multiple of either closes the connection, as in Http2Context.h, which has
@@ -522,9 +526,10 @@ static int us_quic_field_is_malformed(const struct lsxpack_header *hdr) {
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
-    /* `space` is lsqpack's estimate and can exceed what the field decodes to. */
-    size_t need = h->len + space;
-    if (space > LSXPACK_MAX_STRLEN || need > us_quic_hset_hard_cap(h)) return NULL;
+    /* `space` covers the bytes lsqpack has in hand (patches/lsqpack/decode-room-for-bytes-in-hand.patch),
+     * so the buffer grows with what the peer has sent. It is an estimate and can exceed what they decode to. */
+    size_t need = h->len + space, hard_cap = us_quic_hset_hard_cap(h);
+    if (need > hard_cap) return NULL;
     if (need > h->cap) {
         size_t ncap = h->cap ? h->cap : 512;
         while (ncap < need) ncap *= 2;
@@ -533,16 +538,18 @@ static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_h
         h->buf = nb;
         h->cap = (unsigned int) ncap;
     }
+    /* The whole buffer, so that lsqpack doesn't come back for every few bytes. */
+    size_t room = (h->cap < hard_cap ? h->cap : hard_cap) - h->len;
     if (hdr == NULL) {
         hdr = &h->scratch;
         /* Offsets count from this field's start: lsxpack asserts that they fit lsxpack_strlen_t. */
-        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, space);
+        lsxpack_header_prepare_decode(hdr, h->buf + h->len, 0, room);
     } else {
         /* Resize: lsqpack already wrote part of name/value into the previous
          * buffer; only the storage may move. Preserve offsets, repoint buf,
          * and report the larger window via val_len. */
         hdr->buf = h->buf + h->len;
-        hdr->val_len = (lsxpack_strlen_t) space;
+        hdr->val_len = (lsxpack_strlen_t) room;
     }
     return hdr;
 }
@@ -740,6 +747,10 @@ static void us_quic_on_read(lsquic_stream_t *stream, lsquic_stream_ctx_t *h) {
         lsquic_stream_wantread(stream, 0);
         lsquic_stream_shutdown(stream, 0);
         if (ctx->on_stream_data) ctx->on_stream_data(s, ctx->read_buf, 0, 1);
+    } else if (r < 0 && errno == ECONNRESET) {
+        /* lsquic resets a request above the id of a GOAWAY without on_reset,
+         * and calls on_read on every tick until the stream is closed. */
+        lsquic_stream_close(stream);
     }
 }
 
@@ -772,8 +783,9 @@ static void us_quic_on_reset(lsquic_stream_t *stream, lsquic_stream_ctx_t *h, in
      *         lsquic already queues RESET_STREAM for our send side; the
      *         read half stays open so the response/request that arrived
      *         alongside STOP_SENDING is still delivered. Closing here
-     *         would drop it. */
-    if (h && stream && how == 0) lsquic_stream_close(stream);
+     *         would drop it. H3_REQUEST_REJECTED comes with no response. */
+    if (h && stream && (how == 0 || lsquic_stream_get_error_code(stream) == US_QUIC_H3_REQUEST_REJECTED))
+        lsquic_stream_close(stream);
 }
 
 /* ───── public API ───── */
@@ -1186,10 +1198,8 @@ int us_quic_stream_send_headers(us_quic_stream_t *s,
      * so each pair has to be contiguous. The caller hands us arbitrary
      * pointers, so flatten here. */
     size_t total = 0;
-    for (unsigned int i = 0; i < count; i++) {
-        if (headers[i].name_len > LSXPACK_MAX_STRLEN || headers[i].value_len > LSXPACK_MAX_STRLEN) return -1;
+    for (unsigned int i = 0; i < count; i++)
         total += headers[i].name_len + headers[i].value_len;
-    }
 
     char stackbuf[1024];
     char *buf = total <= sizeof(stackbuf) ? stackbuf : (char *) us_malloc(total);
@@ -1283,6 +1293,11 @@ int us_quic_stream_has_unacked(us_quic_stream_t *s) {
 
 uint64_t us_quic_stream_reset_code(us_quic_stream_t *s) {
     return s->stream ? lsquic_stream_get_error_code(s->stream) : 0;
+}
+
+int us_quic_stream_refused_by_goaway(us_quic_stream_t *s) {
+    return s->stream &&
+        lsquic_stream_id(s->stream) > lsquic_conn_goaway_stream_id(lsquic_stream_conn(s->stream));
 }
 
 void *us_quic_stream_ext(us_quic_stream_t *s) { return s + 1; }
@@ -1406,10 +1421,9 @@ us_quic_socket_context_t *us_create_quic_client_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP);
     ctx->settings.es_versions = (1u << LSQVER_I001);
     ctx->settings.es_ecn = 0;
-    /* One field holds at most LSXPACK_MAX_STRLEN bytes, so a server isn't told it may send more. */
-    ctx->settings.es_max_header_list_size = 64 * 1024;
-    /* A server may ignore that setting. Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
+    /* Same as the HTTP/2 client's LOCAL_MAX_HEADER_LIST_SIZE. */
     ctx->max_header_set_size = 256 * 1024;
+    ctx->settings.es_max_header_list_size = ctx->max_header_set_size;
     ctx->settings.es_ext_http_prio = 0;
 
     struct lsquic_engine_api api;

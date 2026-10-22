@@ -449,6 +449,16 @@ pub(crate) mod help_command {
     /// The spacing between commands is intentional.
     macro_rules! print_cli_helptext {
         ($printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
+            if lint_command::IS_ENABLED {
+                print_cli_helptext!(
+                    @lint "  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint\n",
+                    $printer, $prefix, $args $(, $extra)*
+                )
+            } else {
+                print_cli_helptext!(@lint "", $printer, $prefix, $args $(, $extra)*)
+            }
+        };
+        (@lint $lint:literal, $printer:ident, $prefix:literal, $args:expr $(, $extra:expr)*) => {
             $printer!(
                 concat!($prefix, "\
 <b>Usage:<r> <b>bun \\<command\\> <cyan>[...flags]<r> <b>[...args]<r>
@@ -458,8 +468,7 @@ pub(crate) mod help_command {
             <d>dev<r>                  Run a package.json script
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
-  <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
+", $lint, "  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -876,7 +885,8 @@ pub(crate) mod command {
             };
         }
         if x == RootCommandMatcher::case(b"lint") {
-            return match super::script_or_command::is_of_the_project(b"lint") {
+            let is_enabled = super::lint_command::IS_ENABLED;
+            return match !is_enabled || super::script_or_command::is_of_the_project(b"lint") {
                 true => Tag::AutoCommand,
                 false => Tag::LintCommand,
             };

@@ -23,18 +23,17 @@ use bun_sys::Error as SysError;
 
 use crate::api::native_promise_context;
 use crate::generated_bindgen::html_rewriter::{
-    AttributeIteratorResult, ContentOptions, js_HTMLRewriterTransform,
+    AttributeIteratorResult, ContentOptions, js_HTMLRewriter, js_HTMLRewriterTransform,
 };
-use crate::generated_classes::{js_HTMLRewriter, js_Response};
+use crate::generated_bindgen::response::js_Response;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{
     self, SourceHandle, Start, StartTag, StreamError, StreamResult, Writable, WritablePending,
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::call_frame::ArgumentsSlice;
 use lol_html::html_content::UserData as _;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
@@ -62,37 +61,6 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
         message: BunString::static_(message),
         ..Default::default()
     }
-}
-
-// ─────────────────── instance-method arg-decode helpers ──────────────────
-//
-// Note: a `#[bun_jsc::host_fn(method)]` proc-macro form of typed argument
-// decoding hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (string, `JSValue`) are open-coded here as small helpers.
-
-/// Decode arm for a string — eat next arg, throw "Missing argument" if
-/// absent, "Expected string" if undefined/null, otherwise ToString it into a
-/// slice that owns (or holds a ref on) its bytes. A borrowed view of the
-/// temporary `JSString` would not survive the user JS (a later argument's
-/// `toString`/getter) that runs before lol-html copies the bytes.
-fn eat_string(
-    iter: &mut ArgumentsSlice<'_>,
-    global: &JSGlobalObject,
-) -> JsResult<Utf8Bytes<'static>> {
-    let Some(value) = iter.next_eat() else {
-        return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
-    };
-    if value.is_undefined_or_null() {
-        return Err(global.throw_invalid_arguments(format_args!("Expected string")));
-    }
-    value.to_utf8(global)
-}
-
-/// Decode arm for `JSValue` (required) — eat next arg or
-/// throw "Missing argument".
-fn eat_js_value(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<JSValue> {
-    iter.next_eat()
-        .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))
 }
 
 /// Map the optional JS `{ html }` content options onto lol-html's
@@ -333,36 +301,33 @@ fn build_settings(
 
 // ───────────────────────────── HTMLRewriter ──────────────────────────────
 
-#[bun_jsc::JsClass]
 pub(crate) struct HTMLRewriter {
     pub(crate) context: Rc<RefCell<LOLHTMLContext>>,
 }
 
 impl HTMLRewriter {
-    // Note: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
-    // struct already emits the C-ABI constructor shim that calls
-    // `<HTMLRewriter>::constructor(__g, __f)`.
-    pub(crate) fn constructor(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<*mut HTMLRewriter> {
-        let rewriter = bun_core::heap::into_raw(Box::new(HTMLRewriter {
-            context: Rc::new(RefCell::new(LOLHTMLContext::default())),
-        }));
+    pub(crate) fn constructor() -> Self {
         bun_core::analytics::Features::HTML_REWRITER
             .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        Ok(rewriter)
+        Self {
+            context: Rc::new(RefCell::new(LOLHTMLContext::default())),
+        }
     }
 
-    pub(crate) fn on_(
+    pub(crate) fn on<'a>(
         &self,
-        global: &JSGlobalObject,
-        selector_name: &[u8],
-        call_frame: &CallFrame,
-        listener: JSValue,
-    ) -> JsResult<JSValue> {
-        let selector_source = utf8_or_throw(global, selector_name)?;
-        if selector_nesting(selector_name) > MAX_SELECTOR_NESTING {
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        selector: JsLocal<'a>,
+        handlers: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let global = cx.global();
+        if selector.to_js().is_undefined_or_null() {
+            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        }
+        let selector_name = selector.to_js().to_utf8(global)?;
+        let selector_source = utf8_or_throw(global, &selector_name)?;
+        if selector_nesting(&selector_name) > MAX_SELECTOR_NESTING {
             return Err(global.throw_value(create_lolhtml_error(
                 global,
                 &"Selector is nested too deeply.",
@@ -373,29 +338,33 @@ impl HTMLRewriter {
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
         };
 
-        let handler = Box::new(ElementHandler::init(global, call_frame.this(), listener)?);
+        let handler = ElementHandler::init(global, this_value.to_js(), handlers.to_js())?;
+        let handler = Box::new(handler);
         self.context
             .borrow_mut()
             .element_handlers
             .push(ElementHandlerEntry { selector, handler });
-        Ok(call_frame.this())
+        Ok(this_value)
     }
 
-    pub(crate) fn on_document_(
+    pub(crate) fn on_document<'a>(
         &self,
-        global: &JSGlobalObject,
-        listener: JSValue,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let handler = Box::new(DocumentHandler::init(global, call_frame.this(), listener)?);
-        self.context.borrow_mut().document_handlers.push(handler);
-        Ok(call_frame.this())
+        this_value: JsWrapper<'a, Self>,
+        cx: &mut JsScope<'a>,
+        handlers: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let handler = DocumentHandler::init(cx.global(), this_value.to_js(), handlers.to_js())?;
+        self.context
+            .borrow_mut()
+            .document_handlers
+            .push(Box::new(handler));
+        Ok(this_value)
     }
 
     /// `sync_only_noun` is `Some("a string" | "an ArrayBuffer")` when the
     /// caller needs the rewrite to finish before `transform()` returns; a
     /// handler that would suspend then fails the rewrite instead.
-    pub(crate) fn begin_transform(
+    fn begin_transform(
         &self,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
@@ -407,18 +376,15 @@ impl HTMLRewriter {
         RewriterPipe::init(new_context, handlers, cx, response, sync_only_noun)
     }
 
-    pub(crate) fn transform_(
+    pub(crate) fn transform(
         &self,
-        cx: &bun_jsc::JsThread<'_>,
-        this_value: JSValue,
-        response_value: JSValue,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        input: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        // `js_Response::from_js` returns the `m_ctx` as `NonNull<Response>`;
-        // wrap it in a `BackRef` for a safe `&Response` — `response_value` is
-        // on the stack (conservatively scanned), so the native payload outlives
-        // this host-fn body.
-        if let Some(response) = js_Response::from_js(response_value).map(BackRef::<Response>::from)
-        {
+        let cx = cx.js_thread();
+        let (this_value, input) = (this_value.to_js(), input.to_js());
+        if let Some(response) = js_Response::from_js(input).map(BackRef::<Response>::from) {
             // An already-failed body surfaces its stored upstream error (abort
             // reason, connection error) instead of a generic "body already used"
             // — the error is the useful bit, and `wire_input` would otherwise
@@ -432,7 +398,7 @@ impl HTMLRewriter {
                     .global()
                     .throw_invalid_arguments(format_args!("Response body already used")));
             }
-            let out = self.begin_transform(cx, this_value, &response, None)?;
+            let out = self.begin_transform(&cx, this_value, &response, None)?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out.to_error() {
                 return Err(cx.global().throw_value(err));
@@ -446,16 +412,16 @@ impl HTMLRewriter {
             ArrayBuffer,
             Other,
         }
-        let kind = if response_value.is_string() {
+        let kind = if input.is_string() {
             ResponseKind::String
-        } else if response_value.js_type().is_array_buffer_like() {
+        } else if input.js_type().is_array_buffer_like() {
             ResponseKind::ArrayBuffer
         } else {
             ResponseKind::Other
         };
 
         if kind != ResponseKind::Other {
-            let body_value = webcore::body::extract(cx.global(), response_value)?;
+            let body_value = webcore::body::extract(cx.global(), input)?;
             let resp = RefPtr::new(Response::init(
                 webcore::response::Init {
                     status_code: 200,
@@ -472,7 +438,7 @@ impl HTMLRewriter {
             } else {
                 "an ArrayBuffer"
             };
-            let out_response_value = self.begin_transform(cx, this_value, &resp, Some(noun))?;
+            let out_response_value = self.begin_transform(&cx, this_value, &resp, Some(noun))?;
             // Check if the returned value is an error and throw it properly
             if let Some(err) = out_response_value.to_error() {
                 return Err(cx.global().throw_value(err));
@@ -491,16 +457,9 @@ impl HTMLRewriter {
                 .get_body_value()
                 .use_as_any_blob_allow_non_utf8_string();
 
-            // Null out the JS wrapper's `m_ctx` so its GC finalize is a no-op,
-            // then release the wrapper's +1 ourselves. The pipe still holds its
-            // own (`RewriterPipe.response`).
-            js_Response::detach_ptr(out_response_value);
-            // SAFETY: releases the wrapper's ref that `detach_ptr` orphaned.
-            unsafe { Response::deref(out_response.as_const_ptr().cast_mut()) };
-
             return match kind {
-                ResponseKind::String => blob.to_string(cx, webcore::Lifetime::Transfer),
-                ResponseKind::ArrayBuffer => blob.to_array_buffer(cx, webcore::Lifetime::Transfer),
+                ResponseKind::String => blob.to_string(&cx, webcore::Lifetime::Transfer),
+                ResponseKind::ArrayBuffer => blob.to_array_buffer(&cx, webcore::Lifetime::Transfer),
                 ResponseKind::Other => unreachable!(),
             };
         }
@@ -508,40 +467,6 @@ impl HTMLRewriter {
         Err(cx
             .global()
             .throw_invalid_arguments(format_args!("Expected Response or Body")))
-    }
-
-    // ── instance-method arg-decode wrappers ──────────────────────────────
-    // See arg-decode helpers at top of file.
-
-    pub(crate) fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let selector_name = eat_string(&mut iter, global)?;
-        let listener = eat_js_value(&mut iter, global)?;
-        self.on_(global, &selector_name, call_frame, listener)
-    }
-
-    pub(crate) fn on_document(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let listener = eat_js_value(&mut iter, global)?;
-        self.on_document_(global, listener, call_frame)
-    }
-
-    pub(crate) fn transform(
-        &self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let response_value = eat_js_value(&mut iter, global)?;
-        self.transform_(
-            &global.js_thread_of_caller(call_frame),
-            call_frame.this(),
-            response_value,
-        )
     }
 }
 
@@ -776,7 +701,7 @@ impl RewriterPipe {
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept.
     pub fn finalize(&self) {
-        self.cell.with_mut(JsRef::finalize);
+        self.cell.with_mut(|r| r.finalize());
     }
 
     /// Release one ref, deferring the release of the *last* ref to the event
@@ -1094,7 +1019,8 @@ impl RewriterPipe {
         // https://github.com/oven-sh/bun/issues/3334
         result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
 
-        let response_js_value = result_ref.to_js(&this.global);
+        // SAFETY: the wrapper adopts the ref `result` was allocated with.
+        let response_js_value = unsafe { Response::to_js(result.as_ptr(), &this.global) };
 
         // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
         // The cell's WriteBarrier slots root the Response and (later) the

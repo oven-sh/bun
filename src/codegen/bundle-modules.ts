@@ -400,6 +400,12 @@ writeIfNotChanged(
 `,
 );
 
+// The ids replacements.ts compiles `$inherits*()` calls to, inlined into an enum in ZigGlobalObject.cpp.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "JSClasses+enum.h"),
+  jsclasses.map((name, id) => `${name} = ${id},\n`).join(""),
+);
+
 // The bundled JS sources (builtin functions + internal modules) are linked into
 // the executable as one contiguous read-only blob via `.incbin` in the generated
 // `.S` below and addressed by {offset, length}. Emitting them as C++
@@ -793,7 +799,7 @@ declare module "module" {
 }
 `;
 
-    for (const [name] of jsclasses) {
+    for (const name of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 

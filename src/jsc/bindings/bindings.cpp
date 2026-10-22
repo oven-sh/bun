@@ -174,7 +174,8 @@
 
 #include "DOMFormData.h"
 #include "JSDOMFormData.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
+#include "GeneratedExpect.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
 #include <JavaScriptCore/JSWeakMap.h>
@@ -350,6 +351,7 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope& throwScope, ExpectFlags& flags)
 {
+    using namespace Bun::Bindgen::Generated;
     JSCell* matcherPropCell = matcherProp.asCell();
     AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
@@ -616,7 +618,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         // and it would result in a double negation
         flags = flags & ~FLAG_NOT;
 
-        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->wrapped(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
+        bool passed = ExpectCustomAsymmetricMatcher__execute(customMatcher->payload(), JSValue::encode(matcherProp), globalObject, JSValue::encode(otherProp));
         return passed ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
     }
 
@@ -2984,7 +2986,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
         if (dynamicDowncast<WebCore::JSFetchHeaders>(cell))
             return static_cast<double>(uncheckedDowncast<WebCore::JSFetchHeaders>(cell)->wrapped().size());
 
-        if (auto* blob = dynamicDowncast<WebCore::JSBlob>(cell)) {
+        if (auto* blob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(cell)) {
             uint64_t size = Bun__Blob__getSizeForBindings(blob->wrapped());
             if (size == std::numeric_limits<uint64_t>::max())
                 return std::numeric_limits<double>::max();
@@ -6363,12 +6365,12 @@ extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* 
 
 extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpect>(globalObject));
 }
 
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+    return JSValue::encode(Bun::Bindgen::prototypeForClass<Bun::Bindgen::Generated::JSExpectStatic>(globalObject));
 }
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
@@ -6555,6 +6557,11 @@ CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JS
     *outSourceURL = Bun::toStringRef(sourceURL);
     *outLine = lineColumn.line;
     *outColumn = lineColumn.column;
+}
+
+CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
+{
+    Bun__CallFrame__getCallerSrcLoc(JSC::getVM(globalObject).topCallFrame, globalObject, outSourceURL, outLine, outColumn);
 }
 
 extern "C" EncodedJSValue Bun__JSObject__getCodePropertyVMInquiry(JSC::JSGlobalObject* global, JSC::JSObject* object)

@@ -1215,6 +1215,73 @@ if (typeof Bun !== "undefined") {
         open.close();
       }
     });
+
+    // A reload keeps the native listener of an address, and so its kind. The sockets of a Bun.serve listener have
+    // the smaller block: a node:http server gets none of them, so it writes no option to them.
+    test("a server with an option that takes the listener of a Bun.serve server gets none of its connections", async () => {
+      using dir = tempDir("hot-bun-serve-to-node-http-options", {
+        "cert.pem": cert,
+        "cert.key": key,
+        "server.mjs": `
+          import { createServer } from "node:http";
+          import { createServer as createSecureServer } from "node:https";
+          import { once } from "node:events";
+          import { connect } from "node:net";
+          import { connect as connectSecure } from "node:tls";
+          import { writeFileSync, readFileSync } from "node:fs";
+
+          const tls = {
+            cert: readFileSync(new URL("cert.pem", import.meta.url), "utf8"),
+            key: readFileSync(new URL("cert.key", import.meta.url), "utf8"),
+          };
+
+          globalThis.__reloads ??= 0;
+          if (globalThis.__reloads++ === 0) {
+            // A reload finds a listener again by hostname and port, so the two kinds need two hostnames.
+            Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("Bun.serve") });
+            Bun.serve({ port: 0, hostname: "0.0.0.0", tls, fetch: () => new Response("Bun.serve") });
+            const self = new URL(import.meta.url);
+            writeFileSync(self, readFileSync(self, "utf8"));
+          } else {
+            for (const secure of [false, true]) {
+              let connections = 0;
+              const handler = (req, res) => res.end("node:http");
+              const server = secure ? createSecureServer(tls, handler) : createServer(handler);
+              server.maxHeadersCount = 3;
+              server.on("connection", () => connections++);
+              await once(server.listen(0, secure ? "0.0.0.0" : "127.0.0.1"), "listening");
+
+              const port = server.address().port;
+              const socket = secure
+                ? connectSecure({ port, host: "127.0.0.1", rejectUnauthorized: false })
+                : connect(port, "127.0.0.1");
+              let received = "";
+              socket.setEncoding("latin1");
+              socket.on("data", chunk => (received += chunk));
+              socket.on("error", () => {});
+              await once(socket, secure ? "secureConnect" : "connect");
+              socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nA: 1\\r\\nB: 2\\r\\nC: 3\\r\\nConnection: close\\r\\n\\r\\n");
+              await once(socket, "close");
+              const body = received.slice(received.indexOf("\\r\\n\\r\\n") + 4);
+              console.log((secure ? "https" : "http") + ": " + connections + " " + body);
+            }
+            process.exit(0);
+          }
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--hot", "server.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      assert.deepStrictEqual(
+        { stdout, stderr: stderr.replaceAll(/^DEBUG:.*\n/gm, ""), exitCode },
+        { stdout: "http: 0 Bun.serve\nhttps: 0 Bun.serve\n", stderr: "", exitCode: 0 },
+      );
+    });
   });
 
   describe("Node.js compatibility", () => {

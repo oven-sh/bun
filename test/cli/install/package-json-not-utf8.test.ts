@@ -61,6 +61,17 @@ describe.concurrent("a package.json that is not UTF-8", () => {
     expect(table.linesThatDiffer(written.lines.join("\n"), kept)).toEqual([]);
   });
 
+  // The JSON parser decodes a string that has an escape, so the printer gets that string with U+FFFD in it.
+  test("bun pm pkg set writes U+FFFD in a string that has an escape", async () => {
+    const before =
+      '{\n  "name": "app",\n  "author": "Jos\xE9",\n  "scripts": {\n    "say": "echo \\"caf\xE9\\""\n  }\n}\n';
+    using dir = tempDir("package-json-not-utf8", { "package.json": Buffer.from(before, "latin1") });
+    expect(await bun(String(dir), "pm", "pkg", "set", "license=MIT")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    expect(await bytesOf(String(dir), "package.json")).toBe(
+      before.replace('caf\xE9\\"', "caf" + bytesOfText("\uFFFD") + '\\"').replace("}\n}", '},\n  "license": "MIT"\n}'),
+    );
+  });
+
   // Only a shell gives a program an argument that is not UTF-8.
   test.skipIf(isWindows)("bun pm pkg set writes the bytes of an argument", async () => {
     using dir = tempDir("package-json-not-utf8", { "package.json": '{\n  "name": "app"\n}\n' });

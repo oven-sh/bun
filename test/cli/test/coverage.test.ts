@@ -59,7 +59,7 @@ export class Y {
 
 // Latin-1 from an old editor: in UTF-8, 0xE9 starts a sequence of three bytes. Counted as three bytes, the line
 // break after it was stepped over, and each line below it was reported as the line above.
-test("a file that is not UTF-8 has the lines of the same file in UTF-8", async () => {
+test.concurrent("a file that is not UTF-8 has the lines of the same file in UTF-8", async () => {
   const lib = `// caf\xE9
 export function used(x: number) {
   // caf\xE9
@@ -89,7 +89,9 @@ test("used", () => {
     stderr: "pipe",
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const lcov = await Bun.file(path.join(String(dir), "coverage", "lcov.info")).text();
+  const report = Bun.file(path.join(String(dir), "coverage", "lcov.info"));
+  expect(await report.exists(), stderr).toBe(true);
+  const lcov = await report.text();
   const lines = (file: string) => ({
     lcov: [
       ...lcov

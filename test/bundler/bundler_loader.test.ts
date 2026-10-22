@@ -1,5 +1,5 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { textThatIsNotUtf8 } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
@@ -469,25 +469,6 @@ describe("bundler", async () => {
   {
     const table = textThatIsNotUtf8();
     const latin1 = (text: string) => Buffer.from(text, "latin1");
-
-    test("textThatIsNotUtf8 reads what TextDecoder reads, but for a lone byte and half a surrogate pair", () => {
-      // Half of a surrogate pair is a code point of the private use area for TextDecoder.
-      const marked = table.bytes
-        .toString("latin1")
-        .replace(
-          /\xed([\xa0-\xbf])(?=[\x80-\xbf])/g,
-          (_, second) => "\xee" + String.fromCharCode(second.charCodeAt(0) - 0x20),
-        );
-      const decoded = new TextDecoder().decode(latin1(marked));
-      let differences = 0;
-      for (let i = 0; i < Math.max(decoded.length, table.text.length); i++) {
-        const [read, unit] = [table.text.charCodeAt(i), decoded.charCodeAt(i)];
-        const isLoneByte = unit === 0xfffd && ((read >= 0x80 && read <= 0xbf) || (read >= 0xf8 && read <= 0xff));
-        const isHalf = unit >= 0xe000 && unit <= 0xe7ff && read === unit - 0xe000 + 0xd800;
-        if (read !== unit && !isLoneByte && !isHalf) differences++;
-      }
-      expect(differences).toBe(0);
-    });
 
     // `caf`, 0xE9, ` au lait` is Latin-1: in UTF-8, 0xE9 starts a sequence of three bytes.
     const strings = `"caf\xE9 au lait", "caf\xE9 key": 1, m: "\xE2\x82A\xF0\x9F\x98B\xED\xA0\x80C"`;

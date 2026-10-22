@@ -2381,3 +2381,375 @@ describe("Bun.serve HTTP/3 SNI", () => {
     expect(await exchange("other.example")).toBe("200 served");
   });
 });
+
+// A handler runs while lsquic processes the handler's own connection. lsquic
+// skipped every request to make a connection tickable in that time, whichever
+// connection the request was for. What a handler did to a stream of another
+// connection then waited for whatever ticked that connection next: a packet
+// from its peer or one of its own alarms.
+describe("Bun.serve HTTP/3 acts on a stream from the handler of another connection", () => {
+  type Session = Awaited<ReturnType<typeof connect>>;
+  const encode = (text: string) => new TextEncoder().encode(text);
+
+  async function open(server: Bun.Server<undefined>, endpoint: QuicEndpoint) {
+    const session = await connect(`127.0.0.1:${server.port}`, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+      onerror() {},
+    } as SessionOptions);
+    session.closed.catch(() => {});
+    await session.opened;
+    return session;
+  }
+
+  // `ended` resolves with the whole response, `until(text)` once the response
+  // received so far ends with `text`.
+  function read(stream: Awaited<ReturnType<Session["createBidirectionalStream"]>>) {
+    stream.closed.catch(() => {});
+    let received = "";
+    let over = false;
+    let more = Promise.withResolvers<void>();
+    const ended = (async () => {
+      try {
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) received += Buffer.from(chunk).toString("latin1");
+          more.resolve();
+          more = Promise.withResolvers<void>();
+        }
+      } finally {
+        over = true;
+        more.resolve();
+      }
+      return received;
+    })();
+    ended.catch(() => {});
+    return {
+      ended,
+      async until(text: string) {
+        while (!received.endsWith(text)) {
+          if (over) throw new Error(`the response ended before "${text}"`);
+          await more.promise;
+        }
+        return text;
+      },
+    };
+  }
+
+  const request = async (session: Session, path: string) =>
+    read(await session.createBidirectionalStream({ headers: requestHeaders(path) }));
+  const text = async (session: Session, path: string) => (await request(session, path)).ended;
+
+  // A packet from the holder's own client, or the acknowledgement that the
+  // server owes it, also gets the holder's connection ticked, and that tick
+  // sends what the kick queued. So the connection has to be silent before the
+  // kick: no packet in either direction while the other client completes 20
+  // requests. With the fix the wait decides nothing, so a connection that
+  // does not go silent only gets 60 requests.
+  async function silent(holder: Session, other: Session) {
+    // @types/node does not declare the packet counters.
+    const stats = holder.stats as unknown as { pktSent: bigint; pktRecv: bigint };
+    for (let quiet = 0, last = -1n, requests = 0; quiet < 20 && requests < 60; requests++) {
+      const packets = stats.pktSent + stats.pktRecv;
+      quiet = packets === last ? quiet + 1 : 0;
+      last = packets;
+      await text(other, "/marker");
+    }
+  }
+
+  // `hold` sends the request that the server holds and returns what the kick
+  // releases. The kick and the marker come from other connections. The marker
+  // is requested once the kick is done, so what the kick released has to
+  // reach the holder first.
+  async function exchange(
+    routes: Record<string, (req: Request) => Response | Promise<Response>>,
+    hold: (holder: Session, silence: () => Promise<void>) => Promise<{ released: Promise<string> }>,
+    kick = async (kicker: Session, _server: Bun.Server<undefined>): Promise<void> => {
+      expect(await text(kicker, "/kick")).toBe("kicked");
+    },
+  ) {
+    await using kickerEndpoint = new QuicEndpoint();
+    await using holderEndpoint = new QuicEndpoint();
+    // Not `using`: the finally block stops the server, ahead of the sessions.
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      routes: { ...routes, "/marker": () => new Response("marker") },
+    });
+    const sessions: Session[] = [];
+    try {
+      const kicker = await open(server, kickerEndpoint);
+      sessions.push(kicker);
+      const holder = await open(server, holderEndpoint);
+      sessions.push(holder);
+      const silence = () => silent(holder, kicker);
+      const events: string[] = [];
+      const { released } = await hold(holder, silence);
+      const seen = released.then(what => events.push(what));
+      await silence();
+      await kick(kicker, server);
+      events.push(await text(kicker, "/marker"));
+      await seen;
+      return events;
+    } finally {
+      // Ends the response that a case leaves open, which the sessions wait for.
+      await server.stop(true);
+      for (const session of sessions) if (!session.destroyed) session.close().catch(() => {});
+    }
+  }
+
+  const heldResponse = () => {
+    const arrived = Promise.withResolvers<void>();
+    const gate = Promise.withResolvers<void>();
+    return {
+      gate,
+      route: async () => {
+        arrived.resolve();
+        await gate.promise;
+        return new Response("held response");
+      },
+      hold: async (holder: Session) => {
+        const response = await request(holder, "/held");
+        await arrived.promise;
+        return { released: response.ended };
+      },
+    };
+  };
+
+  test("a response", async () => {
+    const held = heldResponse();
+    const events = await exchange(
+      {
+        "/held": held.route,
+        "/kick": () => {
+          held.gate.resolve();
+          return new Response("kicked");
+        },
+      },
+      held.hold,
+    );
+    expect(events).toEqual(["held response", "marker"]);
+  });
+
+  // The handler runs in the tick loop of lsquic's pass. A connection that
+  // closes ends its requests after that loop, and what their abort listeners
+  // do to another connection leaves with the next pass.
+  test("a response, from the abort listener of a request whose connection closed", async () => {
+    const held = heldResponse();
+    const pending = Promise.withResolvers<void>();
+    const aborted = Promise.withResolvers<void>();
+    const events = await exchange(
+      {
+        "/held": held.route,
+        "/pending": async req => {
+          req.signal.addEventListener("abort", () => {
+            held.gate.resolve();
+            aborted.resolve();
+          });
+          pending.resolve();
+          await held.gate.promise;
+          return new Response("not sent");
+        },
+      },
+      held.hold,
+      async (_kicker, server) => {
+        await using endpoint = new QuicEndpoint();
+        const leaver = await open(server, endpoint);
+        await request(leaver, "/pending");
+        await pending.promise;
+        // Closes the connection with a CONNECTION_CLOSE frame.
+        leaver.destroy(undefined, { code: 1n, type: "application" } as Parameters<Session["destroy"]>[1]);
+        await aborted.promise;
+      },
+    );
+    expect(events).toEqual(["held response", "marker"]);
+  });
+
+  test("a chunk of a streamed response", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const events = await exchange(
+      {
+        "/held": () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                controller = c;
+                c.enqueue(encode("first chunk"));
+              },
+            }),
+          ),
+        "/kick": () => {
+          controller.enqueue(encode("second chunk"));
+          return new Response("kicked");
+        },
+      },
+      async holder => {
+        const response = await request(holder, "/held");
+        await response.until("first chunk");
+        return { released: response.until("second chunk") };
+      },
+    );
+    expect(events).toEqual(["second chunk", "marker"]);
+  });
+
+  test("the end of a streamed response", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const events = await exchange(
+      {
+        "/held": () =>
+          new Response(
+            new ReadableStream({
+              start(c) {
+                controller = c;
+                c.enqueue(encode("streamed response"));
+              },
+            }),
+          ),
+        "/kick": () => {
+          controller.close();
+          return new Response("kicked");
+        },
+      },
+      async holder => {
+        const response = await request(holder, "/held");
+        await response.until("streamed response");
+        return { released: response.ended.then(body => `end of ${body}`) };
+      },
+    );
+    expect(events).toEqual(["end of streamed response", "marker"]);
+  });
+
+  // The server takes a request body that no handler asked for until it holds
+  // 1 MiB, then it stops reading the stream. The client sends that much and
+  // waits, so the rest of the body arrives on a stream that nothing reads and
+  // stays in lsquic. The read that the kick starts is then the only thing
+  // that can complete the body.
+  test("the rest of a paused request body", async () => {
+    const body = Buffer.alloc(1024 * 1024 + 256 * 1024, "a");
+    const paused = 1024 * 1024 + 64 * 1024;
+    const gate = Promise.withResolvers<void>();
+    let atKick = "";
+    const events = await exchange(
+      {
+        "/held": async req => {
+          await gate.promise;
+          const whole = req.arrayBuffer();
+          atKick = Bun.peek.status(whole);
+          return new Response(`read ${(await whole).byteLength}`);
+        },
+        "/kick": () => {
+          gate.resolve();
+          return new Response("kicked");
+        },
+      },
+      async (holder, silence) => {
+        const stream = await holder.createBidirectionalStream({ highWaterMark: body.length });
+        const response = read(stream);
+        stream.sendHeaders(requestHeaders("/held", { ":method": "POST" }));
+        // Resolves once the client's lsquic has taken the bytes. The silence
+        // that follows means that the server has acknowledged them.
+        const sent = async (end: number) => {
+          while (stream.stats.bytesSent < end) await new Promise(setImmediate);
+        };
+        expect(stream.writer.writeSync(body.subarray(0, paused))).toBe(true);
+        await sent(paused);
+        await silence();
+        expect(stream.writer.writeSync(body.subarray(paused))).toBe(true);
+        stream.writer.endSync();
+        await sent(body.length);
+        return { released: response.ended };
+      },
+    );
+    expect({ atKick, events }).toEqual({ atKick: "pending", events: [`read ${body.length}`, "marker"] });
+  });
+});
+
+// lsquic_engine_packet_in() put a connection on the Tickable Queue also while
+// the running pass ticked it, and the pass then ticked it a second time: an
+// endless loop, or a failed assert in a debug build. A handler gets a packet
+// read in the middle of a pass when it runs the event loop, as Bun.build()
+// does to wait for an async plugin setup(). The server runs in its own
+// process because a build without the fix does not come back.
+test("Bun.serve HTTP/3 reads a packet for a connection whose handler runs the event loop", async () => {
+  const script = /* js */ `
+    import { connect, QuicEndpoint } from "node:quic";
+
+    let session;
+    async function request(path) {
+      const stream = await session.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": path, ":scheme": "https", ":authority": "localhost" },
+      });
+      stream.closed.catch(() => {});
+      let body = "";
+      for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+      return body;
+    }
+
+    let second;
+    const server = Bun.serve({
+      port: 0,
+      tls: ${JSON.stringify(tls)},
+      http3: true,
+      http1: false,
+      routes: {
+        "/build": () => {
+          Bun.build({
+            entrypoints: ["./entry.js"],
+            plugins: [
+              {
+                name: "second request",
+                async setup() {
+                  const sent = session.stats.pktSent;
+                  second = request("/second");
+                  // The second request is in the server's socket ...
+                  while (session.stats.pktSent === sent) await new Promise(setImmediate);
+                  // ... and one more turn of the event loop has read it.
+                  await new Promise(setImmediate);
+                },
+              },
+            ],
+          }).catch(() => {});
+          return new Response("built");
+        },
+        "/second": () => new Response("second"),
+      },
+    });
+
+    session = await connect("127.0.0.1:" + server.port, {
+      endpoint: new QuicEndpoint(),
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+      onerror() {},
+    });
+    session.closed.catch(() => {});
+    await session.opened;
+    // The first request makes the second one a copy of a header block that
+    // the connection has seen.
+    await request("/second");
+    console.log(JSON.stringify([await request("/build"), await second]));
+    process.exit(0);
+  `;
+  using dir = tempDir("serve-http3-nested-turn", { "entry.js": "export default 1;\n", "server.mjs": script });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    // Ends a server that does not come back.
+    timeout: 20_000,
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify(["built", "second"]),
+    exitCode: 0,
+    signalCode: null,
+  });
+  // The timeout of the test is longer than the one of the server process. A
+  // server that hangs is then ended and reported here, and does not outlive
+  // the test.
+}, 30_000);

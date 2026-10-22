@@ -108,7 +108,13 @@ struct Use {
 impl Checker<'_, '_> {
     /// The end of `Resolve` with `isUse`: it has found `found` for the name at `pos` of `file`, looked up with
     /// `meaning`. Only the file's own declarations are marked, because no other file reports them.
-    pub(super) fn symbol_referenced(&self, file: FileId, pos: u32, found: Sym, meaning: SymFlags) {
+    pub(super) fn symbol_referenced(
+        &mut self,
+        file: FileId,
+        pos: u32,
+        found: Sym,
+        meaning: SymFlags,
+    ) {
         let kinds = reference_kinds(meaning);
         let parts = self.files().parts(found);
         let Some(&part) = parts.iter().find(|part| part.file == file) else {
@@ -128,10 +134,11 @@ impl Checker<'_, '_> {
     /// the time tsc resolves it. The check of `file` never resolves the name itself (`is_left_to_a_request`), and this
     /// task gets to it after the end of that check:
     /// - It has checked `file` that far itself.
+    /// - It emits another file. tsc does that after the last check, and the check of `file` can come later here. So
+    ///   nothing in progress is stored, as for an error there (`is_reported_too_late`).
     /// - It checks a later file. What resolves the name before then must not hit anything this task stores on the way,
     ///   as for an error there.
-    /// - It emits another file. tsc does that after the last check, so nothing in progress is published.
-    fn leaves_reference_to_an_earlier_request(&self, file: FileId, pos: u32) -> bool {
+    fn leaves_reference_to_an_earlier_request(&mut self, file: FileId, pos: u32) -> bool {
         let Some(visited) = self.task.file else {
             return false;
         };
@@ -149,7 +156,7 @@ impl Checker<'_, '_> {
             return true;
         }
         if self.is_type_checked {
-            self.task.hold_back();
+            self.mark_tainted_from(0);
             return true;
         }
         if self.is_checked_no_later_than(visited, file) {

@@ -1834,6 +1834,8 @@ impl Checker<'_, '_> {
         let mut props: ArenaVec<Prop> = ArenaVec::with_capacity_in(attributes.len(), self.arena);
         for attribute in attributes.iter() {
             let (name, value) = (hir[attribute].key.name()?, hir[attribute].value);
+            // `checkExpression`: it checks an import type in the value, which no other check gets to.
+            self.check_expression(file, value);
             let ty = self.type_of_expr(file, value);
             let ty = self.regular(ty);
             // `members[member.Name] = member`: the last attribute with a given name wins.

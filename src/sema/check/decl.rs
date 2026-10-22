@@ -4029,7 +4029,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `IsTypeReferenceType(node)`. It's `Resolve` with `isUse`, so the symbol found is marked as
     /// referenced, whatever it aliases.
     fn resolve_type_reference_name_as_alias(
-        &self,
+        &mut self,
         file: FileId,
         scope: ScopeId,
         node: TypeNodeId,

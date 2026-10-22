@@ -8424,6 +8424,54 @@ export const r: A1<[Z, Z]> = [{ v: 1 }, { v: 1 }];
       expect(exitCode).toBe(0);
     });
 
+    test("compares a type with the apparent type of a mapped type over `NoInfer<T[]>`", async () => {
+      using dir = project({
+        "a.ts": `type Same<T extends unknown[]> = { [K in keyof T]: T[K] };
+type Boxed<T> = { [K in keyof T]: { value: T[K] } };
+export const a1: Same<NoInfer<[string]>> = ["x"];
+export const a2: Same<NoInfer<string[]>> = ["x"];
+export const a3: Boxed<NoInfer<[string]>> = [{ value: "x" }];
+export const a4: Boxed<NoInfer<readonly string[]>> = [{ value: "x" }];
+export const a5: Boxed<NoInfer<[string] | [number, number]>> = [{ value: 1 }, { value: 2 }];
+declare function f<T extends unknown[]>(b: T, a: Same<NoInfer<T>>): void;
+declare const x: [string];
+f(x, x);
+// Still errors.
+declare const numbers: [number];
+declare const two: [string, string];
+declare const boxes: { value: number }[];
+export const b1: Same<NoInfer<[string]>> = numbers;
+export const b2: Same<NoInfer<[string]>> = two;
+export const b3: Boxed<NoInfer<string[]>> = boxes;
+export const b4: Boxed<NoInfer<[string]>> = { 0: { value: "x" } };
+f(x, numbers);
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(15,14): error TS2322: Type '[number]' is not assignable to type 'Same<NoInfer<[string]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type 'number | undefined' is not assignable to type 'string | undefined'.
+              Type 'number' is not assignable to type 'string'.
+        a.ts(16,14): error TS2322: Type '[string, string]' is not assignable to type 'Same<NoInfer<[string]>>'.
+          The types returned by 'sort(...)' are incompatible between these types.
+            Type '[string, string]' is not assignable to type '[string]'.
+              Source has 2 element(s) but target allows only 1.
+        a.ts(17,14): error TS2322: Type '{ value: number; }[]' is not assignable to type 'Boxed<NoInfer<string[]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type '{ value: number; } | undefined' is not assignable to type '{ value: string; } | undefined'.
+              Type '{ value: number; }' is not assignable to type '{ value: string; }'.
+                Types of property 'value' are incompatible.
+                  Type 'number' is not assignable to type 'string'.
+        a.ts(18,14): error TS2740: Type '{ 0: { value: string; }; }' is missing the following properties from type 'Boxed<NoInfer<[string]>>': pop, push, concat, join, and 35 more.
+        a.ts(19,6): error TS2345: Argument of type '[number]' is not assignable to parameter of type 'Same<NoInfer<[string]>>'.
+          The types returned by 'pop()' are incompatible between these types.
+            Type 'number | undefined' is not assignable to type 'string | undefined'.
+              Type 'number' is not assignable to type 'string'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("doesn't report an unknown compiler option set to `null`", async () => {
       using dir = project({
         "tsconfig.json": `{

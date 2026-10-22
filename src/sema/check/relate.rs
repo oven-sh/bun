@@ -6314,13 +6314,22 @@ impl<'p, 's> Checker<'p, 's> {
             Some(_) => self.synth(Shape::new_in(self.arena)),
             None => properties.unwrap_or(source),
         };
-        let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
+        // `getPropertiesOfType(target)`: `{ [K in keyof NoInfer<T[]>]: X }` isn't generic, and its apparent type is an
+        // array.
+        let has_target_properties = match self.is_mapped_type(target) {
+            true => self.reduced_apparent_type_as_object(target),
+            false => target,
+        };
+        let (Some(sm), Some(tm)) = (
+            self.members(has_properties),
+            self.members(has_target_properties),
+        ) else {
             return Ternary::FALSE;
         };
         // A cached shape doesn't change. An intersection has its signatures elsewhere.
         if self.provisional_shapes.len() == provisional
             && !self.is_intersection(has_properties)
-            && !self.is_intersection(target)
+            && !self.is_intersection(has_target_properties)
         {
             *both = Some((sm, tm));
         }

@@ -1,6 +1,6 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isGlibc, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
 import path from "path";
 
@@ -278,7 +278,9 @@ async function withTerminalRepl(
     allOutput: () => string;
     /** `allOutput` with its escape sequences. */
     rawOutput: () => string;
-    /** `terminal.localFlags` (ICANON, ECHO, ISIG ...) from before the command ran. With `session`, from right after its spawn. */
+    /** The local flags of the terminal (ICANON, ECHO, ISIG ...) as they are now. */
+    localFlags: () => number;
+    /** `localFlags()` from before the command ran. With `session`, from right after its spawn. */
     localFlagsAtStart: number;
   }) => Promise<void>,
   options: {
@@ -314,6 +316,8 @@ async function withTerminalRepl(
   };
   // Bun.spawn gives the child a controlling terminal only when it creates the pty itself.
   await using ownTerminal = options.session ? null : new Bun.Terminal(terminalOptions);
+  // PENDIN is not a setting. The BSD kernels set this bit when a terminal goes back to line mode.
+  const withoutPendingInput = (flags: number) => (isLinux ? flags : flags & ~0x20000000);
   // Read before the spawn: a fast child has its terminal in raw mode by the time the spawn returns.
   const ownLocalFlags = ownTerminal?.localFlags;
 
@@ -330,7 +334,8 @@ async function withTerminalRepl(
   });
 
   const terminal = ownTerminal ?? proc.terminal!;
-  const localFlagsAtStart = ownLocalFlags ?? terminal.localFlags;
+  const localFlags = () => withoutPendingInput(terminal.localFlags);
+  const localFlagsAtStart = withoutPendingInput(ownLocalFlags ?? terminal.localFlags);
   const send = (text: string) => terminal.write(text);
 
   const waitFor = async (pattern: string | RegExp, timeoutMs = 5000): Promise<string> => {
@@ -400,7 +405,18 @@ async function withTerminalRepl(
 
   await waitFor(/\u276f|> /); // Wait for prompt
 
-  await fn({ terminal, proc, send, waitFor, waitForScreen, resize, allOutput, rawOutput, localFlagsAtStart });
+  await fn({
+    terminal,
+    proc,
+    send,
+    waitFor,
+    waitForScreen,
+    resize,
+    allOutput,
+    rawOutput,
+    localFlags,
+    localFlagsAtStart,
+  });
 
   // Clean exit. Ctrl+A then Ctrl+K first discards whatever the test left on
   // the line, wherever the cursor is, so `.exit` is not appended to it (which
@@ -2199,6 +2215,23 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       });
     });
 
+    test("a paste with more lines than the terminal has rows shows the lines around the cursor", async () => {
+      await withTerminalRepl(async ({ send, waitForScreen }) => {
+        const top = (await waitForScreen(s => s.rows.at(-1) === "> ")).rows.length - 1;
+        // 60 lines on a terminal of 40 rows.
+        send(paste(["[0,", ...Array(58).fill("1,"), "0].length"].join("\r")));
+        let screen = await waitForScreen(s => s.rows.at(-1) === "... 0].length");
+        expect(screen.rows.slice(top)).toEqual([...Array(37).fill("... 1,"), "... 0].length"]);
+        // A key redraws these rows in place.
+        send(" ");
+        screen = await waitForScreen(s => s.rows.at(-1) === "... 0].length ");
+        expect(screen.rows.length).toBe(top + 38);
+        // The Enter key runs all 60 lines.
+        send("\n");
+        await waitForScreen(s => s.rows.at(-1) === "> " && s.rows.at(-2) === "60");
+      });
+    });
+
     test("a REPL command takes a pasted argument of several lines, but not as a file name", async () => {
       await withTerminalRepl(async ({ send, waitFor, rawOutput }) => {
         send(".copy " + paste("[1,\r2].length") + "\n");
@@ -2292,6 +2325,9 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         await waitFor(/\n\s*3\b/);
         send("\x1bO" + paste('"c\td"') + ".length + 1\n");
         await waitFor(/\n\s*4\b/);
+        // Two presses of the Esc key and then text: the first character is not lost.
+        send('\x1b\x1b"e" + "sc"\n');
+        await waitFor('"esc"');
       });
     });
 
@@ -2428,7 +2464,7 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
       ["SIGINT", "at the first prompt"],
       ["SIGTERM", "after an awaited line"],
     ] as const)("is switched off when %s ends the REPL %s", async (signal, state) => {
-      await withTerminalRepl(async ({ terminal, send, waitFor, proc, rawOutput, localFlagsAtStart }) => {
+      await withTerminalRepl(async ({ send, waitFor, proc, rawOutput, localFlags, localFlagsAtStart }) => {
         if (state === "after an awaited line") {
           send("await 1\n");
           await waitFor(/\n1\r\n[^]*\x1b\[\?2004h/);
@@ -2439,32 +2475,10 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
         expect({
           signalCode: proc.signalCode,
           lastSwitch: lastSwitch(rawOutput()),
-          localFlags: terminal.localFlags,
+          localFlags: localFlags(),
         }).toEqual({ signalCode: signal, lastSwitch: PASTE_OFF, localFlags: localFlagsAtStart });
       });
     });
-
-    // The 20 s: a debug build takes seconds to load `bun:internal-for-testing` while other tests run beside this one.
-    test("is switched off when the process crashes in code that completion runs", async () => {
-      await withTerminalRepl(
-        async ({ terminal, send, waitFor, proc, localFlagsAtStart }) => {
-          send(
-            'globalThis.crashes = { get now() { require("bun:internal-for-testing").crash_handler.panic() } }; "re" + "ady"\n',
-          );
-          await waitFor(/"ready"[^]*> /);
-          send("crashes.now.\t");
-          // The crash handler restores the terminal before it prints its report.
-          await waitFor(/\x1b\[\?2004l[^]*panic/, 15_000);
-          await proc.exited;
-          expect(terminal.localFlags).toBe(localFlagsAtStart);
-        },
-        {
-          // Debug builds then do not start a symbolizer, and the crash is not reported.
-          cmd: [bunExe(), "repl", "--debug-crash-handler-use-trace-string"],
-          env: { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
-        },
-      );
-    }, 20_000);
 
     // The fixture needs job control in a shell script: dash and bash 5 have it, the `sh` of macOS (bash 3.2) does not.
     test.skipIf(!isGlibc)(
@@ -3213,6 +3227,31 @@ describe.todoIf(isWindows).concurrent("Bun REPL (Terminal)", () => {
     });
   });
 });
+
+// Not in the block above: alone, a debug build loads `bun:internal-for-testing` well inside the default timeout.
+test.todoIf(isWindows)(
+  "bracketed paste is switched off when the process crashes in code that completion runs",
+  async () => {
+    await withTerminalRepl(
+      async ({ send, waitFor, proc, localFlags, localFlagsAtStart }) => {
+        send(
+          'globalThis.crashes = { get now() { require("bun:internal-for-testing").crash_handler.panic() } }; "re" + "ady"\n',
+        );
+        await waitFor(/"ready"[^]*> /);
+        send("crashes.now.\t");
+        // The crash handler restores the terminal before it prints its report.
+        await waitFor(/\x1b\[\?2004l[^]*panic/);
+        await proc.exited;
+        expect(localFlags()).toBe(localFlagsAtStart);
+      },
+      {
+        // Debug builds then do not start a symbolizer, and the crash is not reported.
+        cmd: [bunExe(), "repl", "--debug-crash-handler-use-trace-string"],
+        env: { BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      },
+    );
+  },
+);
 
 // History file written on REPL exit must be owner-only (0600), since it can
 // contain pasted credentials. See src/runtime/cli/repl.rs History::save.

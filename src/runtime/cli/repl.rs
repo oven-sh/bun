@@ -1369,9 +1369,21 @@ impl<'a> Repl<'a> {
         // Handle escape sequences
         if byte == 27 {
             // ESC
-            let Some(second) = self.read_byte() else {
+            let Some(mut second) = self.read_byte() else {
                 return Some(Key::Escape);
             };
+
+            // The Esc key, then a key that sends a sequence of its own (a paste marker, an arrow key): read that sequence.
+            if second == 27 {
+                let Some(third) = self.read_byte() else {
+                    return Some(Key::Escape);
+                };
+                if third != b'[' && third != b'O' {
+                    self.stdin_buf_start -= 1;
+                    return Some(Key::Escape);
+                }
+                second = third;
+            }
 
             if second == b'[' {
                 return Some(self.read_csi());
@@ -1389,10 +1401,6 @@ impl<'a> Repl<'a> {
                     }
                     _ => Key::Unknown,
                 });
-            } else if second == 27 {
-                // The Esc key, then a sequence of its own (a paste marker, an arrow key): do not cut its ESC off.
-                self.stdin_buf_start -= 1;
-                return Some(Key::Escape);
             } else if second == b'b' {
                 return Some(Key::AltB);
             } else if second == b'd' {

@@ -84,6 +84,8 @@ const cases: [code: string, ...reports: string[]][] = [
     "no-fallthrough 4: Add break, or a // falls through comment.",
   ],
   [`use(f() === -0);`, "no-compare-neg-zero 1: -0 === 0 is true. Use Object.is(x, -0)."],
+  [`use(f() !== -0);`, "no-compare-neg-zero 1: -0 === 0 is true. Use !Object.is(x, -0)."],
+  [`use(f() < -0);`, "no-compare-neg-zero 1: -0 compares like 0. Write 0."],
   [`if (f()) {\n}`, "no-empty 1: Remove it, or add a comment saying why it's empty."],
   [`try {\n  f();\n} catch {}`, "no-empty 3: Handle the error, or add a comment saying why it's ignored."],
   [`use(/a[]/);`, "no-empty-character-class 1: [] matches nothing."],
@@ -150,6 +152,10 @@ const cases: [code: string, ...reports: string[]][] = [
   [
     `const a = 1;\nif (f()) a = 2;\nuse(a);`,
     "no-const-assign 2: Declared with const on line 1. Use let if it changes.",
+  ],
+  [
+    `using a = f();\nif (g()) a = f();\nuse(a);`,
+    "no-const-assign 2: Declared with using on line 1, so it can't change.",
   ],
   [`var a = 1;\nuse(a);\nvar a = 2;\nuse(a);`, "no-redeclare 3: First declared on line 1."],
   [

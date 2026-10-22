@@ -88,7 +88,11 @@ impl Rule for NoCompareNegZero {
         let report = cx
             .report(e, UNEXPECTED)
             .data("operator", bin_op_text(op))
-            .hint("-0 === 0 is true. Use Object.is(x, -0).");
+            .hint(match op {
+                BinOp::EqEq | BinOp::EqEqEq => "-0 === 0 is true. Use Object.is(x, -0).",
+                BinOp::NotEq | BinOp::NotEqEq => "-0 === 0 is true. Use !Object.is(x, -0).",
+                _ => "-0 compares like 0. Write 0.",
+            });
         // oxlint suggests `Object.is` for `===`. For every other operator, it removes the `-` from the first `-0`.
         if cx.language().is_oxlint {
             let (neg_zero, other) = if left_is_neg_zero { (left, right) } else { (right, left) };

@@ -2673,9 +2673,13 @@ describe("GC lifetime", () => {
       const db = open(":memory:");
       const asked: unknown[] = [];
       db.setAuthorizer((_action, table) => (asked.push(table), constants.SQLITE_OK));
-      Bun.gc(true);
-      expect(asked).toEqual([]);
-      db.exec("SELECT 1");
+      // GC a few times: conservative stack scanning may keep the statement alive through a collection.
+      for (let i = 0; i < 10 && !asked.includes("ft_data"); i++) {
+        const askedBefore = asked.length;
+        Bun.gc(true);
+        expect(asked).toHaveLength(askedBefore);
+        db.exec("SELECT 1");
+      }
       expect(asked).toContain("ft_data");
       db.close();
     });

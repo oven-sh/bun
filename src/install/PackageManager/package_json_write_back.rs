@@ -11,7 +11,7 @@ use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
-use crate::{Features, PackageID, PackageNameHash, invalid_package_id};
+use crate::{DependencyID, Features, PackageID, PackageNameHash, invalid_package_id};
 
 use super::add_catalog;
 use super::add_remove_with_filter::{
@@ -486,7 +486,7 @@ fn sync_lockfile(
     if overrides_changed && !manager.options.log_level.is_silent() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
     }
-    let mut links = false;
+    let mut rewritten: Vec<DependencyID> = Vec::new();
     for (i, pkg) in &parsed {
         let target_id = target_ids[*i];
         if target_id == invalid_package_id {
@@ -567,9 +567,7 @@ fn sync_lockfile(
             *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         }
         builder.clamp();
-        for &(ti, _) in &changed {
-            links |= manager.lockfile.bind_workspace_link(row.off + ti as u32);
-        }
+        rewritten.extend(changed.iter().map(|&(ti, _)| row.off + ti as DependencyID));
     }
     // `steer_used_catalogs_to_latest` ran, also when the root is not edited.
     if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
@@ -591,6 +589,12 @@ fn sync_lockfile(
         builder.allocate()?;
         *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
         builder.clamp();
+    }
+    // An override can decide a rewritten row, so the rows are bound once the overrides are synced.
+    let link_workspace_packages = manager.options.link_workspace_packages;
+    let mut links = false;
+    for row in rewritten {
+        links |= (manager.lockfile).bind_workspace_link(row, link_workspace_packages);
     }
     Ok(Synced { links })
 }

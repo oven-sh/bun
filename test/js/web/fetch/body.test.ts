@@ -2049,6 +2049,7 @@ describe("the Content-Type a body gives does not depend on what is read first", 
   };
   const bodies: [string, () => Bun.BodyInit, unknown][] = [
     ["Blob", () => new Blob(["a=1"], { type: urlencoded }), urlencoded],
+    ["Bun.file", () => file(import.meta.path, { type: urlencoded }), urlencoded],
     ["URLSearchParams", () => new URLSearchParams("a=1"), "application/x-www-form-urlencoded;charset=UTF-8"],
     ["FormData", formData, expect.stringMatching(/^multipart\/form-data; boundary=./)],
   ];
@@ -2130,18 +2131,4 @@ describe("the Content-Type a body gives does not depend on what is read first", 
       headers: sent.headers.get("content-type"),
     }).toEqual({ wire: type, headers: type });
   });
-
-  // A file body builds no header list, which is what makes Bun.serve send a slice as a 206.
-  test.each(["new Response(p.body, p)", "new Response(request.body, request)"])(
-    "Bun.serve still sends a slice of a Bun.file as a 206 (%s)",
-    async copy => {
-      using server = Bun.serve({ port: 0, fetch: () => copies[copy](file(import.meta.path).slice(2, 6)) });
-      const served = await fetch(server.url);
-      expect({
-        status: served.status,
-        contentRange: served.headers.get("content-range"),
-        text: await served.text(),
-      }).toEqual({ status: 206, contentRange: "bytes 2-5/*", text: "port" });
-    },
-  );
 });

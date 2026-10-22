@@ -35,6 +35,7 @@ describe("Bun.file in serve routes", () => {
   beforeAll(async () => {
     tempDir = tempDirWithFiles("bun-serve-file-test-", files);
 
+    const partialSlice = () => Bun.file(join(tempDir, "partial.txt")).slice(5, 10);
     const routes = {
       "/hello.txt": {
         GET: new Response(Bun.file(join(tempDir, "hello.txt"))),
@@ -81,6 +82,22 @@ describe("Bun.file in serve routes", () => {
       "/partial-empty-slice-stream-handler": () =>
         new Response(Bun.file(join(tempDir, "partial.txt")).slice(5, 5).stream()),
       "/partial-stream-handler": () => new Response(Bun.file(join(tempDir, "partial.txt")).stream()),
+      "/slice-handler": () => new Response(partialSlice()),
+      "/slice-handler-headers": () => new Response(partialSlice(), { headers: { "X-Custom": "1" } }),
+      "/slice-handler-headers-read": () => {
+        const res = new Response(partialSlice());
+        res.headers.get("X-Custom");
+        return res;
+      },
+      "/slice-handler-copy": () => {
+        const res = new Response(partialSlice());
+        return new Response(res.body, res);
+      },
+      "/slice-handler-content-range": () =>
+        new Response(partialSlice(), { headers: { "Content-Range": "bytes 5-9/16" } }),
+      "/slice-handler-status": () => new Response(partialSlice(), { status: 201 }),
+      "/slice-handler-status-headers": () =>
+        new Response(partialSlice(), { status: 201, headers: { "X-Custom": "1" } }),
       "/fd-not-supported.txt": (() => {
         // This would test file descriptors, but they're not supported yet
         return new Response(Bun.file(join(tempDir, "hello.txt")));
@@ -757,6 +774,33 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
+    it("a handler's slice is a 206 with Content-Range, with or without headers", async () => {
+      const serve = async (pathname: string) => {
+        const res = await fetch(new URL(pathname, server.url));
+        return { status: res.status, contentRange: res.headers.get("Content-Range"), body: await res.text() };
+      };
+      const partial = { status: 206, contentRange: "bytes 5-9/*", body: "56789" };
+      // A status of its own stays, and gets no Content-Range.
+      const created = { status: 201, contentRange: null, body: "56789" };
+      expect({
+        "no headers": await serve("/slice-handler"),
+        "headers": await serve("/slice-handler-headers"),
+        "headers read": await serve("/slice-handler-headers-read"),
+        "copy": await serve("/slice-handler-copy"),
+        "Content-Range": await serve("/slice-handler-content-range"),
+        "status": await serve("/slice-handler-status"),
+        "status and headers": await serve("/slice-handler-status-headers"),
+      }).toEqual({
+        "no headers": partial,
+        "headers": partial,
+        "headers read": partial,
+        "copy": partial,
+        "Content-Range": { ...partial, contentRange: "bytes 5-9/16" },
+        "status": created,
+        "status and headers": created,
+      });
+    });
+
     // The slice is shorter than the file, so the byte budget runs out before
     // the reader reports EOF: the response completes inline while a deferred
     // completion still hops through the event loop. Repeated requests must
@@ -891,6 +935,15 @@ describe("Bun.file in serve routes", () => {
     it("detects application/octet-stream for binary files", async () => {
       const res = await fetch(new URL(`/binary.bin`, server.url));
       expect(res.headers.get("Content-Type")).toMatch(/application\/octet-stream/);
+    });
+
+    it("HEAD of a handler's file has the Content-Type of GET", async () => {
+      const url = new URL("/range-handler", server.url);
+      const [get, head] = await Promise.all([fetch(url), fetch(url, { method: "HEAD" })]);
+      expect({ get: get.headers.get("Content-Type"), head: head.headers.get("Content-Type") }).toEqual({
+        get: "text/plain;charset=utf-8",
+        head: "text/plain;charset=utf-8",
+      });
     });
   });
 

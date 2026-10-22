@@ -1401,11 +1401,9 @@ impl Request {
 
         req.url.set(href);
 
-        // The same rule as in `Response::constructor`.
         if let BodyValue::Blob(blob) = req.body_value()
             && req.headers.get().is_none()
             && !blob.content_type_slice().is_empty()
-            && !blob.needs_to_read_file()
         {
             req.headers.set(Some(HeadersRef::create_empty()));
         }

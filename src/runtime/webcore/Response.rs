@@ -1146,8 +1146,7 @@ impl Response {
         // `init`'s drop glue and avoids leaking the heap allocation entirely.
         if let BodyValue::Blob(blob) = body.value.get() {
             let content_type = blob.content_type_slice();
-            // A file leaves the list unbuilt: `new Response(Bun.file(path))` is the static file hot path, and `render_metadata` sends a slice as a 206 only without a list.
-            if init.headers.is_none() && !content_type.is_empty() && !blob.needs_to_read_file() {
+            if init.headers.is_none() && !content_type.is_empty() {
                 init.headers = Some(HeadersRef::create_empty());
             }
             if let Some(headers) = init.headers.as_deref_mut() {

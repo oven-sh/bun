@@ -1,4 +1,4 @@
-//! What the rows of the schema have in common.
+//! Helpers shared by the rows of the schema.
 
 use super::Dialect;
 use super::value::Nodes;
@@ -10,7 +10,7 @@ use crate::ast::{
 };
 use crate::rule::NodeTags;
 
-// ───────────────────────────── the handle that a node is made of ─────────────────────────────
+// ───────────────────────────── the handle a node is made from ─────────────────────────────
 
 macro_rules! handles {
     ($($name:ident $variant:ident $handle:ident,)*) => {$(
@@ -49,7 +49,7 @@ pub(super) fn jsx<'a>(v: VNode<'a>) -> Option<Jsx<'a>> {
     }
 }
 
-/// The function of a function, a method signature or a function type.
+/// Returns the `Func` of a function, a method signature or a function type.
 pub(super) fn func_of<'a>(v: VNode<'a>) -> Option<Func<'a>> {
     match v.base {
         Node::Func(func) => Some(func),
@@ -62,14 +62,14 @@ pub(super) fn func_of<'a>(v: VNode<'a>) -> Option<Func<'a>> {
     }
 }
 
-// ───────────────────────────── the kinds that a type of node is made of ─────────────────────────────
+// ───────────────────────────── the kinds a node type is made from ─────────────────────────────
 
-/// What has a name that is not an expression.
+/// The nodes with a key that isn't an expression.
 pub(super) fn keys() -> NodeTags {
     NodeTags::MEMBER | NodeTags::PROP | NodeTags::PAT_PROP | NodeTags::ENUM_MEMBER
 }
 
-/// What an `Identifier` can be made of.
+/// The nodes an `Identifier` can be made from.
 pub(super) fn names() -> NodeTags {
     keys()
         | NodeTags::FUNC
@@ -105,7 +105,7 @@ pub(super) fn names() -> NodeTags {
         | [TypeTag::Ref, TypeTag::Import, TypeTag::Predicate].into()
 }
 
-/// What a `Literal` can be made of.
+/// The nodes a `Literal` can be made from.
 pub(super) fn literals() -> NodeTags {
     keys()
         | NodeTags::IMPORT_SPEC
@@ -157,7 +157,7 @@ pub(super) fn all_types() -> NodeTags {
     TypeTag::ALL.into()
 }
 
-/// What can be in the braces of JSX.
+/// The expressions that can be in JSX braces.
 pub(super) fn all_exprs() -> NodeTags {
     use ExprTag::*;
     [
@@ -209,7 +209,7 @@ pub(super) fn all_exprs() -> NodeTags {
 pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
     use crate::language::SourceType;
     let source_type = match Dialect::of(file) {
-        // oxlint decides for each file, whatever the configuration says.
+        // oxlint decides for each file, whatever the config says.
         _ if file.language().is_oxlint => crate::utils::oxlint::source_type(file),
         Dialect::Espree => file.language().source_type,
         Dialect::TypeScript if file.is_module_program() => SourceType::Module,
@@ -222,21 +222,21 @@ pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
     }
 }
 
-/// Whether the values in the nodes are typescript-estree's where it goes its own way. oxlint has its fields, and the values of ECMAScript.
+/// True if the nodes use typescript-estree's values where those differ from ECMAScript's. oxlint has
+/// typescript-estree's fields but ECMAScript's values.
 fn is_typescript_estree(file: &File) -> bool {
     Dialect::of(file) == Dialect::TypeScript && !file.language().is_oxlint
 }
 
-/// It has the modifier `declare`.
+/// True if it has the `declare` modifier.
 pub(super) fn is_declared(statement: Stmt) -> bool {
     statement.flags().contains(Flags::AMBIENT)
 }
 
-/// The first token of `v`.
 pub(super) fn first_token<'a>(v: VNode<'a>) -> &'a [u8] {
-    let written = v.file().slice(v.span());
-    written
-        .get(..crate::tokens::token_len(written))
+    let source_text = v.file().slice(v.span());
+    source_text
+        .get(..crate::tokens::token_len(source_text))
         .unwrap_or_default()
 }
 
@@ -268,13 +268,13 @@ pub(super) fn directive<'a>(statement: Stmt<'a>) -> Option<&'a [u8]> {
         .then(|| statement.file().slice(own))
 }
 
-/// The module specifier in `v`, if it is a string.
+/// Returns the module specifier in `v`, if it's a string.
 pub(super) fn source<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
     let source = v.with(Part::Source);
     source.leaf().map(|_| source)
 }
 
-/// The field `attributes` of an import or an export.
+/// Returns the `attributes` field of an import or an export.
 pub(super) fn attributes<'a>(v: VNode<'a>) -> Option<Nodes<'a>> {
     Some(match v.stmt()?.import_attributes() {
         Some(attributes) => Nodes::attributes(v.base, attributes.entries()),
@@ -282,7 +282,7 @@ pub(super) fn attributes<'a>(v: VNode<'a>) -> Option<Nodes<'a>> {
     })
 }
 
-/// The number of names in `namespace A.B.C`.
+/// Returns the number of names in `namespace A.B.C`.
 pub(super) fn module_depth(module: Module) -> usize {
     std::iter::successors(Some(module), |it| it.nested()).count()
 }
@@ -311,7 +311,6 @@ pub(super) fn return_type<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
 
 // ───────────────────────────── modifiers ─────────────────────────────
 
-/// The keywords among `modifiers`.
 pub(super) fn keywords<'a>(modifiers: List<'a, Modifier<'a>>) -> Flags {
     modifiers
         .iter()
@@ -347,7 +346,7 @@ pub(super) fn member_decorators<'a>(v: VNode<'a>) -> Option<Nodes<'a>> {
 pub(super) fn member_key<'a>(v: VNode<'a>) -> Option<Option<VNode<'a>>> {
     let member = member(v)?;
     Some(match member.key() {
-        Some(key) => VNode::of_key(member, key),
+        Some(key) => VNode::from_key(member, key),
         None => member.constructor_keyword().map(|_| v.with(Part::Key)),
     })
 }
@@ -367,7 +366,7 @@ pub(super) fn method_kind(member: Member) -> &'static str {
 
 // ───────────────────────────── patterns ─────────────────────────────
 
-/// What typescript-estree adds to the node of a pattern from what is around it.
+/// The extras that typescript-estree adds to a pattern's node from its surroundings.
 pub(super) struct Binding<'a> {
     pub(super) decorators: Nodes<'a>,
     pub(super) is_optional: bool,
@@ -380,8 +379,8 @@ pub(super) fn binding<'a>(v: VNode<'a>) -> Binding<'a> {
         is_optional: false,
         ty: None,
     };
-    // The decorators are on the outermost node of a parameter, `?` and the type on the pattern, or
-    // on the `RestElement`.
+    // The decorators go on a parameter's outermost node. The `?` and the type go on the pattern, or on the
+    // `RestElement`.
     let (param, is_outermost, is_annotated) = match (v.base, v.part) {
         (Node::Param(param), Part::Inner) => (param, !VNode::has_keywords(param), param.is_rest()),
         (Node::Pat(pat), _) => match pat.parent() {
@@ -410,7 +409,7 @@ pub(super) fn binding<'a>(v: VNode<'a>) -> Binding<'a> {
 
 // ───────────────────────────── expressions ─────────────────────────────
 
-/// The `e` of `e as T`, `<T>e`, `e satisfies T`.
+/// Returns the `e` of `e as T`, `<T>e` or `e satisfies T`.
 pub(super) fn asserted<'a>(v: VNode<'a>) -> Option<Expr<'a>> {
     match v.expr()?.kind() {
         ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) => {
@@ -420,16 +419,16 @@ pub(super) fn asserted<'a>(v: VNode<'a>) -> Option<Expr<'a>> {
     }
 }
 
-/// The `T`.
+/// Returns the `T` of `e as T`, `<T>e` or `e satisfies T`.
 pub(super) fn assertion_type<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
     match v.expr()?.kind() {
-        ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(VNode::of_type(ty)),
+        ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(VNode::from_type(ty)),
         ExprKind::AsConst(_) => Some(v.with(Part::ConstType)),
         _ => None,
     }
 }
 
-/// The type arguments in `v`, whatever its part.
+/// Returns the type arguments in `v`, whatever its part.
 pub(super) fn type_argument_list<'a>(v: VNode<'a>) -> Option<List<'a, TypeNode<'a>>> {
     Some(match v.base {
         Node::Class(class) => class.extends_args(),
@@ -452,18 +451,17 @@ pub(super) fn type_argument_list<'a>(v: VNode<'a>) -> Option<List<'a, TypeNode<'
     })
 }
 
-/// The field `typeArguments`.
 pub(super) fn type_arguments<'a>(v: VNode<'a>) -> Option<VNode<'a>> {
     type_argument_list(v)?
         .first()
         .map(|_| v.with(Part::TypeArgs))
 }
 
-/// The `A.B` of `implements A.B<T>`.
+/// Returns the `A.B` of `implements A.B<T>`.
 pub(super) fn heritage_expression<'a>(v: VNode<'a>) -> Option<Option<VNode<'a>>> {
     Some(match v.ty()?.kind() {
-        TypeKind::Ref { name, .. } => VNode::of_entity_name(v.base, name.len(), true),
-        TypeKind::Heritage { expr, .. } => VNode::of_expr(expr),
+        TypeKind::Ref { name, .. } => VNode::from_entity_name(v.base, name.len(), true),
+        TypeKind::Heritage { expr, .. } => VNode::from_expr(expr),
         _ => return None,
     })
 }
@@ -490,17 +488,17 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
             let i = i as usize;
             let is_typescript_estree = is_typescript_estree(e.file());
             let cooked = match is_typescript_estree {
-                // It only looks for `\u` and `\x`, also after a `\`.
+                // typescript-estree only looks for `\u` and `\x`, even right after a `\`.
                 true => {
                     let is_tagged =
                         matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
                     template
-                        .text_of_scanner(i)
+                        .scanner_text(i)
                         .filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
                 }
                 false => template.cooked(i),
             };
-            // In the raw text of ECMAScript every line break is a line feed.
+            // In ECMAScript's raw text every line break is a line feed.
             let raw = match (is_typescript_estree, template.raw(i)) {
                 (false, raw) if bun_core::strings::contains_char(raw, b'\r') => {
                     let mut text = Vec::with_capacity(raw.len());
@@ -538,8 +536,7 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
     })
 }
 
-/// ESTree's `value` of a `JSXText`. What `&amp;` and the like stand for is not in the source text: it
-/// is interned.
+/// ESTree's `value` of a `JSXText`. Text with decoded entities such as `&amp;` isn't in the source, so it's interned.
 pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
     Some(match e.jsx_text_value()? {
         std::borrow::Cow::Borrowed(text) => text,
@@ -547,7 +544,7 @@ pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
     })
 }
 
-/// The same for text that is nothing but whitespace, which [`crate::ast`] has no node for.
+/// The same for whitespace-only text, which [`crate::ast`] has no node for.
 pub(super) fn jsx_whitespace_value<'a>(v: VNode<'a>) -> &'a [u8] {
     let is_espree = v.file().language().parser == crate::language::Parser::Espree;
     match crate::ast::jsx_text_value_of(v.file().slice(v.span()), is_espree) {
@@ -556,9 +553,10 @@ pub(super) fn jsx_whitespace_value<'a>(v: VNode<'a>) -> &'a [u8] {
     }
 }
 
-/// oxlint's `value` of a string that is the value of a JSX attribute, without braces: what is between the quotes, where it does not
-/// read `&amp;` and the like. `None`: `v` is not one, or the tree is not for oxlint's rules.
-pub(super) fn attribute_as_written<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
+/// oxlint's `value` of a string that's a JSX attribute's value, without braces: the text between the quotes, with
+/// `&amp;` and the like left undecoded. Returns `None` if `v` isn't such a string, or the tree isn't for oxlint's
+/// rules.
+pub(super) fn raw_jsx_attribute_string<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
     if !v.file().language().is_oxlint || v.part != Part::Main {
         return None;
     }
@@ -572,7 +570,7 @@ pub(super) fn attribute_as_written<'a>(v: VNode<'a>) -> Option<&'a [u8]> {
     is_bare.then(|| v.file().slice(e.span().shrink(1, 1)))
 }
 
-/// `#isValidEscape` of typescript-estree
+/// typescript-estree's `#isValidEscape`.
 fn has_valid_escapes(raw: &[u8]) -> bool {
     let is_hex =
         |bytes: Option<&[u8]>| bytes.is_some_and(|it| it.iter().all(u8::is_ascii_hexdigit));

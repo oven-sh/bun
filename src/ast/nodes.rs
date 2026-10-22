@@ -698,6 +698,7 @@ pub struct Catch {
 pub struct Finally {
     pub loc: crate::Loc,
     pub stmts: StmtNodeList,
+    pub body_loc: crate::Loc,
 }
 
 pub struct Case {

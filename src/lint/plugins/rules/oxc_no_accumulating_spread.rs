@@ -20,11 +20,12 @@ struct InLoop<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What is first assigned to, for each variable that was asked about.
+    /// The first assignment target of each variable looked up so far.
     first_assignments: IdMap<Symbol<'a>, Option<Expr<'a>>>,
-    /// Whether something is in a call of `reduce` or in a loop.
+    /// Caches whether a node is inside a `reduce` call or a loop.
     in_reduce_or_loop: AncestorMemo<'a, ()>,
-    /// All those of one accumulator are reported at the accumulator: oxlint has them in the order of the source.
+    /// Reported in `finish`, because all the spreads of one accumulator are reported at the accumulator and oxlint has
+    /// them in source order.
     in_loops: Vec<InLoop<'a>>,
 }
 
@@ -54,7 +55,7 @@ impl Rule for NoAccumulatingSpread {
                     check(Node::Expr(e), argument, cx);
                 }
             }
-            // Objects are far fewer than properties.
+            // Listen for objects instead of properties, because there are far fewer.
             ExprTag::Object => {
                 let Some(properties) = e.as_object() else {
                     return;
@@ -79,7 +80,7 @@ impl Rule for NoAccumulatingSpread {
                 .first_label("From this accumulator")
                 .label(it.spread, "From this spread")
                 .label(it.keyword, "For this loop");
-            // The loop is the primary one.
+            // The loop is oxlint's primary label.
             report.comments_apply_at(it.keyword).help(match it.is_in_array {
                 true => "Consider using `Array.prototype.push()` to mutate the accumulator instead.",
                 false => "Consider using `Object.assign()` to mutate the accumulator instead.",
@@ -92,7 +93,7 @@ fn check<'a>(spread: Node<'a>, argument: Expr<'a>, cx: &mut Cx<'a, NoAccumulatin
     if argument.tag() != ExprTag::Ident || argument.is_parenthesized() {
         return;
     }
-    // Before anything is asked about variables.
+    // Cheap check first, before any symbol lookup.
     let is_reduce_or_loop = |it: Node<'a>| is_call_of_reduce(it) || matches!(it, Node::Stmt(stmt) if stmt.is_loop());
     if cx.state.in_reduce_or_loop.find(spread, |_, parent| is_reduce_or_loop(parent).then_some(())).is_none() {
         return;

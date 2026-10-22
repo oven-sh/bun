@@ -1,9 +1,8 @@
-//! What many rules need: ports of ESLint's `lib/rules/utils/ast-utils.js`, of
-//! `@eslint-community/eslint-utils` and of typescript-eslint's `util/`, under the same names in
-//! snake case.
+//! Helpers shared by many rules: ports of ESLint's `lib/rules/utils/ast-utils.js`, of `@eslint-community/eslint-utils`
+//! and of typescript-eslint's `util/`, under the same names in snake case.
 //!
-//! The doc comment of each function starts with the name it has upstream, so
-//! `grep -rn 'getStaticPropertyName' src/lint/utils` finds it.
+//! Each function's doc comment starts with its upstream name, so `grep -rn 'getStaticPropertyName' src/lint/utils`
+//! finds it.
 //!
 //! | upstream | module | a rule writes |
 //! | --- | --- | --- |
@@ -32,13 +31,13 @@
 //! | a fix that's only correct for an array, a string or a regular expression, in a rule without type information | [`visible`] | `report.fix_where_safe(\|\| visible::is_visibly_array(e), fix)` |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
-//! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
-//! a `File<'a>` is invariant in `'a`.
+//! A function that takes two handles uses one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`, because a
+//! `File<'a>` is invariant in `'a`.
 //!
-//! Several of these have a function of the same name that behaves differently, as upstream:
-//! `get_function_name_with_kind` and `get_function_head_loc[ation]` in `ast_utils`, `eslint_utils`
-//! and `ts_utils`, `is_parenthesised` in `ast_utils` and `is_parenthesized` in `eslint_utils`. Take
-//! the one from the module that the upstream rule imports from.
+//! As upstream, several of these modules have a function with the same name that behaves differently:
+//! `get_function_name_with_kind` and `get_function_head_loc[ation]` in `ast_utils`, `eslint_utils` and `ts_utils`,
+//! `is_parenthesised` in `ast_utils` and `is_parenthesized` in `eslint_utils`. Use the one from the module that the
+//! upstream rule imports from.
 
 pub mod ancestor_memo;
 pub mod array;

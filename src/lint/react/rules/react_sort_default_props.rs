@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-/// Enforce defaultProps declarations alphabetical sorting. `OLD_NAME`: as `jsx-sort-default-props`.
+/// Enforce defaultProps declarations alphabetical sorting. `OLD_NAME` registers it as `jsx-sort-default-props`.
 pub struct SortDefaultProps<const OLD_NAME: bool = false> {
     ignore_case: bool,
 }
@@ -16,7 +16,7 @@ const PROPS_NOT_SORTED: Message =
 
 /// `"right" in node.parent && node.parent.right`
 fn right_of_parent(e: Expr<'_>) -> Option<Expr<'_>> {
-    // The parent of the whole of an optional chain is the `ChainExpression`.
+    // A whole optional chain's parent is the `ChainExpression`.
     if e.is_chain_root() {
         return None;
     }
@@ -31,7 +31,7 @@ fn right_of_parent(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `checkNode`: the `ObjectExpression` whose properties `checkSorted` is called with.
+/// `checkNode`. Returns the `ObjectExpression` whose properties `checkSorted` is called with.
 fn check_node(node: Expr<'_>) -> Option<Expr<'_>> {
     let object = match node.as_ident() {
         Some(name) => match find_variable_by_name(node.into(), name)? {
@@ -43,12 +43,12 @@ fn check_node(node: Expr<'_>) -> Option<Expr<'_>> {
     (object.tag() == ExprTag::Object).then_some(object)
 }
 
-/// The listener for `MemberExpression`: as [`check_node`].
+/// The `MemberExpression` listener. Returns the same as [`check_node`].
 fn member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     if is_default_props_declaration(e.into()) { check_node(right_of_parent(e)?) } else { None }
 }
 
-/// The listener for `PropertyDefinition`: as [`check_node`].
+/// The `PropertyDefinition` listener. Returns the same as [`check_node`].
 fn property_definition(member: Member<'_>) -> Option<Expr<'_>> {
     let is_declaration = ast_utils::is_property_definition(member) && is_default_props_declaration(member.into());
     if is_declaration { check_node(member.init()?) } else { None }
@@ -60,7 +60,7 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
         false => Meta::plugin(Plugin::React, "sort-default-props", Kind::None),
     };
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members().finish();
-    /// What `checkSorted` is called with, once for each call.
+    /// The objects `checkSorted` is called with, one entry per call.
     type State<'a> = Vec<Expr<'a>>;
 
     fn new(options: &Options) -> Self {
@@ -68,7 +68,7 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Expr<'a>>> {
-        // upstream takes a private name for its text.
+        // Upstream treats a private name like the same name without the `#`.
         let is_candidate = file.mentions("defaultProps")
             || file.mentions("getDefaultProps")
             || file.mentions("#defaultProps")
@@ -84,7 +84,7 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
         cx.state.extend(property_definition(member));
     }
 
-    /// `checkSorted`, for each of the objects. One that many variables lead to is looked at once, and reported as often.
+    /// `checkSorted`, for each object. An object that's listed several times is checked once and reported each time.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut objects = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut objects, |it| it.span().start);
@@ -100,22 +100,22 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
 }
 
 impl<const OLD_NAME: bool> SortDefaultProps<OLD_NAME> {
-    /// What `checkSorted` reports of the properties of `object`.
+    /// The properties of `object` that `checkSorted` reports.
     fn unsorted<'a>(&self, object: Expr<'a>) -> Vec<Prop<'a>> {
         let ExprKind::Object(declarations) = object.kind() else {
             return Vec::new();
         };
         let file = object.file();
         let mut unsorted = Vec::new();
-        // `getKey` of the last property that is in its place. None at the start and after a spread.
+        // `getKey` of the last property that's in order. `None` at the start and after a spread.
         let mut prev: Option<Cow<'a, [u8]>> = None;
         for curr in declarations {
             let Some(key) = curr.key() else {
                 prev = None;
                 continue;
             };
-            let written = file.slice(key.inner_span(file));
-            let name = if self.ignore_case { text::to_lower_case(written) } else { Cow::Borrowed(written) };
+            let key_text = file.slice(key.inner_span(file));
+            let name = if self.ignore_case { text::to_lower_case(key_text) } else { Cow::Borrowed(key_text) };
             if prev.as_ref().is_some_and(|prev| strings::order_utf16(&name, prev) == Ordering::Less) {
                 unsorted.push(curr);
             } else {

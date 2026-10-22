@@ -307,6 +307,13 @@ pub enum ExternalError {
 }
 bun_core::impl_tag_error!(ExternalError);
 
+/// The parser already logged the error, like every other `SyntaxError`.
+impl From<bun_ast::SourceTooLarge> for ExternalError {
+    fn from(_: bun_ast::SourceTooLarge) -> Self {
+        ExternalError::SyntaxError
+    }
+}
+
 impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
@@ -356,6 +363,7 @@ impl<'a> JSON5Parser<'a> {
     }
 
     pub fn parse(source: &'a Source, log: &mut Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
+        source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
             pos: 0,

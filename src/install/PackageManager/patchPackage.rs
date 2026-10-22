@@ -524,7 +524,7 @@ pub fn do_patch_commit(
     let cache_path = cache_dir_path(cache_dir);
     let old_folder =
         resolve_path::join::<platform::Posix>(&[&cache_path, &cache_dir_subpath]).to_vec();
-    let new_folder = real_folder(&cache_path, &target.folder, false);
+    let new_folder = real_folder(&manager.lockfile, &cache_path, &target.folder, false);
     let stamp_file: &[u8] = PatchStamp::file(pkg.resolution.tag);
     let unstamped = PatchStamp::without_name(&new_folder, &old_folder, pkg.resolution.tag)
         .map(|(contents, mode)| (stamp_file, contents, mode));
@@ -1093,11 +1093,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         &mut folder_path_buf,
         existing_patchfile_hash,
     );
-    let folder = real_folder(
-        &cache_dir_path(cache_result.cache_dir),
-        &target.folder,
-        true,
-    );
+    let cache_path = cache_dir_path(cache_result.cache_dir);
+    let folder = real_folder(&manager.lockfile, &cache_path, &target.folder, true);
     // The folder is only missing for a package in the global store that no package.json in the
     // project depends on directly.
     let is_loaded = sys::exists(&folder);
@@ -1124,6 +1121,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // So we will overwrite the folder by directly copying the package in cache into it
     if let Err(e) = replace_with_cache_copy(
         cache_result.cache_dir,
+        &cache_path,
         cache_result.cache_dir_subpath.as_bytes(),
         &folder,
         names_patch.map(|patch| (pkg.resolution.tag, patch)),
@@ -1341,10 +1339,50 @@ fn resolve_links(path: &[u8]) -> sys::Result<Vec<u8>> {
     }
 }
 
-/// Returns `folder` with symlinks resolved. If that's inside the shared global store and
-/// `replaces_folder` is set, returns the last symlink on the way instead, which `bun patch`
-/// replaces with a copy.
-fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u8> {
+/// Returns true if `real`, which has its symlinks resolved, is inside the shared global store.
+fn is_in_global_store(cache_path: &[u8], real: &[u8]) -> bool {
+    resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
+}
+
+/// Returns the part of `folder` before its first `node_modules`. A `..` can lead out of one again,
+/// so it is applied first.
+fn outermost_package(folder: &[u8]) -> Vec<u8> {
+    let mut spill = Vec::new();
+    let folder = resolve_path::join_spill::<platform::Posix>(&mut spill, &[folder]);
+    let mut start = 0;
+    for name in strings::split(folder, b"/") {
+        if name == b"node_modules" {
+            return folder[..start].to_vec();
+        }
+        start += name.len() + 1;
+    }
+    folder.to_vec()
+}
+
+/// Returns true if `real`, which has its symlinks resolved, is inside `subfolder` of the package
+/// that `folder` starts in, of the root or of a workspace.
+fn is_in_project(lockfile: &Lockfile, folder: &[u8], subfolder: &[u8], real: &[u8]) -> bool {
+    let workspaces = lockfile.workspace_paths.values().iter();
+    [outermost_package(folder).as_slice(), b""]
+        .into_iter()
+        .chain(workspaces.map(|path| lockfile.str(path)))
+        .any(|package| {
+            let parent = resolve_path::join::<platform::Auto>(&[package, subfolder]).to_vec();
+            resolve_links(&parent).is_ok_and(|parent| {
+                resolve_path::is_parent_or_equal(&parent, real) == resolve_path::ParentEqual::Parent
+            })
+        })
+}
+
+/// Returns `folder` with symlinks resolved. If an install doesn't manage that folder (the target of
+/// a `bun link`) or it's inside the shared global store, and `replaces_folder` is set, returns the
+/// last symlink on the way instead, which `bun patch` replaces with a copy.
+fn real_folder(
+    lockfile: &Lockfile,
+    cache_path: &[u8],
+    folder: &[u8],
+    replaces_folder: bool,
+) -> Vec<u8> {
     let resolve = |path: &[u8]| match resolve_links(path) {
         Ok(real) => real,
         Err(e) => {
@@ -1352,24 +1390,47 @@ fn real_folder(cache_path: &[u8], folder: &[u8], replaces_folder: bool) -> Vec<u
             Global::crash();
         }
     };
-    let is_shared = |real: &[u8]| {
-        resolve_path::is_parent_or_equal(cache_path, real) != resolve_path::ParentEqual::Unrelated
+    let is_own = |subfolder: &[u8], real: &[u8]| {
+        !is_in_global_store(cache_path, real) && is_in_project(lockfile, folder, subfolder, real)
     };
 
     let real = resolve(folder);
-    if !is_shared(&real) {
+    let link = strings::without_trailing_slash(folder);
+    let link = resolve_path::join::<platform::Auto>(&[
+        &resolve(resolve_path::dirname::<platform::Auto>(link)),
+        bun_paths::basename(link),
+    ])
+    .to_vec();
+    // The only link that an install puts in a package's place leads into the isolated store.
+    let installed_in: &[u8] = if is_link(&link) {
+        b"node_modules/.bun"
+    } else {
+        b"node_modules"
+    };
+    if is_own(installed_in, &real) {
         return real;
     }
-    if replaces_folder {
-        let link = strings::without_trailing_slash(folder);
-        let link = resolve_path::join::<platform::Auto>(&[
-            &resolve(resolve_path::dirname::<platform::Auto>(link)),
-            bun_paths::basename(link),
-        ])
-        .to_vec();
-        if !is_shared(&link) {
-            return link;
+    let is_own_link = is_own(b"node_modules", &link);
+    if replaces_folder && is_own_link {
+        return link;
+    }
+
+    if !is_in_global_store(cache_path, &real) {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: refusing to patch <b>{}<r>: resolves to <b>{}<r>, which <cyan>bun install<r> does not manage",
+            bstr::BStr::new(folder),
+            bstr::BStr::new(&real),
+        );
+        if is_own_link {
+            bun_core::note!(
+                "run <cyan>bun patch<r> on the package first to create an editable copy"
+            );
+        } else {
+            bun_core::note!(
+                "remove the symlink that leads there, run <cyan>bun install<r> and patch the package again"
+            );
         }
+        Global::crash();
     }
 
     bun_core::pretty_errorln!(
@@ -1443,6 +1504,7 @@ impl Drop for TempTree {
 /// `folder` is never left half-written: the copy is created next to it and then renamed into place. `names_patch`: the patch that the copy is to name.
 fn replace_with_cache_copy(
     cache_dir: Fd,
+    cache_path: &[u8],
     cache_dir_subpath: &[u8],
     folder: &[u8],
     names_patch: Option<(ResolutionTag, Patch)>,
@@ -1480,10 +1542,10 @@ fn replace_with_cache_copy(
     }
 
     if has_old {
-        // If the old folder was a symlink, it points into the global store, which other projects
-        // share, so only the symlink itself is removed.
+        // If the old folder was a symlink, its target is not the project's to change, so only the
+        // symlink itself is removed.
         if is_link(&old.0) {
-            if let Err(e) = link_store_siblings(&old.0, folder) {
+            if let Err(e) = link_store_siblings(cache_path, &old.0, folder) {
                 bun_core::warn!(
                     "failed to link package dependencies into {}: {}",
                     bstr::BStr::new(folder),
@@ -1509,8 +1571,8 @@ fn move_aside(folder: &ZStr, aside: &ZStr) -> sys::Result<()> {
     let Err(refused) = sys::renameat(cwd.fd, folder, cwd.fd, aside) else {
         return Ok(());
     };
-    // If `folder` is a symlink, it points into the global store, which other projects share, so
-    // nothing is moved out of it.
+    // If `folder` is a symlink, its target is not the project's to change, so nothing is moved out
+    // of it.
     if refused.get_errno() == sys::E::ENOENT || is_link(folder.as_bytes()) {
         return Err(refused);
     }
@@ -1554,8 +1616,12 @@ fn move_entries(from: &Dir, to: &Dir) -> sys::Result<()> {
 
 /// In the global store, the symlinks to a package's dependencies are siblings of the package. The
 /// copy in `folder` gets them in its own node_modules, where `--commit` keeps them out of the diff.
-fn link_store_siblings(link: &[u8], folder: &[u8]) -> sys::Result<()> {
+/// A `link` that leads elsewhere has unrelated folders next to its target.
+fn link_store_siblings(cache_path: &[u8], link: &[u8], folder: &[u8]) -> sys::Result<()> {
     let package = resolve_links(link)?;
+    if !is_in_global_store(cache_path, &package) {
+        return Ok(());
+    }
     let mut siblings = resolve_path::dirname::<platform::Auto>(&package);
     if strings::starts_with_char(bun_paths::basename(siblings), b'@') {
         siblings = resolve_path::dirname::<platform::Auto>(siblings);

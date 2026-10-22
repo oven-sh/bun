@@ -1,4 +1,4 @@
-//! Lines in one buffer, with `\n` between them.
+//! Lines stored in one buffer, separated by `\n`.
 
 use super::markers::list_marker;
 use bun_core::strings;
@@ -45,12 +45,12 @@ impl LineBuffer {
         self.buf.len()
     }
 
-    /// The number of line breaks behind the first `from_byte` bytes.
+    /// Returns the number of line breaks after the first `from_byte` bytes.
     pub(super) fn line_count_since(&self, from_byte: usize) -> usize {
         strings::count_char(self.buf.get(from_byte..).unwrap_or_default(), b'\n')
     }
 
-    /// Whether the last line that is not empty ends an item of a list or a block of code.
+    /// True if the last non-empty line ends a list item or a code block.
     pub(super) fn last_line_is_block_end(&self) -> bool {
         let mut rest = &self.buf[..];
         let last = loop {

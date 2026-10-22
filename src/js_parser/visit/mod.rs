@@ -280,6 +280,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_export: bool,
     ) -> usize {
         let was_const = kind == LocalKind::KConst;
+        // A namespace member isn't a module export.
+        let can_replace_exports =
+            IS_POSSIBLY_DECL_TO_REMOVE && self.enclosing_namespace_arg_ref.is_none();
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
@@ -307,7 +310,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut replacement: Option<
                     bun_ptr::BackRef<crate::parser::Runtime::ReplaceableExport>,
                 > = None;
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     if let BData::BIdentifier(id) = decl.binding.data {
                         let id_ref = id.r#ref;
                         let name = self.load_name_from_ref(id_ref);
@@ -574,7 +577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                if IS_POSSIBLY_DECL_TO_REMOVE {
+                if can_replace_exports {
                     self.is_control_flow_dead = orig_dead;
                     self.in_deleted_export = orig_in_deleted;
                     if let BData::BIdentifier(_) = decl.binding.data {
@@ -602,7 +605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         },
                     },
                 );
-            } else if IS_POSSIBLY_DECL_TO_REMOVE {
+            } else if can_replace_exports {
                 if let BData::BIdentifier(id) = decl.binding.data {
                     let id_ref = id.r#ref;
                     let name = self.load_name_from_ref(id_ref);
@@ -617,18 +620,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // which is not mutated during the visit pass.
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
-                            let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(
-                                decl,
-                                VisitDeclOpts {
-                                    was_anonymous_named_expr: false,
-                                    could_be_const_value: was_const && !is_after,
-                                    could_be_macro: false,
-                                },
-                            );
-                        } else {
                             continue 'outer;
                         }
+                        let is_after = self.vis_scope().is_after_const_local_prefix;
+                        self.visit_decl(
+                            decl,
+                            VisitDeclOpts {
+                                was_anonymous_named_expr: false,
+                                could_be_const_value: was_const && !is_after,
+                                could_be_macro: false,
+                            },
+                        );
                     }
                 }
             }
@@ -1024,17 +1026,36 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // must be the original value of the name, not the re-assigned value.
         // Use "const" for this symbol to match JavaScript run-time semantics. You
         // are not allowed to assign to this symbol (it throws a TypeError).
+        //
+        // With lowered class decorators the body reads the class through
+        // `inner_class_ref`, which the lowering sets to what the decorators
+        // return (the spec initializes the inner binding with that class).
         let mut shadow_ref = if let Some(name) = class.class_name {
             let name_ref = name.ref_;
             let original_name: &'a [u8] = self.symbols[name_ref.inner_index() as usize]
                 .original_name
                 .slice();
+            let body_ref = if class.should_lower_standard_decorators
+                && class.ts_decorators.len_u32() > 0
+            {
+                let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
+                class.inner_class_ref = inner_ref;
+                self.decorated_class_names.push((inner_ref, name_ref));
+                // The name of a class expression is declared nowhere else:
+                // the renamer still has to number it around its neighbors.
+                if is_expr {
+                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                }
+                inner_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: name.ref_,
+                        ref_: body_ref,
                         loc: name.loc,
                     },
                 )
@@ -1483,6 +1504,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+        if class.inner_class_ref.is_symbol() {
+            self.decorated_class_names.pop();
+        }
 
         shadow_ref
     }

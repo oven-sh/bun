@@ -237,7 +237,7 @@ impl DevServer {
             // Extract pathname from URL (remove protocol, host, query, hash)
             let pathname = extract_pathname_from_url(url.slice());
             if self.router.match_slow(pathname, &mut params).is_some() {
-                params.to_js(global)
+                params.to_js(global)?
             } else {
                 JSValue::NULL
             }
@@ -498,7 +498,49 @@ impl DevServer {
         Ok(array.into_boxed_slice())
     }
 
-    pub(crate) fn on_js_request_with_bundle(
+    /// Serves `/_bun/client/<route>-<generation>.js`.
+    pub(super) fn serve_client_script(
+        &mut self,
+        bundle_index: route_bundle::Index,
+        generation: u32,
+        resp: AnyResponse,
+        method: Method,
+    ) {
+        let route_bundle = &self.route_bundles[bundle_index.get() as usize];
+        if route_bundle.client_script_generation != generation
+            || route_bundle.server_state != route_bundle::State::Loaded
+        {
+            return resp.corked(move || on_outdated_js_corked(resp));
+        }
+
+        // The in-flight bundle already freed the code of every file that failed in it, so wait for it to finish.
+        if route_bundle.client_bundle.is_none()
+            && let Some(current_bundle) = &mut self.current_bundle
+        {
+            let deferred = bun_ptr::RefPtr::new(DeferredScriptRequest {
+                ref_count: ::core::cell::Cell::new(1),
+                route_bundle_index: bundle_index,
+                generation,
+                response: ::core::cell::Cell::new(Some(ResponseAndMethod {
+                    response: resp,
+                    method,
+                })),
+            });
+            // `script_requests` keeps `deferred` alive until the response removes this handler.
+            resp.on_aborted_this(
+                |deferred: bun_ptr::ThisPtr<DeferredScriptRequest>, _: AnyResponse| {
+                    deferred.response.set(None)
+                },
+                deferred.this_ptr(),
+            );
+            current_bundle.script_requests.push(deferred);
+            return;
+        }
+
+        self.on_js_request_with_bundle(bundle_index, resp, method);
+    }
+
+    fn on_js_request_with_bundle(
         &mut self,
         bundle_index: route_bundle::Index,
         resp: AnyResponse,

@@ -31,9 +31,9 @@ impl Rule for NoConstAssign {
                 continue;
             }
             for reference in get_modifying_references(symbol.references()) {
-                // oxlint points at the declaration.
-                let place = if cx.language().is_oxlint { pat.span() } else { reference.span() };
-                let report = cx.report(place, CONST).data("name", reference.name()).hint_with(|| {
+                // oxlint reports at the declaration.
+                let report_span = if cx.language().is_oxlint { pat.span() } else { reference.span() };
+                let report = cx.report(report_span, CONST).data("name", reference.name()).hint_with(|| {
                     let line = cx.line_of(pat.span().start);
                     Some(match decl.var_kind() {
                         VarKind::Const => format!("It is declared with const on line {line}. Use let if it has to change."),

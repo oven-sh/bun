@@ -1411,7 +1411,6 @@ impl UDPSocket {
                 payload_vals[slice_idx] = payload_val;
             }
             if connected {
-                addr_ptrs[slice_idx] = core::ptr::null();
                 i += 1;
                 continue;
             }

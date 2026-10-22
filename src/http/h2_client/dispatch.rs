@@ -134,10 +134,9 @@ fn dispatch_frame(
             let mut i: usize = 0;
             while i + wire::SettingsPayloadUnit::BYTE_SIZE <= payload.len() {
                 let mut unit = wire::SettingsPayloadUnit::default();
-                wire::SettingsPayloadUnit::from::<true>(
+                wire::SettingsPayloadUnit::from(
                     &mut unit,
                     &payload[i..i + wire::SettingsPayloadUnit::BYTE_SIZE],
-                    0,
                 );
                 // Brace-expr copies of packed fields (unaligned-safe).
                 let utype = { unit.type_ };

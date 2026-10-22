@@ -207,13 +207,11 @@ impl SettingsPayloadUnit {
     pub const BYTE_SIZE: usize = 6;
 
     #[inline]
-    pub fn from<const END: bool>(dst: &mut SettingsPayloadUnit, src: &[u8], offset: usize) {
+    pub fn from(dst: &mut SettingsPayloadUnit, src: &[u8]) {
         let bytes = bytemuck::bytes_of_mut(dst);
-        bytes[offset..src.len() + offset].copy_from_slice(src);
-        if END {
-            // Byte-swap each field.
-            dst.type_ = u16::swap_bytes(dst.type_);
-            dst.value = u32::swap_bytes(dst.value);
-        }
+        bytes[..src.len()].copy_from_slice(src);
+        // Byte-swap each field.
+        dst.type_ = u16::swap_bytes(dst.type_);
+        dst.value = u32::swap_bytes(dst.value);
     }
 }

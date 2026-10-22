@@ -1,7 +1,4 @@
-// MySQL collation/character-set id. Any wire byte is a legal value, named or
-// not, so this is a `#[repr(transparent)]` newtype over `u8` —
-// unknown ids coming off the wire are preserved instead of being collapsed to
-// a known variant, and constructing one is never UB.
+// MySQL collation id that the client sends: a `#[repr(transparent)]` newtype over `u8`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct CharacterSet(pub u8);
@@ -250,13 +247,6 @@ character_sets! {
 
 impl CharacterSet {
     pub(crate) const DEFAULT: CharacterSet = CharacterSet::utf8mb4_general_ci;
-
-    /// Construct from a raw protocol byte: every byte is valid and unknown
-    /// ids are kept
-    /// as-is (they round-trip back onto the wire unchanged).
-    pub(crate) const fn from_raw(b: u8) -> Self {
-        Self(b)
-    }
 
     /// The raw wire byte.
     pub const fn to_int(self) -> u8 {

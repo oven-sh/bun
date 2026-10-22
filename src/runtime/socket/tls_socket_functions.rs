@@ -1301,7 +1301,6 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     let mut formatted: Vec<u8> = Vec::new();
     let mut output_buf: [u8; 4096] = [0; 4096];
 
-    output_buf[0] = 0;
     let mut written: usize = 0;
     let mut ssl_error = boringssl::ERR_get_error();
     while ssl_error != 0 && written < output_buf.len() {

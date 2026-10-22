@@ -1257,14 +1257,12 @@ impl ServerConfig {
         if !args.base_uri.is_empty() {
             let base_url = URL::parse(&args.base_uri);
             if base_url.hostname.is_empty() {
-                args.base_uri = Box::default();
                 return Err(
                     global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
                 );
             }
 
             if !strings::is_all_ascii(&args.base_uri) {
-                args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Unicode baseURI must already be encoded for now.\nnew URL(baseuRI).toString() should do the trick.",
                 )));
@@ -1389,7 +1387,6 @@ impl ServerConfig {
             args.base_uri = buf.into_boxed_slice();
 
             if !strings::is_all_ascii(hostname) {
-                args.base_uri = Box::default();
                 return Err(global.throw_invalid_arguments(format_args!(
                     "Unicode hostnames must already be encoded for now.\nnew URL(input).hostname should do the trick.",
                 )));
@@ -1400,14 +1397,12 @@ impl ServerConfig {
         // but let's check anyway, just in case
         let base_url = URL::parse(&args.base_uri);
         if base_url.hostname.is_empty() {
-            args.base_uri = Box::default();
             return Err(
                 global.throw_invalid_arguments(format_args!("baseURI must have a hostname"))
             );
         }
 
         if !base_url.username.is_empty() || !base_url.password.is_empty() {
-            args.base_uri = Box::default();
             return Err(global.throw_invalid_arguments(format_args!(
                 "baseURI can't have a username or password",
             )));

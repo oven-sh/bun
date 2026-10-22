@@ -76,7 +76,7 @@ pub fn is_valid_close_code(code: u16) -> bool {
 //   bit  14      compressed: bool (default false) — rsv1
 //   bit  15      final: bool   (default true)
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone)]
 pub struct WebsocketHeader(u16);
 
 impl WebsocketHeader {
@@ -143,15 +143,6 @@ impl WebsocketHeader {
     }
 
     pub fn write_header(self, writer: &mut impl std::io::Write, n: usize) -> std::io::Result<()> {
-        // packed structs are sometimes buggy
-        // lets check it worked right
-        if cfg!(debug_assertions) {
-            let buf = self.0.to_be_bytes();
-            let casted = u16::from_be_bytes(buf);
-            debug_assert!(casted == self.0);
-            debug_assert!(WebsocketHeader(casted) == self);
-        }
-
         writer.write_all(&self.0.to_be_bytes())?;
         debug_assert!(self.len() == Self::pack_length(n));
         Ok(())

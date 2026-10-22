@@ -55,8 +55,7 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
-// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
-// brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
+
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
@@ -69,7 +68,6 @@ use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
 };
 use crate::webcore::{blob, readable_stream, response};
-use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
 #[cfg(windows)]

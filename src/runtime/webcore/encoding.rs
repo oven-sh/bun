@@ -390,8 +390,6 @@ fn to_bun_string_comptime<const ENCODING: u8>(input: &[u8]) -> BunString {
             // chars is a freshly-allocated [u16] buffer; reinterpret as bytes.
             let output_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
             let out_len = output_bytes.len();
-            output_bytes[out_len - 1] = 0;
-
             output_bytes.copy_from_slice(&input[..out_len]);
             str
         }

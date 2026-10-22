@@ -1683,7 +1683,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             }
         }
 
-        self.buffer.clear_retaining_capacity();
         if self
             .buffer
             .try_reserve_exact(self.high_water_mark as usize)

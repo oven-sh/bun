@@ -3115,7 +3115,6 @@ pub(crate) mod mock {
             let mut formatter = self.formatter.borrow_mut();
             let mut printed_once = false;
 
-            let mut num_returns: i32 = 0;
             let mut num_calls: i32 = 0;
 
             let mut iter = self
@@ -3138,7 +3137,6 @@ pub(crate) mod mock {
                 {
                     ReturnStatus::Return => {
                         write!(writer, "{}", value.to_fmt(&mut **formatter))?;
-                        num_returns += 1;
                     }
                     ReturnStatus::Throw => {
                         write!(writer, "function call threw an error: {}", value.to_fmt(&mut **formatter))?;
@@ -3148,7 +3146,6 @@ pub(crate) mod mock {
                     }
                 }
             }
-            let _ = num_returns;
             Ok(())
         }
     }

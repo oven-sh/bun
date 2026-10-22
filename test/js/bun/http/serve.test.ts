@@ -3566,6 +3566,88 @@ it.concurrent(
   20_000,
 );
 
+// A client can see an idle timeout only as a close at the next 4 second sweep of the server.
+// No faster signal exists, so the first test takes about 4 seconds.
+// `idleTimeout` is cast because the types do not declare it together with `unix`.
+describe("server.timeout() on a unix socket", () => {
+  // Sends one request. Resolves with the body of the response, or with null when the server closes the
+  // connection without an answer.
+  function request(sock: string, path: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string | null>();
+    let received = "";
+    const socket = net.connect(sock);
+    socket.on("data", chunk => (received += chunk));
+    socket.on("error", reject);
+    socket.on("end", () => resolve(received ? received.split("\r\n\r\n")[1] : null));
+    socket.write(`GET ${path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+    return promise;
+  }
+
+  it.concurrent("server.timeout(req, seconds) replaces idleTimeout for the request", async () => {
+    using dir = tempDir("serve-unix", {});
+    // `strict` closes a silent request at the next sweep. `lax` never closes one.
+    const strict = join(String(dir), "strict.sock");
+    const lax = join(String(dir), "lax.sock");
+    const called = Promise.withResolvers<void>();
+    const respond = Promise.withResolvers<void>();
+    let calls = 0;
+    async function handler(req: Request, server: Server<undefined>) {
+      const seconds = new URL(req.url).searchParams.get("timeout");
+      if (seconds === null) return new Promise<Response>(() => {});
+      server.timeout(req, Number(seconds));
+      if (++calls === 3) called.resolve();
+      await respond.promise;
+      return new Response("late");
+    }
+    await using strictServer = Bun.serve({ unix: strict, idleTimeout: 1 as any, fetch: handler });
+    await using laxServer = Bun.serve({ unix: lax, idleTimeout: 0 as any, fetch: handler });
+
+    const off = request(strict, "/?timeout=0");
+    const longer = request(strict, "/?timeout=30");
+    const shorter = request(lax, "/?timeout=1");
+    await called.promise;
+
+    // idleTimeout closes this request at the next sweep. The three requests above went silent
+    // before it, so that sweep has passed them as well.
+    expect(await request(strict, "/")).toBeNull();
+    // The sweep kept `off` and `longer` open and closed `shorter`, so the answer reaches only the first two.
+    respond.resolve();
+    expect({ off: await off, longer: await longer, shorter: await shorter }).toEqual({
+      off: "late",
+      longer: "late",
+      shorter: null,
+    });
+  });
+
+  it.concurrent("server.timeout() throws for a non-number and for a non-Request", async () => {
+    using dir = tempDir("serve-unix", {});
+    const sock = join(String(dir), "t.sock");
+    await using server = Bun.serve({
+      unix: sock,
+      fetch(req, server) {
+        const errors = [
+          [req, "1"],
+          [{}, 1],
+        ].map(args => {
+          try {
+            (server.timeout as any)(...args);
+          } catch (e) {
+            const { name, message } = e as Error;
+            return { name, message };
+          }
+        });
+        return Response.json(errors);
+      },
+    });
+
+    const res = await fetch("http://localhost/", { unix: sock });
+    expect(await res.json()).toEqual([
+      { name: "Error", message: "timeout() requires a number" },
+      { name: "TypeError", message: "timeout() requires a Request object" },
+    ]);
+  });
+});
+
 it.concurrent(
   "TLS: reaps every zero-byte pre-handshake connection in a burst",
   async () => {

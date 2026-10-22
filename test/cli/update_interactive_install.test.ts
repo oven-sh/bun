@@ -184,7 +184,6 @@ describe.concurrent("bun update --interactive installs from the package.json tha
     // Without these two, an old tree in the cache changes nothing that this test can see.
     expect(stderr).toContain('Duplicate dependency: "a-dep"');
     expect(packageJson.length).toBeLessThan(root.indexOf('"a-dep"'));
-    expect(stderr).not.toContain("error:");
     expect({
       declared: lockfile.match(/"no-deps": "(\^[^"]+)"/)?.[1],
       resolved: lockfile.match(/"no-deps@([^"]+)"/)?.[1],

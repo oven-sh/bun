@@ -186,8 +186,8 @@ describe("css", () => {
     ['animation: "reveal"var(--d)', 'animation: "reveal"var(--d)'],
     ['animation: 1s"reveal" var(--d)', 'animation: 1s"reveal" var(--d)'],
 
-    // A dashed ident stays as written. It can be the name or a timeline, and
-    // no typed form is there to tell.
+    // A dashed ident in the shorthand stays as written. It can be the name or
+    // a timeline, and no typed form is there to tell.
     ["animation: --reveal var(--d)", "animation: --reveal var(--d)"],
     ["animation: reveal var(--d) --timeline", "animation: reveal_# var(--d) --timeline"],
     ["animation: var(--name) 1s --timeline", "animation: var(--name) 1s --timeline"],
@@ -195,7 +195,7 @@ describe("css", () => {
     // The `animation-name` longhand. There, only `none` is a keyword.
     ["animation-name: reveal, var(--x)", "animation-name: reveal_#, var(--x)"],
     ['animation-name: var(--x), "reveal"', "animation-name: var(--x), reveal_#"],
-    ["animation-name: --reveal, var(--x)", "animation-name: --reveal, var(--x)"],
+    ["animation-name: --reveal, var(--x)", "animation-name: --reveal_#, var(--x)"],
     ["animation-name: linear, none, var(--x)", "animation-name: linear_#, none, var(--x)"],
     ["-webkit-animation-name: var(--x), reveal", "-webkit-animation-name: var(--x), reveal_#"],
     // A name in the fallback of a `var()` stays as written, like the value of
@@ -345,6 +345,7 @@ describe("css", () => {
     "animation: --reveal var(--d)",
     "animation: auto linear both reveal",
     'animation-name: "reveal", var(--x)',
+    "animation-name: --reveal, var(--x)",
     "animation: inherit",
   ];
   itBundled("css/AnimationRawTokensAsWritten", {

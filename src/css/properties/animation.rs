@@ -429,6 +429,10 @@ fn tag_unparsed_names(list: &mut TokenList, shorthand: bool) {
                     v: std::ptr::from_ref::<[u8]>(ident),
                 })
             }
+            // In the shorthand a dashed ident can also be a timeline.
+            TokenOrValue::DashedIdent(ident) if !shorthand => {
+                AnimationName::Ident(CustomIdent { v: ident.v })
+            }
             TokenOrValue::Token(Token::QuotedString(string)) => {
                 // The name prints as an ident, which joins any token that touches it except a `)` before it.
                 let joins_previous = i > 0

@@ -204,6 +204,8 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
+        /// `server.unref()` with no `server.ref()` behind it.
+        const UNREFED_BY_USER             = 1 << 2;
     }
 }
 
@@ -506,7 +508,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
     /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
     /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
-    /// `-3` / `+3`: a node:http tunnel becomes idle / reads or has bytes to send again. `-4`: it closes idle.
+    /// `-3`: a node:http tunnel becomes idle. `+3` / `+4`: it is not idle any more, at read EOF / not at it. `-4`: it closes idle.
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -525,10 +527,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     this.note_connection_opened();
                     return;
                 }
-                3 => {
+                3 | 4 => {
                     this.note_tunnel_idle(false);
                     // With a listener open, the loop ref is the user's to drop (`server.unref()`).
-                    if !this.has_listener() {
+                    // Behind `server.unref()` reads do not hold the loop, and only at read EOF is it sure that the tunnel has bytes to send.
+                    if !this.has_listener()
+                        && (opened == 3 || !this.flags.contains(ServerFlags::UNREFED_BY_USER))
+                    {
                         // SAFETY: `this` is not used again, and a tunnel write or read start never runs inside `app.close()`.
                         unsafe { &mut *user_data.cast::<Self>() }.ref_();
                     }
@@ -1606,7 +1611,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     fn note_tunnel_idle(&self, idle: bool) {
         let count = self.idle_tunnel_count.get();
-        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3 or -4.
+        // `AsyncSocketData::filteredIdleTunnel` pairs every -3 with one +3, +4 or -4.
         debug_assert!(idle || count > 0);
         self.idle_tunnel_count.set(if idle {
             count + 1

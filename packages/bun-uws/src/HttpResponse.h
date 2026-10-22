@@ -186,15 +186,16 @@ public:
 
     /* node:http: an idle tunnel does not read (its reads are stopped or at EOF) and has nothing left to send. Like a libuv handle in
      * that state, it does not hold the event loop: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485.
-     * The filter hears -3 when a tunnel becomes idle and +3 when it reads or has bytes to send again. */
-    void setNodeHttpTunnelIdle(bool idle) {
+     * The filter hears -3 when a tunnel becomes idle. When it is not idle any more, the filter hears +3 at read EOF (it has bytes to
+     * send) and +4 otherwise (it reads or has bytes to send). */
+    void setNodeHttpTunnelIdle(bool idle, bool readEnded) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
             return;
         }
         httpResponseData->filteredIdleTunnel = idle;
         for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
-            f(this, idle ? -3 : 3);
+            f(this, idle ? -3 : readEnded ? 3 : 4);
         }
     }
 

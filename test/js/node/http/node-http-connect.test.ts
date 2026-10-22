@@ -1937,84 +1937,141 @@ async function runToExit(...args: string[]) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode, signalCode: proc.signalCode };
 }
+const exitedWith = (result: object) => ({
+  stdout: JSON.stringify(result) + "\n",
+  stderr: "",
+  exitCode: 0,
+  signalCode: null,
+});
 
 test.concurrent("a CONNECT proxy by pipes exits after server.close() when its upstream went away", async () => {
   // The client's socket is still open, so the proxy does not emit 'close'.
-  expect(await runToExit(join(import.meta.dir, "node-http-connect-proxy-pipes-fixture.js"))).toEqual({
-    stdout: '{"clientSocketIsPaused":true}\n',
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
+  expect(await runToExit(join(import.meta.dir, "node-http-connect-proxy-pipes-fixture.js"))).toEqual(
+    exitedWith({ clientSocketIsPaused: true }),
+  );
 });
 
-describe.concurrent.each([
-  ["http", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
-  ["https", "connect", "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"],
-  ["http", "upgrade", "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n"],
-  ["https", "upgrade", "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n"],
-])("%s '%s': a tunnel whose reads stopped, after server.close()", (proto, event, request) => {
-  // `listener` is the body of the listener and `onPeerData` gets the chunks of the peer behind the reply.
-  const run = (listener: string, onPeerData = "") =>
-    runToExit(
-      "-e",
-      `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
-       const reply = "HTTP/1.1 200 OK\\r\\n\\r\\n";
-       const result = {};
-       server.on("${event}", (req, socket) => {
-         server.close();
-         ${listener}
+// `listener` is the body of the listener for `event`. `peer` runs when `client` has the reply. The process prints `result`.
+function runTunnel(proto: string, event: string, listener: string, peer = "client.write(full);") {
+  const request =
+    event === "connect"
+      ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+      : "GET / HTTP/1.1\r\nHost: a\r\nConnection: Upgrade\r\nUpgrade: raw\r\n\r\n";
+  return runToExit(
+    "-e",
+    `const server = require("node:${proto}").createServer(${JSON.stringify(proto === "https" ? tlsCert : {})});
+     const reply = "HTTP/1.1 200 OK\\r\\n\\r\\n";
+     // What a socket buffers before it stops its reads.
+     const full = Buffer.alloc(65536, "a");
+     const result = {};
+     let client;
+     server.on("${event}", (req, socket) => {
+       ${listener}
+     });
+     server.listen(0, "127.0.0.1", () => {
+       client = require("node:${proto === "https" ? "tls" : "net"}").connect({
+         port: server.address().port,
+         host: "127.0.0.1",
+         rejectUnauthorized: false,
+         allowHalfOpen: true,
        });
-       server.listen(0, "127.0.0.1", () => {
-         const client = require("node:${proto === "https" ? "tls" : "net"}").connect({
-           port: server.address().port,
-           host: "127.0.0.1",
-           rejectUnauthorized: false,
-           allowHalfOpen: true,
-         });
-         // Only the server's side of the tunnel may keep the process alive.
-         client.unref();
-         client.write(${JSON.stringify(request)});
-         client.once("data", () => {
-           // What the socket buffers before it stops its reads.
-           client.write(Buffer.alloc(65536, "a"));
-           client.on("data", chunk => {
-             ${onPeerData}
-           });
-         });
+       // Only the server's side of the tunnel may keep the process alive.
+       client.unref();
+       client.write(${JSON.stringify(request)});
+       client.once("data", () => {
+         ${peer}
        });
-       process.on("exit", () => console.log(JSON.stringify(result)));`,
-    );
+     });
+     process.on("exit", () => console.log(JSON.stringify(result)));`,
+  );
+}
+// More than a loopback socket takes in one write.
+const large = 8 * 1024 * 1024;
 
+describe.concurrent.each([
+  ["http", "connect"],
+  ["https", "connect"],
+  ["http", "upgrade"],
+  ["https", "upgrade"],
+])("%s '%s': a tunnel whose reads stopped, after server.close()", (proto, event) => {
   test("does not keep the process alive behind the listener's end()", async () => {
     // No writable event comes for a socket behind its FIN.
-    expect(
-      await run(`socket.end(reply);
-                 process.on("beforeExit", () => (result.buffered = socket.readableLength));`),
-    ).toEqual({ stdout: '{"buffered":65536}\n', stderr: "", exitCode: 0, signalCode: null });
+    const listener = `
+      server.close();
+      socket.end(reply);
+      process.on("beforeExit", () => (result.buffered = socket.readableLength));`;
+    expect(await runTunnel(proto, event, listener)).toEqual(exitedWith({ buffered: 65536 }));
   });
 
   test("keeps the process alive again while it sends and when it reads", async () => {
-    // More than a loopback socket takes in one write.
-    const size = 8 * 1024 * 1024;
-    expect(
-      await run(
-        `socket.write(reply);
-         Object.assign(result, { sent: false, serverReceived: 0, clientReceived: 0 });
-         // 'beforeExit': nothing keeps the process alive. It has to wait for what each step starts.
-         const steps = [
-           () => socket.write(Buffer.alloc(${size}, "x"), () => (result.sent = true)),
-           () => socket.on("data", chunk => (result.serverReceived += chunk.length)).on("end", () => socket.end()),
-         ];
-         process.on("beforeExit", () => steps.shift()?.());`,
-        `if ((result.clientReceived += chunk.length) === ${size}) client.end(Buffer.alloc(${size}, "b"));`,
-      ),
-    ).toEqual({
-      stdout: JSON.stringify({ sent: true, serverReceived: 65536 + size, clientReceived: size }) + "\n",
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    const listener = `
+      server.close();
+      socket.write(reply);
+      Object.assign(result, { sent: false, serverReceived: 0, clientReceived: 0 });
+      // 'beforeExit': nothing keeps the process alive. It has to wait for what each step starts.
+      const steps = [
+        () => socket.write(Buffer.alloc(${large}, "x"), () => (result.sent = true)),
+        () => socket.on("data", chunk => (result.serverReceived += chunk.length)).on("end", () => socket.end()),
+      ];
+      process.on("beforeExit", () => steps.shift()?.());`;
+    const peer = `
+      client.write(full);
+      client.on("data", chunk => {
+        if ((result.clientReceived += chunk.length) === ${large}) client.end(Buffer.alloc(${large}, "b"));
+      });`;
+    expect(await runTunnel(proto, event, listener, peer)).toEqual(
+      exitedWith({ sent: true, serverReceived: 65536 + large, clientReceived: large }),
+    );
+  });
+});
+
+// The server holds the event loop for its sockets, so server.unref() gives it up for their reads too.
+// In Node.js a socket holds it by itself: there the process of the first test does not exit.
+describe.concurrent.each(["http", "https"])("%s: a tunnel behind server.unref() and server.close()", proto => {
+  // `hold` keeps the process alive until the reads have stopped. Then the tunnel gets a reader.
+  const readsAgain = (ref: string, whenRead: string) => `
+    socket.write(reply);
+    server.unref();
+    ${ref}
+    server.close();
+    const hold = setInterval(() => {
+      if (socket.readableLength === full.length) clearInterval(hold);
+    }, 1);
+    result.received = 0;
+    process.once("beforeExit", () => {
+      socket.on("data", chunk => {
+        if ((result.received += chunk.length) === full.length) {
+          ${whenRead}
+        }
+      });
+      socket.on("end", () => {
+        result.end = true;
+        socket.end();
+      });
+    });`;
+
+  test("does not keep the process alive when it reads again", async () => {
+    // The peer stays connected and sends nothing more.
+    expect(await runTunnel(proto, "connect", readsAgain("", ""))).toEqual(exitedWith({ received: 65536 }));
+  });
+
+  test("keeps the process alive when it reads again behind server.ref()", async () => {
+    expect(await runTunnel(proto, "connect", readsAgain("server.ref();", "client.end();"))).toEqual(
+      exitedWith({ received: 65536, end: true }),
+    );
+  });
+
+  test("keeps the process alive while it sends at the end of the stream", async () => {
+    const listener = `
+      socket.write(reply);
+      server.unref();
+      server.close();
+      const hold = setInterval(() => {}, 1000);
+      socket.on("end", () => clearInterval(hold)).resume();
+      process.once("beforeExit", () => socket.end(Buffer.alloc(${large}, "x"), () => (result.sent = true)));`;
+    expect(await runTunnel(proto, "connect", listener, "client.end(); client.resume();")).toEqual(
+      exitedWith({ sent: true }),
+    );
   });
 });
 

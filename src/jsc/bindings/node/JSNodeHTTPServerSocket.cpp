@@ -891,9 +891,9 @@ void JSNodeHTTPServerSocket::updateTunnelIdle()
     }
     const bool idle = (tunnelReadEnded || tunnelReadsStopped) && streamBuffer.bufferedSize() == 0;
     if (is_ssl) {
-        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<true>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->hasFullyDrained(), tunnelReadEnded);
     } else {
-        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained());
+        reinterpret_cast<uWS::HttpResponse<false>*>(socket)->setNodeHttpTunnelIdle(idle && reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->hasFullyDrained(), tunnelReadEnded);
     }
 }
 

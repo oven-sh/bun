@@ -6563,6 +6563,11 @@ impl<'p, 's> Checker<'p, 's> {
                     if let Some(cached) =
                         self.flow_memo.cached_flow_loop_type(&key, &walk.reference)
                     {
+                        // An analysis of this loop that's in progress overwrites the entry when it
+                        // ends.
+                        if let Some(pushed_at) = self.flow_loop_pushed_at() {
+                            self.taint_from(pushed_at);
+                        }
                         break cached;
                     }
                     // `flowLoopStack` belongs to the checker. A walk with the same key, started

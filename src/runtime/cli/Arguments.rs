@@ -17,9 +17,7 @@ use bun_core::{self, FeatureFlags, Global, Output, env_var};
 use bun_jsc::RegularExpression;
 use bun_jsc::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{
-    Debugger, DebuggerEnable, HotReload, MacroOptions, PackageFilter, Shard,
-};
+use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
 use bun_paths::platform;
 use bun_paths::resolve_path;
@@ -370,9 +368,6 @@ const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--silent                          Don't print the script command"),
         parse_param!(
             "--elide-lines <NUMBER>            Number of lines of script output shown when using --filter (default: 0, show all lines)"
-        ),
-        parse_param!(
-            "-w, --workspace <STR>...          Run a script in a workspace package, given by its name or its folder as in npm"
         ),
     ],
     AUTO_OR_RUN_PARAMS,
@@ -839,13 +834,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
                 _ => &[],
             },
-            param_rules: match cmd {
-                // npm reads `-ws` as `--workspaces`, so `bun run` does not read it as `-w s`.
-                CommandTag::RunCommand => &[(b"workspace", clap::ParamRule::SeparateValue)],
-                // bun as `node` shares `RUN_TABLE` and has no `--workspace`.
-                CommandTag::RunAsNodeCommand => &[(b"workspace", clap::ParamRule::Absent)],
-                _ => &[],
-            },
             ..Default::default()
         },
     ) {
@@ -934,9 +922,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
     }
 
     if matches!(cmd, CommandTag::RunCommand | CommandTag::AutoCommand) {
-        ctx.filters = (args.options(b"--filter").iter())
-            .map(|pattern| PackageFilter::Pattern((*pattern).into()))
-            .collect();
+        ctx.filters = slice_to_owned(args.options(b"--filter"));
         ctx.workspaces = args.flag(b"--workspaces");
         ctx.if_present = args.flag(b"--if-present");
         ctx.parallel = args.flag(b"--parallel");
@@ -960,13 +946,6 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                     }
                 };
             }
-        }
-    }
-
-    // Only `RUN_TABLE` has `--workspace`. Stays above the load of bunfig.toml, which reads `[run]` for a run that selects packages.
-    if cmd == CommandTag::RunCommand {
-        for value in args.options(b"--workspace") {
-            ctx.filters.push(PackageFilter::Workspace((*value).into()));
         }
     }
 

@@ -231,21 +231,17 @@ impl<T: Copy> OrderedArraySet<T> {
         true
     }
 
-    /// Returns whether `new` was inserted. An item that orders equal to one in the set is not.
     pub(crate) fn insert(
         &mut self,
         new: T,
         ctx: &impl OrderedArraySetCtx<T>,
-    ) -> Result<bool, AllocError> {
+    ) -> Result<(), AllocError> {
         // allocator param dropped — global mimalloc
         let found = (self.list).binary_search_by(|&existing| ctx.order(existing, new));
-        match found {
-            Ok(_) => Ok(false),
-            Err(i) => {
-                self.list.insert(i, new);
-                Ok(true)
-            }
+        if let Err(i) = found {
+            self.list.insert(i, new);
         }
+        Ok(())
     }
 }
 

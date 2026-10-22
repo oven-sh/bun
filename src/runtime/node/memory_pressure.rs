@@ -453,8 +453,7 @@ mod windows {
         );
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
-            // A reservation: Windows commits stack as it is touched.
-            .stack_size(2 * 1024 * 1024)
+            .stack_size(64 * 1024)
             .spawn(move || thread_main(vm, n, s))
         else {
             return;

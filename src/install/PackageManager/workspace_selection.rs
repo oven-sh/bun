@@ -61,8 +61,7 @@ struct Selector {
     base: Base,
 }
 
-/// The pattern without its leading `!`s, and whether they negate it.
-pub fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
+fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     let mut remain = raw;
     let mut negated = false;
     while let Some(rest) = remain.strip_prefix(b"!") {

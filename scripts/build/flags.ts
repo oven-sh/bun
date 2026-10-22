@@ -28,30 +28,6 @@ export type FlagValue = string | string[] | ((cfg: Config) => string | string[])
  */
 export const DARWIN_STACK_SIZE = "0x1200000";
 
-/**
- * `/STACK:reserve,commit` for bun.exe: SizeOfStackReserve and SizeOfStackCommit
- * in the PE header. The reserve is the main thread's stack, and the default for
- * a thread created without a size.
- *
- * The commit is charged against the system commit limit when a thread starts,
- * for EVERY thread that passes no commit size of its own, and Windows does not
- * start a thread it cannot charge it for. That covers `CreateThread` with size
- * 0 (WTF, mimalloc, zstd, sqlite, threads the OS adds to the process) and with
- * `STACK_SIZE_PARAM_IS_A_RESERVATION` (all of Rust std). One page is lld-link's
- * default, and what node.exe and WebKit's own executables ship: the rest of the
- * stack is committed as it is touched.
- *
- * The commit is also a floor under every thread's stack. A thread that asks for
- * a reserve at or below it (64 KB, 512 KB and 2 MB all did under a 2 MB commit)
- * gets the commit as its reserve, all of it committed, which leaves no guard
- * page.
- *
- * binary-expectations.ts states both numbers again as literals, and
- * verify-binary.ts checks the linked header against them.
- */
-export const WINDOWS_STACK_RESERVE = "0x1200000";
-export const WINDOWS_STACK_COMMIT = "0x1000";
-
 export interface Flag {
   /** Flag(s) to emit. Can be a function for flags that interpolate config values. */
   flag: FlagValue;
@@ -1058,9 +1034,9 @@ export const linkerFlags: Flag[] = [
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
-    flag: [`/STACK:${WINDOWS_STACK_RESERVE},${WINDOWS_STACK_COMMIT}`, "/errorlimit:0"],
+    flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
-    desc: "18MB stack reserve (JSC uses deep recursion), one page committed when a thread starts and the rest as it is touched; no error limit",
+    desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
   },
   {
     flag: "/DEBUG:FULL",

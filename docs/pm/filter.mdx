@@ -142,7 +142,7 @@ bun run --filter foo myscript
 
 ### Parallel and sequential mode
 
-Combine `--filter`, `--workspace` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages with Foreman-style prefixed output:
+Combine `--filter` or `--workspaces` with `--parallel` or `--sequential` to run scripts across workspace packages with Foreman-style prefixed output:
 
 ```bash terminal icon="terminal"
 # Run "build" in all matching packages concurrently
@@ -161,9 +161,9 @@ bun run --parallel --no-exit-on-error --filter '*' test
 bun run --parallel --filter '*' build lint
 ```
 
-Bun prefixes each line of output with the package and script name (`pkg-a:build | ...`). Without a flag that selects packages (`--filter`, `--workspace`, `--workspaces`), the prefix is only the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
+Bun prefixes each line of output with the package and script name (`pkg-a:build | ...`). Without `--filter`/`--workspaces`, the prefix is only the script name (`build | ...`). When a package's `package.json` has no `name` field, Bun uses the relative path from the workspace root instead.
 
-Use `--if-present` with `--workspace` or `--workspaces` to skip packages that don't have the requested script instead of erroring.
+Use `--if-present` with `--workspaces` to skip packages that don't have the requested script instead of erroring.
 
 ### Dependency Order
 

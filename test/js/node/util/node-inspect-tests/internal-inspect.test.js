@@ -1,5 +1,4 @@
 import assert from "assert";
-import { Statement } from "bun:sqlite";
 import { expect, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
 import util from "util";
@@ -187,9 +186,4 @@ test.skip("util.stylizeWithHTML", () => {
       '  [<span style="color:green;">Symbol&#40;&lt;br&gt;&#41;</span>]: <span style="color:yellow;">false</span>\n' +
       "}",
   );
-});
-
-test("util.inspect prints a value of Bun whose Symbol.toStringTag getter throws", () => {
-  // The getter reads a private field, which the prototype does not have.
-  expect(util.inspect(Statement.prototype)).toBe("{}");
 });

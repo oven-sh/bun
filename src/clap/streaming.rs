@@ -66,7 +66,6 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub(crate) unknown_long_flags_are_positional: bool,
     pub(crate) unknown_long_flags_are_errors: bool,
     pub(crate) ignored_long_flags: clap::IgnoredLongFlags,
-    pub(crate) param_rules: &'static [(&'static [u8], clap::ParamRule)],
 }
 
 // ArgIterator is the
@@ -117,7 +116,7 @@ where
                 // Copy the slice ref so `&mut self` is free inside the loop.
                 let params = self.params;
                 for param in params {
-                    if !param.names.matches_long(name) || self.is_absent(param) {
+                    if !param.names.matches_long(name) {
                         continue;
                     }
 
@@ -239,7 +238,7 @@ where
             let Some(short) = param.names.short else {
                 continue;
             };
-            if short != arg[index] || self.is_absent(param) {
+            if short != arg[index] {
                 continue;
             }
 
@@ -289,11 +288,6 @@ where
                     param,
                     value: Some(&arg[next_index + 1..]),
                 }));
-            }
-
-            if self.rule_of(param) == Some(clap::ParamRule::SeparateValue) {
-                let word = [b"-".as_slice(), arg].concat();
-                return Err(self.err(&word, None, None, ArgError::InvalidArgument));
             }
 
             return Ok(Some(Arg {
@@ -363,7 +357,7 @@ where
                 if !self
                     .params
                     .iter()
-                    .any(|param| param.names.matches_long(name) && !self.is_absent(param))
+                    .any(|param| param.names.matches_long(name))
                 {
                     return Ok(Some(ArgInfo {
                         arg: full_arg,
@@ -387,15 +381,6 @@ where
             arg: full_arg,
             kind: ArgKind::Positional,
         }))
-    }
-
-    fn rule_of(&self, param: &clap::Param<Id>) -> Option<clap::ParamRule> {
-        let long = param.names.long?;
-        (self.param_rules.iter()).find_map(|(name, rule)| (*name == long).then_some(*rule))
-    }
-
-    fn is_absent(&self, param: &clap::Param<Id>) -> bool {
-        self.rule_of(param) == Some(clap::ParamRule::Absent)
     }
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
@@ -428,7 +413,6 @@ mod tests {
             unknown_long_flags_are_positional: false,
             unknown_long_flags_are_errors: false,
             ignored_long_flags: Default::default(),
-            param_rules: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -465,7 +449,6 @@ mod tests {
             unknown_long_flags_are_positional: false,
             unknown_long_flags_are_errors: false,
             ignored_long_flags: Default::default(),
-            param_rules: &[],
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -941,7 +924,6 @@ mod tests {
             unknown_long_flags_are_positional: true,
             unknown_long_flags_are_errors: false,
             ignored_long_flags: Default::default(),
-            param_rules: &[],
             params: &params,
             iter: &mut iter,
             state: State::Normal,
@@ -994,7 +976,6 @@ mod tests {
             unknown_long_flags_are_positional: true,
             unknown_long_flags_are_errors: false,
             ignored_long_flags: Default::default(),
-            param_rules: &[],
             params: &params,
             iter: &mut iter,
             state: State::Normal,
@@ -1042,7 +1023,6 @@ mod tests {
                 unknown_long_flags_are_positional: false,
                 unknown_long_flags_are_errors: true,
                 ignored_long_flags: Default::default(),
-                param_rules: &[],
                 params: &params,
                 iter: &mut iter,
                 state: State::Normal,
@@ -1064,78 +1044,5 @@ mod tests {
         assert_eq!(parse(&[b"--aa", b"x", b"--", b"--q"]), None);
         assert_eq!(parse(&[b"x", b"--q", b"y"]), Some(b"q".to_vec()));
         assert_eq!(parse(&[b"--q=1"]), Some(b"q".to_vec()));
-    }
-
-    #[test]
-    fn param_rules() {
-        let params: [clap::Param<u8>; 2] = [
-            clap::Param {
-                id: 0,
-                names: clap::Names {
-                    short: Some(b'c'),
-                    long: Some(b"cc"),
-                    ..Default::default()
-                },
-                takes_value: clap::Values::One,
-                ..Default::default()
-            },
-            clap::Param {
-                id: 1,
-                takes_value: clap::Values::Many,
-                ..Default::default()
-            },
-        ];
-        // The values that the parse read, or the word that it refused.
-        let parse = |rule: clap::ParamRule, args: &[&[u8]]| {
-            let mut diag = clap::Diagnostic::default();
-            let mut iter = args::SliceIterator { remain: args };
-            let mut c = StreamingClap::<u8, args::SliceIterator> {
-                short_aliases: &[],
-                unknown_long_flags_are_positional: false,
-                unknown_long_flags_are_errors: false,
-                ignored_long_flags: Default::default(),
-                param_rules: match rule {
-                    clap::ParamRule::Absent => &[(b"cc", clap::ParamRule::Absent)],
-                    clap::ParamRule::SeparateValue => &[(b"cc", clap::ParamRule::SeparateValue)],
-                },
-                params: &params,
-                iter: &mut iter,
-                state: State::Normal,
-                positional: None,
-                diagnostic: Some(&mut diag),
-            };
-            let mut seen: Vec<(u8, Vec<u8>)> = Vec::new();
-            loop {
-                match c.next() {
-                    Ok(Some(arg)) => seen.push((arg.param.id, arg.value.unwrap().to_vec())),
-                    Ok(None) => return Ok(seen),
-                    Err(err) => {
-                        assert_eq!(err, ArgError::InvalidArgument);
-                        break;
-                    }
-                }
-            }
-            Err(match diag.short {
-                Some(short) => vec![b'-', short],
-                None => diag.arg,
-            })
-        };
-
-        let separate = clap::ParamRule::SeparateValue;
-        assert_eq!(
-            parse(separate, &[b"-c", b"x"]),
-            Ok(vec![(0, b"x".to_vec())])
-        );
-        assert_eq!(parse(separate, &[b"-c=x"]), Ok(vec![(0, b"x".to_vec())]));
-        assert_eq!(parse(separate, &[b"--cc=x"]), Ok(vec![(0, b"x".to_vec())]));
-        assert_eq!(parse(separate, &[b"-cx"]), Err(b"-cx".to_vec()));
-
-        // An absent param is like no param: the short flag is refused, the long flag is skipped.
-        let absent = clap::ParamRule::Absent;
-        assert_eq!(parse(absent, &[b"-c", b"x"]), Err(b"-c".to_vec()));
-        assert_eq!(
-            parse(absent, &[b"--cc", b"x"]),
-            Ok(vec![(1, b"x".to_vec())])
-        );
     }
 }

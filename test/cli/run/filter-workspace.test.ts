@@ -1548,7 +1548,6 @@ describe("auto-discovered bunfig.toml [run] section", () => {
   test.each([
     ["bun run --filter", ["run", "--filter", "dep0", "script"]],
     ["bun --filter", ["--filter", "dep0", "script"]],
-    ["bun run --workspace", ["run", "--workspace", "dep0", "script"]],
     ["bun run --workspaces", ["run", "--workspaces", "script"]],
   ])("%s applies [run] bun = true", (_, args) => {
     using dir = workspace("filter-bunfig-run-bun", "[run]\nbun = true\n");

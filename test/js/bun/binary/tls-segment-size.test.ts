@@ -15,7 +15,7 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
+import { isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
 import { closeSync, openSync } from "node:fs";
 
 /**
@@ -82,84 +82,5 @@ describe("static TLS footprint", () => {
     console.log(`.tls VirtualSize = ${size} bytes (${(size / 1024).toFixed(1)} KB)`);
     expect(size).toBeGreaterThan(0);
     expect(size).toBeLessThan(CEILING);
-  });
-});
-
-/** PE32+: SizeOfStackReserve and SizeOfStackCommit of the optional header. */
-function peStackSizes(path: string): { reserve: number; commit: number } {
-  const fd = openSync(path, "r");
-  try {
-    const dos = preadExact(fd, 0, 64);
-    if (dos.readUInt16LE(0) !== 0x5a4d) throw new Error("not PE (no MZ)");
-    const peOff = dos.readUInt32LE(60);
-    if (preadExact(fd, peOff, 4).readUInt32LE(0) !== 0x00004550) throw new Error("not PE (no PE\\0\\0)");
-    const optional = preadExact(fd, peOff + 4 + 20, 96);
-    if (optional.readUInt16LE(0) !== 0x20b) throw new Error("not PE32+");
-    return { reserve: Number(optional.readBigUInt64LE(72)), commit: Number(optional.readBigUInt64LE(80)) };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// The stack commit in the PE header is not the main thread's alone. Windows charges it against the system commit
-// limit when a thread starts, for every thread that passes no commit size of its own (WTF's, Rust std's, mimalloc's,
-// the ones the OS adds), and does not start a thread it cannot charge it for. bun.exe had 2 MB there: a process near
-// the commit limit ended when JSC could not start a GC helper thread, which it does again after every idle period.
-describe.skipIf(!isWindows)("thread stacks", () => {
-  test("the PE header reserves 18 MB of stack and commits one page of it", () => {
-    expect(peStackSizes(bunExe())).toEqual({ reserve: 0x1200000, commit: 0x1000 });
-  });
-
-  test("a thread commits its stack as it touches it, not when it starts", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { dlopen } = require("bun:ffi");
-          const { symbols: kernel32 } = dlopen("kernel32.dll", {
-            GetModuleHandleA: { args: ["ptr"], returns: "ptr" },
-            GetProcAddress: { args: ["ptr", "ptr"], returns: "ptr" },
-            CreateThread: { args: ["ptr", "u64", "ptr", "ptr", "u32", "ptr"], returns: "u64" },
-          });
-          const Sleep = kernel32.GetProcAddress(
-            kernel32.GetModuleHandleA(Buffer.from("kernel32.dll\\0")),
-            Buffer.from("Sleep\\0"),
-          );
-          const INFINITE = 0xffffffff;
-          const STACK_SIZE_PARAM_IS_A_RESERVATION = 0x10000;
-          const threads = 32;
-          // Bun.unsafe.memoryFootprint() is the process's commit charge on Windows (PrivateUsage).
-          function commitPerThread(stackSize, flags) {
-            const before = Bun.unsafe.memoryFootprint();
-            for (let i = 0; i < threads; i++)
-              if (!kernel32.CreateThread(null, stackSize, Sleep, INFINITE, flags, null))
-                throw new Error("CreateThread failed");
-            return Math.round((Bun.unsafe.memoryFootprint() - before) / threads);
-          }
-          console.log(JSON.stringify({
-            // How WTF, mimalloc and the OS start a thread: both sizes from the header.
-            headerSizes: commitPerThread(0, 0),
-            // How Rust std starts one: a reserve of its own, the commit from the header.
-            ownReserve: commitPerThread(0x1200000, STACK_SIZE_PARAM_IS_A_RESERVATION),
-          }));
-          process.exit(0);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const commit = JSON.parse(stdout);
-    console.log(
-      `commit per thread start: ${commit.headerSizes} bytes (header sizes), ${commit.ownReserve} (own reserve)`,
-    );
-    // With 2 MB in the header each start took 2.1 MB. What is left is the TEB, the TLS block and the first stack
-    // pages: 28 to 57 KB on the x64 and arm64 test machines.
-    expect(commit.headerSizes).toBeLessThan(256 * 1024);
-    expect(commit.ownReserve).toBeLessThan(256 * 1024);
-    expect(exitCode).toBe(0);
   });
 });

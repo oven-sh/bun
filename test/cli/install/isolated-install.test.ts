@@ -458,57 +458,6 @@ test.concurrent.each([
   ]);
 });
 
-// `b` is reached under `a` (its peer `a` is the ancestor, a cycle) and under the workspace (its peer `a`
-// is a sibling, found by the early dedupe). Both link the one `a` entry, so both are one `b` entry. The
-// peers that pass through `a` (`q` auto-installed by `a`, `r` from `c` after `b` was reached) used to
-// reach only the second `b`, which split the two into `b@1.0.0+<hash>` entries with the same tree (#46208).
-test.concurrent("a package whose peer is an ancestor is installed once", async () => {
-  const packages: Record<string, object> = {
-    a: { dependencies: { b: "1.0.0", c: "1.0.0" }, peerDependencies: { q: "*" } },
-    b: { peerDependencies: { a: "*" } },
-    c: { peerDependencies: { r: "*" } },
-    q: {},
-    r: {},
-  };
-  using server = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const { origin, pathname } = new URL(req.url);
-      const name = pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
-      const manifest = { name, version: "1.0.0", ...packages[name] };
-      if (pathname.endsWith(".tgz")) {
-        const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
-        return new Response(await archive.bytes());
-      }
-      const versions = { "1.0.0": { ...manifest, dist: { tarball: `${origin}/${name}-1.0.0.tgz` } } };
-      return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions });
-    },
-  });
-  using dir = tempDir("isolated-peer-ancestor", {
-    "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
-    "packages/mobile/package.json": JSON.stringify({
-      name: "mobile",
-      dependencies: { a: "1.0.0", b: "1.0.0", r: "1.0.0" },
-    }),
-    "bunfig.toml": `[install]\nlinker = "isolated"\ncache = "./.bun-cache"\nregistry = "${server.url.href}"\n`,
-  });
-
-  await runBunInstall({ ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined }, String(dir));
-
-  const store = join(String(dir), "node_modules", ".bun");
-  const entries = (await readdirSorted(store)).filter(entry => /^[ab]@/.test(entry));
-  expect(entries).toEqual([
-    expect.stringMatching(/^a@1\.0\.0\+[0-9a-f]{16}$/),
-    expect.stringMatching(/^b@1\.0\.0\+[0-9a-f]{16}$/),
-  ]);
-  const [aEntry, bEntry] = entries;
-  expect(readlinkSync(join(store, bEntry, "node_modules", "a"))).toBe(join("..", "..", aEntry, "node_modules", "a"));
-  expect(readlinkSync(join(store, aEntry, "node_modules", "b"))).toBe(join("..", "..", bEntry, "node_modules", "b"));
-  expect(readlinkSync(join(String(dir), "packages", "mobile", "node_modules", "b"))).toBe(
-    join("..", "..", "..", "node_modules", ".bun", bEntry, "node_modules", "b"),
-  );
-});
-
 test.concurrent("early dedupe keeps declarer-specific resolutions of an unprovided peer", async () => {
   // `dedupe-divergent-peers` pulls in two declarers of the peer name
   // `no-deps` with divergent ranges: `dedupe-cycle-peer` wants 1.0.0 and

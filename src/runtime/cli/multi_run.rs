@@ -933,8 +933,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
         let selected = FilterArg::select_packages(&*ctx, &mut this_transpiler.resolver, cwd)?;
-        let names: Vec<&[u8]> = script_names.iter().map(|n| &**n).collect();
-        selected.require_scripts(&*ctx, &names);
         let resolve_root: &[u8] = &selected.root_dir;
 
         // Phase 1: collect packages; `scripts` is deep-copied so MatchedPackage sorts independently of `selected`.
@@ -976,15 +974,13 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         }
 
         // Phase 2: Sort by package name, then by path as tiebreaker for deterministic ordering
-        if !selected.in_given_order {
-            index_sort::sort_slice_by(&mut matched_packages, |a, b| {
-                let name_order = a.name.cmp(&b.name);
-                if name_order != core::cmp::Ordering::Equal {
-                    return name_order;
-                }
-                a.dirpath.cmp(&b.dirpath)
-            });
-        }
+        index_sort::sort_slice_by(&mut matched_packages, |a, b| {
+            let name_order = a.name.cmp(&b.name);
+            if name_order != core::cmp::Ordering::Equal {
+                return name_order;
+            }
+            a.dirpath.cmp(&b.dirpath)
+        });
 
         // Phase 3: Build configs from sorted packages
         for pkg in &matched_packages {
@@ -1036,6 +1032,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             if ctx.if_present {
                 Global::exit(0);
             }
+            let names: Vec<&[u8]> = script_names.iter().map(|n| &**n).collect();
             selected.error_script_not_found(ctx, &workspace_selection::quote_patterns(&names));
         }
     } else {

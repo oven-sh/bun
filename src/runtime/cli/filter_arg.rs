@@ -2,7 +2,6 @@ use core::ptr::NonNull;
 
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
-use bun_collections::index_sort;
 use bun_core::Global;
 use bun_core::Output;
 use bun_core::strings;
@@ -10,7 +9,6 @@ use bun_glob as glob;
 use bun_install::package_manager::workspace_selection::{
     self, Candidate, NegatedWorkspaces, RootSelection, WorkspaceGraph,
 };
-use bun_options_types::context::PackageFilter;
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
 use bun_paths::{PathBuffer, platform, resolve_path};
@@ -154,38 +152,24 @@ pub(crate) struct WorkspacePackage {
     pub(crate) package_json_path: Box<[u8]>,
     pub(crate) dir: Box<[u8]>,
     pub(crate) json: bun_resolver::PackageJSON,
-    /// The first `--workspace` value that selects the package, if one does.
-    workspace_value: Option<usize>,
-    /// The entry of `workspaces` that the package comes from.
-    entry: usize,
 }
 
 pub(crate) struct SelectedPackages {
     pub(crate) root_dir: Box<[u8]>,
     pub(crate) packages: Vec<WorkspacePackage>,
-    /// Only `--workspace` values select: as in npm, the packages are in the order of the values and run one after another.
-    pub(crate) in_given_order: bool,
 }
 
-/// Discovers the workspace packages under `cwd` and returns the ones `--filter` / `--workspace` / `--workspaces` select, in discovery order unless `SelectedPackages::in_given_order`.
+/// Discovers the workspace packages under `cwd` and returns the ones `--filter` / `--workspaces` select, in discovery order.
 pub(crate) fn select_packages(
     ctx: &Command::ContextData,
     resolver: &mut bun_resolver::Resolver<'_>,
     cwd: &[u8],
 ) -> Result<SelectedPackages, crate::Error> {
-    let mut patterns: Vec<&[u8]> = Vec::new();
-    let mut workspaces: Vec<&[u8]> = Vec::new();
-    for filter in &ctx.filters {
-        match filter {
-            PackageFilter::Pattern(pattern) => patterns.push(pattern),
-            PackageFilter::Workspace(workspace) => workspaces.push(workspace),
-        }
-    }
-    // As in npm, `--workspaces` adds nothing to what `--workspace` names.
-    let all_workspaces = ctx.workspaces && workspaces.is_empty();
-    if all_workspaces {
-        patterns = vec![b"*".as_slice()];
-    }
+    let patterns: Vec<&[u8]> = if ctx.workspaces {
+        vec![b"*".as_slice()]
+    } else {
+        ctx.filters.iter().map(|f| &f[..]).collect()
+    };
 
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
     let mut negated = NegatedWorkspaces::default();
@@ -206,7 +190,7 @@ pub(crate) fn select_packages(
         let dir = strings::without_trailing_slash(resolve_path::dirname::<platform::Auto>(
             &package_json_path,
         ));
-        if all_workspaces && dir == &*root_dir {
+        if ctx.workspaces && dir == &*root_dir {
             continue;
         }
         let Some(json) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
@@ -226,8 +210,6 @@ pub(crate) fn select_packages(
             dir: dir.into(),
             package_json_path,
             json,
-            workspace_value: None,
-            entry: iter.pattern_idx,
         });
     }
 
@@ -265,55 +247,20 @@ pub(crate) fn select_packages(
             })
         });
 
-    // `select` reads a list of only `!` patterns as every package, so next to a `--workspace` value they are asked on their own.
-    let mut excluded_patterns: Vec<&[u8]> = Vec::new();
-    if !workspaces.is_empty() {
-        let all = core::mem::take(&mut patterns);
-        for (pattern, is_negated) in all.into_iter().map(workspace_selection::strip_negations) {
-            if is_negated {
-                excluded_patterns.push(pattern);
-            } else {
-                patterns.push(pattern);
-            }
-        }
-    }
-    let select = |patterns: &[&[u8]]| {
-        (!patterns.is_empty()).then(|| {
-            workspace_selection::select(
-                patterns,
-                cwd,
-                &candidates,
-                graph.as_ref(),
-                RootSelection::Implicit,
-            )
-        })
-    };
-    let (included, excluded) = (select(&patterns), select(&excluded_patterns));
-    let (workspace_values, unmatched_workspaces) =
-        select_npm_workspaces(&workspaces, cwd, &root_dir, &candidates);
-
-    let mut packages: Vec<WorkspacePackage> = discovered
+    let selection = workspace_selection::select(
+        &patterns,
+        cwd,
+        &candidates,
+        graph.as_ref(),
+        RootSelection::Implicit,
+    );
+    let packages: Vec<WorkspacePackage> = discovered
         .into_iter()
         .enumerate()
-        .filter_map(|(i, mut package)| {
-            package.workspace_value = workspace_values.get(i).copied().flatten();
-            let is_selected = package.workspace_value.is_some()
-                || included.as_ref().is_some_and(|it| it.selected.is_set(i));
-            let is_excluded = excluded.as_ref().is_some_and(|it| it.selected.is_set(i));
-            (is_selected && !is_excluded).then_some(package)
-        })
+        .filter(|&(i, _)| selection.selected.is_set(i))
+        .map(|(_, p)| p)
         .collect();
     if packages.is_empty() {
-        // npm fails here with `--if-present` too.
-        if !workspaces.is_empty() {
-            let filters: Vec<&[u8]> = (ctx.filters.iter())
-                .filter(|filter| matches!(filter, PackageFilter::Pattern(_)))
-                .map(PackageFilter::text)
-                .collect();
-            let message = unmatched_workspaces_message(&workspaces, &filters);
-            Output::err_generic("{}", (BStr::new(&message),));
-            Global::exit(1);
-        }
         if ctx.if_present {
             Global::exit(0);
         }
@@ -323,118 +270,8 @@ pub(crate) fn select_packages(
         }
         workspace_selection::error_unmatched(&patterns);
     }
-    if let Some(included) = &included {
-        workspace_selection::warn_unmatched(&patterns, &included.unmatched_patterns);
-    }
-    if !unmatched_workspaces.is_empty() {
-        let unmatched: Vec<&[u8]> = unmatched_workspaces
-            .iter()
-            .map(|&i| workspaces[i])
-            .collect();
-        bun_core::warn!(
-            "{}",
-            BStr::new(&unmatched_workspaces_message(&unmatched, &[]))
-        );
-    }
-
-    // npm runs in the order of the values, and for one value in the order of `workspaces`.
-    let in_given_order = !workspaces.is_empty() && patterns.is_empty();
-    if in_given_order {
-        index_sort::sort_slice_by(&mut packages, |a, b| {
-            (a.workspace_value, a.entry, &a.dir).cmp(&(b.workspace_value, b.entry, &b.dir))
-        });
-    }
-    Ok(SelectedPackages {
-        root_dir,
-        packages,
-        in_given_order,
-    })
-}
-
-/// `No workspace packages matched --workspace "a", "b"`, with ` or --filter "c"` for `patterns`.
-fn unmatched_workspaces_message(workspaces: &[&[u8]], patterns: &[&[u8]]) -> Vec<u8> {
-    let mut out = b"No workspace packages matched --workspace ".to_vec();
-    out.extend_from_slice(&workspace_selection::quote_patterns(workspaces));
-    if !patterns.is_empty() {
-        out.extend_from_slice(b" or --filter ");
-        out.extend_from_slice(&workspace_selection::quote_patterns(patterns));
-    }
-    out
-}
-
-/// The four tests of npm 11's `lib/utils/get-workspaces.js`. Returns the first value that selects each candidate, and the values that select nothing.
-fn select_npm_workspaces(
-    values: &[&[u8]],
-    cwd: &[u8],
-    root_dir: &[u8],
-    candidates: &[Candidate<'_>],
-) -> (Vec<Option<usize>>, Vec<usize>) {
-    if values.is_empty() {
-        return (Vec::new(), Vec::new());
-    }
-    let (mut buf, mut joined) = (path_buffer_pool::get(), path_buffer_pool::get());
-    // The form of `Candidate::abs_posix_dir`.
-    let mut posix = |dir: &[u8]| -> Box<[u8]> {
-        strings::without_trailing_slash(resolve_path::join_abs_string_buf::<platform::Posix>(
-            dir,
-            &mut buf.0,
-            &[b".".as_slice()],
-        ))
-        .into()
-    };
-    let (from, root) = (posix(cwd), posix(root_dir));
-    let relative = resolve_path::relative_platform::<platform::Posix, true>;
-    // `./` and the directory as the cwd sees it. npm compares with the `./` when the value has one.
-    let from_cwd: Vec<Vec<u8>> = candidates
-        .iter()
-        .map(|c| [b"./".as_slice(), relative(&from, c.abs_posix_dir)].concat())
-        .collect();
-    let children_of = |folder: &[u8]| {
-        let pattern = [folder, b"/*".as_slice()].concat();
-        let shape = glob::matcher::Shape::of(&pattern);
-        (pattern, shape)
-    };
-
-    let mut first_values: Vec<Option<usize>> = vec![None; candidates.len()];
-    let mut unmatched: Vec<usize> = Vec::new();
-    for (at, &value) in values.iter().enumerate() {
-        let mut path = value.to_vec();
-        resolve_path::platform_to_posix_in_place::<u8>(&mut path);
-        // The join of the platform reads a drive letter.
-        let dir = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-            cwd,
-            &mut joined.0,
-            &[value],
-        )
-        .map(&mut posix);
-        let dir = dir.as_deref();
-        // The packages in the folder, which npm writes as a path from the root and as it was given.
-        let in_folder = [
-            dir.map(|dir| children_of(relative(&root, dir))),
-            Some(children_of(strings::without_trailing_slash(&path))),
-        ];
-
-        let mut selects = false;
-        for (i, c) in candidates.iter().enumerate() {
-            let from_cwd = &from_cwd[i][if path.starts_with(b"./") { 0 } else { 2 }..];
-            // `Dots::Hide` is minimatch's `dot: false`, which npm matches with.
-            let is_in_folder = |(pattern, shape): &(Vec<u8>, glob::matcher::Shape)| {
-                let hide = glob::Dots::Hide;
-                glob::matcher::match_prepared::<false>(pattern, shape, from_cwd, hide).matches()
-            };
-            if (!c.name.is_empty() && c.name == value)
-                || dir == Some(c.abs_posix_dir)
-                || in_folder.iter().flatten().any(is_in_folder)
-            {
-                first_values[i].get_or_insert(at);
-                selects = true;
-            }
-        }
-        if !selects {
-            unmatched.push(at);
-        }
-    }
-    (first_values, unmatched)
+    workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
+    Ok(SelectedPackages { root_dir, packages })
 }
 
 impl WorkspacePackage {
@@ -451,37 +288,6 @@ impl WorkspacePackage {
 }
 
 impl SelectedPackages {
-    /// As in npm, a package that `--workspace` selects must have the scripts, unless `--if-present` is set. A name with a `*` is a pattern and is not asked for.
-    pub(crate) fn require_scripts(&self, ctx: &Command::ContextData, names: &[&[u8]]) {
-        if ctx.if_present {
-            return;
-        }
-        let mut is_missing = false;
-        for package in &self.packages {
-            if package.workspace_value.is_none() {
-                continue;
-            }
-            for name in names {
-                if strings::contains_char(name, b'*')
-                    || (package.json.scripts.as_ref()).is_some_and(|it| it.get(name).is_some())
-                {
-                    continue;
-                }
-                Output::err_generic(
-                    "Script \"{}\" not found in package \"{}\"",
-                    (
-                        BStr::new(name),
-                        BStr::new(&package.display_name(&self.root_dir)),
-                    ),
-                );
-                is_missing = true;
-            }
-        }
-        if is_missing {
-            Global::exit(1);
-        }
-    }
-
     /// `error: Script "x" not found in package "a"` / `... in 3 packages matching "a*"` /
     /// `... in 3 workspace packages`, then exit 1. `scripts` is already quoted.
     pub(crate) fn error_script_not_found(&self, ctx: &Command::ContextData, scripts: &[u8]) -> ! {
@@ -500,7 +306,7 @@ impl SelectedPackages {
                 (BStr::new(scripts), n),
             );
         } else {
-            let patterns: Vec<&[u8]> = ctx.filters.iter().map(PackageFilter::text).collect();
+            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
             Output::err_generic(
                 "Script {} not found in {} packages matching {}",
                 (

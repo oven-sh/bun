@@ -1,6 +1,5 @@
 import { AwsClient } from "aws4fetch";
 import type { Server, ServerWebSocket } from "bun";
-import { format } from "node:util";
 
 type Lambda = {
   fetch: (request: Request, server: Server) => Promise<Response | undefined>;
@@ -23,11 +22,11 @@ function log(level: string, ...args: any[]): void {
   if (!args.length) {
     return;
   }
-  const message = format(...args).replace(/\r?\n/g, "\r");
+  const messages = args.map(arg => Bun.inspect(arg).replace(/\n/g, "\r"));
   if (requestId === undefined) {
-    logger(`${level} ${message}`);
+    logger(level, ...messages);
   } else {
-    logger(`${level} RequestId: ${requestId} ${message}`);
+    logger(level, `RequestId: ${requestId}`, ...messages);
   }
 }
 

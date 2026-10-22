@@ -3584,6 +3584,13 @@ CPP_DECL bool JSC__JSValue__canBeFreedWhilePinned(JSC::EncodedJSValue v)
     return buf && !buf->isShared() && (buf->isResizableOrGrowableShared() || buf->isWasmMemory());
 }
 
+// See `ArrayBuffer::can_change_under_borrow` in array_buffer.rs.
+CPP_DECL bool JSC__JSValue__canBeWrittenConcurrently(JSC::EncodedJSValue v)
+{
+    auto* buf = existingArrayBuffer(JSC::JSValue::decode(v));
+    return buf && buf->canBeWrittenConcurrently();
+}
+
 // Returns the WebAssembly.Memory that `v` is a view of and sets `out_offset` to where `v` starts in it.
 // Returns empty if `v` isn't a view of a non-shared memory or that memory was collected.
 // A fixed-length buffer doesn't point to its memory, so this checks every live one.

@@ -765,6 +765,9 @@ export interface BytesOptions {
   refuse?: readonly ("undefined" | "null" | "stringObject")[];
   string?: "utf8" | "asIs";
   shared?: "borrowed" | "copied";
+  mapped?: "borrowed" | "copied";
+  /** With `shared: "copied"`: the longest input the body reads. It refuses a longer one by its length, so that one is not copied. */
+  longest?: number;
   held?: "borrowed" | "handle" | "copied" | "pinned";
 }
 
@@ -774,7 +777,8 @@ export class BytesType extends Type {
   constructor(options: BytesOptions) {
     super();
     const { from, otherwise = "throw", refuse = [], string = "utf8", shared = "borrowed", held = "borrowed" } = options;
-    this.#options = { from, otherwise, refuse, string, shared, held };
+    const { mapped = shared, longest = Infinity } = options;
+    this.#options = { from, otherwise, refuse, string, shared, mapped, longest, held };
     assert(from.length > 0, "from: it takes nothing");
     assertDistinct(from, "kinds");
     assertDistinct(refuse, "refused values");
@@ -791,6 +795,9 @@ export class BytesType extends Type {
     assert(string === "utf8" || from.includes("string") || otherwise === "toString", "string: it takes no string");
     assert(shared === "borrowed" || from.includes("buffer"), "shared: it takes no buffer");
     assert(shared === "borrowed" || held !== "copied", 'held: "copied" copies every buffer');
+    assert(mapped === "borrowed" || shared === "copied", 'mapped: "copied" is only with shared: "copied"');
+    assert(longest === Infinity || shared === "copied", 'longest: only with shared: "copied"');
+    assert(longest === Infinity || Number.isSafeInteger(longest), "longest: it is a length");
     // What no function needs yet is not written.
     assert(string === "utf8" || held === "handle", 'string: "asIs" is only with held: "handle"');
     assert(string === "utf8" || shared === "borrowed", 'string: "asIs" does not copy a shared buffer');
@@ -851,12 +858,16 @@ export class BytesType extends Type {
   }
   cppReadLast(target: string, value: string): string[] {
     if (!this.#isView) return [];
-    if (this.#options.shared === "copied")
+    if (this.#options.shared === "copied") {
+      const copied = `Bun::Bindgen::CopiedBuffers::${this.#options.mapped === "copied" ? "SharedAndMapped" : "Shared"}`;
+      const { longest } = this.#options;
+      const longestArgument = longest === Infinity ? "" : `, static_cast<size_t>(${longest}ULL)`;
       return [
         `WTF::MallocSpan<uint8_t> ${target}Copy;`,
-        `if (${target}.${this.#options.held === "borrowed" ? "readCopyingShared" : "copyIfShared"}(*globalObject, ${value}, ${target}Copy)) [[unlikely]]`,
+        `if (${target}.${this.#options.held === "borrowed" ? "readCopying" : "copyIf"}<${copied}>(*globalObject, ${value}, ${target}Copy${longestArgument})) [[unlikely]]`,
         `    RETURN_IF_EXCEPTION(scope, {});`,
       ];
+    }
     return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
   layout(): Layout {

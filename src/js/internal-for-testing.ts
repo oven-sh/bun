@@ -308,6 +308,10 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   bytesOfThenCopied: $bindgen("bindgen_test.bind.ts", "bytesOfThenCopied"),
   bytesOfAreSameMemory: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemory"),
   bytesOfAreSameMemoryCopyingShared: $bindgen("bindgen_test.bind.ts", "bytesOfAreSameMemoryCopyingShared"),
+  bytesOfAreSameMemoryCopyingSharedNotMapped: $bindgen(
+    "bindgen_test.bind.ts",
+    "bytesOfAreSameMemoryCopyingSharedNotMapped",
+  ),
   bytesBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "bytesBeforeAndAfterCallback"),
   bytesBeforeAndAfterCallbackCopyingShared: $bindgen(
     "bindgen_test.bind.ts",

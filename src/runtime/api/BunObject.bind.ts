@@ -66,8 +66,12 @@ const zlib = (
     rustPath: `crate::api::bun_object::JSZlib::${rustName}`,
   });
 
-/** libdeflate reads each input block twice, so copy shared buffers that another thread could change in between. */
-const compressionInput = b.bytes({ from: ["string", "buffer"], shared: "copied" });
+/**
+ * libdeflate reads each input block twice, so copy shared buffers that another thread could change in between.
+ * A `Bun.mmap` view stays where it is: libdeflate's writes are bounded (patches/libdeflate/bounded-emit.patch), and a
+ * copy would double the memory it takes to compress a large file.
+ */
+const compressionInput = b.bytes({ from: ["string", "buffer"], shared: "copied", mapped: "borrowed" });
 
 export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions, compressionInput);
 

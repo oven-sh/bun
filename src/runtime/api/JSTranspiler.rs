@@ -123,8 +123,8 @@ fn code_from_js(
     let StringOrBuffer::Buffer(buffer) = &parsed else {
         return Ok(parsed);
     };
-    if !buffer.buffer.can_change_under_borrow()
-        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+    if buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
+        && !buffer.buffer.can_change_under_borrow()
     {
         return Ok(parsed);
     }

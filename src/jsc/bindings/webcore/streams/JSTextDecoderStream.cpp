@@ -337,14 +337,14 @@ static std::optional<std::span<const uint8_t>> textDecoderStreamBytes(JSGlobalOb
     if (auto* view = dynamicDowncast<JSArrayBufferView>(chunk)) {
         if (view->isDetached()) [[unlikely]]
             return std::span<const uint8_t>();
-        isShared = view->isShared();
+        isShared = view->canBeWrittenConcurrently();
         return std::span<const uint8_t>(static_cast<const uint8_t*>(view->vector()), view->byteLength());
     }
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(chunk)) {
         auto* impl = buffer->impl();
         if (!impl || impl->isDetached()) [[unlikely]]
             return std::span<const uint8_t>();
-        isShared = impl->isShared();
+        isShared = impl->canBeWrittenConcurrently();
         return std::span<const uint8_t>(static_cast<const uint8_t*>(impl->data()), impl->byteLength());
     }
     Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "chunk"_s, "BufferSource"_s, chunk);

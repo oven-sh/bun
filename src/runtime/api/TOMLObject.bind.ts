@@ -10,6 +10,8 @@ export const TOML = b.namespace({
         otherwise: "toString",
         refuse: ["undefined", "null"],
         shared: "copied",
+        /** A longer input is a RangeError before the parser reads a byte of it. */
+        longest: 2 ** 31 - 1,
       }),
     },
     returns: b.any,

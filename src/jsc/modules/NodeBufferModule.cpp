@@ -181,8 +181,8 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
     if (length == 0)
         RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createEmptyBuffer(globalObject)));
 
-    // Another thread can write to shared bytes between the passes below. The copy is a Buffer so that no return path has to free it.
-    if (view->isShared()) [[unlikely]] {
+    // Another thread can write to shared bytes between the passes below, and another process to those of a file mapping. The copy is a Buffer so that no return path has to free it.
+    if (view->canBeWrittenConcurrently()) [[unlikely]] {
         auto* copy = WebCore::createUninitializedBuffer(globalObject, length);
         RETURN_IF_EXCEPTION(scope, {});
         memcpy(copy->typedVector(), view->typedVector(), length);

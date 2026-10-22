@@ -6,11 +6,21 @@
 
 namespace Bun::Bindgen {
 
+// Which buffers `shared: "copied"` copies: those that something else can write while the body reads them.
+enum class CopiedBuffers : bool {
+    // A SharedArrayBuffer, which another thread writes.
+    Shared,
+    // That, and a buffer over a file mapping (`Bun.mmap`), which another process writes. To JavaScript it is an ordinary
+    // ArrayBuffer. `mapped: "borrowed"` leaves it out.
+    SharedAndMapped,
+};
+
 // The bytes of a BufferSource or of a Blob whose bytes are in memory, where they are now. The data is not null.
 std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue);
-std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& isShared);
+// As above, and whether it is one of the buffers to copy.
+template<CopiedBuffers> std::span<const uint8_t> bytesOfBlobOrBuffer(JSC::JSValue, bool& copied);
 
-bool isSharedBuffer(JSC::JSValue);
+template<CopiedBuffers> bool isCopiedBuffer(JSC::JSValue);
 
 // A copy of the bytes, which `copy` holds, or the bytes themselves if there are none. Allocating it can throw.
 std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t>, WTF::MallocSpan<uint8_t>& copy);
@@ -18,7 +28,7 @@ std::span<const uint8_t> copyBytes(JSC::JSGlobalObject&, std::span<const uint8_t
 // Whether it holds a Blob: a Blob, or a `Bun.build()` output. Throws for one whose bytes are not in memory: a file.
 bool checkInMemoryBlob(JSC::JSGlobalObject&, JSC::JSValue);
 
-// The bytes of a Blob or a buffer where they are, which only JavaScript and a thread that writes a shared buffer change.
+// The bytes of a Blob or a buffer where they are, which only JavaScript and what writes a shared or a mapped buffer change.
 class JSBlobOrBufferView {
     WTF_FORBID_HEAP_ALLOCATION;
     WTF_MAKE_NONCOPYABLE(JSBlobOrBufferView);
@@ -40,23 +50,29 @@ public:
             m_bytes = bytesOfBlobOrBuffer(argument);
     }
 
-    // The bytes of a shared buffer become those of `copy`. Whether it is one: copying can throw.
-    ALWAYS_INLINE bool copyIfShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy)
+    // The bytes of a buffer that `Copied` names become those of `copy`. Whether it is one: copying can throw.
+    // A buffer longer than `longest` stays where it is: the body refuses it by its length, and reads none of it.
+    template<CopiedBuffers Copied>
+    ALWAYS_INLINE bool copyIf(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy, size_t longest = std::numeric_limits<size_t>::max())
     {
-        if (!m_isBlobOrBuffer || !isSharedBuffer(argument)) [[likely]]
+        if (!m_isBlobOrBuffer || !isCopiedBuffer<Copied>(argument)) [[likely]]
             return false;
-        m_bytes = copyBytes(globalObject, bytesOfBlobOrBuffer(argument), copy);
+        auto bytes = bytesOfBlobOrBuffer(argument);
+        if (bytes.size() > longest) [[unlikely]]
+            return false;
+        m_bytes = copyBytes(globalObject, bytes, copy);
         return true;
     }
 
-    // `read` and `copyIfShared` in one look at the buffer.
-    ALWAYS_INLINE bool readCopyingShared(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy)
+    // `read` and `copyIf` in one look at the buffer.
+    template<CopiedBuffers Copied>
+    ALWAYS_INLINE bool readCopying(JSC::JSGlobalObject& globalObject, JSC::JSValue argument, WTF::MallocSpan<uint8_t>& copy, size_t longest = std::numeric_limits<size_t>::max())
     {
         if (!m_isBlobOrBuffer)
             return false;
-        bool isShared = false;
-        m_bytes = bytesOfBlobOrBuffer(argument, isShared);
-        if (!isShared) [[likely]]
+        bool copied = false;
+        m_bytes = bytesOfBlobOrBuffer<Copied>(argument, copied);
+        if (!copied || m_bytes.size() > longest) [[likely]]
             return false;
         m_bytes = copyBytes(globalObject, m_bytes, copy);
         return true;

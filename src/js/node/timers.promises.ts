@@ -71,7 +71,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
   }
   let onCancel: (() => void) | undefined;
   const returnValue = new Promise((resolve, reject) => {
-    const timeout: NodeJS.Timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
+    const timeout = setTimeoutGlobal(() => resolve(value), after, ...arguments_);
     if (!reference) {
       timeout?.unref?.();
     }

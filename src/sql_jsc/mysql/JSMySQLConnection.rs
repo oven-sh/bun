@@ -1,10 +1,13 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
+use bun_jsc::bindgen::JsScope;
+
+use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::{
     AutoFlush, CallFrame, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject,
     JSValue, JsCell, JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _,
-    codegen::js_mysql_connection as js, run_callback,
+    run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -33,6 +36,7 @@ use super::protocol::result_set::{self as ResultSet};
 bun_core::declare_scope!(MySQLConnection, visible);
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
+/// `MySQLConnection`, declared in `JSMySQLConnection.bind.ts`.
 #[derive(bun_ptr::CellRefCounted)]
 pub struct JSMySQLConnection {
     ref_count: Cell<u32>,
@@ -388,35 +392,27 @@ impl JSMySQLConnection {
         Ok(js_value)
     }
 
-    pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn flush(this: &Self) {
         this.register_auto_flusher();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_close(
-        this: &Self,
-        _global_object: &JSGlobalObject,
-        _: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub fn close(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.fail(b"Connection closed", AnyMySQLErrorT::ConnectionClosed);
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_hold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn hold(this: &Self) {
         this.timers.set_checked_out(true);
         this.reset_connection_timeout();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn do_unhold(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    pub fn unhold(this: &Self, _: &mut JsScope<'_>) {
         let _entered = this.entered_from_js();
         this.timers.set_checked_out(false);
         this.on_queue_changed();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub fn get_in_transaction(&self, _: &JSGlobalObject) -> bool {
+    pub fn get_in_transaction(&self) -> bool {
         self.connection.get().is_in_transaction()
     }
 
@@ -773,7 +769,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // SAFETY: `this` is live and that ref is outstanding.
         let _guard = unsafe { RefPtr::from_raw(this.as_ctx_ptr()) };
         // usockets frees this socket at end-of-tick; drop the stored pointer
-        // now so nothing (timer callbacks, do_close) dereferences it after
+        // now so nothing (timer callbacks, close) dereferences it after
         // the free.
         this.connection_mut()
             .set_socket(AnySocket::SocketTcp(SocketTCP::detached()));

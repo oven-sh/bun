@@ -21,7 +21,8 @@ impl<'s> Folder<'_, 's> {
         if let Some(given) = call_site_arguments(self.hir, self.bound, e) {
             self.record_specifier(given);
         }
-        self.fold_replace_at_end_of_text(call).unwrap_or(Folded::UNKNOWN)
+        self.fold_replace_at_end_of_text(call)
+            .unwrap_or(Folded::UNKNOWN)
     }
 
     // `"quire".replace(/^/, "re")`. The method of a string is String.prototype's, and it asks RegExp.prototype: an ahead-of-time
@@ -56,7 +57,7 @@ impl<'s> Folder<'_, 's> {
             return None;
         };
         self.evaluator.push_text(&mut inserted, primitive);
-        if inserted.contains(&b'$') {
+        if bun_core::strings::contains_char(&inserted, b'$') {
             return None;
         }
         let parts = match self.atoms.bytes(pattern) {

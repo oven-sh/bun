@@ -9,7 +9,9 @@ impl ReferencePass<'_, '_> {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         let pragmas = hir.jsx_pragmas;
         let options = self.options;
-        let is_classic = pragmas.classic.unwrap_or(options.jsx_factory_root.is_some());
+        let is_classic = pragmas
+            .classic
+            .unwrap_or(options.jsx_factory_root.is_some());
         if !is_classic || hir.jsx.is_empty() {
             return;
         }
@@ -39,7 +41,7 @@ impl ReferencePass<'_, '_> {
             return option.unwrap_or(known::React);
         }
         let text = self.atoms.bytes(pragma);
-        let end = text.iter().position(|&byte| byte == b'.');
+        let end = bun_core::strings::index_of_char_usize(text, b'.');
         self.atoms.intern(&text[..end.unwrap_or(text.len())])
     }
 

@@ -1245,9 +1245,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             Some(from_fetch_headers(
+                global_this,
                 Some(headers_ref),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            ))
+            )?)
         } else {
             headers
         };
@@ -1339,6 +1340,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         };
         let url_path_decoded = &path_buf2[0..decoded_len as usize];
+        // `open` would truncate the path at a decoded `%00`. `Bun.file(url)` and node:fs reject it the same way.
+        if url_type == URLType::File {
+            crate::node::types::Valid::path_null_bytes(url_path_decoded, global_this)?;
+        }
 
         let url_string: BunString;
 
@@ -1407,7 +1412,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     }
                 };
                 #[cfg(not(windows))]
-                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir;
+                let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 // Relative to the folder of the entry module, or to the working directory when there
@@ -1502,9 +1507,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
+            global_this,
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+        )?);
     }
 
     // Userinfo in the URL is the request's credentials, like curl and

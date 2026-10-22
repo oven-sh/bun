@@ -3,6 +3,7 @@
 use bun_options_types::LoaderExt as _;
 use core::ffi::c_void;
 
+use crate::generated_bindgen::js_bundler::js_BuildArtifact as js;
 use crate::webcore::Blob;
 use crate::webcore::blob::BlobExt;
 use bun_ast::Target;
@@ -13,6 +14,7 @@ use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_jsc::ConcurrentTask::ConcurrentTask;
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 use bun_options_types::aot_options::AotOptions;
@@ -490,9 +492,7 @@ pub(crate) mod js_bundler {
             if let Some(locales) = trim.get_own_array(global_this, "locales")? {
                 self.locales = Some(trim_names_from_js(global_this, locales)?);
             }
-            self.logs = trim
-                .get_boolean_loose(global_this, "log")?
-                .unwrap_or(false);
+            self.logs = trim.get_boolean_loose(global_this, "log")?.unwrap_or(false);
             Ok(())
         }
 
@@ -1660,7 +1660,7 @@ pub(crate) mod js_bundler {
                         let expanded_entry_points = compile.aot.as_ref().and_then(|_| {
                             bun_bundler::aot::expand_entry_points(
                                 this.entry_points.keys(),
-                                bun_resolver::fs::FileSystem::get().top_level_dir,
+                                bun_resolver::fs::FileSystem::get().top_level_dir(),
                                 Some(&this.files),
                                 &mut bun_ast::Log::init(),
                             )
@@ -1906,22 +1906,28 @@ pub(crate) mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
-            let path = path_value
-                .to_bun_string(global)
-                .expect("Unexpected: path is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_bun_string(global)
-                .expect("Unexpected: namespace is not a string")
-                .to_owned_slice()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
+            let strings = path_value.to_bun_string(global).and_then(|path| {
+                let namespace = namespace_value.to_bun_string(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.to_owned_slice().into_boxed_slice(),
+                    namespace: namespace.to_owned_slice().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // Flattening a `path` or `namespace` string can still throw.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);
@@ -2040,24 +2046,21 @@ pub(crate) mod js_bundler {
             this.value = LoadValue::NoMatch;
         } else {
             let loader = api::Loader::from_raw(loader_as_int.as_int32() as u8);
-            let global = bv2_plugin(this.bv2).global_object();
-            let source_code = match crate::node::StringOrBuffer::from_js_to_owned_slice(
-                global,
+            let plugin = bv2_plugin(this.bv2);
+            this.value = match crate::node::StringOrBuffer::from_js_to_owned_slice(
+                plugin.global_object(),
                 source_code_value,
             ) {
-                Ok(s) => s,
+                Ok(source_code) => LoadValue::Success(LoadSuccess {
+                    loader: bun_ast::Loader::from_api(loader),
+                    source_code: source_code.into(),
+                }),
+                // Flattening a `contents` string can still throw.
                 Err(err) => {
-                    match err {
-                        JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown | JsError::Terminated => {}
-                    }
-                    panic!("Unexpected: source_code is not a string");
+                    let exception = plugin.global_object().take_exception(err);
+                    LoadValue::Err(plugin_msg_from_js(plugin, &this.path, exception))
                 }
             };
-            this.value = LoadValue::Success(LoadSuccess {
-                loader: bun_ast::Loader::from_api(loader),
-                source_code: source_code.into(),
-            });
         }
 
         bv2_mut(this.bv2).on_load_async(this);
@@ -2369,10 +2372,9 @@ pub(crate) use js_bundler::BunPluginTarget;
 pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
 
-/// Full `.classes.ts` payload — wraps a `webcore::Blob` plus
+/// Wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper
 /// (`m_sourcemap` WriteBarrier from `cache: true`), not here.
-#[bun_jsc::JsClass(no_constructor)]
 pub(crate) struct BuildArtifact {
     pub(crate) blob: Blob,
     pub(crate) loader: bun_ast::Loader,
@@ -2398,103 +2400,77 @@ fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
 }
 
 impl BuildArtifact {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_text(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_text(global_this, callframe)
+    pub(crate) fn text(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.text(cx)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_json(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_json(global_this, callframe)
+    pub(crate) fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.json(cx)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_array_buffer(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.blob.get_array_buffer(global_this, callframe)
+    pub(crate) fn array_buffer(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.blob.array_buffer(cx)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_slice(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    pub(crate) fn slice(
+        &self,
+        cx: &mut JsScope<'_>,
+        start: JsLocal<'_>,
+        end: JsLocal<'_>,
+        content_type: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        this.blob.get_slice(global_this, callframe)
+        self.blob.slice(cx, start, end, content_type)
     }
 
-    /// `callframe.this()` is a `JSBuildArtifact`, not a `JSBlob`, so the
-    /// cached-stream slot must be BuildArtifact's own (`values: ["stream"]` in
-    /// JSBundler.classes.ts); `Blob::get_stream` would poke `JSBlob::m_stream`.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn get_stream(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
+    /// Not `Blob::stream`, which writes `JSBlob::m_stream`: `this_value` is a `JSBuildArtifact` with its own slot.
+    pub(crate) fn stream(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        chunk_size: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        this.blob.get_stream_with_cache(
-            global_this,
-            callframe,
-            crate::generated_classes::js_BuildArtifact::stream_get_cached,
-            crate::generated_classes::js_BuildArtifact::stream_set_cached,
+        self.blob.get_stream_with_cache(
+            &cx.js_thread(),
+            this_value.to_js(),
+            chunk_size.to_js(),
+            js::stream_get_cached,
+            js::stream_set_cached,
         )
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_path(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        bun_string_jsc::create_utf8_for_js(global_this, &this.path)
+    pub(crate) fn get_path(&self) -> &[u8] {
+        &self.path
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_loader(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        match this.loader {
-            bun_ast::Loader::Base64 => Ok(global_this.common_strings().base64()),
-            loader => BunString::static_(<&'static str>::from(loader)).to_js(global_this),
+    pub(crate) fn get_loader(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        match self.loader {
+            bun_ast::Loader::Base64 => Ok(cx.global().common_strings().base64()),
+            loader => BunString::static_(<&'static str>::from(loader)).to_js(cx.global()),
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_hash(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_hash(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         use std::io::Write;
         let mut buf = [0u8; 512];
         let mut cursor = &mut buf[..];
-        write!(cursor, "{}", this.hash).expect("Unexpected");
+        write!(cursor, "{}", self.hash).expect("Unexpected");
         let written = 512 - cursor.len();
-        bun_string_jsc::create_utf8_for_js(global_this, &buf[..written])
+        bun_string_jsc::create_utf8_for_js(cx.global(), &buf[..written])
     }
 
-    pub(crate) fn get_size(this: &Self, global_object: &JSGlobalObject) -> f64 {
-        // `Blob::get_size` is `&self` post-R-2 (lazy size caches are
-        // Cell-backed inside `Blob`), so a shared borrow is sound here.
-        this.blob.get_size(global_object)
+    pub(crate) fn get_size(&self) -> f64 {
+        self.blob.get_size()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_mime_type(this: &Self, global_object: &JSGlobalObject) -> JSValue {
-        BlobExt::get_type(&this.blob, global_object)
+    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.blob.get_type(cx)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_output_kind(
-        this: &Self,
-        global_object: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        BunString::static_(<&'static str>::from(this.output_kind)).to_js(global_object)
+    pub(crate) fn get_kind(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        BunString::static_(<&'static str>::from(self.output_kind)).to_js(cx.global())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_source_map(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_sourcemap(&self, _: &JsHeap<'_>) -> JSValue {
         // The value lives in the wrapper's `m_sourcemap` WriteBarrier (seeded
         // by `on_complete`); the C++ getter returns that slot before calling
         // here, so reaching this means no sourcemap was assigned.
@@ -2601,8 +2577,7 @@ impl BuildArtifact {
                     Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>sourcemap<r>: "),
                 )?;
 
-                let sourcemap_value =
-                    crate::generated_classes::js_BuildArtifact::sourcemap_get_cached(this_value);
+                let sourcemap_value = js::sourcemap_get_cached(this_value);
                 if let Some((sm_value, sm_ptr)) =
                     sourcemap_value.and_then(|v| v.as_::<BuildArtifact>().map(|p| (v, p)))
                 {

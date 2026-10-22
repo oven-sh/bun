@@ -196,35 +196,31 @@ enum class CommonStringsForRust : uint8_t {
     fetchInclude = 8,
     buffer = 9,
     binaryTypeArrayBuffer = 10,
-    binaryTypeNodeBuffer = 11,
-    binaryTypeUint8Array = 12,
-    binaryTypeBlob = 13,
-    unknown = 14,
-    protocolHttp = 15,
-    protocolHttps = 16,
-    alpnH2 = 17,
-    alpnHttp11 = 18,
-    utf8WithDash = 19,
-    quicDatagramAbandoned = 20,
-    quicDatagramAcknowledged = 21,
-    quicDatagramLost = 22,
-    base64 = 23,
-    write = 24,
-    fetchOptionCompress = 25,
-    fetchOptionDecompress = 26,
-    fetchOptionKeepalive = 27,
-    fetchOptionMaxRedirects = 28,
-    fetchOptionProtocol = 29,
-    fetchOptionProxy = 30,
-    fetchOptionS3 = 31,
-    fetchOptionSession = 32,
-    fetchOptionTimeout = 33,
-    fetchOptionTls = 34,
-    fetchOptionUnix = 35,
-    fetchOptionVerbose = 36,
+    binaryTypeUint8Array = 11,
+    unknown = 12,
+    alpnH2 = 13,
+    alpnHttp11 = 14,
+    utf8WithDash = 15,
+    quicDatagramAbandoned = 16,
+    quicDatagramAcknowledged = 17,
+    quicDatagramLost = 18,
+    base64 = 19,
+    write = 20,
+    fetchOptionCompress = 21,
+    fetchOptionDecompress = 22,
+    fetchOptionKeepalive = 23,
+    fetchOptionMaxRedirects = 24,
+    fetchOptionProtocol = 25,
+    fetchOptionProxy = 26,
+    fetchOptionS3 = 27,
+    fetchOptionSession = 28,
+    fetchOptionTimeout = 29,
+    fetchOptionTls = 30,
+    fetchOptionUnix = 31,
+    fetchOptionVerbose = 32,
 };
 
-static JSC::JSString* toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
+static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForRust commonString)
 {
     auto& commonStrings = Bun::commonStrings(globalObject->vm());
     switch (commonString) {
@@ -250,18 +246,10 @@ static JSC::JSString* toJS(Zig::GlobalObject* globalObject, CommonStringsForRust
         return commonStrings.bufferString();
     case CommonStringsForRust::binaryTypeArrayBuffer:
         return commonStrings.binaryTypeArrayBufferString();
-    case CommonStringsForRust::binaryTypeNodeBuffer:
-        return commonStrings.binaryTypeNodeBufferString();
     case CommonStringsForRust::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString();
-    case CommonStringsForRust::binaryTypeBlob:
-        return commonStrings.binaryTypeBlobString();
     case CommonStringsForRust::unknown:
         return commonStrings.unknownString();
-    case CommonStringsForRust::protocolHttp:
-        return commonStrings.protocolHttpString();
-    case CommonStringsForRust::protocolHttps:
-        return commonStrings.protocolHttpsString();
     case CommonStringsForRust::alpnH2:
         return commonStrings.alpnH2String();
     case CommonStringsForRust::alpnHttp11:
@@ -302,8 +290,10 @@ static JSC::JSString* toJS(Zig::GlobalObject* globalObject, CommonStringsForRust
         return commonStrings.fetchOptionUnixString();
     case CommonStringsForRust::fetchOptionVerbose:
         return commonStrings.fetchOptionVerboseString();
-    default:
-        RELEASE_ASSERT_NOT_REACHED();
+    default: {
+        ASSERT_NOT_REACHED();
+        return jsUndefined();
+    }
     }
 }
 
@@ -322,7 +312,7 @@ extern "C" JSC::EncodedJSValue Bun__CommonStringsForRust__getProperty(JSC::Encod
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSObject* object = JSValue::decode(encodedObject).getObject();
     ASSERT(object);
-    auto identifier = toJS(globalObject, commonString)->toIdentifier(globalObject);
+    auto identifier = JSC::asString(toJS(globalObject, commonString))->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::getIfPropertyExistsPrototypePollutionMitigationUnsafe(vm, globalObject, object, JSC::PropertyName(identifier))));
 }

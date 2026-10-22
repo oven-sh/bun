@@ -847,6 +847,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     } // namespace WebCore
     `;
   // Handle builtin names
+  let privateNames: string[];
   {
     const BunBuiltinNamesHeader = require("fs").readFileSync(
       path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
@@ -892,6 +893,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 `;
 
     writeIfNotChanged(path.join(CODEGEN_DIR, "BunBuiltinNames+extras.h"), additionalPrivateNamesHeader);
+    privateNames = [...definedBuiltinNames, ...(additionalPrivateNames as Set<string>)];
   }
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
@@ -933,6 +935,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  return { combinedSourceCode };
+  // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
+  return { combinedSourceCode, privateNames };
 }

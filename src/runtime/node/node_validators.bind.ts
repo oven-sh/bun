@@ -1,6 +1,4 @@
-// The native functions of src/js/internal/validators.ts. One that is content answers and keeps nothing. One that refuses throws an
-// error whose message describes the value and the name it was given for the value. Their bodies are C++, beside what other C++
-// validates with: src/jsc/bindings/NodeValidatorBodies.h, and NodeValidator.cpp for where compiled code enters them.
+// The native functions of src/js/internal/validators.ts. Their bodies are C++: src/jsc/bindings/NodeValidatorBodies.h.
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
 

@@ -13,6 +13,7 @@ unsafe extern "C" {
     pub(crate) safe fn JSC__JSString__view<'a>(
         this: &'a JSString,
         global: &JSGlobalObject,
+        owner: &mut *const JSString,
     ) -> StringView<'a>;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
     safe fn JSC__JSString__length(this: &JSString) -> usize;
@@ -35,11 +36,6 @@ unsafe extern "C" {
         characters: *mut u16,
         capacity: u32,
     ) -> u32;
-    fn JSC__JSString__createLatin1(
-        global: &JSGlobalObject,
-        characters: *const u8,
-        length: u32,
-    ) -> JSValue;
     fn JSC__JSString__createUninitializedLatin1(
         global: &JSGlobalObject,
         length: u32,
@@ -88,8 +84,14 @@ impl JSString {
     /// Throws when resolving a rope runs out of memory.
     #[track_caller]
     pub fn view<'a>(&'a self, global: &JSGlobalObject) -> JsResult<JSStringView<'a>> {
-        let view = crate::call_check_slow(global, || JSC__JSString__view(self, global))?;
-        Ok(JSStringView { cell: self, view })
+        let mut owner: *const JSString = self;
+        let view =
+            crate::call_check_slow(global, || JSC__JSString__view(self, global, &mut owner))?;
+        Ok(JSStringView {
+            cell: self,
+            owner: JSString::opaque_ref(owner),
+            view,
+        })
     }
 
     pub fn iterator(&self, global_object: &JSGlobalObject, iter: &mut Iterator) {
@@ -233,24 +235,6 @@ impl JSString {
     /// `JSString::MaxLength`.
     pub const MAX_LENGTH: usize = i32::MAX as usize;
 
-    /// A new 8-bit string with a copy of `characters`, of which there are at most
-    /// [`JSString::MAX_LENGTH`]. Nothing is thrown.
-    #[inline(always)]
-    pub fn create_latin1(global: &JSGlobalObject, characters: &[u8]) -> JSValue {
-        if characters.len() < 2 {
-            // SAFETY: the characters are read during the call.
-            return unsafe {
-                JSC__JSString__createLatin1(global, characters.as_ptr(), characters.len() as u32)
-            };
-        }
-        // SAFETY: all of the characters are written.
-        unsafe {
-            Self::create_latin1_with(global, characters.len(), |to| {
-                to.copy_from_nonoverlapping(characters.as_ptr(), characters.len());
-            })
-        }
-    }
-
     /// A new 8-bit string of `length` characters (2 to [`JSString::MAX_LENGTH`]).
     ///
     /// # Safety
@@ -278,6 +262,8 @@ impl JSString {
 /// collected while its characters are in use.
 pub struct JSStringView<'a> {
     pub(crate) cell: &'a JSString,
+    /// The cell that owns the characters. It's the base string when `cell` is a substring rope.
+    pub(crate) owner: &'a JSString,
     pub(crate) view: StringView<'a>,
 }
 
@@ -308,6 +294,7 @@ impl Drop for JSStringView<'_> {
     #[inline]
     fn drop(&mut self) {
         self.cell.ensure_still_alive();
+        self.owner.ensure_still_alive();
     }
 }
 

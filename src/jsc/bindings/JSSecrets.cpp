@@ -1,6 +1,5 @@
 #include "ErrorCode.h"
 #include "root.h"
-#include "RemovableFeatures.h"
 #include "Secrets.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCJSValue.h>

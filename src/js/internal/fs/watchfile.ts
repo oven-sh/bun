@@ -15,7 +15,7 @@ function emitStop(self: StatWatcher) {
 }
 
 class StatWatcher extends EventEmitter {
-  _handle: $ZigGeneratedClasses.StatWatcher | null;
+  _handle: $Bindgen.StatWatcher | null;
 
   constructor(path: string, options: $Node.WatchFileOptions | undefined) {
     super();

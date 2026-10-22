@@ -996,7 +996,8 @@ class Exchange {
   bytesBuffered: number;
   isFrozenChunked: boolean;
   isImplicitFromEnd: boolean;
-  isDetached: boolean;
+  /** The socket the dispatcher already detached a synchronously-finished response from. */
+  detachedFrom: $Node.HttpServerSocket | null;
   isReplaying: boolean;
   isFlushScheduled: boolean;
   mustClose: boolean;
@@ -1040,7 +1041,7 @@ class Exchange {
     this.bytesBuffered = 0;
     this.isFrozenChunked = false;
     this.isImplicitFromEnd = false;
-    this.isDetached = false;
+    this.detachedFrom = null;
     this.isReplaying = false;
     this.isFlushScheduled = false;
     this.mustClose = false;
@@ -1396,6 +1397,7 @@ function storeUnexpectedHeader(
 
 function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHeaderValue): void {
   const shape = exchange.shape;
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (shape.nextName === name && shape.next !== shape) {
     const next = shape.next;
     if (typeof value === "string") {
@@ -1417,6 +1419,7 @@ function storeShapedHeader(exchange: Exchange, name: string, value: $Node.HttpHe
     exchange.shape = next;
     exchange.headerBits = next.bits;
     return;
+    // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   } else if (shape.againName === name && shape.againIndex >= 0 && typeof value === "string") {
     if (shape.checkedAgainValue !== value && isStrictlyValidValue(exchange.response, name, value)) {
       shape.checkedAgainValue = value;
@@ -1620,6 +1623,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
   const exchange = this[kExchange];
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
     const index = indexInShape(exchange.shape, field);
     if (index < 0) return this.setHeader(name, value);
@@ -1680,6 +1684,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(this: $Node.OutgoingMes
 // Returns an array of the names of the current outgoing headers.
 OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.OutgoingMessage) {
   const exchange = this[kExchange];
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return keysOf(exchange.shape).slice();
   return this[kOutHeaders] !== null ? ObjectKeys(this[kOutHeaders]) : [];
 };
@@ -1687,6 +1692,7 @@ OutgoingMessage.prototype.getHeaderNames = function getHeaderNames(this: $Node.O
 // Returns an array of the names of the current outgoing raw headers.
 OutgoingMessage.prototype.getRawHeaderNames = function getRawHeaderNames(this: $Node.OutgoingMessage) {
   const exchange = this[kExchange];
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) return namesOf(exchange.shape).slice();
   const headersMap = this[kOutHeaders];
   if (headersMap === null) return [];
@@ -1707,6 +1713,7 @@ OutgoingMessage.prototype.getHeaders = function getHeaders(this: $Node.OutgoingM
   const headers = this[kOutHeaders];
   const ret = { __proto__: null } as $Node.Dictionary<$Node.HttpHeaderValue>;
   const exchange = this[kExchange];
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (exchange !== undefined && exchange.shape !== spilledHeadersShape) {
     const keys = keysOf(exchange.shape);
     for (let index = 0; index < keys.length; index++) ret[keys[index]] = shapedValue(exchange, index);

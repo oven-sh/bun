@@ -84,9 +84,7 @@ const nativeCall =
   /\$(cpp|rust|newCppFunction|newRustFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
 const keyOf = (match: RegExpMatchArray) => `${match[1]}\t${match[3]}\t${match[5]}`;
 
-/**
- * generate-js2native.ts keeps one numbering per process: only a process's first call returns the ids of a build.
- */
+/** generate-js2native.ts keeps one numbering per process: only a process's first call returns the ids of a build. */
 export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   const transpiler = new Bun.Transpiler({ loader: "ts" });
   const seen = new Set<string>();

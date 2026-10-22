@@ -88,7 +88,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         let text = self.lx.text();
         let start = self.lx.start as usize;
         // An unterminated literal has no closing slash.
-        let close = match text.iter().rposition(|&c| c == b'/') {
+        let close = match bun_core::strings::last_index_of_char(text, b'/') {
             Some(at) if at > 0 => at,
             _ => text.len(),
         };

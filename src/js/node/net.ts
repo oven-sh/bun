@@ -71,6 +71,7 @@ type ConnectionListener = (socket: $Node.Socket) => void;
 interface ClusterFauxHandle {
   stop?: undefined;
   sharedFd?: undefined;
+  fd?: undefined;
   close(): void;
   listen(backlog: number): number;
   ref(): void;
@@ -584,7 +585,7 @@ function appendTlsKeylog(path: string, line: Uint8Array) {
 }
 let BlockList: $Node.BlockListConstructor | undefined, SocketAddress: $Node.SocketAddressConstructor | undefined;
 function lazyBlockList(): $Node.BlockListConstructor {
-  return (BlockList ??= $rust("node_net_binding.rs", "BlockList") as $Node.BlockListConstructor);
+  return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor);
 }
 const newDetachedSocket: (isSSL: boolean) => SocketHandle = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
 const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) => Promise<unknown> = $newRustFunction(
@@ -593,10 +594,11 @@ const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) =>
   2,
 );
 
-const addServerName: (listener: ListenerHandle, hostname: string, tls: unknown) => void = $bindgen(
-  "Listener.bind.ts",
-  "addServerName",
-);
+const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
+  listener: ListenerHandle,
+  hostname: string,
+  tls: unknown,
+) => void;
 // The second part: what the duplex's 'data', 'end', 'drain' and 'close' events are to call.
 const upgradeDuplexToTLS: (
   duplex: $Node.Duplex,
@@ -604,10 +606,10 @@ const upgradeDuplexToTLS: (
 ) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] =
   $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
-const upgradeTLSDeferred: (
+const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred") as unknown as (
   socket: SocketHandle,
   options: $Node.TLSUpgradeOptions<$Node.Socket | ConnectData>,
-) => [raw: SocketHandle, tls: SocketHandle] | undefined = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred");
+) => [raw: SocketHandle, tls: SocketHandle] | undefined;
 const checkServerIdentityInHandshake: (socket: SocketHandle, inHandshake: boolean) => void = $bindgen(
   "socket_body.bind.ts",
   "checkServerIdentityInHandshake",
@@ -764,6 +766,14 @@ function failWriteWith(self: $Node.Socket, er: Error, callback: WriteCallback | 
       self.destroy();
     }
   }
+}
+// No drain comes from a handle that has closed. Node cancels the write that waits for one after 'error' and before 'close'.
+function cancelPendingWriteNT(self: $Node.Socket) {
+  const callback = self[kwriteCallback];
+  if (!callback || !self[kclosed]) return;
+  self._pendingData = self[kwriteCallback] = null;
+  const reason = self.encrypted ? "Canceled because of SSL destruction" : undefined;
+  callback(new ErrnoException(uv().UV_ECANCELED, "write", reason));
 }
 // Node's errnoException(status, 'write') for the negative errno $write returns.
 function writeErrnoException(negErrno: number) {
@@ -2926,9 +2936,11 @@ Socket.prototype._destroy = function _destroy(this: $Node.Socket, err: Error | n
     }
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
+    if (this[kwriteCallback]) process.nextTick(cancelPendingWriteNT, this);
     const transport = transportToDestroy(this);
     if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
@@ -4973,18 +4985,24 @@ function closeSocketHandle(self: $Node.Socket, handle: SocketHandle, isException
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   (handle[kAdoptedTLSRaw] as $Node.Socket | undefined)?.destroy();
   handle.close(onSocketHandleClosed);
-  setImmediate(() => {
-    $debug("emit close", isCleanupPending);
-    self.emit("close", isException);
-    if (isCleanupPending) {
-      // self._handle may have been detached or replaced since.
-      handle.onread = noop;
-      if (self._handle === handle) {
-        self._handle = null;
-        self._sockname = null;
-      }
-    }
-  });
+  // Arguments instead of a closure, so no scope keeps the closed handle alive.
+  if (isCleanupPending) setImmediate(emitCloseAndDetachHandle, self, isException, handle);
+  else setImmediate(emitClose, self, isException);
+}
+
+function emitClose(self: $Node.Socket, isException: boolean) {
+  $debug("emit close");
+  self.emit("close", isException);
+}
+
+function emitCloseAndDetachHandle(self: $Node.Socket, isException: boolean, handle: SocketHandle) {
+  emitClose(self, isException);
+  // self._handle may have been detached or replaced since.
+  handle.onread = noop;
+  if (self._handle === handle) {
+    self._handle = null;
+    self._sockname = null;
+  }
 }
 
 // Reformat a native listen error to Node's "listen <CODE>: <description> <addr>"
@@ -5109,7 +5127,10 @@ const netExports: NetModule = {
     Object.defineProperty(netExports, "BlockList", { value, writable: true, enumerable: true, configurable: true });
   },
   get SocketAddress() {
-    return (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress") as $Node.SocketAddressConstructor);
+    return (SocketAddress ??= $bindgen(
+      "SocketAddress.bind.ts",
+      "SocketAddress",
+    ) as unknown as $Node.SocketAddressConstructor);
   },
   set SocketAddress(value) {
     Object.defineProperty(netExports, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });

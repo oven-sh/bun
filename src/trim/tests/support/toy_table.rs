@@ -90,7 +90,10 @@ pub(crate) fn encode_table(table: &ToyTable) -> Vec<u8> {
     bytes.resize(bytes.len().next_multiple_of(4), 0);
     let byte_length = bytes.len() as u32;
     bytes[12..16].copy_from_slice(&byte_length.to_le_bytes());
-    assert!(bytes.len() as u64 <= TABLE_ROOM, "the toy table does not fit its room");
+    assert!(
+        bytes.len() as u64 <= TABLE_ROOM,
+        "the toy table does not fit its room"
+    );
     bytes
 }
 
@@ -164,7 +167,11 @@ fn encode_icu_packages(table: &ToyTable, base_address: u64) -> (Records, Records
         let start = (package.range.start - base_address) as u32;
         let size = package.range.len() as u32;
         let run_count = package.runs.len() as u32;
-        packages.add(&[start, size, first_run, run_count].map(u32::to_le_bytes).concat());
+        packages.add(
+            &[start, size, first_run, run_count]
+                .map(u32::to_le_bytes)
+                .concat(),
+        );
     }
     (packages, runs)
 }
@@ -247,7 +254,7 @@ pub(crate) fn find_icu_item(package: &[u8], name: &str) -> Option<usize> {
     (0..count).find_map(|index| {
         let entry = ICU_HEADER_BYTES + 4 + ICU_ENTRY_BYTES * index;
         let name_start = ICU_HEADER_BYTES + icu_word(package, entry)? as usize;
-        let entry_name = package.get(name_start..)?.split(|byte| *byte == 0).next()?;
+        let entry_name = bun_core::strings::split(package.get(name_start..)?, b"\0").next()?;
         (entry_name == name.as_bytes())
             .then(|| icu_word(package, entry + 4).map(|offset| ICU_HEADER_BYTES + offset as usize))
             .flatten()

@@ -273,6 +273,7 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_runtime: "all",
   bun_sema: ["compressed/src/sema/"],
   bun_semver_jsc: ["generated_bindgen_bun_semver_jsc.rs"],
+  bun_sql_jsc: ["generated_bindgen_bun_sql_jsc.rs"],
 };
 
 function generatedFilesOf(packageName: string): string[] | "all" {

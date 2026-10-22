@@ -340,7 +340,7 @@ function deserialize(value) {
     const envelope = jsc.deserialize(Uint8ArrayPrototypeSubarray.$call(view, kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);
   }
-  return jsc.deserialize(value);
+  return jsc.deserialize(value as ArrayBuffer);
 }
 function takeCoverage() {
   notimpl("takeCoverage");

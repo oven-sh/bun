@@ -1,5 +1,4 @@
 #include "config.h"
-#include "RemovableFeatures.h"
 #include "JSCompressionStream.h"
 
 #include "DOMClientIsoSubspaces.h"

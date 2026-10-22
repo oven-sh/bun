@@ -74,10 +74,7 @@ const disposeMethodLookup = (name: string, uses: readonly b.UseSpec[]) =>
 
 const ownProperties = ["ObjectFields", "ShapeWords", "OrderWords", "NamedProperties", "Elements", "ArrayStorage"] as const;
 
-// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its
-// call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its
-// description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the
-// target as it stands: no object describes it on the way. It is handed the source too, which says what the target gets.
+// Object.defineProperties(target, Object.getOwnPropertyDescriptors(source)) where the call alone has the descriptors, in two halves, each where its call stood: an error comes from where it came from. describeUnlessOrdinary converts and refuses the source, and does what somebody may see of its description. definePropertiesFrom takes what that answers, refuses what is no target, and defines each own property of an ordinary source on the target as it stands: no object describes it on the way.
 const definitionFrom = {
   args: { target: b.any, described: b.object, source: b.any },
   returns: b.operand("target"),
@@ -140,11 +137,7 @@ const listOfPlainQuery = (symbol: string, element: b.TableType) =>
     },
   }) satisfies b.FunctionField;
 
-// view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there is not made: what travels in its place is the
-// view and where the range starts. startOfRangeOfBytes stands where the call stood and answers the start for bytes of a fixed length that give an
-// ordinary Uint8Array, and -1 for everything else. viewOrRangeOfBytes stands there too: it hands the view on, or makes the call where the start is -1,
-// so an error comes from where it came from. encodeIntoRangeOfBytes writes behind the start. rangeOfBytes makes the range for whoever else wants to
-// see it, as it would be by then: nothing but a transfer of the buffer can have changed such bytes.
+// view.subarray(begin) that goes into encoder.encodeInto(text, ..) and nowhere else on its way there is not made: what travels in its place is the view and where the range starts. startOfRangeOfBytes stands where the call stood and answers the start for bytes of a fixed length that give an ordinary Uint8Array, and -1 for everything else. viewOrRangeOfBytes stands there too: it hands the view on, or makes the call where the start is -1, so an error comes from where it came from. encodeIntoRangeOfBytes writes behind the start. rangeOfBytes makes the range for whoever else wants to see it, as it would be by then: nothing but a transfer of the buffer can have changed such bytes.
 const startOfRange = b.int(-1, 2 ** 31 - 1);
 const storageOfBytes = ["TypedArrayStorage"] as const;
 const anyView = b.union(b.instance("TypedArray"), b.instance("DataView"));
@@ -230,8 +223,7 @@ export default b.declarations(
     scanPlainURLWithPlainBase: scanOfText("AOT__scanPlainURLWithPlainBase", -1, { text: b.string }, [value]),
     scanPlainURLWithBase: scanOfText("AOT__scanPlainURLWithBase", -1, { text: b.string, base: b.any }, [value, value]),
     findPlainQueryValue: scanOfText("AOT__findPlainQueryValue", -2, { text: b.string, offsets: b.any, name: b.any }, [value, value, value]),
-    // Object.entries(object) for a loop that takes each pair apart at once: the keys and values one behind the other in one list. It lists them
-    // at the same moment and in the same way.
+    // Object.entries(object) for a loop that takes each pair apart at once: the keys and values one behind the other in one list.
     ownEntriesFlat: {
       args: { object: b.any },
       returns: b.instance("Array").fresh.dense,

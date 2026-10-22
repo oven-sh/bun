@@ -11,8 +11,7 @@ function namesPlainData(type: ModelType): boolean {
   return type.parts.some(part => part.part === "Instance" && part.contents.some(held => namesPlainData(held.type)));
 }
 
-// "New plain data" says what a call makes: new objects and arrays that hold each other and primitives. Of an operand no type says it: an object literal may have a getter,
-// and its fields and the elements of an array may hold anything. So no call is proven to pass plain data, and an overload that asks for it would never be chosen.
+// "New plain data" says what a call makes: new objects and arrays that hold each other and primitives.
 export function checkOperandTypes({ overloads }: Pick<TableModel, "overloads">, problems: Problems): void {
   for (const overload of overloads) {
     for (const { operand, accepted, converted, refused } of operandsOf(overload)) {

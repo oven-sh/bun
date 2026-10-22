@@ -1568,6 +1568,7 @@ class Interface extends (InterfaceConstructor as unknown as new (
           this[kMoveDownOrHistoryNext]();
           break;
 
+        // @ts-expect-error falls through
         case "tab":
           // If tab completion enabled, do that...
           if (typeof this.completer === "function" && this.isCompletionEnabled) {

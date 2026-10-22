@@ -17,18 +17,20 @@ const MIMALLOC_COMMIT = "92ef6587c57b262f6e6abf513f7776a2f8d12aeb";
 export const mimalloc: Dependency = {
   name: "mimalloc",
   versionMacro: "MIMALLOC",
-  patches: [
-    "patches/mimalloc/hand-out-last-freed.patch",
-    "patches/mimalloc/hand-out-resident-slices.patch",
-    "patches/mimalloc/secure-guard-pages-are-protected.patch",
-    "patches/mimalloc/out-of-memory-is-no-corruption.patch",
-  ],
 
   source: () => ({
     kind: "github-archive",
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),
+
+  patches: [
+    "patches/mimalloc/new-oom-hook.patch",
+    "patches/mimalloc/hand-out-last-freed.patch",
+    "patches/mimalloc/hand-out-resident-slices.patch",
+    "patches/mimalloc/secure-guard-pages-are-protected.patch",
+    "patches/mimalloc/out-of-memory-is-no-corruption.patch",
+  ],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
@@ -122,7 +124,12 @@ export const mimalloc: Dependency = {
       cflags.push(cfg.abi === "musl" ? "-ftls-model=local-dynamic" : "-ftls-model=initial-exec");
     }
 
-    if (override) cflags.push("-fno-builtin-malloc");
+    if (override) {
+      cflags.push("-fno-builtin-malloc");
+      // mimalloc also implements `operator new` here. See patches/mimalloc/new-oom-hook.patch.
+      // The value is a function name, and a `defines` entry would quote it.
+      cflags.push("-DMI_NEW_OOM=Bun__outOfMemory");
+    }
 
     // ─── Windows: silence the vendored-C-as-C++ warning flood ───
     // lang:"c++" means .c compiles as C++; clang-cl then complains about

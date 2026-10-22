@@ -607,8 +607,8 @@ inspect.custom = customInspectSymbol;
 
 /** The two accessors defined below. */
 declare namespace inspect {
-  let defaultOptions: typeof inspectDefaultOptions;
-  let replDefaults: typeof inspectReplDefaults;
+  export let defaultOptions: typeof inspectDefaultOptions;
+  export let replDefaults: typeof inspectReplDefaults;
 }
 
 ObjectDefineProperty(inspect, "defaultOptions", {
@@ -818,7 +818,7 @@ function strEscape(str: string) {
 
 declare namespace highlightRegExp {
   /** The palette for group depth. Users may replace it. */
-  let colors: string[];
+  export let colors: string[];
 }
 
 function highlightRegExp(regexpString: string) {

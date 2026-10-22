@@ -170,11 +170,14 @@ impl TableOfContents {
         for index in 0..self.count {
             let data_offset = self.data_offset(package, index)?;
             let name_offset = self.name_offset(package, index)?;
-            if data_offset < previous_data_offset || name_offset < entries_size || name_offset >= limit {
+            if data_offset < previous_data_offset
+                || name_offset < entries_size
+                || name_offset >= limit
+            {
                 return None;
             }
             let name = package.get(self.start + name_offset as usize..)?;
-            if !name.contains(&0) {
+            if !bun_core::strings::contains_char(name, 0) {
                 return None;
             }
             previous_data_offset = data_offset;
@@ -183,7 +186,10 @@ impl TableOfContents {
     }
 
     fn find_owned_extent(&self, package: &[u8], span: &Range<u32>) -> Option<Range<u32>> {
-        let preceding_start = span.start.checked_sub(1).and_then(|index| self.item_start(package, index));
+        let preceding_start = span
+            .start
+            .checked_sub(1)
+            .and_then(|index| self.item_start(package, index));
         let first_owned = span
             .clone()
             .find(|&index| self.item_start(package, index) != preceding_start)
@@ -191,7 +197,11 @@ impl TableOfContents {
         Some(self.item_start(package, first_owned)?..self.item_start(package, span.end)?)
     }
 
-    fn find_dead_ranges(&self, package: &[u8], removed_spans: &[Range<u32>]) -> Option<Vec<Range<u32>>> {
+    fn find_dead_ranges(
+        &self,
+        package: &[u8],
+        removed_spans: &[Range<u32>],
+    ) -> Option<Vec<Range<u32>>> {
         let mut dead_ranges = Vec::with_capacity(removed_spans.len());
         for span in removed_spans {
             let extent = self.find_owned_extent(package, span)?;
@@ -229,7 +239,10 @@ impl TableOfContents {
     fn find_dead_names(&self, package: &[u8], removed_spans: &[Range<u32>]) -> Option<Vec<u32>> {
         let mut dead_names = Vec::new();
         for span in removed_spans {
-            let retained_before = span.start.checked_sub(1).and_then(|index| self.name_offset(package, index));
+            let retained_before = span
+                .start
+                .checked_sub(1)
+                .and_then(|index| self.name_offset(package, index));
             let retained_after = self.name_offset(package, span.end);
             for index in span.clone() {
                 let name_offset = self.name_offset(package, index)?;
@@ -271,7 +284,10 @@ fn compact_entries(package: &mut [u8], removal: &PlannedRemoval) {
     };
     let mut retained_count = first_span.start;
     for (index, span) in removal.removed_spans.iter().enumerate() {
-        let next_start = removal.removed_spans.get(index + 1).map_or(table.count, |next| next.start);
+        let next_start = removal
+            .removed_spans
+            .get(index + 1)
+            .map_or(table.count, |next| next.start);
         package.copy_within(
             table.entry_position(span.end)..table.entry_position(next_start),
             table.entry_position(retained_count),
@@ -318,14 +334,23 @@ pub(crate) mod tests {
         let mut bodies = Vec::new();
         for (index, (_, size)) in items.iter().enumerate() {
             let padding = (16 - at % 16) % 16;
-            put_u32(&mut entries, COUNT_SIZE + index * ENTRY_SIZE + DATA_OFFSET_FIELD, (at + padding) as u32);
+            put_u32(
+                &mut entries,
+                COUNT_SIZE + index * ENTRY_SIZE + DATA_OFFSET_FIELD,
+                (at + padding) as u32,
+            );
             bodies.resize(bodies.len() + padding + size, 0xaa);
             at += padding + size;
         }
         [header, entries, names, bodies].concat()
     }
 
-    fn compare_after_prefix(package: &[u8], left: &[u8], right_at: usize, prefix_length: &mut usize) -> i32 {
+    fn compare_after_prefix(
+        package: &[u8],
+        left: &[u8],
+        right_at: usize,
+        prefix_length: &mut usize,
+    ) -> i32 {
         loop {
             let left_byte = i32::from(left.get(*prefix_length).copied().unwrap_or(0));
             let right_byte = i32::from(package[right_at + *prefix_length]);
@@ -340,7 +365,8 @@ pub(crate) mod tests {
     fn lookup(package: &[u8], name: &str) -> Option<usize> {
         let table = read_table_of_contents(package)?;
         let name = name.as_bytes();
-        let name_at = |index: u32| table.start + table.name_offset(package, index).unwrap() as usize;
+        let name_at =
+            |index: u32| table.start + table.name_offset(package, index).unwrap() as usize;
         let found = |index: u32| Some(table.item_start(package, index).unwrap() as usize);
         if table.count == 0 {
             return None;
@@ -360,7 +386,8 @@ pub(crate) mod tests {
         while start < limit {
             let index = (start + limit) / 2;
             let mut prefix_length = start_prefix_length.min(limit_prefix_length);
-            let comparison = compare_after_prefix(package, name, name_at(index), &mut prefix_length);
+            let comparison =
+                compare_after_prefix(package, name, name_at(index), &mut prefix_length);
             if comparison < 0 {
                 limit = index;
                 limit_prefix_length = prefix_length;
@@ -376,13 +403,15 @@ pub(crate) mod tests {
 
     fn item_starts(package: &[u8]) -> Vec<u32> {
         let table = read_table_of_contents(package).unwrap();
-        (0..=table.count).map(|index| table.item_start(package, index).unwrap()).collect()
+        (0..=table.count)
+            .map(|index| table.item_start(package, index).unwrap())
+            .collect()
     }
 
     fn name_range(package: &[u8], index: u32) -> Range<usize> {
         let table = read_table_of_contents(package).unwrap();
         let start = table.start + table.name_offset(package, index).unwrap() as usize;
-        let length = package[start..].iter().position(|byte| *byte == 0).unwrap();
+        let length = bun_core::strings::index_of_char_usize(&package[start..], 0).unwrap();
         start..start + length + 1
     }
 
@@ -407,7 +436,11 @@ pub(crate) mod tests {
 
     fn check_lookups(package: &[u8], starts: &[u32], expected_items: [Option<usize>; 5]) {
         for ((name, _), expected_item) in FIVE_ITEMS.iter().zip(expected_items) {
-            assert_eq!(lookup(package, name), expected_item.map(|item| starts[item] as usize), "{name}");
+            assert_eq!(
+                lookup(package, name),
+                expected_item.map(|item| starts[item] as usize),
+                "{name}"
+            );
         }
     }
 
@@ -415,7 +448,11 @@ pub(crate) mod tests {
         start as usize..start as usize + TOMBSTONE.len()
     }
 
-    fn check_malformed(package: &[u8], removed_items: &[Range<u32>], tombstoned_items: &[Range<u32>]) {
+    fn check_malformed(
+        package: &[u8],
+        removed_items: &[Range<u32>],
+        tombstoned_items: &[Range<u32>],
+    ) {
         let mut edited = package.to_vec();
         let result = remove_items(&mut edited, removed_items, tombstoned_items);
         assert!(matches!(result, Err(TrimInternalError::MalformedIcuData)));
@@ -441,8 +478,15 @@ pub(crate) mod tests {
             let name = name_range(&before, index);
             assert!(package[name].iter().all(|byte| *byte == 0));
         }
-        assert!(package[name_field(3)..name_field(5)].iter().all(|byte| *byte == 0));
-        assert_eq!(package[name_range(&before, 0)], before[name_range(&before, 0)]);
+        assert!(
+            package[name_field(3)..name_field(5)]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
+        assert_eq!(
+            package[name_range(&before, 0)],
+            before[name_range(&before, 0)]
+        );
     }
 
     #[test]
@@ -450,7 +494,10 @@ pub(crate) mod tests {
         let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
         let mut package = before.clone();
         let starts = item_starts(&before);
-        assert_eq!(remove_items(&mut package, &[0..1], &[]).unwrap(), vec![starts[0]..starts[1]]);
+        assert_eq!(
+            remove_items(&mut package, &[0..1], &[]).unwrap(),
+            vec![starts[0]..starts[1]]
+        );
         check_retained(&package, &before, &[1, 2, 3, 4]);
     }
 
@@ -472,7 +519,11 @@ pub(crate) mod tests {
         let dead_ranges = remove_items(&mut package, &[0..5], &[]).unwrap();
         assert_eq!(dead_ranges, vec![starts[0]..before.len() as u32]);
         check_retained(&package, &before, &[]);
-        assert!(package[name_field(0)..name_field(5)].iter().all(|byte| *byte == 0));
+        assert!(
+            package[name_field(0)..name_field(5)]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 
     #[test]
@@ -483,7 +534,11 @@ pub(crate) mod tests {
         let dead_ranges = remove_items(&mut package, &[0..1, 2..3, 4..5], &[]).unwrap();
         assert_eq!(
             dead_ranges,
-            vec![starts[0]..starts[1], starts[2]..starts[3], starts[4]..before.len() as u32]
+            vec![
+                starts[0]..starts[1],
+                starts[2]..starts[3],
+                starts[4]..before.len() as u32
+            ]
         );
         check_retained(&package, &before, &[1, 3]);
     }
@@ -493,7 +548,10 @@ pub(crate) mod tests {
         let before = package_of(&FIVE_ITEMS, HEADER_SIZE);
         let mut package = before.clone();
         let starts = item_starts(&before);
-        assert_eq!(remove_items(&mut package, &[0..1, 1..2], &[]).unwrap(), vec![starts[0]..starts[2]]);
+        assert_eq!(
+            remove_items(&mut package, &[0..1, 1..2], &[]).unwrap(),
+            vec![starts[0]..starts[2]]
+        );
         check_retained(&package, &before, &[2, 3, 4]);
     }
 
@@ -503,7 +561,10 @@ pub(crate) mod tests {
             let before = package_of(&FIVE_ITEMS, header_size);
             let mut package = before.clone();
             let starts = item_starts(&before);
-            assert_eq!(remove_items(&mut package, &[1..2], &[]).unwrap(), vec![starts[1]..starts[2]]);
+            assert_eq!(
+                remove_items(&mut package, &[1..2], &[]).unwrap(),
+                vec![starts[1]..starts[2]]
+            );
             assert_eq!(lookup(&package, "coll/b"), None);
             assert_eq!(lookup(&package, "curr/c"), Some(starts[2] as usize));
             assert_eq!(package[starts[0] as usize..], before[starts[0] as usize..]);
@@ -534,7 +595,10 @@ pub(crate) mod tests {
         assert_eq!(lookup(&package, "c"), Some(starts[2] as usize));
 
         let mut package = before.clone();
-        assert_eq!(remove_items(&mut package, &[1..3], &[]).unwrap(), vec![starts[2]..before.len() as u32]);
+        assert_eq!(
+            remove_items(&mut package, &[1..3], &[]).unwrap(),
+            vec![starts[2]..before.len() as u32]
+        );
         assert_eq!(lookup(&package, "a"), Some(starts[0] as usize));
         assert_eq!(lookup(&package, "c"), None);
     }
@@ -557,11 +621,18 @@ pub(crate) mod tests {
         put_u32(&mut before, name_field(1), name_offset);
         let mut package = before.clone();
         remove_items(&mut package, &[0..1], &[]).unwrap();
-        assert_eq!(package[name_range(&before, 0)], before[name_range(&before, 0)]);
+        assert_eq!(
+            package[name_range(&before, 0)],
+            before[name_range(&before, 0)]
+        );
 
         let mut package = before.clone();
         remove_items(&mut package, &[0..2], &[]).unwrap();
-        assert!(package[name_range(&before, 0)].iter().all(|byte| *byte == 0));
+        assert!(
+            package[name_range(&before, 0)]
+                .iter()
+                .all(|byte| *byte == 0)
+        );
     }
 
     #[test]
@@ -580,7 +651,11 @@ pub(crate) mod tests {
         let dead_ranges = remove_items(&mut package, &[], &[1..2, 2..3]).unwrap();
         assert_eq!(dead_ranges, vec![starts[1] + TOMBSTONE_SIZE..starts[3]]);
         assert_eq!(u32_at(&package, HEADER_SIZE), Some(5));
-        check_lookups(&package, &starts, [Some(0), Some(1), Some(1), Some(3), Some(4)]);
+        check_lookups(
+            &package,
+            &starts,
+            [Some(0), Some(1), Some(1), Some(3), Some(4)],
+        );
         assert_eq!(package[tombstone_range(starts[1])], TOMBSTONE);
         let names = name_field(5)..starts[0] as usize;
         assert_eq!(package[names.clone()], before[names]);
@@ -593,7 +668,10 @@ pub(crate) mod tests {
 
         let mut package = before.clone();
         let dead_ranges = remove_items(&mut package, &[], &[4..5]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[4] + TOMBSTONE_SIZE..before.len() as u32]);
+        assert_eq!(
+            dead_ranges,
+            vec![starts[4] + TOMBSTONE_SIZE..before.len() as u32]
+        );
         assert_eq!(package[tombstone_range(starts[4])], TOMBSTONE);
 
         let mut package = before.clone();
@@ -619,16 +697,27 @@ pub(crate) mod tests {
 
         let mut package = before.clone();
         let dead_ranges = remove_items(&mut package, &[1..2], &[2..4]).unwrap();
-        assert_eq!(dead_ranges, vec![starts[1]..starts[2], starts[2] + TOMBSTONE_SIZE..starts[4]]);
+        assert_eq!(
+            dead_ranges,
+            vec![starts[1]..starts[2], starts[2] + TOMBSTONE_SIZE..starts[4]]
+        );
         assert_eq!(u32_at(&package, HEADER_SIZE), Some(4));
-        check_lookups(&package, &starts, [Some(0), None, Some(2), Some(2), Some(4)]);
+        check_lookups(
+            &package,
+            &starts,
+            [Some(0), None, Some(2), Some(2), Some(4)],
+        );
         assert_eq!(package[tombstone_range(starts[2])], TOMBSTONE);
 
         let mut package = before.clone();
         let dead_ranges = remove_items(&mut package, &[3..4], &[1..3]).unwrap();
         assert_eq!(dead_ranges, vec![starts[1] + TOMBSTONE_SIZE..starts[4]]);
         assert_eq!(u32_at(&package, HEADER_SIZE), Some(4));
-        check_lookups(&package, &starts, [Some(0), Some(1), Some(1), None, Some(4)]);
+        check_lookups(
+            &package,
+            &starts,
+            [Some(0), Some(1), Some(1), None, Some(4)],
+        );
         assert_eq!(package[tombstone_range(starts[1])], TOMBSTONE);
     }
 

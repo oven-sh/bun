@@ -291,8 +291,7 @@ const eventTargetSources = [
 
 const nodeCryptoBinding = ["native:Cpp:node_crypto_binding.cpp:createNodeCryptoBinding"];
 
-// The run time reports a promise that is rejected without a handler, and one that gets its handler afterwards. No built-in
-// is called at that moment: a program reaches it once it has a promise.
+// The run time reports a promise that is rejected without a handler, and one that gets its handler afterwards.
 const promises = ["Promise"];
 
 // The overload for a delay that fits a timer says that it runs no code.
@@ -559,8 +558,8 @@ const nativeCalls = [
       { file: inBindings("JSEnvironmentVariableMap.cpp") },
       { file: inBindings("JSEnvironmentVariableMap.h") },
       { file: inBindings("JSPropertyIterator.cpp") },
-      { file: inBindings("ZigGlobalObject.cpp") },
-      { file: inBindings("ZigGlobalObject.h"), times: 2 },
+      { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
+      { file: inBindings("ZigGlobalObject.h") },
       { file: inBindings("webcore/JSWorker.cpp") },
     ],
     callers: [
@@ -591,9 +590,7 @@ const nativeCalls = [
   }),
 ];
 
-// Whoever names it calls `inspect` of a start-up module: the host where it calls the custom inspect method of an operand,
-// the prompt, which no executable has, and the method by which a class of the host prints itself. Each such method is
-// installed under the one name that b.startup lists, and flow goes by a read under that name.
+// Whoever names it calls `inspect` of a start-up module: the host where it calls the custom inspect method of an operand, the prompt, which no executable has, and the method by which a class of the host prints itself.
 const callsOfInspect = b.nativeCalls({
   through: ["utilInspectFunction"],
   calls: [],
@@ -612,8 +609,7 @@ const callsOfInspect = b.nativeCalls({
 
 const customInspect = "@@@nodejs.util.inspect.custom";
 
-// Stands for the native code behind a call that nothing describes: a native binding without a signature, an overload
-// without a declaration.
+// Stands for the native code behind a call that nothing describes: a native binding without a signature, an overload without a declaration.
 const undeclaredNativeCode = "%UndeclaredNativeCode%";
 
 export default b.declarations(
@@ -627,16 +623,13 @@ export default b.declarations(
       ? b.extend(user, { callsFunctions: channelFunctions })
       : b.extend(user.path, { callsFunctions: channelFunctions.map(called => ({ function: called, when: user.when })) }),
   ),
-  // JSEnvironmentVariableMap.cpp. Native code defines a string for each variable, under a name or an index, and nothing else that a program can read. put, putByIndex and
-  // defineOwnProperty make a string of whatever comes (coerceEnvValue) and refuse an accessor, so the object never holds anything but strings. On Windows a proxy of the
-  // library stands before such an object and does the same.
+  // JSEnvironmentVariableMap.cpp: the object never holds anything but strings, whatever is stored.
   b.hostObject(environmentCell, { otherNames: b.string, keepsStringsOfStoredValues: true }),
   // BunProcess.cpp constructVersions, constructProcessReleaseObject, constructFeatures: ordinary objects. Which versions and features there are differs between platforms and builds.
   b.hostObject(versionsCell, { otherNames: b.string }),
   b.hostObject(releaseCell, { fields: { name: b.string, sourceUrl: b.string, headersUrl: b.string } }),
   b.hostObject(featuresCell, { otherNames: [b.bool, b.string] }),
-  // `$asyncContext`. Its field holds the frame of AsyncLocalStorage that is current, undefined from the start. Native code takes the frame
-  // out when it is handed a callback and puts it back around the call.
+  // `$asyncContext`: its field holds the frame of AsyncLocalStorage that is current, undefined from the start.
   b.hostObject(asyncContextCell, { prototype: null, internalFields: { 0: [b.inspectedByHost] } }),
   b.hostObject(nextTickQueueCell, {
     prototype: null,
@@ -648,8 +641,7 @@ export default b.declarations(
     throws: true,
     implementation: b.hostCall,
   }),
-  // Process::emitWarning makes an Error and defines the name, and the code and the detail where it has them. The warning about a rejection
-  // that nobody handles has the `stack` of what the promise was rejected with, whatever that is.
+  // Process::emitWarning makes an Error and defines the name, and the code and the detail where it has them.
   b.hostObject(madeWarningsCell, {
     prototype: "Error.prototype",
     fields: {
@@ -729,8 +721,7 @@ export default b.declarations(
     },
   }),
   b.namedMemberCall(customInspect, [b.f64, b.nativeCell(inspectOptionsCell), b.nativeCell(inspectCell)]),
-  // ConsoleObject.rs print_to_json and the printer of FormData: the formatter passes nothing. (JSON.stringify, which passes the key, has a protocol of its own.)
-  // The toISOString that Date.prototype.toJSON then calls has its row beside Date, in date.builtins.ts.
+  // ConsoleObject.rs print_to_json and the printer of FormData: the formatter passes nothing.
   b.namedMemberCall("toJSON", []),
   // It prints an object that it makes, or a string, with a copy of the options that it was called with.
   b.hostMethodCall(customInspect, inspectCell, {

@@ -1,8 +1,6 @@
 import * as b from "bun-builtins-table";
 
-// Machine code is native code and no text that nobody has seen. An N-API addon holds, calls and changes what it is handed, and reads and calls globals by name.
-// What bun:ffi loads gets numbers, pointers and the closures that it is handed, and holds and calls those. Neither defines a function of JavaScript,
-// and a script that an addon runs goes through the evaluator, which the run time refuses like any other in an image whose build saw no application of one.
+// Machine code is native code and no text that nobody has seen.
 const machineCodeLoaders = [
   "Bun.FFI",
   "bun:ffi.CFunction",
@@ -45,7 +43,6 @@ const unseenCodeEntries = [
 ];
 
 // A worker has a heap of its own and starts with an entry point of the build: the loader of its realm refuses everything else.
-// The debugger starts only in a build that admitted it, and such a build is open as a whole.
 const seenCodeEntries = [
   ...machineCodeLoaders,
   "%NodeVMBinding%.createContext",
@@ -325,6 +322,7 @@ const nativeFiles = [
 export default b.declarations(
   unseenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: true })),
   seenCodeEntries.flatMap(path => b.extend(path, { runsUnseenCode: false })),
+  b.extend("Bun.serve", { runsUnseenCode: b.whenOperandHasProperty("options", "app") }),
   b.seenCodeOnly({
     holders: [...hostObjects, ...classesWithConstructor, ...prototypesWithoutConstructor, ...moduleNamespaces],
     nativeFiles,

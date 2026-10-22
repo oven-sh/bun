@@ -214,7 +214,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarParameterList`
-    pub(super) fn check_grammar_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
+    fn check_grammar_parameter_list(&mut self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let f = &hir[func];
         // `is_erased_syntax`, for the errors on a token.
@@ -265,7 +265,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarArrowFunction`
-    pub(super) fn check_grammar_arrow_function(&mut self, file: FileId, func: FnId) -> bool {
+    fn check_grammar_arrow_function(&mut self, file: FileId, func: FnId) -> bool {
         let hir = self.hir(file);
         let (text, f) = (&hir.text[..], &hir[func]);
         if f.kind != FnKind::Arrow {
@@ -291,7 +291,7 @@ impl Checker<'_, '_> {
 
     /// `checkGrammarForUseStrictSimpleParameterList`, for nodes that satisfy
     /// `IsFunctionLikeDeclaration`.
-    pub(super) fn check_grammar_for_use_strict_simple_parameter_list(
+    fn check_grammar_for_use_strict_simple_parameter_list(
         &mut self,
         file: FileId,
         func: FnId,

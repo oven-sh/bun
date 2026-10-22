@@ -65,6 +65,14 @@ const versionDefaults = {
 };
 
 /**
+ * Returns the `process.versions.webkit` string for `webkitVersion`. A tag
+ * becomes the bare sha and a preview becomes `preview-pr-<N>-<sha8>`.
+ */
+export function webkitVersionName(webkitVersion: string): string {
+  return webkitVersion.startsWith("autobuild-") ? webkitVersion.slice("autobuild-".length) : webkitVersion;
+}
+
+/**
  * The full resolved build configuration. Every field is concrete — no
  * undefined-because-it-depends-on-something-else. This is the single source
  * of truth passed to every build function.
@@ -126,11 +134,6 @@ export interface Config {
    */
   trimmable: boolean;
   /**
-   * Linux: a position-independent executable with full RELRO, eager binding and code in pages of its own. Defines
-   * BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
-   */
-  hardened: boolean;
-  /**
    * Linux with glibc: the relative relocations of the executable are packed (DT_RELR). Smaller, and faster to load.
    * Only glibc 2.36 and later load such a file, so it is for a build whose users are known.
    */
@@ -152,6 +155,12 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /**
+   * Linux: everything, JSC and ICU included, is compiled with the flags of `computeHardeningFlags` (flags.ts) and linked into a
+   * position-independent executable with full RELRO, eager binding and code in pages of its own. Defines BUN_HARDENED for
+   * C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
+   */
+  hardened: boolean;
   /**
    * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
    * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
@@ -380,7 +389,6 @@ export interface PartialConfig {
   mode?: Mode;
   lto?: boolean;
   trimmable?: boolean;
-  hardened?: boolean;
   relr?: boolean;
   pgoGenerate?: string;
   pgoUse?: string;
@@ -394,6 +402,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  hardened?: boolean;
   socketFaultInjection?: boolean;
   codeGenerationFromStrings?: boolean;
   webAssembly?: boolean;
@@ -593,9 +602,9 @@ function hostLoadsPackedRelocations(): boolean {
 export const ANDROID_API_LEVEL_DEFAULT = pins.androidNdk.apiLevel;
 
 /**
- * FreeBSD release we target. 14.x is the current production series; 14.3
- * is the oldest 14.x still on download.freebsd.org. Building against 14.3
- * produces binaries that run on 14.3+ (FreeBSD guarantees forward ABI
+ * FreeBSD release we target. 14.x is the current production series; 14.4
+ * is the oldest 14.x still on download.freebsd.org. Building against 14.4
+ * produces binaries that run on 14.4+ (FreeBSD guarantees forward ABI
  * compat within a major).
  */
 export const FREEBSD_VERSION_DEFAULT = pins.freebsd.version;
@@ -880,6 +889,8 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
   // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+  // Override via --webkit-version=<hash> to test a branch before bumping the pin.
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   return {
     bun: js.bun,
@@ -892,6 +903,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     abi,
     linux,
     darwin,
@@ -938,6 +950,7 @@ export type CodegenFields = Pick<
   | "version"
   | "revision"
   | "nodejsVersion"
+  | "webkitVersion"
   | keyof JsToolchain
 >;
 
@@ -992,6 +1005,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     bun,
     npm,
     jsRuntime,
@@ -1099,6 +1113,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
+  const hardened = (partial.hardened ?? false) && linux && abi !== "android";
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1275,11 +1290,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts. Override to test a bump before changing the
+  // pinned default.
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Native darwin: ask xcode-select/xcrun. Cross-compiling from a non-darwin
@@ -1367,7 +1381,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
       !valgrind &&
       linksWithLld({ darwin, crossTarget }) &&
       host.os !== "windows",
-    hardened: (partial.hardened ?? false) && linux && abi !== "android",
     relr: partial.relr ?? false,
     pgoGenerate,
     pgoUse,
@@ -1382,6 +1395,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    hardened,
     socketFaultInjection,
     codeGenerationFromStrings: partial.codeGenerationFromStrings ?? true,
     webAssembly: partial.webAssembly ?? true,
@@ -1421,7 +1435,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         ? linux && abi === "gnu" && existsSync(`/usr/bin/${crossTarget}-strip`)
           ? `/usr/bin/${crossTarget}-strip`
           : (toolchain.llvmStrip ?? toolchain.strip)
-        : (partial.hardened ?? false) && linux && abi !== "android"
+        : hardened
           ? (toolchain.llvmStrip ?? toolchain.strip)
           : toolchain.strip),
     nm: toolchain.nm,
@@ -1768,7 +1782,6 @@ export function formatConfig(cfg: Config, exe: string): string {
   const features: string[] = [];
   if (cfg.lto) features.push("lto");
   if (cfg.trimmable) features.push("trimmable");
-  if (cfg.hardened) features.push("hardened");
   if (cfg.relr) features.push("relr");
   if (cfg.pgoGenerate) features.push("pgo-gen");
   if (cfg.pgoUse) features.push("pgo-use");
@@ -1783,6 +1796,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (!cfg.linkerMap) features.push("linker-map:off");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.hardened) features.push("hardened");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

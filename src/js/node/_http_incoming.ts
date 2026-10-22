@@ -33,6 +33,7 @@ const {
   emitEOFIncomingMessageOuter,
   clearServerParserIncoming,
   onDataIncomingMessage,
+  takeRequestTrailers,
 } = http;
 // A symbol taken out of a pattern is a plain `symbol` for the type checker, and what it keys is untyped.
 const kAutoDestroyed: typeof shared.kAutoDestroyed = shared.kAutoDestroyed;
@@ -588,6 +589,7 @@ const incomingMessageDestroy = function _destroy(
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
     if (shouldEmitAborted) {
+      // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
       if (!handle.finished && this.socket) {
         http.responseRoad.sendWhatIsHeld?.(this.socket._httpMessage as $Node.ServerResponse | null | undefined);
         handle.abort();
@@ -1190,13 +1192,14 @@ function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isL
   } else {
     "unlikely";
     readMoreLater(req, state);
-    if (
-      ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) &&
-      socket &&
-      !socket.writableEnded
-    ) {
-      socket.pause();
-      req[kHandle]?.pause();
+    if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
+      const finSent = socket?.[kHandle]?.finSent === true;
+      // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
+      if (finSent && !req._consuming) socket![kHandle]!.stopParsing();
+      else if (socket && (finSent || !socket.writableEnded)) {
+        socket.pause();
+        req[kHandle]?.pause();
+      }
     }
     emitEOFIncomingMessage(req);
   }
@@ -1240,6 +1243,7 @@ function finishBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     const stream: $Node.Readable = req;
     errorOrDestroy(stream, err as Error);
   }
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (state[kState] !== asked || state.length !== 0) {
     "unlikely";
     finishReadOfNothing(state);
@@ -1273,6 +1277,7 @@ function finishBufferedBody(req: $Node.IncomingMessage, state: $Node.ReadableSta
     const stream: $Node.Readable = req;
     errorOrDestroy(stream, err as Error);
   }
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (state[kState] !== asked || state.length !== length) {
     "unlikely";
     finishReadOfNothing(state);
@@ -1301,7 +1306,7 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
     return emitEOFIncomingMessageOuter(req);
   }
   req.complete = true;
-  const rawTrailers = handle.takeRequestTrailers(req.socket?.server?.insecureHTTPParser === true);
+  const rawTrailers = takeRequestTrailers(req, handle);
   if (rawTrailers !== undefined) {
     "unlikely";
     req._addHeaderLines(rawTrailers, rawTrailers.length);

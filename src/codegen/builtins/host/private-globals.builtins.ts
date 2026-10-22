@@ -1,5 +1,4 @@
-// The native functions that Bun's own modules call under private names of the global object. No realm has an object for the holder:
-// a call of `$name(..)` finds its entry here by the name.
+// The native functions that Bun's own modules call under private names of the global object.
 import * as b from "bun-builtins-table";
 import { numberedErrorCodes } from "../../replacements.ts";
 import { asyncContextCell, closedPromiseOfStreamCell, printsErrorWithCodeCell } from "./native-cells.ts";
@@ -21,8 +20,7 @@ const resultsOfFunctionsChangingNothing = {
   webStreamControllerError: b.undefined,
 };
 
-// src/jsc/bindings/ErrorCode.cpp. An error with a code is an instance of the kind of error that the code stands for. Between it and the
-// prototype of that kind lies an object of its own for each code, which holds `name`, `code` and a `toString` that prints both.
+// ErrorCode.cpp: an error with a code is an instance of the kind of error the code stands for, with an object of its own for each code in front of the prototype of that kind.
 const kindsOfErrorsWithCode = ["Error", "TypeError", "RangeError", "SyntaxError", "URIError"];
 const [firstKind, ...otherKinds] = kindsOfErrorsWithCode.map(kind => b.instance(kind));
 const newErrorWithCode = b.union(firstKind, ...otherKinds).unaliased;

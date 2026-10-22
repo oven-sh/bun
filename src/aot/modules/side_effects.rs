@@ -18,7 +18,7 @@ pub(super) fn is_declared_free_of_side_effects(
 }
 
 fn is_pattern(entry: &[u8]) -> bool {
-    let has_wildcard = entry.iter().any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{'));
+    let has_wildcard = bun_core::strings::index_of_any(entry, b"*?[{").is_some();
     has_wildcard || bun_glob::has_extglob_prefix(entry)
 }
 

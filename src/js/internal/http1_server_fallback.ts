@@ -497,7 +497,7 @@ function connectionListenerHTTP1(
     req!.httpVersionMinor = versionMinor;
     req!.httpVersion = `${versionMajor}.${versionMinor}`;
     req!.url = url;
-    req!.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
+    req!.method = (typeof methodNum === "number" ? allMethods[methodNum] : methodNum)!;
     req!.upgrade = upgrade;
     // _addHeaderLine reads this off the request (Node's parserOnHeadersComplete copies it the same way).
     if (server.joinDuplicateHeaders) {

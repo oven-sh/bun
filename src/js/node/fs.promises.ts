@@ -57,7 +57,7 @@ function watch(filename: string | Buffer | URL, options: $Node.WatchOptions & { 
   if (typeof options === "string") {
     options = { encoding: options };
   }
-  const queue: InstanceType<typeof import("internal/fifo").default<Event>> = $createFIFO();
+  const queue = $createFIFO() as InstanceType<typeof import("internal/fifo").default<Event>>;
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
@@ -199,7 +199,7 @@ async function opendir(dir: string, options?) {
   // Delegate to the callback form so the eager path check (ENOTDIR/ENOENT at
   // open time, like node) runs on an async stat instead of blocking.
   const { promise, resolve, reject } = Promise.withResolvers<import("node:fs").Dir>();
-  require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve, reject));
+  require("node:fs").opendir(dir, options, settleFromNodeCallback.bind(null, resolve as (value: unknown) => void, reject));
   return promise;
 }
 
@@ -1641,7 +1641,7 @@ function throwEBADFIfNecessary(fn: string, fd) {
 }
 
 async function writeFileAsyncIteratorInner(fd, iterable, encoding, signal: AbortSignal | null) {
-  const writer: $Node.FileSink = Bun.file(fd).writer();
+  const writer = Bun.file(fd).writer() as $Node.FileSink;
 
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
   let totalBytesWritten = 0;

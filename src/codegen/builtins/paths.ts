@@ -22,7 +22,7 @@ const punctuationWords: Readonly<Record<string, string>> = {
 };
 
 const cppIdentifierPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const cppMacroCasePattern = /^[A-Z0-9_]+$/;
+const cppMacroCasePattern = /^[A-Z0-9_]+$|^[A-Z][A-Z0-9]*_\w*$/;
 const cppKeywords: ReadonlySet<string> = new Set(
   `alignas alignof and and_eq asm auto bitand bitor bool break case catch char char8_t char16_t char32_t class compl
    concept const consteval constexpr constinit const_cast continue co_await co_return co_yield decltype default delete

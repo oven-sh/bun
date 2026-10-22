@@ -119,7 +119,6 @@ class DependencyPool {
 }
 
 // The texts one behind the other, and where each starts: four bytes a text where a slice has sixteen.
-// In Bun the engine's half of the table holds the same names, and lookup.rs reads them there.
 const unlessLinkedWithEngine = '#[cfg(not(feature = "linked_names"))]\n';
 
 function emitTexts(name: string, count: string, texts: readonly string[], attribute: string): string {

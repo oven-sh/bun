@@ -503,6 +503,7 @@ Readable.prototype.setEncoding = function (this: $Node.Readable, enc: string) {
 
   // Iterate over current buffer to convert already stored Buffers:
   let content = "";
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (state.buffer.length !== state.bufferIndex) {
     for (const data of state.buffer.slice(state.bufferIndex)) {
       content += decoder.write(data);

@@ -4,7 +4,9 @@ use bun_aot::engine::{self, RejectedOptionWord};
 use bun_aot::report;
 use bun_clap as clap;
 use bun_core::{CodeGenerationFromStrings, Global, Output, strings};
-use bun_options_types::aot_options::{AotOptions, BuildReportRequest, ExplainSet, HeapSize, ReportDetail};
+use bun_options_types::aot_options::{
+    AotOptions, BuildReportRequest, ExplainSet, HeapSize, ReportDetail,
+};
 use bun_options_types::bundle_enums::Format;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::{Debugger, HotReload};
@@ -20,7 +22,8 @@ use crate::cli::command::{Context, Tag};
 const MAX_SUGGESTION_DISTANCE: usize = 3;
 const CODE_GENERATION_FLAG: &[u8] = b"--disallow-code-generation-from-strings";
 pub(crate) const COMPILE_AOT_KEYS: &[&str] = &["aot", "aotExplain", "aotLogTypeMismatches"];
-const EXPLAIN_ALLOWED: &str = "one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
+const EXPLAIN_ALLOWED: &str =
+    "one of text, json, guards, guards-json, trim, missed-optimizations, allocations, statistics";
 const LOCALES_ALLOWED: &str = "a list of locale tags, like en,de-AT";
 const REPORT_DETAIL_ALLOWED: &str = "one of summary, functions, sites";
 
@@ -159,17 +162,35 @@ pub(crate) struct CompileSettings {
 }
 
 pub(crate) enum OptionError<'a> {
-    Requires { option: OptionName, needed: OptionName },
+    Requires {
+        option: OptionName,
+        needed: OptionName,
+    },
     NotSupportedWithAot(OptionName),
-    EmbeddedOptionLoadsCode { option: Box<[u8]>, excluded_by: OptionName },
+    EmbeddedOptionLoadsCode {
+        option: Box<[u8]>,
+        excluded_by: OptionName,
+    },
     RequiresEsm,
     BothAotAndNoAot,
     CrossCompile,
-    InvalidValue { option: OptionName, value: &'a [u8], allowed: &'static str },
-    DeveloperWord { word: Vec<u8>, sentence: Vec<u8> },
+    InvalidValue {
+        option: OptionName,
+        value: &'a [u8],
+        allowed: &'static str,
+    },
+    DeveloperWord {
+        word: Vec<u8>,
+        sentence: Vec<u8>,
+    },
     Trim(TrimError),
-    UnknownCompileKey { key: &'a [u8], suggestion: Option<&'static str> },
-    KeyBelongsInCompile { key: &'a [u8] },
+    UnknownCompileKey {
+        key: &'a [u8],
+        suggestion: Option<&'static str>,
+    },
+    KeyBelongsInCompile {
+        key: &'a [u8],
+    },
 }
 
 fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) {
@@ -200,7 +221,9 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
         (Name::BytecodeDepth, BuildApi) => "bytecodeDepth",
         (Name::BytecodeOrder, BuildFlag | CompileCommand) => "--bytecode-order",
         (Name::BytecodeOrder, BuildApi) => "compile.bytecodeOrder",
-        (Name::CodeGenerationFromStrings, BuildFlag | CompileCommand) => "--disallow-code-generation-from-strings",
+        (Name::CodeGenerationFromStrings, BuildFlag | CompileCommand) => {
+            "--disallow-code-generation-from-strings"
+        }
         (Name::CodeGenerationFromStrings, BuildApi) => "disallowCodeGenerationFromStrings",
         (Name::HugeHeap, _) => "--aot-huge-heap",
         (Name::InPlace, _) => "--compile-in-place",
@@ -216,7 +239,9 @@ fn write_spelling(option: OptionName, origin: RequestOrigin, out: &mut Vec<u8>) 
 }
 
 fn developer_flag_name(key: &str) -> &'static str {
-    let flag = DEVELOPER_FLAGS.iter().find(|(flag_key, ..)| *flag_key == key);
+    let flag = DEVELOPER_FLAGS
+        .iter()
+        .find(|(flag_key, ..)| *flag_key == key);
     flag.expect("a key of DEVELOPER_FLAGS").1
 }
 
@@ -236,21 +261,38 @@ impl OptionError<'_> {
                 out.extend_from_slice(b" does not support ");
                 write_spelling(*option, origin, out);
             }
-            OptionError::EmbeddedOptionLoadsCode { option, excluded_by } => {
+            OptionError::EmbeddedOptionLoadsCode {
+                option,
+                excluded_by,
+            } => {
                 write_spelling(*excluded_by, origin, out);
                 out.extend_from_slice(b" does not support ");
                 out.extend_from_slice(option);
                 out.extend_from_slice(b" in ");
                 write_spelling(OptionName::ExecArgv, origin, out);
-                out.extend_from_slice(b" because the executable only runs code that was compiled into it");
+                out.extend_from_slice(
+                    b" because the executable only runs code that was compiled into it",
+                );
             }
             OptionError::RequiresEsm => out.extend_from_slice(match origin {
-                RequestOrigin::CompileCommand | RequestOrigin::BuildFlag => b"--aot requires --format=esm",
+                RequestOrigin::CompileCommand | RequestOrigin::BuildFlag => {
+                    b"--aot requires --format=esm"
+                }
                 RequestOrigin::BuildApi => b"compile.aot requires format: 'esm'",
             }),
-            OptionError::BothAotAndNoAot => out.extend_from_slice(b"Cannot use both --aot and --no-aot"),
-            OptionError::CrossCompile => CompileFailure::CrossCompilation.write_message(origin, &CompileTarget::default(), out),
-            OptionError::InvalidValue { option, value, allowed } => {
+            OptionError::BothAotAndNoAot => {
+                out.extend_from_slice(b"Cannot use both --aot and --no-aot")
+            }
+            OptionError::CrossCompile => CompileFailure::CrossCompilation.write_message(
+                origin,
+                &CompileTarget::default(),
+                out,
+            ),
+            OptionError::InvalidValue {
+                option,
+                value,
+                allowed,
+            } => {
                 out.extend_from_slice(b"Invalid value for ");
                 write_spelling(*option, origin, out);
                 out.extend_from_slice(b": \"");
@@ -265,7 +307,9 @@ impl OptionError<'_> {
                 out.extend_from_slice(sentence);
             }
             OptionError::Trim(error) => error.write_message(out),
-            OptionError::UnknownCompileKey { key, suggestion } => write_unknown_compile_key(key, *suggestion, out),
+            OptionError::UnknownCompileKey { key, suggestion } => {
+                write_unknown_compile_key(key, *suggestion, out)
+            }
             OptionError::KeyBelongsInCompile { key } => {
                 out.push(b'"');
                 out.extend_from_slice(key);
@@ -301,7 +345,9 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
     // The source text has every name that an obfuscated build leaves out.
     let embeds_function_source = !flags.omits_function_source && !flags.obfuscates;
     let admits_inspector = flags.admits_inspector || embedded.admits_inspector();
-    if (!embeds_function_source || !admits_inspector) && let Some(option) = embedded.first_that_loads_code() {
+    if (!embeds_function_source || !admits_inspector)
+        && let Some(option) = embedded.first_that_loads_code()
+    {
         let excluded_by = if flags.omits_function_source {
             OptionName::FunctionSource
         } else if flags.obfuscates {
@@ -309,10 +355,17 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
         } else {
             OptionName::Aot
         };
-        return Err(OptionError::EmbeddedOptionLoadsCode { option: option.label.clone(), excluded_by });
+        return Err(OptionError::EmbeddedOptionLoadsCode {
+            option: option.label.clone(),
+            excluded_by,
+        });
     }
     let mut options = AotOptions {
-        heap: if flags.has_huge_heap { HeapSize::Huge } else { HeapSize::Standard },
+        heap: if flags.has_huge_heap {
+            HeapSize::Huge
+        } else {
+            HeapSize::Standard
+        },
         embeds_function_source,
         explain,
         trim,
@@ -326,7 +379,10 @@ pub(crate) fn resolve<'a>(flags: &CompileFlags<'a>) -> Result<CompileSettings, O
     for &(key, value) in &flags.developer_words {
         apply_developer_word(key, value, &mut options)?;
     }
-    Ok(CompileSettings { aot: Some(Box::new(options)), trim: TrimRequest::default() })
+    Ok(CompileSettings {
+        aot: Some(Box::new(options)),
+        trim: TrimRequest::default(),
+    })
 }
 
 fn check_combination<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a>> {
@@ -347,14 +403,22 @@ fn check_requires_executable<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionE
     let trim = &flags.trim;
     let option = if flags.aot {
         OptionName::Aot
-    } else if trim.removes_unused || !trim.allow.is_empty() || !trim.remove.is_empty() || trim.locales.is_some() || trim.logs {
+    } else if trim.removes_unused
+        || !trim.allow.is_empty()
+        || !trim.remove.is_empty()
+        || trim.locales.is_some()
+        || trim.logs
+    {
         OptionName::Trim
     } else if !trim.remove_internal.is_empty() {
         OptionName::TrimWithout
     } else {
         return Ok(());
     };
-    Err(OptionError::Requires { option, needed: OptionName::Compile })
+    Err(OptionError::Requires {
+        option,
+        needed: OptionName::Compile,
+    })
 }
 
 fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a>> {
@@ -375,7 +439,10 @@ fn check_requires_aot<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a
     } else {
         return Ok(());
     };
-    Err(OptionError::Requires { option, needed: OptionName::Aot })
+    Err(OptionError::Requires {
+        option,
+        needed: OptionName::Aot,
+    })
 }
 
 fn check_aot_combination<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionError<'a>> {
@@ -399,7 +466,13 @@ pub(crate) fn explain_set<'a>(values: &[&'a [u8]]) -> Result<ExplainSet, OptionE
     for &value in values {
         match EXPLAIN_NAMES.iter().find(|(name, _)| *name == value) {
             Some(&(_, member)) => set |= member,
-            None => return Err(OptionError::InvalidValue { option: OptionName::Explain, value, allowed: EXPLAIN_ALLOWED }),
+            None => {
+                return Err(OptionError::InvalidValue {
+                    option: OptionName::Explain,
+                    value,
+                    allowed: EXPLAIN_ALLOWED,
+                });
+            }
         }
     }
     Ok(set)
@@ -431,7 +504,9 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
     }
     check_unknown_names(unknown)?;
     if let Some(&name) = remove.iter().find(|name| allow.contains(name)) {
-        return Err(OptionError::Trim(TrimError::Request(TrimRequestError::AllowedAndRemoved(name))));
+        return Err(OptionError::Trim(TrimError::Request(
+            TrimRequestError::AllowedAndRemoved(name),
+        )));
     }
 
     let mut unknown_internal: Vec<&[u8]> = Vec::new();
@@ -445,7 +520,11 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
     check_unknown_names(unknown_internal)?;
 
     if let Some(&value) = trim.locales.iter().flatten().find(|tag| tag.is_empty()) {
-        return Err(OptionError::InvalidValue { option: OptionName::TrimLocales, value, allowed: LOCALES_ALLOWED });
+        return Err(OptionError::InvalidValue {
+            option: OptionName::TrimLocales,
+            value,
+            allowed: LOCALES_ALLOWED,
+        });
     }
 
     Ok(TrimRequest {
@@ -453,7 +532,10 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
         allow,
         remove,
         remove_internal,
-        locales: trim.locales.as_ref().map(|tags| tags.iter().map(|tag| Box::from(*tag)).collect()),
+        locales: trim
+            .locales
+            .as_ref()
+            .map(|tags| tags.iter().map(|tag| Box::from(*tag)).collect()),
         logs: trim.logs,
     })
 }
@@ -469,27 +551,55 @@ fn resolve_report_detail(value: &[u8]) -> Result<ReportDetail, OptionError<'_>> 
         b"summary" => Ok(ReportDetail::Summary),
         b"functions" => Ok(ReportDetail::Functions),
         b"sites" => Ok(ReportDetail::Sites),
-        _ => Err(OptionError::InvalidValue { option: OptionName::ReportDetail, value, allowed: REPORT_DETAIL_ALLOWED }),
+        _ => Err(OptionError::InvalidValue {
+            option: OptionName::ReportDetail,
+            value,
+            allowed: REPORT_DETAIL_ALLOWED,
+        }),
     }
 }
 
-pub(crate) fn apply_developer_word<'a>(key: &'static str, value: Option<&'a [u8]>, options: &mut AotOptions) -> Result<(), OptionError<'a>> {
+pub(crate) fn apply_developer_word<'a>(
+    key: &'static str,
+    value: Option<&'a [u8]>,
+    options: &mut AotOptions,
+) -> Result<(), OptionError<'a>> {
     let text = value.unwrap_or_default();
     match key {
-        "report" => options.build_report = Some(BuildReportRequest { path: Box::from(text), detail: ReportDetail::Summary }),
+        "report" => {
+            options.build_report = Some(BuildReportRequest {
+                path: Box::from(text),
+                detail: ReportDetail::Summary,
+            })
+        }
         "report-detail" => {
             let detail = resolve_report_detail(text)?;
-            let missing_report = OptionError::Requires { option: OptionName::ReportDetail, needed: OptionName::Report };
+            let missing_report = OptionError::Requires {
+                option: OptionName::ReportDetail,
+                needed: OptionName::Report,
+            };
             options.build_report.as_mut().ok_or(missing_report)?.detail = detail;
         }
         "references" => match text {
             b"narrow" => {}
             b"wide" => options.heap = HeapSize::Huge,
-            _ => return Err(OptionError::InvalidValue { option: OptionName::References, value: text, allowed: "one of narrow, wide" }),
+            _ => {
+                return Err(OptionError::InvalidValue {
+                    option: OptionName::References,
+                    value: text,
+                    allowed: "one of narrow, wide",
+                });
+            }
         },
         "threads" => {
-            let count = strings::parse_int::<u32>(text, 10).ok().and_then(NonZeroU32::new);
-            let invalid = OptionError::InvalidValue { option: OptionName::Threads, value: text, allowed: "a whole number above zero" };
+            let count = strings::parse_int::<u32>(text, 10)
+                .ok()
+                .and_then(NonZeroU32::new);
+            let invalid = OptionError::InvalidValue {
+                option: OptionName::Threads,
+                value: text,
+                allowed: "a whole number above zero",
+            };
             options.thread_count = Some(count.ok_or(invalid)?);
         }
         "erase-types" => options.erases_types = true,
@@ -499,7 +609,9 @@ pub(crate) fn apply_developer_word<'a>(key: &'static str, value: Option<&'a [u8]
         _ => {
             let word = option_word(key, value);
             // Only the command line passes such a word. The engine's table of them names every pass of the compiler.
-            let checked = bun_removable_features::removable_body!(AotCompiler, Abort, { engine::check_option_word(&options.option_words, &word) });
+            let checked = bun_removable_features::removable_body!(AotCompiler, Abort, {
+                engine::check_option_word(&options.option_words, &word)
+            });
             if let Err(RejectedOptionWord { word, sentence }) = checked {
                 return Err(OptionError::DeveloperWord { word, sentence });
             }
@@ -522,15 +634,23 @@ fn option_word(key: &str, value: Option<&[u8]>) -> Vec<u8> {
 }
 
 fn normalize_name(name: &[u8]) -> Vec<u8> {
-    name.iter().filter(|byte| !matches!(byte, b'-' | b'_')).map(u8::to_ascii_lowercase).collect()
+    name.iter()
+        .filter(|byte| !matches!(byte, b'-' | b'_'))
+        .map(u8::to_ascii_lowercase)
+        .collect()
 }
 
 fn suggest(written: &[u8], candidates: &[&'static str]) -> Option<&'static str> {
     let written = normalize_name(written);
     let mut best: Option<(&'static str, usize)> = None;
     for &candidate in candidates {
-        let distance = strings::edit_distance(written.iter().copied(), &normalize_name(candidate.as_bytes()));
-        if distance <= MAX_SUGGESTION_DISTANCE && best.is_none_or(|(_, smallest)| distance < smallest) {
+        let distance = strings::edit_distance(
+            written.iter().copied(),
+            &normalize_name(candidate.as_bytes()),
+        );
+        if distance <= MAX_SUGGESTION_DISTANCE
+            && best.is_none_or(|(_, smallest)| distance < smallest)
+        {
             best = Some((candidate, distance));
         }
     }
@@ -540,7 +660,10 @@ fn suggest(written: &[u8], candidates: &[&'static str]) -> Option<&'static str> 
 pub(crate) fn misplaced_key<'a>(key: &'a [u8], is_inside_compile: bool) -> Option<OptionError<'a>> {
     let is_aot_key = COMPILE_AOT_KEYS.iter().any(|known| known.as_bytes() == key);
     if is_inside_compile {
-        (key.starts_with(b"aot") && !is_aot_key).then(|| OptionError::UnknownCompileKey { key, suggestion: suggest(key, COMPILE_AOT_KEYS) })
+        (key.starts_with(b"aot") && !is_aot_key).then(|| OptionError::UnknownCompileKey {
+            key,
+            suggestion: suggest(key, COMPILE_AOT_KEYS),
+        })
     } else {
         is_aot_key.then_some(OptionError::KeyBelongsInCompile { key })
     }
@@ -569,29 +692,61 @@ pub(crate) fn disallows_code_generation_from_strings(exec_argv: &[u8]) -> bool {
     read_exec_argv(exec_argv).forbids_text_evaluation
 }
 
-pub(crate) fn prepend_code_generation_flag<'a>(level: &'a [u8], exec_argv: &[u8]) -> Result<Vec<u8>, OptionError<'a>> {
+pub(crate) fn prepend_code_generation_flag<'a>(
+    level: &'a [u8],
+    exec_argv: &[u8],
+) -> Result<Vec<u8>, OptionError<'a>> {
     if CodeGenerationFromStrings::from_flag_value(level).is_none() {
-        return Err(OptionError::InvalidValue { option: OptionName::CodeGenerationFromStrings, value: level, allowed: "\"strict\", or no value" });
+        return Err(OptionError::InvalidValue {
+            option: OptionName::CodeGenerationFromStrings,
+            value: level,
+            allowed: "\"strict\", or no value",
+        });
     }
     let level_separator: &[u8] = if level.is_empty() { b"" } else { b"=" };
     let argument_separator: &[u8] = if exec_argv.is_empty() { b"" } else { b" " };
-    Ok([CODE_GENERATION_FLAG, level_separator, level, argument_separator, exec_argv].concat())
+    Ok([
+        CODE_GENERATION_FLAG,
+        level_separator,
+        level,
+        argument_separator,
+        exec_argv,
+    ]
+    .concat())
 }
 
-fn apply_code_generation_flag(args: &clap::Args<clap::Help>, ctx: Context<'_>, origin: RequestOrigin) {
+fn apply_code_generation_flag(
+    args: &clap::Args<clap::Help>,
+    ctx: Context<'_>,
+    origin: RequestOrigin,
+) {
     let Some(level) = args.option(CODE_GENERATION_FLAG) else {
         return;
     };
     if !ctx.bundler_options.compile {
-        exit_with_error(&OptionError::Requires { option: OptionName::CodeGenerationFromStrings, needed: OptionName::Compile }, origin);
+        exit_with_error(
+            &OptionError::Requires {
+                option: OptionName::CodeGenerationFromStrings,
+                needed: OptionName::Compile,
+            },
+            origin,
+        );
     }
-    match prepend_code_generation_flag(level, ctx.bundler_options.compile_exec_argv.as_deref().unwrap_or_default()) {
+    match prepend_code_generation_flag(
+        level,
+        ctx.bundler_options
+            .compile_exec_argv
+            .as_deref()
+            .unwrap_or_default(),
+    ) {
         Ok(exec_argv) => ctx.bundler_options.compile_exec_argv = Some(exec_argv.into_boxed_slice()),
         Err(error) => exit_with_error(&error, origin),
     }
 }
 
-fn read_developer_words(args: &clap::Args<clap::Help>) -> Vec<(&'static str, Option<&'static [u8]>)> {
+fn read_developer_words(
+    args: &clap::Args<clap::Help>,
+) -> Vec<(&'static str, Option<&'static [u8]>)> {
     let mut words = Vec::new();
     for &(key, name, form) in DEVELOPER_FLAGS {
         let name = name.as_bytes();
@@ -613,10 +768,16 @@ fn read_developer_words(args: &clap::Args<clap::Help>) -> Vec<(&'static str, Opt
 }
 
 fn split_at_commas<'v>(values: &'v [&'static [u8]]) -> impl Iterator<Item = &'static [u8]> + 'v {
-    values.iter().flat_map(|&value| value.split(|byte| *byte == b','))
+    values
+        .iter()
+        .flat_map(|&value| bun_core::strings::split(value, b","))
 }
 
-fn read_build_flags<'c>(cmd: Tag, args: &clap::Args<clap::Help>, ctx: &'c Context<'_>) -> CompileFlags<'c> {
+fn read_build_flags<'c>(
+    cmd: Tag,
+    args: &clap::Args<clap::Help>,
+    ctx: &'c Context<'_>,
+) -> CompileFlags<'c> {
     let options = &ctx.bundler_options;
     let no_aot = cmd == Tag::CompileCommand && args.flag(b"--no-aot") && args.flag(b"--aot");
     let locale_lists = args.options(b"--trim-locales");
@@ -633,12 +794,15 @@ fn read_build_flags<'c>(cmd: Tag, args: &clap::Args<clap::Help>, ctx: &'c Contex
         admits_inspector: args.flag(b"--compile-inspector"),
         trim: TrimFlags {
             removes_unused: args.flag(b"--trim"),
-            remove_internal: split_at_commas(args.options(b"--trim-without")).filter(|name| !name.is_empty()).collect(),
+            remove_internal: split_at_commas(args.options(b"--trim-without"))
+                .filter(|name| !name.is_empty())
+                .collect(),
             locales: (!locale_lists.is_empty()).then(|| split_at_commas(locale_lists).collect()),
             ..Default::default()
         },
         developer_words: read_developer_words(args),
-        has_other_format: args.option(b"--format").is_some() && options.output_format != Format::Esm,
+        has_other_format: args.option(b"--format").is_some()
+            && options.output_format != Format::Esm,
         has_bytecode_depth: args.has(b"--bytecode-depth"),
         has_bytecode_order: args.has(b"--bytecode-order"),
         is_cross_compile: !options.compile_target.is_this_bun(),
@@ -648,7 +812,14 @@ fn read_build_flags<'c>(cmd: Tag, args: &clap::Args<clap::Help>, ctx: &'c Contex
 
 fn list_and_exit(list: &[u8], origin: RequestOrigin) -> ! {
     if list != b"registry" {
-        exit_with_error(&OptionError::InvalidValue { option: OptionName::List, value: list, allowed: "registry" }, origin);
+        exit_with_error(
+            &OptionError::InvalidValue {
+                option: OptionName::List,
+                value: list,
+                allowed: "registry",
+            },
+            origin,
+        );
     }
     if !engine::has_compiler() {
         let mut message = Vec::new();
@@ -663,7 +834,11 @@ fn list_and_exit(list: &[u8], origin: RequestOrigin) -> ! {
 #[cold]
 #[inline(never)]
 pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>) {
-    let origin = if cmd == Tag::CompileCommand { RequestOrigin::CompileCommand } else { RequestOrigin::BuildFlag };
+    let origin = if cmd == Tag::CompileCommand {
+        RequestOrigin::CompileCommand
+    } else {
+        RequestOrigin::BuildFlag
+    };
     if let Some(list) = args.option(b"--aot-list") {
         list_and_exit(list, origin);
     }
@@ -675,8 +850,13 @@ pub(crate) fn parse_build_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Co
     };
     let options = &mut ctx.bundler_options;
     if settings.aot.is_some() {
-        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") {
-            bun_core::note!("--sourcemap has no effect with --aot: a compiled program reports the positions of its sources already");
+        if args
+            .option(b"--sourcemap")
+            .is_some_and(|setting| setting != b"none")
+        {
+            bun_core::note!(
+                "--sourcemap has no effect with --aot: a compiled program reports the positions of its sources already"
+            );
         }
         options.bytecode = false;
         options.output_format = Format::Esm;
@@ -737,7 +917,9 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
     let has_huge_heap = args.flag(b"--aot-huge-heap");
     let compiles = args.flag(b"--debug-aot") || reports_type_mismatches;
     if has_huge_heap && !compiles {
-        exit_with_message(b"--aot-huge-heap is only valid with bun build --compile --aot and bun compile");
+        exit_with_message(
+            b"--aot-huge-heap is only valid with bun build --compile --aot and bun compile",
+        );
     }
     if !(args.flag(b"--aot") || compiles) {
         return;
@@ -747,7 +929,11 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
         check_test_conflicts(&mut *ctx);
     }
     ctx.bundler_options.aot = Some(Box::new(AotOptions {
-        heap: if has_huge_heap { HeapSize::Huge } else { HeapSize::Standard },
+        heap: if has_huge_heap {
+            HeapSize::Huge
+        } else {
+            HeapSize::Standard
+        },
         reports_type_mismatches,
         runs_in_place: true,
         checks_only: !compiles,
@@ -759,10 +945,12 @@ fn apply_runtime_flags(cmd: Tag, args: &clap::Args<clap::Help>, ctx: Context<'_>
 pub(crate) fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
     match (ctx.debug.hot_reload, compiles) {
         (HotReload::None, _) | (_, false) => {}
-        (HotReload::Watch, true) if ctx.debug.watch_flag => {
-            exit_with_message(b"--aot does not support --watch: the program is compiled once, before it starts")
-        }
-        (_, true) => exit_with_message(b"--aot does not support --hot: the program is compiled once, before it starts"),
+        (HotReload::Watch, true) if ctx.debug.watch_flag => exit_with_message(
+            b"--aot does not support --watch: the program is compiled once, before it starts",
+        ),
+        (_, true) => exit_with_message(
+            b"--aot does not support --hot: the program is compiled once, before it starts",
+        ),
     }
     let has_debugger = !matches!(ctx.runtime_options.debugger, Debugger::Unspecified)
         || bun_core::env_var::BUN_INSPECT.get_not_empty().is_some();
@@ -770,7 +958,9 @@ pub(crate) fn check_runtime_conflicts(ctx: &Context<'_>, compiles: bool) {
         exit_with_message(b"--aot does not support the debugger (--inspect, BUN_INSPECT) for a program that is compiled");
     }
     if !ctx.runtime_options.eval.script.is_empty() || ctx.runtime_options.interactive {
-        exit_with_message(b"--aot can't compile code passed with -e, -p or --interactive. Pass a file instead");
+        exit_with_message(
+            b"--aot can't compile code passed with -e, -p or --interactive. Pass a file instead",
+        );
     }
 }
 
@@ -780,7 +970,9 @@ pub(crate) fn check_test_conflicts(ctx: Context<'_>) {
         exit_with_message(b"--aot does not support --rerun-each (or \"rerunEach\" in bunfig.toml): a compiled module only runs once per process");
     }
     if options.parallel > 0 {
-        exit_with_message(b"--aot does not support --parallel: a compiled program runs in one process");
+        exit_with_message(
+            b"--aot does not support --parallel: a compiled program runs in one process",
+        );
     }
     if options.isolate {
         exit_with_message(b"--aot does not support --isolate: a compiled module can't be loaded into a second global object");
@@ -796,7 +988,11 @@ fn unknown_flag_message(group: &FlagGroup, flag: &clap::UnknownLongFlag<'_>) -> 
         return None;
     }
     let mut message = Vec::new();
-    if group.other_params.iter().any(|param| param.names.long == Some(flag.name)) {
+    if group
+        .other_params
+        .iter()
+        .any(|param| param.names.long == Some(flag.name))
+    {
         if flag.is_from_bun_options {
             return None;
         }
@@ -828,7 +1024,10 @@ pub(crate) fn reject_unknown_flags(cmd: Tag, unknown: &[clap::UnknownLongFlag<'s
         Tag::BuildCommand | Tag::CompileCommand => &BUILD_FLAGS,
         _ => return,
     };
-    if let Some(message) = unknown.iter().find_map(|flag| unknown_flag_message(group, flag)) {
+    if let Some(message) = unknown
+        .iter()
+        .find_map(|flag| unknown_flag_message(group, flag))
+    {
         exit_with_message(&message);
     }
 }

@@ -412,7 +412,7 @@ fn is_plain_name_byte(byte: u8) -> bool {
 fn create_virtual_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
     let mut virtual_path = [HOST_ROOT, VIRTUAL_DIRECTORY].concat();
     append_encoded_segment(&mut virtual_path, namespace);
-    for segment in path.split(|&byte| byte == b'/') {
+    for segment in bun_core::strings::split(path, b"/") {
         virtual_path.push(b'/');
         append_encoded_segment(&mut virtual_path, segment);
     }

@@ -63,6 +63,7 @@ let lenientHeaderCharRegex: RegExp | undefined;
  * characters above 0xff are rejected.
  */
 function checkInvalidHeaderChar(val: $Node.HttpHeaderValue | Buffer, lenient: boolean = false) {
+  // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
   if (typeof val === "string" && val.length <= 32) {
     const length = val.length;
     if (lenient) {

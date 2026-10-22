@@ -186,11 +186,6 @@ pub fn is_module_removed(module: &[u8]) -> bool {
     module_removal(module) != bun_removable_features::Removal::Present
 }
 
-/// `specifier`: any spelling of a built-in module, as in an import.
-pub fn feature_of_builtin_module(specifier: &[u8]) -> Option<bun_removable_features::Feature> {
-    crate::ResolvedSourceTag::try_from_name(bun_aliases_get(specifier)?.path.as_bytes())?.feature()
-}
-
 #[unsafe(no_mangle)]
 extern "C" fn Bun__fetchBuiltinModule(
     jsc_vm: &VirtualMachine,

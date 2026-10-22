@@ -358,10 +358,7 @@ class AsyncLocalStorage<T = any> {
 }
 
 if (IS_BUN_DEVELOPMENT) {
-  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (
-    depth: number,
-    options: { stylize(text: string, style: string): string },
-  ) {
+  AsyncLocalStorage.prototype[Bun.inspect.custom] = function (depth: number, options) {
     if (depth < 0) return `AsyncLocalStorage { ${Bun.inspect((this as any).__id__, options)} }`;
     return `AsyncLocalStorage { [${options.stylize("debug id", "special")}]: ${Bun.inspect(
       (this as any).__id__,

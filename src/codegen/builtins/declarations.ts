@@ -187,10 +187,7 @@ export interface OwnPropertiesDeclaration {
   properties: readonly OwnPropertyDeclaration[];
 }
 
-/**
- * ModuleObject: the export is the object that `require` answers. Property: that object's property of the same name
- * holds it. Namespace: only the module namespace object holds it.
- */
+/** ModuleObject: the export is the object that `require` answers. Property: a property of that object holds it. Namespace: only the module namespace object holds it. */
 export type ModuleExportHolder = "ModuleObject" | "Property" | "Namespace";
 
 export interface ModuleExportDeclaration {

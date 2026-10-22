@@ -2,14 +2,13 @@
 //! (src/runtime/node/path.rs) and the paths of `bun lint` and `bun fmt` are these.
 
 #![feature(adt_const_params)]
-#![feature(portable_simd)]
 
 mod tidy;
 pub use tidy::{
     ParsedPosixLatin1, RelativePosixLatin1, basename_posix_latin1,
-    basename_without_suffix_posix_latin1, dirname_posix_latin1,
-    extname_posix_latin1, is_resolved_posix, is_tidy_posix, normalize_posix_latin1,
-    parse_posix_latin1, relative_posix_latin1, resolve_absolute_posix_latin1,
+    basename_without_suffix_posix_latin1, dirname_posix_latin1, extname_posix_latin1,
+    is_resolved_posix, is_tidy_posix, normalize_posix_latin1, parse_posix_latin1,
+    relative_posix_latin1, resolve_absolute_posix_latin1,
 };
 
 use bun_core::strings;
@@ -2351,13 +2350,10 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
-                buf_size = resolved_device_len;
-                memmove(&mut buf2[0..buf_size], &tmp_buf[0..resolved_device_len]);
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path_ptr = buf2.as_ptr();
-                path_len = buf_size;
+                // Append to the device in tmp_buf because buf2 backs resolvedTail.
+                tmp_buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
+                path_ptr = tmp_buf.as_ptr();
+                path_len = resolved_device_len + 1;
             }
         }
 
@@ -2534,8 +2530,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
             buf_size = slice_len;
             if slice_len > 0 {
-                // path may alias buf2 (drive-mismatch fallback); use ptr::copy.
-                // SAFETY: handles overlap.
+                // SAFETY: path has len elements and buf2 has room for the tail.
                 unsafe {
                     core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
                 }

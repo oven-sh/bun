@@ -40,6 +40,9 @@ export function builtinTableTarget(cfg: Pick<CodegenFields, "os" | "abi">): Buil
 
 type CodegenDirectory = Pick<CodegenFields, "codegenDir">;
 
+/** `ci` is no field of a `mode: "codegen"` graph, which has no engine either. */
+const isCI = (cfg: CodegenFields): boolean => (cfg as Partial<Config>).ci === true;
+
 export function removableFeaturesJson(cfg: CodegenDirectory): string {
   return resolve(cfg.codegenDir, "removable-features.json");
 }
@@ -189,7 +192,7 @@ export function emitAotSchema({ n, cfg, sources, o, dirStamp, engine }: Ctx): vo
 
 export function emitAotSchemaUseCheck({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
   assert(engine !== undefined, "emitAotSchemaUseCheck needs an engine");
-  if (engine.javaScriptCore === undefined || !cfg.ci) return;
+  if (engine.javaScriptCore === undefined || !isCI(cfg)) return;
   const script = resolve(cfg.cwd, "src", "codegen", "aot-schema", "index.ts");
   const stamp = schemaUseCheckStamp(cfg);
   const usersOutsideAot = [
@@ -256,7 +259,6 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
       ...sources.builtinsTableCodegen.filter(path => path !== script),
       ...sources.aotSchemaCodegen,
       ...sources.bindgen,
-      ...sources.zigGeneratedClasses,
       ...sources.js,
       ...sources.jsCodegen,
       ...sources.aotPrelude,
@@ -281,7 +283,7 @@ export function emitBuiltinsTable({ n, cfg, sources, o, dirStamp, engine }: Ctx)
     implicitInputs: [o.rootInstall],
     orderOnlyInputs: [dirStamp],
     // Not on the schema's step: build.ninja depends on its AOTSchemaFiles.cmake, so ninja would run the check before it starts the build.
-    validations: engine.javaScriptCore === undefined || !cfg.ci ? [] : [schemaUseCheckStamp(cfg)],
+    validations: engine.javaScriptCore === undefined || !isCI(cfg) ? [] : [schemaUseCheckStamp(cfg)],
     vars: {
       cwd: cfg.cwd,
       desc: "the table of built-ins",

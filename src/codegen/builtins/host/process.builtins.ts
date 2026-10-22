@@ -30,9 +30,7 @@ const externalState = ["ExternalState"];
 const numberOrString = b.union(b.f64, b.string);
 const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
 
-// `process` has no listener methods of its own. It inherits the native ones of the object above it, and node:events puts its own
-// EventEmitter.prototype above that object when it is loaded. On a receiver that wraps no native emitter the native methods make
-// one and keep it in a property of the receiver.
+// `process` has no listener methods of its own.
 const nativeEmitter = b.union(b.builtin("process"), b.instance("EventEmitter"));
 
 const findsOrMakesEmitter = [
@@ -111,8 +109,7 @@ const readsListenerLists = (signature: Pick<b.SignatureOptions, "args" | "return
 
 const listsListeners = readsListenerLists({ args: { event: b.propertyKey.loose }, returns: newArrayOf(b.any) });
 
-// It calls the listeners that were added under the event, each with the values and with the object that a listener was last
-// added through as `this`. What a listener throws goes to the listeners for "error" or is reported, and is not thrown here.
+// It calls the listeners that were added under the event, each with the values and with the object that a listener was last added through as `this`.
 const emitsEvent = {
   this: b.any,
   args: { event: b.any, values: b.any.rest },
@@ -237,8 +234,7 @@ const highResolutionTimeSince = [
   },
 ] satisfies b.FunctionField[];
 
-// While an init hook of node:async_hooks is enabled, the callback and its arguments go to the function of the library that shows them to the hooks.
-// node:async_hooks hands that function over with the first hook.
+// While an init hook of node:async_hooks is enabled, the callback and its arguments go to the function of the library that shows them to the hooks. node:async_hooks hands that function over with the first hook.
 const shownToInitHooks = b.keptCalled(tickShownToHooksCell, {
   times: "Once",
   args: [b.operand("callback"), newArrayOf(b.operand("passed")).or(b.undefined), b.nativeMemory],
@@ -340,8 +336,7 @@ const objectCreatedOnFirstRead = (cell: string) =>
 const declareEach = <Declared extends b.Field>(names: readonly string[], field: Declared) =>
   Object.fromEntries(names.map(name => [name, field]));
 
-// Each is there, holds true and is read-only in a run that was started with the flag of its name. In every other run a
-// program may store what it likes under the name.
+// Each is there, holds true and is read-only in a run that was started with the flag of its name.
 const setByCommandLineFlag = [
   "noDeprecation",
   "noProcessWarnings",
@@ -395,8 +390,7 @@ const computedOnce = [
   "versions",
 ];
 
-// Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp. No other native code holds the
-// object without being handed it, and the Rust side reaches it through functions of BunProcess.cpp alone.
+// Every `get` and `getIfPropertyExists` on the object in BunProcess.cpp and ZigGlobalObject.cpp.
 const lookedUpByNativeCode = [
   "_fatalException",
   "_kill",

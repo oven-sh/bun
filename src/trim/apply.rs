@@ -543,7 +543,7 @@ mod tests {
         let records_end = BUILTIN_MODULES_HEADER_SIZE as u32 + 4 * records.len() as u32;
         let dependencies_end = records_end + 2 * (MODULE_TEXTS.len() as u32 + 1);
         let header = [
-            1,
+            2,
             0,
             MODULE_TEXTS.len() as u32,
             BUILTIN_MODULES_HEADER_SIZE as u32,

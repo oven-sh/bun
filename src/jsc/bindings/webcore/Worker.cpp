@@ -299,7 +299,6 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto* proxy = WebWorker__getMessagingProxy(globalObject->bunVM());
     if (proxy) {
         auto& options = proxy->options();
-        auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
         RefPtr<WebCore::SerializedScriptValue> serialized = WTF::move(options.workerDataAndEnvironmentData);
         // `workerDataAndEnvironmentData` is moved-from on the first call. If
         // this binding is created twice (lazy-init re-entry), `serialized` is
@@ -308,6 +307,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // deserialize on second call (workerData stays jsUndefined), and use a
         // checked cast so a non-Array deserialize result doesn't trap.
         if (serialized) {
+            auto ports = MessagePort::entanglePorts(*globalObject->scriptExecutionContext(), WTF::move(options.dataMessagePorts));
             JSValue deserialized = serialized->deserialize(*globalObject, globalObject, WTF::move(ports));
             RETURN_IF_EXCEPTION(scope, {});
             // Should always be set to an Array of length 2 in the constructor in JSWorker.cpp

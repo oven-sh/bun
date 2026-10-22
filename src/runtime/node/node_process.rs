@@ -79,10 +79,9 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // here instead of unwinding — the 'exit' event has already been dispatched by the caller.
         if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
             bun_removable_features::removable_body!(HotReload, Abort, {
-                let should_clear_terminal =
-                    !vm.env_loader().has_set_no_clear_terminal_on_reload(
-                        !bun_core::Output::enable_ansi_colors_stdout(),
-                    );
+                let should_clear_terminal = !vm.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
                 bun_jsc::node_compile_cache::persist_now();
                 bun_core::Output::flush();
                 bun_core::reload_process(should_clear_terminal, false);
@@ -527,7 +526,8 @@ mod _impl {
             return None;
         }
         let path = resolve_path::join_abs_string::<platform::Auto>(current.unwrap_or(b"/"), &[to]);
-        let leaves_executable = bun_paths::is_absolute(to) && !bun_standalone_graph::is_bun_standalone_file_path(path);
+        let leaves_executable =
+            bun_paths::is_absolute(to) && !bun_standalone_graph::is_bun_standalone_file_path(path);
         (!leaves_executable).then(|| graph.dir_key(path))
     }
 
@@ -551,7 +551,7 @@ mod _impl {
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
         let prev_cwd: Box<[u8]> =
-            Box::from(bun_core::working_directory_in_executable().unwrap_or(fs.top_level_dir));
+            Box::from(bun_core::working_directory_in_executable().unwrap_or(fs.top_level_dir()));
         match find_directory_in_executable(slice.as_bytes()) {
             None => {}
             Some(Ok(directory)) => {
@@ -578,7 +578,7 @@ mod _impl {
                 let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(fs.top_level_dir),
+                    without_trailing_slash(fs.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {
@@ -604,7 +604,7 @@ mod _impl {
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
         let len1: usize = if k.is_8bit() {
-            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written as usize
+            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written
         } else {
             buf1[0..k.length()].copy_from_slice(k.utf16());
             k.length()
@@ -618,7 +618,7 @@ mod _impl {
                     break 'str_ EMPTY_W.as_ptr();
                 }
                 let len2: usize = if v.is_8bit() {
-                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written as usize
+                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
                 } else {
                     buf2[0..v.length()].copy_from_slice(v.utf16());
                     v.length()

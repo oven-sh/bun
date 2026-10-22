@@ -125,12 +125,6 @@ pub(crate) fn get_dl_error() -> Box<[u8]> {
     }
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// FFI — `.classes.ts` payload (the C++ JSCell wrapper stays generated; this is
-// `m_ctx`). The codegen `FFIPrototype__*` thunks resolve to `crate::ffi::FFI`,
-// so this MUST be the same type that `to_js()` boxes into the wrapper.
-// ═════════════════════════════════════════════════════════════════════════════
-
 pub(crate) use ffi_body::FFI;
 
 // The full `CompileC`/`Source`/`SymbolsMap`/`StringArray`/`CompilerRT` port

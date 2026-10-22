@@ -32,6 +32,7 @@ impl Default for WindowsWatcher {
                 overlapped: bun_core::ffi::zeroed(),
                 buf: [0u8; 64 * 1024],
                 dir_handle: w::INVALID_HANDLE_VALUE,
+                read_pending: false,
             },
             buf: PathBuffer::ZEROED,
             base_idx: 0,
@@ -77,6 +78,8 @@ pub struct DirWatcher {
     /// `EventIterator::next`).
     pub(crate) buf: [u8; 64 * 1024],
     pub(crate) dir_handle: HANDLE,
+    /// True while a read is in flight. The kernel owns `buf` and `overlapped` until it completes.
+    read_pending: bool,
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
@@ -84,7 +87,7 @@ pub struct DirWatcher {
 // total size) is what proves that alignment requirement.
 bun_core::assert_ffi_layout!(
     DirWatcher,
-    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>(),
+    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>() + ::core::mem::align_of::<w::OVERLAPPED>(),
     ::core::mem::align_of::<w::OVERLAPPED>();
     overlapped @ 0, buf @ 32, dir_handle @ 32 + 64 * 1024,
 );
@@ -96,8 +99,12 @@ const _: () = assert!(
 );
 
 impl DirWatcher {
-    /// invalidates any EventIterators
+    /// invalidates any EventIterators. No-op if the previous read is still pending, which happens
+    /// after a poll times out.
     fn prepare(&mut self) -> bun_sys::Result<()> {
+        if self.read_pending {
+            return Ok(());
+        }
         let filter = w::FileNotifyChangeFilter::FILE_NAME
             | w::FileNotifyChangeFilter::DIR_NAME
             | w::FileNotifyChangeFilter::LAST_WRITE
@@ -122,6 +129,7 @@ impl DirWatcher {
             return Err(bun_sys::Error::from_win32(err, bun_sys::Tag::watch));
         }
         bun_core::scoped_log!(watcher, "read directory changes!");
+        self.read_pending = true;
         Ok(())
     }
 }
@@ -313,6 +321,10 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
+            // A failed read still dequeues its completion.
+            if overlapped == &raw mut self.watcher.overlapped {
+                self.watcher.read_pending = false;
+            }
             if rc == 0 {
                 let err = w::Win32Error::get();
                 // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
@@ -401,11 +413,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
-        bun_core::scoped_log!(
-            watcher,
-            "number of watched items: {}",
-            this.watchlist.items_file_path().len()
-        );
         while let Some(event) = iter.next() {
             // `event.filename` is a `RawSlice<u16>` into `this.platform.watcher.buf`,
             // live for the duration of this iteration (no `prepare()` until the
@@ -413,7 +420,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             let filename: &[u16] = event.filename.slice();
             let convert_res =
                 strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
-            let eventpath_len = base_idx + convert_res.written as usize;
+            let eventpath_len = base_idx + convert_res.written;
 
             bun_core::scoped_log!(
                 watcher,
@@ -430,53 +437,43 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            let n_items = this.watchlist.items_file_path().len();
-            for item_idx in 0..n_items {
-                // reshaped for borrowck — `rel` is computed in a scoped
-                // block so the borrows of `this.watchlist` / `this.platform.buf`
-                // are released before we touch `this.watch_events` or hand the
-                // whole `&mut Watcher` to `process_watch_event_batch`.
-                let rel = {
+            let mut item_idx = usize::MAX;
+            loop {
+                {
+                    // Other threads append to the watchlist under this mutex, which can reallocate it.
+                    let _guard = this.mutex.lock_guard();
+                    // Eviction is a swap-remove, so walk from the end to avoid skipping items.
+                    item_idx = item_idx.min(this.watchlist.len());
                     let eventpath = &this.platform.buf[..eventpath_len];
-                    let path = &this.watchlist.items_file_path()[item_idx];
-                    let rel = is_parent_or_equal(path.as_ref(), eventpath);
-                    bun_core::scoped_log!(
-                        watcher,
-                        "checking path: {} = .{}",
-                        bstr::BStr::new(path.as_ref()),
-                        match rel {
-                            ParentEqual::Parent => "parent",
-                            ParentEqual::Equal => "equal",
-                            ParentEqual::Unrelated => "unrelated",
+                    while item_idx > 0 && event_id < this.watch_events.len() {
+                        item_idx -= 1;
+                        let path = &this.watchlist.items_file_path()[item_idx];
+                        let rel = is_parent_or_equal(path.as_ref(), eventpath);
+                        bun_core::scoped_log!(
+                            watcher,
+                            "checking path: {} = .{}",
+                            bstr::BStr::new(path.as_ref()),
+                            match rel {
+                                ParentEqual::Parent => "parent",
+                                ParentEqual::Equal => "equal",
+                                ParentEqual::Unrelated => "unrelated",
+                            }
+                        );
+                        if rel == ParentEqual::Unrelated {
+                            continue;
                         }
-                    );
-                    rel
-                };
-                // skip unrelated items
-                if rel == ParentEqual::Unrelated {
-                    continue;
+                        this.watch_events[event_id] =
+                            create_watch_event(&event, item_idx as WatchItemIndex);
+                        event_id += 1;
+                    }
                 }
-                // if the event is for a parent dir of the item, only emit it if it's a delete or rename
-
-                // Check if we're about to exceed the watch_events array capacity
-                if event_id >= this.watch_events.len() {
-                    // Process current batch of events
-                    process_watch_event_batch(this, event_id)?;
-                    // passing `this: &mut Watcher` above materialises a fresh Unique
-                    // borrow over the whole `Watcher`, which under Stacked Borrows pops the
-                    // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
-                    // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
-                    // then dereference a pointer with invalidated provenance — UB that MIRI flags.
-                    // The callee never touches `platform.watcher`, so re-deriving the pointer
-                    // here from the now-current `&mut Watcher` restores valid provenance.
-                    iter.watcher = BackRef::new(&this.platform.watcher);
-                    // Reset event_id to start a new batch
-                    event_id = 0;
+                if item_idx == 0 {
+                    break;
                 }
-
-                this.watch_events[event_id] =
-                    create_watch_event(&event, item_idx as WatchItemIndex);
-                event_id += 1;
+                process_watch_event_batch(this, event_id)?;
+                // The `&mut Watcher` passed above invalidated `iter.watcher`, so derive it again.
+                iter.watcher = BackRef::new(&this.platform.watcher);
+                event_id = 0;
             }
         }
     }
@@ -500,19 +497,17 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    // The sentinel must be wider than
-    // WatchItemIndex (u16) so it can never collide with a real index (incl. no_watch_item=65535).
-    let mut last_event_id: u32 = u32::MAX;
+    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
 
     for i in 0..all_events.len() {
-        if all_events[i].index as u32 == last_event_id {
+        if all_events[i].index == last_event_id {
             // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
         }
         last_event_index = i;
-        last_event_id = all_events[i].index as u32;
+        last_event_id = all_events[i].index;
     }
     if all_events.is_empty() {
         return Ok(());

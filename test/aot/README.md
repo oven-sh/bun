@@ -49,7 +49,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `src/options_types/aot_options.rs`, `scripts/build/aot*`, `scripts/build/trim`, `packages/bun-sound`, this folder, the pinned WebKit,
   and the host's files for compiled programs: `src/resolver/compiled_program.rs`, `src/standalone_graph/executable_*`,
   `src/crash_handler/compiled_frames.rs`, `src/sql_jsc/shared/RowDecoder.rs`, `src/runtime/cli/check_command/compile_check.rs`,
-  `src/jsc/proven_return.rs`, `src/jsc/bindings/BunCompiled*` ..) runs all of it, on every platform but Ubuntu;
+  `src/codegen/declared-type-checks.ts`, `src/jsc/bindings/BunCompiled*` ..) runs all of it, on every platform but Ubuntu;
   `collector-stress` and `bad-time` on Debian x64 alone. Any other build runs a tenth, on Debian x64 and arm64:
   `AOT_PROGRAMS=quick`, without those two groups, `startup-scaling` and `variant-*`. macOS x64 and Windows arm64 only ever run that
   tenth. A failing file is run once more, not three times.

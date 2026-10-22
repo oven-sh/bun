@@ -462,8 +462,6 @@ const PREVIOUS_BUILDS_TO_TRY = 50;
 /** Bound on the number probe: the main branch is sparse among build numbers. */
 const NUMBER_PROBE_BUDGET = 200;
 
-const PROBES_AT_ONCE = 25;
-
 /** Per-attempt cap, so a hung agent cannot blow the step's budget. */
 const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
@@ -606,21 +604,13 @@ export async function* candidateBuilds(
   // one commit. A build can fail its tests, or be cancelled, and still have
   // linked and published.
   let number = ctx.buildNumber;
-  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; ) {
+  for (let probes = 0; number !== undefined && number > 1 && probes < NUMBER_PROBE_BUDGET; probes++) {
     if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
-    const nearest: number = number - 1;
-    const count = Math.min(PROBES_AT_ONCE, NUMBER_PROBE_BUDGET - probes, nearest);
-    const bodies = await Promise.all(
-      Array.from({ length: count }, (_, index) => lookups.build(`${pipeline}/builds/${nearest - index}.json`)),
-    );
-    probes += count;
-    number -= count;
-    for (const body of bodies) {
-      if (seen.size >= PREVIOUS_BUILDS_TO_TRY) break;
-      if (!body?.id || body.branch_name !== branch) continue;
-      seen.add(body.id);
-      yield { id: body.id, number: body.number };
-    }
+    number -= 1;
+    const body = await lookups.build(`${pipeline}/builds/${number}.json`);
+    if (!body?.id || body.branch_name !== branch) continue;
+    seen.add(body.id);
+    yield { id: body.id, number: body.number };
   }
 
   // The branch was quiet for longer than the probe reaches: fall back to its

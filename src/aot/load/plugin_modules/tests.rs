@@ -299,8 +299,8 @@ fn virtual_paths_keep_modules_apart() {
     for path in [&upper, &lower] {
         assert!(path.starts_with(HOST_ROOT));
         assert!(!path.iter().any(u8::is_ascii_uppercase));
-        assert!(!path.contains(&b':'));
-        assert!(!path.contains(&b'\\'));
+        assert!(!bun_core::strings::contains_char(path, b':'));
+        assert!(!bun_core::strings::contains_char(path, b'\\'));
     }
     assert_eq!(
         plugins.virtual_module(&upper),

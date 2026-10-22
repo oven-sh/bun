@@ -469,7 +469,7 @@ function wrapTimerFunction<T extends (...args: any[]) => any>(original: T, isInt
   return wrapped as T;
 }
 
-function wrapClearFunction(original: (timer: unknown) => void) {
+function wrapClearFunction(original: (timer: any) => void) {
   function wrapped(timer) {
     if (typeof timer === "object" && timer !== null) {
       const span = timer[kTimerSpan];

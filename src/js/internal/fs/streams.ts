@@ -551,7 +551,7 @@ function WriteStream(
   let fastWriter: FileSink | undefined;
   if (fastPath && fd != null) {
     try {
-      fastWriter = Bun.file(fd).writer();
+      fastWriter = Bun.file(fd as number).writer() as FileSink;
     } catch {
       fastPath = false;
     }

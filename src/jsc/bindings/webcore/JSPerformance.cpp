@@ -19,7 +19,6 @@
 */
 
 #include "config.h"
-#include "RemovableFeatures.h"
 #include "JSPerformance.h"
 
 #include "ErrorCode.h"

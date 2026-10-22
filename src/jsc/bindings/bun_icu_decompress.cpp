@@ -29,7 +29,6 @@
 #if OS(LINUX) || OS(WINDOWS)
 
 #include "MimallocWTFMalloc.h"
-#include "RemovableFeatures.h"
 
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>

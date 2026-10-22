@@ -38,8 +38,7 @@ const cachedIn = (className: string, member: string): b.ImplementationSpec => ({
   member: `m_${member}`,
 });
 
-// A call that leaves out a required string throws before it converts the others. The second overload therefore keeps
-// the conversions inside the call, and every string is optional there, so the planner never passes undefined for one.
+// A call that leaves out a required string throws before it converts the others.
 const takingStrings = (required: readonly string[], optional: readonly string[], operation: StringOperation) => {
   const names = [...required, ...optional];
   return [
@@ -61,8 +60,7 @@ const takingStrings = (required: readonly string[], optional: readonly string[],
   ] satisfies b.FunctionField[];
 };
 
-// A sequence of sequences of strings, or a record of strings. What the operand yields or holds is iterated or
-// converted in turn, and nothing of it is kept.
+// A sequence of sequences of strings, or a record of strings.
 const pairsOfStrings = [b.runsTransitively("Iterate", "OwnKeys", "OwnValues", "PrototypeChain", "ToPrimitive")];
 
 // The iterator keeps the native headers or parameters alive, and not the object that wraps them.
@@ -102,8 +100,7 @@ const pairIteration = (iteratorClass: b.ClassName) =>
     forEach: forEachPair,
   }) satisfies Fields;
 
-// next() tests its receiver against the base class. One class makes the iterators of entries, of keys and of values,
-// so a step holds a pair or a single string.
+// next() tests its receiver against the base class.
 const pairIteratorClass = (
   iterated: b.ClassName,
   instanceCppClass: b.CppClassRef,
@@ -236,9 +233,7 @@ const anyMessage = [b.readAsCharacters, b.readsContents(), b.runs("ToPrimitive")
 const textMessage = characters;
 const binaryMessage = readsState;
 
-// A socket that is closed inside a call has its close handler called before the call returns, and the error handler
-// with what that one throws. close and terminate close this socket. A write is declared to do the same to this socket
-// and, for a publish, to a subscriber, although the write path closes no socket under its caller.
+// A socket that is closed inside a call has its close handler called before the call returns, and the error handler with what that one throws. close and terminate close this socket.
 const mayClose = (socket: b.PlaceLike) => [
   b.keptCalled(webSocketHandlerCell("close"), { times: "Once", args: [socket, b.f64, b.string], result: "Ignored" }),
   b.keptCalled(webSocketHandlerCell("error"), { times: "Once", args: [b.any, socket], result: "Ignored" }),
@@ -246,8 +241,7 @@ const mayClose = (socket: b.PlaceLike) => [
 const writesToSocket = [...changesState, ...mayClose(b.operand("this"))];
 const writesToSubscribers = [...writesToSocket, ...mayClose(b.nativeCell(webSocketsCell))];
 
-// On a closed socket send, subscribe and close answer before they look at an argument, so no parameter is strict and
-// no conversion is hoisted.
+// On a closed socket send, subscribe and close answer before they look at an argument, so no parameter is strict and no conversion is hoisted.
 const socketTraffic = {
   returns: b.int(-1, Number.MAX_SAFE_INTEGER),
   capability: "js",
@@ -489,8 +483,7 @@ export default b.declarations(
     },
   }),
 
-  // The first value of a websocket is the one upgrade was given. That of a socket is the `data` of the options of
-  // Bun.connect, or what the listener holds when the socket is accepted.
+  // The first value of a websocket is the one upgrade was given.
   keepsData("ServerWebSocket", webSocketDataCell, cachedIn("ServerWebSocket", "data")),
   keepsData("TCPSocket", socketDataCell, cachedIn("TCPSocket", "data")),
   keepsData("TLSSocket", socketDataCell, cachedIn("TLSSocket", "data")),

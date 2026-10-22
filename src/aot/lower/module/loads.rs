@@ -982,8 +982,7 @@ fn branch_on_path_made_by_call(
         let arguments = Arguments::Values(smallvec![start, end]);
         directory = call::emit_call(lowering, slice, Some(directory), arguments, CallSite::default());
     }
-    let below: Vec<u8> = below
-        .split(|&byte| byte == b'/')
+    let below: Vec<u8> = bun_core::strings::split(below, b"/")
         .collect::<Vec<_>>()
         .join(separator);
     let below = lowering.file.intern_bytes(&below);

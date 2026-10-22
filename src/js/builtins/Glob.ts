@@ -1,8 +1,8 @@
 type Glob = import("bun").Glob;
 
 $overriddenName = "";
-export function scan(this: Glob, opts?: Parameters<Glob["$pull"]>[0]) {
-  const valuesPromise = this.$pull(opts);
+export function scan(this: Glob, opts?: Parameters<Glob["$globScan"]>[0]) {
+  const valuesPromise = this.$globScan(opts);
   async function* iter() {
     const values = (await valuesPromise) || [];
     yield* values;
@@ -11,8 +11,8 @@ export function scan(this: Glob, opts?: Parameters<Glob["$pull"]>[0]) {
 }
 
 $overriddenName = "";
-export function scanSync(this: Glob, opts?: Parameters<Glob["$pull"]>[0]) {
-  const arr = this.$resolveSync(opts) || [];
+export function scanSync(this: Glob, opts?: Parameters<Glob["$globScan"]>[0]) {
+  const arr = this.$globScanSync(opts) || [];
   function* iter() {
     yield* arr;
   }

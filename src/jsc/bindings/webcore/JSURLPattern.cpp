@@ -19,7 +19,6 @@
 */
 
 #include "config.h"
-#include "RemovableFeatures.h"
 #include "JSURLPattern.h"
 
 #include "ExtendedDOMClientIsoSubspaces.h"

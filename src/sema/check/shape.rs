@@ -2724,12 +2724,17 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `resolveStructuredTypeMembers(apparent)`, where `apparent` is `getApparentType(ty)`.
     /// `getApparentType` passes the type variable `ty` as the `this` argument to a base constraint
-    /// that's a reference, and a tuple has no slot for it. No other apparent type gets a `this`
-    /// argument.
+    /// that's a reference, and to the reference that the members of an intersection become. That intersection is the
+    /// base constraint or `ty` itself. A tuple has no slot for it. No other apparent type gets a `this` argument.
     fn members_of_apparent_type(&mut self, ty: TypeId, apparent: TypeId) -> Option<Members<'p>> {
-        if self.is_deferred(ty) && self.is_tuple(apparent) {
-            let constraint = self.base_constraint(ty);
-            if self.is_tuple(constraint) {
+        if ty != apparent && self.is_tuple(apparent) {
+            let is_passed = if self.is_deferred(ty) {
+                let constraint = self.base_constraint(ty);
+                self.is_tuple(constraint) || self.is_intersection(constraint)
+            } else {
+                self.is_intersection(ty)
+            };
+            if is_passed {
                 let this_argument = ty;
                 return self.members_with_this(apparent, this_argument);
             }
@@ -6859,12 +6864,15 @@ impl<'p, 's> Checker<'p, 's> {
             // FOR SPEED, an intersection of types that are their own apparent types is left
             // unchanged: `getTypeWithThisArgument` gives them the `this` argument and nothing else,
             // and `build_intersection_shape` passes that.
-            TypeData::Intersection(_) => {
-                return if self.has_only_own_apparent_types(ty) {
-                    ty
-                } else {
-                    self.apparent_type_of_intersection_type(ty, original_type)
-                };
+            TypeData::Intersection(members) => {
+                if self.has_only_own_apparent_types(ty) {
+                    return ty;
+                }
+                let apparent = self.apparent_type_of_intersection_type(ty, original_type);
+                // References that could have become one type and haven't are left unchanged too.
+                let is_unchanged = self.is_intersection(apparent)
+                    && self.types().can_become_one_reference(members);
+                return if is_unchanged { ty } else { apparent };
             }
             TypeData::Intrinsic(Intrinsic::String)
             | TypeData::StringLit { .. }
@@ -8215,14 +8223,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// type once more, which matters because the apparent type of a `T & {}` is `string`, not
     /// `String`. For a type variable's apparent type that changes nothing, but the apparent type
     /// doesn't tell what `this` is in a tuple type. `get_property_of_type_ex` gets that from the
-    /// variable.
+    /// variable, or from the intersection whose members have become one tuple type.
     #[inline(always)]
     pub(super) fn apparent_type_or_type_variable(
         &self,
         ty: TypeId,
         apparent_type: TypeId,
     ) -> TypeId {
-        if self.is_deferred(ty) {
+        if self.is_deferred(ty)
+            || ty != apparent_type && self.is_intersection(ty) && self.is_tuple(apparent_type)
+        {
             ty
         } else {
             apparent_type
@@ -8237,7 +8247,39 @@ impl<'p, 's> Checker<'p, 's> {
         skip_object_function_property_augment: bool,
     ) -> Option<(&'p Prop<'p>, MapperId)> {
         let holder = self.property_holder_for_a_name(ty);
+        if self.is_deferred(ty)
+            && let PropertyHolder::Members(apparent, _) | PropertyHolder::Unlisted(apparent) =
+                holder
+            && let Some(found) = self.property_of_only_tuple_constituent(ty, apparent, name)
+        {
+            return Some(found);
+        }
         self.property_of_holder(holder, name, skip_object_function_property_augment)
+    }
+
+    /// Returns the property `name` of the tuple in the intersection `apparent`, if no other constituent has that property.
+    /// `createUnionOrIntersectionProperty` returns such a property as it is. `apparent` is the apparent type of the type
+    /// variable `ty`, so `this` is `ty` in each constituent. A tuple has no slot for that, and in the intersection's own
+    /// members its `this` is the intersection.
+    fn property_of_only_tuple_constituent(
+        &mut self,
+        ty: TypeId,
+        apparent: TypeId,
+        name: Atom,
+    ) -> Option<(&'p Prop<'p>, MapperId)> {
+        let TypeData::Intersection(parts) = self.data(apparent) else {
+            return None;
+        };
+        let tuple = *parts.iter().find(|&&part| self.is_tuple(part))?;
+        let this_argument = ty;
+        let members = self.members_with_this(tuple, this_argument)?;
+        let prop = members.resolved.prop(name)?;
+        for &part in parts.iter() {
+            if part != tuple && self.get_property_of_type(part, name).is_some() {
+                return None;
+            }
+        }
+        Some((prop, members.mapper))
     }
 
     /// The part of `getPropertyOfTypeEx(ty, ..)` that doesn't depend on the name.

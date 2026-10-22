@@ -45,17 +45,17 @@
     "bun.lock",
 
     // Verbatim ports from Node.js v26.3.0 (lib/) — keep close to upstream
-    "src/js/node/repl.js",
-    "src/js/node/readline.js",
-    "src/js/node/readline.promises.js",
-    "src/js/internal/repl.js",
+    "src/js/node/repl.ts",
+    "src/js/node/readline.ts",
+    "src/js/node/readline.promises.ts",
+    "src/js/internal/repl.ts",
     "src/js/internal/readline/**",
-    "src/js/internal/repl/history.js",
-    "src/js/internal/repl/utils.js",
-    "src/js/internal/repl/completion.js",
-    "src/js/internal/repl/await.js",
-    "src/js/internal/repl/acorn.js",
-    "src/js/internal/repl/acorn-walk.js",
+    "src/js/internal/repl/history.ts",
+    "src/js/internal/repl/utils.ts",
+    "src/js/internal/repl/completion.ts",
+    "src/js/internal/repl/await.ts",
+    "src/js/internal/repl/acorn.ts",
+    "src/js/internal/repl/acorn-walk.ts",
 
     "test/js/node/**/parallel/**",
     "test/js/node/test/fixtures", // full of JS with intentional syntax errors
@@ -97,12 +97,22 @@
       }
     },
     {
+      "files": ["src/js/private.d.ts"],
+      "rules": {
+        // `util.types.isNumberObject(value)` says that `value` is a `Number`.
+        "typescript/no-wrapper-object-types": "off"
+      }
+    },
+    {
       "files": ["src/js/**"],
       "rules": {
         // Reading `obj.prop` in an `if` condition and again in the body hits
         // the property (and any getter/Proxy trap) twice. Destructure or
         // cache the value in a local instead.
-        "bun/no-duplicate-conditional-property-access": "error"
+        "bun/no-duplicate-conditional-property-access": "error",
+
+        // `"unlikely";` at the start of a block tells `bun build --compile --aot` that the block rarely runs.
+        "no-unused-expressions": "off"
       }
     }
   ]

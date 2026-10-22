@@ -1,5 +1,4 @@
-// The objects that the host answers for `$cpp(file, symbol)` and `$rust(file, symbol)`, each from the code of the function of that name.
-// operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
+// The objects that the host answers for `$cpp(file, symbol)` and `$rust(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
 import { handedOver } from "./native-code.ts";
 
@@ -134,14 +133,6 @@ export default b.declarations(
   }),
   ["Script", "Module"].flatMap(name => b.class(`${vmBinding}.${name}`, { hasPrototype: false })),
   answers("native:Cpp:NodeVM.cpp:Bun::createNodeVMBinding", b.builtin(vmBinding)),
-
-  // The constructor of the class, which the realm makes at the first request.
-  ["BlockList", "SocketAddress"].flatMap(name => answers(`native:Rust:node_net_binding.rs:${name}`, b.builtin(`%${name}%`))),
-  answers("native:Rust:SecureContext.rs:js.getConstructor", b.builtin("%SecureContext%")),
-  ["NativeBrotli", "NativeZlib", "NativeZstd"].flatMap(name =>
-    answers(`native:Rust:node_zlib_binding.rs:${name}`, b.builtin(`%${name}%`)),
-  ),
-  answers("native:Rust:h2_frame_parser.rs:H2FrameParserConstructor", b.builtin("%H2FrameParser%")),
 
   // Whether the process was started with --experimental-stream-iter.
   answers("native:Cpp:NodeModuleModule.cpp:createStreamIterEnabledFlag", b.bool),

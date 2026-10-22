@@ -43,7 +43,7 @@ fn find_tag_group(languages: &[IcuLanguage], tag: &[u8]) -> Option<LocaleGroup> 
 }
 
 fn language_of(tag: &[u8]) -> Option<[u8; 4]> {
-    let language = tag.split(|byte| matches!(byte, b'-' | b'_')).next()?;
+    let language = bun_core::strings::split_any(tag, b"-_").next()?;
     if !matches!(language.len(), 2 | 3) || !language.iter().all(u8::is_ascii_alphabetic) {
         return None;
     }
@@ -126,7 +126,11 @@ mod tests {
         for tag in ["xx", "x", "abcd-DE", ""] {
             let error = Err(TrimRequestError::UnknownLocale(Box::from(tag.as_bytes())));
             assert_eq!(resolve(&UNKNOWN, Some(&[tag])), error, "{tag}");
-            assert_eq!(resolve(&listed(&["de"]), Some(&["de", tag])), error, "{tag}");
+            assert_eq!(
+                resolve(&listed(&["de"]), Some(&["de", tag])),
+                error,
+                "{tag}"
+            );
         }
     }
 
@@ -143,7 +147,10 @@ mod tests {
 
     #[test]
     fn listed_use_wants_used_groups() {
-        assert_eq!(resolve(&listed(&["zh-Hant-TW", "de-AT"]), None), wanted(&[0, 4]));
+        assert_eq!(
+            resolve(&listed(&["zh-Hant-TW", "de-AT"]), None),
+            wanted(&[0, 4])
+        );
         assert_eq!(resolve(&listed(&[]), None), wanted(&[]));
     }
 
@@ -160,13 +167,19 @@ mod tests {
 
     #[test]
     fn used_tag_without_data_is_skipped_with_request() {
-        assert_eq!(resolve(&listed(&["xx", "de"]), Some(&["en"])), wanted(&[0, 1]));
+        assert_eq!(
+            resolve(&listed(&["xx", "de"]), Some(&["en"])),
+            wanted(&[0, 1])
+        );
     }
 
     #[test]
     fn wanted_groups_are_sorted_and_unique() {
         let used = listed(&["zh", "no", "de", "nb"]);
-        assert_eq!(resolve(&used, Some(&["nb-NO", "zh_TW"])), wanted(&[0, 3, 4]));
+        assert_eq!(
+            resolve(&used, Some(&["nb-NO", "zh_TW"])),
+            wanted(&[0, 3, 4])
+        );
     }
 
     #[test]
@@ -179,7 +192,15 @@ mod tests {
 
     #[test]
     fn language_of_rejects_other_lengths_and_bytes() {
-        for tag in [&b"x"[..], b"abcd", b"", b"-de", b"x-de", b"d3", b"d\xc3\xa9"] {
+        for tag in [
+            &b"x"[..],
+            b"abcd",
+            b"",
+            b"-de",
+            b"x-de",
+            b"d3",
+            b"d\xc3\xa9",
+        ] {
             assert_eq!(language_of(tag), None, "{tag:?}");
         }
     }

@@ -8,7 +8,9 @@ mod tests;
 fn has_annotation(comment: &Comment, text: &[u8]) -> bool {
     let closing = if comment.is_block { 2 } else { 0 };
     let (from, to) = (comment.pos as usize + 2, comment.end as usize);
-    let mut rest = text.get(from..to.saturating_sub(closing)).unwrap_or_default();
+    let mut rest = text
+        .get(from..to.saturating_sub(closing))
+        .unwrap_or_default();
     while let Some(sign) = strings::index_of_any(rest, b"@#") {
         let (before, after) = (&rest[..sign], &rest[sign + 1..]);
         if strings::has_prefix_with_word_boundary(after, b"__PURE__") {
@@ -100,7 +102,10 @@ fn mark_chain(file: &mut FileBuilder, chain_end: ExprId) {
     {
         link = inner;
     }
-    if !matches!(kind_of(file, link), Some(ExprKind::Call(_) | ExprKind::New(_))) {
+    if !matches!(
+        kind_of(file, link),
+        Some(ExprKind::Call(_) | ExprKind::New(_))
+    ) {
         return;
     }
     loop {
@@ -126,7 +131,7 @@ fn skip_opening_parentheses(text: &[u8], mut at: usize) -> usize {
                 Some(end) => end + 2,
                 None => return at,
             },
-            [b'/', b'/', ..] => match rest.iter().position(|&it| it == b'\n') {
+            [b'/', b'/', ..] => match bun_core::strings::index_of_char_usize(rest, b'\n') {
                 Some(end) => end,
                 None => return at,
             },
@@ -154,7 +159,9 @@ fn find_chains_in_parentheses(
     for (index, expr) in file.exprs.iter().enumerate() {
         let chain_end = ExprId(index as u32);
         if is_chain_link(&expr.kind)
-            && file.expr_flags(chain_end).contains(ExprFlags::PARENTHESIZED)
+            && file
+                .expr_flags(chain_end)
+                .contains(ExprFlags::PARENTHESIZED)
             && let Ok(found) = inner_starts.binary_search_by_key(&expr.pos, |it| it.0)
         {
             chain_ends[inner_starts[found].1] = chain_end;

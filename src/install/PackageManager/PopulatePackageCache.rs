@@ -159,8 +159,7 @@ pub(crate) fn download_pinned_packages(
                 enqueue_tarball_for_download(manager, dep_id, pkg_id, url, waiter)
             }
             ResolutionTag::LocalTarball => {
-                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter);
-                Ok(())
+                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter)
             }
             ResolutionTag::Git => enqueue_git_for_checkout(
                 manager,

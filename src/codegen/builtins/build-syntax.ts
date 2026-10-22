@@ -300,7 +300,7 @@ function resolveMeaning(builder: ModelBuilder, line: SyntaxLine): ModelIntrinsic
     case "PrivateName":
     case "Erased":
     case "BundleError":
-      return spec;
+      return spec as ModelIntrinsicMeaning;
   }
 }
 

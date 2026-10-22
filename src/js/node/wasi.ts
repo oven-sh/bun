@@ -941,7 +941,7 @@ class WASI {
         const rstats = this.fstatSync(stats.real);
         let atim: Date | number = rstats.atime;
         let mtim: Date | number = rstats.mtime;
-        const n = nsToMs(now(WASI_CLOCK_REALTIME));
+        const n = nsToMs(now(WASI_CLOCK_REALTIME)!);
         const atimflags = WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_ATIM_NOW;
         if ((fstflags & atimflags) === atimflags) {
           return WASI_EINVAL;
@@ -1266,7 +1266,7 @@ class WASI {
           const rstats = this.fstatSync(stats.real);
           let atim: Date | number = rstats.atime;
           let mtim: Date | number = rstats.mtime;
-          const n = nsToMs(now(WASI_CLOCK_REALTIME));
+          const n = nsToMs(now(WASI_CLOCK_REALTIME)!);
           const atimflags = WASI_FILESTAT_SET_ATIM | WASI_FILESTAT_SET_ATIM_NOW;
           if ((fstflags & atimflags) === atimflags) {
             return WASI_EINVAL;

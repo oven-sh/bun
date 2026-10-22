@@ -250,7 +250,6 @@ function createOperandState(parameter: ModelParameter): OperandState {
 }
 
 // One word says on which objects all protocols of an operand run.
-// Where some run on the operand itself, "every reachable object" covers both.
 function finishParameter(state: OperandState): ModelParameter {
   const uses = new Set(state.uses);
   if (state.protocolsOfContents.size > 0) {
@@ -1001,7 +1000,7 @@ export function applyWrittenUses(context: OverloadContext): void {
     const { name, operand, accepted, converted } = parameter;
     const isWritten = !isUndeclared && Object.hasOwn(uses, name);
     if (isWritten) {
-      applyUses(context, operand, uses[name]);
+      applyUses(context, operand, uses[name]!);
       continue;
     }
     if (!isUndeclared && !mayBeObject(accepted) && !mayBeObject(converted)) continue;

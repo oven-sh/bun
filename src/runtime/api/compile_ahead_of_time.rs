@@ -241,9 +241,7 @@ impl JSBundleCompletionTask {
                     Some(compile.executable_path.list.as_slice())
                 },
                 root_dir: destination.root_dir.fd,
-                // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; valid
-                // for the lifetime of the VirtualMachine, which waits for this build.
-                env: unsafe { &mut *self.env },
+                env: &mut self.env,
                 windows: &destination.windows,
                 exec_argv: &compile.exec_argv.list,
                 flags: destination.flags,

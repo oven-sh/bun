@@ -7,7 +7,8 @@ const NO_COMMAND_LINE: &str = " can't be used with this executable because it do
 const ONLY_COMPILED_CODE: &str = " can't be used with this executable because it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag";
 const ONLY_CODE_OF_THE_BUILD: &str = " can't be used with this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code";
 const IGNORED_WITHOUT_FUNCTION_SOURCE: &str = " is ignored by this executable because it was built with --no-compile-function-source, so it only runs code that was compiled into it. Rebuild without that flag";
-const NO_DEBUGGER: &str = " can't be used with this executable. Rebuild it with --compile-inspector";
+const NO_DEBUGGER: &str =
+    " can't be used with this executable. Rebuild it with --compile-inspector";
 const DEFAULT_BUILD: BuildRecord = BuildRecord {
     omits_function_source: false,
     admits_inspector: false,
@@ -72,8 +73,9 @@ fn obstacle_without_anything(requirement: RuntimeRequirement) -> Option<Obstacle
 }
 
 fn message_without_anything(options: &str) -> Option<String> {
-    let unusable =
-        with_words(options, |words| find_unusable_option(words, obstacle_without_anything));
+    let unusable = with_words(options, |words| {
+        find_unusable_option(words, obstacle_without_anything)
+    });
     unusable.map(|option| message_of(&option))
 }
 
@@ -118,7 +120,10 @@ fn every_row_names_parameter() {
 fn rows_do_not_repeat() {
     for (index, (name, _)) in AUTO_REQUIREMENT_ROWS.iter().enumerate() {
         let mut earlier = AUTO_REQUIREMENT_ROWS[..index].iter();
-        assert!(earlier.all(|(earlier_name, _)| earlier_name != name), "{name:?}");
+        assert!(
+            earlier.all(|(earlier_name, _)| earlier_name != name),
+            "{name:?}"
+        );
     }
 }
 
@@ -181,7 +186,10 @@ fn quotes_group_words() {
 fn labels_are_primary_names() {
     assert_eq!(written_labels(""), [""; 0]);
     assert_eq!(written_labels("--help -h"), ["--help", "--help"]);
-    assert_eq!(written_labels("--preload=a -r b"), ["--preload", "--preload"]);
+    assert_eq!(
+        written_labels("--preload=a -r b"),
+        ["--preload", "--preload"]
+    );
     assert_eq!(
         written_labels("--eval 1 -e 1 --print 1 -p 1"),
         ["--eval", "--eval", "--print", "--print"]
@@ -213,14 +221,21 @@ fn chained_shorts_are_separate_options() {
     assert_eq!(written_labels("-be 1 -h"), ["--bun", "--eval", "--help"]);
     assert_eq!(
         requirements("-bi"),
-        [(RuntimeRequirement::Feature(Feature::Install), "-i".to_owned())]
+        [(
+            RuntimeRequirement::Feature(Feature::Install),
+            "-i".to_owned()
+        )]
     );
 }
 
 #[test]
 fn node_alias_is_resolved() {
     for (from, to) in NODE_SHORT_ALIASES {
-        assert!(!from.contains(&b'='), "{}", BStr::new(from));
+        assert!(
+            !bun_core::strings::contains_char(from, b'='),
+            "{}",
+            BStr::new(from)
+        );
         assert!(!to.is_empty(), "{}", BStr::new(from));
     }
     assert_eq!(
@@ -243,7 +258,10 @@ fn option_value_is_not_option() {
     assert_eq!(written_labels("--title -h"), ["--title"]);
     assert_eq!(written_labels("-r --help --smol"), ["--preload", "--smol"]);
     assert_eq!(written_labels("-e-h"), ["--eval"]);
-    assert_eq!(written_labels("--inspect=-h --smol"), ["--inspect", "--smol"]);
+    assert_eq!(
+        written_labels("--inspect=-h --smol"),
+        ["--inspect", "--smol"]
+    );
 
     let embedded = read_exec_argv(b"--title --inspect");
     assert!(embedded.requirements.is_empty());
@@ -294,13 +312,27 @@ fn walk_stops_at_malformed_word() {
 
 #[test]
 fn inspect_admits_inspector() {
-    for options in ["--inspect", "--inspect-wait", "--inspect-brk=9229", "--smol --inspect"] {
+    for options in [
+        "--inspect",
+        "--inspect-wait",
+        "--inspect-brk=9229",
+        "--smol --inspect",
+    ] {
         let embedded = read_exec_argv(options.as_bytes());
         assert!(embedded.admits_inspector(), "{options}");
         assert!(embedded.first_that_loads_code().is_none(), "{options}");
     }
-    for options in ["", "--smol", "--inspector", "--preload a", "app.ts --inspect"] {
-        assert!(!read_exec_argv(options.as_bytes()).admits_inspector(), "{options}");
+    for options in [
+        "",
+        "--smol",
+        "--inspector",
+        "--preload a",
+        "app.ts --inspect",
+    ] {
+        assert!(
+            !read_exec_argv(options.as_bytes()).admits_inspector(),
+            "{options}"
+        );
     }
 }
 
@@ -323,7 +355,9 @@ fn first_option_that_loads_code_is_found() {
     ];
     for (options, label) in loading {
         let embedded = read_exec_argv(options.as_bytes());
-        let found = embedded.first_that_loads_code().map(|option| text(&option.label));
+        let found = embedded
+            .first_that_loads_code()
+            .map(|option| text(&option.label));
         assert_eq!(found.as_deref(), Some(label), "{options}");
     }
     let load_nothing = [
@@ -336,7 +370,12 @@ fn first_option_that_loads_code_is_found() {
         "--trace-env-native-stack",
     ];
     for options in load_nothing {
-        assert!(read_exec_argv(options.as_bytes()).first_that_loads_code().is_none(), "{options}");
+        assert!(
+            read_exec_argv(options.as_bytes())
+                .first_that_loads_code()
+                .is_none(),
+            "{options}"
+        );
     }
 }
 
@@ -362,7 +401,10 @@ fn code_generation_flag_is_found() {
         "app.ts --disallow-code-generation-from-strings",
     ];
     for options in allowing {
-        assert!(!read_exec_argv(options.as_bytes()).forbids_text_evaluation, "{options}");
+        assert!(
+            !read_exec_argv(options.as_bytes()).forbids_text_evaluation,
+            "{options}"
+        );
     }
 }
 
@@ -389,7 +431,10 @@ fn hot_reload_options_need_reloader_and_runtime_code() {
             requirements(label),
             [
                 (RuntimeRequirement::RuntimeCode, label.to_owned()),
-                (RuntimeRequirement::Feature(Feature::HotReload), label.to_owned()),
+                (
+                    RuntimeRequirement::Feature(Feature::HotReload),
+                    label.to_owned()
+                ),
             ]
         );
     }
@@ -412,7 +457,11 @@ fn command_line_messages() {
     ];
     for (options, label) in cases {
         let expected = format!("{label}{NO_COMMAND_LINE}");
-        assert_eq!(message_without_anything(options), Some(expected), "{options}");
+        assert_eq!(
+            message_without_anything(options),
+            Some(expected),
+            "{options}"
+        );
     }
 }
 
@@ -425,12 +474,22 @@ fn removed_feature_messages() {
         ("--heap-prof-md", "--heap-prof-md"),
         ("--sql-preconnect", "--sql-preconnect"),
         ("--redis-preconnect", "--redis-preconnect"),
-        ("--fetch-preconnect=http://127.0.0.1:9", "--fetch-preconnect"),
-        ("--smol --fetch-preconnect http://127.0.0.1:9", "--fetch-preconnect"),
+        (
+            "--fetch-preconnect=http://127.0.0.1:9",
+            "--fetch-preconnect",
+        ),
+        (
+            "--smol --fetch-preconnect http://127.0.0.1:9",
+            "--fetch-preconnect",
+        ),
     ];
     for (options, label) in cases {
         let expected = format!("{label}{FEATURE_REMOVED}");
-        assert_eq!(message_without_anything(options), Some(expected), "{options}");
+        assert_eq!(
+            message_without_anything(options),
+            Some(expected),
+            "{options}"
+        );
     }
 }
 
@@ -441,7 +500,9 @@ fn warning_of(option: &UnusableOption) -> String {
 }
 
 fn warnings_without_anything(options: &str) -> Vec<String> {
-    let ignored = with_words(options, |words| find_ignored_options(words, obstacle_without_anything));
+    let ignored = with_words(options, |words| {
+        find_ignored_options(words, obstacle_without_anything)
+    });
     ignored.iter().map(warning_of).collect()
 }
 
@@ -471,14 +532,21 @@ fn options_for_diagnosis_are_ignored_with_a_warning() {
         ("--trace-exits=1", "--trace-exits"),
         ("--trace-events-enabled", "--trace-events-enabled"),
         ("--trace-event-categories node", "--trace-event-categories"),
-        ("--trace-event-file-pattern=trace.log", "--trace-event-file-pattern"),
+        (
+            "--trace-event-file-pattern=trace.log",
+            "--trace-event-file-pattern",
+        ),
         ("--smol --trace-exit --stack-trace-limit=3", "--trace-exit"),
         ("--title --trace-exit", "--trace-exit"),
         ("positional --trace-exit", "--trace-exit"),
     ];
     for (options, label) in cases {
         assert_eq!(message_without_anything(options), None, "{options}");
-        assert_eq!(warnings_without_anything(options), [format!("{label}{IGNORED_WITHOUT_FUNCTION_SOURCE}")], "{options}");
+        assert_eq!(
+            warnings_without_anything(options),
+            [format!("{label}{IGNORED_WITHOUT_FUNCTION_SOURCE}")],
+            "{options}"
+        );
     }
     assert_eq!(
         warnings_without_anything("--trace-exit --trace-env --trace-exit"),
@@ -489,12 +557,16 @@ fn options_for_diagnosis_are_ignored_with_a_warning() {
     );
     let ignored_by = |build: Option<BuildRecord>, is_whole: bool| {
         let obstacle_to = |requirement| find_obstacle(requirement, build, |_| is_whole);
-        let ignored = with_words("--trace-exit", |words| find_ignored_options(words, obstacle_to));
+        let ignored = with_words("--trace-exit", |words| {
+            find_ignored_options(words, obstacle_to)
+        });
         ignored.iter().map(warning_of).collect::<Vec<_>>()
     };
     assert_eq!(
         ignored_by(Some(DEFAULT_BUILD), true),
-        ["--trace-exit is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code"]
+        [
+            "--trace-exit is ignored by this executable because it only runs code that was compiled into it. Rebuild it with --compile-inspector to load other code"
+        ]
     );
     assert_eq!(
         ignored_by(None, false),
@@ -503,7 +575,10 @@ fn options_for_diagnosis_are_ignored_with_a_warning() {
     assert!(ignored_by(Some(WITH_INSPECTOR), true).is_empty());
     assert!(ignored_by(None, true).is_empty());
     // An option that ends the process is reported, whatever is ignored beside it.
-    assert_eq!(message_without_anything("--trace-exit --help"), Some(format!("--help{NO_COMMAND_LINE}")));
+    assert_eq!(
+        message_without_anything("--trace-exit --help"),
+        Some(format!("--help{NO_COMMAND_LINE}"))
+    );
 }
 
 #[test]
@@ -525,11 +600,22 @@ fn code_loading_messages() {
     for (options, label) in cases {
         let expected = Some(format!("{label}{ONLY_COMPILED_CODE}"));
         assert_eq!(message_without_anything(options), expected, "{options}");
-        for build in [WITHOUT_FUNCTION_SOURCE, WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE] {
-            assert_eq!(message_untrimmed(options, Some(build)), expected, "{options}");
+        for build in [
+            WITHOUT_FUNCTION_SOURCE,
+            WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE,
+        ] {
+            assert_eq!(
+                message_untrimmed(options, Some(build)),
+                expected,
+                "{options}"
+            );
         }
         let of_default_build = Some(format!("{label}{ONLY_CODE_OF_THE_BUILD}"));
-        assert_eq!(message_untrimmed(options, Some(DEFAULT_BUILD)), of_default_build, "{options}");
+        assert_eq!(
+            message_untrimmed(options, Some(DEFAULT_BUILD)),
+            of_default_build,
+            "{options}"
+        );
         for build in [Some(WITH_INSPECTOR), None] {
             assert_eq!(message_untrimmed(options, build), None, "{options}");
         }
@@ -548,9 +634,17 @@ fn debugger_messages() {
         let expected = Some(format!("{label}{NO_DEBUGGER}"));
         assert_eq!(message_without_anything(options), expected, "{options}");
         for build in [DEFAULT_BUILD, WITHOUT_FUNCTION_SOURCE] {
-            assert_eq!(message_untrimmed(options, Some(build)), expected, "{options}");
+            assert_eq!(
+                message_untrimmed(options, Some(build)),
+                expected,
+                "{options}"
+            );
         }
-        for build in [Some(WITH_INSPECTOR), Some(WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE), None] {
+        for build in [
+            Some(WITH_INSPECTOR),
+            Some(WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE),
+            None,
+        ] {
             assert_eq!(message_untrimmed(options, build), None, "{options}");
         }
     }
@@ -559,7 +653,10 @@ fn debugger_messages() {
 #[test]
 fn build_is_asked_only_about_options_that_load_code() {
     let options = "--help --aot -i --config=own.toml --cpu-prof --heap-prof --sql-preconnect --redis-preconnect --expose-internals --smol";
-    assert_eq!(message_untrimmed(options, Some(WITHOUT_FUNCTION_SOURCE)), None);
+    assert_eq!(
+        message_untrimmed(options, Some(WITHOUT_FUNCTION_SOURCE)),
+        None
+    );
     for requirement in AUTO_REQUIREMENTS {
         let expected = match requirement {
             RuntimeRequirement::RuntimeCode | RuntimeRequirement::WholeRuntime => {
@@ -572,7 +669,10 @@ fn build_is_asked_only_about_options_that_load_code() {
         };
         let obstacle = find_obstacle(requirement, Some(WITHOUT_FUNCTION_SOURCE), |_| true);
         assert_eq!(obstacle, expected, "{requirement:?}");
-        assert_eq!(find_obstacle(requirement, Some(WITH_INSPECTOR), |_| true), None);
+        assert_eq!(
+            find_obstacle(requirement, Some(WITH_INSPECTOR), |_| true),
+            None
+        );
     }
 }
 
@@ -581,7 +681,11 @@ fn option_that_build_allows_still_needs_its_feature() {
     for requirement in [INSPECTOR_REQUIREMENT, RuntimeRequirement::RuntimeCode] {
         for build in [Some(WITH_INSPECTOR), None] {
             let obstacle = find_obstacle(requirement, build, |_| false);
-            assert_eq!(obstacle, Some(Obstacle::FeatureRemoved), "{requirement:?} {build:?}");
+            assert_eq!(
+                obstacle,
+                Some(Obstacle::FeatureRemoved),
+                "{requirement:?} {build:?}"
+            );
         }
     }
 }
@@ -616,18 +720,27 @@ fn first_unusable_option_is_reported() {
             (requirement == install).then_some(Obstacle::FeatureRemoved)
         })
     });
-    assert_eq!(message_of(&unusable.unwrap()), format!("-i{FEATURE_REMOVED}"));
+    assert_eq!(
+        message_of(&unusable.unwrap()),
+        format!("-i{FEATURE_REMOVED}")
+    );
     assert_eq!(
         message_without_anything("-r a --help"),
         Some(format!("--preload{ONLY_COMPILED_CODE}"))
     );
-    assert_eq!(message_without_anything("--help -r a"), Some(format!("--help{NO_COMMAND_LINE}")));
+    assert_eq!(
+        message_without_anything("--help -r a"),
+        Some(format!("--help{NO_COMMAND_LINE}"))
+    );
 }
 
 #[test]
 fn available_requirements_make_every_option_usable() {
     let options = "--help --aot -i --sql-preconnect --trace-exit --preload a --hot --inspect";
-    assert_eq!(with_words(options, |words| find_unusable_option(words, |_| None)), None);
+    assert_eq!(
+        with_words(options, |words| find_unusable_option(words, |_| None)),
+        None
+    );
 }
 
 #[test]
@@ -641,7 +754,11 @@ fn bunfig_settings() {
 
     let install_message = format!("\"install.auto\" in bunfig.toml{FEATURE_REMOVED}");
     let no_package_manager = format!("\"install.auto\" in bunfig.toml{NO_COMMAND_LINE}");
-    for cache in [GlobalCache::force, GlobalCache::fallback, GlobalCache::allow_install] {
+    for cache in [
+        GlobalCache::force,
+        GlobalCache::fallback,
+        GlobalCache::allow_install,
+    ] {
         ctx.debug.global_cache = cache;
         assert_eq!(message(&ctx), Some(no_package_manager.clone()), "{cache:?}");
     }
@@ -657,8 +774,14 @@ fn bunfig_settings() {
         let obstacle_to = |requirement| find_obstacle(requirement, build, |_| true);
         find_unusable_bunfig_setting(&ctx, obstacle_to).map(|option| message_of(&option))
     };
-    assert_eq!(untrimmed(Some(WITHOUT_FUNCTION_SOURCE)), Some(expected.clone()));
-    assert_eq!(untrimmed(Some(WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE)), Some(expected));
+    assert_eq!(
+        untrimmed(Some(WITHOUT_FUNCTION_SOURCE)),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        untrimmed(Some(WITH_INSPECTOR_WITHOUT_FUNCTION_SOURCE)),
+        Some(expected)
+    );
     assert_eq!(untrimmed(Some(DEFAULT_BUILD)), None);
     assert_eq!(untrimmed(Some(WITH_INSPECTOR)), None);
     assert_eq!(untrimmed(None), None);
@@ -667,9 +790,18 @@ fn bunfig_settings() {
     ctx.args.serve_plugins = Some(Vec::new());
     assert_eq!(message(&ctx), None);
     ctx.args.serve_plugins = Some(vec![Box::from(&b"bun-plugin-tailwind"[..])]);
-    assert_eq!(message(&ctx), Some(format!("\"serve.static.plugins\" in bunfig.toml{ONLY_COMPILED_CODE}")));
-    let obstacle_in_default_build = |requirement| find_obstacle(requirement, Some(DEFAULT_BUILD), |_| true);
-    assert_eq!(find_unusable_bunfig_setting(&ctx, obstacle_in_default_build), None);
+    assert_eq!(
+        message(&ctx),
+        Some(format!(
+            "\"serve.static.plugins\" in bunfig.toml{ONLY_COMPILED_CODE}"
+        ))
+    );
+    let obstacle_in_default_build =
+        |requirement| find_obstacle(requirement, Some(DEFAULT_BUILD), |_| true);
+    assert_eq!(
+        find_unusable_bunfig_setting(&ctx, obstacle_in_default_build),
+        None
+    );
     ctx.args.serve_plugins = None;
     ctx.preloads = preloads;
 
@@ -678,7 +810,10 @@ fn bunfig_settings() {
     let unusable = find_unusable_bunfig_setting(&ctx, |requirement| {
         (requirement != runtime_code).then_some(Obstacle::FeatureRemoved)
     });
-    assert_eq!(unusable.map(|option| message_of(&option)), Some(install_message));
+    assert_eq!(
+        unusable.map(|option| message_of(&option)),
+        Some(install_message)
+    );
 }
 
 #[test]
@@ -691,7 +826,10 @@ fn default_build_ignores_code_of_bunfig() {
     };
     let runtime_code = RuntimeRequirement::RuntimeCode;
     let mut ctx = with_code();
-    ignore_code_of_bunfig(&mut ctx, find_obstacle(runtime_code, Some(DEFAULT_BUILD), |_| true));
+    ignore_code_of_bunfig(
+        &mut ctx,
+        find_obstacle(runtime_code, Some(DEFAULT_BUILD), |_| true),
+    );
     assert!(ctx.preloads.is_empty() && ctx.args.serve_plugins.is_none());
     for build in [Some(WITH_INSPECTOR), Some(WITHOUT_FUNCTION_SOURCE), None] {
         let mut ctx = with_code();
@@ -707,7 +845,10 @@ fn environment_variable_messages() {
         origin: OptionOrigin::EnvironmentVariable("BUN_INSPECT_PRELOAD"),
         obstacle: Obstacle::BuiltWithoutFunctionSource,
     };
-    assert_eq!(message_of(&option), format!("BUN_INSPECT_PRELOAD{ONLY_COMPILED_CODE}"));
+    assert_eq!(
+        message_of(&option),
+        format!("BUN_INSPECT_PRELOAD{ONLY_COMPILED_CODE}")
+    );
     let option = UnusableOption {
         origin: OptionOrigin::EnvironmentVariable("BUN_INSPECT"),
         obstacle: Obstacle::BuiltWithoutInspector,

@@ -29,9 +29,15 @@ impl EntryPointNames<'_> {
 
 /// In a public path, a `..` that leaves the root directory of the build is `_.._`.
 fn is_shown_as(name: &[u8], shown: &[u8]) -> bool {
-    let segments = name.split(|&byte| byte == b'/');
-    let segments = segments.map(|segment| if segment == b".." { &b"_.._"[..] } else { segment });
-    segments.eq(shown.split(|&byte| byte == b'/'))
+    let segments = bun_core::strings::split(name, b"/");
+    let segments = segments.map(|segment| {
+        if segment == b".." {
+            &b"_.._"[..]
+        } else {
+            segment
+        }
+    });
+    segments.eq(bun_core::strings::split(shown, b"/"))
 }
 
 pub(crate) fn finish_build(
@@ -72,7 +78,11 @@ fn collect_output_files(
     let mut entry_points = Vec::with_capacity(entry_count);
     for (index, entry) in entry_paths.into_iter().enumerate() {
         let dest_path = names.file_name(&entry.public_path);
-        output_files.push(create_entry_file(dest_path, &entry.source_path, index as u32));
+        output_files.push(create_entry_file(
+            dest_path,
+            &entry.source_path,
+            index as u32,
+        ));
         entry_points.push(AotEntryPoint {
             source_path: entry.source_path,
             module_path: entry.public_path,
@@ -86,11 +96,17 @@ fn collect_output_files(
         // In place, an entry point that is embedded, a native addon, has one name for its file and for its bytes, and of two files with one name
         // the executable keeps the first.
         let entry_files = &mut output_files[..entry_count];
-        if let Some(entry_file) = entry_files.iter_mut().find(|entry_file| entry_file.dest_path == file.dest_path) {
+        if let Some(entry_file) = entry_files
+            .iter_mut()
+            .find(|entry_file| entry_file.dest_path == file.dest_path)
+        {
             core::mem::swap(&mut entry_file.value, &mut file.value);
             core::mem::swap(&mut entry_file.loader, &mut file.loader);
             core::mem::swap(&mut entry_file.size, &mut file.size);
-            core::mem::swap(&mut entry_file.size_without_sourcemap, &mut file.size_without_sourcemap);
+            core::mem::swap(
+                &mut entry_file.size_without_sourcemap,
+                &mut file.size_without_sourcemap,
+            );
         }
         output_files.push(file);
     }
@@ -149,14 +165,20 @@ mod tests {
 
     #[test]
     fn file_names_of_entry_points() {
-        let (shown, embedded) = (names(&["a.ts", "../lib/b.mjs"]), names(&["app", "_.._/lib/b.js"]));
+        let (shown, embedded) = (
+            names(&["a.ts", "../lib/b.mjs"]),
+            names(&["app", "_.._/lib/b.js"]),
+        );
         let names = EntryPointNames {
             module_prefix: PREFIX,
             shown: &shown,
             embedded: &embedded,
         };
         assert_eq!(names.file_name(b"/$bunfs/root/a.ts"), b"app");
-        assert_eq!(names.file_name(b"/$bunfs/root/_.._/lib/b.mjs"), b"_.._/lib/b.js");
+        assert_eq!(
+            names.file_name(b"/$bunfs/root/_.._/lib/b.mjs"),
+            b"_.._/lib/b.js"
+        );
         assert_eq!(names.file_name(b"/$bunfs/root/a.ts?text"), b"a.ts?text");
         assert_eq!(names.file_name(b"/project/a.ts"), b"/project/a.ts");
     }

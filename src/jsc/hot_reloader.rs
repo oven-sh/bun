@@ -362,7 +362,7 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub(crate) main: MainFile,
 
     #[cfg(not(windows))]
-    pub(crate) tombstones: StringHashMap<*mut Fs::EntriesOption>,
+    pub(crate) tombstones: StringHashMap<*mut Fs::DirEntry>,
 
     /// See [`HotReloaderCtx::reload_handle`].
     pub(crate) reload_handle: Option<crate::VmHandle>,
@@ -728,11 +728,12 @@ where
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
             Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
+                bun_core::pretty_errorln!(
+                    "<red>error<r><d>:<r> Failed to enable File Watcher: {}",
                     err.name()
-                ));
+                );
+                Output::flush();
+                bun_core::Global::exit(1);
             }
         };
 
@@ -759,13 +760,29 @@ where
     }
 
     #[cfg(not(windows))]
-    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::EntriesOption) {
+    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::DirEntry) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
     #[cfg(not(windows))]
-    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::EntriesOption> {
+    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::DirEntry> {
         self.tombstones.get(key).copied()
+    }
+
+    /// Returns `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
+    /// Resolver threads rewrite the cache under `entries_mutex`. The `DirEntry` is never freed.
+    #[cfg(not(windows))]
+    fn cached_dir_entry(
+        rfs: &mut Fs::file_system::RealFS,
+        key: &[u8],
+    ) -> Option<*mut Fs::DirEntry> {
+        let _entries_lock = rfs.entries_mutex.lock_guard();
+        match rfs.entries.get(key) {
+            Some(Fs::EntriesOption::Entries(existing)) => {
+                Some(std::ptr::from_mut::<Fs::DirEntry>(*existing))
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn on_error(_: &mut Self, err: &bun_sys::Error) {
@@ -842,6 +859,7 @@ where
             unsafe { (*ctx).flush_evictions() };
         });
         let fs: &mut FileSystem = FileSystem::instance();
+        let top_level_dir = fs.top_level_dir();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors, rfs);
@@ -864,8 +882,9 @@ where
 
             match kind {
                 bun_watcher::Kind::File => {
-                    if event.op.contains(WatchOp::DELETE)
-                        || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
+                    if !bun_watcher::WATCHES_BY_PATH
+                        && (event.op.contains(WatchOp::DELETE)
+                            || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE))
                     {
                         // SAFETY: the Watcher outlives this call (it owns the
                         // Reloader that calls us); `remove_at_index::<false>`
@@ -885,11 +904,8 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
-                            // while `rfs = &mut fs.fs` is live; inline the body so the
-                            // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                fs.top_level_dir,
+                                top_level_dir,
                                 file_path
                             ))
                         ));
@@ -936,7 +952,7 @@ where
                     #[cfg(not(windows))]
                     {
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
-                        let mut entries_option: Option<*mut Fs::EntriesOption> = None;
+                        let mut entries_option: Option<*mut Fs::DirEntry> = None;
 
                         // Note: the affected-name element type differs by
                         // platform (kqueue vs inotify). Split into two locals;
@@ -947,9 +963,7 @@ where
 
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
-                                // SAFETY: hot-reload runs single-threaded on the JS thread;
-                                // no other live `&mut EntriesOption` for this key here.
-                                if let Some(existing) = rfs.entries.get(file_path) {
+                                if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
                                     self.put_tombstone(file_path, existing);
                                     entries_option = Some(existing);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
@@ -1040,7 +1054,7 @@ where
                         };
 
                         if affected_len > 0 && !IS_KQUEUE {
-                            if let Some(existing) = rfs.entries.get(file_path) {
+                            if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
                                 self.put_tombstone(file_path, existing);
                                 entries_option = Some(existing);
                             } else if let Some(existing) = self.get_tombstone(file_path) {
@@ -1103,13 +1117,13 @@ where
                         if let Some(dir_ent) = entries_option {
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration. Shared access only —
-                            // `entries()` takes `&self` and per-entry mutation below goes
+                            // `get()` takes `&self` and per-entry mutation below goes
                             // through the entry's own mutex + cells.
                             let dir_ent = unsafe { &*dir_ent };
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
-                            for i in 0..affected_len {
+                            'names: for i in 0..affected_len {
                                 let changed_name: &[u8] = if IS_KQUEUE {
                                     affected_kqueue[i]
                                 } else {
@@ -1145,7 +1159,7 @@ where
                                         // (EntryStore-owned).
                                         let looked_up = {
                                             let _entries_lock = rfs.entries_mutex.lock_guard();
-                                            dir_ent.entries().get(changed_name)
+                                            dir_ent.get(changed_name)
                                         };
                                         if let Some(file_ent) = looked_up {
                                             // reset the file descriptor
@@ -1160,7 +1174,7 @@ where
                                                     core::sync::atomic::Ordering::Release,
                                                 );
                                             }
-                                            path_string = ent.abs_path;
+                                            path_string = ent.abs_path();
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
@@ -1184,7 +1198,7 @@ where
                                                             unsafe {
                                                                 (*ctx).remove_at_index::<false>(
                                                                     bun_watcher::Kind::File,
-                                                                    entry_id as u16,
+                                                                    entry_id as bun_watcher::WatchItemIndex,
                                                                     0,
                                                                     &[],
                                                                 )
@@ -1202,6 +1216,12 @@ where
                                         } else {
                                             let file_path_without_trailing_slash =
                                                 strings::trim_right(file_path, &[SEP]);
+                                            if file_path_without_trailing_slash.len()
+                                                + changed_name.len()
+                                                >= _on_file_update_path_buf.len()
+                                            {
+                                                continue 'names;
+                                            }
                                             _on_file_update_path_buf
                                                 [0..file_path_without_trailing_slash.len()]
                                                 .copy_from_slice(file_path_without_trailing_slash);
@@ -1238,7 +1258,7 @@ where
                                         Self::debug(format_args!(
                                             "File change: {}",
                                             bstr::BStr::new(bun_paths::resolve_path::relative(
-                                                fs.top_level_dir,
+                                                top_level_dir,
                                                 abs_path,
                                             ))
                                         ));
@@ -1251,7 +1271,7 @@ where
                             Self::debug(format_args!(
                                 "Dir change: {} (affecting {})",
                                 bstr::BStr::new(bun_paths::resolve_path::relative(
-                                    fs.top_level_dir,
+                                    top_level_dir,
                                     file_path
                                 )),
                                 affected_len
@@ -1338,7 +1358,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
-        FileSystem::get().top_level_dir
+        FileSystem::get().top_level_dir()
     }
 
     fn install_bun_watcher(

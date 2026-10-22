@@ -18730,5 +18730,15 @@
       "tsconfig.json": "{ \"files\": [], \"references\": [{ \"path\": \"./lib\" }, { \"path\": \"./app\" }] }\n"
     },
     "build": true
+  },
+  "inferred-type-is-a-module-in-a-nested-node-modules": {
+    "files": {
+      "a.ts": "import { K, viaImportType, viaNamespace } from \"outer\";\nexport const a = viaImportType();\nexport const b = viaNamespace();\nexport const c = new K().m;\nexport class D { m(x: typeof import(\"outer/node_modules/inner\")) { return x; } }\n",
+      "node_modules/outer/package.json": "{ \"name\": \"outer\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/index.d.ts": "import * as inner from \"inner\";\nexport declare function viaImportType(): typeof import(\"inner\");\nexport declare function viaNamespace(): typeof inner;\nexport declare class K { m(x: import(\"inner\").Inner): typeof import(\"inner\"); }\n",
+      "node_modules/outer/node_modules/inner/package.json": "{ \"name\": \"inner\", \"version\": \"1.0.0\", \"types\": \"index.d.ts\" }\n",
+      "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
+    }
   }
 }

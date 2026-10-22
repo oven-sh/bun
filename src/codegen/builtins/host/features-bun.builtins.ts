@@ -46,8 +46,7 @@ const s3PathUses = (operand: b.OperandName) =>
 const usesWhenOptionsHave = (names: readonly string[], ...features: readonly b.FeatureName[]) =>
   features.flatMap(feature => names.map(name => ({ feature, when: b.whenOperandHasProperty("options", name) })));
 
-// ServerConfig::from_js reads the TLS options from `tls`. Where that gives none it reads them from the options
-// themselves, as Bun 0.2 did, and any one of them makes the server an HTTPS server.
+// ServerConfig::from_js reads the TLS options from `tls`.
 const serverTlsOptions = ["tls", ...TLSOptions.names];
 
 const externalState = ["ExternalState"];
@@ -560,7 +559,7 @@ export default b.declarations(
   extendAll(s3RequestFeatures, "Bun.s3", "Bun.S3Client"),
   extendAll(["S3Client"], "%S3Stat%"),
 
-  extendAll(tlsSocketFeatures, ...nativeBindings("Rust", "SecureContext.rs", "js.getConstructor")),
+  extendAll(tlsSocketFeatures, ...nativeBindings("Bindgen", "SecureContext.bind.ts", "SecureContext")),
   extendAll(["TlsSockets", "X509"], "%TLSSocket%"),
   extendAll(["TlsSockets"], "node:tls", "%SecureContext%", "%HTTPSServer%", "%DebugHTTPSServer%"),
 

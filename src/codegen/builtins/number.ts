@@ -245,7 +245,6 @@ function closedKeysOf(
 }
 
 // A constructor of the engine without a lock of its own is called like every built-in function: `Error.call(this, message)`, `x instanceof Error`.
-// So is a constructor that the host puts on the global object: each of them is native, an InternalFunction, which takes none of the four names and no other prototype by itself.
 function isConstructorWithoutLock({ kind, origin, holder, flags, sameObjectAs }: ModelBuiltin): boolean {
   return (
     kind === "Constructor" &&

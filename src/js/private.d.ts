@@ -206,7 +206,7 @@ declare namespace NodeJS {
     /** The `-e` / `--eval` source, which `node:child_process` reads when it forks the current script. */
     _eval?: string;
     /** Set by `node:domain` while a domain is active. */
-    domain?: import("node:domain").Domain | null;
+    domain?: $Node.Domain | null;
     // Bun::Process (src/jsc/bindings/BunProcess.cpp): what builtins use of the `process` that native code hands them.
     on(event: string | symbol, listener: (...args: any[]) => void): this;
     nextTick(callback: Function, ...args: unknown[]): void;
@@ -222,7 +222,7 @@ declare namespace NodeJS {
 }
 
 declare namespace NodeJS {
-  // What `setTimeout` and `setInterval` answer: src/runtime/node/node.classes.ts (Timeout), src/runtime/timer
+  // What `setTimeout` and `setInterval` answer: src/runtime/timer/Timer.bind.ts (Timeout), src/runtime/timer
   interface Timeout {
     ref(): this;
     unref(): this;
@@ -240,7 +240,7 @@ declare namespace NodeJS {
     syscall?: string;
   }
 
-  // What `setImmediate` answers: src/runtime/node/node.classes.ts (Immediate)
+  // What `setImmediate` answers: src/runtime/timer/Timer.bind.ts (Immediate)
   interface Immediate {
     ref(): this;
     unref(): this;
@@ -315,8 +315,6 @@ type RequireMap = Map<string, JSCommonJSModule>;
 interface JSCommonJSModule {
   /** The require cache the module reads and writes: the global one, or its Bun.ModuleGraph's. */
   readonly $requireMap: RequireMap;
-  $require(id: string, mod: any, args_count: number, args: Array): any;
-  $requireNativeModule(id: string): any;
   children: JSCommonJSModule[];
   exports: any;
   id: string;
@@ -421,7 +419,7 @@ declare module "node:net" {
 declare module "bun" {
   // src/runtime/api/Glob.bind.ts: the native halves of `scan` and `scanSync`.
   interface Glob {
-    $pull(
+    $globScan(
       options?:
         | string
         | {
@@ -434,11 +432,11 @@ declare module "bun" {
           }
         | null,
     ): Promise<string[] | undefined>;
-    $resolveSync(options?: Parameters<Glob["$pull"]>[0]): string[] | undefined;
+    $globScanSync(options?: Parameters<Glob["$globScan"]>[0]): string[] | undefined;
     match(path: string): boolean;
     // src/js/builtins/Glob.ts
-    scan(options?: Parameters<Glob["$pull"]>[0]): AsyncIterableIterator<string>;
-    scanSync(options?: Parameters<Glob["$pull"]>[0]): IterableIterator<string>;
+    scan(options?: Parameters<Glob["$globScan"]>[0]): AsyncIterableIterator<string>;
+    scanSync(options?: Parameters<Glob["$globScan"]>[0]): IterableIterator<string>;
   }
 }
 
@@ -463,7 +461,7 @@ declare module "bun" {
     closeIdleConnections(): number;
   }
 
-  // The native class `ServerWebSocket`: src/runtime/server/server.classes.ts, ServerWebSocket.rs.
+  // The native class `ServerWebSocket`: src/runtime/server/server.bind.ts, ServerWebSocket.rs.
   // A send answers -1 (queued behind backpressure), 0 (dropped) or the number of bytes sent.
   interface ServerWebSocket<T = undefined> {
     data: T;
@@ -766,7 +764,7 @@ declare var Headers: {
   new (init?: Headers | Record<string, string | readonly string[]> | Iterable<readonly string[]>): Headers;
 };
 
-// src/runtime/webcore/response.classes.ts, Request.rs, Response.rs, Body.rs
+// src/runtime/webcore/response.bind.ts, Request.rs, Response.rs, Body.rs
 declare namespace $Node {
   /** What `Request` and `Response` share. */
   interface Body {
@@ -1052,7 +1050,7 @@ declare namespace $Node {
     native?: FFIFunction;
     close?(): void;
   }
-  /** The native class `FFI` (src/runtime/ffi/ffi.classes.ts). */
+  /** The native class `FFI` (src/runtime/ffi/ffi.bind.ts). */
   interface FFILibrary {
     symbols: Record<string, FFIFunction>;
     close(): void;
@@ -1072,7 +1070,7 @@ declare namespace $Node {
     cfunction?(options: object, name: string): FFIFunction | Error;
   }
 
-  // More of what `Bun.serve()` returns (src/runtime/server/server.classes.ts).
+  // More of what `Bun.serve()` returns (src/runtime/server/server.bind.ts).
   interface NativeHTTPServer {
     readonly url: URL;
     /** `true`: the request is a WebSocket now, and `fetch` answers nothing. */
@@ -1088,10 +1086,10 @@ declare namespace $Node {
   }
 }
 
-// Classes from `*.classes.ts`. The generated `$ZigGeneratedClasses` says `unknown` for every parameter and result;
+// Classes from `*.classes.ts`. The generated `$Bindgen` says `unknown` for every parameter and result;
 // the declarations here merge with it and say what the native code takes and returns.
-declare namespace $ZigGeneratedClasses {
-  // src/runtime/api/streams.classes.ts, src/runtime/webcore/ReadableStream.rs
+declare namespace $Bindgen {
+  // src/runtime/webcore/ReadableStream.bind.ts, ReadableStream.rs
   interface FileInternalReadableStreamSource {
     updateRef(ref: boolean): void;
     setFlowing(flowing: boolean): void;
@@ -1102,7 +1100,7 @@ declare namespace $ZigGeneratedClasses {
   // src/runtime/api/bun/subprocess.rs. What `Bun.spawn` answers; native code hands it to builtins as an opaque owner.
   interface Subprocess {}
 
-  // src/runtime/api/sql.classes.ts, src/sql_jsc
+  // src/sql_jsc: the schemas beside mysql/JSMySQLConnection.rs, JSMySQLQuery.rs, postgres/PostgresSQLConnection.rs, PostgresSQLQuery.rs
   interface MySQLConnection {
     close(): void;
     flush(): void;
@@ -1142,21 +1140,21 @@ declare namespace $ZigGeneratedClasses {
     copyResume(): void;
   }
 
-  // src/runtime/api/ParsedShellScript.classes.ts, src/runtime/shell/ParsedShellScript.rs
+  // src/runtime/shell/ParsedShellScript.bind.ts, ParsedShellScript.rs
   interface ParsedShellScript {
     setCwd(cwd: string): void;
     setEnv(env: Record<string, string | undefined>): void;
     setQuiet(quiet: boolean): void;
   }
 
-  // src/runtime/api/Shell.classes.ts, src/runtime/shell/interpreter.rs
+  // src/runtime/shell/interpreter.bind.ts, interpreter.rs
   interface ShellInterpreter {
     run(): void;
   }
 }
 
 declare namespace NodeJS {
-  /** What `setTimeout` and `setInterval` answer: the native `Timeout` (src/runtime/node/node.classes.ts). */
+  /** What `setTimeout` and `setInterval` answer: the native `Timeout` (src/runtime/timer/Timer.bind.ts). */
   interface Timeout {
     ref(): this;
     unref(): this;
@@ -1198,7 +1196,7 @@ declare namespace $Node {
     issuerCertificate?: PeerCertificate;
   }
 
-  /** The native `TCPSocket` and `TLSSocket`: src/runtime/socket/sockets.classes.ts, socket_body.rs. */
+  /** The native `TCPSocket` and `TLSSocket`: src/runtime/socket/socket_body.bind.ts, socket_body.rs. */
   interface SocketHandle<Data = unknown> {
     data: Data;
     /** -2: shut down, -1: detached, 0: closed, 1: established, 2: connecting. */
@@ -1278,7 +1276,7 @@ declare namespace $Node {
     _parentWrap?: unknown;
   }
 
-  /** The native `Listener`: src/runtime/socket/sockets.classes.ts, Listener.rs. */
+  /** The native `Listener`: src/runtime/socket/Listener.bind.ts, Listener.rs. */
   interface ListenerHandle {
     data: NetServer;
     readonly fd: number;
@@ -1294,7 +1292,7 @@ declare namespace $Node {
     onconnection?: (err: number, clientHandle: SocketHandle<Socket>) => void;
   }
 
-  /** The native `H2FrameParser` of `node:http2`: src/runtime/api/h2.classes.ts, bun/h2_frame_parser.rs. */
+  /** The native `H2FrameParser` of `node:http2`: src/runtime/api/bun/h2_frame_parser.bind.ts, h2_frame_parser.rs. */
   interface H2FrameParser {
     /** The stream's id, or -1. `undefined` where the session has gone. */
     request(
@@ -1375,7 +1373,7 @@ declare namespace $Node {
     prototype: H2FrameParser;
   }
 
-  /** The native `UDPSocket`, what `Bun.udpSocket()` answers: src/runtime/socket/sockets.classes.ts, udp_socket.rs. */
+  /** The native `UDPSocket`, what `Bun.udpSocket()` answers: src/runtime/socket/udp_socket.bind.ts, udp_socket.rs. */
   interface UDPSocketHandle {
     readonly hostname: string;
     readonly port: number;
@@ -1399,7 +1397,7 @@ declare namespace $Node {
     dropSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
   }
 
-  /** The native `SecureContext`, an SSL_CTX: src/runtime/api/SecureContext.classes.ts, SecureContext.rs. */
+  /** The native `SecureContext`, an SSL_CTX: src/runtime/api/bun/SecureContext.bind.ts, SecureContext.rs. */
   interface NativeSecureContext {
     addCACert(pem: string | ArrayBufferView): void;
   }
@@ -1606,7 +1604,6 @@ interface $BunModules {
   "internal/worker/stdio": $ModuleValue<typeof import("./internal/worker/stdio")>;
   "isomorphic-fetch": $ModuleValue<typeof import("./thirdparty/isomorphic-fetch")>;
   "node-fetch": $ModuleValue<typeof import("./thirdparty/node-fetch")>;
-  "node:_http2_upgrade": $ModuleValue<typeof import("./node/_http2_upgrade")>;
   "node:_http_agent": $ModuleValue<typeof import("./node/_http_agent")>;
   "node:_http_client": $ModuleValue<typeof import("./node/_http_client")>;
   "node:_http_common": $ModuleValue<typeof import("./node/_http_common")>;
@@ -1751,7 +1748,7 @@ declare namespace $Node {
     _getFd(): number;
   }
 
-  // node:fs. src/runtime/node/node.classes.ts (NodeJSFS), node_fs.rs, Stat.rs, StatFS.rs;
+  // node:fs. src/runtime/node/node_fs_binding.bind.ts (NodeJSFS), node_fs.rs, Stat.rs, StatFS.rs;
   // src/jsc/bindings/NodeFSStatBinding.cpp, NodeDirent.cpp
 
   /**
@@ -2078,12 +2075,12 @@ declare namespace $Node {
       path: PathLike,
       options: WatchOptions,
       listener: (eventType: string, filename: string | Buffer | Error | undefined) => void,
-    ): $ZigGeneratedClasses.FSWatcher;
+    ): $Bindgen.FSWatcher;
     watchFile(
       path: PathLike,
       options: WatchFileOptions | undefined,
       listener: (current: Stats | BigIntStats, previous: Stats | BigIntStats) => void,
-    ): $ZigGeneratedClasses.StatWatcher;
+    ): $Bindgen.StatWatcher;
     readonly Dirent: new (name: string, type: number, path: string) => Dirent;
     readonly Stats: new (...fields: number[]) => Stats;
   }
@@ -2110,8 +2107,8 @@ interface AddEventListenerOptions {
   signal?: AbortSignal;
 }
 
-// src/runtime/node/node.classes.ts
-declare namespace $ZigGeneratedClasses {
+// src/runtime/node/node_fs_watcher.bind.ts, node_fs_stat_watcher.bind.ts
+declare namespace $Bindgen {
   interface FSWatcher {
     ref(): void;
     unref(): void;
@@ -2124,8 +2121,8 @@ declare namespace $ZigGeneratedClasses {
   }
 }
 
-// src/runtime/api/zlib.classes.ts, src/runtime/node/zlib/*.rs, src/runtime/node/node_zlib_binding.rs
-declare namespace $ZigGeneratedClasses {
+// src/runtime/node/node_zlib_binding.bind.ts, node_zlib_binding.rs, zlib/*.rs
+declare namespace $Bindgen {
   /** What `NativeZlib`, `NativeBrotli` and `NativeZstd` share. */
   interface CompressionStream {
     /** Called with the handle as `this`. */
@@ -2313,7 +2310,7 @@ interface BufferConstructor {
 // `chunk = Buffer.concat(..)` into a `Uint8Array` variable stops every build. The front end binds the value by its name.
 declare var Buffer: any;
 
-// src/runtime/webcore/Blob.rs, src/runtime/webcore/response.classes.ts
+// src/runtime/webcore/Blob.rs, Blob.bind.ts
 interface Blob {
   readonly size: number;
   readonly type: string;
@@ -2493,6 +2490,8 @@ declare namespace $Node {
     readonly closedWithUnsentData: boolean | undefined;
     readonly closeError: (Error & { errno: number; code: string }) | undefined;
     readonly peerEnded: boolean;
+    /** The FIN of `end()` has left, rather than waiting for queued bytes. */
+    readonly finSent: boolean;
     /** No member of the native class. The server asks for it where it reports a dropped connection. */
     readonly localPort?: number;
     close(): void;
@@ -2722,8 +2721,8 @@ interface Performance extends EventTarget {
 }
 declare var Performance: { prototype: Performance; new (): Performance };
 
-// src/runtime/api/bun/subprocess.rs, src/runtime/api/BunObject.classes.ts: what `Bun.spawn` answers.
-declare namespace $ZigGeneratedClasses {
+// src/runtime/api/bun/subprocess.rs, subprocess.bind.ts: what `Bun.spawn` answers.
+declare namespace $Bindgen {
   interface Subprocess {
     readonly pid: number;
     /** By the `stdio` option: a sink for "pipe", a file descriptor, or nothing. */
@@ -2782,11 +2781,14 @@ declare namespace $Node {
     verify(options: unknown, signature: CryptoData, signatureEncoding?: string): boolean;
   }
   interface NativeHash {
+    /** `throwIfFinalized` false: a chunk that comes after `digest()` is dropped, and the answer is `undefined`. */
     update<T>(self: T, data: CryptoData, encoding?: string): T;
+    update<T>(self: T, data: CryptoData, encoding: string | undefined, throwIfFinalized: false): T | undefined;
     digest(outputEncoding?: string | null, finalize?: boolean): Buffer | string;
   }
   interface NativeHmac {
     update<T>(self: T, data: CryptoData, encoding?: string): T;
+    update<T>(self: T, data: CryptoData, encoding: string | undefined, throwIfFinalized: false): T | undefined;
     digest(outputEncoding?: string | null): Buffer | string;
   }
   interface NativeCipher {
@@ -2799,8 +2801,8 @@ declare namespace $Node {
   }
 }
 
-// The native handles of `node:quic`: src/runtime/node/quic/quic.classes.ts, endpoint.rs, session.rs, stream.rs
-declare namespace $ZigGeneratedClasses {
+// The native handles of `node:quic`: src/runtime/node/quic/quic.bind.ts, endpoint.rs, session.rs, stream.rs
+declare namespace $Bindgen {
   interface QuicTransportParams {
     preferredAddressIpv4?: object;
     preferredAddressIpv6?: object;
@@ -2867,7 +2869,7 @@ declare namespace $ZigGeneratedClasses {
 declare namespace $Node {
   // src/runtime/node/node_quic_binding.rs
   interface QuicBinding {
-    Endpoint: new (options: object) => $ZigGeneratedClasses.QuicEndpoint;
+    Endpoint: new (options: object) => $Bindgen.QuicEndpoint;
     /** `onEndpointClose`, `onSessionClose` ..: called with the native handle as `this`. */
     setCallbacks(callbacks: object): void;
     CC_ALGO_RENO_STR: string;

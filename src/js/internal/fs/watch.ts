@@ -134,7 +134,7 @@ function assertFSEventHandle(handle: unknown) {
 }
 
 class FSWatcher extends EventEmitter {
-  #watcher: $ZigGeneratedClasses.FSWatcher | null | undefined;
+  #watcher: $Bindgen.FSWatcher | null | undefined;
   #listener: WatchListener;
   #ignoreMatcher: ((filename: unknown) => boolean) | null;
   #silentClose = false;

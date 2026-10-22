@@ -15,7 +15,6 @@ import { buildModel } from "./build-model.ts";
 import { collectSyntaxUses } from "./build-syntax.ts";
 import { describeUndescribedResults, summarizeUndescribedResults } from "./check-dependencies.ts";
 import { collectBindgen } from "./collect-bindgen.ts";
-import { collectClasses, loadClassDefinitions } from "./collect-classes.ts";
 import { collectModules, collectOwnProperties } from "./collect-modules.ts";
 import { collectNativeBindings } from "./collect-native-bindings.ts";
 import { checkNativeCalls, collectBufferAccessors, collectNativeLoads } from "./collect-registrations.ts";
@@ -133,8 +132,7 @@ function findPlacements(staticTableMembers: readonly SourcedDeclaration[]): Map<
 const schemaFileNameOf = (bindgenSource: string): string =>
   basename(bindgenSource.slice(bindgenSource.indexOf("=") + 1));
 
-// Only some builds of Bun compile such a schema: isCompiled() in scripts/build/codegen.ts. The table has nothing of it in any build:
-// so its ids are the same whichever way Bun is built, and no name of a class for tests counts as the name of a built-in.
+// Only some builds of Bun compile such a schema: isCompiled() in scripts/build/codegen.ts.
 const bindsWhatExistsForTests = (schemaFileName: string): boolean => schemaFileName.endsWith("_test.bind.ts");
 
 export async function collectHost(options: GenerateOptions, problems: Problems): Promise<SourcedDeclaration[]> {
@@ -145,16 +143,18 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
   const staticTableMembers = collectStaticTables(written, singleRoot(bunRoot), problems);
   const { nativeModuleLoadSites, nativeCallSites } = globAllSources();
   checkNativeCalls(bunRoot, [...nativeModuleLoadSites, ...nativeCallSites], written, problems);
+  // collectBindgen() asks which bindings src/js names, which this registers.
+  const calls = nativeCalls(typesOnly);
+  const schemas = await collectBindgen(bunRoot, sourcesOfEveryBuild, findPlacements(staticTableMembers), problems);
   return [
     ...written,
     ...staticTableMembers,
-    ...collectClasses(loadClassDefinitions(bunRoot), problems),
     ...collectModules(bunRoot, problems),
     ...collectOwnProperties(bunRoot, problems),
-    ...collectNativeBindings(nativeCalls(typesOnly), bindsWhatExistsForTests, problems),
+    ...collectNativeBindings(calls, bindsWhatExistsForTests, schemas.constructorBindings, problems),
     ...collectBufferAccessors(bunRoot, problems),
     ...collectNativeLoads(bunRoot, nativeModuleLoadSites, problems),
-    ...(await collectBindgen(bunRoot, sourcesOfEveryBuild, findPlacements(staticTableMembers), problems)),
+    ...schemas.declarations,
   ];
 }
 

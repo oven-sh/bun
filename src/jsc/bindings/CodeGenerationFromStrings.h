@@ -1,7 +1,6 @@
 #pragma once
 
 #include "root.h"
-#include "RemovableFeatures.h"
 #include <JavaScriptCore/AOTRealmStartup.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>

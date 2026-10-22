@@ -1348,7 +1348,8 @@ bitflags::bitflags! {
         /// with `Provenance::has_other_instantiation`.
         const HAS_OTHER_INSTANTIATION = 256;
         /// An intersection of object types that are each their own apparent type. That covers every object type except
-        /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace.
+        /// a mapped type with type variables, which `getResolvedApparentTypeOfMappedType` may replace. They don't all
+        /// have the same apparent type (`can_become_one_reference`).
         const HAS_ONLY_OWN_APPARENT_TYPES = 1024;
     }
 }
@@ -3659,6 +3660,32 @@ impl<'p, 's> Types<'p, 's> {
         })
     }
 
+    /// True if the members of an intersection are references to one target, and all but one at most are deferred.
+    /// `getTypeWithThisArgument` recreates every reference, so with the same type arguments they become one type:
+    /// the apparent type of `A & [number]` is `[number]` after `type A = [number]`. The type arguments aren't
+    /// resolved here.
+    pub fn can_become_one_reference(&self, members: &[TypeId]) -> bool {
+        let has_target_of_first = |&member: &TypeId| match (self.get(members[0]), self.get(member))
+        {
+            (TypeData::Ref { target: a, .. }, TypeData::Ref { target: b, .. }) => a == b,
+            (
+                TypeData::Tuple {
+                    flags: a,
+                    readonly: a_readonly,
+                    ..
+                },
+                TypeData::Tuple {
+                    flags: b,
+                    readonly: b_readonly,
+                    ..
+                },
+            ) => a_readonly == b_readonly && **a == **b,
+            _ => false,
+        };
+        let is_given = |&&member: &&TypeId| self.deferred(member).is_none();
+        members.iter().all(has_target_of_first) && members.iter().filter(is_given).count() <= 1
+    }
+
     fn new_record(&self, created: OwnedTypeKey<'s>, id: u32) -> TypeRecord<'s> {
         let data = &created.0;
         let may_be_reduced = match data {
@@ -3681,7 +3708,7 @@ impl<'p, 's> Types<'p, 's> {
             | TypeData::ReverseMapped { .. } => true,
             _ => false,
         };
-        let has_only_own_apparent_types = matches!(data, TypeData::Intersection(members) if members.iter().all(is_own_apparent_type));
+        let has_only_own_apparent_types = matches!(data, TypeData::Intersection(members) if members.iter().all(is_own_apparent_type) && !self.can_become_one_reference(members));
         let mut flags = self.object_flags_of(data);
         let has_type_variables_in_alias = (created.1.as_ref())
             .and_then(|provenance| provenance.alias.as_ref())

@@ -111,7 +111,7 @@ impl WaiterPool {
             return waiter;
         }
         self.all.push(Box::default());
-        NonNull::from(&**self.all.last().expect("a waiter was just pushed"))
+        NonNull::from(&mut **self.all.last_mut().expect("a waiter was just pushed"))
     }
 
     fn release(&mut self, waiter: NonNull<PluginWaiter>) {
@@ -163,7 +163,7 @@ impl PluginRequests {
         // SAFETY: the caller owns the carrier, and no other thread has it yet.
         let carrier = unsafe { bundle.as_ref() };
         debug_assert!(carrier.completion.is_some());
-        let working_directory = carrier.transpiler().fs().top_level_dir;
+        let working_directory = carrier.transpiler().fs().top_level_dir();
         let in_memory_files = carrier.file_map.into_iter();
         let in_memory_files =
             in_memory_files.flat_map(|files| in_memory_files_by_path(files, working_directory));
@@ -173,7 +173,8 @@ impl PluginRequests {
             waiters: Guarded::default(),
             deferred: Guarded::default(),
             drain_waiter: Box::default(),
-            written_keys: (in_memory_files.map(|(path, (key, _))| (path, Box::from(key)))).collect(),
+            written_keys: (in_memory_files.map(|(path, (key, _))| (path, Box::from(key))))
+                .collect(),
             specifiers_matched: ShardedMap::default(),
             files_matched: ShardedMap::default(),
         }
@@ -226,14 +227,18 @@ impl PluginRequests {
         }
         let path = Fs::Path::init_with_namespace(specifier, FILE_NAMESPACE);
         let is_matched = self.plugins().has_any_matches(&path, false);
-        *self.specifiers_matched.insert_ref(specifier.to_vec(), is_matched)
+        *self
+            .specifiers_matched
+            .insert_ref(specifier.to_vec(), is_matched)
     }
 
     fn told_path<'p>(&'p self, module: ModuleName<'p>) -> &'p [u8] {
         if self.written_keys.is_empty() || module.namespace != FILE_NAMESPACE {
             return module.path;
         }
-        self.written_keys.get(module.path).map_or(module.path, |key| &**key)
+        self.written_keys
+            .get(module.path)
+            .map_or(module.path, |key| &**key)
     }
 
     pub(crate) fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
@@ -245,12 +250,17 @@ impl PluginRequests {
             return is_matched;
         }
         let is_matched = self.plugins().has_any_matches(&path, true);
-        *self.files_matched.insert_ref(module.path.to_vec(), is_matched)
+        *self
+            .files_matched
+            .insert_ref(module.path.to_vec(), is_matched)
     }
 
     pub(crate) fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
         if !self.has_load_plugin(request.module) {
-            return Ok(Loaded::from_file((request.read_file)(), request.default_loader));
+            return Ok(Loaded::from_file(
+                (request.read_file)(),
+                request.default_loader,
+            ));
         }
 
         let pending = self.post_load(request);
@@ -361,7 +371,7 @@ impl PluginRequests {
 
     fn drain_defer_promises(&self) {
         debug_assert!(self.drain_waiter.state.lock().answer.is_none());
-        let drain_waiter = NonNull::from(&*self.drain_waiter);
+        let drain_waiter = NonNull::from_ref(self.drain_waiter.as_ref());
         self.with_bundle(|bundle| {
             debug_assert!(bundle.drain_defer_task.waiter.is_none());
             bundle.drain_defer_task.waiter = Some(drain_waiter);
@@ -465,7 +475,10 @@ mod tests {
     use std::time::Duration;
 
     fn is_load_answer(reason: &WakeReason) -> bool {
-        matches!(reason, WakeReason::Answered(Answer::Load(LoadValue::NoMatch)))
+        matches!(
+            reason,
+            WakeReason::Answered(Answer::Load(LoadValue::NoMatch))
+        )
     }
 
     fn message(kind: Kind) -> Msg {
@@ -527,7 +540,10 @@ mod tests {
         waiter.defer();
         assert!(matches!(waiter.wait(), WakeReason::Deferred));
         waiter.answer_load(LoadValue::NoMatch);
-        assert!(matches!(waiter.wait_for_answer(), Answer::Load(LoadValue::NoMatch)));
+        assert!(matches!(
+            waiter.wait_for_answer(),
+            Answer::Load(LoadValue::NoMatch)
+        ));
     }
 
     #[test]

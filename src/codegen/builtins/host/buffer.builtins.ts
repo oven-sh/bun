@@ -22,41 +22,39 @@ const converted = [b.runs("ToPrimitive")];
 const readAsArrayLike = b.runs("OwnValues", "PrototypeChain", "ToPrimitive", b.named("length"));
 
 // ERR_INVALID_ARG_VALUE prints the value with Bun.inspect, which prints what a custom inspect function returns.
-// ERR_INVALID_ARG_TYPE only looks at data properties, so a value that it names is inspected.
 const printedByInspect = b.printedByFormatter();
 
 const fromInJavaScript = b.compiled("builtins/JSBufferConstructor", "from");
 
-const createdFrom = (implementation: b.ImplementationSpec) =>
-  [
-    {
-      args: { string: b.string, encoding: b.any.optional },
-      returns: newBuffer,
-      capability: "heap",
-      throws: true,
-      uses: { string: [b.readAsCharacters], encoding: b.inspected },
-      implementation,
-    },
-    {
-      args: { arrayBuffer: anyArrayBuffer, byteOffset: b.any.optional, length: b.any.optional },
-      returns: bufferOverSharedBytes,
-      capability: "js",
-      throws: true,
-      runsOnlyOperandCode: true,
-      uses: { arrayBuffer: [b.retained, b.readsContents()], byteOffset: converted, length: converted },
-      implementation,
-    },
-    {
-      args: { typedArray: b.instance("TypedArray") },
-      returns: newBuffer,
-      capability: "heap",
-      throws: true,
-      uses: { typedArray: readsBytes },
-      implementation,
-    },
-  ] satisfies b.FunctionField[];
+const createdFrom = (implementation: b.ImplementationSpec): b.FunctionField[] => [
+  {
+    args: { string: b.string, encoding: b.any.optional },
+    returns: newBuffer,
+    capability: "heap",
+    throws: true,
+    uses: { string: [b.readAsCharacters], encoding: b.inspected },
+    implementation,
+  },
+  {
+    args: { arrayBuffer: anyArrayBuffer, byteOffset: b.any.optional, length: b.any.optional },
+    returns: bufferOverSharedBytes,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { arrayBuffer: [b.retained, b.readsContents()], byteOffset: converted, length: converted },
+    implementation,
+  },
+  {
+    args: { typedArray: b.instance("TypedArray") },
+    returns: newBuffer,
+    capability: "heap",
+    throws: true,
+    uses: { typedArray: readsBytes },
+    implementation,
+  },
+];
 
-const constructed = [
+const constructed: b.FunctionField[] = [
   {
     args: { value: b.notPassed },
     returns: newBuffer,
@@ -85,7 +83,7 @@ const constructed = [
     },
     implementation: b.hostCall,
   },
-] satisfies b.FunctionField[];
+];
 
 const uninitialized = {
   args: { size: b.f64 },
@@ -203,7 +201,7 @@ const propertyOfBuffer = (name: string, property: string) =>
   }) satisfies b.GetterField;
 
 // `new Buffer.from(..)` runs the same function, and what that answers takes the place of the new object.
-const createdByFrom = [
+const createdByFrom: b.FunctionField[] = [
   ...createdFrom(fromInJavaScript),
   {
     args: { array: b.instance("Array").pristine("Names") },
@@ -224,7 +222,7 @@ const createdByFrom = [
     uses: { value: handedOver, encodingOrOffset: handedOver, length: handedOver },
     implementation: fromInJavaScript,
   },
-] satisfies b.FunctionField[];
+];
 
 export default b.declarations(
   b.constructionOfFunction("Buffer.from", createdByFrom),
@@ -435,7 +433,7 @@ export default b.declarations(
         this: uint8Array,
         args: { encoding: b.any.optional, start: b.any.optional, end: b.any.optional },
         returns: b.string,
-        capability: "js",
+        capability: "js" as const,
         throws: true,
         runsOnlyOperandCode: true,
         uses: { this: readsBytes, encoding: converted, start: converted, end: converted },

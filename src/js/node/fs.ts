@@ -292,7 +292,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     }
     callback = wrapFsCallback(callback);
     fs.readCb(
-      (err, bytesRead) => (err ? callback!(err) : callback!(null, bytesRead, buffer)),
+      (err, bytesRead) => (err ? callback!(err, 0, buffer) : callback!(null, bytesRead, buffer)),
       fd,
       buffer,
       offset,
@@ -309,7 +309,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     callback?: Callback<[bytesWritten: number, buffer: T]>,
   ) {
     function onWritten(err: Error | null, bytesWritten: number) {
-      if (err) callback!(err);
+      if (err) callback!(err, 0, buffer);
       else callback!(null, bytesWritten, buffer);
     }
 
@@ -610,7 +610,7 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     callback = ensureCallback(callback);
 
     fs.writevCb(
-      (err, bytesWritten) => (err ? callback!(err) : callback!(null, bytesWritten, buffers)),
+      (err, bytesWritten) => (err ? callback!(err, 0, buffers) : callback!(null, bytesWritten, buffers)),
       fd,
       buffers,
       position,
@@ -630,7 +630,12 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
 
     callback = ensureCallback(callback);
 
-    fs.readvCb((err, bytesRead) => (err ? callback!(err) : callback!(null, bytesRead, buffers)), fd, buffers, position);
+    fs.readvCb(
+      (err, bytesRead) => (err ? callback!(err, 0, buffers) : callback!(null, bytesRead, buffers)),
+      fd,
+      buffers,
+      position,
+    );
   },
   readvSync = fs.readvSync.bind(fs),
   Dirent = fs.Dirent,

@@ -885,6 +885,7 @@ const aotSources = [
   "src/exe_format/",
   "src/codegen/aot-schema/",
   "src/codegen/builtins/",
+  "src/codegen/declared-type-checks.ts",
   "src/codegen/generate-removable-features.ts",
   "src/codegen/removable-entry-points.ts",
   "src/options_types/aot_options.rs",
@@ -902,7 +903,6 @@ const aotSources = [
   "src/runtime/cli/startup_options",
   "src/runtime/removed_feature.rs",
   "src/jsc/compiled_program.rs",
-  "src/jsc/proven_return.rs",
   "src/jsc/bindings/BunAOT",
   "src/jsc/bindings/BunCompiled",
   "src/jsc/bindings/BunCompilers.cpp",
@@ -1110,13 +1110,6 @@ function getImageSteps(
       {
         ...waitStep,
         label: `${getImageLabel(platform)} - bake-image`,
-        env: {
-          // Packer needs several minutes to delete its temp Azure resources after a cancel;
-          // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
-          // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
-          // step-level property for it.
-          BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
-        },
         // One command, so that a cancel reaches Packer (see bakeWindowsImage).
         command: `node ./scripts/ci-image.ts bake-image --key=${key} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
       },
@@ -1181,8 +1174,9 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
-      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+      `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
         `-Artifacts ${artifacts.join(",")} ` +
         `-BuildSteps ${buildSteps.join(",")}`,
     ],

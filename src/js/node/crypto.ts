@@ -66,7 +66,6 @@ const {
 const {
   pbkdf2,
   pbkdf2Sync,
-  timingSafeEqual,
   randomInt,
   randomUUID,
   randomUUIDv7,
@@ -112,6 +111,7 @@ const normalizeEncoding: (encoding: string) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",
   "normalizeEncoding",
 );
+const timingSafeEqual = $bindgen("Crypto.bind.ts", "timingSafeEqual");
 
 const {
   validateFunction,
@@ -329,7 +329,7 @@ Object.assign(Hash.prototype, {
     return new Hash(this[kHandle], options);
   },
   _transform: function (this: $Node.Hash, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (this: $Node.Hash, callback: DoneCallback) {
@@ -369,7 +369,7 @@ Object.assign(Hmac.prototype, {
     return this[kHandle].digest(outputEncoding);
   },
   _transform: function (this: $Node.Hmac, chunk: CryptoData, encoding: string, callback: DoneCallback) {
-    this[kHandle].update(this, chunk, encoding);
+    this[kHandle].update(this, chunk, encoding, false);
     callback();
   },
   _flush: function (this: $Node.Hmac, callback: DoneCallback) {

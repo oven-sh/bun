@@ -244,7 +244,7 @@ function injectFakeEmitter(Class: { prototype: EventTarget }) {
     return this;
   }
 
-  function emit(this: Target, event: string, ...args: unknown[]) {
+  function emit(this: Target, event: string, ...args: any[]) {
     switch (event) {
       case "error":
       case "messageerror":

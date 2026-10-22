@@ -636,8 +636,8 @@ fn engine_prints_same_text() {
         .expect("the engine's tool starts");
 
     assert!(output.status.success(), "{}", BStr::new(&output.stderr));
-    let engine_lines = output.stdout.split(|&byte| byte == b'\n');
-    let lines = text.as_bytes().split(|&byte| byte == b'\n');
+    let engine_lines = bun_core::strings::split(&output.stdout, b"\n");
+    let lines = bun_core::strings::split(text.as_bytes(), b"\n");
     for (number, (engine_line, line)) in (1..).zip(engine_lines.zip(lines)) {
         assert_eq!(BStr::new(engine_line), BStr::new(line), "line {number}");
     }

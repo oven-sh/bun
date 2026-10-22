@@ -104,7 +104,7 @@ fn part_texts<'a>(
 }
 
 #[test]
-fn template_parts() {
+fn template_parts_are_recorded() {
     let text = "`a${b}c`";
     let (file, scratch) = parsed(text, typescript());
     let atoms = scratch.atoms(text.as_bytes());

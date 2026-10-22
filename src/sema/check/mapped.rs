@@ -879,6 +879,7 @@ impl<'p, 's> Checker<'p, 's> {
             });
         }
         let apparent = self.reduced_apparent_type(obj);
+        let holder = self.apparent_type_or_type_variable(obj, apparent);
         if let TypeData::Union(keys) = self.data(index)
             && !self.is_boolean(index)
         {
@@ -886,7 +887,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut was_missing_prop = false;
             for &key in keys.iter() {
                 match self.property_type_for_index(
-                    apparent,
+                    (apparent, holder),
                     (key, index),
                     access_node,
                     access_flags,
@@ -911,7 +912,12 @@ impl<'p, 's> Checker<'p, 's> {
                 self.union_with_alias(&types, alias)
             });
         }
-        self.property_type_for_index(apparent, (index, index), access_node, access_flags)
+        self.property_type_for_index(
+            (apparent, holder),
+            (index, index),
+            access_node,
+            access_flags,
+        )
     }
 
     /// The start of `getIndexedAccessTypeOrUndefined`. If the reduced `obj` has only a string index
@@ -1068,11 +1074,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type. The index pair is
-    /// `indexType`, which isn't a union, and `fullIndexType`.
+    /// `getPropertyTypeForIndexType`. `object` is a reduced apparent type, and `holder` is what
+    /// `apparent_type_or_type_variable` returns for it. The index pair is `indexType`, which isn't a union, and
+    /// `fullIndexType`.
     fn property_type_for_index(
         &mut self,
-        object: TypeId,
+        (object, holder): (TypeId, TypeId),
         (index, full_index): (TypeId, TypeId),
         access_node: AccessNode,
         access_flags: AccessFlags,
@@ -1088,7 +1095,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let ty = self.contextual_property(object, name);
                 return Some(ty.unwrap_or(TypeId::ANY));
             }
-            if let Some((prop, mapper)) = self.get_property_of_type(object, name) {
+            if let Some((prop, mapper)) = self.get_property_of_type(holder, name) {
                 if !access_flags.contains(AccessFlags::WRITING) {
                     let prop_type = self.type_of_prop(prop, mapper);
                     return Some(match access_node {
@@ -1474,7 +1481,8 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mark = self.non_cacheable_mark();
         let ty = self.conditional_type_uncached(file, node, mapper, false, alias);
-        let is_repeatable = self.non_cacheable_mark() == mark;
+        // A call that ends at `tailCount == 1000` reports that every time.
+        let is_repeatable = self.non_cacheable_mark() == mark && !self.is_error_type(ty);
         match (self.leave(q), alias) {
             (Ok(stored), None) if is_member => {
                 if is_repeatable {
@@ -1616,7 +1624,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `tailCount` skips roots that aren't the body of a type alias. In tsgo,
             // `instantiationCount` ends a loop of those.
             if tail_count == 1000 || tail_roots.len() == 10_000 {
-                return self.excessively_deep();
+                return self.too_many_tail_calls();
             }
             let TypeNodeKind::Cond {
                 check,
@@ -1794,7 +1802,7 @@ impl<'p, 's> Checker<'p, 's> {
                         // The loop is deterministic, so a root that recurs under the same mapper
                         // recurs until a limit is hit.
                         if !tail_roots.insert(root) {
-                            return self.excessively_deep();
+                            return self.too_many_tail_calls();
                         }
                         // `newRoot.alias != nil`
                         let known = has_alias

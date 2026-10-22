@@ -142,7 +142,11 @@ fn write_product(
     if let CompileResult::Err(error) = written.result {
         return Err(CompileFailure::Executable(error));
     }
-    if let Some(error) = written.details.as_ref().and_then(|it| it.payload_reference_error) {
+    if let Some(error) = written
+        .details
+        .as_ref()
+        .and_then(|it| it.payload_reference_error)
+    {
         let (directory, path) = executable_location(settings.root_dir, outfile);
         let _ = bun_sys::unlinkat(directory, &ZBox::from_bytes(path));
         log_payload_reference(request.log, error);
@@ -245,11 +249,9 @@ fn build_program(
     });
     built.map_err(|failure| {
         if !request.log.has_errors() {
-            request.log.add_error_fmt(
-                None,
-                bun_ast::Loc::EMPTY,
-                format_args!("the build failed"),
-            );
+            request
+                .log
+                .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
         }
         Box::new(failure)
     })
@@ -273,16 +275,15 @@ fn add_assets(
     added.map_err(CompileFailure::Assets)
 }
 
-/// The file of a compiled module is empty: `require()` and `import()` find the code. An asset at its path gives it its bytes,
-/// which `node:fs` and `Bun.file()` read.
-fn add_assets_under_root(
-    assets: &[Box<[u8]>],
-    entry_name: &[u8],
-    output_files: &mut Vec<OutputFile>,
-) -> Result<(), String> {
-    let has_no_text =
-        |file: &OutputFile| file.size == 0 && file.output_kind.is_file_in_standalone_mode();
-    let mut modules_without_text: std::collections::HashMap<Box<[u8]>, usize> = output_files
+/// The file of a compiled module is empty: `require()` and `import()` find the code.
+fn has_no_text(file: &OutputFile) -> bool {
+    file.size == 0 && file.output_kind.is_file_in_standalone_mode()
+}
+
+type ModulesWithoutText = std::collections::HashMap<Box<[u8]>, usize>;
+
+fn modules_without_text(output_files: &[OutputFile]) -> ModulesWithoutText {
+    output_files
         .iter()
         .enumerate()
         .filter(|(_, file)| has_no_text(file))
@@ -290,7 +291,34 @@ fn add_assets_under_root(
             let path = bun_core::strings::remove_leading_dot_slash(&file.dest_path);
             (path.into(), index)
         })
-        .collect();
+        .collect()
+}
+
+/// An asset at the path of a compiled module gives the module's file its bytes, which `node:fs` and `Bun.file()` read, and its
+/// loader: the bytes are stored as they are, not as text that the executable runs.
+fn add_asset(
+    asset: OutputFile,
+    modules_without_text: &mut ModulesWithoutText,
+    output_files: &mut Vec<OutputFile>,
+) {
+    match modules_without_text.remove(&asset.dest_path) {
+        Some(index) => {
+            let module = &mut output_files[index];
+            module.loader = asset.loader;
+            module.size = asset.size;
+            module.size_without_sourcemap = asset.size_without_sourcemap;
+            module.value = asset.value;
+        }
+        None => output_files.push(asset),
+    }
+}
+
+fn add_assets_under_root(
+    assets: &[Box<[u8]>],
+    entry_name: &[u8],
+    output_files: &mut Vec<OutputFile>,
+) -> Result<(), String> {
+    let mut modules_without_text = modules_without_text(output_files);
     let mut others: Vec<OutputFile> = output_files
         .iter()
         .filter(|file| !has_no_text(file))
@@ -303,15 +331,7 @@ fn add_assets_under_root(
     let number_of_others = others.len();
     collect_compile_assets(assets, entry_name, &mut others)?;
     for asset in others.drain(number_of_others..) {
-        match modules_without_text.remove(&asset.dest_path) {
-            Some(index) => {
-                let module = &mut output_files[index];
-                module.size = asset.size;
-                module.size_without_sourcemap = asset.size_without_sourcemap;
-                module.value = asset.value;
-            }
-            None => output_files.push(asset),
-        }
+        add_asset(asset, &mut modules_without_text, output_files);
     }
     Ok(())
 }
@@ -324,8 +344,12 @@ fn add_assets_in_place(
         .map_err(|error| format!("failed to read the working directory: {error}"))?;
     let mut real_path_buffer = bun_paths::path_buffer_pool::get();
     // What a module has embedded stands at the path of its source already.
-    let embedded: std::collections::HashSet<Box<[u8]>> =
-        output_files.iter().filter(|file| file.size > 0).map(|file| file.dest_path.clone()).collect();
+    let embedded: std::collections::HashSet<Box<[u8]>> = output_files
+        .iter()
+        .filter(|file| file.size > 0)
+        .map(|file| file.dest_path.clone())
+        .collect();
+    let mut modules_without_text = modules_without_text(output_files);
     for asset in assets {
         let mut files = Vec::new();
         collect_compile_assets(core::slice::from_ref(asset), b"", &mut files)?;
@@ -351,10 +375,11 @@ fn add_assets_in_place(
             }
             if real_path != written_path.as_slice() {
                 let real_dest = graph_path(real_path, path_in_asset);
-                output_files.push(asset_output_file(real_dest, file.value.as_slice().to_vec()));
+                let at_real_path = asset_output_file(real_dest, file.value.as_slice().to_vec());
+                add_asset(at_real_path, &mut modules_without_text, output_files);
             }
             file.dest_path = written_dest.into_boxed_slice();
-            output_files.push(file);
+            add_asset(file, &mut modules_without_text, output_files);
         }
     }
     Ok(())

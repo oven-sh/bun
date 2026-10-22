@@ -585,7 +585,7 @@ impl Checker<'_, '_> {
     }
 
     /// `checkGrammarForDisallowedBlockScopedVariableStatement`: 1156.
-    pub(super) fn check_grammar_for_disallowed_block_scoped_variable_statement(
+    fn check_grammar_for_disallowed_block_scoped_variable_statement(
         &mut self,
         file: FileId,
         s: StmtId,

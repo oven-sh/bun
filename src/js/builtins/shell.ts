@@ -5,14 +5,10 @@ interface ShellResolve {
 }
 type ShellReject = (error: unknown) => void;
 interface CreateShellInterpreter {
-  (
-    resolve: ShellResolve,
-    reject: ShellReject,
-    args: $ZigGeneratedClasses.ParsedShellScript,
-  ): $ZigGeneratedClasses.ShellInterpreter;
+  (resolve: ShellResolve, reject: ShellReject, args: $Bindgen.ParsedShellScript): $Bindgen.ShellInterpreter;
 }
 interface CreateParsedShellScript {
-  (raw: readonly string[], args: unknown[]): $ZigGeneratedClasses.ParsedShellScript;
+  (raw: readonly string[], args: unknown[]): $Bindgen.ParsedShellScript;
 }
 
 export function createBunShellTemplateFunction(
@@ -117,13 +113,13 @@ export function createBunShellTemplateFunction(
   }
 
   class ShellPromise extends Promise<ShellOutput> {
-    #args: $ZigGeneratedClasses.ParsedShellScript | undefined = undefined;
+    #args: $Bindgen.ParsedShellScript | undefined = undefined;
     #hasRun: boolean = false;
     #throws: boolean = true;
     #resolve: ShellResolve;
     #reject: ShellReject;
 
-    constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
+    constructor(args: $Bindgen.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace

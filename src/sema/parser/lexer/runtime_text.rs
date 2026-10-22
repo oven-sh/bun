@@ -117,7 +117,7 @@ impl Lexer<'_> {
         let written = after_quote
             .strip_suffix(token.get(..1).unwrap_or_default())
             .unwrap_or(after_quote);
-        let has_backslash = written.contains(&b'\\');
+        let has_backslash = bun_core::strings::contains_char(written, b'\\');
         let needs_decoding = written.iter().any(|&c| c == b'&' || c >= 0x80)
             || has_backslash
                 && (written.iter().zip(written.iter().skip(1)))

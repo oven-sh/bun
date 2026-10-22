@@ -1,11 +1,12 @@
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
-import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { loadClassDefinitions } from "../../../src/codegen/builtins/collect-classes";
+import { ClassType, FunctionDefinition, Getter, type ClassMember } from "../../../src/codegen/bindgen-lib-internal";
+import { loadSchemaFile } from "../../../src/codegen/bindgen-load";
 import type { DumpedClass, DumpedEntry, DumpedParameter, DumpedType, Primitive } from "../../../src/codegen/builtins/dump";
-import { declaredTypeOf, isCheckedAtRuntime, parseDeclaredType } from "../../../src/codegen/class-definitions";
+import type { TypeSpec } from "../../../src/codegen/builtins/vocabulary";
+import { parseDeclaredType } from "../../../src/codegen/declared-type-checks";
 import { test } from "../supported";
 
 const typeScriptNames: Record<Primitive, string> = {
@@ -87,18 +88,6 @@ test("a definition that disagrees is reported", async () => {
   expect(await errorsOf(['export const Request_url: Agree<Request["url"], number> = true;'])).toEqual([2]);
 });
 
-// Blob::from_js also accepts a BuildArtifact, which is not a JSBlob. The first member whose Rust type is to prove Blob needs a test here that hands it one.
-test("no Rust type proves Blob", () => {
-  const proven = loadClassDefinitions(join(import.meta.dir, "../../..")).flatMap(({ name, proto, klass }) =>
-    [...Object.entries(proto), ...Object.entries(klass)].flatMap(([member, field]) => {
-      const type = declaredTypeOf(field);
-      const declaresBlob = type !== undefined && parseDeclaredType(type).some(alternative => typeof alternative === "object" && alternative.instance === "Blob");
-      return declaresBlob && !isCheckedAtRuntime(field) ? [`${name}.${member}`] : [];
-    }),
-  );
-  expect(proven).toEqual([]);
-});
-
 async function errorsOf(lines: string[]) {
   using dir = tempDir("proven-returns", {
     // bun-types leaves some members out, and `void` tells the caller not to look at the result: there is nothing to agree with then.
@@ -135,8 +124,8 @@ function isInstanceOfOneOf(token: string, classes: Set<string>): boolean {
   return classes.has(token);
 }
 
-// What a type of the table admits and a declared type does not.
-function partsOutside(type: DumpedType, declared: string): string[] {
+// What a type of the table admits and a declared type does not. The receiver is an instance of `receiverClass`.
+function partsOutside(type: DumpedType, declared: string, receiverClass: string | undefined): string[] {
   const alternatives = parseDeclaredType(declared);
   const primitives = new Set(alternatives.flatMap(alternative => (typeof alternative === "string" ? (primitivesOfAlternative[alternative] ?? []) : [])));
   const instances = new Set(alternatives.flatMap(alternative => (typeof alternative === "object" ? alternative.instance : alternative === "Promise" ? alternative : [])));
@@ -147,29 +136,73 @@ function partsOutside(type: DumpedType, declared: string): string[] {
   if (type.stringLiterals.length > 0 && !primitives.has("String")) outside.push("strings");
   if ((type.hasAnyObject || type.hasAnyFunction || type.hasPlainData) && !admitsEveryObject) outside.push("any object");
   for (const part of type.parts) {
-    if (part.part === "Operand" && part.operand === "this" && alternatives.includes("this")) continue;
+    if (part.part === "Operand" && part.operand === "this") {
+      if (alternatives.includes("this") || admitsEveryObject || (receiverClass !== undefined && isInstanceOfOneOf(receiverClass, instances))) continue;
+    }
     if (part.part === "Instance" && (admitsEveryObject || isInstanceOfOneOf(part.class, instances))) continue;
     outside.push(part.part === "Instance" ? part.class : part.part);
   }
   return outside;
 }
 
-// The class definition is the one source of what a member returns. A row that is written by hand for some operands may say more, never something else.
-test("a result that is written by hand lies inside the type that the class definition declares", () => {
-  const definitions = new Map(loadClassDefinitions(join(import.meta.dir, "../../..")).map(definition => [definition.name, definition]));
+const wordsOfPrimitives: Partial<Record<Primitive, string>> = { Undefined: "undefined", Null: "null", Boolean: "boolean", Number: "number", String: "string", BigInt: "bigint" };
+
+// A type of a schema in the words of parseDeclaredType, if they can say it.
+function wordsOf(spec: TypeSpec): string[] | undefined {
+  switch (spec.type) {
+    case "Primitive":
+      return wordsOfPrimitives[spec.primitive] === undefined ? undefined : [wordsOfPrimitives[spec.primitive]!];
+    case "Integers":
+      return ["number"];
+    case "StringLiterals":
+      return ["string"];
+    case "Object":
+    case "PlainData":
+    case "Layout":
+      return ["object"];
+    case "Instance":
+      return [spec.class];
+    case "Operand":
+      return spec.operand === "this" ? ["this"] : undefined;
+    case "Union": {
+      const members = spec.members.map(wordsOf);
+      return members.includes(undefined) ? undefined : members.flat();
+    }
+    default:
+      return undefined;
+  }
+}
+
+function declaredResultOf(member: ClassMember | undefined): string | undefined {
+  const types = member instanceof Getter ? [member.type] : member instanceof FunctionDefinition ? member.signatures.map(signature => signature.returns) : [];
+  const words = types.map(type => wordsOf(type.resultType));
+  return words.length === 0 || words.includes(undefined) ? undefined : [...new Set(words.flat())].join(" | ");
+}
+
+async function loadClassesOfSchemas(): Promise<Map<string, ClassType>> {
+  const root = join(import.meta.dir, "../../..");
+  const classes = new Map<string, ClassType>();
+  for (const file of [...new Bun.Glob("src/**/*.bind.ts").scanSync({ cwd: root, absolute: true })].sort()) {
+    for (const type of (await loadSchemaFile(`bun_runtime=${file}`)).types) if (type instanceof ClassType) classes.set(type.name, type);
+  }
+  return classes;
+}
+
+// The schema is the one source of what a member returns. A row that is written by hand for some operands may say more, never something else.
+test("a result that is written by hand lies inside the type that the schema declares", async () => {
+  const definitions = await loadClassesOfSchemas();
   const classesByConstructor = new Map(table.classes.flatMap(builtinClass => (builtinClass.constructor === null ? [] : [[builtinClass.constructor, builtinClass] as const])));
   let compared = 0;
   const disagreements = table.entries.flatMap(entry => {
     if (entry.holder === null) return [];
     const ofPrototype = classesByPrototype.get(entry.holder);
     const definition = definitions.get((ofPrototype ?? classesByConstructor.get(entry.holder))?.token ?? "");
-    const field = (ofPrototype ? definition?.proto : definition?.klass)?.[entry.name];
-    const declared = field && declaredTypeOf(field);
+    const declared = declaredResultOf((ofPrototype ? definition?.protoMembers : definition?.staticMembers)?.find(member => member.name === entry.name));
     if (!declared) return [];
     return entry.overloads.flatMap(overload => {
       if (overload.isProvenByConstruction || overload.isUndeclared || (overload.mode !== "Call" && overload.mode !== "Get")) return [];
       compared++;
-      const outside = partsOutside(overload.result.type, declared);
+      const outside = partsOutside(overload.result.type, declared, ofPrototype?.token);
       return outside.length === 0 ? [] : [`${entry.path}: ${declared} admits no ${outside.join(", ")}`];
     });
   });
@@ -258,47 +291,4 @@ test.concurrent.each([
   expect(stderr).toContain(message);
   expect(stdout).toBe("");
   expect(exitCode).not.toBe(0);
-});
-
-// What the class generator makes of a class with one member.
-async function generate(member: string) {
-  const codegen = join(import.meta.dir, "../../../src/codegen");
-  using dir = tempDir("declared-types", {
-    "a.classes.ts": `import { define } from ${JSON.stringify(join(codegen, "class-definitions.ts"))};
-      export default [define({ name: "Blob", rustPath: "crate::Blob", proto: { member: ${member} } })];`,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), join(codegen, "generate-classes.ts"), join(String(dir), "a.classes.ts"), String(dir), String(dir)],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  const read = (name: string) => (exitCode === 0 ? readFileSync(join(String(dir), name), "utf8") : "");
-  return { stderr, rust: read("generated_classes.rs"), cpp: read("ZigGeneratedClasses.cpp") };
-}
-
-test.concurrent.each([
-  ["number", "return_kind::Number"],
-  ["number | null", "return_kind::Nullable<return_kind::Number>"],
-  ["number | undefined", "return_kind::Optional<return_kind::Number>"],
-])("the return type of the Rust method has to prove %s", async (type, kind) => {
-  expect((await generate(`{ fn: "member", returns: "${type}" }`)).rust).toContain(`proven_return::proven_return::<${kind}, _>(Blob::member(t, g, c))`);
-});
-
-test.concurrent("a type that is checked asks nothing of the Rust method, and is checked in every build", async () => {
-  const { rust, cpp } = await generate(`{ fn: "member", returns: "number | string", checkedAtRuntime: true }`);
-  expect(rust).not.toContain("proven_return::proven_return::<");
-  expect(cpp).toContain(`panicOnValueOutsideDeclaredType(vm, "Blob", "member", "number | string");`);
-  expect(cpp).not.toContain("if constexpr (ASSERT_ENABLED || ASAN_ENABLED) {");
-});
-
-test.concurrent.each([
-  [`{ fn: "member", returns: "number | string" }`, "is not a type that can be proven"],
-  [`{ fn: "member", returns: "number | null | undefined" }`, "is not a type that can be proven"],
-  [`{ fn: "member", returns: "this" }`, "is not a type that can be proven"],
-  [`{ fn: "member", checkedAtRuntime: true }`, "'checkedAtRuntime' goes with the type that is checked"],
-  [`{ fn: "member", returns: "Nobody", checkedAtRuntime: true }`, "no test is known for instances of Nobody"],
-])("%s is refused", async (member, message) => {
-  expect((await generate(member)).stderr).toContain(message);
 });

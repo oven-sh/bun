@@ -6632,16 +6632,20 @@ it("a view of shared memory as a tls option is refused", () => {
   }
 });
 
-// expect(promise).resolves ticks the loop while the dispatch that called the handler is still on the stack.
+// Bun.build() ticks the loop until an async plugin setup() settles, while the dispatch that called the handler is still on the stack.
 // The outer dispatch reads the closed socket again, so the inner ticks must not free it.
 describe.concurrent("a handler that closes its socket and then waits for a promise", () => {
   it("doesn't crash the dispatch that called it", async () => {
     const source = `
-      import { expect, test } from "bun:test";
+      import { test } from "bun:test";
 
       // JS can't observe when the loop finishes the close, so tick the loop from the handler for a short time.
       function waitInsideHandler() {
-        expect(Bun.sleep(20)).resolves.toBeUndefined();
+        void Bun.build({
+          entrypoints: ["/wait.js"],
+          files: { "/wait.js": "" },
+          plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
+        });
       }
 
       test("data() closes the accepted socket", async () => {

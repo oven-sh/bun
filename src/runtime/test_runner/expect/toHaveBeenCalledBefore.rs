@@ -1,6 +1,7 @@
 use core::fmt;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::mock;
 use super::throw;
@@ -65,15 +66,16 @@ impl fmt::Display for FirstInvocation {
 fn to_have_been_called_in_order(
     this: &Expect,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    this_value: JSValue,
+    other: JSValue,
+    fail_if_no_first_invocation: JSValue,
     order: Order,
 ) -> JsResult<JSValue> {
-    let [other, fail_if_no_first_invocation] = frame.arguments_as_array::<2>();
     let fail_if_no_first_invocation =
         fail_if_no_first_invocation.is_undefined() || fail_if_no_first_invocation.to_boolean();
     let (this, _calls, value) = this.mock_prologue(
         global,
-        frame.this(),
+        this_value,
         order.matcher_name(),
         "<green>expected<r>",
         mock::MockKind::CallsWithSig,
@@ -126,21 +128,37 @@ fn to_have_been_called_in_order(
 }
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_have_been_called_before(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        mock: JsLocal<'_>,
+        fail_if_no_first_invocation: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        to_have_been_called_in_order(self, global, frame, Order::Before)
+        to_have_been_called_in_order(
+            self,
+            cx.global(),
+            this_value.to_js(),
+            mock.to_js(),
+            fail_if_no_first_invocation.to_js(),
+            Order::Before,
+        )
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn to_have_been_called_after(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        mock: JsLocal<'_>,
+        fail_if_no_first_invocation: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        to_have_been_called_in_order(self, global, frame, Order::After)
+        to_have_been_called_in_order(
+            self,
+            cx.global(),
+            this_value.to_js(),
+            mock.to_js(),
+            fail_if_no_first_invocation.to_js(),
+            Order::After,
+        )
     }
 }

@@ -1,4 +1,5 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
 use super::mock;
 use super::throw;
@@ -65,27 +66,27 @@ impl Expect {
 fn to_have_resolved_times_fn(
     this: &Expect,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    this_value: JSValue,
+    expected: JSValue,
     matcher_name: &'static str,
     at_least_once: bool,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments();
     let matcher_params = if at_least_once { "" } else { "<green>expected<r>" };
     let (this, settled_results) =
-        this.settled_results_prologue(global, frame.this(), matcher_name, matcher_params)?;
+        this.settled_results_prologue(global, this_value, matcher_name, matcher_params)?;
 
     let expected_count: u32 = if at_least_once {
-        if !arguments.is_empty() && !arguments[0].is_undefined() {
+        if !expected.is_undefined() {
             return Err(global.throw_invalid_arguments(format_args!("{matcher_name}() must not have an argument")));
         }
         1
     } else {
-        if arguments.is_empty() || !arguments[0].is_uint32_as_any_int() {
+        if !expected.is_uint32_as_any_int() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{matcher_name}() requires 1 non-negative integer argument"
             )));
         }
-        arguments[0].to_u32()
+        expected.to_u32()
     };
 
     let calls_count = settled_results.get_length(global)? as u32;
@@ -128,13 +129,21 @@ fn to_have_resolved_times_fn(
 }
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_have_resolved(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        to_have_resolved_times_fn(self, global, frame, "toHaveResolved", true)
+    pub(crate) fn to_have_resolved(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        to_have_resolved_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), "toHaveResolved", true)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_have_resolved_times(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        to_have_resolved_times_fn(self, global, frame, "toHaveResolvedTimes", false)
+    pub(crate) fn to_have_resolved_times(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        to_have_resolved_times_fn(self, cx.global(), this_value.to_js(), expected.to_js(), "toHaveResolvedTimes", false)
     }
 }

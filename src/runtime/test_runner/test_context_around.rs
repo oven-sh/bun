@@ -30,7 +30,6 @@ enum State {
 }
 
 /// One call of a hook: each attempt of a test has its own.
-#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct AroundHook {
     buntest: BunTestPtrWeak,
     set_up_entry: RefDataValue,
@@ -39,9 +38,7 @@ pub(crate) struct AroundHook {
     state: Cell<State>,
 }
 
-mod js {
-    bun_jsc::codegen_cached_accessors!("AroundHook"; context, outerAsyncContext, ready, release, done);
-}
+use crate::generated_bindgen::test_context::js_AroundHook as js;
 
 impl Around {
     fn hook_name(self) -> &'static str {

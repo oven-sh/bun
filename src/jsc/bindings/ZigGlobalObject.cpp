@@ -69,8 +69,12 @@
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "BunObject.h"
+#include "GeneratedBlob.h"
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
+#include "GeneratedHtmlRewriter.h"
+#include "GeneratedResolveMessage.h"
+#include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
@@ -179,7 +183,6 @@
 #include "WebCoreJSBuiltins.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
-#include "ZigGeneratedClasses.h"
 #include "ZigSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
@@ -2842,8 +2845,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createModuleGraphFrameStructure(init.vm, init.owner));
         });
 
-    this->initGeneratedLazyClasses();
-
     m_napiTypeTags.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSWeakMap>::Initializer& init) {
         init.set(JSC::JSWeakMap::create(init.vm, init.owner->weakMapStructure()));
     });
@@ -2999,6 +3000,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
 
     return JSValue::encode(jsUndefined());
+}
+
+enum class JSClassID : int32_t {
+#include "JSClasses+enum.h"
+};
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInherits, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue value = callFrame->argument(1);
+    switch (static_cast<JSClassID>(callFrame->uncheckedArgument(0).asInt32())) {
+    case JSClassID::Blob:
+        return JSValue::encode(jsBoolean(value.inherits<Bun::Bindgen::Generated::JSBlob>()));
+    case JSClassID::ReadableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSReadableStream>()));
+    case JSClassID::WritableStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSWritableStream>()));
+    case JSClassID::TransformStream:
+        return JSValue::encode(jsBoolean(value.inherits<JSTransformStream>()));
+    case JSClassID::ArrayBuffer:
+        return JSValue::encode(jsBoolean(value.inherits<JSArrayBuffer>()));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
@@ -3528,7 +3551,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     // when downcast<> calls the virtual isWebCoreJSClientData() on garbage.
     WebCore::clientData(visitor.collector().heap().vm())->httpHeaderIdentifiers().template visit<Visitor>(visitor);
 
-    thisObject->visitGeneratedLazyClasses<Visitor>(thisObject, visitor);
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
@@ -5044,7 +5066,6 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     destroyVM(vm);
 }
 
-#include "ZigGeneratedClasses+lazyStructureImpl.h"
 #include "ZigGlobalObject.lut.h"
 
 const JSC::ClassInfo GlobalObject::s_info = { "GlobalObject"_s, &Base::s_info, &bunGlobalObjectTable, nullptr,

@@ -2,7 +2,8 @@ use core::cell::RefCell;
 use core::fmt;
 
 use bun_jsc::console_object::Formatter;
-use bun_jsc::{js_error_to_write_error, CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{js_error_to_write_error, JSGlobalObject, JSValue, JsResult};
 
 use super::throw;
 use super::to_have_resolved::Settled;
@@ -145,12 +146,17 @@ fn one_call_resolved_with(
 }
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     #[optimize(size)]
-    pub(crate) fn to_have_resolved_with(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [expected] = frame.arguments_as_array::<1>();
+    pub(crate) fn to_have_resolved_with(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let expected = expected.to_js();
         let (this, settled_results) =
-            self.settled_results_prologue(global, frame.this(), "toHaveResolvedWith", "<green>expected<r>")?;
+            self.settled_results_prologue(global, this_value.to_js(), "toHaveResolvedWith", "<green>expected<r>")?;
 
         let calls_count = settled_results.get_length(global)? as u32;
         let mut pass = false;
@@ -222,11 +228,16 @@ impl Expect {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_have_last_resolved_with(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [expected] = frame.arguments_as_array::<1>();
+    pub(crate) fn to_have_last_resolved_with(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let expected = expected.to_js();
         let (this, settled_results) =
-            self.settled_results_prologue(global, frame.this(), "toHaveLastResolvedWith", "<green>expected<r>")?;
+            self.settled_results_prologue(global, this_value.to_js(), "toHaveLastResolvedWith", "<green>expected<r>")?;
         one_call_resolved_with(
             &this,
             global,
@@ -238,13 +249,19 @@ impl Expect {
         )
     }
 
-    #[bun_jsc::host_fn(method)]
     #[optimize(size)]
-    pub(crate) fn to_have_nth_resolved_with(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [nth_arg, expected] = frame.arguments_as_array::<2>();
+    pub(crate) fn to_have_nth_resolved_with(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        nth: JsLocal<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let (nth_arg, expected) = (nth.to_js(), expected.to_js());
         let (this, settled_results) = self.settled_results_prologue(
             global,
-            frame.this(),
+            this_value.to_js(),
             "toHaveNthResolvedWith",
             "<green>n<r>, <green>expected<r>",
         )?;

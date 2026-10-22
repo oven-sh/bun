@@ -26,7 +26,7 @@
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedSourcemap.h"
 
 namespace Bun {
 
@@ -649,15 +649,6 @@ static JSValue getPathCacheObject(VM& vm, JSObject* moduleObject)
         vm, globalObject->nullPrototypeObjectStructure());
 }
 
-static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
-{
-    auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    auto* zigGlobalObject = globalObject;
-
-    // Return the actual SourceMap constructor from code generation
-    return zigGlobalObject->JSSourceMapConstructor();
-}
-
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
     // reifyAllStaticProperties calls PropertyCallback builders without checking for exceptions, so check here.
@@ -1018,7 +1009,7 @@ isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          DontEnum|DontDelete|PropertyCallback
 register                jsFunctionRegister                Function 1
 runMain                 moduleRunMain                        CustomAccessor
-SourceMap               getSourceMapFunction              PropertyCallback
+SourceMap               Bun::Bindgen::Generated::Sourcemap::getSourceMapConstructor PropertyCallback
 syncBuiltinESMExports   jsFunctionSyncBuiltinESMExports   Function 0
 wrap                    jsFunctionWrap                    Function 1
 wrapper                 nodeModuleWrapper                 CustomAccessor

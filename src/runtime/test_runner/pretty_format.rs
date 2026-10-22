@@ -11,6 +11,11 @@ use bun_core::{strings, EncodedSlice, Utf8Bytes};
 
 use super::expect;
 use super::snapshot::Format as SnapshotFormat;
+use crate::generated_bindgen::expect::{
+    js_ExpectAny, js_ExpectArrayContaining, js_ExpectCloseTo, js_ExpectCustomAsymmetricMatcher,
+    js_ExpectMatcherUtils, js_ExpectObjectContaining, js_ExpectStringContaining,
+    js_ExpectStringMatching,
+};
 use crate::webcore::BlobExt as _;
 
 /// `<tag>` colour templates used by the formatter, rewritten to ANSI (or
@@ -20,35 +25,6 @@ macro_rules! pretty_fmt_const {
     ($enabled:expr, $fmt:literal) => {
         if $enabled { ::bun_core::pretty_fmt!($fmt, true) } else { ::bun_core::pretty_fmt!($fmt, false) }
     };
-}
-
-/// `Expect*.js.*GetCached` accessors — generate-classes.ts emits these
-/// per-type for `cache: true` props (jest.classes.ts).
-/// Rust has no inherent associated modules, so each
-/// matcher gets a sibling `expect_js::*` module the same way `mod.rs` does for
-/// `Expect`.
-mod expect_js {
-    pub(super) mod any {
-        ::bun_jsc::codegen_cached_accessors!("ExpectAny"; constructorValue);
-    }
-    pub(super) mod array_containing {
-        ::bun_jsc::codegen_cached_accessors!("ExpectArrayContaining"; arrayValue);
-    }
-    pub(super) mod close_to {
-        ::bun_jsc::codegen_cached_accessors!("ExpectCloseTo"; numberValue, digitsValue);
-    }
-    pub(super) mod object_containing {
-        ::bun_jsc::codegen_cached_accessors!("ExpectObjectContaining"; objectValue);
-    }
-    pub(super) mod string_containing {
-        ::bun_jsc::codegen_cached_accessors!("ExpectStringContaining"; stringValue);
-    }
-    pub(super) mod string_matching {
-        ::bun_jsc::codegen_cached_accessors!("ExpectStringMatching"; testValue);
-    }
-    pub(super) mod custom {
-        ::bun_jsc::codegen_cached_accessors!("ExpectCustomAsymmetricMatcher"; capturedArgs, matcherFn);
-    }
 }
 
 #[repr(u8)]
@@ -2885,7 +2861,7 @@ impl JestPrettyFormat {
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.
 
         if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAnything".len());
@@ -2895,12 +2871,12 @@ impl JestPrettyFormat {
                 writer.write_all(b"Anything");
             }
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
-            let Some(constructor_value) = expect_js::any::constructor_value_get_cached(value)
+            let Some(constructor_value) = js_ExpectAny::constructor_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NotAny<".len());
@@ -2921,11 +2897,11 @@ impl JestPrettyFormat {
             this.amf_add_for_new_line(1);
             writer.write_all(b">");
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            let Some(number_value) = expect_js::close_to::number_value_get_cached(value)
+            let Some(number_value) = js_ExpectCloseTo::number_value_get_cached(value)
             else {
                 return Ok(true);
             };
-            let Some(digits_value) = expect_js::close_to::digits_value_get_cached(value)
+            let Some(digits_value) = js_ExpectCloseTo::digits_value_get_cached(value)
             else {
                 return Ok(true);
             };
@@ -2933,7 +2909,7 @@ impl JestPrettyFormat {
             let number = number_value.to_int32();
             let digits = digits_value.to_int32();
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"NumberNotCloseTo".len());
@@ -2950,12 +2926,12 @@ impl JestPrettyFormat {
             ));
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
             let Some(object_value) =
-                expect_js::object_containing::object_value_get_cached(value)
+                js_ExpectObjectContaining::object_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"ObjectNotContaining ".len());
@@ -2969,12 +2945,12 @@ impl JestPrettyFormat {
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
-                expect_js::string_containing::string_value_get_cached(value)
+                js_ExpectStringContaining::string_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotContaining ".len());
@@ -2987,12 +2963,12 @@ impl JestPrettyFormat {
                 bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
+            let Some(test_value) = js_ExpectStringMatching::test_value_get_cached(value)
             else {
                 return Ok(true);
             };
 
-            let flags = matcher.flags.get();
+            let flags = matcher.flags;
             Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
             if flags.not() {
                 this.amf_add_for_new_line(b"StringNotMatching ".len());
@@ -3019,12 +2995,12 @@ impl JestPrettyFormat {
                 // default print (non-overridden by user)
                 let flags = instance.flags;
                 let Some(args_value) =
-                    expect_js::custom::captured_args_get_cached(value)
+                    js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value)
                 else {
                     return Ok(true);
                 };
                 let Some(matcher_fn) =
-                    expect_js::custom::matcher_fn_get_cached(value)
+                    js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value)
                 else {
                     return Ok(true);
                 };
@@ -3274,23 +3250,23 @@ fn members_of_matcher(global: &JSGlobalObject, value: JSValue) -> JsResult<Optio
     }
     let found = |sample: Option<JSValue>, flags: expect::Flags| Some((sample.unwrap_or(JSValue::UNDEFINED), flags.not(), None));
     Ok(if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-        found(expect_js::array_containing::array_value_get_cached(value), matcher.flags.get())
+        found(js_ExpectArrayContaining::array_value_get_cached(value), matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-        found(expect_js::object_containing::object_value_get_cached(value), matcher.flags.get())
+        found(js_ExpectObjectContaining::object_value_get_cached(value), matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-        found(expect_js::string_containing::string_value_get_cached(value), matcher.flags.get())
+        found(js_ExpectStringContaining::string_value_get_cached(value), matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-        let sample = expect_js::string_matching::test_value_get_cached(value).map(|sample| to_reg_exp(global, sample)).transpose()?;
-        found(sample, matcher.flags.get())
+        let sample = js_ExpectStringMatching::test_value_get_cached(value).map(|sample| to_reg_exp(global, sample)).transpose()?;
+        found(sample, matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-        found(expect_js::close_to::number_value_get_cached(value), matcher.flags.get())
-            .map(|(sample, inverse, _)| (sample, inverse, expect_js::close_to::digits_value_get_cached(value)))
+        found(js_ExpectCloseTo::number_value_get_cached(value), matcher.flags)
+            .map(|(sample, inverse, _)| (sample, inverse, js_ExpectCloseTo::digits_value_get_cached(value)))
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-        found(expect_js::custom::captured_args_get_cached(value), matcher.flags)
+        found(js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAny>() {
-        found(expect_js::any::constructor_value_get_cached(value), matcher.flags.get())
+        found(js_ExpectAny::constructor_value_get_cached(value), matcher.flags)
     } else if let Some(matcher) = value.as_class_ref::<expect::ExpectAnything>() {
-        found(None, matcher.flags.get())
+        found(None, matcher.flags)
     } else {
         None
     })
@@ -3315,21 +3291,21 @@ pub(crate) fn write_name_of_matcher(global: &JSGlobalObject, value: JSValue, out
     let name = |flags: expect::Flags, is: &'static str, is_not: &'static str| if flags.not() { is_not } else { is };
     out.extend_from_slice(
         if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-            name(matcher.flags.get(), "ArrayContaining", "ArrayNotContaining")
+            name(matcher.flags, "ArrayContaining", "ArrayNotContaining")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-            name(matcher.flags.get(), "ObjectContaining", "ObjectNotContaining")
+            name(matcher.flags, "ObjectContaining", "ObjectNotContaining")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-            name(matcher.flags.get(), "StringContaining", "StringNotContaining")
+            name(matcher.flags, "StringContaining", "StringNotContaining")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            name(matcher.flags.get(), "StringMatching", "StringNotMatching")
+            name(matcher.flags, "StringMatching", "StringNotMatching")
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
-            name(matcher.flags.get(), "NumberCloseTo", "NumberNotCloseTo")
+            name(matcher.flags, "NumberCloseTo", "NumberNotCloseTo")
         } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
             "Any"
         } else if value.as_class_ref::<expect::ExpectAnything>().is_some() {
             "Anything"
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
-            let Some(matcher_fn) = expect_js::custom::matcher_fn_get_cached(value) else { return Ok(false) };
+            let Some(matcher_fn) = js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value) else { return Ok(false) };
             if matcher.flags.not() {
                 out.extend_from_slice(b"not.");
             }
@@ -4237,44 +4213,44 @@ impl Formatter<'_> {
             (if flags.not() { is_not } else { is }).as_bytes()
         };
         if let Some(matcher) = value.as_class_ref::<expect::ExpectArrayContaining>() {
-            let Some(sample) = expect_js::array_containing::array_value_get_cached(value) else { return Ok(false) };
+            let Some(sample) = js_ExpectArrayContaining::array_value_get_cached(value) else { return Ok(false) };
             if self.is_at_max_depth() {
-                out.extend_from_slice(name(matcher.flags.get(), "[ArrayContaining]", "[ArrayNotContaining]"));
+                out.extend_from_slice(name(matcher.flags, "[ArrayContaining]", "[ArrayNotContaining]"));
                 return Ok(true);
             }
-            out.extend_from_slice(name(matcher.flags.get(), "ArrayContaining [", "ArrayNotContaining ["));
+            out.extend_from_slice(name(matcher.flags, "ArrayContaining [", "ArrayNotContaining ["));
             self.deeper(|this| this.print_list_items(out, sample))?;
             out.push(b']');
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectObjectContaining>() {
-            let Some(sample) = expect_js::object_containing::object_value_get_cached(value) else { return Ok(false) };
+            let Some(sample) = js_ExpectObjectContaining::object_value_get_cached(value) else { return Ok(false) };
             if self.is_at_max_depth() {
-                out.extend_from_slice(name(matcher.flags.get(), "[ObjectContaining]", "[ObjectNotContaining]"));
+                out.extend_from_slice(name(matcher.flags, "[ObjectContaining]", "[ObjectNotContaining]"));
                 return Ok(true);
             }
-            out.extend_from_slice(name(matcher.flags.get(), "ObjectContaining {", "ObjectNotContaining {"));
+            out.extend_from_slice(name(matcher.flags, "ObjectContaining {", "ObjectNotContaining {"));
             self.deeper(|this| this.print_object_properties(out, sample))?;
             out.push(b'}');
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
-            let Some(sample) = expect_js::string_containing::string_value_get_cached(value) else { return Ok(false) };
-            out.extend_from_slice(name(matcher.flags.get(), "StringContaining ", "StringNotContaining "));
+            let Some(sample) = js_ExpectStringContaining::string_value_get_cached(value) else { return Ok(false) };
+            out.extend_from_slice(name(matcher.flags, "StringContaining ", "StringNotContaining "));
             self.print_child(out, sample)?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
-            let Some(sample) = expect_js::string_matching::test_value_get_cached(value) else { return Ok(false) };
-            out.extend_from_slice(name(matcher.flags.get(), "StringMatching ", "StringNotMatching "));
+            let Some(sample) = js_ExpectStringMatching::test_value_get_cached(value) else { return Ok(false) };
+            out.extend_from_slice(name(matcher.flags, "StringMatching ", "StringNotMatching "));
             self.print_child(out, to_reg_exp(global, sample)?)?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCloseTo>() {
             let (Some(number), Some(digits)) =
-                (expect_js::close_to::number_value_get_cached(value), expect_js::close_to::digits_value_get_cached(value))
+                (js_ExpectCloseTo::number_value_get_cached(value), js_ExpectCloseTo::digits_value_get_cached(value))
             else {
                 return Ok(false);
             };
-            out.extend_from_slice(name(matcher.flags.get(), "NumberCloseTo ", "NumberNotCloseTo "));
+            out.extend_from_slice(name(matcher.flags, "NumberCloseTo ", "NumberNotCloseTo "));
             write_string(global, out, number)?;
             let digits = digits.to_int32();
             let _ = write!(out, " ({} digit{})", digits, if digits == 1 { "" } else { "s" });
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
             let (Some(arguments), Some(matcher_fn)) =
-                (expect_js::custom::captured_args_get_cached(value), expect_js::custom::matcher_fn_get_cached(value))
+                (js_ExpectCustomAsymmetricMatcher::captured_args_get_cached(value), js_ExpectCustomAsymmetricMatcher::matcher_fn_get_cached(value))
             else {
                 return Ok(false);
             };
@@ -4313,7 +4289,7 @@ impl Formatter<'_> {
             }
             out.push(b'>');
         } else if value.as_class_ref::<expect::ExpectAny>().is_some() {
-            let Some(constructor) = expect_js::any::constructor_value_get_cached(value) else { return Ok(false) };
+            let Some(constructor) = js_ExpectAny::constructor_value_get_cached(value) else { return Ok(false) };
             out.extend_from_slice(b"Any<");
             let name = constructor.get_class_name(global)?;
             let name = name.to_utf8();
@@ -4676,10 +4652,6 @@ impl Formatter<'_> {
     }
 }
 
-mod serializers_js {
-    ::bun_jsc::codegen_cached_accessors!("ExpectMatcherUtils"; snapshotSerializers);
-}
-
 macro_rules! serializer_host_fn {
     ($shim:ident, $function:path) => {
         bun_jsc::jsc_host_abi! {
@@ -4696,8 +4668,7 @@ serializer_host_fn!(print_child_shim, JestPrettyFormat::print_child);
 serializer_host_fn!(indent_shim, JestPrettyFormat::indent);
 
 impl JestPrettyFormat {
-    pub(crate) fn add_snapshot_serializer(global: &JSGlobalObject, frame: &jsc::CallFrame) -> JsResult<JSValue> {
-        let [plugin] = frame.arguments_as_array::<1>();
+    pub(crate) fn add_snapshot_serializer(global: &JSGlobalObject, plugin: JSValue) -> JsResult<()> {
         let is_function = |name: &str| Ok::<bool, JsError>(plugin.get(global, name)?.is_some_and(|value| value.is_callable()));
         if !plugin.is_object() || !is_function("test")? || !(is_function("serialize")? || is_function("print")?) {
             return Err(global.throw_invalid_argument_type_value(
@@ -4708,11 +4679,11 @@ impl JestPrettyFormat {
         }
 
         let utils_value = expect::ExpectMatcherUtils::singleton(global);
-        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(JSValue::UNDEFINED) };
+        let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
 
-        let is_of_file = expect::Expect::is_called_by_test_file(global, frame);
+        let is_of_file = expect::Expect::is_called_by_test_file(global);
         let serializers = JSValue::create_empty_array(global, 0)?;
         serializers.push(global, plugin)?;
         if let Some(registered) = Self::serializers(global)? {
@@ -4720,14 +4691,14 @@ impl JestPrettyFormat {
             while let Some(earlier) = iter.next()? {
                 // A shared helper that every test file calls would otherwise register its serializer once per file.
                 if !is_of_file && earlier == plugin && utils.serializers_of_file.get().get(iter.i as usize - 1) == Some(&false) {
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(());
                 }
                 serializers.push(global, earlier)?;
             }
         }
-        serializers_js::snapshot_serializers_set_cached(utils_value, global, serializers);
+        js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, serializers);
         utils.serializers_of_file.with_mut(|of_file| of_file.insert(0, is_of_file));
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     /// Most recently added first. Drops the ones an earlier test file registered itself.
@@ -4739,7 +4710,7 @@ impl JestPrettyFormat {
         let utils = unsafe { &*utils };
         let file = super::jest::Jest::file_generation(global);
         let is_same_file = utils.serializers_file.replace(file) == file;
-        let Some(serializers) = serializers_js::snapshot_serializers_get_cached(utils_value) else {
+        let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);
         };
         if is_same_file || !utils.serializers_of_file.get().contains(&true) {
@@ -4759,10 +4730,10 @@ impl JestPrettyFormat {
         }
         utils.serializers_of_file.set(vec![false; count as usize]);
         if count == 0 {
-            serializers_js::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
+            js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, JSValue::ZERO);
             return Ok(None);
         }
-        serializers_js::snapshot_serializers_set_cached(utils_value, global, kept);
+        js_ExpectMatcherUtils::snapshot_serializers_set_cached(utils_value, global, kept);
         Ok(Some(kept))
     }
 

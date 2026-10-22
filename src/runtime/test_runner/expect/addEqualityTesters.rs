@@ -1,7 +1,8 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult};
 
 use super::super::jest::{FileColumns as _, Jest};
-use super::expect_matcher_utils_js as js;
+use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
 impl Expect {
@@ -40,21 +41,22 @@ impl Expect {
     }
 
     #[optimize(size)]
-    pub(crate) fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
+    pub(crate) fn is_called_by_test_file(global: &JSGlobalObject) -> bool {
         let Some(runner) = Jest::runner() else { return false };
         let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
         let path = runner.files.items_source()[buntest.get().file_id as usize].path.text;
-        frame.get_caller_src_loc(global).str.eql_utf8(path)
+        global.get_caller_src_loc().str.eql_utf8(path)
     }
 
-    pub(crate) fn add_equality_testers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let [testers] = frame.arguments_as_array::<1>();
+    pub(crate) fn add_equality_testers(cx: &mut JsScope<'_>, testers: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
+        let testers = testers.to_js();
         if !testers.js_type().is_array() {
             return Err(global.throw_invalid_argument_type_value("testers", "array", testers));
         }
 
         let utils_value = ExpectMatcherUtils::singleton(global);
-        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(JSValue::UNDEFINED) };
+        let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(()) };
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
 
@@ -70,7 +72,7 @@ impl Expect {
         }
         let registered = count;
 
-        let is_of_file = Self::is_called_by_test_file(global, frame);
+        let is_of_file = Self::is_called_by_test_file(global);
         let mut iter = testers.array_iterator(global)?;
         'testers: while let Some(tester) = iter.next()? {
             if !tester.is_callable() {
@@ -94,12 +96,12 @@ impl Expect {
             count += 1;
         }
         if count == registered {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
 
         js::equality_testers_set_cached(utils_value, global, all);
         utils.testers_of_file.with_mut(|of_file| of_file.resize(count as usize, is_of_file));
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     fn run_equality_testers(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JsResult<Option<bool>> {
@@ -134,8 +136,8 @@ impl Expect {
 }
 
 impl ExpectMatcherContext {
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_custom_testers(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_custom_testers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         match Expect::equality_testers(global)? {
             Some(testers) => Ok(testers),
             None => JSValue::create_empty_array(global, 0),

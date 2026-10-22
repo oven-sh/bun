@@ -53,11 +53,12 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
 #include "GCDefferalContext.h"
 
 namespace WebCore {
 using namespace JSC;
+using Bun::Bindgen::Generated::JSBlob;
 
 struct JSBlobWrapperConverter {
     static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)

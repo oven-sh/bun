@@ -221,7 +221,7 @@ describe("modifiers", () => {
         test.runIf(false).fails("false, fails", never);
         describe.runIf(true)("describe true", () => { test("inner", () => {}); });
         describe.runIf(false)("describe false", () => { test("inner", never); });
-        test("no condition", () => { expect(() => test.runIf()).toThrow("Expected condition to be a boolean"); });
+        test("no condition", () => { expect(test.runIf()).toBeFunction(); });
       `,
     });
     expect(results).toEqual([

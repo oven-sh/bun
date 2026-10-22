@@ -94,7 +94,7 @@ const StringPrototypeIncludes = String.prototype.includes;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
-const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
+const H2FrameParser = $bindgen("h2_frame_parser.bind.ts", "H2FrameParser");
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",
@@ -4074,7 +4074,7 @@ class ServerHttp2Session extends Http2Session {
   #connected: boolean = false;
   #connections: number = 0;
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
-  #parser: typeof H2FrameParser | null;
+  #parser: $Bindgen.H2FrameParser | null;
   #alpnProtocol: string | undefined = undefined;
   #localSettings: Settings | null = null;
   #encrypted: boolean = false;
@@ -5062,7 +5062,7 @@ class ClientHttp2Session extends Http2Session {
   #connections: number = 0;
 
   #socket_proxy: import("node:net").Socket | import("node:tls").TLSSocket | undefined;
-  #parser: typeof H2FrameParser | null;
+  #parser: $Bindgen.H2FrameParser | null;
   #url: URL;
   #authority: string;
   #alpnProtocol: string | undefined = undefined;
@@ -5503,11 +5503,11 @@ class ClientHttp2Session extends Http2Session {
     }
     const nativeSocket = socket._handle;
     if (nativeSocket) {
-      this.#parser.setNativeSocket(nativeSocket);
+      this.#parser!.setNativeSocket(nativeSocket);
       this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
-    this.#parser.flush();
+    this.#parser!.flush();
     if (this.#closed) {
       // close() was called while the socket was still connecting: requests made in the meantime
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
@@ -6372,7 +6372,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       connectionsCounted = true;
-      let stream_id: number = this.#parser.getNextStream();
+      let stream_id: number = this.#parser!.getNextStream();
       if (stream_id < 0) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(emitOutofStreamErrorNT, req);
@@ -6385,11 +6385,7 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-      if (typeof options === "undefined") {
-        this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
-      } else {
-        this.#parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
-      }
+      this.#parser!.request(stream_id, req, wireHeaders, sensitiveNames, options);
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });
       }

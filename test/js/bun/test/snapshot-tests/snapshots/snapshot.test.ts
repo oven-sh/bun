@@ -994,6 +994,24 @@ Date)
       `,
     );
   });
+  it("does not take undefined for no argument", async () => {
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string or object" },
+      /*js*/ `
+        test("cases", () => {
+          expect(1).toMatchInlineSnapshot(undefined);
+        });
+      `,
+    );
+    await tester.testError(
+      { msg: "Matcher error: Expected first argument to be a string" },
+      /*js*/ `
+        test("cases", () => {
+          expect(() => { throw new Error("1"); }).toThrowErrorMatchingInlineSnapshot(undefined);
+        });
+      `,
+    );
+  });
   it("only replaces when the argument is a literal string 3", async () => {
     await tester.testError(
       {
@@ -1248,6 +1266,31 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+test("snapshot matchers treat undefined arguments as omitted", async () => {
+  using dir = tempDir("snapshot-undefined-argument", {
+    "snap.test.ts": `
+      test("undefined", () => {
+        const thrower = () => { throw new Error("message"); };
+        expect(1).toMatchSnapshot(undefined);
+        expect(2).toMatchSnapshot("hint", undefined);
+        expect({ a: 3 }).toMatchSnapshot({ a: 3 }, undefined);
+        expect(thrower).toThrowErrorMatchingSnapshot(undefined);
+        expect(thrower).toThrowErrorMatchingSnapshot("hint", "ignored");
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "./snap.test.ts"],
+    env: { ...bunEnv, CI: "false" },
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("5 added");
+  expect(exitCode).toBe(0);
 });
 
 async function runTests(cwd: string, env: Record<string, string>, ...args: string[]) {

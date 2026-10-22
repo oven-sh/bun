@@ -342,11 +342,6 @@ public:
     void handleRejectedPromises();
     size_t holdRejectedPromises() { return m_aboutToBeNotifiedRejectedPromises.hold(this); }
     void releaseRejectedPromises(size_t mark) { m_aboutToBeNotifiedRejectedPromises.release(this, mark); }
-    ALWAYS_INLINE void initGeneratedLazyClasses();
-
-    template<typename Visitor>
-    void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
-
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
@@ -777,7 +772,6 @@ public:
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::MarkdownTagStrings& markdownTagStrings() { return m_markdownTagStrings; }
-#include "ZigGeneratedClasses+lazyStructureHeader.h"
 
     void finishCreation(JSC::VM&);
 

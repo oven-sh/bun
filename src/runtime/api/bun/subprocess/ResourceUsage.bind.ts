@@ -13,7 +13,6 @@ export const ResourceUsageOps = b.dictionary({ in: b.f64, out: b.f64 }, { nullPr
 
 export const ResourceUsage = b.class({
   rustPath: "crate::api::bun_subprocess::ResourceUsage",
-  configurable: false,
   proto: {
     contextSwitches: { getter: ResourceUsageContextSwitches, cache: true },
     cpuTime: { getter: ResourceUsageCpuTime, cache: true },

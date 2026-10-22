@@ -5,7 +5,7 @@ use std::rc::{Rc, Weak};
 
 use bun_collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::RefPtr;
@@ -996,32 +996,25 @@ impl BunTest {
     ) -> JsResult<JSValue> {
         let _g = group_begin!();
 
-        let Some(this) = DoneCallback::from_js(callframe.this()) else {
+        let Some(this) = callframe.this().as_class_ref::<DoneCallback>() else {
             return Err(global_this.throw(format_args!("Expected callee to be DoneCallback")));
         };
 
         let [value] = callframe.arguments_as_array::<1>();
 
         let was_error = !value.is_empty_or_undefined_or_null();
-        // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
-        // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
+        if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
             // Vitest does not support done callbacks
         } else {
             // error is only reported for the first done() call
             if was_error {
-                // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-                Self::on_done_error(global_this, &unsafe { (*this).entry }, value);
+                Self::on_done_error(global_this, &this.entry, value);
             }
         }
-        // SAFETY: see above — `this` is a live `*mut DoneCallback`.
-        let ref_in = unsafe {
-            (*this).called = true;
-            (*this).r#ref.take()
-        };
-        let Some(ref_in) = ref_in else {
+        this.called.set(true);
+        let Some(ref_in) = this.r#ref.take() else {
             return Ok(JSValue::UNDEFINED);
         };
 
@@ -1421,17 +1414,15 @@ impl BunTest {
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
         if !done_callback.is_empty() && !result.is_empty() {
-            if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
-                // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
-                // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+            if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
+                if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
-                    // SAFETY: see above. Move the sole +1 into the DoneCallback.
-                    unsafe { (*dcb_data).r#ref = Some(r) };
+                    // Move the sole +1 into the DoneCallback.
+                    dcb_data.r#ref.set(Some(r));
                     dcb_ref = Some(alias);
                 }
             } else {

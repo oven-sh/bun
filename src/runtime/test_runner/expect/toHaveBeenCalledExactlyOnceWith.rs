@@ -1,4 +1,5 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 
 use super::DiffFormatter;
 use super::mock;
@@ -6,17 +7,18 @@ use super::throw;
 use super::Expect;
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
     #[optimize(size)]
     pub(crate) fn to_have_been_called_exactly_once_with(
         &self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
+        let global = cx.global();
+        let arguments = JsLocal::to_js_slice(expected);
         let (this, calls, _value) = self.mock_prologue(
             global,
-            frame.this(),
+            this_value.to_js(),
             "toHaveBeenCalledExactlyOnceWith",
             "<green>...expected<r>",
             mock::MockKind::CallsWithSig,

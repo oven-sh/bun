@@ -1069,7 +1069,7 @@ impl FileSink {
         // via `self.ref_()`, and `finalize`'s `deref()` below releases it.
         // Callers that allocate via `init`/`create` and then
         // `to_js()` must `deref()` once to release init's +1 (see
-        // `Blob::get_writer`). `pending`/`pipe` are left for
+        // `Blob::writer`). `pending`/`pipe` are left for
         // `deinit` (Box drop) since in-flight IO may still need them.
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {

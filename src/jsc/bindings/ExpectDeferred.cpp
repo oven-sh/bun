@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "ErrorStackTrace.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedExpectDeferred.h"
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/ErrorInstance.h>
@@ -33,7 +33,7 @@ extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObjec
     if (!exception)
         return {};
     JSValue thrown = exception->value();
-    if (!dynamicDowncast<WebCore::JSExpectDeferred>(thrown))
+    if (!dynamicDowncast<Bun::Bindgen::Generated::JSExpectDeferred>(thrown))
         return {};
     (void)scope.tryClearException();
     return JSValue::encode(thrown);

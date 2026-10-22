@@ -58,7 +58,6 @@ struct Override {
     registrations: Vec<usize>,
 }
 
-#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct TestFixtures {
     /// Includes replaced definitions. Each one's value or function is at the same index in `js::values`.
     definitions: JsCell<Vec<Definition>>,
@@ -71,9 +70,7 @@ pub(crate) struct TestFixtures {
     generation: Cell<u32>,
 }
 
-pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("TestFixtures"; values, scoped);
-}
+pub(crate) use crate::generated_bindgen::test_context::js_TestFixtures as js;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum State {
@@ -84,7 +81,6 @@ enum State {
     TornDown,
 }
 
-#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ActiveFixture {
     definition: usize,
     timeout: u32,
@@ -92,9 +88,7 @@ pub(crate) struct ActiveFixture {
     state: Cell<State>,
 }
 
-mod active {
-    bun_jsc::codegen_cached_accessors!("ActiveFixture"; fixtures, context, value, ready, release, returned, cleanup);
-}
+use crate::generated_bindgen::test_context::js_ActiveFixture as active;
 
 pub(crate) enum Next {
     Ready,
@@ -185,14 +179,13 @@ impl TestFixtures {
     #[optimize(size)]
     pub(crate) fn define(
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        [first, second, third]: [JSValue; 3],
         signature: &str,
         parent: JSValue,
         active_scope: *const DescribeScope,
         is_top_level: bool,
         is_override: bool,
     ) -> JsResult<JSValue> {
-        let [first, second, third] = frame.arguments_as_array::<3>();
         let parent_fixtures = Self::of(parent);
         if let Some(parent_fixtures) = parent_fixtures {
             parent_fixtures.enter_file(parent, global)?;

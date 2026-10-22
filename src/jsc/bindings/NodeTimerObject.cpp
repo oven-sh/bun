@@ -9,7 +9,6 @@
 #include "ZigGlobalObject.h"
 #include "BunClientData.h"
 
-#include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"

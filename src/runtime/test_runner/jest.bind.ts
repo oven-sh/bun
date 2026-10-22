@@ -4,3 +4,53 @@ export default b.module({ rustPath: "crate::test_runner::jest" });
 
 export const fileGeneration = b.fn({ returns: b.u32 });
 export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
+
+/** The bound `this` of the `done` a test callback takes. */
+export const DoneCallback = b.class({ rustPath: "crate::test_runner::DoneCallback" });
+
+const js = { capability: "js", throws: true } as const;
+const modifier = { getter: b.any, cache: true, ...js } as const;
+const conditionalModifier = { args: { condition: b.bool.loose }, returns: b.any, ...js } as const;
+/** A tagged template call passes its substitutions as `values`. */
+const rows = { args: { table: b.any, values: b.any.variadic }, returns: b.any, ...js, length: 1 } as const;
+/** `(fixtures)` or `(name, options?, value)` */
+const fixtures = { args: { name: b.any, options: b.any, value: b.any }, returns: b.any, ...js, length: 1 } as const;
+
+/** The bound `this` of `test`, `describe` and what their modifiers give, such as `test.skip`. */
+export const ScopeFunctions = b.class({
+  rustPath: "crate::test_runner::scope_functions::ScopeFunctions",
+  forBind: true,
+  /** `bound` is the function JavaScript sees. */
+  internalFields: ["each", "fixtures", "bound"],
+  proto: {
+    afterAll: modifier,
+    afterEach: modifier,
+    aroundAll: modifier,
+    aroundEach: modifier,
+    beforeAll: modifier,
+    beforeEach: modifier,
+    concurrent: modifier,
+    concurrentIf: conditionalModifier,
+    describe: modifier,
+    each: rows,
+    extend: fixtures,
+    failing: modifier,
+    failingIf: conditionalModifier,
+    fails: modifier,
+    for: rows,
+    if: conditionalModifier,
+    only: modifier,
+    override: { ...fixtures, passThis: true },
+    runIf: conditionalModifier,
+    scoped: { ...fixtures, passThis: true, rustName: "override" },
+    sequential: modifier,
+    serial: modifier,
+    serialIf: conditionalModifier,
+    shuffle: modifier,
+    skip: modifier,
+    skipIf: conditionalModifier,
+    suite: { ...modifier, cache: "describe", rustName: "describe" },
+    todo: modifier,
+    todoIf: conditionalModifier,
+  },
+});

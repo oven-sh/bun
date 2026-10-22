@@ -5,7 +5,7 @@ use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsCell,
-    JsClass as _, JsError, JsResult, Strong,
+    JsClass as _, JsError, JsResult, JsThread, Strong,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
@@ -32,7 +32,6 @@ impl Kind {
     }
 }
 
-#[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ViWait {
     kind: Kind,
     interval_ms: u32,
@@ -54,9 +53,7 @@ bun_jsc::impl_abort_handle_owner!(ViWait, abort_handle, |this, _cause| {
     unsafe { (*this).finish() }
 });
 
-pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("ViWait"; callback, promise, lastError, timeoutError);
-}
+pub(crate) use crate::generated_bindgen::vi_wait::js_ViWait as js;
 
 unsafe extern "C" {
     safe fn ExpectDeferred__setCauseIfNone(global: &JSGlobalObject, error: JSValue, cause: JSValue);
@@ -139,20 +136,19 @@ impl ViWait {
         };
         let interval_ms = interval_ms(global, interval)?;
         let timeout_ms = delay_ms(global, timeout, 1000)?;
-        Self::begin(global, frame, kind, callback, interval_ms, timeout_ms, None)
+        let cx = global.js_thread_of_caller(frame);
+        Self::begin(cx, kind, callback, interval_ms, timeout_ms, None)
     }
 
     pub(crate) fn poll_matcher(
         global: &JSGlobalObject,
-        frame: &CallFrame,
         attempt: JSValue,
         interval_ms: u32,
         timeout_ms: u32,
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
         Self::begin(
-            global,
-            frame,
+            global.js_thread_of_caller_no_frame(),
             Kind::Poll,
             attempt,
             interval_ms,
@@ -163,15 +159,14 @@ impl ViWait {
 
     #[optimize(size)]
     fn begin(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
+        cx: JsThread<'_>,
         kind: Kind,
         callback: JSValue,
         interval_ms: u32,
         timeout_ms: u32,
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
-        let cx = global.js_thread_of_caller(frame);
+        let global = cx.global();
         let promise = JSPromise::create(global).to_js();
         let this_value = ViWait {
             kind,

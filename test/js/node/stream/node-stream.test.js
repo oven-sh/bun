@@ -4,6 +4,7 @@ import { bunEnv, bunExe, bunRun, isGlibcVersionAtLeast, isMacOS, tempDir, tmpdir
 import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { Duplex, duplexPair, finished, PassThrough, Readable, Stream, Transform, Writable } from "node:stream";
+import { text } from "node:stream/consumers";
 import { finished as finishedP } from "node:stream/promises";
 import { join } from "path";
 
@@ -1804,6 +1805,26 @@ describe("maybeReadMore is a no-op while a read is in flight (nodejs/node#60454)
     // setImmediate fires, so this is a deterministic ordering, not a timeout.
     await new Promise(resolve => setImmediate(resolve));
     expect(reads).toBe(1);
+  });
+});
+
+describe("Duplex.from(blob)", () => {
+  it("reads a File", async () => {
+    expect(await text(Duplex.from(new File(["from a File"], "file.txt")))).toBe("from a File");
+  });
+
+  it("reads an S3 file", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response("from " + new URL(req.url).pathname),
+    });
+    const s3 = new Bun.S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      endpoint: server.url.href,
+    });
+    expect(await text(Duplex.from(s3.file("key.txt")))).toBe("from /bucket/key.txt");
   });
 });
 

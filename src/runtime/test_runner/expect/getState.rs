@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult};
 
 use super::super::bun_test::{self, ExecutionEntry, RefDataValue};
 use super::super::execution::{ExecutionSequence, ExpectAssertions};
 use super::super::jest::{FileColumns as _, Jest};
-use super::expect_matcher_utils_js as js;
+use crate::generated_bindgen::expect::js_ExpectMatcherUtils as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
 /// `with_empty_names` keeps `describe("")` blocks in the name, which only Jest's snapshot format does.
@@ -39,21 +40,21 @@ fn with_sequence<R>(test: Test, f: impl FnOnce(&mut ExecutionSequence) -> R) -> 
 }
 
 #[optimize(size)]
-fn assertion_calls(test: Test) -> JSValue {
-    JSValue::js_number(f64::from(with_sequence(test, |sequence| sequence.expect_call_count).unwrap_or(0)))
+fn assertion_calls(test: Test) -> u32 {
+    with_sequence(test, |sequence| sequence.expect_call_count).unwrap_or(0)
 }
 
 #[optimize(size)]
-fn expected_assertions_number(test: Test) -> JSValue {
+fn expected_assertions_number(test: Test) -> Option<u32> {
     match with_sequence(test, |sequence| sequence.expect_assertions) {
-        Some(ExpectAssertions::Exact(count)) => JSValue::js_number(f64::from(count)),
-        _ => JSValue::NULL,
+        Some(ExpectAssertions::Exact(count)) => Some(count),
+        _ => None,
     }
 }
 
 #[optimize(size)]
-fn is_expecting_assertions(test: Test) -> JSValue {
-    JSValue::from(with_sequence(test, |sequence| sequence.expect_assertions) == Some(ExpectAssertions::AtLeastOne))
+fn is_expecting_assertions(test: Test) -> bool {
+    with_sequence(test, |sequence| sequence.expect_assertions) == Some(ExpectAssertions::AtLeastOne)
 }
 
 #[optimize(size)]
@@ -97,29 +98,28 @@ impl Expect {
     }
 
     #[optimize(size)]
-    pub(crate) fn get_state(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        Self::get_state_in(global, None)
+    pub(crate) fn get_state(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        Self::get_state_in(cx.global(), None)
     }
 
     pub(crate) fn get_state_in(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
         let state = Self::state_object(global);
-        state.put(global, b"assertionCalls", assertion_calls(test));
+        state.put(global, b"assertionCalls", JSValue::from(assertion_calls(test)));
         state.put(global, b"currentTestName", current_test_name(global, test)?);
-        state.put(global, b"expectedAssertionsNumber", expected_assertions_number(test));
-        state.put(global, b"isExpectingAssertions", is_expecting_assertions(test));
+        state.put(global, b"expectedAssertionsNumber", expected_assertions_number(test).map_or(JSValue::NULL, JSValue::from));
+        state.put(global, b"isExpectingAssertions", JSValue::from(is_expecting_assertions(test)));
         state.put(global, b"suppressedErrors", JSValue::create_empty_array(global, 0)?);
         state.put(global, b"testPath", test_path(global)?);
         Ok(state)
     }
 
     #[optimize(size)]
-    pub(crate) fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        Self::set_state_in(global, frame, None)
+    pub(crate) fn set_state(cx: &mut JsScope<'_>, state: JsLocal<'_>) -> JsResult<()> {
+        Self::set_state_in(cx.global(), state.to_js(), None)
     }
 
     #[optimize(size)]
-    pub(crate) fn set_state_in(global: &JSGlobalObject, frame: &CallFrame, test: Test) -> JsResult<JSValue> {
-        let [partial] = frame.arguments_as_array::<1>();
+    pub(crate) fn set_state_in(global: &JSGlobalObject, partial: JSValue, test: Test) -> JsResult<()> {
         let Some(partial_object) = partial.get_object() else {
             return Err(global.throw_invalid_argument_type_value("state", "object", partial));
         };
@@ -146,7 +146,7 @@ impl Expect {
         }
 
         if assertion_calls.is_none() && expected_assertions_number.is_none() && is_expecting_assertions.is_none() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(());
         }
         let applied = with_sequence(test, |sequence| {
             if let Some(count) = assertion_calls {
@@ -166,7 +166,7 @@ impl Expect {
         if applied.is_none() {
             return Err(global.throw(format_args!("expect.setState() cannot set the assertion counters in the describe phase, in concurrent tests, between tests, or after test execution has completed")));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 }
 
@@ -178,33 +178,27 @@ impl ExpectMatcherContext {
         (names_a_test && Rc::ptr_eq(&parent.bun_test()?, &bun_test::clone_active_strong()?)).then_some(parent.phase)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_assertion_calls(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        assertion_calls(this.test())
+    pub(crate) fn get_assertion_calls(&self) -> u32 {
+        assertion_calls(self.test())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_current_test_name(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        current_test_name(global, this.test())
+    pub(crate) fn get_current_test_name(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        current_test_name(cx.global(), self.test())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_expected_assertions_number(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        expected_assertions_number(this.test())
+    pub(crate) fn get_expected_assertions_number(&self) -> Option<u32> {
+        expected_assertions_number(self.test())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_is_expecting_assertions(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        is_expecting_assertions(this.test())
+    pub(crate) fn get_is_expecting_assertions(&self) -> bool {
+        is_expecting_assertions(self.test())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_suppressed_errors(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        JSValue::create_empty_array(global, 0)
+    pub(crate) fn get_suppressed_errors(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        JSValue::create_empty_array(cx.global(), 0)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_test_path(_this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        test_path(global)
+    pub(crate) fn get_test_path(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        test_path(cx.global())
     }
 }

@@ -294,9 +294,18 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
-  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  TestMutates: $bindgen("bindgen_test.bind.ts", "TestMutates"),
   TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  TestError: $bindgen("bindgen_test.bind.ts", "TestError"),
+  TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
+  TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
+  TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
+  isNoteFromJSDirect: $bindgen("bindgen_test.bind.ts", "isNoteFromJSDirect"),
+  tokenIdFromJS: $bindgen("bindgen_test.bind.ts", "tokenIdFromJS"),
+  errorConstructor: $bindgen("bindgen_test.bind.ts", "errorConstructor"),
+  afterFirst: $bindgen("bindgen_test.bind.ts", "afterFirst"),
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
@@ -321,12 +330,11 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
-  portOf: $bindgen("class_ref_test.bind.ts", "portOf"),
-  portOfOrNull: $bindgen("class_ref_test.bind.ts", "portOfOrNull"),
-  portAfterCallback: $bindgen("class_ref_test.bind.ts", "portAfterCallback"),
-  describeAddressOrList: $bindgen("class_ref_test.bind.ts", "describeAddressOrList"),
-  isAddress: $bindgen("class_ref_test.bind.ts", "isAddress"),
-  portPlus: $bindgen("class_ref_test.bind.ts", "portPlus"),
+  portOf: $bindgen("imported_class_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("imported_class_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("imported_class_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("imported_class_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -722,7 +730,7 @@ export type SocketFaultSyscall =
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"

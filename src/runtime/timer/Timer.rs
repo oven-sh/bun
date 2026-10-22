@@ -475,11 +475,6 @@ impl All {
 // Method bodies on canonical sibling types (`mod.rs` definitions).
 // ════════════════════════════════════════════════════════════════════════════
 
-// `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}`; the inherent `init`
-// constructor and the `JsClass`-derived `from_js` are re-exported via
-// `super::{TimeoutObject, ImmediateObject}`.
-
 impl DateHeaderTimer {
     /// Schedule the "Date" header timer.
     ///

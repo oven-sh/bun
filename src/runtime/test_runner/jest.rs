@@ -10,13 +10,13 @@ use bun_jsc::bun_string_jsc;
 use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
 };
 use crate::timer::ElTimespec;
 
 pub(crate) use super::bun_test;
-use super::expect::{Expect, ExpectTypeOf};
+use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use super::pretty_format::{self, JestPrettyFormat};
 use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
@@ -466,8 +466,8 @@ pub(crate) mod Jest {
                     b"setDefaultTimeout",
                     jsc::JSFunction::create(global_object, "setDefaultTimeout", __jsc_host_js_set_default_timeout, 1, Default::default()),
                 );
-                module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
-                module.put(global_object, b"expectTypeOf", jsc::codegen::js::get_constructor::<ExpectTypeOf>(global_object));
+                module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
+                module.put(global_object, b"expectTypeOf", js_ExpectTypeOf::get_constructor(global_object));
                 create_mock_objects(global_object, module);
             }
             Flavor::Vitest => {
@@ -535,7 +535,7 @@ pub(crate) mod Jest {
 
         module.put(global_object, b"jest", jest);
         module.put(global_object, b"spyOn", spy_on);
-        module.put(global_object, b"expect", jsc::codegen::js::get_constructor::<Expect>(global_object));
+        module.put(global_object, b"expect", js_Expect::get_constructor(global_object));
 
         let vi = JSValue::create_empty_object(global_object, 64);
         vi.put(global_object, b"fn", mock_fn);
@@ -646,13 +646,11 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
     // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
     let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
-    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return;
     };
-    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
-    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
-    let (bound, dcb_called) = unsafe { ((*dcb).entry, (*dcb).called) };
-    if dcb_called {
+    let bound = dcb.entry;
+    if dcb.called.get() {
         // done() already ran and reported — nothing left to mark.
         return;
     }

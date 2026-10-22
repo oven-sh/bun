@@ -3,10 +3,11 @@
 // loudly instead of silently reusing an engine that cannot frame it.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
-import { createPrivateKey } from "node:crypto";
+import { createCipheriv, createHmac, createPrivateKey, randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
+import { once } from "node:events";
 import { readFileSync } from "node:fs";
-import { BlockList } from "node:net";
+import { BlockList, SocketAddress } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
 
@@ -249,6 +250,424 @@ describe("transportParams.maxIdleTimeout", () => {
     };
 
     expect({ zero: await advertised(0), seven: await advertised(7) }).toEqual({ zero: 0n, seven: 7n });
+  });
+});
+
+// lsquic selects the error it closes a connection with (type, code and
+// reason) for its CONNECTION_CLOSE frame. The session read only lsquic's
+// status enum, so the side that found the error reported transport error 1
+// for every one of them, or a clean close when the handshake had also failed.
+describe("session close report for an error the local side finds", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  // Past every test timeout: an idle timeout also settles `closed`.
+  const tp = { maxIdleTimeout: 600 };
+  const request = { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" };
+
+  const quicError = (e: any) => ({ code: e.code, type: e.type, errorCode: e.errorCode });
+  const settled = (p: Promise<unknown>) => p.then(() => "resolved", quicError);
+  const transport = (errorCode: bigint) => ({ code: "ERR_QUIC_TRANSPORT_ERROR", type: "transport", errorCode });
+  const application = (errorCode: bigint) => ({ code: "ERR_QUIC_APPLICATION_ERROR", type: "application", errorCode });
+
+  // HKDF-Expand-Label (RFC 8446 section 7.1) for one SHA-256 block.
+  function expandLabel(secret: Buffer, label: string, length: number) {
+    const full = Buffer.from("tls13 " + label);
+    const info = Buffer.concat([Buffer.from([0, length, full.length]), full, Buffer.from([0, 1])]);
+    return createHmac("sha256", secret).update(info).digest().subarray(0, length);
+  }
+
+  /** The connection IDs of a long-header packet (RFC 8999 section 5.1). */
+  function connectionIds(packet: Buffer) {
+    const dcid = packet.subarray(6, 6 + packet[5]);
+    const scid = packet.subarray(7 + dcid.length, 7 + dcid.length + packet[6 + dcid.length]);
+    return { dcid, scid };
+  }
+
+  /**
+   * A server's Initial packet that carries `frames`, in answer to the client's
+   * `first` packet. Initial packets are protected with keys derived from the
+   * client's first Destination Connection ID (RFC 9001 section 5.2), so this
+   * needs no TLS.
+   */
+  function serverInitial(first: Buffer, frames: number[]) {
+    const { dcid, scid } = connectionIds(first);
+    const salt = Buffer.from("38762cf7f55934b34d179ae6a4c80cadccbb7f0a", "hex");
+    const secret = expandLabel(createHmac("sha256", salt).update(dcid).digest(), "server in", 32);
+    // Long header, type Initial, version 1, no token, 4-byte packet number 0.
+    const header = Buffer.concat([
+      Buffer.from([0xc3, 0, 0, 0, 1, scid.length]),
+      scid,
+      Buffer.from([8, 1, 2, 3, 4, 5, 6, 7, 8, 0, 4 + frames.length + 16, 0, 0, 0, 0]),
+    ]);
+    const aead = createCipheriv("aes-128-gcm", expandLabel(secret, "quic key", 16), expandLabel(secret, "quic iv", 12));
+    aead.setAAD(header);
+    const sealed = Buffer.concat([aead.update(Buffer.from(frames)), aead.final(), aead.getAuthTag()]);
+    const mask = createCipheriv("aes-128-ecb", expandLabel(secret, "quic hp", 16), null).update(sealed.subarray(0, 16));
+    header[0] ^= mask[0] & 0x0f;
+    for (let i = 0; i < 4; i++) header[header.length - 4 + i] ^= mask[1 + i];
+    return Buffer.concat([header, sealed]);
+  }
+
+  /** How a client session ends when the peer answers its first packet with `reply(first)`. */
+  async function closeAfter(reply: (first: Buffer) => Buffer) {
+    const peer = createSocket("udp4");
+    peer.bind(0, "127.0.0.1");
+    await once(peer, "listening");
+    try {
+      peer.once("message", (first, from) => peer.send(reply(first), from.port, from.address));
+      const errors: unknown[] = [];
+      const session = await connect(new SocketAddress({ address: "127.0.0.1", port: peer.address().port }), {
+        alpn: "quic-test",
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: tp,
+        onerror: (e: unknown) => void errors.push(quicError(e)),
+      } as SessionOptions);
+      const [opened, closed] = await Promise.all([settled(session.opened), settled(session.closed)]);
+      return { opened, closed, errors };
+    } finally {
+      peer.close();
+    }
+  }
+
+  // These run before the client has Handshake keys. lsquic sends no
+  // CONNECTION_CLOSE then, so only the client's own report shows the error.
+  test.each([
+    ["a packet with no frames is PROTOCOL_VIOLATION", [], 0xan],
+    // CRYPTO, offset 0, length 255, and no data.
+    ["a frame that does not parse is FRAME_ENCODING_ERROR", [0x06, 0x00, 0x40, 0xff], 0x7n],
+    // CRYPTO with a Finished message where the ServerHello belongs: TLS alert
+    // unexpected_message (10).
+    ["a TLS alert that fails the handshake is CRYPTO_ERROR", [0x06, 0x00, 0x04, 0x14, 0x00, 0x00, 0x00], 0x100n + 10n],
+    // ACK of packet 9, which the client did not send. lsquic aborts with no
+    // error code and sends INTERNAL_ERROR.
+    ["an abort with no error code is INTERNAL_ERROR", [0x02, 0x09, 0x00, 0x00, 0x00], 0x1n],
+  ] as const)("%s", async (_, frames, errorCode) => {
+    const error = transport(errorCode);
+    expect(await closeAfter(first => serverInitial(first, [...frames]))).toEqual({
+      opened: error,
+      closed: error,
+      errors: [error],
+    });
+  });
+
+  // lsquic sets the same flags for this as for an error that fails the
+  // handshake. Node rejects `closed` with ERR_QUIC_VERSION_NEGOTIATION_ERROR
+  // here, after `onversionnegotiation`.
+  test("a failed version negotiation is not reported as a transport error", async () => {
+    // Version Negotiation (RFC 9000 section 17.2.1) that offers only a version
+    // the client does not have.
+    const { closed } = await closeAfter(first => {
+      const { dcid, scid } = connectionIds(first);
+      return Buffer.concat([
+        Buffer.from([0x80, 0, 0, 0, 0, scid.length]),
+        scid,
+        Buffer.from([dcid.length]),
+        dcid,
+        Buffer.from([0x0a, 0x0a, 0x0a, 0x0a]),
+      ]);
+    });
+    expect(closed).not.toEqual(expect.objectContaining({ code: "ERR_QUIC_TRANSPORT_ERROR" }));
+  });
+  test.todo("a failed version negotiation rejects closed with ERR_QUIC_VERSION_NEGOTIATION_ERROR, as node does");
+  test.todo("a stateless reset is reported as PROTOCOL_VIOLATION (10n), as node does, and not as 1n");
+  test.todo("a handshake timeout is reported as INTERNAL_ERROR (1n), as node does, and not as 0x128n");
+
+  /** How a client with `verifyPeer` and its peer end, when the server's certificate has no trusted issuer. */
+  async function untrustedCertificate(verifyPeer: "strict" | "auto") {
+    const peerClosed = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.opened.catch(() => {});
+        peerClosed.resolve(settled(s.closed));
+      },
+      { sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+    const errors: unknown[] = [];
+    const session = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer,
+      transportParams: tp,
+      onerror: (e: unknown) => void errors.push(quicError(e)),
+    } as SessionOptions);
+    const [opened, closed] = await Promise.all([settled(session.opened), settled(session.closed)]);
+    return { opened, closed, errors, peer: await peerClosed.promise };
+  }
+
+  test("verifyPeer 'strict' against an untrusted certificate", async () => {
+    // TLS alert unknown_ca (48).
+    const error = transport(0x100n + 48n);
+    expect(await untrustedCertificate("strict")).toEqual({
+      opened: error,
+      closed: error,
+      errors: [error],
+      peer: error,
+    });
+  });
+
+  // 'auto' finishes the handshake and JS refuses the certificate: `opened`
+  // rejects and `closed` resolves, as on node.
+  test("verifyPeer 'auto' against an untrusted certificate", async () => {
+    expect(await untrustedCertificate("auto")).toEqual({
+      opened: transport(0n),
+      closed: "resolved",
+      errors: [],
+      // TLS alert bad_certificate (42).
+      peer: transport(0x100n + 42n),
+    });
+  });
+
+  /**
+   * An HTTP/3 connection. `violate` makes one side break RFC 9114, and the
+   * other side's lsquic closes the connection with an application error.
+   */
+  async function http3(violate: (sides: { client: any; server: any }) => unknown, serverParams: object = {}) {
+    const accepted = Promise.withResolvers<any>();
+    await using endpoint = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.closed.catch(() => {});
+        accepted.resolve(s);
+      },
+      { sni: sniOpt, transportParams: { ...tp, ...serverParams } },
+    );
+    const client = await connect(endpoint.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    const server = await accepted.promise;
+    await Promise.all([client.opened, server.opened]);
+    await violate({ client, server });
+    const [clientClosed, serverClosed] = await Promise.all([settled(client.closed), settled(server.closed)]);
+    return { client: clientClosed, server: serverClosed };
+  }
+  const H3_GENERAL_PROTOCOL_ERROR = 0x101n;
+  const H3_STREAM_CREATION_ERROR = 0x103n;
+  // Stream type 0x00 (control), then an empty SETTINGS frame: a second control stream.
+  const secondControlStream = new Uint8Array([0x00, 0x04, 0x00]);
+  // lsquic's default gives the client its three HTTP/3 streams and no more.
+  const roomForOneMoreStream = { initialMaxStreamsUni: 100 };
+
+  /** The server opens a bidirectional stream, which an HTTP/3 client must refuse. */
+  async function serverOpensStream(server: any) {
+    const stream = await server.createBidirectionalStream({ headers: request });
+    stream.closed.catch(() => {});
+  }
+
+  // Node sends and reports transport INTERNAL_ERROR for these two. lsquic sends
+  // the RFC 9114 code, and the side that found the error reports what it sent.
+  test("HTTP/3: the client finds a server-initiated bidirectional stream", async () => {
+    expect(await http3(({ server }) => serverOpensStream(server))).toEqual({
+      client: application(H3_STREAM_CREATION_ERROR),
+      server: application(H3_STREAM_CREATION_ERROR),
+    });
+  });
+
+  test("HTTP/3: the server finds a second control stream", async () => {
+    const result = await http3(async ({ client }) => {
+      const stream = await client.createUnidirectionalStream({ body: secondControlStream });
+      stream.closed.catch(() => {});
+    }, roomForOneMoreStream);
+    expect(result).toEqual({
+      client: application(H3_STREAM_CREATION_ERROR),
+      server: application(H3_STREAM_CREATION_ERROR),
+    });
+  });
+
+  test("HTTP/3: the client cannot open its control and QPACK streams", async () => {
+    const peerClosed = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.opened.catch(() => {});
+        peerClosed.resolve(settled(s.closed));
+      },
+      { sni: sniOpt, transportParams: { ...tp, initialMaxStreamsUni: 2 } },
+    );
+    const errors: unknown[] = [];
+    const session = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+      onerror: (e: unknown) => void errors.push(quicError(e)),
+    } as SessionOptions);
+    const [opened, closed] = await Promise.all([settled(session.opened), settled(session.closed)]);
+    const error = application(H3_GENERAL_PROTOCOL_ERROR);
+    expect({ opened, closed, errors, peer: await peerClosed.promise }).toEqual({
+      opened: error,
+      closed: error,
+      errors: [error],
+      // The client has no 1-RTT keys yet. In a Handshake packet an application
+      // error goes out as transport APPLICATION_ERROR (RFC 9000 section 10.2.3).
+      peer: transport(0xcn),
+    });
+  });
+
+  // close() with no code asks lsquic for no error of this side's own, so it
+  // must not replace the error that ends the connection. Node reports that
+  // error for each of these shapes.
+  const closeShapes = [
+    ["close()", undefined],
+    ["close({ reason })", { reason: "bye" }],
+    ["close({ type: 'application' })", { type: "application" }],
+  ] as const;
+  // A close with type "application" goes out at once. The other two wait for
+  // the open request, so an error can still end the connection first.
+  const waitingCloseShapes = closeShapes.slice(0, 2);
+
+  test.each(waitingCloseShapes)("HTTP/3: a client's %s does not hide a later error", async (_, options) => {
+    const result = await http3(async ({ client, server }) => {
+      server.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        serverOpensStream(server);
+      };
+      // The server never answers, so the graceful close waits for this stream.
+      const stream = await client.createBidirectionalStream({ headers: request });
+      stream.closed.catch(() => {});
+      client.close(options).catch(() => {});
+    });
+    expect(result.client).toEqual(application(H3_STREAM_CREATION_ERROR));
+  });
+
+  test.each(waitingCloseShapes)("HTTP/3: a server's %s does not hide a later error", async (_, options) => {
+    const result = await http3(async ({ client, server }) => {
+      const goaway = Promise.withResolvers<void>();
+      client.ongoaway = () => goaway.resolve();
+      // The server never answers, so its graceful close waits for this stream.
+      server.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+        server.close(options).catch(() => {});
+      };
+      // Opened before the GOAWAY: a closing session opens no new stream.
+      const control = await client.createUnidirectionalStream();
+      control.closed.catch(() => {});
+      const stream = await client.createBidirectionalStream({ headers: request });
+      stream.closed.catch(() => {});
+      await goaway.promise;
+      control.writer.writeSync(secondControlStream);
+      control.writer.endSync();
+    }, roomForOneMoreStream);
+    expect(result.server).toEqual(application(H3_STREAM_CREATION_ERROR));
+  });
+
+  // lsquic closes a stream when it destroys the connection. That reaches JS
+  // one turn before the session's own close event, and `destroyedAtClose`
+  // shows that close() ran in between.
+  test.each(closeShapes)(
+    "HTTP/3: a client's %s after lsquic closed the connection reports the error",
+    async (_, options) => {
+      let destroyedAtClose: boolean | undefined;
+      const result = await http3(async ({ client, server }) => {
+        server.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          serverOpensStream(server);
+        };
+        const stream = await client.createBidirectionalStream({ headers: request });
+        const close = () => {
+          destroyedAtClose = client.destroyed;
+          client.close(options).catch(() => {});
+        };
+        stream.closed.then(close, close);
+      });
+      expect({ destroyedAtClose, client: result.client }).toEqual({
+        destroyedAtClose: false,
+        client: application(H3_STREAM_CREATION_ERROR),
+      });
+    },
+  );
+
+  test.each(closeShapes)(
+    "HTTP/3: a server's %s after lsquic closed the connection reports the error",
+    async (_, options) => {
+      let destroyedAtClose: boolean | undefined;
+      const result = await http3(async ({ client, server }) => {
+        const accepted = Promise.withResolvers<void>();
+        server.onstream = (stream: any) => {
+          const close = () => {
+            destroyedAtClose = server.destroyed;
+            server.close(options).catch(() => {});
+          };
+          stream.closed.then(close, close);
+          accepted.resolve();
+        };
+        const stream = await client.createBidirectionalStream({ headers: request });
+        stream.closed.catch(() => {});
+        await accepted.promise;
+        const control = await client.createUnidirectionalStream({ body: secondControlStream });
+        control.closed.catch(() => {});
+      }, roomForOneMoreStream);
+      expect({ destroyedAtClose, server: result.server }).toEqual({
+        destroyedAtClose: false,
+        server: application(H3_STREAM_CREATION_ERROR),
+      });
+    },
+  );
+
+  test.each(closeShapes)("HTTP/3: %s with no error resolves on both sides", async (_, options) => {
+    const result = await http3(({ client }) => void client.close(options).catch(() => {}));
+    expect(result).toEqual({ client: "resolved", server: "resolved" });
+  });
+
+  // A rejected 0-RTT resume must not end the connection (RFC 9001 section
+  // 4.6.2), and node keeps it open. lsquic keeps its count of 0-RTT bytes
+  // sent, finds it above the server's new initialMaxData, and aborts with no
+  // error code, which fails the handshake. This test only uses that abort to
+  // reach the report for it.
+  test("an abort with no error code that fails the handshake is INTERNAL_ERROR", async () => {
+    const endpoint = { tokenSecret: randomBytes(16) };
+    const streamWindow = { initialMaxStreamDataBidiLocal: 1 << 20, initialMaxStreamDataBidiRemote: 1 << 20 };
+    const ticket = Promise.withResolvers<unknown>();
+    const token = Promise.withResolvers<unknown>();
+    {
+      await using first = await listen((s: any) => void s.closed.catch(() => {}), {
+        sni: sniOpt,
+        alpn: ["quic-test"],
+        endpoint,
+        transportParams: { ...tp, ...streamWindow, initialMaxData: 1 << 20 },
+      });
+      const session = await connect(first.address!, {
+        alpn: "quic-test",
+        verifyPeer: "manual",
+        transportParams: tp,
+        onsessionticket: ticket.resolve,
+        onnewtoken: token.resolve,
+      } as SessionOptions);
+      await Promise.all([session.opened, ticket.promise, token.promise]);
+      await session.close();
+    }
+    const peerClosed = Promise.withResolvers<unknown>();
+    await using second = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.opened.catch(() => {});
+        s.onstream = (stream: any) => void stream.closed.catch(() => {});
+        peerClosed.resolve(settled(s.closed));
+      },
+      { sni: sniOpt, alpn: ["quic-test"], endpoint, transportParams: { ...tp, ...streamWindow, initialMaxData: 2000 } },
+    );
+    const errors: unknown[] = [];
+    const session = await connect(second.address!, {
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      transportParams: tp,
+      sessionTicket: await ticket.promise,
+      token: await token.promise,
+      onerror: (e: unknown) => void errors.push(quicError(e)),
+    } as SessionOptions);
+    const stream = await session.createBidirectionalStream({ body: new Uint8Array(60000) });
+    stream.closed.catch(() => {});
+    const [opened, closed] = await Promise.all([settled(session.opened), settled(session.closed)]);
+    const error = transport(1n);
+    expect({ opened, closed, errors, peer: await peerClosed.promise }).toEqual({
+      opened: error,
+      closed: error,
+      errors: [error],
+      peer: error,
+    });
   });
 });
 

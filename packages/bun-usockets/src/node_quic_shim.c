@@ -428,6 +428,8 @@ int us_nq_conn_transport_params(const lsquic_conn_t *c, int peer,
 
 size_t us_nq_tp_size(void) { return sizeof(struct us_nq_tp); }
 
+size_t us_nq_close_info_size(void) { return sizeof(struct lsquic_close_info); }
+
 size_t us_nq_settings_size(void) { return sizeof(struct lsquic_engine_settings); }
 
 void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,

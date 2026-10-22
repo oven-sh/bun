@@ -247,7 +247,8 @@ test("verifyPeer 'strict' and 'auto' refuse a certificate with a blocked public 
   );
   try {
     expect([await open("strict"), await open("auto")]).toEqual([
-      "Invalid state: Session was destroyed before it opened",
+      // 'strict' fails the TLS handshake: alert certificate_revoked (44).
+      "QUIC transport error 300: TLS alert 44",
       "QUIC transport error 0: Peer certificate validation failed: certificate revoked [CERT_REVOKED]",
     ]);
   } finally {

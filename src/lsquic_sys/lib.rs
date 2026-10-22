@@ -153,7 +153,6 @@ unsafe extern "C" {
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
     pub fn lsquic_conn_close(c: *mut lsquic_conn);
     fn lsquic_conn_going_away(c: *mut lsquic_conn);
-    pub fn lsquic_conn_status(c: *mut lsquic_conn, errbuf: *mut c_char, bufsz: usize) -> c_int;
     pub fn lsquic_conn_make_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_make_uni_stream(c: *mut lsquic_conn);
     pub fn lsquic_conn_get_sockaddr(
@@ -180,6 +179,7 @@ unsafe extern "C" {
         out: *mut NqTransportParams,
     ) -> c_int;
     pub fn us_nq_tp_size() -> usize;
+    fn us_nq_close_info_size() -> usize;
 
     fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
     pub fn lsquic_stream_conn(s: *const lsquic_stream) -> *mut lsquic_conn;
@@ -769,6 +769,94 @@ impl Conn {
     }
 }
 
+/// Why a conn closed. Mirrors `enum lsquic_close_cause` (lsquic.h).
+#[derive(Clone, Copy)]
+pub enum CloseCause {
+    NotClosing,
+    /// `lsquic_conn_close`, a finished GOAWAY, or the peer's CONNECTION_CLOSE.
+    Closed,
+    /// This side aborted the conn: [`CloseInfo::is_app`] and [`CloseInfo::code`].
+    Error,
+    TimedOut,
+    UserAborted,
+    /// Stateless reset.
+    Reset,
+    HandshakeFailed,
+    VersionNegotiationFailed,
+}
+
+impl CloseCause {
+    /// Indexed by the value of the C enum.
+    const BY_VALUE: [CloseCause; 8] = [
+        CloseCause::NotClosing,
+        CloseCause::Closed,
+        CloseCause::Error,
+        CloseCause::TimedOut,
+        CloseCause::UserAborted,
+        CloseCause::Reset,
+        CloseCause::HandshakeFailed,
+        CloseCause::VersionNegotiationFailed,
+    ];
+}
+
+/// How lsquic ended a conn, copied out of it.
+pub struct CloseInfo {
+    pub cause: CloseCause,
+    /// For [`CloseCause::Error`], `is_app` and `code` are the error lsquic
+    /// selects for its CONNECTION_CLOSE frame. Both are zero for any other
+    /// cause.
+    pub is_app: bool,
+    pub code: u64,
+    /// The message lsquic recorded. Empty when it recorded none.
+    pub reason: Vec<u8>,
+}
+
+/// Mirrors `struct lsquic_close_info` (lsquic.h).
+#[repr(C)]
+struct RawCloseInfo {
+    cause: c_int,
+    is_app: c_int,
+    code: u64,
+    reason: *const c_char,
+}
+
+impl Conn {
+    /// `None` when the conn is not a full IETF conn.
+    pub fn close_info(&self) -> Option<CloseInfo> {
+        unsafe extern "C" {
+            fn lsquic_conn_close_info(c: *mut lsquic_conn, info: *mut RawCloseInfo) -> c_int;
+        }
+        let mut raw = RawCloseInfo {
+            cause: 0,
+            is_app: 0,
+            code: 0,
+            reason: core::ptr::null(),
+        };
+        // SAFETY: `self.0` is live; `raw` is a stack out-param.
+        if unsafe { lsquic_conn_close_info(self.0, core::ptr::from_mut(&mut raw)) } != 0 {
+            return None;
+        }
+        let cause = usize::try_from(raw.cause)
+            .ok()
+            .and_then(|i| CloseCause::BY_VALUE.get(i).copied())
+            .unwrap_or(CloseCause::NotClosing);
+        let reason = if raw.reason.is_null() {
+            Vec::new()
+        } else {
+            // SAFETY: lsquic's NUL-terminated message, owned by the live conn.
+            unsafe { core::ffi::CStr::from_ptr(raw.reason) }
+                .to_bytes()
+                .to_vec()
+        };
+        Some(CloseInfo {
+            cause,
+            is_app: raw.is_app != 0,
+            code: raw.code,
+            reason,
+        })
+    }
+}
+
 pub fn debug_assert_layout() {
     debug_assert_eq!(
         // SAFETY: pure size query.
@@ -782,5 +870,11 @@ pub fn debug_assert_layout() {
         core::mem::size_of::<NqTransportParams>(),
         "us_nq_tp layout mismatch: peer_transport_params passes a stack \
          NqTransportParams that C fills with sizeof(struct us_nq_tp) bytes"
+    );
+    debug_assert_eq!(
+        // SAFETY: pure size query.
+        unsafe { us_nq_close_info_size() },
+        core::mem::size_of::<RawCloseInfo>(),
+        "lsquic_close_info layout mismatch between lsquic.h and lsquic_sys"
     );
 }

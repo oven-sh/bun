@@ -159,6 +159,13 @@ export const lsquic: Dependency = {
     // close, or a transport close with a reason) went out as transport
     // INTERNAL_ERROR. Record the error with a flag of its own.
     "patches/lsquic/abort-error-app-code-zero.patch",
+    // lsquic_conn_status() has no error code, and it reports every error that
+    // comes with a failed handshake as a version negotiation failure. So
+    // node:quic reported an error the local side found as transport error 1,
+    // or as a clean close. lsquic_conn_close_info() returns the close cause
+    // and the error that immediate_close() selects for CONNECTION_CLOSE. Both
+    // read conn_close_error(). Applies on top of abort-error-app-code-zero.
+    "patches/lsquic/close-cause.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

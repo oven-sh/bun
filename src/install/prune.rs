@@ -1747,7 +1747,7 @@ pub(crate) fn remove_copies_of_the_older_layout(
     let Ok(cache) = crate::package_manager::directories::try_get_cache_directory(manager) else {
         return;
     };
-    places.sort_unstable_by_key(|&(key, _)| key);
+    places.sort_unstable();
     if let Ok(saved) = hoist_tree(
         manager,
         false,
@@ -1817,22 +1817,26 @@ fn tree_path(lockfile: &Lockfile, tree_id: usize) -> Box<[u8]> {
 }
 
 /// `manager.lockfile` must hold the tree of the older layout. `places` is the
-/// `tree::Builder::places` of the current layout, sorted by key.
+/// `tree::Builder::places` of the current layout, sorted.
 fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)], cache: sys::Fd) {
     let lockfile: &Lockfile = &manager.lockfile;
     let trees = lockfile.buffers.trees.as_slice();
     let rows = lockfile.buffers.hoisted_dependencies.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
-    let folders = tree::folder_keys(trees, deps);
-    let today = |place: u64| {
-        let found = places.binary_search_by_key(&place, |&(key, _)| key);
-        found.ok().map(|i| places[i].1)
-    };
+    let folders = tree::folder_keys(
+        trees,
+        deps,
+        lockfile.buffers.resolutions.as_slice(),
+        lockfile.packages.items_resolution(),
+    );
+    let today = |place: u64| places.binary_search_by_key(&place, |&(key, _)| key).is_ok();
     let mut plan = Plan::default();
     for (id, older) in trees.iter().enumerate().skip(1) {
         let only_older: Vec<u64> = (older.dependencies.get(rows).iter())
             .map(|&row| deps[row as usize].name_hash)
-            .filter(|&name_hash| today(tree::place_key(folders[id], name_hash)).is_none())
+            .filter(|&name_hash| {
+                !(folders[id].iter()).any(|&key| today(tree::place_key(key, name_hash)))
+            })
             .collect();
         if only_older.is_empty() {
             continue;
@@ -1840,7 +1844,10 @@ fn remove_from_older_places(manager: &PackageManager, places: &[(u64, PackageID)
         // If the current layout has another package or nothing where this tree's owner is, the
         // owner is a leftover too. Only other leftovers load it, so its dependencies stay.
         let owner = tree_owner(lockfile, id);
-        if !is_member_tree(lockfile, id) && today(folders[id]) != Some(owner) {
+        let mut owner_places = folders[id].iter().map(|&key| (key, owner));
+        if !is_member_tree(lockfile, id)
+            && owner_places.all(|place| places.binary_search(&place).is_err())
+        {
             continue;
         }
         // A package with bundled dependencies can ship folders at any depth, so skip every tree

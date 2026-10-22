@@ -6285,11 +6285,12 @@ impl<'p, 's> Checker<'p, 's> {
         let is_in_back_edge = depth != usize::MAX && self.is_flow_loop_visible(depth);
         let level = self.inference_contexts.len() + 1;
         let outer = std::mem::replace(&mut self.context_free_level, level);
+        let before = self.before_check_in_flow_loop();
         let (ty, stored) = self.run_memoizable(|c| {
             let mode = CheckMode::SKIP_CONTEXT_SENSITIVE;
             c.check_expression_with_contextual_type(file, e, TypeId::ANY, None, mode)
         });
-        self.check_expression_in_flow_loop(file, e);
+        self.check_expression_in_flow_loop(file, e, before);
         self.context_free_level = outer;
         if let Some(stored) = stored
             && !self.is_stack_low()
@@ -7274,8 +7275,9 @@ impl<'p, 's> Checker<'p, 's> {
                 is_await,
                 ..
             } if head == left => {
+                let before = self.before_check_in_flow_loop();
                 let iterable = self.type_of_expr(file, expr);
-                self.check_expression_in_flow_loop(file, expr);
+                self.check_expression_in_flow_loop(file, expr, before);
                 let iterable = self.non_nullable_type_if_needed(iterable);
                 Some(self.iterated_type(iterable, is_await))
             }

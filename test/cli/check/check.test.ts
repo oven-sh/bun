@@ -10754,6 +10754,33 @@ export function notReturned(o: object) {
       expect(exitCode).toBe(1);
     });
 
+    test("keeps what the resolution of a call reports while a loop is analyzed", async () => {
+      using dir = project({
+        "a.ts": `type Letter = "a" | "b" | "c";
+declare function id<T>(value: T): T;
+declare const next: { a: "b"; b: "c"; c: "a" };
+declare const list: Letter[];
+export function f() {
+  let x: Letter = "a";
+  let y: Letter = "a";
+  for (const item of list) {
+    if (x === y) {
+      x = (() => y)();
+    }
+    y = id(next[y]);
+  }
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(10,12): error TS7024: Function implicitly has return type 'any' because it does not have a return type annotation and is referenced directly or indirectly in one of its return expressions.
+        a.ts(12,12): error TS2345: Argument of type '"b" | "c"' is not assignable to parameter of type '"b"'.
+          Type '"c"' is not assignable to type '"b"'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

@@ -2770,26 +2770,36 @@ impl<'p, 's> Checker<'p, 's> {
         // When nothing is being rechecked, no mode is carried, so `is_checked_type_only` tracks it
         // down from this node.
         let outside = self.type_only_node.replace((file, e));
+        let before = self.before_check_in_flow_loop();
         let ty = if self.is_rechecking() {
             self.check_expression_ex(file, e, check_mode)
         } else {
             self.check_expression_again(file, e)
         };
-        self.check_expression_in_flow_loop(file, e);
+        self.check_expression_in_flow_loop(file, e, before);
         self.type_only_node = outside;
         ty
+    }
+
+    /// Call before `type_of_expr(e)`. Returns the argument for `check_expression_in_flow_loop`: the length of
+    /// `reported`, and `interruptions`.
+    pub(super) fn before_check_in_flow_loop(&self) -> (usize, (u64, u64, u64)) {
+        (self.reported.len(), self.interruptions())
     }
 
     /// Call after `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is
     /// dropped. While a loop is being analyzed it reports based on the types the loop has collected so far. The walk,
     /// with the final types, doesn't report those errors: `last = last.next = node` after `last === null` assigns to
     /// `never`.
-    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
+    pub(super) fn check_expression_in_flow_loop(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        (reported, cuts): (usize, (u64, u64, u64)),
+    ) {
         if !self.is_in_flow_loop() {
             return;
         }
-        let reported = self.reported.len();
-        let cuts = self.interruptions();
         let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
         self.check_expression(file, e);
         self.is_checking_in_flow_loop = outer;

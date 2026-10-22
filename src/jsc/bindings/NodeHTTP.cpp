@@ -78,6 +78,19 @@ static bool svValueHasToken(std::string_view value, std::string_view lowerToken)
     return false;
 }
 
+static String percentEncodeNonASCII(std::span<const Latin1Character> bytes)
+{
+    StringBuilder builder;
+    builder.reserveCapacity(bytes.size() + 16);
+    for (Latin1Character byte : bytes) {
+        if (isASCII(byte))
+            builder.append(byte);
+        else
+            builder.append('%', upperNibbleToASCIIHexDigit(byte), lowerNibbleToASCIIHexDigit(byte));
+    }
+    return builder.toString();
+}
+
 // One pass over the request: append url, method and jsNumber(dispatch
 // bitfield) to `args`, and capture the raw header bytes into `flatHeaders`
 // as [u32 nameLen][u32 valueLen][name][value]... so req.rawHeaders /
@@ -87,7 +100,8 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 {
     {
         std::string_view fullURLStdStr = request->getFullUrl();
-        String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() });
+        std::span<const Latin1Character> target { reinterpret_cast<const Latin1Character*>(fullURLStdStr.data()), fullURLStdStr.length() };
+        String fullURL = charactersAreAllASCII(target) ? String(target) : percentEncodeNonASCII(target);
         args.append(jsString(vm, WTF::move(fullURL)));
     }
 

@@ -2209,6 +2209,100 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(mockHandler).not.toHaveBeenCalled();
     });
 
+    test("rejects a request target with a control character", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const codes: string[] = [];
+      server.on("clientError", (err: any, socket) => {
+        codes.push(err.code);
+        replyBadRequest(socket);
+      });
+      const targets = ["/\x7f", "/\x01", "/a?b=\x7f", "/a#\x7f", "/aaaaaaaaaaaaaaaaaaaa\x7faaaaaaaaaaaaaaaaaaaa", "http://a\x7f/"];
+      for (const target of targets) {
+        const msg = `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`;
+        expect(await sendRequest(msg)).toStartWith("HTTP/1.1 400 Bad Request");
+      }
+      expect(codes).toEqual(targets.map(() => "HPE_INVALID_URL"));
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("answers 400 to an invalid request target without a 'clientError' listener", async () => {
+      const mockHandler = createMockHandler();
+      server.on("request", mockHandler);
+      const msg = "GET /\x7f HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+      expect(await sendRequest(msg)).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      expect(mockHandler).not.toHaveBeenCalled();
+    });
+
+    test("req.url has the non-ASCII bytes of the request target percent-encoded", async () => {
+      const urls: string[] = [];
+      server.on("request", (req, res) => {
+        urls.push(req.url);
+        res.writeHead(200, { Connection: "close" }).end();
+      });
+      const onSocket = (req, socket) => {
+        urls.push(req.url);
+        socket.end("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+      };
+      server.on("upgrade", onSocket);
+      server.on("connect", onSocket);
+      const requests = [
+        ["GET /\xc3\xa9?q=\xe4\xb8\xad#\xf0\x9f\x98\x80", "/%C3%A9?q=%E4%B8%AD#%F0%9F%98%80"],
+        ["GET /\xff/\x80/\xc3(/\xc0\xaf", "/%FF/%80/%C3(/%C0%AF"],
+        ["GET /%c3%a9/%/\xe9~", "/%c3%a9/%/%E9~"],
+        ["GET http://a\xe9/\xe9", "http://a%E9/%E9"],
+        ["CONNECT a\xe9:80", "a%E9:80"],
+        ["GET /\xe9", "/%E9", "Upgrade: a\r\nConnection: upgrade\r\n"],
+      ];
+      for (const [requestLine, , headers = ""] of requests) {
+        const msg = Buffer.from(`${requestLine} HTTP/1.1\r\nHost: localhost\r\n${headers}\r\n`, "latin1");
+        expect(await sendRequest(msg)).toStartWith("HTTP/1.1 200 OK");
+      }
+      expect(urls).toEqual(requests.map(([, url]) => url));
+    });
+
+    test("rejects DEL in a header or trailer value unless insecureHTTPParser is set", async () => {
+      const seen: string[] = [];
+      const onRequest = (req, res) => {
+        req.resume().on("end", () => {
+          seen.push(req.headers["x-a"] ?? req.trailers["x-a"]);
+          res.end();
+        });
+      };
+      const codes: string[] = [];
+      server.on("request", onRequest);
+      server.on("clientError", (err: any, socket) => {
+        codes.push(err.code);
+        replyBadRequest(socket);
+      });
+      const header = value =>
+        Buffer.from(`GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-A: ${value}\r\n\r\n`, "latin1");
+      const trailer = value =>
+        Buffer.from(
+          `POST / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n0\r\nX-A: ${value}\r\n\r\n`,
+          "latin1",
+        );
+      for (const msg of [header("\x7f"), header("aaaaaaaaaaaaaaaa\x7faaaaaaaaaaaaaaaa"), trailer("a\x7fb")]) {
+        expect(await sendRequest(msg)).toStartWith("HTTP/1.1 400 Bad Request");
+      }
+      expect(codes).toEqual(["HPE_INVALID_HEADER_TOKEN", "HPE_INVALID_HEADER_TOKEN", "HPE_INVALID_HEADER_TOKEN"]);
+      expect(seen).toEqual([]);
+
+      // Bytes from 0x80 stay valid and reach the handler as latin1.
+      expect(await sendRequest(header("a\x80\xffb"))).toStartWith("HTTP/1.1 200 OK");
+      expect(seen).toEqual(["a\x80\xffb"]);
+
+      server.close();
+      server = new Server({ insecureHTTPParser: true }, onRequest);
+      await once(server.listen(0), "listening");
+      port = server.address().port;
+      seen.length = 0;
+      for (const msg of [header("a\x7fb"), trailer("c\x7fd")]) {
+        expect(await sendRequest(msg)).toStartWith("HTTP/1.1 200 OK");
+      }
+      expect(seen).toEqual(["a\x7fb", "c\x7fd"]);
+    });
+
     test("rejects requests with missing Host header in HTTP/1.1", async () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);

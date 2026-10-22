@@ -1,5 +1,5 @@
-//! Names that the emitted code reserves, and names no type may have: 2441 2529 18027 2818, 2725,
-//! 2414 2427 2431 2457 2368.
+//! Names that the emitted code reserves, and names that a type can't have: 2441 2529 18027 2818, 2725, 2414 2427 2431
+//! 2457 2368. The callers of `check_type_name_is_reserved` pass in 2427, 2457 and 2368.
 
 use super::errors_operators::language_version;
 use super::*;
@@ -28,9 +28,8 @@ fn is_reserved_type_name(text: Atom) -> bool {
 }
 
 impl Checker<'_, '_> {
-    /// `checkCollisionsForDeclarationName` for a declaration, or for the identifier that names a
-    /// variable, a parameter or a binding element. `text`: `name.Text()`. Few names can collide, so
-    /// the name is tested first.
+    /// `checkCollisionsForDeclarationName` for a declaration, or for the identifier that names a variable, a parameter
+    /// or a binding element. `text` is `name.Text()`. Few names can collide, so the name is tested first.
     #[inline]
     pub(super) fn check_collisions_for_declaration_name(
         &mut self,
@@ -85,8 +84,8 @@ impl Checker<'_, '_> {
         self.error(file, node, code, args).skipped_on_no_emit = true;
     }
 
-    /// Whether the declaration `node` is at the top level of a file that is a module, and is not a
-    /// namespace that emits nothing.
+    /// True if the declaration `node` is at the top level of a file that's a module, and isn't a namespace that emits
+    /// nothing.
     fn is_emitted_at_top_level_of_module(&self, file: FileId, node: Node) -> bool {
         let hir = self.hir(file);
         let is_uninstantiated = matches!(hir.data(node), NodeData::Stmt(s) if matches!(hir[s].kind, StmtKind::Module(m)
@@ -209,8 +208,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `setNodeLinksForPrivateIdentifierScope` for a class member whose name is a private
-    /// identifier.
+    /// `setNodeLinksForPrivateIdentifierScope` for a class member whose name is a private identifier.
     pub(super) fn set_node_links_for_private_identifier_scope(
         &mut self,
         file: FileId,
@@ -225,8 +223,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The part of `checkSuperExpression` that marks the scopes enclosing `super.x` in a static
-    /// initializer.
+    /// The part of `checkSuperExpression` that marks the scopes enclosing `super.x` in a static initializer.
     pub(super) fn mark_super_property_in_static_initializer(&mut self, file: FileId, e: ExprId) {
         let hir = self.hir(file);
         let node = hir.node(e);
@@ -236,9 +233,9 @@ impl Checker<'_, '_> {
         {
             return;
         }
-        let mut container = hir.get_super_container(node, true);
+        let mut container = hir.get_super_container(node);
         while hir.kind(container) == Kind::ArrowFunction {
-            container = hir.get_super_container(container, true);
+            container = hir.get_super_container(container);
         }
         let class = hir.class_of(hir.parent(container));
         if !matches!(
@@ -295,7 +292,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         let flag = CONTAINS_SUPER_PROPERTY_IN_STATIC_INITIALIZER;
         let has_collision = match hir.kind(node) {
-            // The name of a class expression can only collide within its members.
+            // A class expression's name can only collide within its members.
             Kind::ClassExpression => (hir[hir.class_of(node)].members.iter())
                 .any(|member| self.has_node_check_flag(hir.node(member), flag)),
             Kind::FunctionExpression => self.has_node_check_flag(node, flag),
@@ -317,7 +314,7 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// `checkTypeNameIsReserved` for the name of `declaration`. `text`: `name.Text()`.
+    /// `checkTypeNameIsReserved` for the name of `declaration`. `text` is `name.Text()`.
     #[inline]
     pub(super) fn check_type_name_is_reserved(
         &mut self,

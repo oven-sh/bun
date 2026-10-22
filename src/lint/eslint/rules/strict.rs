@@ -44,7 +44,7 @@ const WRAP: Message = Message::new(
 );
 
 impl Mode {
-    /// What a directive is reported with that the mode does not allow.
+    /// The message for a directive that the mode doesn't allow.
     fn message(self) -> Message {
         match self {
             Mode::Never => NEVER,
@@ -61,8 +61,8 @@ impl Mode {
     }
 }
 
-/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites what typescript-estree
-/// says with the option it was given: an `import` or an `export` makes no module of a script.
+/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites typescript-estree's value with the option
+/// it was given, so an `import` or an `export` doesn't turn a script into a module.
 fn is_module(file: &File<'_>) -> bool {
     file.language().scope_source_type() == SourceType::Module
 }
@@ -92,7 +92,7 @@ fn is_simple_parameter_list(func: Func<'_>) -> bool {
     })
 }
 
-/// What is around a function.
+/// The constructs that enclose a function.
 #[derive(Default)]
 struct Surroundings {
     /// The body of a class.
@@ -102,12 +102,12 @@ struct Surroundings {
     is_in_strict_function: bool,
 }
 
-/// By a node: the innermost function with a body, or class whose body it is in, around it.
+/// Maps a node to the innermost enclosing function with a body, or class whose body contains the node.
 type Containers<'a> = AncestorMemo<'a, Node<'a>>;
 
 impl Surroundings {
     fn of<'a>(func: Func<'a>, containers: &mut Containers<'a>) -> Surroundings {
-        let mut around = Surroundings::default();
+        let mut surroundings = Surroundings::default();
         let mut inner = Node::Func(func);
         while let Some(container) = containers.find(inner, |child, ancestor| match ancestor {
             Node::Func(outer) => ast_utils::is_function_with_body(outer).then_some(ancestor),
@@ -116,14 +116,14 @@ impl Surroundings {
         }) {
             match container {
                 Node::Func(outer) => {
-                    around.is_in_function = true;
-                    around.is_in_strict_function |= has_use_strict_directive(outer);
+                    surroundings.is_in_function = true;
+                    surroundings.is_in_strict_function |= has_use_strict_directive(outer);
                 }
-                _ => around.is_in_class = true,
+                _ => surroundings.is_in_class = true,
             }
             inner = container;
         }
-        around
+        surroundings
     }
 }
 
@@ -141,14 +141,14 @@ fn report_directive<'a>(cx: &Cx<'a, Strict>, directive: Stmt<'a>, message: Messa
 }
 
 impl Strict {
-    /// In the mode `Function`.
+    /// Only called in `Function` mode.
     fn check_function_without_directive<'a>(func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // A static block is in a class.
         if func.enclosing().is_some_and(Func::has_body) {
             return;
         }
-        let around = Surroundings::of(func, &mut cx.state.containers);
-        if around.is_in_function || around.is_in_class {
+        let surroundings = Surroundings::of(func, &mut cx.state.containers);
+        if surroundings.is_in_function || surroundings.is_in_class {
             return;
         }
         if is_simple_parameter_list(func) {
@@ -212,10 +212,10 @@ impl Rule for Strict {
             directives.for_each(|it| report_directive(cx, it, mode.message(), mode.should_fix()));
             return;
         } else {
-            let around = Surroundings::of(func, &mut cx.state.containers);
-            if around.is_in_strict_function {
+            let surroundings = Surroundings::of(func, &mut cx.state.containers);
+            if surroundings.is_in_strict_function {
                 report_directive(cx, first, UNNECESSARY, true);
-            } else if around.is_in_class {
+            } else if surroundings.is_in_class {
                 report_directive(cx, first, UNNECESSARY_IN_CLASSES, true);
             }
         }

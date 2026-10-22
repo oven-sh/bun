@@ -2,17 +2,33 @@
 
 #include "root.h"
 #include "JSDOMGlobalObject.h"
+#include "JSDOMWrapper.h"
 #include "BunClientData.h"
 
 namespace WebCore {
 
+// What `Blob__sharedView` found in a value. Rust: `BlobBytes` (Blob.rs).
+enum class BlobBytes : uint8_t {
+    // The value holds no Blob.
+    NotABlob = 0,
+    InMemory = 1,
+    // A file- or S3-backed Blob, which has to be read first.
+    NotInMemory = 2,
+};
+
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
-// Returns false for a file- or S3-backed Blob, since its bytes aren't in memory. `ptr` is only valid while `blob` is alive.
-extern "C" bool Blob__sharedView(JSC::EncodedJSValue blob, const uint8_t** ptr, size_t* len);
+// Borrows the bytes of the Blob that `value` holds: a Blob, or a `Bun.build()` output. Writes `ptr` and `len` only for `InMemory`. `ptr` is only valid while `value` is alive.
+extern "C" BlobBytes Blob__sharedView(JSC::EncodedJSValue value, const uint8_t** ptr, size_t* len);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);
+
+// False means that `value` holds no Blob, without a call into Rust: every wrapper that holds one has this cell type.
+inline bool mayHoldBlob(JSC::JSValue value)
+{
+    return value.isCell() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
 
 // Opaque type corresponding to `bun.webcore.Blob`.
 class BlobImpl;

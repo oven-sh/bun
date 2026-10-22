@@ -12,7 +12,7 @@ use std::cmp::Ordering;
 pub struct OptionMistake {
     /// Path from the options array (without the severity) to the invalid value. The value may not exist.
     pub path: Vec<Step>,
-    /// The last key in `path` is the problem, not its value.
+    /// True if the last key in `path` is the problem, not its value.
     pub is_about_key: bool,
     /// The error, plus a second line with the expected values if they're known.
     pub message: Vec<u8>,
@@ -50,7 +50,7 @@ fn counted(count: f64, noun: &str) -> Vec<u8> {
 }
 
 /// Path to the value that caused `error`, and whether the problem is the key itself.
-fn place_of(error: &SchemaError) -> (Vec<Step>, bool) {
+fn error_location(error: &SchemaError) -> (Vec<Step>, bool) {
     let mut path = error.path.clone();
     match &error.why {
         // Point at the first extra item.
@@ -112,27 +112,27 @@ fn expected_by(why: &Why, into: &mut Vec<Vec<u8>>) {
 
 /// Picks the most useful of `errors` and describes it. `rule` is the rule name as the user wrote it.
 pub(super) fn explain(rule: &[u8], errors: &[SchemaError]) -> OptionMistake {
-    let mut telling = errors.iter().filter(|it| !matches!(it.why, Why::Composite));
-    let Some(first) = telling.next() else {
+    let mut specific = errors.iter().filter(|it| !matches!(it.why, Why::Composite));
+    let Some(first) = specific.next() else {
         return OptionMistake {
             path: Vec::new(),
             is_about_key: false,
             message: [b"Invalid options for ", rule].concat(),
         };
     };
-    let best = telling.fold(first, |best, it| {
-        match compare(&place_of(it).0, &place_of(best).0) {
+    let best = specific.fold(first, |best, it| {
+        match compare(&error_location(it).0, &error_location(best).0) {
             Ordering::Greater => it,
             Ordering::Less | Ordering::Equal => best,
         }
     });
-    let (path, is_about_key) = place_of(best);
+    let (path, is_about_key) = error_location(best);
     let key = path.iter().rev().find_map(|it| match it {
         Step::Key(key) => Some(string(key)),
         Step::Index(_) => None,
     });
     let mut expected = Vec::new();
-    for error in errors.iter().filter(|it| place_of(it).0 == path) {
+    for error in errors.iter().filter(|it| error_location(it).0 == path) {
         expected_by(&error.why, &mut expected);
     }
     let expected = match expected.is_empty() {
@@ -169,8 +169,8 @@ pub(super) fn explain(rule: &[u8], errors: &[SchemaError]) -> OptionMistake {
         }
         (_, Some(key)) => {
             let value = printed(&best.data);
-            let said: [&[u8]; 6] = [&value, b" is not valid for ", key, b" of ", rule, &expected];
-            said.concat()
+            let parts: [&[u8]; 6] = [&value, b" is not valid for ", key, b" of ", rule, &expected];
+            parts.concat()
         }
     };
     OptionMistake {

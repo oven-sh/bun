@@ -12,7 +12,7 @@ const ARIA_PROPTYPES: Message = Message::new("", "This is not a valid ARIA state
 
 impl Rule for AriaProptypes {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-proptypes", Kind::Problem);
-    // Elements are far fewer than properties.
+    // Listens for elements instead of properties, because there are far fewer.
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     no_state!();
 
@@ -49,11 +49,11 @@ impl Rule for AriaProptypes {
 #[derive(Copy, Clone)]
 enum AriaPropType {
     Id,
-    /// Also what can be undefined.
+    /// Also covers booleans that can be undefined.
     Boolean,
     String,
     Tristate,
-    /// Also an integer.
+    /// Also covers integers.
     Number,
     IdList,
     Token(&'static [&'static str]),
@@ -79,7 +79,7 @@ fn help(aria_prop_type: AriaPropType, prop_name: &[u8]) -> String {
     )
 }
 
-/// Whether there can be no value: `<button aria-expanded>`.
+/// True if the value can be omitted: `<button aria-expanded>`.
 fn allow_none_value(aria_prop_type: AriaPropType) -> bool {
     match aria_prop_type {
         AriaPropType::Boolean | AriaPropType::Tristate | AriaPropType::String => true,
@@ -92,7 +92,7 @@ fn is_valid_value_for_aria_prop_type(aria_prop_type: AriaPropType, value: Attrib
     if !is_target_literal_value(value) {
         return true;
     }
-    // It always makes a string.
+    // A template with expressions always produces a string.
     let is_template_with_expressions = || {
         (value.as_expression().filter(|it| !it.is_parenthesized()))
             .is_some_and(|it| matches!(it.kind(), ExprKind::Template(template) if template.as_static().is_none()))
@@ -127,9 +127,9 @@ fn is_valid_value_for_aria_prop_type(aria_prop_type: AriaPropType, value: Attrib
     }
 }
 
-/// In lower case. `boolean_as_string`: `{true}` is `true`, and so is `{!0}`.
+/// Returns the value lowercased. `boolean_as_string`: `{true}` becomes `true`, and so does `{!0}`.
 fn parse_aria_prop_value_as_string(value: AttributeValue<'_>, boolean_as_string: bool) -> Option<Cow<'_, [u8]>> {
-    let of_boolean = |value: bool| Cow::Borrowed(if value { b"true".as_slice() } else { b"false".as_slice() });
+    let boolean_text = |value: bool| Cow::Borrowed(if value { b"true".as_slice() } else { b"false".as_slice() });
     let e = match value {
         AttributeValue::StringLiteral(literal) => return Some(text::to_lower_case(literal.value)),
         _ => value.as_expression().filter(|it| !it.is_parenthesized())?,
@@ -137,14 +137,14 @@ fn parse_aria_prop_value_as_string(value: AttributeValue<'_>, boolean_as_string:
     match e.kind() {
         ExprKind::String(value) => Some(text::to_lower_case(value.bytes())),
         ExprKind::Template(template) => Some(text::to_lower_case(template.as_static()?.bytes())),
-        ExprKind::True if boolean_as_string => Some(of_boolean(true)),
-        ExprKind::False if boolean_as_string => Some(of_boolean(false)),
-        ExprKind::Unary { op: UnOp::Not, operand } if boolean_as_string => Some(of_boolean(!to_boolean(operand)?)),
+        ExprKind::True if boolean_as_string => Some(boolean_text(true)),
+        ExprKind::False if boolean_as_string => Some(boolean_text(false)),
+        ExprKind::Unary { op: UnOp::Not, operand } if boolean_as_string => Some(boolean_text(!to_boolean(operand)?)),
         _ => None,
     }
 }
 
-/// Anything else is not looked at, `{null}` neither.
+/// Everything else is skipped, including `{null}`.
 fn is_target_literal_value(value: AttributeValue) -> bool {
     match value {
         AttributeValue::StringLiteral(_) => true,
@@ -162,7 +162,7 @@ fn is_target_literal_value(value: AttributeValue) -> bool {
     }
 }
 
-/// `prop_name`: without its `aria-`.
+/// `prop_name`: without the `aria-` prefix.
 fn get_aria_prop_type(prop_name: &[u8]) -> Option<AriaPropType> {
     Some(match prop_name {
         b"activedescendant" | b"details" | b"errormessage" => AriaPropType::Id,

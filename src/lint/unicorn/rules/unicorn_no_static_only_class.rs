@@ -29,7 +29,7 @@ impl Rule for NoStaticOnlyClass {
     }
 }
 
-/// A method or a property that is `static` and nothing else that an object cannot have.
+/// A method or property that's `static` and has no other modifier that an object member can't have.
 fn is_plain_static_member(member: Member) -> bool {
     let flags = member.flags();
     let is_allowed = match member.kind() {

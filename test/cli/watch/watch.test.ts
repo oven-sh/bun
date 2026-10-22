@@ -2,8 +2,17 @@ import type { Subprocess } from "bun";
 import { spawn } from "bun";
 import { afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
-import { readdirSync, readFileSync, readlinkSync, realpathSync, rmSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import {
+  copyFileSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { basename, join } from "node:path";
 
 let watchee: Subprocess;
 
@@ -186,29 +195,59 @@ for (;;) spawnThreadsForTesting(1000, fd, 2);
   30000,
 );
 
-// Watcher::start() must propagate a failed thread spawn as an Err through its
-// Result return instead of aborting inside start() with `.expect()`. An
-// LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
-// immediately before start()) and fails the very next pthread_create.
+// The two tests below build an LD_PRELOAD shim around the libc calls that Watcher::init() and
+// start() make on Linux. NO_CORE_C disables core files, which CI's runner would flag as a crash.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+const NO_CORE_C = /* c */ `
+#include <sys/resource.h>
+__attribute__((constructor)) static void no_core(void) {
+  struct rlimit rl = {0, 0};
+  setrlimit(RLIMIT_CORE, &rl);
+}
+`;
+
+async function compileShim(dir: string): Promise<string> {
+  const shimPath = join(dir, "shim.so");
+  await using ccProc = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(dir, "shim.c"), "-ldl", "-lpthread"],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
+  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+  return shimPath;
+}
+
+async function runWatcheeWithShim(dir: string, shimPath: string, args: string[]) {
+  const existing = bunEnv.LD_PRELOAD;
+  await using proc = Bun.spawn({
+    // --debug-crash-handler-use-trace-string skips the debug build's slow
+    // backtrace symbolication so an aborting child exits promptly.
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", ...args],
+    cwd: dir,
+    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
+
+// Watcher::start() must propagate a failed thread spawn as an Err through its
+// Result return instead of aborting inside start() with `.expect()`. The shim
+// arms on inotify_init1 (which Watcher::init() calls on Linux immediately
+// before start()) and fails the very next pthread_create.
 it.skipIf(!isLinux || !cc)("propagates FileWatcher thread spawn failure instead of panicking in start()", async () => {
   const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
-#include <sys/resource.h>
-
+${NO_CORE_C}
 static int (*real_inotify_init1)(int);
 static int (*real_pthread_create)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *);
 static volatile int armed = 0;
-
-/* The child is expected to abort; suppress the core file so CI's runner does
- * not flag it as a crash. RLIMIT_CORE survives execvp. */
-__attribute__((constructor)) static void no_core(void) {
-  struct rlimit rl = {0, 0};
-  setrlimit(RLIMIT_CORE, &rl);
-}
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
@@ -230,27 +269,8 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     "shim.c": SHIM_C,
     "watchee.js": "console.log('unreachable');\n",
   });
-  const shimPath = join(String(dir), "shim.so");
-  await using ccProc = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", shimPath, join(String(dir), "shim.c"), "-ldl", "-lpthread"],
-    env: bunEnv,
-    stderr: "pipe",
-    stdout: "pipe",
-  });
-  const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
-  if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
-
-  const existing = bunEnv.LD_PRELOAD;
-  await using proc = Bun.spawn({
-    // --debug-crash-handler-use-trace-string skips the debug build's slow
-    // backtrace symbolication so the child exits promptly.
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const shimPath = await compileShim(String(dir));
+  const { stdout, stderr, exitCode } = await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"]);
 
   // The .expect("spawn FileWatcher thread") panic inside start() must be gone;
   // the error now reaches the caller, which reports it by errno name.
@@ -258,6 +278,94 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stderr).toContain("Failed to start File Watcher: EAGAIN");
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
+});
+
+// EMFILE means the user is out of inotify instances or the process is out of file descriptors.
+it.skipIf(!isLinux || !cc)("prints an error and exits with code 1 when inotify_init1 fails", async () => {
+  using dir = tempDir("watch-init-fail", {
+    "shim.c": /* c */ `
+#include <errno.h>
+${NO_CORE_C}
+int inotify_init1(int flags) {
+  (void)flags;
+  errno = EMFILE;
+  return -1;
+}
+`,
+    "watchee.js": "console.log('unreachable');\n",
+  });
+  const shimPath = await compileShim(String(dir));
+  expect(await runWatcheeWithShim(String(dir), shimPath, ["--watch", "watchee.js"])).toEqual({
+    stdout: "",
+    stderr: "error: Failed to enable File Watcher: EMFILE\n",
+    exitCode: 1,
+    signalCode: null,
+  });
+});
+
+it.skipIf(isWindows)("--watch reports an error when its executable was deleted", async () => {
+  using dir = tempDir("watch-exe-removed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const exe = join(String(dir), basename(bunExe()));
+  copyFileSync(bunExe(), exe);
+  const proc = spawn({
+    // The flag skips a debug build's slow crash symbolication.
+    cmd: [exe, "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(String(dir), "app"),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  rmSync(exe);
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+  expect(await stderr).toContain(`error: Failed to reload "${exe}`);
+  expect(await stderr).toContain(`ENOENT (execve)`);
+  expect(await proc.exited).toBe(1);
+});
+
+// On Windows, the first --watch process acts as a manager that restarts the script in a child process on every change.
+it.skipIf(!isWindows)("--watch reports an error when its executable was renamed", async () => {
+  // Windows can keep the renamed executable mapped briefly after the manager exits, so ignore a failed delete.
+  const dir = tempDir("watch-exe-renamed", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  try {
+    const exe = join(String(dir), basename(bunExe()));
+    copyFileSync(bunExe(), exe);
+    await using proc = spawn({
+      cmd: [exe, "--watch", "entry.js"],
+      cwd: join(String(dir), "app"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const stderr = proc.stderr.text();
+
+    const { waitFor, release } = stdoutWaiter(proc);
+    await waitFor("iter first");
+    release();
+
+    renameSync(exe, exe + ".renamed");
+    await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+    expect((await stderr).replaceAll("\r\n", "\n")).toBe(`error: Failed to start "${exe}": ENOENT (CreateProcessW)\n`);
+    expect(await proc.exited).toBe(1);
+  } finally {
+    try {
+      rmSync(String(dir), { recursive: true, force: true });
+    } catch {}
+  }
 });
 
 // A script that registers a SIGTERM handler and then spins in synchronous

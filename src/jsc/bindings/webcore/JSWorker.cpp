@@ -276,8 +276,9 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
             if (envValue && envValue.isCell()) {
                 envObject = dynamicDowncast<JSC::JSObject>(envValue);
-            } else if (globalObject->m_processEnvObject.isInitialized()) {
-                envObject = globalObject->processEnvObject();
+            } else {
+                // Null if nothing has read process.env yet, in which case there's nothing to copy.
+                envObject = globalObject->m_processEnvObject.get();
             }
 
             if (envObject) {

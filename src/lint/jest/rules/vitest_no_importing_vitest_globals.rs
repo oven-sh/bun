@@ -80,7 +80,7 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
             return Some(fixer.remove(node));
         }
         let mut import_text = Vec::new();
-        // What is imported under a name that is a string is lost.
+        // The fix drops specifiers imported under a string name.
         for specifier in import_decl.named().iter().filter(|it| !is_global(it) && (it.is_type_only() || !it.imported().is_string())) {
             import_text.extend_from_slice(if import_text.is_empty() { "" } else { ", " }.as_bytes());
             import_text.extend_from_slice(specifier.text());
@@ -91,7 +91,8 @@ fn check_import<'a>(node: Stmt<'a>, import_decl: Import<'a>, cx: &Cx<'a, NoImpor
     });
 }
 
-/// `{ .. } = require("vitest")`, without a rest and without a `default`: the properties and the name of the module.
+/// Matches `{ .. } = require("vitest")` with no rest element and no `default` key. Returns the properties and the
+/// module name.
 fn vitest_require<'a>(declaration: VarDecl<'a>) -> Option<(List<'a, PatProp<'a>>, Name<'a>)> {
     let init = declaration.init().filter(|it| !it.is_parenthesized() && !it.is_chain_root())?;
     let call_expr = init.as_call().filter(|it| it.callee().is_ident("require") && !it.callee().is_parenthesized())?;
@@ -116,7 +117,7 @@ fn check_variable_declaration<'a>(
     let Some((properties, _)) = declarations.iter().find_map(vitest_require) else {
         return;
     };
-    // It is reported also if none of the names is that of a global.
+    // Reported even if none of the names is a global.
     let report = match properties.iter().find(is_global_property) {
         Some(first_global) => {
             let report = cx.report(first_global, NO_IMPORTING_VITEST_GLOBALS).first_label(REMOVE_THIS);
@@ -138,7 +139,7 @@ fn check_variable_declaration<'a>(
                 rendered.push(declaration.text().to_vec());
                 continue;
             };
-            // What has a key that is computed is lost.
+            // The fix drops properties with a computed key.
             let non_global_imports: SmallVec<[&[u8]; 8]> = (properties.iter())
                 .filter(|it| !is_global_property(it) && it.key().is_some_and(|key| key.name().is_some()))
                 .map(|it| it.text())

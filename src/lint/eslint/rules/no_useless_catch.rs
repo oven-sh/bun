@@ -39,7 +39,7 @@ impl Rule for NoUselessCatch {
         if argument.as_ident() != Some(name) {
             return;
         }
-        // oxlint points at the parameter, and does not see through parentheses.
+        // oxlint points at the parameter, and doesn't look through parentheses.
         if cx.language().is_oxlint {
             if !argument.is_parenthesized() {
                 let message = if finalizer.is_some() { UNNECESSARY_CATCH_CLAUSE } else { UNNECESSARY_CATCH };

@@ -1,4 +1,4 @@
-//! Descriptions, which are Markdown. They are parsed as that, and written the way prettier-plugin-jsdoc does.
+//! Descriptions are Markdown. They're parsed as Markdown and printed the way prettier-plugin-jsdoc prints them.
 
 use super::embedded::{format_embedded_js, format_embedded_language, is_js_ts_lang};
 use super::line_buffer::LineBuffer;
@@ -15,9 +15,9 @@ use std::borrow::Cow;
 
 type Bytes<'a> = Cow<'a, [u8]>;
 
-// ───────────────────────────── is it Markdown at all ─────────────────────────────
+// ───────────────────────────── detecting Markdown ─────────────────────────────
 
-/// Whether there is anything in `text` but paragraphs of plain text.
+/// True if `text` contains anything other than paragraphs of plain text.
 fn needs_markdown_parsing(text: &[u8]) -> bool {
     // A hard line break.
     if strings::contains(text, b"  \n") {
@@ -32,7 +32,8 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
             b'*' | b'_' => {
                 let next = at(i + 1).unwrap_or(b' ');
                 let prev = if i > 0 { text[i - 1] } else { b' ' };
-                // With spaces on both sides it is a product, unless it starts a line: then it can start an item.
+                // With spaces on both sides it's a multiplication sign, unless it starts a line, where it can start a
+                // list item.
                 if !next.is_ascii_whitespace()
                     || !prev.is_ascii_whitespace()
                     || (byte == b'*'
@@ -64,7 +65,8 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 }
             }
             b' ' | b'#' | b'>' | b'-' | b'0'..=b'9' | b'|' | b'+' if is_line_start => {
-                // After an empty line or at the start. Only there can code start, or a list with another number than 1.
+                // True after an empty line or at the start of the text. Only there can an indented code block start, or
+                // a list that starts at a number other than 1.
                 let is_block_start = i == 0
                     || (i >= 2 && text[i - 2] == b'\n')
                     || (i >= 3 && text[i - 2] == b' ' && text[i - 3] == b'\n');
@@ -85,7 +87,7 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                         _ => {}
                     },
                     Some(b'|') => {
-                        // The row of a table starts and ends with a pipe.
+                        // A table row starts and ends with a pipe.
                         let line_end = strings::index_of_char_usize(&text[start..], b'\n')
                             .map_or(len, |at| start + at);
                         let line = text[start + 1..line_end].trim_ascii_end();
@@ -108,12 +110,13 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
     false
 }
 
-// ───────────────────────────── before it is parsed ─────────────────────────────
+// ───────────────────────────── preprocessing ─────────────────────────────
 
-/// What stands for a `{@link ...}` while the text is parsed starts with this. It looks like a word.
+/// Prefix of the placeholder that replaces a `{@link ...}` while the text is parsed. It looks like a word.
 const PLACEHOLDER_PREFIX: &[u8] = b"\x02JDLNK";
 
-/// Makes a text of `text` line by line. `change` appends what is to be in the place of a line, or returns `false`.
+/// Rewrites `text` line by line. `change` appends a line's replacement and returns true, or returns false to keep the
+/// line.
 fn map_lines<'a>(
     text: &'a [u8],
     mut change: impl FnMut(usize, &'a [u8], &mut Vec<u8>) -> bool,
@@ -162,7 +165,7 @@ fn normalize_legacy_ordered_list_markers(text: &[u8]) -> Bytes<'_> {
     })
 }
 
-/// `* ` at the start of a line becomes `- `, which cannot be emphasis.
+/// `* ` at the start of a line becomes `- `, which can't be emphasis.
 fn convert_star_list_markers(text: &[u8]) -> Bytes<'_> {
     if !strings::contains(text, b"* ") {
         return Cow::Borrowed(text);
@@ -179,7 +182,7 @@ fn convert_star_list_markers(text: &[u8]) -> Bytes<'_> {
     })
 }
 
-/// Puts a placeholder of the same length in the place of each `{@link ...}`. Returns what they stand for.
+/// Replaces each `{@link ...}` with a placeholder of the same length. Also returns the links that were replaced.
 fn protect_jsdoc_links(text: &[u8]) -> (Bytes<'_>, Vec<&[u8]>) {
     if !strings::contains(text, b"{@") {
         return (Cow::Borrowed(text), Vec::new());
@@ -252,7 +255,7 @@ fn restore_placeholders(text: Vec<u8>, placeholders: &[&[u8]]) -> Vec<u8> {
     result
 }
 
-// ───────────────────────────── the text of inline content ─────────────────────────────
+// ───────────────────────────── inline content ─────────────────────────────
 
 /// Prettier's `getMinNotPresentContinuousCount`, for backticks.
 fn min_not_present_backtick_run(text: &[u8]) -> usize {
@@ -278,7 +281,7 @@ fn min_not_present_backtick_run(text: &[u8]) -> usize {
 
 struct Serializer<'a> {
     tree: &'a Tree,
-    /// What has been parsed.
+    /// The text that was parsed.
     source: &'a [u8],
     max_width: usize,
     capitalize: bool,
@@ -342,7 +345,7 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    /// Appends inline content as it is to be written.
+    /// Appends inline content in its printed form.
     fn collect_inline(&self, id: NodeId, out: &mut Vec<u8>, inside_link: bool) {
         let Some(node) = self.node(id) else {
             return;
@@ -360,11 +363,11 @@ impl<'a> Serializer<'a> {
             Kind::InlineCode => {
                 let value = self.str(node.value);
                 let delimiter_len = min_not_present_backtick_run(value);
-                let is_blank_at = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
+                let is_space_or_newline = |byte: Option<&u8>| matches!(byte, Some(b' ' | b'\n'));
                 let needs_padding = value.starts_with(b"`")
                     || value.ends_with(b"`")
-                    || (is_blank_at(value.first())
-                        && is_blank_at(value.last())
+                    || (is_space_or_newline(value.first())
+                        && is_space_or_newline(value.last())
                         && value.iter().any(|byte| !matches!(byte, b' ' | b'\n')));
                 out.resize(out.len() + delimiter_len, b'`');
                 if needs_padding {
@@ -404,14 +407,14 @@ impl<'a> Serializer<'a> {
                 out.extend_from_slice(self.str(node.identifier));
                 out.push(b']');
             }
-            // Of anything else: the text in it.
+            // For anything else, just the text inside it.
             _ => self.collect_children(id, out, inside_link),
         }
     }
 
     // ───────────────────────────── blocks ─────────────────────────────
 
-    /// Pushes the lines of a paragraph that has been broken into lines.
+    /// Pushes the lines of an already wrapped paragraph.
     fn push_paragraph_lines(&self, paragraph: &[u8], indent: usize, lines: &mut LineBuffer) {
         let count = strings::count_char(paragraph, b'\n') + 1;
         for (index, line) in strings::split(paragraph, b"\n").enumerate() {
@@ -448,7 +451,7 @@ impl<'a> Serializer<'a> {
         self.push_paragraph_lines(&paragraph.into_bytes(), indent, lines);
     }
 
-    /// The children of `id`, with empty lines between blocks.
+    /// Writes the children of `id`, with empty lines between blocks.
     fn serialize_children(
         &self,
         id: NodeId,
@@ -460,8 +463,8 @@ impl<'a> Serializer<'a> {
         let kind = |index: usize| children.get(index).and_then(|&child| self.tree.kind(child));
         let mut i = 0;
         while i < children.len() {
-            // `<div>` in a sentence is taken for the start of a block of HTML. A run of paragraphs and of such
-            // HTML is one paragraph.
+            // The parser treats a `<div>` in a sentence as the start of an HTML block. A run of paragraphs and such
+            // HTML is really one paragraph.
             if matches!(kind(i), Some(Kind::Paragraph | Kind::Html)) {
                 let mut has_html = kind(i) == Some(Kind::Html);
                 let mut run_end = i + 1;
@@ -549,7 +552,7 @@ impl<'a> Serializer<'a> {
                 out.extend_from_slice(&text);
             }
             Kind::List => self.serialize_list(id, node, indent, lines),
-            // Items are written with their list. A thematic break goes away.
+            // Items are written with their list. A thematic break is dropped.
             Kind::ListItem | Kind::ThematicBreak => {}
             Kind::Code => self.serialize_code(node, lines),
             Kind::Blockquote => {
@@ -607,7 +610,7 @@ impl<'a> Serializer<'a> {
         if self.serialize_pipe_prefixed_paragraph(raw, indent, lines) {
             return;
         }
-        // Each part that ends with a hard line break is a line.
+        // Each part that ends with a hard line break gets its own line.
         if self
             .tree
             .children(id)
@@ -672,8 +675,8 @@ impl<'a> Serializer<'a> {
         );
     }
 
-    /// A paragraph with rows of a table in it, which is not parsed as one. Returns whether `raw` is such a
-    /// paragraph.
+    /// Writes a paragraph that contains table rows but wasn't parsed as a table. Returns false without writing anything
+    /// if `raw` isn't such a paragraph.
     fn serialize_pipe_prefixed_paragraph(
         &self,
         raw: &[u8],
@@ -798,7 +801,7 @@ impl<'a> Serializer<'a> {
                 }
                 match kind {
                     Some(Kind::Definition) => self.serialize_node(child, 0, 0, lines),
-                    // A list in an item is under what is in the item.
+                    // A nested list lines up under the item's content.
                     Some(Kind::List) => {
                         let nested_indent =
                             indent + marker_width + if indent == 0 { 0 } else { marker_width };
@@ -821,8 +824,8 @@ impl<'a> Serializer<'a> {
         }
     }
 
-    /// What is in an item of a list. Of the first paragraph, all lines but the first are indented by the width of
-    /// the marker.
+    /// Formats a child of a list item. In the first paragraph, every line but the first is indented by the marker's
+    /// width.
     fn serialize_node_for_list_item(
         &self,
         id: NodeId,
@@ -868,7 +871,7 @@ impl<'a> Serializer<'a> {
             lines.push(b"```");
             return;
         }
-        // Without a language it is indented by four spaces, and by no more.
+        // Without a language it's indented by exactly four spaces.
         let min_indent = super::text::lines(&formatted)
             .filter(|line| !strings::is_all_unicode_whitespace(line))
             .map(|line| line.len() - strings::trim_unicode_whitespace_start(line).len())
@@ -884,7 +887,7 @@ impl<'a> Serializer<'a> {
     }
 }
 
-/// Whether `html` starts with a tag that has a name.
+/// True if `html` starts with a tag that has a name.
 fn is_inline_html(html: &[u8]) -> bool {
     let Some(rest) = strings::trim_unicode_whitespace(html).strip_prefix(b"<") else {
         return false;
@@ -910,7 +913,7 @@ fn is_block_kind(kind: Kind) -> bool {
     )
 }
 
-/// `text` in lines of at most `max_width` columns, the first `tag_string_length` less.
+/// Wraps `text` into lines of at most `max_width` columns. The first line gets `tag_string_length` fewer.
 pub(super) fn format_description(
     text: &[u8],
     max_width: usize,
@@ -932,7 +935,7 @@ pub(super) fn format_description(
         if !capitalize && !description_with_dot {
             return result;
         }
-        // The first word of each paragraph gets the capital letter, the last line the dot.
+        // Capitalize the first word of each paragraph and add the dot to its last line.
         let mut out = Vec::with_capacity(result.len() + 1);
         let mut iter = strings::split(&result, b"\n").peekable();
         let mut at_paragraph_start = true;

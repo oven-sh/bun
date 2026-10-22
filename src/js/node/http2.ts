@@ -2026,7 +2026,7 @@ function validateWindowSize(windowSize) {
 hideFromStack(validateWindowSize);
 
 function pushToStream(stream, data) {
-  if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) return;
+  if (data && stream[bunHTTP2StreamStatus] & (StreamState.Closed | StreamState.EndedByClose)) return;
 
   // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
   // is the readable side's backpressure signal, and the reader must readStop()
@@ -2057,6 +2057,9 @@ enum StreamState {
   WantTrailer = 1 << 1, // 00010 = 2
   FinalCalled = 1 << 2, // 00100 = 4
   Closed = 1 << 3, // 01000 = 8
+  // close() gave the readable its EOF. It runs listeners and flushes the writable before it sets
+  // Closed, and a DATA frame that the session parses in between must not follow that EOF.
+  EndedByClose = 1 << 30,
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
   // The native side fully closed and freed the stream (state 7 delivered): there is
@@ -2574,6 +2577,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       }
       if (this.pending || code === NGHTTP2_NO_ERROR || code === NGHTTP2_CANCEL) {
         // For other rstCodes _destroy ends the readable so 'end' is suppressed.
+        this[bunHTTP2StreamStatus] |= StreamState.EndedByClose;
         this.push(null);
       }
       const { ending } = this._writableState;

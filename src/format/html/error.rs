@@ -1,4 +1,4 @@
-//! The errors of `angular-html-parser`, with its messages.
+//! The errors of `angular-html-parser`, with their messages.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ErrorKind {
@@ -18,16 +18,16 @@ pub(crate) enum ErrorKind {
     LetWithoutValue,
     LetNotTerminated,
     IncompleteLet,
-    /// None of the parser's, for which `$EOF` is 0: a NUL between tags ends the text, and Prettier prints nothing of what
-    /// follows.
-    TextBehindNul,
-    /// None of the parser's: Prettier fails over what has been parsed.
+    /// Not one of the parser's errors. Its `$EOF` is 0, so a NUL between tags ends the text, and Prettier drops
+    /// everything after it.
+    TextAfterNul,
+    /// Not one of the parser's errors: Prettier itself fails on the parsed tree.
     Other,
 }
 
 impl ErrorKind {
-    /// The lexer finds it. Its errors come before those of the parser.
-    pub(crate) fn is_of_lexer(self) -> bool {
+    /// True for the lexer's errors, which are reported before the parser's.
+    pub(crate) fn is_lexer_error(self) -> bool {
         matches!(
             self,
             ErrorKind::UnexpectedCharacter
@@ -40,12 +40,12 @@ impl ErrorKind {
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct SyntaxError<'a> {
-    /// Where its span starts.
+    /// The start of its span.
     pub(crate) at: u32,
     pub(crate) kind: ErrorKind,
-    /// The namespace of `name`, if that is the name of an element.
+    /// The namespace of `name`, if that's an element's name.
     pub(crate) prefix: &'a [u8],
-    /// What the message names. For a character: the text from it on.
+    /// The name quoted in the message. For a character, it's the text starting at that character.
     pub(crate) name: &'a [u8],
     /// `_isInExpansionForm()`, when it was thrown by the lexer.
     pub(crate) is_in_expansion_form: bool,
@@ -124,7 +124,7 @@ impl<'a> SyntaxError<'a> {
                 "Incomplete @let declaration \"",
                 "\". @let declarations must be written as `@let <name> = <value>;`",
             ),
-            TextBehindNul => ("Unexpected NUL character", ""),
+            TextAfterNul => ("Unexpected NUL character", ""),
             Other => ("Unexpected token", ""),
         };
         let name: &[u8] = match (self.kind, &name[..]) {

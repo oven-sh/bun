@@ -47,13 +47,13 @@ impl Rule for AlwaysReturn {
     }
 }
 
-/// `a.name()`, where neither `a.name` is in parentheses nor `name` is private.
+/// `a.name()`, where `a.name` isn't parenthesized and `name` isn't private.
 fn is_member_call(call_expr: Call, member_names: &[&str]) -> bool {
     let callee = call_expr.callee();
     callee.member_name().is_some_and(|it| it.name().is_any(member_names)) && !callee.is_parenthesized() && !callee.is_private_member()
 }
 
-/// Whether nothing is done with what `call`, a call of `then`, returns.
+/// True if the result of `call`, a `then` call, is unused.
 fn is_last_callback(call: Expr) -> bool {
     let mut target = call;
     loop {
@@ -94,7 +94,7 @@ fn is_nodejs_terminal_statement(statement: Stmt) -> bool {
         })
 }
 
-/// Whether the end of the function can be reached, other than after `process.exit()` in the same segment of its code path.
+/// True if the end of the function is reachable, other than after a `process.exit()` in the same code path segment.
 fn has_no_return_code_path(func: Func) -> bool {
     if !func.is_end_reachable() {
         return false;
@@ -104,7 +104,7 @@ fn has_no_return_code_path(func: Func) -> bool {
     }
     let root = Node::Func(func);
     let mut code_path = None;
-    // The segments that have started and not ended, and those with a `process.exit()`.
+    // The segments that have started but not ended, and those that contain a `process.exit()`.
     let mut current_segments: SmallVec<[Segment; 4]> = SmallVec::new();
     let mut terminated_segments: SmallVec<[Segment; 4]> = SmallVec::new();
     for step in steps_of_code_path(root, NodeTags::EMPTY, NodeTags::FUNC | ExprTag::Dot.into()) {
@@ -131,7 +131,7 @@ fn has_no_return_code_path(func: Func) -> bool {
 }
 
 impl AlwaysReturn {
-    /// Whether a statement of the function assigns to one of the variables, or to something in one.
+    /// True if a statement of the function assigns to one of the variables or to something inside one.
     fn has_ignored_assignment(&self, func: Func) -> bool {
         !self.ignore_assignment_variable.is_empty()
             && func.body_statements().into_iter().flatten().any(|it| match it.kind() {
@@ -146,7 +146,7 @@ impl AlwaysReturn {
     }
 }
 
-/// The `a` of `a`, `a.b`, `a[b].c`.
+/// Returns the `a` in `a`, `a.b`, `a[b].c`.
 fn get_root_object_name(assignment_target: Expr<'_>) -> Option<Name<'_>> {
     let mut at = assignment_target;
     loop {

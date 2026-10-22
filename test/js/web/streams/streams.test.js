@@ -7,9 +7,20 @@ import {
   readableStreamToText,
 } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { mkfifo } from "mkfifo";
-import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
+import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
 import {
@@ -313,6 +324,121 @@ describe("ReadableStream.prototype.tee", () => {
         console.log(e.stack);
         throw e;
       }
+    });
+  });
+});
+
+// Repeating tee() on a branch or textStream() on a text stream builds a chain of streams that call each other natively.
+describe("a deep chain of natively linked streams doesn't overflow the stack", () => {
+  // Gives every link a tick to start, do its initial pull, and queue a read on its parent.
+  const settle = `await new Promise(resolve => setImmediate(resolve));`;
+
+  // Each returns code that adds one link to the chain. `tee` also runs `side` on `b`, its second branch.
+  const tee = side => `const [a, b] = stream.tee(); ${side} stream = a;`;
+  const textStream = () => `stream = new Response(stream).textStream();`;
+  const kinds = {
+    "tee()": { type: undefined, link: tee },
+    "tee() of a byte stream": { type: "bytes", link: tee },
+    "Response.textStream()": { type: undefined, link: textStream },
+  };
+
+  // Deep enough to overflow the native stack. About 29,000 links fill a release build's 8 MB main thread stack,
+  // and about 3,000 fill a debug build's. macOS and Windows have 18 MB.
+  const depth = (isDebug ? 4_000 : isASAN ? 30_000 : 50_000) * (isMacOS || isWindows ? 2 : 1);
+
+  // Reads from the end of the chain and, for a tee, from four second branches along the way.
+  const settleAllScript = ({ type, link }, act) => `
+    let controller;
+    let stream = new ReadableStream({ type: ${JSON.stringify(type)}, start(c) { controller = c; } });
+    const ends = [];
+    for (let i = 0; i < ${depth}; i++) { ${link(`if (i % ${depth / 4} === 0) ends.push(b);`)} }
+    ends.push(stream);
+    const reads = ends.map(end => end.getReader().read().then(result => result, error => error.message));
+    ${settle}
+    controller.${act};
+    console.log(JSON.stringify(await Promise.all(reads)));
+  `;
+
+  // A tee cancels its source only after both branches are canceled, so cancel every second branch too.
+  // Each tee wraps the reason from the link below it: [[["a", "b"], "b"], "b"] and so on.
+  const cancelScript = ({ type, link }) => `
+    let reason;
+    let stream = new ReadableStream({ type: ${JSON.stringify(type)}, cancel(r) { reason = r; } });
+    for (let i = 0; i < ${depth}; i++) { ${link(`b.cancel("b");`)} }
+    ${settle}
+    await stream.cancel("a");
+    let nesting = 0;
+    for (; Array.isArray(reason); reason = reason[0]) nesting++;
+    console.log(JSON.stringify({ nesting, innermost: reason }));
+  `;
+
+  // The source closes in its first pull.
+  const readScript = ({ type, link }, readerOptions, view) => `
+    let pulls = 0;
+    let stream = new ReadableStream(
+      { type: ${JSON.stringify(type)}, pull(c) { pulls++; c.close(); c.byobRequest?.respond(0); } },
+      { highWaterMark: 0 },
+    );
+    for (let i = 0; i < ${depth}; i++) { ${link("")} }
+    ${settle}
+    const { done } = await stream.getReader(${readerOptions}).read(${view});
+    console.log(JSON.stringify({ pulls, done }));
+  `;
+
+  const cases = [];
+  for (const [name, kind] of Object.entries(kinds)) {
+    const ends = kind.link === tee ? 5 : 1;
+    cases.push(
+      [
+        `${name} ${depth} deep when the source closes`,
+        settleAllScript(kind, `close()`),
+        Array(ends).fill({ done: true }),
+      ],
+      [
+        `${name} ${depth} deep when the end is canceled`,
+        cancelScript(kind),
+        { nesting: kind.link === tee ? depth : 0, innermost: "a" },
+      ],
+    );
+  }
+  // A tee forwards an error through reader.closed, one microtask per link, so it doesn't recurse.
+  cases.push([
+    `Response.textStream() ${depth} deep when the source errors`,
+    settleAllScript(kinds["Response.textStream()"], `error(new Error("boom"))`),
+    ["boom"],
+  ]);
+  const pulled = { pulls: 1, done: true };
+  cases.push(
+    [
+      `tee() of a byte stream ${depth} deep when the end is read`,
+      readScript(kinds["tee() of a byte stream"], "", ""),
+      pulled,
+    ],
+    [
+      `tee() of a byte stream ${depth} deep when the end is read into a view`,
+      readScript(kinds["tee() of a byte stream"], `{ mode: "byob" }`, "new Uint8Array(4)"),
+      pulled,
+    ],
+    [
+      `Response.textStream() ${depth} deep when the end is read`,
+      readScript(kinds["Response.textStream()"], "", ""),
+      pulled,
+    ],
+  );
+
+  test.concurrent.each(cases)("%s", async (_name, script, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify(expected) + "\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
     });
   });
 });
@@ -1895,6 +2021,23 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     await expect(new Response(source([42])).text()).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
   });
 
+  const unresolvedRopes = () => {
+    const part = Buffer.alloc(40, "p").toString();
+    return [1, 2, 3].map(i => part + i + (i === 2 ? "\u20AC" : "\u00E9") + part);
+  };
+  it.each([
+    ["Latin-1 chunks", () => ["caf\u00E9", "", " au lait"], "caf\u00E9 au lait"],
+    ["a 16-bit chunk after Latin-1 chunks", () => ["abc", "d\u00E9", "\u20AC"], "abcd\u00E9\u20AC"],
+    ["a Latin-1 chunk after a 16-bit chunk", () => ["\u4F60\u597D", "abc"], "\u4F60\u597Dabc"],
+    ["only empty chunks", () => ["", ""], ""],
+    ["rope chunks", unresolvedRopes, unresolvedRopes().join("")],
+    ["two BOMs before the text", () => ["\uFEFF", "\uFEFFabc"], "abc"],
+    ["three BOMs before the text", () => ["\uFEFF\uFEFF", "\uFEFFabc"], "\uFEFFabc"],
+  ])("text: joins string chunks in order (%s)", async (_name, chunks, text) => {
+    expect(await Bun.readableStreamToText(source(chunks()))).toBe(text);
+    expect(await new Response(source(chunks())).text()).toBe(text);
+  });
+
   it("a detached chunk throws", () => {
     const chunk = new Uint8Array([1, 2, 3]);
     structuredClone(chunk.buffer, { transfer: [chunk.buffer] });
@@ -2783,6 +2926,38 @@ describe.skipIf(isWindows)("Bun.file().stream() surfaces read() errors", () => {
   });
 });
 
+// Each read returns at most 256 KiB, so the first read doesn't drain everything the closed peer sent.
+it.skipIf(!isLinux)(
+  "Bun.write(file, stream) writes every byte when the peer hung up with more than one read's worth buffered",
+  async () => {
+    const { dlopen, ptr } = require("bun:ffi");
+    const libc = dlopen(libcPathForDlopen(), {
+      socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+      setsockopt: { args: ["i32", "i32", "i32", "ptr", "u32"], returns: "i32" },
+      send: { args: ["i32", "ptr", "usize", "i32"], returns: "i64" },
+    }).symbols;
+    const [AF_UNIX, SOCK_STREAM, SOL_SOCKET, SO_SNDBUF, MSG_DONTWAIT] = [1, 1, 1, 7, 0x40];
+    const fds = new Int32Array(2);
+    expect(libc.socketpair(AF_UNIX, SOCK_STREAM, 0, ptr(fds))).toBe(0);
+    const [source, peer] = fds;
+    using dir = tempDir("native-sink-hung-up", {});
+    const out = join(String(dir), "out.bin");
+    const body = Buffer.alloc(270_000, "0123456789abcdefghijklmnopqrstuvwxyz");
+    try {
+      libc.setsockopt(peer, SOL_SOCKET, SO_SNDBUF, ptr(new Int32Array([212_992])), 4);
+      expect(Number(libc.send(peer, ptr(body), body.length, MSG_DONTWAIT))).toBe(body.length);
+    } finally {
+      closeSync(peer);
+    }
+    try {
+      expect(await Bun.write(out, Bun.file(source).stream())).toBe(body.length);
+    } finally {
+      closeSync(source);
+    }
+    expect(readFileSync(out).equals(body)).toBe(true);
+  },
+);
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));
@@ -3633,6 +3808,90 @@ describe("script-sized stream containers throw when they cannot grow", () => {
     });
   });
 });
+// The child runs with a 64 KiB synthetic allocation limit, so text can't be longer than 64 KiB.
+describe("a direct stream's text sink rejects a write that would make the text too long", () => {
+  const LIMIT_BYTES = 64 * 1024;
+  const CHUNK = LIMIT_BYTES / 4;
+  const runInSubprocess = async source => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const describeError = e => e.name + ": " + e.message;
+        const chunk = letter => Buffer.alloc(${CHUNK}, letter).toString();
+        const settle = promise => promise.then(text => ({ length: text.length }), e => ({ rejected: describeError(e) }));
+        ${source}`,
+      ],
+      env: { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(LIMIT_BYTES) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
+  };
+
+  test.concurrent("pull() can catch the error, and the text written so far is kept", async () => {
+    const result = await runInSubprocess(`
+      let refused;
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          for (const letter of "abc") controller.write(chunk(letter));
+          try {
+            controller.write(chunk("z") + chunk("z"));
+          } catch (e) {
+            refused = describeError(e);
+          }
+          controller.end();
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(stream.text())), refused }));
+    `);
+    expect(result).toEqual({
+      stdout: { length: 3 * CHUNK, refused: "RangeError: Out of memory" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("an error that pull() doesn't catch rejects the consumer", async () => {
+    const result = await runInSubprocess(`
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          for (const letter of "abc") controller.write(chunk(letter));
+          controller.write(chunk("z") + chunk("z"));
+        },
+      });
+      console.log(JSON.stringify(await settle(stream.text())));
+    `);
+    expect(result).toEqual({ stdout: { rejected: "RangeError: Out of memory" }, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("a stream that errors with its sink over the limit rejects with its own error", async () => {
+    const result = await runInSubprocess(`
+      const bytes = new Uint8Array(${CHUNK}).fill(97);
+      let closedWith = "close() not called";
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          for (let i = 0; i < 6; i++) controller.write(bytes);
+          controller.error(new Error("boom"));
+        },
+        close(reason) {
+          closedWith = describeError(reason);
+        },
+      });
+      console.log(JSON.stringify({ ...(await settle(Bun.readableStreamToText(stream))), closedWith }));
+    `);
+    expect(result).toEqual({
+      stdout: { rejected: "Error: boom", closedWith: "Error: boom" },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
 
 // A source pull() that runs inside the pipe's in-place drain and synchronously errors the
 // destination and aborts the pipe's signal must not touch the released writer afterwards.
@@ -4186,6 +4445,23 @@ describe("iterator result consumers", () => {
       async: await readableStreamToArray(ReadableStream.from(asyncGen())),
       sync: await readableStreamToArray(ReadableStream.from(syncGen())),
     }).toEqual({ async: [1, 2, 3], sync: ["s1", "s2"] });
+  });
+
+  test("ReadableStream.from over a sync generator, pipe aborted during the first read", async () => {
+    let finished = false;
+    function* gen() {
+      try {
+        yield 1;
+        yield 2;
+      } finally {
+        finished = true;
+      }
+    }
+    const controller = new AbortController();
+    const piped = ReadableStream.from(gen()).pipeTo(new WritableStream(), { signal: controller.signal });
+    controller.abort();
+    expect(await piped.catch(e => e.name)).toBe("AbortError");
+    expect(finished).toBe(true);
   });
 
   test("ReadableStream.from over an async iterator whose results have accessors", async () => {
@@ -4773,6 +5049,7 @@ describe("direct stream edge cases", () => {
         "thrown after close(error)",
       ],
     ])("close(error) from %s: the caller's try/catch is the only report", async (_, pull, message) => {
+      using dir = tempDir("direct-close-error-report", {});
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -4785,6 +5062,7 @@ describe("direct stream edge cases", () => {
             "new Response(s).arrayBuffer()": s => new Response(s).arrayBuffer(),
             "Bun.readableStreamToBytes": s => Bun.readableStreamToBytes(s),
             "Bun.readableStreamToArrayBuffer": s => Bun.readableStreamToArrayBuffer(s),
+            "Bun.write(file, new Response(s))": s => Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s)),
           };
           const out = {};
           for (const [name, consume] of Object.entries(consumers)) {
@@ -4808,9 +5086,45 @@ describe("direct stream edge cases", () => {
         "new Response(s).arrayBuffer()": "caught: " + message,
         "Bun.readableStreamToBytes": "caught: " + message,
         "Bun.readableStreamToArrayBuffer": "caught: " + message,
+        "Bun.write(file, new Response(s))": "caught: " + message,
       });
       expect(exitCode).toBe(0);
     });
+
+    // Bun.write() rejects with the throw, so a caller that ignores the rejection gets that one report.
+    test.concurrent(
+      "Bun.write: close(error) from a sync pull() that then throws is reported once when the caller ignores the rejection",
+      async () => {
+        using dir = tempDir("direct-close-error-ignored", {});
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+          const unhandled = [];
+          process.on("unhandledRejection", e => unhandled.push(e?.message));
+          process.on("exit", () => console.log(JSON.stringify(unhandled)));
+          const s = new ReadableStream({
+            type: "direct",
+            pull(c) {
+              c.write("partial");
+              c.close(new Error("source failed"));
+              throw new Error("thrown after close(error)");
+            },
+          });
+          Bun.write(${JSON.stringify(join(String(dir), "out.txt"))}, new Response(s));
+          `,
+          ],
+          env: bunEnv,
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        expect({ unhandled: JSON.parse(stdout), exitCode }).toEqual({
+          unhandled: ["thrown after close(error)"],
+          exitCode: 0,
+        });
+      },
+    );
 
     // close(error) rejects the promise the caller holds, so the caller decides whether the rejection is handled.
     test.concurrent(
@@ -5234,5 +5548,51 @@ describe("direct stream edge cases", () => {
       readable.destroy(new Error("node source failed"));
       expect(await text).toEqual({ err: "node source failed" });
     });
+  });
+});
+
+// node:vm's `timeout` stops a run with a termination request, and the process keeps running. Each loop spins
+// on one operation under a timeout, so some rounds terminate in the middle of it.
+describe.concurrent("a node:vm timeout inside a streams operation", () => {
+  test.each([
+    [
+      "getWriter() on an erroring stream",
+      `for (;;) {
+        let controller;
+        const stream = new WritableStream({ start(c) { controller = c; } });
+        controller.error(new Error("boom"));
+        stream.getWriter();
+      }`,
+    ],
+    ["a writer's releaseLock()", `for (;;) new WritableStream({}).getWriter().releaseLock();`],
+  ])("doesn't crash during %s", async (_name, loop) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const vm = require("node:vm");
+        globalThis.spin = () => { ${loop} };
+        let timeouts = 0;
+        for (let i = 0; i < 100; i++) {
+          try {
+            vm.runInThisContext("spin()", { timeout: 2 });
+          } catch (e) {
+            if (e?.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw e;
+            timeouts++;
+          }
+          await new Promise(resolve => setImmediate(resolve));
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        console.log("timeouts", timeouts);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "timeouts 100\n", stderr: "" });
+    expect(exitCode).toBe(0);
   });
 });

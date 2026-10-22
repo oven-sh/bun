@@ -13,7 +13,7 @@ const NO_DOCUMENT_COOKIE: Message = Message::new("", "Do not use `document.cooki
 impl Rule for NoDocumentCookie {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-document-cookie", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Assign]);
-    /// Whether a variable is `document`.
+    /// Caches whether a variable is `document`.
     type State<'a> = IdMap<Symbol<'a>, bool>;
 
     fn new(_: &Options) -> Self {
@@ -37,10 +37,10 @@ impl Rule for NoDocumentCookie {
     }
 }
 
-/// `document`, `window.document`, or a variable that is declared with one of them. `known`: what has been found for the
-/// variables on the way, so that `const b = a, c = b ..` is followed once.
+/// True for `document`, `window.document`, or a variable initialized with one of them. `known` caches the answer for
+/// every variable it follows, so `const b = a, c = b ..` is only followed once.
 fn is_document_cookie_reference<'a>(expr: Expr<'a>, known: &mut IdMap<Symbol<'a>, bool>) -> bool {
-    let mut on_the_way: SmallVec<[Symbol<'a>; 4]> = SmallVec::new();
+    let mut followed_variables: SmallVec<[Symbol<'a>; 4]> = SmallVec::new();
     let mut next = plain(expr);
     let is_document = loop {
         let Some(at) = next else {
@@ -56,7 +56,8 @@ fn is_document_cookie_reference<'a>(expr: Expr<'a>, known: &mut IdMap<Symbol<'a>
         let Some(variable) = at.symbol() else {
             break false;
         };
-        // oxlint does not come back from `var a = b, b = a`: what is on the way is not `document` until it is known.
+        // oxlint never returns from `var a = b, b = a`. Here a variable that's still being followed counts as not
+        // `document`.
         let mut is_new = false;
         let is_known = *known.get_or_insert_with(variable, || {
             is_new = true;
@@ -65,12 +66,12 @@ fn is_document_cookie_reference<'a>(expr: Expr<'a>, known: &mut IdMap<Symbol<'a>
         if !is_new {
             break is_known;
         }
-        on_the_way.push(variable);
+        followed_variables.push(variable);
         let Some(Node::VarDecl(var_decl)) = variable.declarations().next().and_then(Declaration::node) else {
             break false;
         };
         next = var_decl.init().and_then(plain);
     };
-    known.extend(on_the_way.into_iter().map(|it| (it, is_document)));
+    known.extend(followed_variables.into_iter().map(|it| (it, is_document)));
     is_document
 }

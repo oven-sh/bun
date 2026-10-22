@@ -1,5 +1,6 @@
-// A `with` clause can be nested in another one: a value in the options of an import type can hold an import type that has
-// options of its own. TypeScript reports values that aren't strings, but every parser accepts them, so rules and plugins see them.
+// A `with` clause can be nested in another one: a value in an import type's options can contain an import type with its
+// own options. TypeScript reports values that aren't strings, but every parser accepts them, so rules and plugins see
+// them.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { endChildren, spawn } from "../children";
@@ -527,7 +528,7 @@ async function lint(more: Record<string, string>) {
 
 const typescript = `files: ["**/*.ts"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } }`;
 
-describe.concurrent("import types with options inside the options of an import type", () => {
+describe.concurrent("import types with options nested in another import type's options", () => {
   const plugin = `
     const depth = node => (node.parent ? depth(node.parent) + 1 : 0);
     const label = node => (node.type === "Identifier" ? " " + node.name : node.type === "Literal" ? " " + node.raw : "");
@@ -576,7 +577,7 @@ describe.concurrent("import types with options inside the options of an import t
     timeout,
   );
 
-  /** `show` of each message, by the name of the file. */
+  /** Maps each file name to `show` of each of its messages. */
   function byFile<T>(stdout: string, show: (message: Message, name: string) => T) {
     const results: { filePath: string; messages: Message[] }[] = JSON.parse(stdout);
     const of = (name: string) =>
@@ -584,7 +585,7 @@ describe.concurrent("import types with options inside the options of an import t
     return Object.fromEntries(names.map(name => [name, of(name).map(it => show(it, name))]));
   }
 
-  /** What each rule reports in each file: the text of the reported range. None spans lines. */
+  /** Lints with `rules`. `of(rule)` maps each file to the source text of that rule's reports. No report spans lines. */
   async function reported(rules: Record<string, unknown>) {
     const config = `export default [{ ${typescript}, rules: ${JSON.stringify(rules)} }];`;
     const { stdout, exitCode } = await lint({ "eslint.config.mjs": config });
@@ -596,7 +597,7 @@ describe.concurrent("import types with options inside the options of an import t
     return { of, exitCode };
   }
 
-  test("rules that read the options of an import type get each name once", async () => {
+  test("rules that read an import type's options see each name once", async () => {
     const keys = [...new Set(names.flatMap(name => cases[name].keys))];
     const { of, exitCode } = await reported({
       "id-denylist": ["error", ...keys],
@@ -610,14 +611,14 @@ describe.concurrent("import types with options inside the options of an import t
     expect(exitCode).toBe(1);
   });
 
-  test("the way up from a value leads through the options of its own import type", async () => {
+  test("a value's ancestors are the options of its own import type", async () => {
     const value = "TSImportType > ObjectExpression > Property > ObjectExpression > Property > .value";
     const { of, exitCode } = await reported({ "no-restricted-syntax": ["error", value] });
     expect(of("no-restricted-syntax")).toEqual(Object.fromEntries(names.map(name => [name, cases[name].values])));
     expect(exitCode).toBe(1);
   });
 
-  test("rules that listen to string literals get each quoted string once", async () => {
+  test("rules that listen for string literals see each quoted string once", async () => {
     const patterns = [{ pattern: "^.*$", message: "A string.", in: ["strings"] }];
     const { of, exitCode } = await reported({ "bun/no-restricted-text": ["error", { patterns }] });
     const quoted = (code: string) => Array.from(code.matchAll(/"([^"]*)"/g), it => it[1]);

@@ -60,30 +60,29 @@ void ConsoleObject::messageWithTypeAndLevel(MessageType type, MessageLevel level
 }
 void ConsoleObject::count(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__count(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__count(this->m_client, globalObject, &input);
 }
 
 void ConsoleObject::countReset(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__countReset(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__countReset(this->m_client, globalObject, &input);
 }
 
-void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String& label)
+void ConsoleObject::takeHeapSnapshot(JSC::JSGlobalObject* globalObject, const String&)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__takeHeapSnapshot(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    Bun__ConsoleObject__takeHeapSnapshot(this->m_client, globalObject);
 }
 void ConsoleObject::time(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__time(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__time(this->m_client, globalObject, &input);
 }
 void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
     Ref<ScriptArguments>&& arguments)
 {
-    auto input = label.tryGetUTF8().value();
+    auto input = Bun::toString(label);
 
     auto args = arguments.ptr();
     JSC::EncodedJSValue jsArgs[255];
@@ -93,12 +92,12 @@ void ConsoleObject::timeLog(JSGlobalObject* globalObject, const String& label,
         jsArgs[i] = JSC::JSValue::encode(val);
     }
 
-    Bun__ConsoleObject__timeLog(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length(), jsArgs, count);
+    Bun__ConsoleObject__timeLog(this->m_client, globalObject, &input, jsArgs, count);
 }
 void ConsoleObject::timeEnd(JSGlobalObject* globalObject, const String& label)
 {
-    auto input = label.tryGetUTF8().value();
-    Bun__ConsoleObject__timeEnd(this->m_client, globalObject, reinterpret_cast<const unsigned char*>(input.data()), input.length());
+    auto input = Bun::toString(label);
+    Bun__ConsoleObject__timeEnd(this->m_client, globalObject, &input);
 }
 void ConsoleObject::timeStamp(JSGlobalObject* globalObject, Ref<ScriptArguments>&& args)
 {

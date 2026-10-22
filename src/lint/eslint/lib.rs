@@ -1,6 +1,5 @@
-//! The rules of ESLint. Each is a port of the rule of the same name in
-//! https://github.com/eslint/eslint (Copyright OpenJS Foundation and other contributors, MIT
-//! License): the same options, the same messages, at the same places.
+//! ESLint's rules. Each is a port of the rule of the same name in https://github.com/eslint/eslint (Copyright OpenJS
+//! Foundation and other contributors, MIT License), with the same options, messages and report locations.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::iter_over_hash_type)]

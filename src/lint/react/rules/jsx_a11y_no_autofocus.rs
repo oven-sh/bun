@@ -23,7 +23,7 @@ const REMOVE: Message = Message::new("", "Remove the `autoFocus` attribute.");
 impl Rule for NoAutofocus {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-autofocus", Kind::Problem).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    /// Whether something is in a dialog or a popover.
+    /// Caches whether a node is inside a dialog or a popover.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {

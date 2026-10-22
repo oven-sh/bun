@@ -686,7 +686,13 @@ pub mod SerializedSourceMap {
         pub(crate) fn source_file_contents(&self, index: usize) -> Option<&[u8]> {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
-                let compressed_file = sp.slice(self.map.bytes);
+                let start = sp.offset as usize;
+                let Some(compressed_file) = start
+                    .checked_add(sp.length as usize)
+                    .and_then(|end| self.map.bytes.get(start..end))
+                else {
+                    return Vec::new();
+                };
                 bun_zstd::decompress_alloc(compressed_file).unwrap_or_else(|err| {
                     bun_core::warn!("Source map decompression error: {}", err);
                     Vec::new()

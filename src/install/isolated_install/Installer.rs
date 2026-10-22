@@ -59,6 +59,28 @@ type OsAutoAbsPath = AbsPath<paths::OSPathChar, { PathSeparators::AUTO }>;
 type OsAutoPath = paths::Path<paths::OSPathChar, { PathKind::ANY }, { PathSeparators::AUTO }>;
 type DefaultAbsPath = AbsPath<u8>;
 
+/// What the `append_*_path` helpers need from a `Path` of any unit, kind and separators.
+pub(crate) trait PathLike {
+    fn clear(&mut self);
+    fn append(&mut self, bytes: &[u8]) -> sys::Result<()>;
+    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> sys::Result<()>;
+}
+impl<U: paths::PathUnit, const KIND: u8, const SEP: u8> PathLike for paths::Path<U, KIND, SEP> {
+    fn clear(&mut self) {
+        paths::Path::clear(self);
+    }
+    fn append(&mut self, bytes: &[u8]) -> sys::Result<()> {
+        self.try_append(bytes).map_err(name_too_long)
+    }
+    fn append_fmt(&mut self, args: core::fmt::Arguments<'_>) -> sys::Result<()> {
+        self.try_append_fmt(args).map_err(name_too_long)
+    }
+}
+
+fn name_too_long(_: paths::path_options::Error) -> sys::Error {
+    sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::symlink)
+}
+
 pub struct Installer<'a> {
     /// BACKREF, as `manager`.
     pub lockfile: *mut Lockfile,
@@ -218,13 +240,16 @@ impl<'a> Installer<'a> {
                 .filter(|dep| dep.entry_id == entry_id)
                 .any(|dep| {
                     let mut link = AutoPath::init_top_level_dir();
-                    self.append_store_node_modules_path(&mut link, dependent);
-                    append_dependency_link_name(
-                        &mut link,
-                        lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
-                        self.entry_store_node_modules_package_name(dependent),
-                    );
-                    sys::stat(link.slice_z())
+                    self.append_store_node_modules_path(&mut link, dependent)
+                        .and_then(|()| {
+                            append_dependency_link_name(
+                                &mut link,
+                                lockfile
+                                    .str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
+                                self.entry_store_node_modules_package_name(dependent),
+                            )
+                        })
+                        .and_then(|()| sys::stat(link.slice_z()))
                         .is_ok_and(|st| st.st_ino == target.st_ino && st.st_dev == target.st_dev)
                 })
         })
@@ -504,15 +529,17 @@ impl<'a> Installer<'a> {
         // random — but it's wasted disk).
         if self.entry_uses_global_store(entry_id) {
             let mut staging = AutoAbsPath::init();
-            self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
-            let _ = Fd::cwd().delete_tree(staging.slice());
+            let _ = self
+                .append_global_store_entry_path(&mut staging, entry_id, Which::Staging)
+                .and_then(|()| Fd::cwd().delete_tree(staging.slice()));
         } else if let Some(lock) = self.staging_lock.get()
             && pkg_res.can_enqueue_install_task()
         {
             // A staged link that failed only wrote to the staging directory.
             let mut staging = AutoPath::init();
-            self.append_local_staging_path(&mut staging, entry_id, lock.mode);
-            let _ = Fd::cwd().delete_tree(staging.slice());
+            let _ = self
+                .append_local_staging_path(&mut staging, entry_id, lock.mode)
+                .and_then(|()| Fd::cwd().delete_tree(staging.slice()));
         }
 
         // Like the hoisted linker, exit without saving the lockfile when a patch does not apply.
@@ -740,15 +767,20 @@ impl<'a> Installer<'a> {
     /// Deletes the `installed_marker` file first, because `delete_tree` can stop midway.
     fn delete_local_store_package_in_place(&self, entry_id: StoreEntryId) {
         let mut path = AutoAbsPath::init_top_level_dir();
-        self.append_store_path(&mut path, entry_id);
+        if self.append_store_path(&mut path, entry_id).is_err() {
+            return;
+        }
         let package_len = path.len();
         if is_link(path.slice_z()) == Some(false)
             && let Ok(patch_info) = self.package_patch_info(self.store.ids(entry_id).pkg_id)
         {
             let mut hash_buf = install::BuntagHashBuf::default();
             let tag = self.resolution(entry_id).tag;
-            let _ = path.append(installed_marker(tag, &patch_info, &mut hash_buf));
-            let _ = sys::unlink(path.slice_z());
+            if PathLike::append(&mut path, installed_marker(tag, &patch_info, &mut hash_buf))
+                .is_ok()
+            {
+                let _ = sys::unlink(path.slice_z());
+            }
             path.set_length(package_len);
         }
         let _ = Fd::cwd().delete_tree(path.slice());
@@ -757,7 +789,7 @@ impl<'a> Installer<'a> {
     /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
     fn store_path_len() -> usize {
         let mut store = AutoPath::init_top_level_dir();
-        let _ = store.append(b"node_modules/.bun");
+        let _ = store.try_append(b"node_modules/.bun");
         store.len()
     }
 
@@ -768,13 +800,13 @@ impl<'a> Installer<'a> {
             return Ok(());
         }
         let mut bin = AutoPath::init_top_level_dir();
-        self.append_store_node_modules_path(&mut bin, entry_id);
+        self.append_store_node_modules_path(&mut bin, entry_id)?;
         let node_modules_len = bin.len();
-        let _ = bin.append(b".bin");
+        PathLike::append(&mut bin, b".bin")?;
         crate::prune::remove_planted_links(bin.slice(), real_len)?;
 
         let mut package = AutoPath::init_top_level_dir();
-        self.append_store_path(&mut package, entry_id);
+        self.append_store_path(&mut package, entry_id)?;
         crate::prune::remove_planted_links(
             // A cached package replaces whatever is at its path. A folder's files are linked into
             // the existing directory.
@@ -1195,7 +1227,11 @@ impl Task {
                             .filter(|name| !name.is_empty())
                     {
                         installer
-                            .link_bins(&mut installer.bin_links(entry_id), pkg_id, own_name, false)
+                            .bin_links(entry_id)
+                            .map_err(crate::Error::from)
+                            .and_then(|mut links| {
+                                installer.link_bins(&mut links, pkg_id, own_name, false)
+                            })
                             .map_err(TaskError::Binaries)?;
                     }
                     installer
@@ -1295,7 +1331,9 @@ impl Task {
         }
 
         let mut cwd = AutoAbsPath::init_top_level_dir();
-        installer.append_store_path(&mut cwd, self.entry_id);
+        installer
+            .append_store_path(&mut cwd, self.entry_id)
+            .map_err(|err| TaskError::RunScripts(err.into()))?;
         let mut log = Log::init();
         let Some(list) = pkg_scripts
             .get_list(&mut log, lockfile, &mut cwd, dep_name, pkg_res, is_trusted)
@@ -1329,11 +1367,16 @@ impl Task {
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
         let pkg_res = installer.resolution(entry_id);
         let mut pkg_dir = AutoAbsPath::init_top_level_dir();
-        installer.append_real_store_path(&mut pkg_dir, entry_id, which);
 
         let mut log = Log::init();
-        // `true` counts the scripts that would run, like the hoisted installer does.
-        match pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res, true) {
+        let list = installer
+            .append_real_store_path(&mut pkg_dir, entry_id, which)
+            .map_err(crate::Error::from)
+            // `true` counts the scripts that would run, like the hoisted installer does.
+            .and_then(|()| {
+                pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res, true)
+            });
+        match list {
             Ok(Some(list)) => {
                 if manager.options.log_level.is_verbose() {
                     bun_core::pretty_error!(
@@ -1550,16 +1593,16 @@ impl<'a> Installer<'a> {
         // The hardlink and copy walks below only visit what the folder contains now. First remove
         // what it no longer has from the old copy, and any symlink that they would write through.
         let mut copy = AutoPath::init();
-        self.append_store_path(&mut copy, entry_id);
+        self.append_store_path(&mut copy, entry_id)?;
         if let (Ok(src), Ok(dest)) = (sys::Dir::open(path), sys::Dir::open(copy.slice())) {
             crate::prune::remove_entries_missing_from(&src, &dest);
         }
 
         let hardlinked = {
             let mut src = OsAutoAbsPath::init_top_level_dir_long_path();
-            let _ = src.append_join(path);
+            src.try_append_join(path).map_err(name_too_long)?;
             let mut dest = OsAutoPath::init();
-            self.append_store_path(&mut dest, entry_id);
+            self.append_store_path(&mut dest, entry_id)?;
 
             let mut hardlinker =
                 bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
@@ -1622,7 +1665,7 @@ impl<'a> Installer<'a> {
             }
 
             let mut dest = OsAutoPath::init();
-            self.append_store_path(&mut dest, entry_id);
+            self.append_store_path(&mut dest, entry_id)?;
 
             let mut file_copier =
                 bun_core::handle_oom(FileCopier::init(folder_dir, src_path, dest, skip_dirnames));
@@ -1674,7 +1717,8 @@ impl<'a> Installer<'a> {
         let staging = if uses_global_store {
             // Clear any leftover staging directory from a crashed earlier run with the same suffix.
             let mut staging = AutoAbsPath::init();
-            self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
+            self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging)
+                .map_err(TaskError::LinkPackage)?;
             let _ = Fd::cwd().delete_tree(staging.slice());
             Staging::Off
         } else {
@@ -1688,7 +1732,8 @@ impl<'a> Installer<'a> {
             if !uses_global_store && (!self.is_new_bun_modules || link_in_place) {
                 // An entry that lost global-store eligibility is still a link into that store.
                 let mut local = AutoPath::init_top_level_dir();
-                self.append_local_store_entry_path(&mut local, entry_id);
+                self.append_local_store_entry_path(&mut local, entry_id)
+                    .map_err(TaskError::LinkPackage)?;
                 let is_stale_link = is_link(local.slice_z());
                 if is_stale_link == Some(true)
                     && let Err(err) = remove_link(local.slice_z())
@@ -1713,10 +1758,12 @@ impl<'a> Installer<'a> {
             let linked: sys::Result<()> = 'backend: loop {
                 // Rebuilt per iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
                 let mut dest_subpath = OsAutoPath::init();
-                if uses_global_store || link_in_place {
-                    self.append_real_store_path(&mut dest_subpath, entry_id, Which::Staging);
+                if let Err(err) = if uses_global_store || link_in_place {
+                    self.append_real_store_path(&mut dest_subpath, entry_id, Which::Staging)
                 } else {
-                    self.append_local_staging_path(&mut dest_subpath, entry_id, staging);
+                    self.append_local_staging_path(&mut dest_subpath, entry_id, staging)
+                } {
+                    break 'backend Err(err);
                 }
                 match backend {
                     InstallMethod::Clonefile => {
@@ -1771,7 +1818,9 @@ impl<'a> Installer<'a> {
 
                         let mut src =
                             OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
-                        let _ = src.append_join(subpath.slice()); // OOM/capacity: fire-and-forget
+                        if let Err(err) = src.try_append_join(subpath.slice()) {
+                            break 'backend Err(name_too_long(err));
+                        }
 
                         let mut hardlinker =
                             bun_core::handle_oom(Hardlinker::init(dir, src, dest_subpath, &[]));
@@ -1805,7 +1854,9 @@ impl<'a> Installer<'a> {
                         let _dir_guard = sys::CloseOnDrop::new(dir);
 
                         let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
-                        let _ = src.append(subpath.slice()); // OOM/capacity: fire-and-forget
+                        if let Err(err) = PathLike::append(&mut src, subpath.slice()) {
+                            break 'backend Err(err);
+                        }
 
                         let mut file_copier =
                             bun_core::handle_oom(FileCopier::init(dir, src, dest_subpath, &[]));
@@ -1977,7 +2028,8 @@ impl<'a> Installer<'a> {
                     && self.resolution(entry_id).tag == ResolutionTag::Workspace =>
             {
                 let mut node_modules = AutoPath::init_top_level_dir();
-                self.append_store_node_modules_path(&mut node_modules, entry_id);
+                self.append_store_node_modules_path(&mut node_modules, entry_id)
+                    .map_err(TaskError::SymlinkDependencies)?;
                 let Some(linked) = LinkedNodeModules::at(node_modules.slice_z()) else {
                     return Err(TaskError::SymlinkDependencies(err));
                 };
@@ -2006,7 +2058,8 @@ impl<'a> Installer<'a> {
         let uses_global_store = self.entry_uses_global_store(entry_id);
 
         let mut dest = AutoPath::init_top_level_dir();
-        self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
+        self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging)
+            .map_err(TaskError::SymlinkDependencies)?;
         // A relative symlink is resolved from its real location, so `dest` needs its real path when
         // `node_modules` or the workspace's directory is itself a symlink.
         let is_linked = (self.linked.iter().chain(own)).any(|linked| linked.resolve(&mut dest));
@@ -2020,7 +2073,7 @@ impl<'a> Installer<'a> {
             && let Some(member) = linked_member
         {
             dest = AutoPath::from(&*member.real_path).assume_ok();
-            dest.append(b"node_modules").assume_ok();
+            PathLike::append(&mut dest, b"node_modules").map_err(TaskError::SymlinkDependencies)?;
         }
         let base_len = dest.len();
         // The links go directly into the symlinked `node_modules` of the project or of a workspace.
@@ -2081,7 +2134,8 @@ impl<'a> Installer<'a> {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
-            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name)
+                .map_err(TaskError::SymlinkDependencies)?;
             if real_len > base_len
                 && !(dep_name.starts_with(real_scope)
                     && dep_name.get(real_scope.len()) == Some(&b'/'))
@@ -2118,9 +2172,11 @@ impl<'a> Installer<'a> {
                 continue;
             } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
-                self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
+                self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final)
+                    .map_err(TaskError::SymlinkDependencies)?;
             } else {
-                self.append_store_path(&mut dep_store_path, dep.entry_id);
+                self.append_store_path(&mut dep_store_path, dep.entry_id)
+                    .map_err(TaskError::SymlinkDependencies)?;
             }
 
             let (linked_dest, looked_len, written) = link(dest, dep_store_path, real_len);
@@ -2160,7 +2216,8 @@ impl<'a> Installer<'a> {
                 }
 
                 dest.set_length(base_len);
-                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name)
+                    .map_err(TaskError::SymlinkDependencies)?;
                 let (linked_dest, _, written) = link(dest, shipped, real_len.min(base_len));
                 dest = linked_dest;
                 if written? {
@@ -2191,13 +2248,16 @@ impl<'a> Installer<'a> {
                     continue;
                 }
                 let mut dest = AutoPath::init_top_level_dir();
-                self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
-                append_dependency_link_name(
-                    &mut dest,
-                    lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
-                    self.entry_store_node_modules_package_name(entry_id),
-                );
-                if is_link(dest.slice_z()) == Some(true) {
+                let fits = self
+                    .append_real_store_node_modules_path(&mut dest, entry_id, Which::Final)
+                    .and_then(|()| {
+                        append_dependency_link_name(
+                            &mut dest,
+                            lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
+                            self.entry_store_node_modules_package_name(entry_id),
+                        )
+                    });
+                if fits.is_ok() && is_link(dest.slice_z()) == Some(true) {
                     let _ = remove_link(dest.slice_z());
                 }
             }
@@ -2237,7 +2297,9 @@ impl<'a> Installer<'a> {
         let pkgs = lockfile.packages.slice();
         let pkg_bins = pkgs.items_bin();
 
-        let mut links = self.bin_links(parent_entry_id);
+        let mut links = self
+            .bin_links(parent_entry_id)
+            .map_err(|err| TaskError::Binaries(err.into()))?;
         let mut failed = Vec::new();
 
         // Public hoisting gives the root entry dependencies that the root package does not declare.
@@ -2279,8 +2341,8 @@ impl<'a> Installer<'a> {
         if !deps_with_bins.is_empty() && is_importer {
             let path = &mut links.node_modules_path;
             let node_modules_len = path.len();
-            let _ = path.append(b".bin");
-            let looked = crate::prune::remove_planted_link(&sys::Dir::cwd(), path.slice_z());
+            let looked = PathLike::append(path, b".bin")
+                .and_then(|()| crate::prune::remove_planted_link(&sys::Dir::cwd(), path.slice_z()));
             path.set_length(node_modules_len);
             looked.map_err(|err| TaskError::Binaries(err.into()))?;
         }
@@ -2306,23 +2368,23 @@ impl<'a> Installer<'a> {
         Err(TaskError::DependencyBinaries(failed.into_boxed_slice()))
     }
 
-    fn bin_links(&self, entry_id: StoreEntryId) -> BinLinks {
+    fn bin_links(&self, entry_id: StoreEntryId) -> sys::Result<BinLinks> {
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
-        self.append_real_store_node_modules_path(&mut node_modules_path, entry_id, Which::Staging);
+        self.append_real_store_node_modules_path(&mut node_modules_path, entry_id, Which::Staging)?;
         let is_linked = (self.linked.iter()).any(|linked| linked.resolve(&mut node_modules_path));
         let is_behind_link = match self.resolution(entry_id).tag {
             ResolutionTag::Root => Some(is_linked),
             ResolutionTag::Workspace => None,
             _ => Some(false),
         };
-        BinLinks {
+        Ok(BinLinks {
             node_modules_path,
             is_behind_link,
             seen: StringHashMap::default(),
             abs_target_buf: paths::path_buffer_pool::get(),
             abs_dest_buf: paths::path_buffer_pool::get(),
             rel_buf: paths::path_buffer_pool::get(),
-        }
+        })
     }
 
     /// Links the bins of `pkg_id`, which is `package_name` in `links.node_modules_path`.
@@ -2340,15 +2402,16 @@ impl<'a> Installer<'a> {
             .maybe_replace_node_modules_path(pkg_id)
             .map(|entry_id| {
                 let mut path = DefaultAbsPath::init_top_level_dir();
-                self.append_real_store_node_modules_path(&mut path, entry_id, Which::Final);
+                self.append_real_store_node_modules_path(&mut path, entry_id, Which::Final)?;
                 if let Some(linked) = &self.linked {
                     linked.resolve(&mut path);
                 }
-                (
+                Ok::<_, sys::Error>((
                     path,
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
-                )
-            });
+                ))
+            })
+            .transpose()?;
         // A bin link to a replacement package points outside the workspace's `node_modules`. If
         // that directory is a symlink, the relative target has to start from its real path.
         if replacement.is_some() && links.is_behind_link != Some(false) {
@@ -2424,13 +2487,13 @@ impl<'a> Installer<'a> {
     /// step renames staging → final.
     pub(crate) fn append_global_store_entry_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
         which: Which,
-    ) {
+    ) -> sys::Result<()> {
         debug_assert!(self.entry_uses_global_store(entry_id));
         buf.clear();
-        buf.append(self.global_store_path.as_ref().unwrap().as_bytes());
+        buf.append(self.global_store_path.as_ref().unwrap().as_bytes())?;
         match which {
             Which::Final => buf.append_fmt(format_args!(
                 "{}",
@@ -2455,9 +2518,9 @@ impl<'a> Installer<'a> {
             return Ok(());
         }
         let mut staging = AutoAbsPath::init();
-        self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
+        self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging)?;
         let mut final_ = AutoAbsPath::init();
-        self.append_global_store_entry_path(&mut final_, entry_id, Which::Final);
+        self.append_global_store_entry_path(&mut final_, entry_id, Which::Final)?;
 
         let mut retry = RenameRetry::new();
         let Err(err) = retry.rename(Fd::cwd(), staging.slice_z(), Fd::cwd(), final_.slice_z())
@@ -2492,12 +2555,24 @@ impl<'a> Installer<'a> {
             }
         }
         let mut old = AutoAbsPath::init();
-        let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: fire-and-forget
-        let _ = old.append_fmt(format_args!(
-            "{}.old-{:x}",
-            store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
-            bun_core::fast_random(),
-        ));
+        let fits = PathLike::append(
+            &mut old,
+            self.global_store_path.as_ref().unwrap().as_bytes(),
+        )
+        .and_then(|()| {
+            PathLike::append_fmt(
+                &mut old,
+                format_args!(
+                    "{}.old-{:x}",
+                    store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
+                    bun_core::fast_random(),
+                ),
+            )
+        });
+        if let Err(err) = fits {
+            let _ = Fd::cwd().delete_tree(staging.slice());
+            return Err(err);
+        }
         if let Err(err) = retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), old.slice_z()) {
             let _ = Fd::cwd().delete_tree(staging.slice());
             return Err(global_store_publish_error(err, &final_));
@@ -2521,17 +2596,17 @@ impl<'a> Installer<'a> {
     /// could exceed the path length limit when the package's relative path does not.
     fn append_local_staging_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
         mode: Staging,
-    ) {
+    ) -> sys::Result<()> {
         debug_assert!(!self.entry_uses_global_store(entry_id) && mode != Staging::Off);
-        self.append_local_store_entry_path(buf, entry_id);
-        buf.append(b"node_modules");
+        self.append_local_store_entry_path(buf, entry_id)?;
+        buf.append(b"node_modules")?;
         buf.append_fmt(format_args!(
             "{}",
             StagingPath(self.pkg_name(entry_id), mode),
-        ));
+        ))
     }
 
     /// Frees the final path, and the staging path of a dead install's rest. On an error, link in place.
@@ -2542,9 +2617,9 @@ impl<'a> Installer<'a> {
         wait: bool,
     ) -> sys::Maybe<()> {
         let mut final_ = AutoPath::init();
-        self.append_store_path(&mut final_, entry_id);
+        self.append_store_path(&mut final_, entry_id)?;
         let mut staging = AutoPath::init();
-        self.append_local_staging_path(&mut staging, entry_id, mode);
+        self.append_local_staging_path(&mut staging, entry_id, mode)?;
 
         // A delete can be interrupted halfway, so rename the existing package away from its final
         // path first.
@@ -2577,9 +2652,14 @@ impl<'a> Installer<'a> {
     /// it. Returns false if the caller should link in place instead.
     fn commit_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let mut staging = AutoPath::init();
-        self.append_local_staging_path(&mut staging, entry_id, mode);
         let mut final_ = AutoPath::init();
-        self.append_store_path(&mut final_, entry_id);
+        if self
+            .append_local_staging_path(&mut staging, entry_id, mode)
+            .and_then(|()| self.append_store_path(&mut final_, entry_id))
+            .is_err()
+        {
+            return false;
+        }
 
         if rename_staging_into_place(Fd::cwd(), staging.slice_z(), final_.slice_z()).is_ok() {
             return true;
@@ -2592,13 +2672,13 @@ impl<'a> Installer<'a> {
     /// points at the global virtual-store entry). Relative to top-level dir.
     pub(crate) fn append_local_store_entry_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
-    ) {
+    ) -> sys::Result<()> {
         buf.append_fmt(format_args!(
             "node_modules/.bun/{}",
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-        ));
+        ))
     }
 
     /// Create the project-level symlink `node_modules/.bun/<storepath>` →
@@ -2607,10 +2687,10 @@ impl<'a> Installer<'a> {
     /// `readlink` and no write. Returns true if the project had nothing at that path before.
     pub(crate) fn link_project_to_global_store(&self, entry_id: StoreEntryId) -> sys::Result<bool> {
         let mut dest = AutoPath::init_top_level_dir();
-        self.append_local_store_entry_path(&mut dest, entry_id);
+        self.append_local_store_entry_path(&mut dest, entry_id)?;
 
         let mut target_abs = AutoAbsPath::init();
-        self.append_global_store_entry_path(&mut target_abs, entry_id, Which::Final);
+        self.append_global_store_entry_path(&mut target_abs, entry_id, Which::Final)?;
 
         // Absolute target so the link is independent of where node_modules
         // lives (project root may itself be behind a symlink). Symlinker's
@@ -2646,13 +2726,16 @@ impl<'a> Installer<'a> {
                     // The link points to an entry with a different hash. Replace it atomically.
                     Ok(_) if cfg!(not(windows)) => {
                         let mut tmp = AutoPath::init_top_level_dir();
-                        let _ = tmp.append_fmt(format_args!(
-                            "node_modules/.bun/{}",
-                            StagingPath(
-                                paths::basename(dest.slice()),
-                                Staging::Unlocked(self.global_store_tmp_suffix),
+                        PathLike::append_fmt(
+                            &mut tmp,
+                            format_args!(
+                                "node_modules/.bun/{}",
+                                StagingPath(
+                                    paths::basename(dest.slice()),
+                                    Staging::Unlocked(self.global_store_tmp_suffix),
+                                ),
                             ),
-                        ));
+                        )?;
                         do_symlink(tmp.slice_z(), target_abs.slice_z())?;
                         let renamed =
                             sys::renameat(Fd::cwd(), tmp.slice_z(), Fd::cwd(), dest.slice_z());
@@ -2696,18 +2779,18 @@ impl<'a> Installer<'a> {
 
     pub(crate) fn append_store_node_modules_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
-    ) {
+    ) -> sys::Result<()> {
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
             ResolutionTag::Root => {}
             ResolutionTag::Workspace => {
-                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()));
+                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()))?;
             }
-            _ => self.append_local_store_entry_path(buf, entry_id),
+            _ => self.append_local_store_entry_path(buf, entry_id)?,
         }
-        buf.append(b"node_modules");
+        buf.append(b"node_modules")
     }
 
     /// Like `appendStoreNodeModulesPath`, but resolves to the *physical*
@@ -2716,33 +2799,31 @@ impl<'a> Installer<'a> {
     /// otherwise. See `Which` for when to pass `.staging` vs `.final`.
     pub(crate) fn append_real_store_node_modules_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
         which: Which,
-    ) {
+    ) -> sys::Result<()> {
         if self.entry_uses_global_store(entry_id) {
-            self.append_global_store_entry_path(buf, entry_id, which);
-            buf.append(b"node_modules");
-            return;
+            self.append_global_store_entry_path(buf, entry_id, which)?;
+            return buf.append(b"node_modules");
         }
-        self.append_store_node_modules_path(buf, entry_id);
+        self.append_store_node_modules_path(buf, entry_id)
     }
 
     /// `appendStorePath` resolved to the entry's *physical* location. See
     /// `Which` for when to pass `.staging` vs `.final`.
     pub(crate) fn append_real_store_path(
         &self,
-        buf: &mut impl paths::PathLike,
+        buf: &mut impl PathLike,
         entry_id: StoreEntryId,
         which: Which,
-    ) {
+    ) -> sys::Result<()> {
         if self.entry_uses_global_store(entry_id) {
-            self.append_global_store_entry_path(buf, entry_id, which);
-            buf.append(b"node_modules");
-            buf.append(self.pkg_name(entry_id));
-            return;
+            self.append_global_store_entry_path(buf, entry_id, which)?;
+            buf.append(b"node_modules")?;
+            return buf.append(self.pkg_name(entry_id));
         }
-        self.append_store_path(buf, entry_id);
+        self.append_store_path(buf, entry_id)
     }
 
     /// `check_link_entries` bounded the length. Normalized: a Windows junction resolves no `..`.
@@ -2762,26 +2843,31 @@ impl<'a> Installer<'a> {
         &buf[..len]
     }
 
-    pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
+    pub(crate) fn append_store_path(
+        &self,
+        buf: &mut impl PathLike,
+        entry_id: StoreEntryId,
+    ) -> sys::Result<()> {
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
             ResolutionTag::Workspace => {
-                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()));
+                append_workspace_path(buf, self.lockfile().str(pkg_res.workspace()))
             }
             ResolutionTag::Symlink => {
                 let mut join_buf = paths::path_buffer_pool::get();
                 buf.clear();
                 buf.append(
                     self.link_target_path(self.lockfile().str(pkg_res.symlink()), &mut join_buf),
-                );
+                )
             }
             _ => {
                 // `None`: the root. `buf` is already top_level_dir.
-                if let Some(name) = self.entry_store_node_modules_package_name(entry_id) {
-                    self.append_local_store_entry_path(buf, entry_id);
-                    buf.append(b"node_modules");
-                    buf.append(name);
-                }
+                let Some(name) = self.entry_store_node_modules_package_name(entry_id) else {
+                    return Ok(());
+                };
+                self.append_local_store_entry_path(buf, entry_id)?;
+                buf.append(b"node_modules")?;
+                buf.append(name)
             }
         }
     }
@@ -2799,8 +2885,8 @@ impl<'a> Installer<'a> {
             return Ok(false);
         }
 
-        self.append_real_store_node_modules_path(buf, entry_id, Which::Staging);
-        buf.append(package_dir_name).assume_ok();
+        self.append_real_store_node_modules_path(buf, entry_id, Which::Staging)?;
+        PathLike::append(buf, package_dir_name)?;
         // `folder` comes from a third-party manifest, so its length is unchecked.
         if buf.len() + 1 + folder.len() >= paths::MAX_PATH_BYTES {
             return Err(sys::Error::from_code(
@@ -2858,7 +2944,7 @@ struct BinLinks {
 /// `buf` is the project's directory. Appends the path of a workspace. On Windows, the path of a
 /// workspace outside the project is normalized, because the `..` in the path of a new link isn't
 /// resolved there. Elsewhere the kernel resolves it, also when the project is behind a symlink.
-fn append_workspace_path(buf: &mut impl paths::PathLike, workspace_path: &[u8]) {
+fn append_workspace_path(buf: &mut impl PathLike, workspace_path: &[u8]) -> sys::Result<()> {
     if cfg!(not(windows)) || !crate::bin::path_climbs_out(workspace_path) {
         return buf.append(workspace_path);
     }
@@ -2869,21 +2955,22 @@ fn append_workspace_path(buf: &mut impl paths::PathLike, workspace_path: &[u8]) 
         &[workspace_path],
     );
     buf.clear();
-    buf.append(absolute);
+    buf.append(absolute)
 }
 
 fn append_dependency_link_name(
     dest: &mut AutoPath,
     dep_name: &[u8],
     entry_node_modules_name: Option<&[u8]>,
-) {
-    let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+) -> sys::Result<()> {
+    PathLike::append(dest, dep_name)?;
     if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
         // It has the same name as the entry itself, so nest it one `node_modules` deeper to avoid
         // the collision.
-        let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
-        let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+        PathLike::append(dest, b"node_modules")?;
+        PathLike::append(dest, dep_name)?;
     }
+    Ok(())
 }
 
 /// The next install skips a project-local package that has this file. A discard deletes it first.
@@ -2929,12 +3016,15 @@ pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
     sys::unlink(path)
 }
 
-/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
+/// EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks.
+/// Only the link itself can say that. A `mkdir` or the walk of the package fails with the same
+/// errnos, and a copy does not avoid those.
 fn needs_copy(hardlink_err: &sys::Error) -> bool {
-    matches!(
-        hardlink_err.get_errno(),
-        sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
-    )
+    hardlink_err.syscall == sys::Tag::link
+        && matches!(
+            hardlink_err.get_errno(),
+            sys::Errno::EXDEV | sys::Errno::EACCES | sys::Errno::EPERM
+        )
 }
 
 fn os_path(path: &[paths::OSPathChar]) -> bun_core::fmt::FormatOSPath<'_> {

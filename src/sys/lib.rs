@@ -2428,7 +2428,7 @@ mod posix_impl {
         check!(unsafe { libc::truncate(path.as_ptr(), len) }, Tag::truncate);
         Ok(())
     }
-    /// `mkdtemp(3)` in place: `template` is the `...XXXXXX` pattern with its NUL terminator.
+    /// `mkdtemp(3)` in place: `template` ends in six `X` and its NUL terminator.
     pub fn mkdtemp(template: &mut [u8]) -> Maybe<()> {
         let [.., 0] = template else {
             return Err(Error::from_code_int(libc::EINVAL, Tag::mkdtemp));
@@ -2436,7 +2436,7 @@ mod posix_impl {
         let len = template.len() - 1;
         loop {
             // SAFETY: `template` is a writable NUL-terminated C string, and
-            // mkdtemp(3) writes only over its `XXXXXX`.
+            // mkdtemp(3) writes only over its six `X`.
             if !unsafe { libc::mkdtemp(template.as_mut_ptr().cast()) }.is_null() {
                 return Ok(());
             }
@@ -2444,9 +2444,9 @@ mod posix_impl {
             if e != libc::EINTR {
                 return Err(Error::from_code_int(e, Tag::mkdtemp));
             }
-            // A failed call can leave its candidate in place of the `XXXXXX`, which libc then rejects.
+            // A failed call can leave its candidate in place of the six `X`, which libc then rejects.
             if let Some(suffix) = len.checked_sub(6) {
-                template[suffix..len].copy_from_slice(b"XXXXXX");
+                template[suffix..len].fill(b'X');
             }
         }
     }

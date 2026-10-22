@@ -14,6 +14,7 @@
 #include <openssl/rand.h>
 #include <openssl/x509v3.h>
 #include <algorithm>
+#include <array>
 #include <cstring>
 #if OPENSSL_VERSION_MAJOR >= 3
 #include <openssl/provider.h>
@@ -1557,86 +1558,27 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
+// The digest-name table in src/runtime/crypto/EVP.rs; ASCII case-insensitive.
+extern "C" const EVP_MD* Bun__Crypto__digestByName(const uint8_t* name, size_t len);
+
 const EVP_MD* getDigestByName(const WTF::StringView name)
 {
-    // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
-    // exposed through the public API.
-    if (name == "dss1"_s || name == "DSS1"_s) [[unlikely]] {
-        return EVP_sha1();
+    if (name.is8Bit()) {
+        auto span = byteCast<uint8_t>(name.span8());
+        return Bun__Crypto__digestByName(span.data(), span.size());
     }
 
-    if (WTF::equalIgnoringASCIICase(name, "md5"_s)) {
-        return EVP_md5();
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "rsa-sha"_s)) {
-        auto bits = name.substring(7);
-        if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-            return EVP_sha1();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-            return EVP_sha224();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-            return EVP_sha256();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-            return EVP_sha384();
-        }
-        if (WTF::equalIgnoringASCIICase(bits, "512"_s)) {
-            return EVP_sha512();
-        }
-    }
-
-    if (WTF::startsWithIgnoringASCIICase(name, "sha"_s)) {
-        auto remain = name.substring(3);
-        if (remain.startsWith('-')) {
-            auto bits = remain.substring(1);
-            if (WTF::equalIgnoringASCIICase(bits, "1"_s)) {
-                return EVP_sha1();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "224"_s)) {
-                return EVP_sha224();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "256"_s)) {
-                return EVP_sha256();
-            }
-            if (WTF::equalIgnoringASCIICase(bits, "384"_s)) {
-                return EVP_sha384();
-            }
-
-            if (WTF::startsWithIgnoringASCIICase(bits, "512"_s)) {
-                auto moreBits = bits.substring(3);
-                if (moreBits.isEmpty()) {
-                    return EVP_sha512();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/224"_s)) {
-                    return EVP_sha512_224();
-                }
-                if (WTF::equalIgnoringASCIICase(moreBits, "/256"_s)) {
-                    return EVP_sha512_256();
-                }
-
-                // backwards compatibility with what we supported before
-                // (not supported by node)
-                if (WTF::equalIgnoringASCIICase(moreBits, "256"_s) || WTF::equalIgnoringASCIICase(moreBits, "_256"_s)) {
-                    return EVP_sha512_256();
-                }
-            }
-        }
-
-        // backwards compatibility with what we supported before
-        // (not supported by node)
-        if (WTF::equalIgnoringASCIICase(remain, "128"_s)) {
-            return EVP_sha1();
-        }
-    }
-
-    // utf8() asserts on failure. A name too long to convert isn't a digest.
-    auto nameUtf8 = name.tryGetUTF8();
-    if (!nameUtf8) [[unlikely]]
+    // Every digest name is ASCII. A 16-bit view of one fits a small buffer.
+    constexpr size_t maxNameLength = 64;
+    if (name.length() > maxNameLength || !name.containsOnlyASCII()) {
         return nullptr;
-    return EVP_get_digestbyname(nameUtf8->legacyCStringPointer());
+    }
+    std::array<uint8_t, maxNameLength> buffer;
+    auto span = name.span16();
+    for (size_t i = 0; i < span.size(); i++) {
+        buffer[i] = static_cast<uint8_t>(span[i]);
+    }
+    return Bun__Crypto__digestByName(buffer.data(), span.size());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)

@@ -143,41 +143,14 @@ impl CryptoHasher {
 
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__CryptoHasherExtern__getByName(
-        global: &JSGlobalObject,
+        _global: &JSGlobalObject,
         name_bytes: *const c_char,
         name_len: usize,
     ) -> Option<Box<CryptoHasher>> {
         // SAFETY: caller passes a valid (ptr,len) byte slice
         let name = unsafe { bun_core::ffi::slice(name_bytes.cast::<u8>(), name_len) };
 
-        if let Some(inner) = CryptoHasherZig::init(name) {
-            return Some(Box::new(CryptoHasher::Zig(inner)));
-        }
-
-        let algorithm = evp::lookup_ignore_case(name)?;
-
-        match algorithm {
-            evp::Algorithm::Ripemd160
-            | evp::Algorithm::Blake2b256
-            | evp::Algorithm::Blake2b512
-            | evp::Algorithm::Sha512_224 => {
-                if let Some(md) = algorithm.md() {
-                    // `Algorithm::md()` lives in `bun_sha_hmac` and
-                    // returns that crate's opaque `EVP_MD`; cast to the boringssl-sys
-                    // opaque (same underlying C `struct env_md_st`).
-                    return Some(Box::new(CryptoHasher::Evp(Box::new(EVP::init(
-                        algorithm,
-                        md.cast::<boring_ssl::EVP_MD>(),
-                        boring_engine(global),
-                    )))));
-                }
-            }
-            _ => {
-                return None;
-            }
-        }
-
-        None
+        CryptoHasherZig::init(name).map(|inner| Box::new(CryptoHasher::Zig(inner)))
     }
 
     #[unsafe(no_mangle)]

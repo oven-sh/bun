@@ -14,6 +14,7 @@ describe("CryptoHasher", () => {
       "blake2s256",
       "md4",
       "md5",
+      "md5-sha1",
       "ripemd160",
       "sha1",
       "sha224",
@@ -38,6 +39,7 @@ describe("CryptoHasher", () => {
     blake2s256: "9aec6806794561107e594b1f6a8a6b0c92a0cba9acf5e5e93cca06f781813b0b",
     md4: "aa010fbc1d14c795d86ef98c95479d17",
     md5: "5eb63bbbe01eeed093cb22bb8f5acdc3",
+    "md5-sha1": "5eb63bbbe01eeed093cb22bb8f5acdc32aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
     ripemd160: "98c615784ccb5fe5936fbc0cbe9dfdb408d92f0f",
     sha1: "2aae6c35c94fcfb415dbe95f408b9ce91ee846ed",
     sha224: "2f05477fc24bb4faefd86517156dafdecec45b8ad3cf2522a563582b",
@@ -60,6 +62,7 @@ describe("CryptoHasher", () => {
     blake2s256: 256,
     md4: 128,
     md5: 128,
+    "md5-sha1": 288,
     ripemd160: 160,
     sha1: 160,
     sha224: 224,
@@ -225,6 +228,161 @@ describe("crypto.getCurves", () => {
   it("should return an array of strings", () => {
     expect(Array.isArray(crypto.getCurves())).toBe(true);
     expect(typeof crypto.getCurves()[0]).toBe("string");
+  });
+});
+
+describe("crypto.getHashes", () => {
+  // Node's list without the names bun cannot hash (sm3, shake128/256 and
+  // blake2s256 have no EVP_MD), plus md4, which bun keeps.
+  const nodeNames = [
+    "RSA-MD5",
+    "RSA-RIPEMD160",
+    "RSA-SHA1",
+    "RSA-SHA1-2",
+    "RSA-SHA224",
+    "RSA-SHA256",
+    "RSA-SHA3-224",
+    "RSA-SHA3-256",
+    "RSA-SHA3-384",
+    "RSA-SHA3-512",
+    "RSA-SHA384",
+    "RSA-SHA512",
+    "RSA-SHA512/224",
+    "RSA-SHA512/256",
+    "blake2b512",
+    "id-rsassa-pkcs1-v1_5-with-sha3-224",
+    "id-rsassa-pkcs1-v1_5-with-sha3-256",
+    "id-rsassa-pkcs1-v1_5-with-sha3-384",
+    "id-rsassa-pkcs1-v1_5-with-sha3-512",
+    "md4",
+    "md5",
+    "md5-sha1",
+    "md5WithRSAEncryption",
+    "ripemd",
+    "ripemd160",
+    "ripemd160WithRSA",
+    "rmd160",
+    "sha1",
+    "sha1WithRSAEncryption",
+    "sha224",
+    "sha224WithRSAEncryption",
+    "sha256",
+    "sha256WithRSAEncryption",
+    "sha3-224",
+    "sha3-256",
+    "sha3-384",
+    "sha3-512",
+    "sha384",
+    "sha384WithRSAEncryption",
+    "sha512",
+    "sha512-224",
+    "sha512-224WithRSAEncryption",
+    "sha512-256",
+    "sha512-256WithRSAEncryption",
+    "sha512WithRSAEncryption",
+    "ssl3-md5",
+    "ssl3-sha1",
+  ];
+
+  it("lists node's digest names", () => {
+    expect(crypto.getHashes()).toEqual(nodeNames);
+  });
+
+  // Every listed name resolves in every digest-taking API. Node's own
+  // test-crypto-pbkdf2.js, test-crypto-hkdf.js and test-crypto-oneshot-hash.js
+  // push every listed name (except shake) through the same APIs.
+  for (const name of crypto.getHashes()) {
+    it(`${name} resolves in createHash, hash, createHmac, pbkdf2Sync and hkdfSync`, () => {
+      const digest = crypto.createHash(name).update("message").digest("hex");
+      expect(crypto.hash(name, "message")).toBe(digest);
+      expect(crypto.createHmac(name, "key").update("message").digest("hex")).toBeString();
+      expect(crypto.pbkdf2Sync("p", "s", 1, 8, name).byteLength).toBe(8);
+      expect(crypto.hkdfSync(name, "k", "s", "i", 8).byteLength).toBe(8);
+    });
+  }
+
+  it("alias names give the same digest as the canonical name, in any case", () => {
+    // [alias, canonical]
+    const aliases: [string, string][] = [
+      ["RSA-SHA3-512", "sha3-512"],
+      ["rsa-sha3-512", "sha3-512"],
+      ["Rsa-Sha3-256", "sha3-256"],
+      ["id-rsassa-pkcs1-v1_5-with-sha3-224", "sha3-224"],
+      ["ID-RSASSA-PKCS1-V1_5-WITH-SHA3-384", "sha3-384"],
+      ["RSA-SHA256", "sha256"],
+      ["sha256WithRSAEncryption", "sha256"],
+      ["SHA256WITHRSAENCRYPTION", "sha256"],
+      ["RSA-SHA512/224", "sha512-224"],
+      ["ssl3-sha1", "sha1"],
+      ["dss1", "sha1"],
+      ["ripemd", "ripemd160"],
+      ["Sha3-512", "sha3-512"],
+      ["MD5", "md5"],
+    ];
+    for (const [alias, canonical] of aliases) {
+      expect(crypto.createHash(alias).update("message").digest("hex")).toBe(
+        crypto.createHash(canonical).update("message").digest("hex"),
+      );
+      expect(crypto.hash(alias, "message")).toBe(crypto.hash(canonical, "message"));
+      expect(crypto.createHmac(alias, "key").update("message").digest("hex")).toBe(
+        crypto.createHmac(canonical, "key").update("message").digest("hex"),
+      );
+      expect(crypto.pbkdf2Sync("p", "s", 1, 8, alias)).toEqual(crypto.pbkdf2Sync("p", "s", 1, 8, canonical));
+      expect(crypto.hkdfSync(alias, "k", "s", "i", 8)).toEqual(crypto.hkdfSync(canonical, "k", "s", "i", 8));
+    }
+  });
+
+  it("matches node's digests for the RSA-SHA3-512 alias", () => {
+    expect(crypto.createHmac("RSA-SHA3-512", "key").update("message").digest("hex")).toBe(
+      "4b733ae1713d83ed27e49527a1e4ce032ecad6657e82403b42c31f901f00bdc306fdc5d1e4b664530e9c691a01070d85e6479be0b9c43b28e0ed7740f90628cf",
+    );
+    expect(crypto.hash("RSA-SHA3-512", "message")).toBe(
+      "6b68516bdfd85cb5b6cdfa7ce6994ae8e59053997bcad939dd79f254dea783e7b93a82d4b4a7299029c62e009f9f130dfd42825527984159c783447a9ec142cb",
+    );
+    expect(crypto.pbkdf2Sync("p", "s", 1, 8, "RSA-SHA3-512").toString("hex")).toBe("40bc2bdd8ad20634");
+    expect(Buffer.from(crypto.hkdfSync("RSA-SHA3-512", "k", "s", "i", 8)).toString("hex")).toBe("30a99eba8ff12d66");
+  });
+
+  it("matches node's digests for md5-sha1", () => {
+    expect(crypto.createHmac("md5-sha1", "key").update("message").digest("hex")).toBe(
+      "2001802d0d363c8321d134c011bb81ac335faa8754b5bb34e4404966264cdc6543e90084",
+    );
+    expect(crypto.pbkdf2Sync("p", "s", 1, 8, "md5-sha1").toString("hex")).toBe("e5d773789600e4e4");
+  });
+
+  it("keeps accepting the names bun resolved before", () => {
+    for (const name of ["DSS1", "sha-1", "sha128", "sha-512/256", "sha-512_256", "sha-512256", "MD5-SHA1"]) {
+      expect(crypto.createHmac(name, "key").update("message").digest("hex")).toBeString();
+      expect(crypto.createHash(name).update("message").digest("hex")).toBeString();
+    }
+  });
+
+  it("resolves a 16-bit ASCII name", () => {
+    // A flat 16-bit literal sliced past the non-ASCII char stays 16-bit.
+    const name = "\u4e2dsha256WithRSAEncryption".slice(1);
+    expect(crypto.createHmac(name, "key").update("message").digest("hex")).toBe(
+      crypto.createHmac("sha256", "key").update("message").digest("hex"),
+    );
+    expect(crypto.createHash(name).update("message").digest("hex")).toBe(crypto.hash("sha256", "message"));
+    expect(() => crypto.createHmac("\u4e2d".concat("a".repeat(200)).slice(1), "key")).toThrow("Invalid digest");
+  });
+
+  it("signs with an alias name under PSS padding", () => {
+    const { privateKey, publicKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+    const data = Buffer.from("message");
+    const padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+    const signature = crypto.sign("RSA-SHA3-256", data, { key: privateKey, padding });
+    expect(crypto.verify("sha3-256", data, { key: publicKey, padding }, signature)).toBe(true);
+  });
+
+  it("rejects unknown names everywhere", () => {
+    expect(() => crypto.createHash("RSA-SM3")).toThrow("Digest method not supported");
+    expect(() => crypto.createHmac("DSA-SHA1", "key")).toThrow("Invalid digest: DSA-SHA1");
+    expect(() => crypto.createHmac("RSA-SM3", "key")).toThrow("Invalid digest: RSA-SM3");
+    expect(() => crypto.pbkdf2Sync("p", "s", 1, 8, "RSA-SM3")).toThrow("Invalid digest: RSA-SM3");
+    expect(() => crypto.hkdfSync("RSA-SM3", "k", "s", "i", 8)).toThrow("Invalid digest: RSA-SM3");
+    expect(() => crypto.createHmac("sha3-512\u00e9", "key")).toThrow("Invalid digest");
+    expect(() => crypto.createHmac("\u4e2d", "key")).toThrow("Invalid digest");
   });
 });
 

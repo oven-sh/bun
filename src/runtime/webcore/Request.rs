@@ -243,9 +243,10 @@ impl Request {
         &self,
         global_this: &JSGlobalObject,
     ) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
+        if let Some(headers) = self.headers_mut() {
             // headers is already set
-            return Ok(self.headers_mut().as_mut().unwrap());
+            headers.set_implied_by_body(false);
+            return Ok(headers);
         }
 
         if let Some(req) = self.request_context.get_request() {
@@ -1405,7 +1406,9 @@ impl Request {
             && req.headers.get().is_none()
             && !blob.content_type_slice().is_empty()
         {
-            req.headers.set(Some(HeadersRef::create_empty()));
+            let mut headers = HeadersRef::create_empty();
+            headers.set_implied_by_body(true);
+            req.headers.set(Some(headers));
         }
 
         if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {

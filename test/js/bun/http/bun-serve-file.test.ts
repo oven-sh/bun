@@ -93,10 +93,27 @@ describe("Bun.file in serve routes", () => {
         const res = new Response(partialSlice());
         return new Response(res.body, res);
       },
+      "/slice-handler-copy-headers": () => {
+        const res = new Response(partialSlice());
+        return new Response(res.body, { headers: res.headers });
+      },
+      "/slice-handler-redirect-copy": () =>
+        new Response(partialSlice(), Response.redirect("/", new Response(partialSlice()))),
+      "/slice-handler-request-copy": () => {
+        const req = new Request("http://example.com/", { method: "POST", body: partialSlice() });
+        return new Response(req.body, req);
+      },
+      "/slice-handler-request-copy-headers-read": () => {
+        const req = new Request("http://example.com/", { method: "POST", body: partialSlice() });
+        req.headers.get("X-Custom");
+        return new Response(req.body, req);
+      },
+      "/slice-handler-clone": () => new Response(partialSlice()).clone(),
       "/slice-handler-content-range": () =>
         new Response(partialSlice(), { headers: { "Content-Range": "bytes 5-9/16" } }),
       "/slice-handler-206": () => new Response(partialSlice(), { status: 206 }),
       "/slice-handler-206-headers": () => new Response(partialSlice(), { status: 206, headers: { "X-Custom": "1" } }),
+      "/slice-handler-empty-headers": () => new Response(partialSlice().slice(2, 2), { headers: { "X-Custom": "1" } }),
       "/slice-handler-status": () => new Response(partialSlice(), { status: 201 }),
       "/slice-handler-status-headers": () =>
         new Response(partialSlice(), { status: 201, headers: { "X-Custom": "1" } }),
@@ -776,34 +793,45 @@ describe("Bun.file in serve routes", () => {
       });
     });
 
-    it("a handler's slice is a 206 with Content-Range, with or without headers", async () => {
+    it("a handler's slice is a 206 with Content-Range until the handler gives or reads headers", async () => {
       const serve = async (pathname: string) => {
         const res = await fetch(new URL(pathname, server.url));
         return { status: res.status, contentRange: res.headers.get("Content-Range"), body: await res.text() };
       };
       const partial = { status: 206, contentRange: "bytes 5-9/*", body: "56789" };
-      // Another status stays, and gets no Content-Range.
-      const created = { status: 201, contentRange: null, body: "56789" };
+      const whole = { status: 200, contentRange: null, body: "56789" };
       expect({
         "no headers": await serve("/slice-handler"),
+        "copy": await serve("/slice-handler-copy"),
+        "copy of a Request": await serve("/slice-handler-request-copy"),
+        "clone": await serve("/slice-handler-clone"),
+        "status 206": await serve("/slice-handler-206"),
+        "status": await serve("/slice-handler-status"),
+        "Content-Range": await serve("/slice-handler-content-range"),
         "headers": await serve("/slice-handler-headers"),
         "headers read": await serve("/slice-handler-headers-read"),
-        "copy": await serve("/slice-handler-copy"),
-        "Content-Range": await serve("/slice-handler-content-range"),
-        "status 206": await serve("/slice-handler-206"),
+        "copy with its headers": await serve("/slice-handler-copy-headers"),
+        "copy of a Request, headers read": await serve("/slice-handler-request-copy-headers-read"),
+        "copy of a redirect": await serve("/slice-handler-redirect-copy"),
         "status 206 and headers": await serve("/slice-handler-206-headers"),
-        "status": await serve("/slice-handler-status"),
         "status and headers": await serve("/slice-handler-status-headers"),
+        "empty and headers": await serve("/slice-handler-empty-headers"),
       }).toEqual({
         "no headers": partial,
-        "headers": partial,
-        "headers read": partial,
         "copy": partial,
-        "Content-Range": { ...partial, contentRange: "bytes 5-9/16" },
+        "copy of a Request": partial,
+        "clone": partial,
         "status 206": partial,
-        "status 206 and headers": partial,
-        "status": created,
-        "status and headers": created,
+        "status": partial,
+        "Content-Range": { ...partial, contentRange: "bytes 5-9/16" },
+        "headers": whole,
+        "headers read": whole,
+        "copy with its headers": whole,
+        "copy of a Request, headers read": whole,
+        "copy of a redirect": whole,
+        "status 206 and headers": { ...whole, status: 206 },
+        "status and headers": { ...whole, status: 201 },
+        "empty and headers": { ...whole, body: "" },
       });
     });
 

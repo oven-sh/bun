@@ -599,7 +599,9 @@ impl Response {
             }
         }
 
-        Ok(init.headers.as_mut().unwrap())
+        let headers = init.headers.as_mut().unwrap();
+        headers.set_implied_by_body(false);
+        Ok(headers)
     }
 
     pub(crate) fn get_headers(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -1147,7 +1149,9 @@ impl Response {
         if let BodyValue::Blob(blob) = body.value.get() {
             let content_type = blob.content_type_slice();
             if init.headers.is_none() && !content_type.is_empty() {
-                init.headers = Some(HeadersRef::create_empty());
+                init.headers
+                    .insert(HeadersRef::create_empty())
+                    .set_implied_by_body(true);
             }
             if let Some(headers) = init.headers.as_deref_mut() {
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {

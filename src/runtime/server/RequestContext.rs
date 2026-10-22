@@ -3880,21 +3880,31 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        let mut headers = response.swap_init_headers();
-        if let Some(headers_) = &mut headers {
+        if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
-        }
-        // A 206 answers a Range: header (sendfile.total > 0), and a `.slice()` with status 200 or 206 or a Content-Range.
-        needs_content_range = needs_content_range
-            && (sendfile.total > 0 || has_content_range || status == 200 || status == 206);
-        if needs_content_range {
-            status = 206;
-        }
+            // For .slice()-driven ranges, only promote to 206 if the user
+            // also set Content-Range (preserves the old contract). For an
+            // incoming Range: header (sendfile.total > 0) we always 206.
+            // A list implied by the body counts as no list.
+            needs_content_range = needs_content_range
+                && (sendfile.total > 0 || has_content_range || headers_.is_implied_by_body());
+            if needs_content_range {
+                status = 206;
+            }
 
-        self.do_write_status(status);
-        if let Some(mut headers_) = headers {
+            self.do_write_status(status);
             self.do_write_headers(&mut headers_);
+            // `HeadersRef` is RAII — its Drop
+            // already calls `WebCore__FetchHeaders__deref`, so an explicit
+            // `.deref()` here would resolve (via DerefMut) to the inherent
+            // `FetchHeaders::deref` and double-free the C++ object.
+            drop(headers_);
+        } else if needs_content_range {
+            status = 206;
+            self.do_write_status(status);
+        } else {
+            self.do_write_status(status);
         }
 
         if let Some(mut cookies) = self.cookies.replace(None) {

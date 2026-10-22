@@ -2357,6 +2357,17 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createEmpty()
     auto* headers = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     return headers;
 }
+
+void WebCore__FetchHeaders__setImpliedByBody(WebCore::FetchHeaders* headers, bool implied)
+{
+    headers->setImpliedByBody(implied);
+}
+
+bool WebCore__FetchHeaders__isImpliedByBody(WebCore::FetchHeaders* headers)
+{
+    return headers->isImpliedByBody();
+}
+
 WebCore::FetchHeaders* WebCore__FetchHeaders__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
 {
     return WebCoreCast<WebCore::JSFetchHeaders, WebCore::FetchHeaders>(JSValue0);
@@ -2436,6 +2447,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__cloneThis(WebCore::FetchHeaders* h
 {
     auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
+    clone->setImpliedByBody(headers->isImpliedByBody());
     WebCore::propagateException(*lexicalGlobalObject, throwScope, clone->fill(*headers));
     return clone;
 }

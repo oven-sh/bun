@@ -1893,8 +1893,7 @@ impl FileSink {
     }
 
     /// Pump a JS `stream` in through the pipe's `controller`; the writer is ended when the pump settles.
-    /// With `keep_process_alive` (a child's stdin) the process stays alive while the pump waits for
-    /// its source. A write of script's does not hold it: whatever can feed the stream does.
+    /// `keep_process_alive`: a child's stdin holds the process while the pump waits for its source. For `Bun.write`, what can feed the stream does.
     fn assign_to_js_stream(
         &mut self,
         stream: &mut ReadableStream,

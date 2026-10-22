@@ -25,42 +25,62 @@ impl Export {
             // No args: print all exported vars.
             return Self::print_all(interp, cmd);
         }
+        Self::assign_prefixes(interp, cmd, argc);
         for i in 0..argc {
             let s = Builtin::of(interp, cmd).arg_bytes(i);
             if s.is_empty() {
                 continue;
             }
             let (name, value) = match bun_core::strings::index_of_char_usize(s, b'=') {
-                Some(eq) => (&s[..eq], &s[eq + 1..]),
-                None => (s, &b""[..]),
+                Some(eq) => (&s[..eq], Some(&s[eq + 1..])),
+                None => (s, None),
             };
             // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
-            // `init_slice` here would leave dangling EnvStr in `export_env`.
+            // `init_slice` here would leave dangling EnvStr in the variable table.
             let label = EnvStr::dupe_ref_counted(name);
-            let val = EnvStr::dupe_ref_counted(value);
-            let shell = interp.as_cmd(cmd).base.shell;
-            // SAFETY: shell env outlives the Cmd node.
-            unsafe { (*shell).export_env.insert(label, val) };
+            let val = value.map(EnvStr::dupe_ref_counted);
+            let shell = interp.as_cmd_mut(cmd).base.shell_mut();
+            shell.vars.export(label, val);
             label.deref();
-            val.deref();
+            if let Some(val) = val {
+                val.deref();
+            }
         }
         Builtin::done(interp, cmd, 0)
     }
 
+    /// `NAME=v export NAME`: the prefix on this command assigns the operand.
+    fn assign_prefixes(interp: &Interpreter, cmd: NodeId, argc: usize) {
+        for i in 0..argc {
+            let Some(prefixes) = interp.as_cmd(cmd).prefix_env.as_deref() else {
+                return;
+            };
+            let s = Builtin::of(interp, cmd).arg_bytes(i);
+            let eq = bun_core::strings::index_of_char_usize(s, b'=').unwrap_or(s.len());
+            let Some(value) = prefixes.get(EnvStr::init_slice(&s[..eq])) else {
+                continue;
+            };
+            let label = EnvStr::dupe_ref_counted(&s[..eq]);
+            let shell = interp.as_cmd_mut(cmd).base.shell_mut();
+            shell.vars.set(label, value);
+            label.deref();
+            value.deref();
+        }
+    }
+
     fn print_all(interp: &Interpreter, cmd: NodeId) -> Yield {
-        let mut entries: Vec<(EnvStr, EnvStr)> = Builtin::shell(interp, cmd)
-            .export_env
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
+        let mut entries: Vec<(EnvStr, Option<EnvStr>)> =
+            Builtin::shell(interp, cmd).vars.exported_names().collect();
         index_sort::sort_slice_by(&mut entries, |a, b| a.0.slice().cmp(b.0.slice()));
 
         let mut buf = Vec::new();
         for (k, v) in &entries {
             buf.extend_from_slice(k.slice());
-            buf.push(b'=');
-            buf.extend_from_slice(v.slice());
+            if let Some(v) = v {
+                buf.push(b'=');
+                buf.extend_from_slice(v.slice());
+            }
             buf.push(b'\n');
         }
 

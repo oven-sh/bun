@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use bun_sys::{self, Fd};
 
-pub(crate) use crate::shell::env_map::EnvMap;
+pub(crate) use crate::shell::env_map::{EnvMap, VarTable};
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
@@ -480,25 +480,25 @@ impl Interpreter {
         event_loop: EventLoopHandle,
         shargs: Box<ShellArgs>,
         jsobjs: Vec<crate::jsc::JSValue>,
-        export_env_: Option<EnvMap>,
+        export_env_: Option<VarTable>,
         cwd_: Option<&[u8]>,
     ) -> ShellResult<Box<Interpreter>> {
         // ── export_env ─────────────────────────────────────────────────────
         // On the `.js` event loop, take `export_env_` (or empty); on `.mini`,
         // populate from `event_loop.env()` (the loop's `DotEnv::Loader`).
         let export_env = if matches!(event_loop, EventLoopHandle::Js { .. }) {
-            export_env_.unwrap_or_else(EnvMap::init)
+            export_env_.unwrap_or_else(VarTable::init)
         } else {
             // SAFETY: `event_loop.env()` returns the `MiniEventLoop`'s
             // `DotEnv::Loader`, which is set by `init_global()` and outlives
             // the interpreter (thread-lifetime singleton).
             let env_loader = unsafe { &mut *event_loop.env() };
-            let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
+            let mut export_env = VarTable::init_with_capacity(env_loader.map.map.count());
             let mut iter = env_loader.iterator();
             while let Some(entry) = iter.next() {
                 let key = crate::shell::EnvStr::init_slice(&entry.key_ptr[..]);
                 let value = crate::shell::EnvStr::init_slice(&entry.value_ptr.value[..]);
-                export_env.insert(key, value);
+                export_env.export(key, Some(value));
             }
             export_env
         };
@@ -564,9 +564,7 @@ impl Interpreter {
             root_shell: JsCell::new(ShellExecEnv {
                 _buffered_stdout: Bufio::default(),
                 _buffered_stderr: Bufio::default(),
-                shell_env: EnvMap::init(),
-                cmd_local_env: EnvMap::init(),
-                export_env,
+                vars: export_env,
                 __prev_cwd: cwd_arr.clone(),
                 __cwd: cwd_arr,
                 cwd_fd,
@@ -1804,9 +1802,7 @@ pub(crate) fn throw_shell_err(
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
-    pub(crate) shell_env: EnvMap,
-    pub(crate) cmd_local_env: EnvMap,
-    pub(crate) export_env: EnvMap,
+    pub(crate) vars: VarTable,
     pub(crate) __prev_cwd: Vec<u8>,
     pub(crate) __cwd: Vec<u8>,
     pub(crate) cwd_fd: Fd,
@@ -1846,9 +1842,7 @@ pub(crate) enum ShellExecEnvKind {
 impl ShellExecEnv {
     pub(crate) fn memory_cost(&self) -> usize {
         let mut size = core::mem::size_of::<ShellExecEnv>();
-        size += self.shell_env.memory_cost();
-        size += self.cmd_local_env.memory_cost();
-        size += self.export_env.memory_cost();
+        size += self.vars.memory_cost();
         size += self.__cwd.capacity();
         size += self.__prev_cwd.capacity();
         size += self._buffered_stderr.memory_cost();
@@ -1925,7 +1919,7 @@ impl ShellExecEnv {
 
     /// Heap-allocates a
     /// fresh env for a subshell/pipeline child: dups `cwd_fd`, clones
-    /// `shell_env`/`export_env`, gives it a fresh empty `cmd_local_env`, and
+    /// `vars`, and
     /// borrows or owns buffered stdout/stderr per `kind` (subshell/pipeline
     /// borrow the parent's buffers so output bubbles up; cmd-subst owns).
     ///
@@ -1965,9 +1959,7 @@ impl ShellExecEnv {
         let duped = Box::new(ShellExecEnv {
             _buffered_stdout: stdout,
             _buffered_stderr: stderr,
-            shell_env: self.shell_env.clone(),
-            cmd_local_env: EnvMap::init(),
-            export_env: self.export_env.clone(),
+            vars: self.vars.clone(),
             __prev_cwd: self.__prev_cwd.clone(),
             __cwd: self.__cwd.clone(),
             cwd_fd: dupedfd,
@@ -1987,7 +1979,7 @@ impl ShellExecEnv {
         // explicit close.
         let boxed = unsafe { bun_core::heap::take(this) };
         closefd(boxed.cwd_fd);
-        // EnvMap/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
+        // VarTable/Vec/Vec<u8> drop impls free their storage; `Bufio::Borrowed`
         // is a raw ptr so its drop is a no-op.
         drop(boxed);
     }
@@ -2007,11 +1999,9 @@ impl ShellExecEnv {
                 o.clear_and_free();
             }
         }
-        // EnvMap has a Drop impl; replace with fresh to free now and leave
+        // VarTable has a Drop impl; replace with fresh to free now and leave
         // valid state for any later `Drop` of the outer `Interpreter` box.
-        self.shell_env = EnvMap::init();
-        self.cmd_local_env = EnvMap::init();
-        self.export_env = EnvMap::init();
+        self.vars = VarTable::init();
         self.__cwd = Vec::new();
         self.__prev_cwd = Vec::new();
         closefd(self.cwd_fd);
@@ -2043,7 +2033,7 @@ impl ShellExecEnv {
 
     /// Resolves `new_cwd_` (absolute, or relative to current `cwd()`), opens it
     /// with `O_DIRECTORY`, and on success rotates `__cwd`/`__prev_cwd`/`cwd_fd`.
-    /// Always writes `PWD` into `export_env`; `OLDPWD` is written only when
+    /// Always exports `PWD`; `OLDPWD` is written only when
     /// `!in_init` (the very first cwd has no meaningful "previous").
     pub(crate) fn change_cwd_impl(
         &mut self,
@@ -2131,38 +2121,20 @@ impl ShellExecEnv {
         // `init()` with `in_init = true`) still exports the resolved cwd.
         // Note: reshaped for borrowck — materialize the EnvStr (which
         // erases the slice lifetime into a packed ptr) before taking
-        // `&mut self.export_env`.
+        // `&mut self.vars`.
         use crate::shell::env_str::EnvStr;
         if !in_init {
             let oldpwd = EnvStr::init_slice(self.prev_cwd());
-            self.export_env
-                .insert(EnvStr::init_slice(b"OLDPWD"), oldpwd);
+            self.vars
+                .export(EnvStr::init_slice(b"OLDPWD"), Some(oldpwd));
         }
         let pwd = EnvStr::init_slice(self.cwd());
-        self.export_env.insert(EnvStr::init_slice(b"PWD"), pwd);
+        self.vars.export(EnvStr::init_slice(b"PWD"), Some(pwd));
 
         Ok(())
     }
 
-    /// Routes `label = value` into an env map depending on where the
-    /// assignment appeared (`FOO=1 cmd` → cmd-local, bare `FOO=1` → shell).
-    /// NOTE: `EnvMap::insert` `.ref()`s the value, so callers should deref
-    /// `value` after the call.
-    pub(crate) fn assign_var(
-        &mut self,
-        label: crate::shell::env_str::EnvStr,
-        value: crate::shell::env_str::EnvStr,
-        assign_ctx: AssignCtx,
-    ) {
-        match assign_ctx {
-            AssignCtx::Cmd => self.cmd_local_env.insert(label, value),
-            AssignCtx::Shell => self.shell_env.insert(label, value),
-        }
-    }
-
-    /// Looks up `$HOME` (`$USERPROFILE` on Windows) in `shell_env` first, then
-    /// `export_env`. Falls back to `""` (or `/data/local/tmp` on Android) so
-    /// `cd` with no args / `~` expansion never sees a null.
+    /// `$HOME` (`$USERPROFILE` on Windows), or `""` (`/data/local/tmp` on Android) so `cd` and `~` never see a null.
     pub(crate) fn get_homedir(&self) -> crate::shell::env_str::EnvStr {
         use crate::shell::env_str::EnvStr;
         let key = if cfg!(windows) {
@@ -2170,16 +2142,13 @@ impl ShellExecEnv {
         } else {
             EnvStr::init_slice(b"HOME")
         };
-        self.shell_env
-            .get(key)
-            .or_else(|| self.export_env.get(key))
-            .unwrap_or_else(|| {
-                EnvStr::init_slice(if bun_core::env::IS_ANDROID {
-                    b"/data/local/tmp"
-                } else {
-                    b""
-                })
+        self.vars.get(key).unwrap_or_else(|| {
+            EnvStr::init_slice(if bun_core::env::IS_ANDROID {
+                b"/data/local/tmp"
+            } else {
+                b""
             })
+        })
     }
 }
 

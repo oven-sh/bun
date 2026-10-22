@@ -104,6 +104,33 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() with a live prefixed Bun.$ command does not leak variable values or the prefix map",
+  async () => {
+    // Each statement takes one release path of the variable table. `sh` checks what it got, then stays alive with its prefix map.
+    await runTerminateScenario(
+      `
+      const running = Bun.$\`
+        L=1; L=2
+        OUTER=changed
+        export E=1; E=2; export E=3
+        P=1 export P
+        R=1 R=2 sh -c 'test "$L$OUTER$E$P$R" = changed312 && echo ok > flag.txt && exec sleep 100'
+      \`.nothrow();
+      const exited = running.then(() => {
+        throw new Error("sh did not get OUTER, E, P and R as the script set them");
+      });
+      while (!(await Bun.file("flag.txt").exists())) {
+        await Promise.race([Bun.sleep(5), exited]);
+      }
+      postMessage("ok");
+    `,
+      { OUTER: "fromenv" },
+    );
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
+test.skipIf(!isASAN || isWindows)(
   "worker.terminate() with a live Bun.$ file redirect does not leak the redirection fd",
   async () => {
     // `> out.txt` opens a CowFd on the Cmd that only Cmd::deinit releases.

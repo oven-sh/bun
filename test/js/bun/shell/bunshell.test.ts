@@ -1301,12 +1301,7 @@ booga"
       let procEnv = JSON.parse(str1);
       expect(procEnv).toEqual({ ...bunEnv, BAZ: "1", FOO: "bar" });
       procEnv = JSON.parse(str2);
-      expect(procEnv).toEqual({
-        ...bunEnv,
-        BAZ: "1",
-        FOO: "bar",
-        BUN_TEST_VAR: "1",
-      });
+      expect(procEnv).toEqual({ ...bunEnv, FOO: "bar", BUN_TEST_VAR: "1" });
     });
 
     test("syntax edgecase", async () => {
@@ -1318,6 +1313,239 @@ booga"
       const procEnv = JSON.parse(str);
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
+    });
+  });
+
+  // `export NAME` keeps the value, a plain assignment keeps the export attribute, a `NAME=value` prefix reaches one command.
+  describe("exported variables", () => {
+    // Prints NAME=value for each NAME argument, as a child process sees it.
+    const childEnv = "console.log(process.argv.slice(1).map(k => k + '=' + (process.env[k] ?? '<unset>')).join(' '))";
+    const env = { ...bunEnv, OUTER: "fromenv", APPEND: "base", CLEARED: "full" };
+
+    TestBuilder.command`
+      A=1; export A
+      export OUTER
+      export KEEP=1; export KEEP
+      export NOVALUE
+      export LATER; LATER=late
+      export EMPTY=
+      X=1; Y=2; export X Y
+      echo "$A $OUTER $KEEP [$NOVALUE] $LATER [$EMPTY] $X $Y"
+      ${BUN} -e ${childEnv} A OUTER KEEP NOVALUE LATER EMPTY X Y
+    `
+      .env(env)
+      .stdout("1 fromenv 1 [] late [] 1 2\nA=1 OUTER=fromenv KEEP=1 NOVALUE=<unset> LATER=late EMPTY= X=1 Y=2\n")
+      .testMini()
+      .runAsTest("export NAME keeps the value of the name");
+
+    TestBuilder.command`
+      OUTER=changed
+      APPEND="$APPEND+more"
+      CLEARED=
+      export T=5; T=6
+      U=5; export U; U=7
+      FRESH=1
+      echo "$OUTER $APPEND [$CLEARED] $T $U $FRESH"
+      ${BUN} -e ${childEnv} OUTER APPEND CLEARED T U FRESH
+    `
+      .env(env)
+      .stdout("changed base+more [] 6 7 1\nOUTER=changed APPEND=base+more CLEARED= T=6 U=7 FRESH=<unset>\n")
+      .testMini()
+      .runAsTest("a plain assignment keeps the export attribute of the name");
+
+    TestBuilder.command`
+      FOO=a; export FOO=b; echo $FOO
+      BAR=a; export BAR=b; BAR=c; echo $BAR
+      ${BUN} -e ${childEnv} FOO BAR
+    `
+      .stdout("b\nc\nFOO=b BAR=c\n")
+      .testMini()
+      .runAsTest("export NAME=value replaces a plain assignment to the name");
+
+    TestBuilder.command`
+      OUTER=changed; FRESH=1; export PENDING
+      (${BUN} -e ${childEnv} OUTER FRESH)
+      ${BUN} -e ${childEnv} OUTER FRESH | cat
+      echo $(${BUN} -e ${childEnv} OUTER FRESH)
+      (OUTER=inner; export FRESH; export NESTED=1; PENDING=1; ${BUN} -e ${childEnv} OUTER FRESH NESTED PENDING)
+      ${BUN} -e ${childEnv} OUTER FRESH NESTED PENDING
+    `
+      .env(env)
+      .stdout(
+        [
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=changed FRESH=<unset>",
+          "OUTER=inner FRESH=1 NESTED=1 PENDING=1",
+          "OUTER=changed FRESH=<unset> NESTED=<unset> PENDING=<unset>",
+          "",
+        ].join("\n"),
+      )
+      .testMini()
+      .runAsTest("a subshell, a pipeline and a command substitution copy values and attributes");
+
+    TestBuilder.command`PWD=junk; OLDPWD=junk; cd .; cd .; echo $PWD; echo $OLDPWD; pwd; ${BUN} -e ${childEnv} PWD OLDPWD`
+      .env({ ...bunEnv, PWD: undefined, OLDPWD: undefined })
+      .stdout(out => {
+        const [pwd, oldpwd, cwd, child] = out.split("\n");
+        expect({ pwd, oldpwd, child }).toEqual({ pwd: cwd, oldpwd: cwd, child: `PWD=${cwd} OLDPWD=${cwd}` });
+      })
+      .testMini()
+      .runAsTest("cd sets and exports PWD and OLDPWD over a plain assignment");
+
+    // OLDPWD gets the export attribute from the first `cd`, as in dash. bash exports it from the start.
+    TestBuilder.command`
+      OLDPWD=junk
+      ${BUN} -e ${childEnv} OLDPWD
+      cd .; cd .
+      pwd
+      ${BUN} -e ${childEnv} OLDPWD
+    `
+      .env({ ...bunEnv, OLDPWD: undefined })
+      .stdout(out => {
+        const [before, cwd, after] = out.split("\n");
+        expect({ before, after }).toEqual({ before: "OLDPWD=<unset>", after: `OLDPWD=${cwd}` });
+      })
+      .testMini()
+      .runAsTest("OLDPWD is not exported before the first cd");
+
+    TestBuilder.command`OUTER=changed; export NOVALUE; export`
+      .env(env)
+      .stdout(out => {
+        const lines = out.split("\n").filter(line => line.startsWith("OUTER") || line.startsWith("NOVALUE"));
+        expect(lines).toEqual(["NOVALUE", "OUTER=changed"]);
+      })
+      .testMini()
+      .runAsTest("export with no operand lists the current value of each exported name");
+
+    // Only the prefix on the `export` command itself is an assignment to its operand.
+    TestBuilder.command`
+      A=3 export A; echo $A
+      B=1 export B=2 B; echo $B
+      C=4 true; export C; echo "[$C]"
+      ${BUN} -e ${childEnv} A B C
+    `
+      .stdout("3\n2\n[]\nA=3 B=2 C=<unset>\n")
+      .testMini()
+      .runAsTest("NAME=value export NAME assigns the value to the name");
+
+    // A prefix on `export` assigns only a name that is an operand, as in bash. dash assigns every prefix.
+    TestBuilder.command`
+      D=1 export E; echo "[$D]"
+      OUTER=x export F; echo $OUTER
+      G=1 H=2 export G; echo "[$G][$H]"
+      ${BUN} -e ${childEnv} D OUTER G H
+    `
+      .env(env)
+      .stdout("[]\nfromenv\n[1][]\nD=<unset> OUTER=fromenv G=1 H=<unset>\n")
+      .testMini()
+      .runAsTest("a prefix on export does not assign a name that is not an operand");
+
+    TestBuilder.command`
+      OUTER=pre NEW=1 ${BUN} -e ${childEnv} OUTER NEW
+      ${BUN} -e ${childEnv} OUTER NEW
+      OUTER=changed
+      ${BUN} -e ${childEnv} OUTER
+      echo "$OUTER [$NEW]"
+    `
+      .env(env)
+      .stdout("OUTER=pre NEW=1\nOUTER=fromenv NEW=<unset>\nOUTER=changed\nchanged []\n")
+      .testMini()
+      .runAsTest("a NAME=value prefix reaches one command only");
+
+    // Windows: names are ASCII-case-insensitive, as in process.env, so `outer` is the inherited `OUTER`.
+    TestBuilder.command`outer=changed; echo $OUTER; ${BUN} -e ${childEnv} OUTER`
+      .env(env)
+      .stdout(isWindows ? "changed\nOUTER=changed\n" : "fromenv\nOUTER=fromenv\n")
+      .testMini()
+      .runAsTest("a name in another case is the same variable on Windows only");
+
+    // `env` is a POSIX tool. It prints every entry of the environment it got, duplicates included.
+    if (isPosix) {
+      TestBuilder.command`
+        OUTER=pre env
+        export MADE=first; MADE=second env
+        TWICE=1 TWICE=2 env
+      `
+        .env(env)
+        .stdout(out => {
+          const entries = out.split("\n").filter(line => /^(OUTER|MADE|TWICE)=/.test(line));
+          expect(entries).toEqual([
+            "OUTER=pre",
+            "OUTER=fromenv",
+            "MADE=second",
+            "OUTER=fromenv",
+            "MADE=first",
+            "TWICE=2",
+          ]);
+        })
+        .testMini()
+        .runAsTest("a NAME=value prefix over an exported name gives the child one entry for the name");
+    }
+
+    // `set NAME` of cmd.exe prints every entry of the environment it got whose name starts with NAME.
+    if (isWindows) {
+      TestBuilder.command`
+        OUTER=pre cmd /d /c set OUTER
+        outer=low cmd /d /c set OUTER
+        export MADE=first; made=second cmd /d /c set MADE
+      `
+        .env(env)
+        .stdout(out => {
+          expect(out.split(/\r?\n/).filter(Boolean)).toEqual(["OUTER=pre", "outer=low", "made=second"]);
+        })
+        .testMini()
+        .runAsTest("a NAME=value prefix over an exported name gives the child one entry for the name");
+    }
+
+    // Each sequence runs in its own subshell, for a name that is unset at the start and for an inherited name.
+    test.skipIf(isWindows)("sequences of assignments, exports and prefixes give the result of sh", async () => {
+      const ops = ["V=1", "export V", "export V=3", "V=4 printenv V"];
+      const sequences = ops.flatMap(a => [[a], ...ops.flatMap(b => [[a, b], ...ops.map(c => [a, b, c])])]);
+      const script = ["UNSET_AT_START", "OUTER"]
+        .flatMap(name =>
+          sequences.map(sequence => {
+            const statements = sequence.join("; ").replaceAll("V", name);
+            return `(echo '# ${statements}'; ${statements}; printenv ${name} || echo not-in-env; echo "[$${name}]")`;
+          }),
+        )
+        .join("\n");
+
+      const sh = Bun.spawnSync({ cmd: ["sh", "-c", script], env, stderr: "inherit" });
+      const bun = await $`${{ raw: script }}`.env(env).quiet().nothrow();
+      expect(bun.stdout.toString().split("\n")).toEqual(sh.stdout.toString().split("\n"));
+    });
+
+    TestBuilder.command`A=1 $EMPTY; echo "[$A]"`
+      .stdout("[1]\n")
+      .todo("a command with no command word does not keep its assignments yet")
+      .runAsTest("NAME=value before an empty expansion assigns the name");
+
+    test("a plain assignment to PATH is used by which", async () => {
+      const exe = isWindows ? "onlyintool.exe" : "onlyintool";
+      using dir = tempDir("shell-path-assign-which", { [exe]: "" });
+      if (!isWindows) chmodSync(join(String(dir), exe), 0o755);
+
+      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; which onlyintool`.quiet().nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString()).toBe(join(String(dir), exe) + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // Windows: the command lookup matches the key PATH byte for byte and the inherited key is spelled Path (#42049).
+    test.todoIf(isWindows)("a plain assignment to PATH is used by command lookup", async () => {
+      using dir = tempDir(
+        "shell-path-assign",
+        isWindows
+          ? { "onlyintool.cmd": "@echo from-onlyintool\r\n" }
+          : { "onlyintool": "#!/bin/sh\necho from-onlyintool\n" },
+      );
+      if (!isWindows) chmodSync(join(String(dir), "onlyintool"), 0o755);
+
+      const { stdout, stderr, exitCode } = await $`PATH=${String(dir)}; onlyintool`.quiet().nothrow();
+      expect(stderr.toString()).toBe("");
+      expect(stdout.toString().trim()).toBe("from-onlyintool");
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -3763,6 +3991,24 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
+  }
+
+  // A `PATH=` prefix is the PATH of its own command only: a later command is looked up on the shell's PATH.
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir}/empty true; onlyintool`
+      .env({ ...bunEnv, PATH: toolDir })
+      .quiet()
+      .nothrow();
+    expect(stderr.toString()).toBe("");
+    expect(stdout.toString()).toBe("from-onlyintool\n");
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, stderr, exitCode } = await $`PATH=${toolDir} true; onlyintool`.quiet().nothrow();
+    expect(stderr.toString()).toBe("bun: command not found: onlyintool\n");
+    expect(stdout.toString()).toBe("");
+    expect(exitCode).toBe(1);
   }
 });
 

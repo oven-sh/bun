@@ -6,7 +6,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{
+    CowFd, EnvMap, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log,
+};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -23,6 +25,8 @@ pub(crate) struct Cmd {
     pub(crate) io: IO,
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
+    /// The `NAME=value` words before the command name. They reach this command only.
+    pub(crate) prefix_env: Option<Box<EnvMap>>,
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
@@ -212,6 +216,7 @@ impl Cmd {
             io,
             state: CmdState::Idle,
             args: Vec::new(),
+            prefix_env: None,
             redirection_file: Vec::new(),
             redirection_fd: None,
             exec: Exec::None,
@@ -478,13 +483,10 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
-        // Fill env from export_env + cmd_local_env.
         {
-            let env = interp.as_cmd_mut(this).base.shell_mut();
-            let mut iter = env.export_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
-            let mut iter = env.cmd_local_env.iterator();
-            spawn_args.fill_env::<false>(&mut iter);
+            let cmd = interp.as_cmd(this);
+            let prefixes = cmd.prefix_env.as_deref();
+            spawn_args.fill_env::<false>(cmd.base.shell().vars.child_env(prefixes));
         }
 
         // Resolve argv[0] via PATH (`bun_which::which`).

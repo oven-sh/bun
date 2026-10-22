@@ -490,12 +490,7 @@ impl Expansion {
                 *has_quoted_empty = true;
             }
             ast::SimpleAtom::Var(label) => {
-                // Spec `expandVar`: shell_env first, then export_env, else "".
-                let key = EnvStr::init_slice(label);
-                if let Some(v) = shell.shell_env.get(key) {
-                    out.extend_from_slice(v.slice());
-                    v.deref();
-                } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
+                if let Some(v) = shell.vars.get(EnvStr::init_slice(label)) {
                     out.extend_from_slice(v.slice());
                     v.deref();
                 }

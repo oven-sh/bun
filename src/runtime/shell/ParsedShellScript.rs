@@ -8,7 +8,7 @@ use bun_jsc::{
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
 
-use super::env_map::EnvMap;
+use super::env_map::VarTable;
 use super::interpreter::ShellArgs;
 use super::shell_body::shell_cmd_from_js;
 use super::{EnvStr, Interpreter};
@@ -26,7 +26,7 @@ pub(crate) struct ParsedShellScript {
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
     pub(crate) jsobjs: JsCell<Vec<JSValue>>,
-    pub(crate) export_env: JsCell<Option<EnvMap>>,
+    pub(crate) export_env: JsCell<Option<VarTable>>,
     pub(crate) quiet: Cell<bool>,
     pub(crate) cwd: JsCell<Option<BunString>>,
     /// Self-wrapper backref. `.classes.ts` has `finalize: true`, so the weak arm is
@@ -84,7 +84,7 @@ impl ParsedShellScript {
         Vec<JSValue>,
         bool,
         Option<BunString>,
-        Option<EnvMap>,
+        Option<VarTable>,
     ) {
         let args = self.args.replace(None).expect("args already taken");
         let jsobjs = self.jsobjs.replace(Vec::new());
@@ -144,7 +144,7 @@ impl ParsedShellScript {
         )?;
         // `defer object_iter.deinit()` — handled by Drop.
 
-        let mut env = EnvMap::init();
+        let mut env = VarTable::init();
         // errdefer env.deinit() — Drop on early-return handles this.
         env.ensure_total_capacity(object_iter.len);
 
@@ -162,11 +162,11 @@ impl ParsedShellScript {
             let keyref = EnvStr::init_ref_counted(keyslice);
             let valueref = EnvStr::init_ref_counted(slice);
 
-            env.insert(keyref, valueref);
+            env.export(keyref, Some(valueref));
             keyref.deref();
             valueref.deref();
         }
-        // Dropping the previous Option<EnvMap> deinits it.
+        // Dropping the previous Option<VarTable> deinits it.
         self.export_env.set(Some(env));
         Ok(JSValue::UNDEFINED)
     }

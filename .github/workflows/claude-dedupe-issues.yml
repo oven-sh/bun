@@ -38,7 +38,8 @@ jobs:
           CLAUDE_CODE_SCRIPT_CAPS: '{"comment-on-duplicates.sh":1}'
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Issue text is untrusted: this also strips credentials from the agent's subprocesses.
+          # Issue text is untrusted: this strips the API key from the agent's subprocesses.
+          # GH_TOKEN stays, because the helper scripts need it.
           allowed_non_write_users: "*"
           prompt: "/dedupe ${{ github.repository }}/issues/${{ github.event.issue.number || inputs.issue_number }}"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}

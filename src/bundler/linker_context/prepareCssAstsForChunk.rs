@@ -170,6 +170,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             source_index: AstIndex::default(),
                             original_path: b"",
                             flags: ImportRecordFlags::default(),
+                            unreadable_attributes: None,
                             unreadable_attributes_loc: Default::default(),
                         });
 
@@ -300,6 +301,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_index: AstIndex::default(),
                         original_path: b"",
                         flags: ImportRecordFlags::default(),
+                        unreadable_attributes: None,
                         unreadable_attributes_loc: Default::default(),
                     });
 

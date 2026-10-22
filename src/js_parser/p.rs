@@ -1460,8 +1460,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             Some(loader);
                     }
                     E::ImportLoader::Unreadable { reason, loc } => {
-                        self.import_records.items_mut()[import_record_index as usize]
-                            .set_unreadable_attributes(reason, loc);
+                        let record =
+                            &mut self.import_records.items_mut()[import_record_index as usize];
+                        record.unreadable_attributes = Some(reason);
+                        record.unreadable_attributes_loc = loc;
                     }
                     E::ImportLoader::None => {}
                 }
@@ -5288,6 +5290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             source_index: bun_ast::Index::INVALID,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
+            unreadable_attributes: None,
             unreadable_attributes_loc: bun_ast::Loc::EMPTY,
         });
         u32::try_from(index).expect("int cast")

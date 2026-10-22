@@ -2476,14 +2476,20 @@ fn attributes_loader(attributes: Expr, bump: &Bump) -> ImportLoader {
     let Some(loader) = crate::Loader::from_string(&type_str.flattened(bump).data) else {
         return ImportLoader::None;
     };
-    if loader == crate::Loader::Sqlite
-        && Object::get(attributes, b"embed")
-            .and_then(|embed| embed.data.as_e_string())
-            .is_some_and(|embed| embed.eql_comptime(b"true"))
-    {
+    if loader == crate::Loader::Sqlite && is_embedded_sqlite(attributes) {
         return ImportLoader::Attribute(crate::Loader::SqliteEmbedded);
     }
     ImportLoader::Attribute(loader)
+}
+
+/// `{ type: "sqlite", embed: "true" }`
+#[cold]
+fn is_embedded_sqlite(attributes: &Object) -> bool {
+    plain_property(attributes, b"embed", false)
+        .ok()
+        .flatten()
+        .and_then(|embed| embed.data.as_e_string())
+        .is_some_and(|embed| embed.eql_comptime(b"true"))
 }
 
 /// The value of `name` after the object literal is evaluated, when the definition that
@@ -2508,16 +2514,17 @@ fn plain_property(
     let mut found = Ok(None);
     let mut proto = None;
     for prop in obj.properties.slice() {
-        // A `[key]: value` or a spread can define `name`. Neither gets here today:
-        // `e_import` reads only options that have no side effects.
-        let (key, key_str) = match &prop.key {
-            Some(key) => match &key.data {
-                crate::ExprData::EString(key_str) => (key, key_str),
-                // `1: value` does not define `name`.
-                _ if key.is_primitive_literal() => continue,
-                _ => return Err(key.loc),
-            },
-            None => return Err(prop.value.map_or(crate::Loc::EMPTY, |value| value.loc)),
+        // A spread, or a `[key]: value` whose key is not a constant, can define `name`.
+        // Neither gets here today: `e_import` reads only options that have no side
+        // effects. A member of an enum in the same file is a constant key.
+        let Some(key) = prop.key.map(Expr::unwrap_inlined) else {
+            return Err(prop.value.map_or(crate::Loc::EMPTY, |value| value.loc));
+        };
+        let key_str = match &key.data {
+            crate::ExprData::EString(key_str) => key_str,
+            // `1: value` does not define `name`.
+            _ if key.is_primitive_literal() => continue,
+            _ => return Err(key.loc),
         };
         let is_plain = prop.kind == G::PropertyKind::Normal
             && !prop.flags.contains(crate::flags::Property::IsMethod);

@@ -2099,7 +2099,7 @@ pub mod bv2_impl {
         pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
 
         /// Importer and record index of every bundled `import()` that has
-        /// `ImportRecordFlags::UNREADABLE_ATTRIBUTES`.
+        /// `ImportRecord::unreadable_attributes`.
         pub(crate) imports_with_unreadable_attributes: Vec<(IndexInt, u32)>,
 
         pub(crate) stack: Vec<ReachFrame>,
@@ -2264,9 +2264,7 @@ pub mod bv2_impl {
 
                             let next_source = import_record.source_index;
                             if next_source.is_valid()
-                                && import_record
-                                    .flags
-                                    .contains(bun_ast::ImportRecordFlags::UNREADABLE_ATTRIBUTES)
+                                && import_record.unreadable_attributes.is_some()
                             {
                                 self.imports_with_unreadable_attributes
                                     .push((source_index.get(), ir_idx as u32));
@@ -2361,9 +2359,10 @@ pub mod bv2_impl {
             for &(importer, record_index) in imports {
                 let record =
                     &all_import_records[importer as usize].as_slice()[record_index as usize];
-                let Some((reason, loc)) = record.unreadable_attributes() else {
+                let Some(reason) = record.unreadable_attributes else {
                     continue;
                 };
+                let loc = record.unreadable_attributes_loc;
                 let target = record.source_index.get() as usize;
                 // What an `onLoad` plugin returned is the module, and a node polyfill has
                 // no loader to pick.

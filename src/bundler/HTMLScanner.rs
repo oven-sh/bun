@@ -116,6 +116,7 @@ impl<'a> HTMLScanner<'a> {
             source_index: AstIndex::default(),
             original_path: b"",
             flags: ImportRecordFlags::default(),
+            unreadable_attributes: None,
             unreadable_attributes_loc: Default::default(),
         };
 

@@ -32,12 +32,15 @@ pub struct ImportRecord {
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 
-    /// The expression that hides the `with` attributes of `import(specifier, options)`.
-    /// Only meaningful with `Flags::UNREADABLE_ATTRIBUTES`.
+    /// `import(specifier, options)` in a bundle: why only the runtime can read the
+    /// `with` attributes of `options`. The bundler then picks the loader from the file
+    /// extension, and `BundleV2` warns when it bundles the call.
+    pub unreadable_attributes: Option<UnreadableAttributes>,
+    /// The expression that hides those attributes.
     pub unreadable_attributes_loc: Loc,
 }
 
-// `unreadable_attributes_loc` sits in what was tail padding.
+// The two `unreadable_attributes` fields sit in what was padding.
 const _: () = assert!(core::mem::size_of::<ImportRecord>() == 96);
 
 bitflags::bitflags! {
@@ -114,14 +117,6 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
-
-        /// `import(specifier, options)` in a bundle: only the runtime can read the
-        /// `with` attributes of `options`, so the bundler picks the loader from the
-        /// file extension. `BundleV2` warns when it bundles the call.
-        const UNREADABLE_ATTRIBUTES = 1 << 20;
-
-        /// Two bits: the `UnreadableAttributes` of an `UNREADABLE_ATTRIBUTES` record.
-        const UNREADABLE_ATTRIBUTES_REASON = 0b11 << 21;
     }
 }
 
@@ -137,41 +132,6 @@ pub enum UnreadableAttributes {
     /// The definition of `with` or `type` that wins is a getter, a setter or a method,
     /// or `__proto__` can supply `with`.
     PropertyNotPlain,
-}
-
-impl ImportRecord {
-    const UNREADABLE_ATTRIBUTES_REASON_SHIFT: u32 =
-        Flags::UNREADABLE_ATTRIBUTES_REASON.bits().trailing_zeros();
-
-    pub fn set_unreadable_attributes(&mut self, reason: UnreadableAttributes, loc: Loc) {
-        let reason: u32 = match reason {
-            UnreadableAttributes::OptionsNotObjectLiteral => 0,
-            UnreadableAttributes::WithNotObjectLiteral => 1,
-            UnreadableAttributes::TypeNotStringLiteral => 2,
-            UnreadableAttributes::PropertyNotPlain => 3,
-        };
-        self.flags.insert(
-            Flags::UNREADABLE_ATTRIBUTES
-                | Flags::from_bits_retain(reason << Self::UNREADABLE_ATTRIBUTES_REASON_SHIFT),
-        );
-        self.unreadable_attributes_loc = loc;
-    }
-
-    #[inline]
-    pub fn unreadable_attributes(&self) -> Option<(UnreadableAttributes, Loc)> {
-        if !self.flags.contains(Flags::UNREADABLE_ATTRIBUTES) {
-            return None;
-        }
-        let reason = match (self.flags & Flags::UNREADABLE_ATTRIBUTES_REASON).bits()
-            >> Self::UNREADABLE_ATTRIBUTES_REASON_SHIFT
-        {
-            0 => UnreadableAttributes::OptionsNotObjectLiteral,
-            1 => UnreadableAttributes::WithNotObjectLiteral,
-            2 => UnreadableAttributes::TypeNotStringLiteral,
-            _ => UnreadableAttributes::PropertyNotPlain,
-        };
-        Some((reason, self.unreadable_attributes_loc))
-    }
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;

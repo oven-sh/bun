@@ -1,4 +1,5 @@
 import { fileURLToPath, Loader } from "bun";
+import { Database } from "bun:sqlite";
 import { describe, expect } from "bun:test";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
@@ -686,24 +687,49 @@ describe("bundler", async () => {
       },
     });
 
-    // A member of an enum in the same file is a constant.
+    // A member of an enum in the same file is a constant, as a value and as a key.
     itBundled("bun/import-options-enum-member", {
       target: "bun",
       outdir: "/out",
       files: {
         "/entry.ts": /* ts */ `
           ${show}
-          const enum Inlined { Text = "text" }
+          const enum Inlined { Text = "text", With = "with", Type = "type", One = 1 }
           enum Declared { Text = "text" }
           const results = await Promise.allSettled([
             import("./0.dat", { with: { type: Inlined.Text } }),
             import("./1.dat", { with: { type: Declared.Text } }),
+            import("./2.dat", { [Inlined.With]: { type: "text" } }),
+            import("./3.dat", { with: { [Inlined.Type]: "text" } }),
+            import("./4.dat", { [Inlined.One]: 1, with: { [Inlined.One]: "one", type: "text" } }),
           ]);
           console.log(results.map(show).join("\\n"));
         `,
-        ...dat(2),
+        ...dat(5),
       },
-      run: { stdout: [`text {"n":0}`, `text {"n":1}`].join("\n") },
+      run: { stdout: [0, 1, 2, 3, 4].map(i => `text {"n":${i}}`).join("\n") },
+    });
+
+    // Every attribute is read with the same rule: the last definition wins.
+    itBundled("bun/import-options-sqlite-embed", {
+      target: "bun",
+      outfile: "",
+      outdir: "/out",
+      files: {
+        "/entry.js": /* js */ `
+          const { default: db } = await import("./db.sqlite", {
+            with: { type: "sqlite", embed: "false", embed: "true" },
+          });
+          console.log(db.query("select message from messages LIMIT 1").get().message);
+        `,
+        "/db.sqlite": (() => {
+          const db = new Database(":memory:");
+          db.exec("create table messages (message text)");
+          db.exec("insert into messages values ('Hello, world!')");
+          return db.serialize();
+        })(),
+      },
+      run: { stdout: "Hello, world!" },
     });
 
     // Minification inlines a constant declared at the start of its scope and removes the

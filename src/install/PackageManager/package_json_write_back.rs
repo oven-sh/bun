@@ -19,7 +19,6 @@ use super::add_remove_with_filter::{
 };
 use super::options::Do;
 use super::package_json_editor::{self as PackageJSONEditor, Declared, EditOptions};
-use super::update_package_json_and_install::print_package_json_into_cache_entry;
 use super::workspace_manifests::same_row;
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
 use super::{PackageManager, Subcommand, UpdateRequest};
@@ -614,9 +613,9 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     }
     // Printing the file unchanged can already give different bytes. That alone isn't a reason to
     // write it.
-    let root = on_disk.root;
-    print_package_json_into_cache_entry(on_disk, root);
-    *on_disk.source.contents == *printed
+    on_disk
+        .print(on_disk.root)
+        .is_ok_and(|reprinted| *reprinted == *printed)
 }
 
 /// Phase 2 (after bun.lock is saved): add `trustedDependencies` learned during the install and write every edited entry whose bytes differ from disk.

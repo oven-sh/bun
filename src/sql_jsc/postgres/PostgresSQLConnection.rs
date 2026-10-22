@@ -1919,7 +1919,8 @@ impl PostgresSQLConnection {
                     return true;
                 }
                 // Whether an unnamed statement is described before its Bind depends on the values.
-                let formats = if unnamed {
+                // A statement without parameters is prepared before its RowDescription arrives.
+                let formats = if unnamed || statement.fields.is_empty() {
                     ResultFormats::Text
                 } else if req.flags.get().result_mode == SQLQueryResultMode::Raw {
                     ResultFormats::Raw

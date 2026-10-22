@@ -1214,6 +1214,15 @@ function pathToFileURL(filepath: string, options?: { windows?: boolean } | null)
   return createFileURL(resolved, windows);
 }
 
+// node shows V8's message for a pathname that does not decode. JSC's is "URI error".
+function decodePathname(pathname: string): string {
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    throw new URIError("URI malformed");
+  }
+}
+
 // Ports of node's getPathFromURLWin32/getPathFromURLPosix
 // (lib/internal/url.js), used when the `windows` option is explicit; the
 // host-platform path stays on the native fast path below.
@@ -1229,7 +1238,7 @@ function getPathFromURLWin32(url: URL): string {
     }
   }
   pathname = pathname.replace(/\//g, "\\");
-  pathname = decodeURIComponent(pathname);
+  pathname = decodePathname(pathname);
   if (hostname !== "") {
     // UNC path: \\hostname\path
     return `\\\\${domainToUnicode(hostname)}${pathname}`;
@@ -1255,7 +1264,7 @@ function getPathFromURLPosix(url: URL): string {
       }
     }
   }
-  return decodeURIComponent(pathname);
+  return decodePathname(pathname);
 }
 
 function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {

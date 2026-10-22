@@ -4,6 +4,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
+#include "NodeURLHelpers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
@@ -385,10 +386,9 @@ JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String&
 // fileSystemPath() returns null if a percent escape in the specifier doesn't decode to UTF-8. Retry with every "%" escaped.
 static String relativeSpecifierToFileSystemPath(const URL& base, const String& specifier)
 {
-    String path = URL(base, specifier).fileSystemPath();
-    if (path.isNull()) [[unlikely]]
-        path = URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)).fileSystemPath();
-    return path;
+    if (auto path = Bun::fileSystemPath(URL(base, specifier)))
+        return WTF::move(*path);
+    return Bun::fileSystemPathOfInternalURL(URL(base, makeStringByReplacingAll(specifier, "%"_s, "%25"_s)));
 }
 
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
@@ -650,9 +650,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
 
         if (specifier.startsWith("file:"_s)) {
             // fileSystemPath() returns null if the percent-decoded path isn't valid UTF-8.
-            String path = URL(url, specifier).fileSystemPath();
-            if (!path.isNull()) {
-                specifier = WTF::move(path);
+            auto path = Bun::fileSystemPath(URL(url, specifier));
+            if (path) {
+                specifier = WTF::move(*path);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -663,7 +663,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         }
 
         if (url.isValid() && url.protocolIsFile()) {
-            auto fromString = url.fileSystemPath();
+            auto fromString = Bun::fileSystemPathOfInternalURL(url);
             BunString from = Bun::toString(fromString);
             // Not resolving is fine (mocking a module that does not exist yet); anything else thrown
             // while resolving (e.g. by an onResolve plugin) propagates.

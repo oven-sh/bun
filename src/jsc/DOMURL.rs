@@ -1,6 +1,4 @@
-use core::ffi::c_int;
-
-use crate::{JSValue, VM};
+use crate::{JSGlobalObject, JSValue, VM};
 use bun_core as bstr;
 
 bun_opaque::opaque_ffi! {
@@ -8,22 +6,36 @@ bun_opaque::opaque_ffi! {
     pub struct DOMURL;
 }
 
-// `DOMURL`/`VM` are opaque `UnsafeCell`-backed ZST handles; the `c_int`
-// out-param is a plain `#[repr(C)]` POD whose `&mut` is exclusive for the
-// call → `safe fn`.
+// SAFETY: `DOMURL`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles; the
+// error out-param is a `#[repr(u8)]` enum that C++ writes only with one of
+// its values, and its `&mut` is exclusive for the call → `safe fn`.
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
-    safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
+    safe fn WebCore__DOMURL__fileSystemPath(
+        this: &DOMURL,
+        error: &mut ToFileSystemPathError,
+    ) -> bstr::String;
+    safe fn Bun__createURIMalformedError(global: &JSGlobalObject) -> JSValue;
 }
 
+/// Mirrors `Bun::FileURLToPathError` in NodeURLHelpers.h.
+#[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
 pub enum ToFileSystemPathError {
     #[error("NotFileUrl")]
-    NotFileUrl,
-    #[error("InvalidPath")]
-    InvalidPath,
+    NotFileUrl = 0,
     #[error("InvalidHost")]
-    InvalidHost,
+    InvalidHost = 1,
+    #[error("InvalidPath")]
+    InvalidPath = 2,
+    /// The percent-decoded path is not UTF-8.
+    #[error("Undecodable")]
+    Undecodable = 3,
+}
+
+/// Node's error for [`ToFileSystemPathError::Undecodable`]: `URIError: URI malformed`, with no `code`.
+pub fn uri_malformed_error(global: &JSGlobalObject) -> JSValue {
+    Bun__createURIMalformedError(global)
 }
 
 impl DOMURL {
@@ -46,15 +58,11 @@ impl DOMURL {
     }
 
     pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
-        let mut error_code: c_int = 0;
-        let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
-        match error_code {
-            1 => return Err(ToFileSystemPathError::InvalidHost),
-            2 => return Err(ToFileSystemPathError::InvalidPath),
-            3 => return Err(ToFileSystemPathError::NotFileUrl),
-            _ => {}
+        let mut error = ToFileSystemPathError::NotFileUrl;
+        let path = WebCore__DOMURL__fileSystemPath(self, &mut error);
+        if path.is_dead() {
+            return Err(error);
         }
-        debug_assert!(path.tag() != bun_core::Tag::Dead);
         Ok(path)
     }
 }

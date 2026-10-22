@@ -88,8 +88,10 @@ pub mod whatwg {
     pub fn file_url_from_string(str: &String) -> String {
         URL__getFileURLString(str)
     }
-    pub fn path_from_file_url(str: &String) -> String {
-        URL__pathFromFileURL(str)
+    /// `None` when `str` is not a `file:` URL, and when its percent-decoded path is not UTF-8.
+    pub fn path_from_file_url(str: &String) -> Option<String> {
+        let path = URL__pathFromFileURL(str);
+        (!path.is_dead()).then_some(path)
     }
     /// Returns the origin (`scheme://host[:port]`) prefix of `slice` as a borrowed
     /// subslice, or `None` if `slice` does not parse as a valid WHATWG URL.

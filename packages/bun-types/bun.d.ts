@@ -2456,6 +2456,7 @@ declare module "bun" {
    * @param url The URL to convert.
    * @returns A filesystem path.
    * @throws If `url` is not a valid URL.
+   * @throws {URIError} On Linux and macOS, if the percent-decoded path is not valid UTF-8, for example `file:///tmp/%E9.txt`.
    *
    * @category File System
    *

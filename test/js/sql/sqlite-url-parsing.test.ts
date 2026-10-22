@@ -2,7 +2,8 @@ import { SQL } from "bun";
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const URL_VARIABLES = ["DATABASE_URL", "DATABASEURL", "TLS_DATABASE_URL", "SQLITE_URL", "SQLITEURL", "POSTGRES_URL"];
 const originalEnv = Object.fromEntries(URL_VARIABLES.map(name => [name, process.env[name]]));
@@ -315,6 +316,39 @@ describe("SQLite URL Parsing Matrix", () => {
     test("undefined with adapter defaults to :memory:", async () => {
       await using sql = new SQL(undefined as never, { adapter: "sqlite" });
       expect(sql.options.filename).toBe(":memory:");
+    });
+  });
+
+  // "50%deposit.db" is a file name. In a file:// URL its "%de" is an escape, and the byte DE is not UTF-8.
+  // Bun.fileURLToPath() throws for such a URL, and the filename is then the text after "file://".
+  // With the path "" for it, the database is ":memory:": each write resolves and nothing is kept.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789), so the file has that name.
+  describe.skipIf(isWindows)("a file:// URL whose path does not percent-decode to UTF-8", () => {
+    test("keeps the rows in the file of that name", async () => {
+      using dir = tempDir("sqlite-percent", {});
+      const filename = "file://" + String(dir) + "/50%deposit.db";
+      {
+        await using sql = new SQL({ adapter: "sqlite", filename });
+        await sql`create table t (n integer)`;
+        await sql`insert into t values (42)`;
+      }
+      expect(readdirSync(String(dir))).toEqual(["50%deposit.db"]);
+      await using sql = new SQL({ adapter: "sqlite", filename });
+      expect(await sql`select n from t`).toEqual([{ n: 42 }]);
+    });
+
+    test.each(["50%deposit.db", "caf%E9.db", "%ff%fe.db"])("new URL(%j, directory) is that file", async name => {
+      using dir = tempDir("sqlite-percent", {});
+      const url = new URL(name, pathToFileURL(String(dir) + sep));
+      for (const filename of [url, url.href, url.href + "?mode=rwc"]) {
+        await using sql = new SQL({ adapter: "sqlite", filename });
+        expect(sql.options.filename).toBe(join(String(dir), name));
+        await using detected = new SQL(filename);
+        expect({ adapter: detected.options.adapter, filename: detected.options.filename }).toEqual({
+          adapter: "sqlite",
+          filename: join(String(dir), name),
+        });
+      }
     });
   });
 

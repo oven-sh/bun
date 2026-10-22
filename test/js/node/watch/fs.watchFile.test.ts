@@ -165,6 +165,31 @@ describe("fs.watchFile", () => {
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
 
+  // "50%deposit.txt" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+  // With the path "" for it, fs.watchFile() watches the current directory.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+  test.skipIf(isWindows)("throws a URIError for a file: URL whose path does not percent-decode to UTF-8", () => {
+    const fileUrl = new URL("50%deposit.txt", pathToFileURL(testDir + path.sep));
+    for (const filename of [fileUrl, fileUrl.href]) {
+      for (const call of [() => fs.watchFile(filename, () => {}), () => fs.unwatchFile(filename)]) {
+        let watcher: any;
+        let error: any;
+        try {
+          watcher = call();
+        } catch (e) {
+          error = e;
+        } finally {
+          watcher?.stop();
+        }
+        expect({ name: error?.name, message: error?.message, code: error?.code }).toEqual({
+          name: "URIError",
+          message: "URI malformed",
+          code: undefined,
+        });
+      }
+    }
+  });
+
   test("watchFile returns a shared StatWatcher and unwatchFile stops it", async () => {
     const file = path.join(testDir, "watch.txt");
     const listener1 = () => {};

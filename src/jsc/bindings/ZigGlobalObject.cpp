@@ -187,6 +187,7 @@
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
+#include "NodeURLHelpers.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
@@ -3640,7 +3641,11 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyString = url.fileSystemPath();
+                // No path when the percent-decoded path is not UTF-8. Then it resolves as it is written, as a URL that is not valid does: the error names it.
+                if (auto path = Bun::fileSystemPath(url))
+                    keyString = WTF::move(*path);
+                else
+                    keyString = moduleName;
             } else {
                 keyString = moduleName;
             }
@@ -3750,7 +3755,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
-        sourceOriginStringHolder = sourceURL.fileSystemPath();
+        sourceOriginStringHolder = Bun::fileSystemPathOfInternalURL(sourceURL);
         auto query = sourceURL.queryWithLeadingQuestionMark();
         auto referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)

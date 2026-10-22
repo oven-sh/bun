@@ -8014,8 +8014,7 @@ fn run_on_resolve(
 
     if user_namespace.eq_ascii(b"file") {
         if file_path.starts_with_ascii(b"file://") {
-            let path = bun_url::path_from_file_url(&file_path);
-            if !path.is_dead() {
+            if let Some(path) = bun_url::path_from_file_url(&file_path) {
                 return Ok(Some(Ok(path)));
             }
         }

@@ -515,6 +515,7 @@ fn message_with_type_and_level_(
     if message_type == MessageType::Dir && len >= 2 {
         print_length = 1;
         let opts = vals_slice[1];
+        let mut inspect_custom = true;
         if opts.is_object() {
             if let Some(depth_prop) = opts.get(global, b"depth")? {
                 if depth_prop.is_number() {
@@ -532,6 +533,21 @@ fn message_with_type_and_level_(
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
             }
+            // Node defaults this to false; Bun keeps console.log's default, hooks on: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/console/constructor.js#L447-L453
+            if let Some(custom_inspect) =
+                opts.get_common_string(global, crate::CommonString::InspectOptionCustomInspect)?
+            {
+                inspect_custom = custom_inspect.to_boolean();
+            }
+        }
+        if !inspect_custom {
+            return format_without_inspect_custom(
+                level,
+                global,
+                vals_slice[0],
+                writer,
+                print_options,
+            );
         }
     }
 
@@ -1330,6 +1346,31 @@ pub fn format2(
     writer: &mut dyn bun_io::Write,
     options: FormatOptions,
 ) -> JsResult<()> {
+    format_values::<true>(level, global, vals, writer, options)
+}
+
+/// `console.dir(value, { customInspect: false })`: prints one value and runs no `[nodejs.util.inspect.custom]` function.
+#[cold]
+#[inline(never)]
+fn format_without_inspect_custom(
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    value: JSValue,
+    writer: &mut dyn bun_io::Write,
+    options: FormatOptions,
+) -> JsResult<()> {
+    format_values::<false>(level, global, &[value], writer, options)
+}
+
+// One body, two instantiations: `format2` does not pay for the option.
+#[inline(always)]
+fn format_values<const INSPECT_CUSTOM: bool>(
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    vals: &[JSValue],
+    writer: &mut dyn bun_io::Write,
+    options: FormatOptions,
+) -> JsResult<()> {
     let len = vals.len();
     if len == 0 {
         return Ok(());
@@ -1347,7 +1388,11 @@ pub fn format2(
         fmt.indent = u32::from(options.default_indent);
         fmt.can_throw_stack_overflow = true;
         fmt.error_display_level = options.error_display_level;
-        let tag = formatter::Tag::get(vals[0], global)?;
+        if !INSPECT_CUSTOM {
+            fmt.disable_inspect_custom = true;
+            fmt.stand_in_tag_opts = formatter::TagOptions::DISABLE_INSPECT_CUSTOM;
+        }
+        let tag = fmt.tag_of_stand_in(vals[0])?;
         if fmt.write_indent(writer).is_err() {
             return Ok(());
         }
@@ -1389,6 +1434,9 @@ pub fn format2(
 
         return Ok(());
     }
+
+    // The hooks-off entry passes one value.
+    debug_assert!(INSPECT_CUSTOM);
 
     // Reborrow through the guard so SB sees body writes as children of the
     // guard's borrow (see `FlushOnDrop` doc).
@@ -1608,6 +1656,8 @@ pub mod formatter {
         pub ordered_properties: bool,
         pub(crate) custom_formatted_object: CustomFormattedObject,
         pub(crate) disable_inspect_custom: bool,
+        /// Bits for a top-level value or a stand-in for the printed one. Written once per call, so an error dump cannot change them.
+        pub(crate) stand_in_tag_opts: TagOptions,
         pub(crate) stack_check: StackCheck,
         pub(crate) can_throw_stack_overflow: bool,
         pub(crate) error_display_level: ErrorDisplayLevel,
@@ -1638,6 +1688,7 @@ pub mod formatter {
                 single_line: false,
                 ordered_properties: false,
                 custom_formatted_object: CustomFormattedObject::default(),
+                stand_in_tag_opts: TagOptions::empty(),
                 disable_inspect_custom: false,
                 stack_check: StackCheck::init(),
                 can_throw_stack_overflow: false,
@@ -1675,6 +1726,7 @@ pub mod formatter {
                 ordered_properties: self.ordered_properties,
                 custom_formatted_object: self.custom_formatted_object,
                 disable_inspect_custom: self.disable_inspect_custom,
+                stand_in_tag_opts: self.stand_in_tag_opts,
                 stack_check: self.stack_check,
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
@@ -2067,6 +2119,16 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
+        // Out of line: as a self tail call, LLVM turns `get_advanced` into a loop unswitched on `opts`, and a primitive costs about 10 more instructions.
+        #[inline(never)]
+        fn get_global_proxy_target(
+            value: JSValue,
+            global_this: &JSGlobalObject,
+            opts: TagOptions,
+        ) -> JsResult<TagResult> {
+            Self::get_advanced(value.get_proxy_target(), global_this, opts)
+        }
+
         pub(crate) fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
@@ -2187,7 +2249,7 @@ pub mod formatter {
 
             if js_type == jsc::JSType::GlobalProxy {
                 if !opts.contains(TagOptions::HIDE_GLOBAL) {
-                    return Tag::get(value.get_proxy_target(), global_this);
+                    return Tag::get_global_proxy_target(value, global_this, opts);
                 }
                 return Ok(TagResult {
                     tag: TagPayload::GlobalObject,
@@ -3396,6 +3458,11 @@ pub mod formatter {
             opts
         }
 
+        /// Classifies a top-level value or a stand-in for the printed one (Proxy target, `toJSON` result): the global prints in full.
+        pub(super) fn tag_of_stand_in(&self, value: JSValue) -> JsResult<TagResult> {
+            Tag::get_advanced(value, self.global_this, self.stand_in_tag_opts)
+        }
+
         #[inline(never)]
         fn print_undefined<const C: bool>(
             &mut self,
@@ -3517,7 +3584,7 @@ pub mod formatter {
             // `Proxy { target: ..., handlers: ... }` — this is default off so
             // it is not used.
             loop {
-                let tag = Tag::get(target, self.global_this)?;
+                let tag = self.tag_of_stand_in(target)?;
                 if !matches!(tag.tag.tag(), Tag::Proxy) {
                     return self.format::<C>(tag, writer_, target, self.global_this);
                 }
@@ -3792,6 +3859,7 @@ pub mod formatter {
             &mut self,
             writer_: &mut dyn bun_io::Write,
         ) -> JsResult<()> {
+            debug_assert!(self.stand_in_tag_opts.is_empty());
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
             // in here.
@@ -4162,7 +4230,7 @@ pub mod formatter {
                 let prev_quote_keys = self.quote_keys;
                 self.quote_keys = true;
                 let _r = defer_restore!(self.quote_keys, prev_quote_keys);
-                let tag = Tag::get(result, self.global_this)?;
+                let tag = self.tag_of_stand_in(result)?;
                 return self.format::<C>(tag, writer_, result, self.global_this);
             }
 
@@ -5176,7 +5244,8 @@ pub mod formatter {
                     }
 
                     if let Some(children) = children_prop {
-                        let tag = Tag::get(children, self.global_this)?;
+                        let tag =
+                            Tag::get_advanced(children, self.global_this, self.stand_in_tag_opts)?;
 
                         let print_children =
                             matches!(tag.tag.tag(), Tag::String | Tag::JSX | Tag::Array);
@@ -5219,7 +5288,7 @@ pub mod formatter {
                                                 self.failed = true;
                                             }
                                             self.format::<C>(
-                                                Tag::get(children, self.global_this)?,
+                                                self.tag_of_stand_in(children)?,
                                                 writer_,
                                                 children,
                                                 self.global_this,

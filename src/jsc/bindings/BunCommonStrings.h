@@ -43,6 +43,7 @@
     macro(fetchOptionTls, "tls") \
     macro(fetchOptionUnix, "unix") \
     macro(fetchOptionVerbose, "verbose") \
+    macro(inspectOptionCustomInspect, "customInspect") \
     macro(httpACL, "ACL") \
     macro(httpBIND, "BIND") \
     macro(httpCHECKOUT, "CHECKOUT") \

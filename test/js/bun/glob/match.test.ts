@@ -2497,6 +2497,61 @@ describe("Glob.match", () => {
     }
   });
 
+  // `*[!x]*` doesn't match `a/b`: its class takes the `a`, and its last `*` stops at the `/`.
+  test.each([
+    ["*{zz,[!x]}*", ["*zz*", "*[!x]*"]],
+    ["*{zz,[/]}*", ["*zz*", "*[/]*"]],
+    ["*b{[!x]}*", ["*b[!x]*"]],
+    ["{a,b}*[!x]*", ["a*[!x]*", "b*[!x]*"]],
+    ["*[!x]{,a}*", ["*[!x]*", "*[!x]a*"]],
+    ["*{a,{b,[!x]}}*", ["*a*", "*b*", "*[!x]*"]],
+    ["*{a,b}{x,[!x]}*", ["*ax*", "*a[!x]*", "*bx*", "*b[!x]*"]],
+    ["x/**/*{a,[!x]}*", ["x/**/*a*", "x/**/*[!x]*"]],
+    ["a{zz,[!x]}b", ["azzb", "a[!x]b"]],
+    // The two `*` on either side of an empty alternative aren't a `**`.
+    ["*{,[!x]}*", ["*", "*[!x]*"]],
+    ["{*a,b}*[!x]*", ["*a*[!x]*", "b*[!x]*"]],
+    ["\\*{*,a}[!x]*", ["\\**[!x]*", "\\*a[!x]*"]],
+  ])(
+    "a group matches what its alternatives match, with a `*` and a class that can match a separator: %s",
+    (pattern, alternatives) => {
+      let paths = [""];
+      for (let length = 0; length < 4; length++) {
+        paths = paths.flatMap(path =>
+          path.length === length ? [path, ...Array.from("abx/*", it => path + it)] : [path],
+        );
+      }
+      const glob = new Glob(pattern);
+      const written = alternatives.map(it => new Glob(it));
+      for (let round = 0; round < 2; round++) {
+        const differs = paths.filter(path => {
+          const expected = written.some(it => it.match(path));
+          return glob.match(path) !== expected || new Glob(pattern).match(path) !== expected;
+        });
+        expect(differs).toEqual([]);
+      }
+    },
+  );
+
+  test.each([
+    ["*{zz,[!x]}*", ["a", "azz", "/b", "x/b", "xx/"], ["a/b", "a/", "a/b/c", "a/zz", "x", ""]],
+    ["!*{zz,[!x]}*", ["a/b", "a/", "x"], ["a", "/b"]],
+    // Written out, these would mean something else: a leading `!`, `**/*` at the end, `*(a)`.
+    ["{*[!x],}!*", ["!", "!a", "a!b", "/!a", "a/!"], ["a", "a/b", ""]],
+    ["*[/]{/**/*,x}", ["//", "a//", "a//b/", "a/x"], ["/", "a/", "a/x/"]],
+    ["{*,[!x]}(a)", ["(a)", "x(a)", "b(a)", "/(a)"], ["a", "", "aa"]],
+    ["*[/]{1..3}", ["a/1", "a/2", "/3"], ["a/4", "a1", "a/1..3"]],
+    // Up to 16 alternatives are written out.
+    [`*{${Array.from({ length: 15 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z14", "/b"], ["a/b", "x"]],
+    [`*{${Array.from({ length: 16 }, (_, i) => `z${i}`)},[!x]}*`, ["a", "z15", "/b", "a/b"], ["x"]],
+  ])("a group, a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
+    const glob = new Glob(pattern);
+    for (let round = 0; round < 12; round++) {
+      expect(matches.filter(path => !glob.match(path) || !new Glob(pattern).match(path))).toEqual([]);
+      expect(others.filter(path => glob.match(path) || new Glob(pattern).match(path))).toEqual([]);
+    }
+  });
+
   test.each([
     ["{src/**,lib/**}", ["src/a", "lib/a/b.ts", "src/"], ["src", "test/a", "a/src/b"]],
     ["{**/*.ts,**/*.js}", ["a.ts", "src/a/b.js"], ["a.css", "src/a.tsx"]],
@@ -2834,14 +2889,14 @@ describe("Glob.match", () => {
   );
 
   test.each([
-    ["**/*[!a]*{a,b}", ["/abc/aa", "x//abc/aa", "b/x//abc/aa"], ["/abc/ac", "c/cc"]],
+    ["**/*[!a]*{a,b}", ["bca", "x/bcb", "/a"], ["/abc/aa", "x//abc/aa", "b/x//abc/aa", "/abc/ac", "c/cc"]],
     ["**/*[^b]*@(a|b)", ["abc/b", "x/abc/b"], ["abc/c", "b"]],
-    ["*[^b]*{a,b}/x", ["abc/ab/x", "ca/x"], ["cc/x", "abc/cc/x"]],
-    ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bc/a"], ["a/aa", "b/bcaa"]],
-    ["**/*[!a]*[^/]/**/*{,b}/*", ["b/./.a/é", "2/x//y/z", "a}/n/../"], ["a/a", "aa"]],
+    ["*[^b]*{a,b}/x", ["ca/x", "/a/x"], ["abc/ab/x", "cc/x", "abc/cc/x"]],
+    ["a/**/*[^/]*[!a]*{a,b}", ["a/bcaa", "a/x/bca"], ["a/x/bc/a", "a/aa", "b/bcaa"]],
+    ["**/*[!a]*[^/]/**/*{,b}/*", ["bc/x/y", "x/bc/y/z"], ["b/./.a/é", "2/x//y/z", "a}/n/../", "a/a", "aa"]],
     ["**/*[^b]**a*/**/{a,b}*/*", ["1/a/aa/aa", "1/a/aa/aa/x"], ["1/c/cc/cc"]],
-    ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["a,b/2/ba//a/b", "x/2/ba//a/b"], ["x/2/c/c/c"]],
-    ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["ab/ab/x//x/+", "ab/ab/x//x/y"], ["aa/aa"]],
+    ["**/*[!a]*[+-9]/**/*/{*a,b}/b", ["b2/x/a/b", "y/b2/x/b/b"], ["a,b/2/ba//a/b", "x/2/ba//a/b", "x/2/c/c/c"]],
+    ["**/*[!a]*[!a]/**/*/{,b}/*/*", ["bb/x//y/z", "bb/x/b/y/z"], ["ab/ab/x//x/+", "ab/ab/x//x/y", "aa/aa"]],
   ])("a group after a `*` and a class that can match a separator: %s", (pattern, matches, others) => {
     const glob = new Glob(pattern);
     for (let round = 0; round < 12; round++) {

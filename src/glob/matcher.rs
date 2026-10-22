@@ -1245,15 +1245,54 @@ fn match_slowly(
         }
     }
     let is_kept = groups.prepared.is_some();
-    match_groups(
-        glob,
-        glob_start,
-        path,
-        groups.parsed(glob),
-        dots,
-        is_kept,
-        is_windows,
-    )
+    let parsed = groups.parsed(glob);
+    if parsed.has_missed_matches
+        && let Some(matched) = match_alternatives(glob, parsed, path, mode)
+    {
+        return matched;
+    }
+    match_groups(glob, glob_start, path, parsed, dots, is_kept, is_windows)
+}
+
+/// A walk finds matches that the loop misses: `*[!x]*` doesn't match `a/b`. So that `*{y,[!x]}*` doesn't either, writes the pattern
+/// out once for each alternative of its first group, and matches that. Returns `None` if it can't be written out.
+#[cold]
+#[inline(never)]
+fn match_alternatives(glob: &[u8], parsed: &Parsed, path: &[u8], mode: Mode) -> Option<bool> {
+    // Each group multiplies the number of patterns to write out.
+    const MOST_ALTERNATIVES: usize = 16;
+    let first = parsed.alternatives.first()?;
+    if parsed.alternatives.len() > MOST_ALTERNATIVES
+        || first.next == Alternative::IS_SEQUENCE
+        || std::str::from_utf8(glob).is_err()
+    {
+        return None;
+    }
+    let before = &glob[parsed.top as usize..first.start as usize - 1];
+    let after = &glob[first.close as usize + 1..];
+    let mut written: SmallVec<[u8; 64]> = SmallVec::new();
+    let mut next = Some(first);
+    while let Some(it) = next {
+        written.clear();
+        for mut part in [before, &glob[it.start as usize..it.end as usize], after] {
+            match (written.last(), part.first()) {
+                // Two `*` that come to stand side by side would be a `**`.
+                (Some(b'*'), Some(b'*')) if !written.ends_with(b"\\*") => part = &part[1..],
+                (Some(b'?' | b'*' | b'+' | b'@' | b'!'), Some(b'(')) => return None,
+                _ => {}
+            }
+            written.extend_from_slice(part);
+        }
+        // A leading `!` would mean something else in a pattern of its own, and `**/*` at the end has a rule of its own.
+        if written.first() == Some(&b'!') || written.ends_with(b"**/*") {
+            return None;
+        }
+        if match_written(&written, path, mode) {
+            return Some(true);
+        }
+        next = parsed.alternatives.get(it.next as usize);
+    }
+    Some(false)
 }
 
 /// Matches with a [`Walk`] instead of the loop. With `is_kept`, what's found out about the pattern stays with `parsed`.
@@ -3607,6 +3646,9 @@ struct Parsed {
     /// All that keeps it from being regular are classes that can match a separator. It has neither `*` nor groups, so there's only
     /// one way to match it, and the loop finds that.
     is_fixed: bool,
+    /// The same holds, but one of those classes comes after a `*`, so the loop doesn't find every match. Its groups are all `{a,b}`.
+    /// See [`match_alternatives`].
+    has_missed_matches: bool,
     /// It has only literal bytes that need no second look, which nothing compares faster than the loop.
     is_plain_text: bool,
     /// If all of it is literal, the one text that it matches.
@@ -3667,6 +3709,7 @@ impl Parsed {
             alternatives: SmallVec::new(),
             is_regular: false,
             is_fixed: false,
+            has_missed_matches: false,
             is_plain_text: false,
             text: None,
             has_group: false,
@@ -3739,6 +3782,8 @@ impl Parsed {
         let mut front_end = i;
         self.is_plain_text = i == glob.len();
         let (mut has_star, mut has_separator_class) = (false, false);
+        // A `*` that isn't part of a `**`, and a class after it that can match a separator.
+        let (mut has_lone_star, mut has_missed_matches, mut has_extglob) = (false, false, false);
         let mut is_one_segment = !strings::contains_char(&glob[top..i], b'/');
         while let Some(&ch) = glob.get(i) {
             if IS_TEXT[ch as usize] {
@@ -3786,6 +3831,7 @@ impl Parsed {
                 {
                     let at = if ch == b'(' { i - 1 } else { i };
                     is_one_segment &= glob[at] != b'!';
+                    has_extglob |= ch == b'(';
                     let inner = Open {
                         is_brace: ch == b'{',
                         is_plain: ch == b'{' || matches!(glob[i - 1], b'@' | b'?'),
@@ -3859,6 +3905,7 @@ impl Parsed {
                     is_one_segment = false;
                     i += 1;
                 }
+                b'*' => has_lone_star = true,
                 b'\\' => {
                     i += 1;
                     escaped = i;
@@ -3876,6 +3923,7 @@ impl Parsed {
                         // The rules for dot segments overlook `[(`, so it can match where a `**` can't go on.
                         is_regular &= glob[i + 1] != b'(';
                         has_separator_class |= may_be_separator;
+                        has_missed_matches |= may_be_separator && has_lone_star;
                         i = end - 1;
                     }
                     None => {
@@ -3888,6 +3936,7 @@ impl Parsed {
             i += 1;
         }
         self.is_fixed = is_regular && depth == 0 && !has_star && found.is_empty();
+        self.has_missed_matches = is_regular && depth == 0 && has_missed_matches && !has_extglob;
         self.is_regular = is_regular && depth == 0 && !has_separator_class;
         self.has_group = has_group || has_choice && !self.is_regular;
         self.is_one_segment = is_one_segment;

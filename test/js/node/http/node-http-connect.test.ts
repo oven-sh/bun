@@ -1987,8 +1987,11 @@ function runTunnel(proto: string, event: string, listener: string, peer = "clien
 }
 // 16 KiB on Windows, 64 KiB elsewhere.
 const highWaterMark = getDefaultHighWaterMark(false);
-// More than a loopback socket takes in one write, except on Windows.
 const large = 8 * 1024 * 1024;
+// Writes until the kernel takes no more. The peer is in the same process, so it reads nothing meanwhile.
+const writeUntilBytesAreLeftToSend = `
+  const chunk = Buffer.alloc(1024 * 1024, "x");
+  while (socket.writable && socket.writableLength === 0) socket.write(chunk);`;
 
 describe.concurrent.each([
   ["http", "connect"],
@@ -2010,7 +2013,10 @@ describe.concurrent.each([
     const listener = `
       server.close();
       socket.write(reply);
-      process.once("beforeExit", () => socket.write(Buffer.alloc(${large}, "x"), () => (result.sent = true)));`;
+      process.once("beforeExit", () => {
+        ${writeUntilBytesAreLeftToSend}
+        socket.write(chunk, () => (result.sent = true));
+      });`;
     expect(await runTunnel(proto, event, listener, "client.write(full); client.resume();")).toEqual(
       exitedWith({ sent: true }),
     );
@@ -2072,7 +2078,10 @@ describe.concurrent.each(["http", "https"])("%s: a tunnel behind server.unref() 
       server.close();
       const hold = setInterval(() => {}, 1000);
       socket.on("end", () => clearInterval(hold)).resume();
-      process.once("beforeExit", () => socket.end(Buffer.alloc(${large}, "x"), () => (result.sent = true)));`;
+      process.once("beforeExit", () => {
+        ${writeUntilBytesAreLeftToSend}
+        socket.end(() => (result.sent = true));
+      });`;
     expect(await runTunnel(proto, "connect", listener, "client.end(); client.resume();")).toEqual(
       exitedWith({ sent: true }),
     );

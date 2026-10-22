@@ -9,9 +9,9 @@ const result = {};
 let client;
 
 // An upstream that does not read.
-let upstreamSocket;
+const upstreamSocket = Promise.withResolvers();
 const upstream = net.createServer(socket => {
-  upstreamSocket = socket.pause().on("error", () => {});
+  upstreamSocket.resolve(socket.pause().on("error", () => {}));
 });
 
 const proxy = http.createServer();
@@ -26,8 +26,8 @@ proxy.on("connect", (req, clientSocket, head) => {
   clientSocket.on("error", () => {});
   serverSocket.on("error", () => {});
   // pipe() pauses the client's socket because the upstream is slow. Then the upstream goes away.
-  clientSocket.once("pause", () => {
-    upstreamSocket.destroy();
+  clientSocket.once("pause", async () => {
+    (await upstreamSocket.promise).destroy();
     upstream.close();
   });
   serverSocket.on("close", () => {

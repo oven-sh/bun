@@ -10255,6 +10255,50 @@ export function object(o: { p: number }) {
       expect(exitCode).toBe(1);
     });
 
+    test("checks the expression of a switch again to find out whether the switch is exhaustive", async () => {
+      using dir = project({
+        "a.ts": `declare function fail(): never;
+declare const c: boolean;
+type Shape = { kind: "a" } | { kind: "b" };
+export function statement(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  shape.kind;
+}
+export function exhaustive(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      return 1;
+  }
+}
+export function withDefault(shape: Shape): number {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    default:
+      return 1;
+  }
+}
+export const inferredFirst = (shape: Shape) => {
+  fail();
+  while (c && c) {}
+  switch (shape.kind) {
+    case "a":
+      return 1;
+  }
+};
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toMatchInlineSnapshot(`
+        "a.ts(12,17): error TS2339: Property 'kind' does not exist on type 'never'.
+        a.ts(28,17): error TS2339: Property 'kind' does not exist on type 'never'."
+      `);
+      expect(exitCode).toBe(1);
+    });
+
     test("elaborates a failed assertion to a union with the member that the comparable relation selects", async () => {
       using dir = project({
         "a.ts": `type U = { k: "a"; x: number } | { k: 1; x: string };

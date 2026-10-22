@@ -216,6 +216,9 @@ pub(super) struct FlowMemo {
     exhaustive_states_computing: SmallVec<[usize; 2]>,
     /// `last_assignment_pos`
     last_assignment_positions: std::cell::RefCell<FxHashMap<(FileId, SymbolId), u32>>,
+    /// The expressions whose stored type follows from a walk that ended with an incomplete type.
+    /// See `check_expression_again`.
+    checked_with_incomplete_walk: crate::util::FxHashSet<(FileId, ExprId)>,
 }
 
 /// `FlowLoopKey`, without the reference.
@@ -5656,9 +5659,16 @@ impl<'p, 's> Checker<'p, 's> {
         self.walk_declared = outer;
         // The walk that completes a loop continues with the entries its back edges left in
         // `sharedFlows`. The next walk finds the loop in `flowLoopCache` and may compute a
-        // different type. Results derived from this walk's type stay in `flowTypeCache`.
+        // different type. Results derived from this walk's type stay in `flowTypeCache`, or are
+        // stored for the check in progress only.
         let depth = self.flow_type_cache_depth;
-        if evolved.incomplete && depth != usize::MAX && self.is_flow_loop_visible(depth) {
+        if evolved.incomplete && depth == usize::MAX {
+            let checked = &mut self.flow_memo.checked_with_incomplete_walk;
+            for &q in self.stack.iter().rev() {
+                let Query::Expr(file, e) = q else { break };
+                checked.insert((file, e));
+            }
+        } else if evolved.incomplete && self.is_flow_loop_visible(depth) {
             self.taint_from(depth);
         }
         let evolved = evolved.ty;
@@ -7951,7 +7961,35 @@ impl<'p, 's> Checker<'p, 's> {
     /// empty `flowTypeCache`. Only its callers read `links.resolvedType`, each once.
     /// `checkExpression` computes the type again.
     fn type_of_expr_outside_loops(&mut self, file: FileId, e: ExprId) -> TypeId {
-        self.outside_flow_loops(|c| c.type_of_expr(file, e))
+        self.outside_flow_loops(|c| c.check_expression_again(file, e))
+    }
+
+    pub(super) fn is_checked_with_incomplete_walk(&self, file: FileId, e: ExprId) -> bool {
+        (self.flow_memo.checked_with_incomplete_walk).contains(&(file, e))
+    }
+
+    /// `checkExpression(e)` from somewhere else than the check of `e`'s parent, which may have
+    /// checked `e` before. `checkExpression` stores nothing, so every reference in `e` is walked
+    /// again, and what the second check finds is reported too. The result only differs from the
+    /// stored type after a walk that ended with an incomplete type.
+    pub(super) fn check_expression_again(&mut self, file: FileId, e: ExprId) -> TypeId {
+        // Nothing is stored while a loop is analyzed.
+        if !self.is_checked_with_incomplete_walk(file, e) || !self.flow_loops.is_empty() {
+            return self.type_of_expr(file, e);
+        }
+        cold_path();
+        let found_outside = self.set_rechecked_aside();
+        let level = self.inference_contexts.len();
+        let level = std::mem::replace(&mut self.context_free_level, level);
+        let depth = std::mem::replace(&mut self.flow_type_cache_depth, usize::MAX);
+        let outer = self.begin_recheck();
+        let ty = self.check_expression_ex(file, e, CheckMode::empty());
+        self.check_expression(file, e);
+        self.end_recheck(outer);
+        self.flow_type_cache_depth = depth;
+        self.context_free_level = level;
+        self.restore_rechecked(found_outside);
+        ty
     }
 
     /// Runs `compute` with an empty `flowLoopStack` and an empty `flowTypeCache`, as in

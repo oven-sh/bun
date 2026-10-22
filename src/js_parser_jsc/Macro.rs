@@ -59,7 +59,7 @@ pub(crate) struct MacroContext {
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
-    /// prints it before the `Transpiler` drops).
+    /// prints it before the context is freed).
     ///
     /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
     /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
@@ -273,7 +273,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
+    // stays with the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro

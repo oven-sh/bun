@@ -934,6 +934,72 @@ test("strips leading and trailing whitespace from a response field value", async
   }
 });
 
+test("a response header set over the size limit fails that request and no other on the connection", async () => {
+  const held = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  let heldRequests = 0;
+  await using origin = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/held") {
+        heldRequests++;
+        held.resolve();
+        await release.promise;
+        return new Response("held");
+      }
+      const headers = new Headers();
+      for (const cookie of cookiesOfSize(Number(pathname.slice(1)))) headers.append("set-cookie", cookie);
+      return new Response(null, { headers });
+    },
+  });
+  // RFC 9114 section 4.2.2 counts the name, the value and 32 more bytes for each field.
+  const sizeOf = (name: string, value: string) => name.length + value.length + 32;
+  // Empty cookies, and a last one that takes the remainder.
+  function cookiesOfSize(size: number) {
+    const count = Math.floor(size / sizeOf("set-cookie", ""));
+    const cookies: string[] = Array(count).fill("");
+    if (count > 0) cookies[count - 1] = Buffer.alloc(size % sizeOf("set-cookie", ""), "v").toString();
+    return cookies;
+  }
+
+  const other = fetch(`${origin.url}held`, h3);
+  await held.promise;
+  // What a response carries besides the cookies.
+  const rest = [...(await fetch(`${origin.url}0`, h3)).headers].reduce(
+    (size, [name, value]) => size + sizeOf(name, value),
+    sizeOf(":status", "200"),
+  );
+  const atTheLimit = 256 * 1024 - rest;
+  const served = await fetch(`${origin.url}${atTheLimit}`, h3);
+  expect(served.headers.getSetCookie()).toEqual(cookiesOfSize(atTheLimit));
+  const refused = await fetch(`${origin.url}${atTheLimit + 1}`, h3).then(
+    res => res.status,
+    err => err.code,
+  );
+  expect(refused).toBe("ResponseHeadersTooLarge");
+  release.resolve();
+  expect(await (await other).text()).toBe("held");
+  // A closed connection would have sent it again on a new one.
+  expect(heldRequests).toBe(1);
+});
+
+test("rejects a request header value that is too long to send", async () => {
+  // lsxpack holds the length of a value in 16 bits.
+  const outcome = await fetch(`${base}/headers-echo`, {
+    ...h3,
+    headers: { "x-value": Buffer.alloc(70_000, "v").toString() },
+  }).then(
+    res => res.status,
+    err => err.code,
+  );
+  expect(outcome).toBe("HTTP3HeaderEncodingError");
+  expect(await fetch(`${base}/hello`, h3).then(res => res.text())).toBe("hello over h3");
+});
+
 // Stale-session retry: a request bound on session A when A's conn closes
 // (GOAWAY/CONNECTION_CLOSE) must transparently retry on a fresh session
 // instead of surfacing HTTP3StreamReset. reusePort lets B bind the same
@@ -1088,6 +1154,175 @@ test.skipIf(!isLinux || !cc)("a retry whose reconnect fails before it returns re
     stdout: '{"first":"HTTP3HandshakeFailed","second":"ECONNREFUSED"}',
     signal: null,
     exitCode: 0,
+  });
+});
+
+// The same stop as in the port reuse test above, but A's handler already has a
+// request that is not idempotent. The origin may have acted on it, so the client
+// reports the failure and does not send it again (RFC 9110 section 9.2.2), as
+// over HTTP/1.1.
+test.each(["POST", "PATCH"])("does not send a %s again after it was written", async method => {
+  const hits: string[] = [];
+  const received = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const a = Bun.serve({
+    port: 0,
+    reusePort: true,
+    tls,
+    http3: true,
+    http1: false,
+    fetch: async req => {
+      hits.push(`a ${req.method}`);
+      if (req.method === method) {
+        received.resolve();
+        await release.promise;
+      }
+      return new Response("a");
+    },
+  });
+  let b: Server<undefined> | undefined;
+  try {
+    const port = a.port;
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("a");
+    const inflight = fetch(`https://127.0.0.1:${port}/`, { ...h3, method, body: "payload" });
+    await received.promise;
+    b = Bun.serve({
+      port,
+      reusePort: true,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: req => {
+        hits.push(`b ${req.method}`);
+        return new Response("b");
+      },
+    });
+    void a.stop(true);
+    release.resolve();
+    expect(await inflight.then(r => r.text()).catch(e => e.code)).toBe("HTTP3StreamReset");
+    // The origin is reachable: a new request lands on B, the first one never did.
+    expect(await fetch(`https://127.0.0.1:${port}/`, h3).then(r => r.text())).toBe("b");
+    expect(hits).toEqual(["a GET", `a ${method}`, "b GET"]);
+  } finally {
+    release.resolve();
+    void a.stop(true);
+    void b?.stop(true);
+  }
+});
+
+// A request that never left the client is safe to send again whatever its
+// method. This server answers each Initial with a Version Negotiation packet
+// that lists only a reserved version, so the handshake fails before the request
+// is written. Each connection attempt uses a new connection ID.
+test.each(["GET", "POST"])("sends a %s again once if the connection failed before it was written", async method => {
+  const attempts = new Set<string>();
+  const server = await Bun.udpSocket({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      data(socket, packet, port, address) {
+        if (packet.length < 7 || (packet[0] & 0x80) === 0) return;
+        const dcidLength = packet[5];
+        const dcid = packet.subarray(6, 6 + dcidLength);
+        const scidLength = packet[6 + dcidLength];
+        const scid = packet.subarray(7 + dcidLength, 7 + dcidLength + scidLength);
+        attempts.add(dcid.toString("hex"));
+        socket.send(
+          Buffer.concat([
+            Buffer.from([0xc0, 0, 0, 0, 0, scidLength]),
+            scid,
+            Buffer.from([dcidLength]),
+            dcid,
+            Buffer.from([0x0a, 0x0a, 0x0a, 0x0a]),
+          ]),
+          port,
+          address,
+        );
+      },
+    },
+  });
+  try {
+    const init = method === "GET" ? {} : { method, body: "payload" };
+    const outcome = await fetch(`https://127.0.0.1:${server.port}/`, { ...h3, ...init }).catch(e => e.code);
+    expect(outcome).toBe("HTTP3HandshakeFailed");
+    expect(attempts.size).toBe(2);
+  } finally {
+    server.close();
+  }
+});
+
+// The origin can also end the stream itself, with the connection still up. A
+// second send then reaches the same origin and its handler runs again. Only
+// H3_REQUEST_REJECTED says that the origin did not process the request
+// (RFC 9114 section 4.1.1).
+describe("the origin ended the stream with no final response", () => {
+  const encoder = new TextEncoder();
+  const listenOrigin = (endWithoutResponse: (stream: any) => void, received: string[]) =>
+    listen(
+      async (session: any) => {
+        session.onstream = (stream: any) => stream.closed.catch(() => {});
+        await session.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [createPrivateKey(tls.key)], certs: [Buffer.from(tls.cert)] } },
+        transportParams: { maxIdleTimeout: 5 },
+        async onheaders(this: any, headers: Record<string, string>) {
+          for await (const _ of this);
+          received.push(headers[":method"]);
+          if (received.length === 1) return endWithoutResponse(this);
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(encoder.encode("ok"));
+          this.writer.endSync();
+        },
+      },
+    );
+  const internalError = (stream: any) => stream.resetStream(0x102n);
+  const requestRejected = (stream: any) => stream.resetStream(0x10bn);
+  const interimOnly = (stream: any) => {
+    stream.sendInformationalHeaders({ ":status": "103" });
+    stream.writer.endSync();
+  };
+
+  test.each([
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "POST", internalError, { outcome: "HTTP3StreamReset", received: ["POST"] }],
+    ["RESET_STREAM(H3_INTERNAL_ERROR)", "PUT", internalError, { outcome: "ok", received: ["PUT", "PUT"] }],
+    ["a 103 and the end of the stream", "POST", interimOnly, { outcome: "HTTP3StreamReset", received: ["POST"] }],
+    ["a 103 and the end of the stream", "PUT", interimOnly, { outcome: "ok", received: ["PUT", "PUT"] }],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "POST", requestRejected, { outcome: "ok", received: ["POST", "POST"] }],
+    ["RESET_STREAM(H3_REQUEST_REJECTED)", "PUT", requestRejected, { outcome: "ok", received: ["PUT", "PUT"] }],
+  ])("%s: %s", async (_name, method, endWithoutResponse, expected) => {
+    const received: string[] = [];
+    const origin = await listenOrigin(endWithoutResponse, received);
+    try {
+      const outcome = await fetch(`https://127.0.0.1:${origin.address!.port}/`, { ...h3, method, body: "one order" })
+        .then(r => r.text())
+        .catch(e => e.code);
+      expect({ outcome, received }).toEqual(expected);
+    } finally {
+      // Not close(): it waits for the session that fetch() keeps in its pool.
+      await origin.destroy();
+    }
+  });
+
+  test("Bun.serve could not send the response headers: POST", async () => {
+    let handled = 0;
+    await using origin = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      async fetch(req) {
+        await req.text();
+        handled++;
+        // lsxpack holds the length of a value in 16 bits.
+        return new Response("body", { headers: { "x-value": Buffer.alloc(70_000, "v").toString() } });
+      },
+    });
+    const outcome = await fetch(origin.url, { ...h3, method: "POST", body: "one order" }).then(
+      res => res.status,
+      err => err.code,
+    );
+    expect({ outcome, handled }).toEqual({ outcome: "HTTP3StreamReset", handled: 1 });
   });
 });
 

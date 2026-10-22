@@ -808,7 +808,7 @@ for (const transport of transports) {
       assert.deepStrictEqual(actual, expected);
     });
 
-    // Like node's onStreamClose, a request nobody tried to read is dumped.
+    // Like node's onStreamClose, an unread request is dumped.
     test("is dumped and closes when it's answered before anything reads it", async () => {
       for (const [waitName, wait] of Object.entries(waits)) {
         const events = await serverStreamEvents(transport, requestThatEndsOn["a DATA frame"], async stream => {

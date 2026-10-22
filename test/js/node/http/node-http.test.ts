@@ -5299,6 +5299,54 @@ it("write('') after writeHead() ends the header section", async () => {
   );
 });
 
+describe.each(["listen()", "emit('connection')"])("a response without a body on a %s connection", transport => {
+  it.each([
+    ["HEAD", 200, false],
+    ["GET", 204, false],
+    ["GET", 304, false],
+    ["HEAD", 200, true],
+  ])("%s %i ends its head at end(), not at write() (write callback: %p)", async (method, status, withCallback) => {
+    const events: string[] = [];
+    const wrote = Promise.withResolvers<ServerResponse>();
+    const server = createServer((req, res) => {
+      if (req.url === "/ping") return void res.end("pong");
+      res.statusCode = status;
+      for (const event of ["aborted", "error"]) req.on(event, () => events.push(`req ${event}`));
+      for (const event of ["finish", "close"]) res.on(event, () => events.push(`res ${event}`));
+      setImmediate(() => {
+        if (withCallback) res.write("a", () => wrote.resolve(res));
+        else wrote.resolve((res.write("a"), res));
+      });
+    });
+    await using listener = transport === "listen()" ? server : createNetServer(s => void server.emit("connection", s));
+    await once(listener.listen(0, "127.0.0.1"), "listening");
+    const { port } = listener.address() as AddressInfo;
+
+    let received = "";
+    const client = connect(port, "127.0.0.1");
+    client.setEncoding("latin1").on("data", chunk => {
+      received += chunk;
+      // Like `curl -I`, leave as soon as the head is complete.
+      if (received.includes("\r\n\r\n")) client.destroy();
+    });
+    client.write(`${method} / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+
+    const res = await wrote.promise;
+    // After a round trip on a second connection, the client has read whatever write() sent.
+    expect(await (await fetch(`http://127.0.0.1:${port}/ping`, { headers: { Connection: "close" } })).text()).toBe(
+      "pong",
+    );
+    expect(received).not.toContain("\r\n\r\n");
+
+    res.write("b");
+    res.end();
+    await once(client, "close");
+    expect(received).toStartWith(`HTTP/1.1 ${status} `);
+    expect(received).toEndWith("\r\n\r\n");
+    expect(events).toEqual(["res finish", "res close"]);
+  });
+});
+
 it("res.shouldKeepAlive = false renders Connection: close and ends the socket", async () => {
   // Graceful-shutdown helpers (stoppable, http-terminator) clear
   // shouldKeepAlive on in-flight responses; the rendered header and the

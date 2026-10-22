@@ -4084,9 +4084,10 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       // If handle.writeHead throws, we don't want headersSent to be set to true.
       // So we set it here.
       this[headerStateSymbol] = NodeHTTPHeaderState.sent;
-      result = handle.write(chunk, encoding, onWritable, strict);
+      // Without a body the head ends at end(). A client that leaves at the end of the head would abort a handler that's still writing.
+      if (hasBody) result = handle.write(chunk, encoding, onWritable, strict);
     });
-  } else {
+  } else if (hasBody) {
     result = handle.write(chunk, encoding, onWritable, strict);
   }
 
@@ -4102,12 +4103,14 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
   if (hasBody) noteResponseWrite(this);
   this._callPendingCallbacks();
   if (callback) {
-    // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
-    handle.flushHeaders();
-    if (hasBody && handle.bufferedAmount > 0) {
-      this[kPendingCallbacks].push(callback);
-      handle.onwritable = allowWritesToContinue.bind(this);
-      return false;
+    if (hasBody) {
+      // A write callback reports that its bytes reached the socket: uncork them before the callback can destroy the response.
+      handle.flushHeaders();
+      if (handle.bufferedAmount > 0) {
+        this[kPendingCallbacks].push(callback);
+        handle.onwritable = allowWritesToContinue.bind(this);
+        return false;
+      }
     }
     process.nextTick(callback);
   }

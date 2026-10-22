@@ -9577,7 +9577,7 @@ describe.concurrent("RST_STREAM from the peer while the readable side is open", 
     await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), [{ ":path": "/" }], async (client, req, events) => {
       await once(req, "response");
       await resetWasHandled(client);
-      // The stream is closed, but it is not destroyed until somebody reads it to 'end'.
+      // The stream is closed, but it isn't destroyed until it's read to 'end'.
       expect({
         events,
         closed: req.closed,
@@ -9693,6 +9693,25 @@ describe.concurrent("RST_STREAM from the peer while the readable side is open", 
       req.resume();
       await closed(req);
       expect(events.filter(name => name !== "response")).toEqual(["end", "aborted", "finish", "close"]);
+    });
+  });
+
+  // Node emits 'error' ERR_STREAM_WRITE_AFTER_END for the write(), which also discards the unread response.
+  it("drops a write() after RST_STREAM(NO_ERROR) and still delivers the unread response", async () => {
+    const requestArgs = [{ ":path": "/", ":method": "POST" }, { endStream: false }];
+    await withRawServer(responseThenReset(NGHTTP2_NO_ERROR), requestArgs, async (client, req, events) => {
+      await once(req, "response");
+      await resetWasHandled(client);
+      const written = Promise.withResolvers();
+      expect(req.write("more of the upload", written.resolve)).toBe(false);
+      expect((await written.promise)?.code).toBe("ERR_STREAM_WRITE_AFTER_END");
+      const body = [];
+      req.on("data", chunk => body.push(chunk));
+      await closed(req);
+      expect({ length: Buffer.concat(body).length, events }).toEqual({
+        length: BODY.length,
+        events: ["response", "aborted", "end", "close"],
+      });
     });
   });
 

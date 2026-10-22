@@ -2102,7 +2102,7 @@ function endReadableAtHalfClose(stream: Http2Stream) {
 function endReadableAtClose(stream: Http2Stream) {
   endInboundHalf(stream);
   if (stream instanceof ServerHttp2Stream && !stream.readableDidRead && stream.readableFlowing === null) {
-    // Like node's onStreamClose, dump a request nobody tried to read so the stream can finish.
+    // Like node's onStreamClose, dump an unread request so the stream can finish.
     stream.resume();
   } else if (stream.writableFinished) {
     // Only read(0) ends a paused, empty readable. It waits for 'finish', which the destroy() after 'end' would swallow.
@@ -2137,8 +2137,8 @@ enum StreamState {
   HoldsRequestSlot = 1 << 11, // 100000000000 = 2048
   // The request HEADERS that opened this server stream carried END_STREAM.
   EndAfterHeaders = 1 << 12, // 1000000000000 = 4096
-  // respond() ended the writable side itself (HEAD, 204, 205, 304 or endStream).
-  EndedByRespond = 1 << 13, // 10000000000000 = 8192
+  // User code didn't end the writable side. respond() did (HEAD, 204, 205, 304, endStream), or the peer's RST_STREAM with NO_ERROR or CANCEL.
+  EndedForUser = 1 << 13, // 10000000000000 = 8192
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2309,11 +2309,17 @@ function abortIfWritableOpen(stream: Http2Stream) {
   }
   return true;
 }
+// Ends the writable side of a stream the peer reset, if it's still open. write() drops what user code writes afterwards.
+function abortAndEndWritable(stream: Http2Stream) {
+  if (!abortIfWritableOpen(stream) || stream.destroyed) return;
+  stream[bunHTTP2StreamStatus] |= StreamState.EndedForUser;
+  stream.end();
+}
 // Like node's onStreamClose, the peer's CANCEL ends an open writable side before the stream is destroyed, so 'finish' still fires.
 function abortOnPeerCancel(stream: Http2Stream) {
   stream[bunHTTP2StreamStatus] |= StreamState.Reset | StreamState.NativeClosed | StreamState.WritableClosed;
   stream.rstCode = NGHTTP2_CANCEL;
-  if (abortIfWritableOpen(stream)) stream.end();
+  abortAndEndWritable(stream);
 }
 function rstNextTick(this: Http2Stream, session: Http2Session, id: number, rstCode: number) {
   // Native can't dedupe this. It forgets a closed stream at the next read.
@@ -2349,6 +2355,7 @@ function uncorkNT(stream: Http2Stream) {
 function readNothing(this: Http2Stream) {
   this.read(0);
 }
+function ignoreError() {}
 // Per-request AbortSignal handler: node destroys the stream with an AbortError when the signal
 // fires (lib/internal/http2/core.js request()).
 function abortRequestStream(this: Http2Stream, signal: AbortSignal) {
@@ -2768,8 +2775,8 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     ) {
       err = null;
     }
-    // The client didn't ask for a pushed stream, so the peer's GOAWAY or reset isn't an uncaught exception when it has no 'error' listener.
-    if (err != null && this[kPush] && this.listenerCount("error") === 0) err = null;
+    // The client didn't ask for a pushed stream, so its 'error' is never uncaught. It stays errored, or a body the peer cut short would emit 'end'.
+    if (err != null && this[kPush] && this.listenerCount("error") === 0) this.on("error", ignoreError);
 
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
@@ -2918,6 +2925,17 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     } else {
       this.once("ready", streamOnResume);
     }
+  }
+
+  write(chunk, encoding?, callback?) {
+    // Drop a write to a closed stream whose writable side user code didn't end. An 'error' would be uncaught in a handler that answers HEAD like GET.
+    const dropped = StreamState.NativeClosed | StreamState.EndedForUser;
+    if ((this[bunHTTP2StreamStatus] & dropped) === dropped) {
+      if (typeof encoding === "function") callback = encoding;
+      if (typeof callback === "function") process.nextTick(callback, $ERR_STREAM_WRITE_AFTER_END());
+      return false;
+    }
+    return super.write(chunk, encoding, callback);
   }
 
   end(chunk?, encoding?, callback?) {
@@ -3358,16 +3376,6 @@ class ServerHttp2Stream extends Http2Stream {
   _final(callback) {
     if (!this._readableState.ended) this.once("finish", serverStreamOnFinish);
     super._final(callback);
-  }
-  write(chunk, encoding?, callback?) {
-    // Drop a body written after respond() closed the stream, so a handler that answers HEAD like GET doesn't raise an uncaught 'error'.
-    const dropped = StreamState.NativeClosed | StreamState.EndedByRespond;
-    if ((this[bunHTTP2StreamStatus] & dropped) === dropped) {
-      if (typeof encoding === "function") callback = encoding;
-      if (typeof callback === "function") process.nextTick(callback, $ERR_STREAM_WRITE_AFTER_END());
-      return false;
-    }
-    return super.write(chunk, encoding, callback);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
@@ -3816,7 +3824,7 @@ class ServerHttp2Stream extends Http2Stream {
     }
     this[bunHTTP2Headers] = headers;
     if (endStream) {
-      if (endedByRespond) this[bunHTTP2StreamStatus] |= StreamState.EndedByRespond;
+      if (endedByRespond) this[bunHTTP2StreamStatus] |= StreamState.EndedForUser;
       this.end();
     }
 
@@ -3881,7 +3889,7 @@ function closeStreamResetWithNoError(session: Http2Session, stream: Http2Stream)
   stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
   if (!stream.closed) {
     stream.rstCode = NGHTTP2_NO_ERROR;
-    if (abortIfWritableOpen(stream) && !stream.destroyed) stream.end();
+    abortAndEndWritable(stream);
     markStreamClosed(stream);
   }
   // An 'aborted' listener or a close-channel subscriber can destroy the stream.

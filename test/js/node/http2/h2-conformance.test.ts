@@ -1075,19 +1075,40 @@ describe("push stream states (checklist §5.1, RFC 9113 §6.4/§8.4)", () => {
   });
 
   // Node emits 'error' on the pushed stream here, which is uncaught.
-  test("a GOAWAY with an error code closes a pushed stream that has no 'error' listener", async () => {
+  test("a GOAWAY with an error code closes a pushed stream that has no 'error' listener, without 'end'", async () => {
     using ctx = await openRequest();
     const { raw, client, req } = ctx;
     client.on("error", () => {});
     req.on("error", () => {});
-    raw.socket!.write(pushPromise(2));
+    raw.socket!.write(
+      Buffer.concat([
+        pushPromise(2),
+        encodeFrame(FrameType.HEADERS, 0x4, 2, STATUS_200),
+        encodeFrame(FrameType.DATA, 0, 2, Buffer.from("part")),
+      ]),
+    );
     const [pushed] = await once(client, "stream");
+    const events: string[] = [];
     // Not once(), which adds an 'error' listener.
+    const gotData = Promise.withResolvers<void>();
     const pushedClosed = Promise.withResolvers<void>();
-    pushed.on("close", pushedClosed.resolve);
+    pushed.on("data", (chunk: Buffer) => {
+      events.push(`data ${chunk}`);
+      gotData.resolve();
+    });
+    pushed.on("end", () => events.push("end"));
+    pushed.on("close", () => {
+      events.push("close");
+      pushedClosed.resolve();
+    });
+    await gotData.promise;
     raw.sendFrame(FrameType.GOAWAY, 0, 0, Buffer.from([0, 0, 0, 1, 0, 0, 0, 11]));
     await pushedClosed.promise;
-    expect({ destroyed: pushed.destroyed, errored: pushed.errored }).toEqual({ destroyed: true, errored: null });
+    expect({ events, errored: pushed.errored?.code, rstCode: pushed.rstCode }).toEqual({
+      events: ["data part", "close"],
+      errored: "ERR_HTTP2_SESSION_ERROR",
+      rstCode: ErrorCode.ENHANCE_YOUR_CALM,
+    });
   });
 
   /** Sends DATA on pushed stream 2 for as long as the client grants window, up to `limit` bytes. Returns the bytes sent. */
@@ -4528,7 +4549,7 @@ describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
     }
   });
 
-  test("client treats HEADERS on a stream nobody opened as a connection error", async () => {
+  test("client treats HEADERS on an idle stream as a connection error", async () => {
     const raw = await RawH2Server.listen();
     const client = http2.connect(`http://127.0.0.1:${raw.port}`);
     try {

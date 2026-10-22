@@ -5,6 +5,8 @@ import { afterAll, describe, expect, jest, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "path";
 import { collect, heapFromTimer, Lifetimes } from "./module-graph-lifetimes";
 
@@ -96,6 +98,57 @@ const dir = String(
         controller.enqueue(new TextEncoder().encode("<div>x"));
         return registered.promise;
       }
+      // A server that gives native code no function of the graph's to call.
+      export const serveWith = {
+        "only static routes": () => Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response("static") } }),
+        // A connection that has had an answer may take its time with the next request.
+        "only static routes and no idle timeout": () => Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, routes: { "/": new Response("static") } }),
+        "only a file route": () => Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response(Bun.file(import.meta.dir + "/static.txt")) } }),
+        "only static routes after a reload()": () => {
+          const server = Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": () => new Response("a function") } });
+          server.reload({ routes: { "/": new Response("static") } });
+          return server;
+        },
+      };
+      // control.opened is a WeakRef: the host finds the server through it without holding it.
+      export function serveAndForget(how) {
+        const server = serveWith[how]();
+        control.httpPort = server.port;
+        control.opened = new WeakRef(server);
+      }
+      // Leftover script of a graph that is disposed before the microtask runs.
+      export function serveFromAMicrotask() {
+        queueMicrotask(() => { control.made = serveWith["only static routes"](); });
+      }
+    `,
+    "static.txt": "static",
+    // Under --hot a Bun.serve() with the hostname and port option of one that is up takes that server over.
+    "serves-static-routes.mjs": `
+      export const serve = who => Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response(who) } }).port;
+    `,
+    "taken-over-under-hot.mjs": `
+      import { Lifetimes } from ${JSON.stringify(join(import.meta.dir, "module-graph-lifetimes.ts"))};
+      const lifetimes = new Lifetimes();
+      const serveFrom = async which => {
+        const graph = lifetimes.track(which, new Bun.ModuleGraph());
+        const { serve } = await graph.import(import.meta.dir + "/serves-static-routes.mjs");
+        return graph.run(() => serve(which));
+      };
+      // (Under --hot an error leaves the process waiting for an edit.)
+      try {
+        const port = await serveFrom("first");
+        const bySecond = process.argv[2] === "a second graph";
+        if (bySecond) await serveFrom("second");
+        else Bun.serve({ hostname: "127.0.0.1", port: 0, routes: { "/": new Response("the host") } });
+        const kept = bySecond && (await lifetimes.survives("second")) ? ["second"] : [];
+        kept.push(...(await lifetimes.stillAlive("first")));
+        const answer = await fetch("http://127.0.0.1:" + port + "/").then(response => response.text(), () => "nobody");
+        console.log(JSON.stringify({ kept, answer }));
+        process.exit(0);
+      } catch (error) {
+        console.error(error);
+        process.exit(1);
+      }
     `,
   }),
 );
@@ -128,6 +181,24 @@ async function baselineOf(...types: string[]): Promise<Record<string, number>> {
   const all = heapStats().objectTypeCounts;
   return Object.fromEntries(types.map(type => [type, all[type] ?? 0]));
 }
+
+/** A client that has had one answer and has sent its next request but for the last line, so that this
+ *  request stays in flight. (Here, not in a test: what is made in a function that has a graph in scope would
+ *  keep that graph.) */
+async function askAgainButForTheLastLine(port: number) {
+  const socket = net.connect(port, "127.0.0.1");
+  let received = "";
+  socket.on("data", chunk => (received += chunk)).on("error", () => {});
+  const closed = new Promise<void>(resolve => socket.on("close", () => resolve()));
+  await once(socket, "connect");
+  socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  while (!received.endsWith("static") && !socket.destroyed) await new Promise<void>(resolve => setImmediate(resolve));
+  received = "";
+  socket.write("GET / HTTP/1.1\r\nHost: x\r\n");
+  // What the server answers to it, once it has closed the connection.
+  return { sendTheLastLine: () => (socket.write("\r\n"), closed.then(() => received)) };
+}
+const settled = (promise: Promise<unknown>) => promise.then(() => "settled");
 
 async function accepts(port: number): Promise<boolean> {
   try {
@@ -351,7 +422,15 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
 });
 
 describe("ModuleGraph GC: what the graph's context owns", () => {
-  const control = () => ({ stop: false, ticks: 0, httpPort: 0, tcpPort: 0, heard: [] as string[] });
+  const control = () => ({
+    stop: false,
+    ticks: 0,
+    httpPort: 0,
+    tcpPort: 0,
+    heard: [] as string[],
+    opened: undefined as WeakRef<any> | undefined,
+    made: undefined as any,
+  });
 
   test("a listening server keeps its graph alive and serving after the host dropped the graph; stopping it lets the graph go", async () => {
     const lifetimes = new Lifetimes();
@@ -366,6 +445,111 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     state.stop = true;
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
     expect(await accepts(state.httpPort)).toBe(false);
+  });
+
+  // Such a server gives native code no function of the graph's to call: its listening is all that keeps the graph.
+  test.each(["only static routes", "only a file route", "only static routes after a reload()"])(
+    "a listening server with %s keeps its graph alive and serving after the host dropped the graph; stopping it lets the graph go",
+    async how => {
+      const lifetimes = new Lifetimes();
+      const state = control();
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+        const io = await graph.import(file("io.mjs"));
+        graph.run(() => io.serveAndForget(how));
+      })();
+      expect(await lifetimes.survives("graph")).toBe(true);
+      expect(await (await fetch(`http://127.0.0.1:${state.httpPort}/`)).text()).toBe("static");
+      state.opened!.deref().stop(true);
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+      expect(await accepts(state.httpPort)).toBe(false);
+    },
+  );
+
+  // The graph is kept for the listening, not for the server object that the host holds.
+  test.each([
+    ["once it was stopped at once", (server: any) => server.stop(true)],
+    ["once it was stopped and its last connection is gone", (server: any) => server.stop()],
+    ["once its graph is disposed", (_: any, graph: Graph) => graph.dispose()],
+  ])("a server with only static routes that the host still holds does not keep its graph %s", async (_, end) => {
+    const lifetimes = new Lifetimes();
+    const box: { held?: any } = {};
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      box.held = graph.run(() => io.serveWith["only static routes"]());
+      expect(await (await fetch(box.held.url)).text()).toBe("static");
+      await end(box.held, graph);
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(box.held.port).toBe(0);
+  });
+
+  test("a server with only static routes that is stopping keeps its graph until its last request is done", async () => {
+    const lifetimes = new Lifetimes();
+    const box: { held?: any; stopped?: Promise<string> } = {};
+    const client = await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      box.held = graph.run(() => io.serveWith["only static routes and no idle timeout"]());
+      const client = await askAgainButForTheLastLine(box.held.port);
+      // The server reads what arrives in order: it has the client's unfinished request once it has answered this.
+      expect(await (await fetch(box.held.url)).text()).toBe("static");
+      box.stopped = settled(box.held.stop());
+      return client;
+    })();
+    expect(await lifetimes.survives("graph")).toBe(true);
+    expect(await client.sendTheLastLine()).toEndWith("static");
+    expect(await box.stopped).toBe("settled");
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(box.held.port).toBe(0);
+  });
+
+  // stop()'s promise is settled in the server's context, one turn of the loop later: the graph is there until then.
+  test.each([
+    ["stop()", (server: any) => server.stop()],
+    ["stop(true)", (server: any) => server.stop(true)],
+  ])(
+    "the host that dropped the graph gets its answer to await server.%s when a collection comes first",
+    async (_, stop) => {
+      const lifetimes = new Lifetimes();
+      const box: { held?: any } = {};
+      await (async () => {
+        const graph = lifetimes.track("graph", new ModuleGraph());
+        const io = await graph.import(file("io.mjs"));
+        box.held = graph.run(() => io.serveWith["only static routes"]());
+      })();
+      await collect();
+      expect(box.held.port).not.toBe(0);
+      // From a timer, as collect() does: a collection in this function's own continuation still finds the graph.
+      const answer = await new Promise<string>(resolve =>
+        setTimeout(() => {
+          const stopped = stop(box.held).then(() => "settled");
+          Bun.gc(true);
+          const turns = (async () => {
+            for (let i = 0; i < 10; i++) await new Promise<void>(turn => setImmediate(turn));
+            return "still pending";
+          })();
+          resolve(Promise.race([stopped, turns]));
+        }, 0),
+      );
+      expect(answer).toBe("settled");
+      expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    },
+  );
+
+  // Its microtask still runs, once, and the server that it makes is stopped at once.
+  test("a server with only static routes that leftover script of a disposed graph made does not keep the graph", async () => {
+    const lifetimes = new Lifetimes();
+    const state = control();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph({ globals: { control: state } }));
+      const io = await graph.import(file("io.mjs"));
+      graph.run(() => io.serveFromAMicrotask());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+    expect(state.made.port).toBe(0);
   });
 
   test("a repeating timer keeps its graph alive; clearing it lets the graph go", async () => {
@@ -603,6 +787,28 @@ describe.concurrent("ModuleGraph GC: node:fs's record of open FileHandles", () =
   });
 });
 
+// The server is the graph's whose Bun.serve() took it over, or the host's: it keeps that graph, and no longer the first.
+// (One at a time: only then does the runner end the --hot child of a test that timed out.)
+test.each([
+  ["a second graph", { kept: ["second"], answer: "second" }],
+  ["the host", { kept: [], answer: "the host" }],
+])(
+  "ModuleGraph GC: --hot: a server with only static routes that %s took over lets the first graph go",
+  async (by, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", file("taken-over-under-hot.mjs"), by],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify(expected));
+    expect(exitCode).toBe(0);
+  },
+);
+
 test("ModuleGraph GC: survives collecting continuously", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -633,6 +839,46 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The servers must still answer once a graph with nothing open, made after theirs, has been collected.
+test("ModuleGraph GC: survives collecting continuously while graphs the host dropped keep their servers", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { join } = require("path");
+      const dir = ${JSON.stringify(dir)};
+      const ports = [];
+      for (const who of ["first", "second"]) {
+        await (async () => {
+          const graph = new Bun.ModuleGraph();
+          const { serve } = await graph.import(join(dir, "serves-static-routes.mjs"));
+          ports.push(graph.run(() => serve(who)));
+        })();
+      }
+      let collected = false;
+      const registry = new FinalizationRegistry(() => { collected = true; });
+      (() => { registry.register(new Bun.ModuleGraph(), 0); })();
+      // Until it is collected, and then a few more for the others to be.
+      for (let turns = 0, after = 0; turns < 200 && after < 5; turns++, after += Number(collected)) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      const answers = [];
+      for (const port of ports) answers.push(await fetch("http://127.0.0.1:" + port + "/").then(response => response.text(), () => "nobody"));
+      console.log(JSON.stringify({ collected, answers }));
+      process.exit(0);
+      `,
+    ],
+    env: { ...bunEnv, BUN_JSC_collectContinuously: "1" },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ collected: true, answers: ["first", "second"] });
+  expect(exitCode).toBe(0);
+});
 
 // The period puts a collection in the middle of the signal's abort steps, whatever came before.
 test.concurrent.each([2, 3, 4])(

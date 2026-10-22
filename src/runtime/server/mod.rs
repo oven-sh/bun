@@ -204,6 +204,8 @@ bitflags::bitflags! {
     pub struct ServerFlags: u8 {
         const DEINIT_SCHEDULED            = 1 << 0;
         const TERMINATED                  = 1 << 1;
+        /// The wrapper refers to the `Bun.ModuleGraph` of the server's context (`join_context`).
+        const KEEPS_GRAPH                 = 1 << 2;
     }
 }
 
@@ -1710,6 +1712,49 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.poll_ref.unref(self.vm.loop_ctx());
     }
 
+    /// The server is `context`'s from here on, and keeps its `Bun.ModuleGraph` until it leaves.
+    /// SAFETY: `this` is the live heap-allocated server, pinned until it leaves its context.
+    pub(crate) unsafe fn join_context(this: *mut Self, context: &jsc::ScriptExecutionContext) {
+        // SAFETY: fn contract.
+        unsafe {
+            (*this).leave_context();
+            (*this).context.set(context.id());
+            jsc::AbortHandle::arm_owner(this, context);
+            if let Some(graph) = context.module_graph() {
+                (*this).set_graph_kept(graph);
+            }
+        }
+    }
+
+    /// The wrapper, which is rooted while the server listens, refers to `graph`: `ZERO` for none.
+    fn set_graph_kept(&mut self, graph: JSValue) {
+        self.flags.remove(ServerFlags::KEEPS_GRAPH);
+        if let Some(wrapper) = self.js_value.try_get() {
+            let global = bun_opaque::opaque_deref(self.global_this);
+            Self::js_gc_module_graph_set(wrapper, global, graph);
+            self.flags.set(ServerFlags::KEEPS_GRAPH, !graph.is_empty());
+        }
+    }
+
+    /// The graph that the wrapper refers to, held for a task that runs in the graph's context.
+    fn graph_kept(&self) -> Option<jsc::Strong> {
+        if !self.flags.contains(ServerFlags::KEEPS_GRAPH) {
+            return None;
+        }
+        let wrapper = self.js_value.try_get()?;
+        let graph = server_js_cached!(SSL, DEBUG, module_graph_get_cached(wrapper))?;
+        let global = bun_opaque::opaque_deref(self.global_this);
+        Some(jsc::Strong::create(graph, global))
+    }
+
+    /// The server is no context's any more, and its wrapper refers to no graph.
+    fn leave_context(&mut self) {
+        self.abort_handle.leave();
+        if self.flags.contains(ServerFlags::KEEPS_GRAPH) {
+            self.set_graph_kept(JSValue::ZERO);
+        }
+    }
+
     pub(crate) fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
@@ -1925,6 +1970,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     promise: self.all_closed_promise.take(),
                     tracker: jsc::AsyncTaskTracker::init(vm_ref),
                     context: self.context.get(),
+                    _graph: self.graph_kept(),
                 },
                 vm_ref,
             );
@@ -1933,7 +1979,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self.unref();
         }
         if self.is_drained() {
-            self.abort_handle.leave();
+            self.leave_context();
             // No handler is dispatched from here on (`js_value_for_dispatch`), so the wrapper —
             // the handlers' only GC root — may become collectible.
             self.js_value.downgrade();
@@ -3275,7 +3321,7 @@ mod cached_values {
             bun_jsc::codegen_cached_accessors!(
                 $ty; routeList, onRequest, onError, onNodeHTTPRequest, onClientError, onConnection,
                 wsOnOpen, wsOnMessage, wsOnClose, wsOnDrain, wsOnError, wsOnPing, wsOnPong,
-                wsPackageHandlers
+                wsPackageHandlers, moduleGraph
             );
         };
     }
@@ -3339,6 +3385,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         js_gc_ws_package_handlers_set,
         ws_package_handlers_set_cached
     );
+    slot_setter!(js_gc_module_graph_set, module_graph_set_cached);
 
     /// Stores `handlers` (`{ message, ping, pong, drain, close }`) on the first call. Later calls
     /// are no-ops. The object is private to `ws.ts`, so user code can't modify it.
@@ -4418,6 +4465,8 @@ pub(crate) struct ServerAllConnectionsClosedTask {
     /// The context of the script that made the server: `stop()`'s promise (and node:http's
     /// `'close'`, which waits on it) is settled for that script.
     pub(crate) context: jsc::ContextId,
+    /// The `Bun.ModuleGraph` of `context`, which must still be there when the promise is settled.
+    pub(crate) _graph: Option<jsc::Strong>,
 }
 
 impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {

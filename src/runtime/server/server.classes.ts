@@ -105,6 +105,7 @@ function generate(name) {
       "wsOnPing",
       "wsOnPong",
       "wsPackageHandlers",
+      "moduleGraph",
     ],
   });
 }

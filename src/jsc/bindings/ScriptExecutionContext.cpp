@@ -103,6 +103,11 @@ extern "C" void WebCore__ScriptExecutionContext__stopActiveDOMObjects(ScriptExec
     context->stopActiveDOMObjects();
 }
 
+extern "C" JSC::EncodedJSValue WebCore__ScriptExecutionContext__moduleGraph(ScriptExecutionContext* context)
+{
+    return JSC::JSValue::encode(context->moduleGraph());
+}
+
 void ScriptExecutionContext::stop()
 {
     ASSERT(m_bunContext);

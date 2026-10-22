@@ -197,28 +197,25 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     "node_modules/tailwindcss/index.js": `const order = ${JSON.stringify(order)};\n${imports}`,
   };
 
-  test("`@import` of a package subpath in `stylesheet` takes the most specific `exports` pattern, like Node", async () => {
-    // Like @fontsource-variable/roboto: `./*` is listed before `./*.css`, and `./*` would map `a.css` to `a.css.css`.
-    const rows: [Record<string, unknown>, string][] = [
-      [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a.css"],
-      [{ "./*": { style: "./*.css" }, "./*.css": "./*.css" }, "pkg/a.css"],
-      // `./*` maps this to `./styles/a.css`, which exists, but `./styles/*` is more specific.
-      [{ "./*": "./*.css", "./styles/*": "./*.css" }, "pkg/styles/a"],
-    ];
-    await Promise.all(
-      rows.map(async ([exports, id]) => {
-        const files = {
-          ...version4WithImports,
-          ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./app.css" } }',
-          "app.css": `@import "${id}";\n`,
-          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports }),
-          "node_modules/pkg/a.css": "/* reversed */\n",
-          "node_modules/pkg/styles/a.css": "",
-          "src/a.jsx": sorted,
-        };
-        expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
-      }),
-    );
+  // Like @fontsource-variable/roboto: `./*` is listed before `./*.css`, and `./*` would map `a.css` to `a.css.css`.
+  test.each<[Record<string, unknown>, string]>([
+    [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a.css"],
+    [{ "./*": { style: "./*.css" }, "./*.css": "./*.css" }, "pkg/a.css"],
+    // `./*.css` is the most specific, doesn't match, and `./*` is next.
+    [{ "./*": "./*.css", "./*.css": "./*.css" }, "pkg/a"],
+    // `./*` maps this to `./styles/a.css`, which exists, but `./styles/*` is more specific.
+    [{ "./*": "./*.css", "./styles/*": "./*.css" }, "pkg/styles/a"],
+  ])("`@import` in `stylesheet` takes the most specific `exports` pattern, like Node: %j", async (exports, id) => {
+    const files = {
+      ...version4WithImports,
+      ".oxfmtrc.json": '{ "sortTailwindcss": { "stylesheet": "./app.css" } }',
+      "app.css": `@import "${id}";\n`,
+      "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", exports }),
+      "node_modules/pkg/a.css": "/* reversed */\n",
+      "node_modules/pkg/styles/a.css": "",
+      "src/a.jsx": sorted,
+    };
+    expect(await format(files, ["src/a.jsx"])).toMatchObject({ stderr: "", files: [reversed], exitCode: 0 });
   });
 
   test("loads Tailwind CSS 3 with `config`, or with the nearest tailwind.config.*", async () => {

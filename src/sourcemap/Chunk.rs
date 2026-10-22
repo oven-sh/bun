@@ -4,8 +4,8 @@ use bun_paths::fs::FileSystem;
 use bun_ptr::RawSlice;
 
 use crate::{
-    InternalSourceMap, LineOffsetTable, SourceMapState, append_mapping_to_buffer,
-    internal_source_map,
+    InternalSourceMap, LineColumnOffset, LineOffsetTable, Ordinal, SourceMapState,
+    append_mapping_to_buffer, internal_source_map,
     internal_source_map::{Mark, MarkKind},
     line_offset_table,
     line_offset_table::LineOffsetTableColumns as _,
@@ -619,44 +619,29 @@ impl NewBuilder<'_, VLQSourceMap> {
         self.has_prev_state = true;
     }
 
-    /// Marks the last mapping. VLQ has nowhere to keep a mark.
-    pub fn mark_object_brace(&mut self) {
-        let last = &self.prev_state;
-        let mark = Mark::new(
-            MarkKind::ObjectBrace,
-            0,
-            (last.generated_line, last.generated_column),
-            (last.original_line, last.original_column),
-        );
-        if let Some(internal) = &mut self.source_map.ctx.internal {
-            internal.mark(mark);
-        }
-    }
-
-    /// Marks the end of `output`, where what is at `loc` is about to be printed. Adds no mapping.
+    /// Marks the end of `output` as the generated position of `loc`. Adds no mapping.
     pub fn mark(&mut self, kind: MarkKind, decision: u32, loc: Loc, output: &[u8]) {
         // exclude generated code from source
-        if self.source_map.ctx.internal.is_none() || loc.start == Loc::EMPTY.start {
+        if loc.start == Loc::EMPTY.start {
             return;
         }
-        let Some((original_line, original_column)) = self.original_line_and_column(loc) else {
+        let Some(original) = self.original_position(loc) else {
             return;
         };
         self.update_generated_line_and_column(output);
-        let mark = Mark::new(
-            kind,
-            decision,
-            (self.prev_state.generated_line, self.generated_column.max(0)),
-            (original_line.max(0), original_column.max(0)),
-        );
+        // VLQ has nowhere to keep a mark.
         if let Some(internal) = &mut self.source_map.ctx.internal {
-            internal.mark(mark);
+            let generated = LineColumnOffset {
+                lines: Ordinal(self.prev_state.generated_line),
+                columns: Ordinal(self.generated_column.max(0)),
+            };
+            internal.mark(Mark::new(kind, decision, generated, original));
         }
     }
 
     /// `None`: the source has no lines.
     #[inline(always)]
-    fn original_line_and_column(&mut self, loc: Loc) -> Option<(i32, i32)> {
+    fn original_position(&mut self, loc: Loc) -> Option<LineColumnOffset> {
         if let LineOffsetTables::Deferred {
             contents,
             approximate_line_count,
@@ -721,7 +706,10 @@ impl NewBuilder<'_, VLQSourceMap> {
             }
         }
 
-        Some((original_line, original_column))
+        Some(LineColumnOffset {
+            lines: Ordinal(original_line.max(0)),
+            columns: Ordinal(original_column.max(0)),
+        })
     }
 
     #[inline(never)]
@@ -737,7 +725,7 @@ impl NewBuilder<'_, VLQSourceMap> {
 
         self.prev_loc = loc;
 
-        let Some((original_line, original_column)) = self.original_line_and_column(loc) else {
+        let Some(original) = self.original_position(loc) else {
             return;
         };
 
@@ -763,8 +751,8 @@ impl NewBuilder<'_, VLQSourceMap> {
             generated_line: self.prev_state.generated_line,
             generated_column: self.generated_column.max(0),
             source_index: self.prev_state.source_index,
-            original_line: original_line.max(0),
-            original_column: original_column.max(0),
+            original_line: original.lines.zero_based(),
+            original_column: original.columns.zero_based(),
         });
 
         // This line now has a mapping on it, so don't insert another one

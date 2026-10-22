@@ -688,9 +688,7 @@ test("only imports the function", () => {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
-  expect(record).toBeDefined();
+  const record = recordOf(String(dir), "subject.ts");
   // Blank line 5 is only "executable" in the worker that never ran count().
   expect(record).not.toContain("DA:5,");
   expect(record).toMatch(/LF:4\nLH:4\n/);
@@ -750,8 +748,7 @@ test("calls second", () => {
 
   expect(stderr).toContain("2 pass");
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +100\.00 +\| +\n/);
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
+  const record = recordOf(String(dir), "subject.ts");
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
@@ -791,9 +788,8 @@ test("ran", () => {
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("SF:subject.ts"));
-  expect(record?.match(/^DA:.*$/gm)).toEqual([
+  const record = recordOf(String(dir), "subject.ts");
+  expect(record.match(/^DA:.*$/gm)).toEqual([
     "DA:1,1",
     "DA:2,1",
     "DA:3,1",
@@ -1170,7 +1166,7 @@ function recordOf(dir: string, file: string) {
 
 type Mode = "transpiled" | "// @bun" | "// @bun with a source map" | "coverageIgnoreSourcemaps";
 
-/** The lcov record of `lib` after `testFile`, which imports it from "./lib.js". */
+/** The lcov record of `lib` after `testFile`, which imports it from "./lib.js", and how many lines are above `lib` in it. */
 async function coverageOfLib(mode: Mode, lib: string, testFile: string) {
   using dir = tempDir("cov-lib", {
     "lib.test.ts": testFile,
@@ -1201,7 +1197,7 @@ async function coverageOfLib(mode: Mode, lib: string, testFile: string) {
     stderr: "inherit",
   });
   const exitCode = await proc.exited;
-  return { record: recordOf(String(dir), "lib.js"), exitCode };
+  return { record: recordOf(String(dir), "lib.js"), above: mode === "// @bun" ? 1 : 0, exitCode };
 }
 
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
@@ -1222,7 +1218,7 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
   }
 }
 `;
-    const { record, exitCode } = await coverageOfLib(
+    const { record, above, exitCode } = await coverageOfLib(
       mode,
       mode === "// @bun" ? lib + "await 0;\nif (false) globalThis.list = [\n  {\n  }\n];\n" : lib,
       `
@@ -1231,7 +1227,6 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
         test("f", () => { expect(f()).toEqual({ one: 1 }); });
       `,
     );
-    const above = mode === "// @bun" ? 1 : 0;
     const count = (line: number) => record.match(new RegExp(`^DA:${line + above},(\\d+)$`, "m"))?.[1];
     expect([2, 4, 6, 8, 11, 12].map(count)).toEqual([undefined, "1", "1", undefined, undefined, undefined]);
     if (mode === "// @bun") {
@@ -1244,8 +1239,8 @@ test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSou
 
 describe("branches", () => {
   // After `//` are the branches of each decision that starts on the line, in the order of the
-  // decisions, and how often each was taken. The last of `[1,2]` is the one without code of its own,
-  // but for `if` with `else`, `?:` and a `switch` with `default`.
+  // decisions, and how often each was taken. The last of `[1,2]` is the branch without code of its own,
+  // except for `if` with `else`, `?:`, and a `switch` with `default` or a fall through.
   // Laid out as the printer prints it, so that the lines are the same with coverageIgnoreSourcemaps.
   const lib = `const Kind = { A: 1 };
 export function decisions(v, o, list) {
@@ -1344,6 +1339,13 @@ export function switches(v, o) {
       Kind.last = v;
     case 2:
   }
+  switch (v) { // [1,1,2]
+    case 1: {
+      using none = null;
+      break;
+    }
+    case 2:
+  }
   switch (v) { // [1,0,0,0,3]
     case Kind.A:
       return;
@@ -1384,9 +1386,9 @@ export function never(v) {
   }
 
   test.concurrent.each(["transpiled", "// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"] as const)(
-    "each way of each decision has its count: %s",
+    "every branch has its hit count: %s",
     async mode => {
-      const { record, exitCode } = await coverageOfLib(
+      const { record, above, exitCode } = await coverageOfLib(
         mode,
         lib,
         `
@@ -1408,7 +1410,6 @@ export function never(v) {
         });
       `,
       );
-      const above = mode === "// @bun" ? 1 : 0;
       const expected = expectedOf(lib);
       expect(decisionsOf(record)).toEqual(expected.map(([line, hits]) => [line + above, hits]));
       const all = expected.flatMap(([, hits]) => hits);
@@ -1417,8 +1418,36 @@ export function never(v) {
     },
   );
 
+  test.concurrent.each(["transpiled", "// @bun"] as const)("a line with a BRDA has a DA: %s", async mode => {
+    const { record, above, exitCode } = await coverageOfLib(
+      mode,
+      `export function pattern(
+  {
+    a = 1,
+  } = {},
+) {
+  return a;
+}
+`,
+      `
+        import { test } from "bun:test";
+        import { pattern } from "./lib.js";
+        test("lib", () => {
+          pattern();
+          pattern({ a: 2 });
+        });
+      `,
+    );
+    expect(decisionsOf(record)).toEqual([
+      [3 + above, [1, 1]],
+      [2 + above, [1, 1]],
+    ]);
+    expect(record).toContain(`DA:${2 + above},2\n`);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.each(["transpiled", "// @bun"] as const)(
-    "a name that Bun replaces with the value of its const is where it was: %s",
+    "an inlined const has the position of the name it replaces: %s",
     async mode => {
       const lib = `const M = 2;
 export function inlined(v, o, t = M) { // [3,0]
@@ -1437,7 +1466,7 @@ export function inlined(v, o, t = M) { // [3,0]
   return (p = L) => p; // [0,0]
 }
 `;
-      const { record, exitCode } = await coverageOfLib(
+      const { record, above, exitCode } = await coverageOfLib(
         mode,
         lib,
         `
@@ -1450,13 +1479,46 @@ export function inlined(v, o, t = M) { // [3,0]
           });
         `,
       );
-      const above = mode === "// @bun" ? 1 : 0;
       expect(decisionsOf(record)).toEqual(expectedOf(lib).map(([line, hits]) => [line + above, hits]));
       expect(exitCode).toBe(0);
     },
   );
 
-  test.concurrent("what TypeScript and JSX turn into has no branches", async () => {
+  test.concurrent("a file that is nested too deep is an error", async () => {
+    // A debug build has depths that the parser takes and the printer does not. Which ones depends on the build.
+    const depths = [...Array.from({ length: 18 }, (_, i) => Math.round(100 * 1.25 ** i)), 102400];
+    const nested = (depth: number) =>
+      Buffer.alloc(depth * 10, "v && x?.b(").toString() + "x?.b" + Buffer.alloc(depth, ")").toString();
+    using dir = tempDir("cov-branches-deep", {
+      ...Object.fromEntries(
+        depths.map(depth => [`lib${depth}.js`, `var v = 0, x = null;\nexport default ${nested(depth)};\n`]),
+      ),
+      "lib.test.js": `
+        import { expect, test } from "bun:test";
+        test("lib", async () => {
+          const errors = [];
+          for (const depth of ${JSON.stringify(depths)}) {
+            errors.push(await import("./lib" + depth + ".js").then(() => "", String));
+          }
+          const tooDeep = /Maximum call stack size exceeded|StackOverflow while building/;
+          expect(errors.at(-1)).toMatch(tooDeep);
+          expect(errors.filter(error => error && !tooDeep.test(error))).toEqual([]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("code generated for TypeScript and JSX syntax adds no branches", async () => {
     using dir = tempDir("cov-branches-ts", {
       "lib.tsx": `enum Color { Red, Green = "g" }
 export namespace Outer { export const a = Color.Red; export namespace Inner { export const b = 2; } }
@@ -1492,14 +1554,6 @@ export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0)
     expect(exitCode).toBe(0);
   });
 
-  const half = {
-    "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\n`,
-    "lib.test.ts": `
-      import { test } from "bun:test";
-      import { pick } from "./lib.ts";
-      test("pick", () => { pick(1); });
-    `,
-  };
   test.concurrent.each([
     ["coverageThreshold = 0.9", 0],
     ["coverageThreshold = { lines = 0.9 }", 0],
@@ -1507,7 +1561,12 @@ export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0)
     ["coverageThreshold = { branches = 0.6 }", 1],
   ])("%s and half of the branches exits with %d", async (threshold, expectedExitCode) => {
     using dir = tempDir("cov-branches-threshold", {
-      ...half,
+      "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\n`,
+      "lib.test.ts": `
+        import { test } from "bun:test";
+        import { pick } from "./lib.ts";
+        test("pick", () => { pick(1); });
+      `,
       "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n${threshold}\n`,
     });
     await using proc = Bun.spawn({
@@ -1524,7 +1583,7 @@ export function loop(n: number) { for (let i = 0; i < n; i++) {} while (n-- > 0)
     expect(exitCode).toBe(expectedExitCode);
   });
 
-  test.concurrent("--parallel adds up what each worker took", async () => {
+  test.concurrent("--parallel adds up branch hits across workers", async () => {
     using dir = tempDir("cov-branches-parallel", {
       "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\ncoverageThreshold = { branches = 1.0 }\n`,
       "lib.ts": `export const pick = (v: number) => (v ? 1 : 2);\nexport const both = (v: number) => v && 1;\n`,
@@ -1588,8 +1647,7 @@ test("list", () => { Object(list); });
       stderr: "inherit",
     });
     const exitCode = await proc.exited;
-    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-    return { record: lcov.split("end_of_record").find(r => r.includes("lib.ts\n")), exitCode };
+    return { record: recordOf(String(dir), "lib.ts"), exitCode };
   };
   // A run that does not take the entry writes it again.
   const written = () =>
@@ -1644,9 +1702,8 @@ test("lib", () => { Object(lib); });
     stderr: "inherit",
   });
   const exitCode = await proc.exited;
-  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
-  const record = lcov.split("end_of_record").find(r => r.includes("lib.ts\n"));
-  expect(record!.match(/^DA:.*$/gm)).toEqual([7, 8, 9, 10, 11, 12, 13, 14].map(line => `DA:${line},1`));
+  const record = recordOf(String(dir), "lib.ts");
+  expect(record.match(/^DA:.*$/gm)).toEqual([7, 8, 9, 10, 11, 12, 13, 14].map(line => `DA:${line},1`));
   expect(exitCode).toBe(0);
 });
 

@@ -831,7 +831,7 @@ impl ByteRangeMapping {
             });
         }
 
-        let branches = self.count_branches(&counts, &functions, source_map.as_deref());
+        let branches = self.count_branches(&counts, &functions, source_map.as_deref(), &mut lines);
 
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
         let (functions, functions_which_have_executed) = split_executed(&functions)?;
@@ -856,13 +856,13 @@ impl ByteRangeMapping {
         counts: &ExecutionCounts,
         functions: &[CountedRange],
         source_map: Option<&ParsedSourceMap>,
+        lines: &mut LineCounts,
     ) -> Vec<(Branch, u32)> {
-        // JSC starts the block of a branch one unit early, as a function that starts it has its own.
+        // A function's start has the function's own block, so JSC starts the branch's a unit earlier.
         let count_at = |offset: u32| {
-            let first = functions.partition_point(|function| function.range.start < offset);
             let starts_a_function = functions
-                .get(first)
-                .is_some_and(|function| function.range.start == offset);
+                .binary_search_by_key(&offset, |function| function.range.start)
+                .is_ok();
             counts
                 .at(offset.saturating_sub(u32::from(starts_a_function)))
                 .unwrap_or(0)
@@ -889,6 +889,9 @@ impl ByteRangeMapping {
             let Some(line) = line else {
                 continue;
             };
+            let reached = count_at(decision.offset);
+            // genhtml rejects a `BRDA` without a `DA`: the `{` of a pattern with a default, alone on its line.
+            lines.add(line as usize, reached);
 
             let mut index = 0;
             let mut push = |hits: u32| {
@@ -900,12 +903,12 @@ impl ByteRangeMapping {
                 branches.push((branch, hits));
                 index += 1;
             };
-            let mut ran_into_next = 0u32;
+            let mut fell_through = 0u32;
             let mut total = 0u32;
             for mark in branch_marks {
                 let ran = count_at(mark.offset);
-                let hits = ran.saturating_sub(ran_into_next);
-                ran_into_next = match mark.kind {
+                let hits = ran.saturating_sub(fell_through);
+                fell_through = match mark.kind {
                     MarkKind::EmptyCase => ran,
                     _ => 0,
                 };
@@ -913,7 +916,7 @@ impl ByteRangeMapping {
                 push(hits);
             }
             if has_implicit_branch {
-                push(count_at(decision.offset).saturating_sub(total));
+                push(reached.saturating_sub(total));
             }
         }
         branches
@@ -974,7 +977,7 @@ impl ByteRangeMapping {
         }
     }
 
-    /// `source` is the text JSC compiled, and `utf8` the same.
+    /// `source` is the text JSC compiled. `utf8` is the same text as UTF-8.
     fn read_marks(&mut self, source: &bun_core::String, utf8: &[u8], already_bundled: bool) {
         if already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in it.
@@ -1013,9 +1016,7 @@ impl ByteRangeMapping {
             MarkKind::Decision | MarkKind::DecisionWithImplicitBranch => {}
             MarkKind::Branch | MarkKind::EmptyCase => {
                 let len = u32::try_from(self.executable_units.bit_length()).expect("int cast");
-                while offset + 1 < len
-                    && matches!(source.char_at(offset as usize), 0x09 | 0x0A | 0x0D | 0x20)
-                {
+                while offset + 1 < len && is_white_space(source.char_at(offset as usize)) {
                     offset += 1;
                 }
             }
@@ -1038,6 +1039,7 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
     let source = bun_ast::Source::init_path_string(path, text);
     let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);
     options.features.dead_code_elimination = false;
+    options.features.lower_using = false;
     options.features.no_macros = true;
     options.features.top_level_await = true;
     let define = bun_js_parser::Define::default();
@@ -1071,6 +1073,10 @@ fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableStrin
     Some(chunk?.buffer)
 }
 
+fn is_white_space(unit: u16) -> bool {
+    matches!(unit, 0x09 | 0x0A | 0x0D | 0x20)
+}
+
 /// `ByteRangeMapping::line_starts` and `executable_units`. Lines end where
 /// `bun_sourcemap` ends them, in a generated text and in an original.
 fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
@@ -1083,7 +1089,7 @@ fn scan(units: impl ExactSizeIterator<Item = u16>) -> (Vec<u32>, Bitset) {
             0x0A | 0x0D | 0x2028 | 0x2029 => starts.push(u32::try_from(i + 1).expect("int cast")),
             _ => {}
         }
-        if !matches!(unit, 0x09 | 0x0A | 0x0D | 0x20 | 0x7B | 0x7D) {
+        if !is_white_space(unit) && !matches!(unit, 0x7B | 0x7D) {
             executable.set(i);
         }
     }

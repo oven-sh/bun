@@ -287,7 +287,7 @@ export const cases: Record<string, Case> = {
  1|};
 `,
   },
-  // Where a constant is inlined, its value has the position of its declaration.
+  // Where a constant is inlined, its value has the position of the name it replaces.
   "inlined.ts": {
     functions: "1/2",
     lines: `
@@ -298,10 +298,17 @@ export const cases: Record<string, Case> = {
  0|export function unused(x: number): number {
  0|  return x + B;
  -|}
- 1|export function used(x: number): number {
- 1|  return x + C;
+ 3|export function used(x: number): number {
+ 3|  const D = 4;
+ 3|  return x +
+ 3|    C +
+ 3|    D;
  -|}
  1|used(A);
+ 1|used(A);
+ 1|used(
+ 1|  A,
+ 1|);
 `,
   },
   // JSC's offsets count code units of a text that is Latin-1 here and UTF-16 below, never UTF-8 bytes.
@@ -512,16 +519,11 @@ export const cases: Record<string, Case> = {
  -|}
 `,
   },
-  // A `;` that is a body runs, and a name that Bun replaces with the value of its `const` is where it was.
-  "replaced.ts": {
-    functions: "2/3",
+  // An empty statement that is a body runs.
+  "empty-statements.ts": {
+    functions: "1/2",
     lines: `
- 1|const M = 2;
- 3|function g(...a: unknown[]) {
- 3|  return a.length;
- -|}
  3|function f(v: number, list: number[]) {
- 3|  const L = 3;
  3|  let r = 0;
  3|  if (v)
  2|    ;
@@ -531,21 +533,10 @@ export const cases: Record<string, Case> = {
  3|    ;
  3|  for (const x of list)
  3|    ;
- 3|  r = g(
- 3|    L,
- 3|    M,
- 3|    v,
- 3|  );
- 3|  return r +
- 3|    L;
  -|}
- 0|export function never() {
- 0|  const N = 4;
- 0|  if (N)
+ 0|export function never(v: number) {
+ 0|  if (v)
  0|    ;
- 0|  return g(
- 0|    N,
- 0|  );
  -|}
  1|f(1, [1, 2]);
  1|f(0, []);
@@ -871,7 +862,7 @@ export const cases: Record<string, Case> = {
  1|rejected();
 `,
   },
-  // What `?.`, a logical assignment and a value that is there skip. A `case` that does not match did not run.
+  // What `?.`, a logical assignment and a value that is there skip.
   "skipped.ts": {
     functions: "8/8",
     lines: `

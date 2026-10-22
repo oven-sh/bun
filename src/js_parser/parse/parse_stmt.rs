@@ -46,10 +46,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline]
     fn t_semicolon(p: &mut Self, loc: bun_ast::Loc) -> Result<Stmt> {
         p.lexer.next()?;
-        Ok(Stmt {
-            loc,
-            ..Stmt::empty()
-        })
+        Ok(p.s(S::Empty {}, loc))
     }
 
     #[inline]

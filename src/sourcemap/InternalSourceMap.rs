@@ -156,9 +156,9 @@ pub enum MarkKind {
     Decision,
     /// One more branch has no code. It ran as often as this position, less the other branches.
     DecisionWithImplicitBranch,
-    /// White space can be before it.
+    /// The start of a branch, or the white space before it.
     Branch,
-    /// A `case` without statements. The count of the next clause has the times this one ran.
+    /// A `case` without statements. It falls through, so the next clause's count includes its own.
     EmptyCase,
 }
 
@@ -166,16 +166,12 @@ impl Mark {
     pub(crate) fn new(
         kind: MarkKind,
         decision: u32,
-        generated: (i32, i32),
-        original: (i32, i32),
+        generated: LineColumnOffset,
+        original: LineColumnOffset,
     ) -> Mark {
-        let position = |(line, column)| LineColumnOffset {
-            lines: Ordinal(line),
-            columns: Ordinal(column),
-        };
         Mark {
-            generated: position(generated),
-            original: position(original),
+            generated,
+            original,
             kind: kind as u32,
             decision,
         }

@@ -1606,10 +1606,6 @@ impl ExprFlag {
     pub(crate) fn expr_result_is_unused() -> ExprFlagSet {
         ExprFlag::ExprResultIsUnused.into()
     }
-    #[inline]
-    pub(crate) fn is_followed_by_of() -> ExprFlagSet {
-        ExprFlag::IsFollowedByOf.into()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1647,7 +1643,7 @@ pub(crate) mod __gated_printer {
     pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
         p.slice()
     }
-    /// Control does not reach what is after `stmts`, going by the last of them alone.
+    /// Whether the last of `stmts` leaves, so nothing after them runs. Looks at no other statement.
     fn ends_in_jump(stmts: &[Stmt]) -> bool {
         match stmts.last().map(|stmt| &stmt.data) {
             Some(
@@ -1738,7 +1734,7 @@ pub(crate) mod __gated_printer {
         pub(crate) entry: &'static OpInfo,
         pub(crate) wrap: bool,
         pub(crate) right_level: Level,
-        /// From `mark_decision`, if the right side is a branch.
+        /// From `mark_decision` if the right side is a branch, else 0.
         pub(crate) decision: u32,
     }
 
@@ -1801,7 +1797,7 @@ pub(crate) mod __gated_printer {
                 v.flags.insert(ExprFlag::ForbidIn);
             }
 
-            if GENERATE_SOURCE_MAP && self.options.code_coverage {
+            if self.code_coverage() {
                 self.mark_binary(v);
             }
 
@@ -2475,15 +2471,21 @@ pub(crate) mod __gated_printer {
                 .add_source_mapping(location, self.writer.slice());
         }
 
-        #[inline]
-        pub(crate) fn mark_object_brace(&mut self) {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
-                return;
-            }
-            self.source_map_builder.mark_object_brace();
+        #[inline(always)]
+        fn code_coverage(&self) -> bool {
+            GENERATE_SOURCE_MAP && ASCII_ONLY && self.options.code_coverage
         }
 
-        /// Control goes to one of `branches` from what is at `loc`, which is about to be printed.
+        #[inline]
+        pub(crate) fn mark_object_brace(&mut self, loc: bun_ast::Loc) {
+            if !self.code_coverage() {
+                return;
+            }
+            self.source_map_builder
+                .mark(MarkKind::ObjectBrace, 0, loc, self.writer.slice());
+        }
+
+        /// Starts a decision at `loc`, which is about to be printed. Its branches start at `branches`.
         #[inline]
         pub(crate) fn mark_decision(
             &mut self,
@@ -2491,46 +2493,51 @@ pub(crate) mod __gated_printer {
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
         ) -> u32 {
-            self.mark_decision_before_end(0, kind, loc, branches)
+            self.mark_decision_at(self.writer.written(), kind, loc, branches)
         }
 
-        /// The same where what is at `loc` was just printed. Its last character is marked.
+        /// A decision that was just printed: marks its last character, a byte as the output is ASCII.
         #[inline]
         pub(crate) fn mark_decision_after(
             &mut self,
-            loc: bun_ast::Loc,
-            branch: bun_ast::Loc,
+            decision_loc: bun_ast::Loc,
+            branch_loc: bun_ast::Loc,
         ) -> u32 {
-            self.mark_decision_before_end(1, MarkKind::DecisionWithImplicitBranch, loc, &[branch])
+            let last_character = self.writer.written() - 1;
+            self.mark_decision_at(
+                last_character,
+                MarkKind::DecisionWithImplicitBranch,
+                decision_loc,
+                &[branch_loc],
+            )
         }
 
         /// Returns 0, which `mark_branch` ignores, for a decision that the source does not have.
         #[inline]
-        fn mark_decision_before_end(
+        fn mark_decision_at(
             &mut self,
-            bytes_before_end: usize,
+            written: i32,
             kind: MarkKind,
             loc: bun_ast::Loc,
             branches: &[bun_ast::Loc],
         ) -> u32 {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+            if !self.code_coverage() || self.stack_overflowed {
                 return 0;
             }
             if loc.start < 0 || branches.iter().any(|branch| branch.start <= loc.start) {
                 return 0;
             }
             self.decision_count += 1;
-            let output = self.writer.slice();
             self.source_map_builder.mark(
                 kind,
                 self.decision_count,
                 loc,
-                &output[..output.len() - bytes_before_end],
+                &self.writer.slice()[..written as usize],
             );
             self.decision_count
         }
 
-        /// What is at `loc`, which is about to be printed, is one of the branches of `decision`.
+        /// `loc`, which is about to be printed, starts a branch of `decision`.
         #[inline]
         pub(crate) fn mark_branch(&mut self, decision: u32, loc: bun_ast::Loc) {
             self.mark_branch_as(MarkKind::Branch, decision, loc);
@@ -2570,7 +2577,7 @@ pub(crate) mod __gated_printer {
         /// `target` was just printed and `?.` is about to be. `rest` is in what is after the `?.`.
         #[inline]
         fn mark_optional_chain(&mut self, target: Expr, rest: bun_ast::Loc) {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+            if !self.code_coverage() {
                 return;
             }
             // The start of `target` also ran when a `?.` in it stopped the chain.
@@ -2588,20 +2595,20 @@ pub(crate) mod __gated_printer {
 
         #[inline]
         fn mark_switch(&mut self, loc: bun_ast::Loc, cases: &[js_ast::Case]) -> u32 {
-            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+            if !self.code_coverage() {
                 return 0;
             }
             let Some((last, others)) = cases.split_last() else {
                 return 0;
             };
-            // JSC counts a clause that matched and one that the clause above ran into as one.
-            let has_no_match_branch = last.value.is_some()
+            // JSC has one count for a clause, whether it matched or the clause above fell through to it.
+            let has_implicit_branch = last.value.is_some()
                 && others.iter().all(|case| {
                     case.value.is_some()
                         && (case.body.is_empty() || ends_in_jump(slice_of(case.body)))
                 });
             self.mark_decision(
-                if has_no_match_branch {
+                if has_implicit_branch {
                     MarkKind::DecisionWithImplicitBranch
                 } else {
                     MarkKind::Decision
@@ -4129,7 +4136,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
-                    self.mark_object_brace();
+                    self.mark_object_brace(expr.loc);
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -4168,7 +4175,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
-                        self.mark_object_brace();
+                        self.mark_object_brace(e.close_brace_loc);
                     }
                     self.print(b"}");
                     if wrap {
@@ -5024,7 +5031,7 @@ pub(crate) mod __gated_printer {
         }
 
         pub(crate) fn print_property(&mut self, item_in: &G::Property, value_flags: ExprFlagSet) {
-            let default_of = match item_in.value {
+            let target_loc = match item_in.value {
                 Some(value) if value_flags.contains(ExprFlag::IsAssignTarget) => Some(value.loc),
                 _ => None,
             };
@@ -5178,7 +5185,7 @@ pub(crate) mod __gated_printer {
                 }
 
                 if let Some(initial) = &item.initializer {
-                    self.print_initializer(*initial, default_of);
+                    self.print_initializer(*initial, target_loc);
                 }
                 return;
             }
@@ -5210,7 +5217,7 @@ pub(crate) mod __gated_printer {
                                 ExprData::EIdentifier(e) => {
                                     if key_str.slice8() == self.name_for_symbol(e.ref_) {
                                         if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial, default_of);
+                                            self.print_initializer(*initial, target_loc);
                                         }
                                         if allow_shorthand {
                                             return;
@@ -5227,7 +5234,7 @@ pub(crate) mod __gated_printer {
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
                                         {
                                             if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial, default_of);
+                                                self.print_initializer(*initial, target_loc);
                                             }
                                             if allow_shorthand {
                                                 return;
@@ -5255,7 +5262,7 @@ pub(crate) mod __gated_printer {
                                         )
                                     {
                                         if let Some(initial) = &item.initializer {
-                                            self.print_initializer(*initial, default_of);
+                                            self.print_initializer(*initial, target_loc);
                                         }
                                         return;
                                     }
@@ -5270,7 +5277,7 @@ pub(crate) mod __gated_printer {
                                             )
                                         {
                                             if let Some(initial) = &item.initializer {
-                                                self.print_initializer(*initial, default_of);
+                                                self.print_initializer(*initial, target_loc);
                                             }
                                             return;
                                         }
@@ -5327,23 +5334,21 @@ pub(crate) mod __gated_printer {
             }
 
             if let Some(initial) = &item.initializer {
-                self.print_initializer(*initial, default_of);
+                self.print_initializer(*initial, target_loc);
             }
         }
 
-        /// `default_of`: what gets `initial` if it has no value. `None` for a field of a class.
+        /// `target_loc`: what `initial` is the default of. `None` for a class field, which always runs it.
         pub(crate) fn print_initializer(
             &mut self,
             initial: Expr,
-            default_of: Option<bun_ast::Loc>,
+            target_loc: Option<bun_ast::Loc>,
         ) {
-            let decision = match default_of {
-                Some(target) => self.mark_decision_after(target, initial.loc),
+            let decision = match target_loc {
+                Some(target_loc) => self.mark_decision_after(target_loc, initial.loc),
                 None => 0,
             };
-            self.print_space();
-            self.print(b"=");
-            self.print_space();
+            self.print_whitespacer(ws!(b" = "));
             self.mark_branch(decision, initial.loc);
             self.print_expr(initial, Level::Comma, ExprFlag::none());
         }
@@ -5398,7 +5403,10 @@ pub(crate) mod __gated_printer {
                             }
 
                             self.print_binding(item.binding, tlm);
-                            self.maybe_print_default_binding_value(item);
+                            self.maybe_print_default_binding_value(
+                                item.binding,
+                                item.default_value,
+                            );
 
                             // Make sure there's a comma after trailing missing items
                             if is_last && matches!(item.binding.data, BindingData::BMissing(_)) {
@@ -5469,7 +5477,10 @@ pub(crate) mod __gated_printer {
                                     self.print_space();
 
                                     self.print_binding(property.value, tlm);
-                                    self.maybe_print_default_binding_value(property);
+                                    self.maybe_print_default_binding_value(
+                                        property.value,
+                                        property.default_value,
+                                    );
                                     continue;
                                 }
 
@@ -5502,7 +5513,8 @@ pub(crate) mod __gated_printer {
                                                             }
                                                         }
                                                         self.maybe_print_default_binding_value(
-                                                            property,
+                                                            property.value,
+                                                            property.default_value,
                                                         );
                                                         continue;
                                                     }
@@ -5537,7 +5549,8 @@ pub(crate) mod __gated_printer {
                                                         }
                                                     }
                                                     self.maybe_print_default_binding_value(
-                                                        property,
+                                                        property.value,
+                                                        property.default_value,
                                                     );
                                                     continue;
                                                 }
@@ -5564,7 +5577,10 @@ pub(crate) mod __gated_printer {
                             }
 
                             self.print_binding(property.value, tlm);
-                            self.maybe_print_default_binding_value(property);
+                            self.maybe_print_default_binding_value(
+                                property.value,
+                                property.default_value,
+                            );
                         }
 
                         if !b.is_single_line {
@@ -5580,12 +5596,13 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(
+        pub(crate) fn maybe_print_default_binding_value(
             &mut self,
-            property: &P,
+            binding: Binding,
+            default_value: Option<Expr>,
         ) {
-            if let Some(default) = property.default_value() {
-                self.print_initializer(default, Some(property.binding_loc()));
+            if let Some(default) = default_value {
+                self.print_initializer(default, Some(binding.loc));
             }
         }
 
@@ -6120,7 +6137,7 @@ pub(crate) mod __gated_printer {
                     self.for_of_init_start = self.writer.written();
                     self.print_for_loop_init(
                         s.init,
-                        ExprFlag::is_followed_by_of() | ExprFlag::IsAssignTarget,
+                        ExprFlag::IsFollowedByOf | ExprFlag::IsAssignTarget,
                     );
                     self.print_space();
                     self.print_space_before_identifier();
@@ -7455,32 +7472,6 @@ impl PrintArg for &[u8] {
 impl<const N: usize> PrintArg for &[u8; N] {
     fn print_into<W: WriterTrait>(self, w: &mut W) {
         w.print_slice(self);
-    }
-}
-
-/// Trait covering `B::ArrayItem` / `B::Property` for `maybe_print_default_binding_value`.
-pub trait HasDefaultValue {
-    fn default_value(&self) -> Option<js_ast::Expr>;
-    fn binding_loc(&self) -> bun_ast::Loc;
-}
-impl HasDefaultValue for js_ast::b::Property {
-    #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
-        self.default_value
-    }
-    #[inline]
-    fn binding_loc(&self) -> bun_ast::Loc {
-        self.value.loc
-    }
-}
-impl HasDefaultValue for js_ast::ArrayBinding {
-    #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
-        self.default_value
-    }
-    #[inline]
-    fn binding_loc(&self) -> bun_ast::Loc {
-        self.binding.loc
     }
 }
 

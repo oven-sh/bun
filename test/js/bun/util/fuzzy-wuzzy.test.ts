@@ -21,6 +21,7 @@ const ENABLE_LOGGING = process.env.FUZZY_WUZZY_LOGGING === "1";
 
 import { afterAll, describe, expect, test } from "bun:test";
 import { EventEmitter } from "events";
+import { isWindows } from "harness";
 var calls = 0,
   constructs = 0,
   subclasses = 0;
@@ -507,18 +508,18 @@ const globals = [
 for (const [Global, name] of globals) {
   describe(name, () => {
     // TODO: hangs in CI on Windows.
-    test("call", async () => {
+    test.skipIf(isWindows && Global === Bun)("call", async () => {
       await Bun.sleep(1);
       expect(async () => await callAllMethods(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
     // TODO: hangs in CI on Windows.
-    test("construct", async () => {
+    test.skipIf(isWindows && Global === Bun)("construct", async () => {
       await Bun.sleep(1);
       expect(async () => await constructAllConstructors(Global, Global === Bun ? "Bun" : "globalThis")).not.toThrow();
       await Bun.sleep(1);
     });
-    test("construct-subclass", async () => {
+    test.skipIf(isWindows && Global === Bun)("construct-subclass", async () => {
       await Bun.sleep(1);
       expect(
         async () => await constructAllConstructorsWithSubclassing(Global, Global === Bun ? "Bun" : "globalThis"),

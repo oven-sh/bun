@@ -11876,19 +11876,22 @@ describe.concurrent("a script, file or executable named lint", () => {
   );
 
   // git stores a symlink to `/dev/zero` unchanged. `bun run` stops at such a file and finds no script in it.
-  test("a package.json that's a symlink to a device has no script, and the parent directory's package.json isn't used", async () => {
-    using dir = tempDir("bun-lint-name", {
-      ...files,
-      "sub/eslint.config.js": files["eslint.config.js"],
-      "sub/b.js": "debugger;\n",
-    });
-    symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
-    const cmd = [bunExe(), "lint", "-f", "unix"];
-    await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("b.js:1:1: ");
-    expect(exitCode).toBe(1);
-  });
+  test.skipIf(isWindows)(
+    "a package.json that's a symlink to a device has no script, and the parent directory's package.json isn't used",
+    async () => {
+      using dir = tempDir("bun-lint-name", {
+        ...files,
+        "sub/eslint.config.js": files["eslint.config.js"],
+        "sub/b.js": "debugger;\n",
+      });
+      symlinkSync("/dev/null", join(String(dir), "sub/package.json"));
+      const cmd = [bunExe(), "lint", "-f", "unix"];
+      await using proc = spawn({ cmd, env, cwd: join(String(dir), "sub"), stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toContain("b.js:1:1: ");
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test("bun --cwd lint lint treats the first lint as the directory", async () => {
     const { "package.json": __, ...rest } = files;

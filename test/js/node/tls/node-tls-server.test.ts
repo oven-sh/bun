@@ -5215,7 +5215,7 @@ describe("a send that the kernel rejects", () => {
   });
 
   // At the reset of the client, Windows drops what is still unread in the kernel.
-  it("leaves a reader that stopped for backpressure the time to go on", async () => {
+  it.skipIf(isWindows)("leaves a reader that stopped for backpressure the time to go on", async () => {
     const sent = 70000 + 16385;
     const outcome = Promise.withResolvers<number>();
     await using server: Server = createServer(COMMON_CERT, socket => {

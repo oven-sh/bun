@@ -17,6 +17,7 @@ enum class BlobBytes : uint8_t {
 };
 
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
+extern "C" bool Blob__canDupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
 // Borrows the bytes of the Blob that `value` holds: a Blob, or a `Bun.build()` output. Writes `ptr` and `len` only for `InMemory`. `ptr` is only valid while `value` is alive.
 extern "C" BlobBytes Blob__sharedView(JSC::EncodedJSValue value, const uint8_t** ptr, size_t* len);
@@ -67,6 +68,12 @@ public:
     static RefPtr<Blob> create(JSC::JSValue impl)
     {
         return createAdopted(Blob__dupeFromJS(JSValue::encode(impl)));
+    }
+
+    // Whether `create(value)` gives a Blob: a Blob, or a `Bun.build()` output, which wraps one.
+    static bool canCreate(JSC::JSValue value)
+    {
+        return Blob__canDupeFromJS(JSValue::encode(value));
     }
 
     static RefPtr<Blob> create(std::span<const uint8_t> bytes, JSC::JSGlobalObject* globalThis)

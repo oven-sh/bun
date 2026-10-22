@@ -980,6 +980,135 @@ describe("Bun.build", () => {
     expect(response.headers.get("etag")).toMatchSnapshot("content-etag");
   });
 
+  // bun-types declares `BuildArtifact extends Blob`, and the docs call an output a Blob.
+  describe.each(["in memory", "outdir"])("BuildArtifact as a Blob (%s)", form => {
+    // 3x2 pixels
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAMAAAACCAYAAACddGYaAAAAFElEQVR4nGP8z8BQzwAFTDAGiAYAJB8Bgun2XH8AAAAASUVORK5CYII=",
+      "base64",
+    );
+    const files = {
+      "index.js": `import logo from "./logo.png";\nconsole.log("marker", logo);\n`,
+      "logo.png": png,
+    };
+
+    async function build(dir: string) {
+      const { outputs } = await Bun.build({
+        entrypoints: [join(dir, "index.js")],
+        ...(form === "outdir" ? { outdir: join(dir, "out") } : {}),
+        sourcemap: "external",
+      });
+      const byKind = Object.fromEntries(outputs.map(output => [output.kind, output]));
+      expect(Object.keys(byKind).sort()).toEqual(["asset", "entry-point", "sourcemap"]);
+      return byKind as Record<"asset" | "entry-point" | "sourcemap", Bun.BuildArtifact>;
+    }
+
+    test("bytes() gives the contents", async () => {
+      using dir = tempDir("build-artifact-bytes", files);
+      const outputs = await build(String(dir));
+
+      const asset = await outputs.asset.bytes();
+      expect(asset).toBeInstanceOf(Uint8Array);
+      expect(Buffer.from(asset)).toEqual(png);
+
+      const decoder = new TextDecoder();
+      const entry = decoder.decode(await outputs["entry-point"].bytes());
+      expect(entry).toBe(await outputs["entry-point"].text());
+      expect(entry).toContain(`console.log("marker", logo_default);`);
+      expect(decoder.decode(await outputs.sourcemap.bytes())).toBe(await outputs.sourcemap.text());
+    });
+
+    test("image() is new Bun.Image(output)", async () => {
+      using dir = tempDir("build-artifact-image", files);
+      const { asset } = await build(String(dir));
+
+      const image = asset.image();
+      expect(image).toBeInstanceOf(Bun.Image);
+      expect(await image.metadata()).toEqual({ width: 3, height: 2, format: "png" });
+
+      const error = await asset
+        .image({ maxPixels: 4 })
+        .metadata()
+        .then(
+          () => undefined,
+          e => e,
+        );
+      expect(error?.code).toBe("ERR_IMAGE_TOO_MANY_PIXELS");
+    });
+
+    test.each(["append", "set"] as const)("FormData.%s() takes an output as a Blob", async method => {
+      using dir = tempDir("build-artifact-in-form-data", files);
+      const { "entry-point": entry } = await build(String(dir));
+      const code = await entry.text();
+
+      function fill(blob: Blob) {
+        const data = new FormData();
+        data[method]("file", blob);
+        data[method]("named", blob, "app.js");
+        return data;
+      }
+      async function multipart(data: FormData) {
+        const response = new Response(data);
+        const boundary = response.headers.get("content-type")!.split("boundary=")[1];
+        return (await response.text()).replaceAll(boundary, "boundary");
+      }
+
+      const data = fill(entry);
+      const file = data.get("file");
+      expect(file).toBeInstanceOf(Blob);
+      expect(await (file as Blob).text()).toBe(code);
+
+      // In a FormData, an output is the Blob that it wraps.
+      const wrapped = form === "outdir" ? Bun.file(entry.path) : new Blob([code], { type: entry.type });
+      const body = await multipart(data);
+      expect(body).toBe(await multipart(fill(wrapped)));
+      expect(body).toContain(
+        `Content-Disposition: form-data; name="named"; filename="app.js"\r\n` +
+          `Content-Type: text/javascript;charset=utf-8\r\n\r\n${code}\r\n`,
+      );
+
+      // Every other object still takes the string overload.
+      data[method]("text", { toString: () => "not a Blob" } as any);
+      expect(data.get("text")).toBe("not a Blob");
+
+      // With a third argument, a value that holds no Blob is a TypeError.
+      for (const value of ["text", {}, 5, null, undefined, Symbol()]) {
+        for (const fileName of ["app.js", undefined]) {
+          const call = () => data[method]("rejected", value as any, fileName as any);
+          expect(call).toThrow(TypeError);
+          expect(call).toThrow("Expected argument to be a Blob.");
+        }
+      }
+      expect(data.has("rejected")).toBe(false);
+    });
+  });
+
+  test("a BuildArtifact has every member of Blob.prototype that is not listed here", async () => {
+    using dir = tempDir("build-artifact-blob-members", { "index.js": "console.log(1);\n" });
+    const {
+      outputs: [output],
+    } = await Bun.build({ entrypoints: [join(String(dir), "index.js")] });
+
+    // This list goes away with the delegates when BuildArtifact inherits from Blob (#16374).
+    const absent = [
+      // Bun.file()
+      "delete",
+      "exists",
+      "stat",
+      "unlink",
+      "write",
+      "writer",
+      // File
+      "lastModified",
+      "name",
+      // An output never has a form type, so this could only reject.
+      "formData",
+    ];
+    const names = Object.getOwnPropertyNames(Blob.prototype);
+    expect(names.filter(name => !(name in output) && !absent.includes(name))).toEqual([]);
+    expect(absent.filter(name => name in output)).toEqual([]);
+  });
+
   // test("BuildArtifact with assets", async () => {
   //   const x = await Bun.build({
   //     entrypoints: [join(import.meta.dir, "./fixtures/with-assets/index.js")],

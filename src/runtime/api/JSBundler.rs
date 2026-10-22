@@ -2096,6 +2096,24 @@ impl BuildArtifact {
     }
 
     #[bun_jsc::host_fn(method)]
+    pub(crate) fn get_bytes(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        this.blob.get_bytes(global_this, callframe)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn do_image(
+        this: &Self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        Blob::do_image(&this.blob, global_this, callframe)
+    }
+
+    #[bun_jsc::host_fn(method)]
     pub(crate) fn get_slice(
         this: &Self,
         global_this: &JSGlobalObject,

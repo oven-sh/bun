@@ -1055,14 +1055,6 @@ cafile = "path/to/cafile"
 
 Set one of the two. If both are set, only `cafile` is used. `--ca` or `--cafile` on the command line replaces both.
 
-Bun loads the certificate when `bun install` or another package manager command starts. Bun prints an error and exits with code 1 in these cases:
-
-- The `cafile` does not exist.
-- The `cafile` holds no certificate, or a certificate that is not valid.
-- The `ca` value is not PEM text.
-
-A command that makes no network request, such as `bun pm bin`, exits the same way. `bunx` loads the certificate only when it installs a package. [Auto-install](/runtime/auto-install) does not read `ca` or `cafile`.
-
 ### `install.cache`
 
 To configure the cache behavior:

@@ -506,42 +506,34 @@ pub(crate) fn redirect_moved_edges(
     redirect(lockfile, pairs, direct_only);
 }
 
+/// The package of `cleaned` with the name and the resolution of the package `old_id` of `before_clean`. `None` if the clean dropped it.
+pub(crate) fn package_after_clean(
+    before_clean: &Lockfile,
+    cleaned: &Lockfile,
+    old_id: PackageID,
+) -> Option<PackageID> {
+    let old_res = before_clean
+        .packages
+        .items_resolution()
+        .get(old_id as usize)?;
+    let old_buf = before_clean.buffers.string_bytes.as_slice();
+    let new_res = cleaned.packages.items_resolution();
+    let new_buf = cleaned.buffers.string_bytes.as_slice();
+    let named = cleaned.packages_named(before_clean.packages.items_name_hash()[old_id as usize]);
+    (named.iter().copied()).find(|&id| new_res[id as usize].eql(old_res, new_buf, old_buf))
+}
+
 /// Packages of `cleaned` that the `moved` edges of `before_clean` resolved to, for seeding the security scan.
 pub(crate) fn moved_targets_after_clean(
     before_clean: &Lockfile,
     cleaned: &Lockfile,
     moved: &[(DependencyID, PackageID)],
 ) -> Vec<PackageID> {
-    if moved.is_empty() {
-        return Vec::new();
-    }
     let old_resolutions = before_clean.buffers.resolutions.as_slice();
-    let old_name_hashes = before_clean.packages.items_name_hash();
-    let old_res = before_clean.packages.items_resolution();
-    let old_buf = before_clean.buffers.string_bytes.as_slice();
-    let new_res = cleaned.packages.items_resolution();
-    let new_buf = cleaned.buffers.string_bytes.as_slice();
-
-    let mut targets: Vec<PackageID> = Vec::new();
-    for &(dep_id, _) in moved {
-        let Some(&old_id) = old_resolutions.get(dep_id as usize) else {
-            continue;
-        };
-        if (old_id as usize) >= old_res.len() {
-            continue;
-        }
-        let Some(entry) = cleaned.package_index.get(&old_name_hashes[old_id as usize]) else {
-            continue;
-        };
-        if let Some(&id) = entry
-            .as_slice()
-            .iter()
-            .find(|&&c| new_res[c as usize].eql(&old_res[old_id as usize], new_buf, old_buf))
-        {
-            targets.push(id);
-        }
-    }
-    targets
+    (moved.iter())
+        .filter_map(|&(dep_id, _)| old_resolutions.get(dep_id as usize))
+        .filter_map(|&old_id| package_after_clean(before_clean, cleaned, old_id))
+        .collect()
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]

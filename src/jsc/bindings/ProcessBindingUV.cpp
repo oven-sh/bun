@@ -185,7 +185,7 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
 {
     // Non-zero inline capacity: a zero-capacity object trips the
     // hasInlineStorage() assertion in JSObject::inlineStorage when JS
-    // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
+    // spreads it (internal/test/binding.ts does).
     auto bindingObject = JSC::constructEmptyObject(globalObject);
     EnsureStillAliveScope ensureStillAlive(bindingObject);
     bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
@@ -199,4 +199,10 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
 }
 
 } // namespace ProcessBindingUV
+
+JSC::JSValue getProcessBindingUV(Zig::GlobalObject* globalObject)
+{
+    return globalObject->processObject()->bindingUV();
+}
+
 } // namespace Bun

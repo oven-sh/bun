@@ -82,4 +82,9 @@ void ProcessBindingHTTPParser::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
+JSValue getProcessBindingHTTPParser(Zig::GlobalObject* globalObject)
+{
+    return globalObject->processBindingHTTPParser();
+}
+
 } // namespace Bun

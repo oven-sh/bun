@@ -31,7 +31,7 @@ const kAfterFlush = Symbol("kAfterFlush");
 const kError = Symbol("kError");
 const kFlushBound = Symbol("kFlushBound");
 
-const { zlib: constants } = process.binding("constants");
+const constants = $processBindingConstants.zlib;
 // prettier-ignore
 const {
   // Zlib flush levels

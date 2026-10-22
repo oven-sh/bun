@@ -407,6 +407,10 @@ function lazyHttp(): HttpModule {
   return (http ??= require("node:http"));
 }
 
+function uv() {
+  return $cpp("ProcessBindingUV.cpp", "getProcessBindingUV");
+}
+
 // prettier-ignore
 const tokenChars = [
   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // 0 - 15
@@ -1886,10 +1890,7 @@ const clientHandlers: ClientHandlers = {
     }
 
     if (reset) {
-      emitRequestError(
-        req,
-        new (require("internal/shared").ErrnoException)(process.binding("uv").UV_ECONNRESET, "read"),
-      );
+      emitRequestError(req, new (require("internal/shared").ErrnoException)(uv().UV_ECONNRESET, "read"));
     }
   },
   open() {
@@ -2130,7 +2131,7 @@ function connectError(dialled: string, error: NativeError): Error {
 
   const detail = error.$detail;
   // Node reports libuv's errno, which differs from os.constants.errno on Windows.
-  const errno = (process.binding("uv") as unknown as Dictionary<number | undefined>)["UV_" + code];
+  const errno = (uv() as unknown as Dictionary<number | undefined>)["UV_" + code];
   let err: ConnectError;
 
   if (detail) {

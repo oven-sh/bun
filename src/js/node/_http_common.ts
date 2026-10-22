@@ -74,7 +74,10 @@ interface HTTPParserBinding {
   ConnectionsList: unknown;
 }
 
-const { methods, allMethods, HTTPParser } = process.binding("http_parser") as HTTPParserBinding;
+const { methods, allMethods, HTTPParser } = $cpp(
+  "ProcessBindingHTTPParser.cpp",
+  "getProcessBindingHTTPParser",
+) as HTTPParserBinding;
 const incoming = require("node:_http_incoming");
 const { kHeaderSource } = require("internal/http");
 

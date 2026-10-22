@@ -75,7 +75,7 @@ function internalBinding(name: string) {
       if (cachedUvBinding === undefined) {
         const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
         cachedUvBinding = {
-          ...process.binding("uv"),
+          ...$cpp("ProcessBindingUV.cpp", "getProcessBindingUV"),
           getErrorMessage: function getErrorMessage(n: number) {
             const entry = errmap.get(n);
             return entry !== undefined ? entry[1] : `Unknown system error ${n}`;

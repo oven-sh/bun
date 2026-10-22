@@ -140,7 +140,6 @@ typedef int mode_t;
 #endif
 
 #include <cstring>
-#include "ErrorStackTrace.h"
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessNoWarnings;
 extern "C" bool Bun__Node__ProcessTraceWarnings;
@@ -3746,20 +3745,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
     auto process = globalObject->processObject();
 
     if (Bun__Node__ProcessPendingDeprecation && !process->m_warnedProcessBinding) {
-        // Node latches DEP0111 once per Environment via deprecate(). Bun's own builtins call
-        // process.binding() too (node uses internalBinding), so internal callers don't warn/latch.
-        String callerURL;
-        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-            if (Zig::isImplementationVisibilityPrivate(visitor))
-                return WTF::IterationStatus::Continue;
-            if (visitor->hasLineAndColumnInfo()) {
-                callerURL = Zig::sourceURL(visitor);
-                return WTF::IterationStatus::Done;
-            }
-            return WTF::IterationStatus::Continue;
-        });
-        bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-        if (!isInternalCaller) {
+        // Node wraps process.binding in deprecate(): DEP0111 once per Environment, and a call made while
+        // process.noDeprecation is set does not use it up.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L189-L192
+        // Every caller is user code: src/codegen/replacements.ts rejects process.binding in a builtin.
+        JSValue noDeprecation = process->getIfPropertyExists(globalObject, Identifier::fromString(vm, "noDeprecation"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!noDeprecation || !noDeprecation.toBoolean(globalObject)) {
             process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),

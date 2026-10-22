@@ -201,7 +201,7 @@ const reportError = globalThis.reportError;
 
 let uvBinding;
 function uv() {
-  return (uvBinding ??= process.binding("uv"));
+  return (uvBinding ??= $cpp("ProcessBindingUV.cpp", "getProcessBindingUV"));
 }
 const isWindows = process.platform === "win32";
 

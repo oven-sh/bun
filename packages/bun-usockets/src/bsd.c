@@ -954,24 +954,6 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 /* Every write to a stream socket uses these, vectored or not. */
 #define BSD_SEND_FLAGS (MSG_NOSIGNAL | LIBUS_SEND_DONTWAIT)
 
-/* XNU leaves the result register as the caller set it when a system call ends in EJUSTRETURN, which
- * ip6_output() returns for a packet that pf consumed: x86_64 reads back the system call number, arm64
- * the descriptor. sosend() has stopped early by then, so how much the kernel took is unknown and the
- * stream cannot go on. The shutdown is for callers that take a failed send for backpressure. */
-static ssize_t bsd_sent(LIBUS_SOCKET_DESCRIPTOR fd, ssize_t sent, size_t requested) {
-    if (sent < 0 || (size_t)sent <= requested) {
-        return sent;
-    }
-    bsd_shutdown_socket(fd);
-    bsd_shutdown_socket_read(fd);
-#ifdef _WIN32
-    WSASetLastError(WSAECONNABORTED);
-#else
-    errno = ECONNABORTED;
-#endif
-    return -1;
-}
-
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
@@ -990,7 +972,7 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
     /* A "short" rule keeps the first `clamp` bytes of the list. */
     struct iovec clamped[1024];
     ssize_t injected = 0; int clamp = INT_MAX;
-    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, clamp)) return bsd_sent(fd, injected, INT_MAX);
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, clamp)) return injected;
     if (clamp != INT_MAX) {
         size_t left = (size_t)clamp;
         int kept = 0;
@@ -1004,15 +986,12 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
     }
 #endif
 
-    size_t requested = 0;
-    for (size_t i = 0; i < (size_t)msg.msg_iovlen; i++) requested += msg.msg_iov[i].iov_len;
-
     while (1) {
         ssize_t written = sendmsg(fd, &msg, BSD_SEND_FLAGS);
         if (UNLIKELY(IS_EINTR(written))) {
             continue;
         }
-        return bsd_sent(fd, written, requested);
+        return written;
     }
 }
 
@@ -1045,14 +1024,13 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
     ssize_t injected = 0;
-    if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return bsd_sent(fd, injected, (size_t)length);
+    if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
         ssize_t rc = send(fd, buf, length, BSD_SEND_FLAGS);
 
         if (UNLIKELY(IS_EINTR(rc))) {
             continue;
         }
-        rc = bsd_sent(fd, rc, (size_t)length);
 
 #if BUN_DEBUG
         // Debug logging for sent data

@@ -271,7 +271,7 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     );
   }
 
-  test("send → a count above the request fails the write, which is not sent again", async () => {
+  test("send → more bytes than it was given: the write fails and is not sent again", async () => {
     const received: Buffer[] = [];
     using p = await connectedPair(s => s.on("data", (c: Buffer) => received.push(c)));
     const peerEnded = once(p.serverSock, "end");

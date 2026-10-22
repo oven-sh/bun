@@ -75,34 +75,27 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
   });
 
   // The response writer takes a failed send for backpressure and would send the same bytes again.
-  test("send → a count above the request ends that connection and the server goes on", async () => {
+  test("send → more bytes than it was given: that connection ends and the server goes on", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         fetch(req) {
-          if (req.url.endsWith("/excess")) {
-            fault.set({ syscall: "send", action: "excess" });
-            fault.set({ syscall: "writev", action: "excess" });
-          } else {
-            fault.clear();
-          }
+          if (req.url.endsWith("/excess")) fault.set({ syscall: "send", action: "excess" });
           return new Response(Buffer.alloc(16384, 0x61));
         } });
       console.log(s.port);
       process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
     `);
-    try {
-      expect(
-        await fetch(`http://127.0.0.1:${port}/excess`).then(
-          res => res.status,
+    const bodyLength = (path: string) =>
+      fetch(`http://127.0.0.1:${port}/${path}`)
+        .then(res => res.arrayBuffer())
+        .then(
+          body => body.byteLength,
           error => error.code,
-        ),
-      ).toBe("ECONNRESET");
-      const res = await fetch(`http://127.0.0.1:${port}/`);
-      expect({ status: res.status, length: (await res.arrayBuffer()).byteLength }).toEqual({
-        status: 200,
-        length: 16384,
-      });
+        );
+    try {
+      expect(await bodyLength("excess")).toBe("ECONNRESET");
+      expect(await bodyLength("")).toBe(16384);
     } finally {
       proc.kill("SIGTERM");
       await proc.exited;

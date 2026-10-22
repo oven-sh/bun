@@ -126,36 +126,25 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     expect({ events: client.events, errors: client.errors, destroyed: p.client.destroyed }).toEqual(RESET_CLOSE);
   });
 
-  test.each(["client", "server"] as const)("send → ECONNRESET fails the %s's write", async side => {
-    using p = await connectedTLSPair();
-    const writer = side === "client" ? p.client : p.serverSock;
-    const seen = observe(writer);
-    const written = Promise.withResolvers<Error | null | undefined>();
-    fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1, fd: fdOf(writer) });
-    writer.write("hello", written.resolve);
-    const WRITE_RESET = { name: "Error", code: "ECONNRESET", syscall: "write", message: "write ECONNRESET" };
-    expect(await written.promise).toMatchObject(WRITE_RESET);
-    await seen.closed;
-    // The reads go on until the close, so the FIN that the peer answers with can come first.
-    expect({ events: seen.events.filter(event => event !== "end"), errors: seen.errors }).toEqual({
-      events: ["error", "close(hadError=true)"],
-      errors: [WRITE_RESET],
-    });
-  });
-
-  test.each(["client", "server"] as const)("send → a count above the request fails the %s's write", async side => {
-    using p = await connectedTLSPair();
-    const writer = side === "client" ? p.client : p.serverSock;
-    const seen = observe(writer);
-    const written = Promise.withResolvers<Error | null | undefined>();
-    fault.set({ syscall: "send", action: "excess", fd: fdOf(writer) });
-    writer.write("hello", written.resolve);
-    const WRITE_ABORTED = { name: "Error", code: "ECONNABORTED", syscall: "write", message: "write ECONNABORTED" };
-    expect(await written.promise).toMatchObject(WRITE_ABORTED);
-    await seen.closed;
-    expect({ events: seen.events.filter(event => event !== "end"), errors: seen.errors }).toEqual({
-      events: ["error", "close(hadError=true)"],
-      errors: [WRITE_ABORTED],
+  describe.each([
+    { result: "ECONNRESET", rule: { action: "errno", errno: "ECONNRESET", repeat: -1 }, code: "ECONNRESET" },
+    { result: "more bytes than it was given", rule: { action: "excess" }, code: "ECONNABORTED" },
+  ] as const)("send → $result", ({ rule, code }) => {
+    test.each(["client", "server"] as const)("fails the %s's write", async side => {
+      using p = await connectedTLSPair();
+      const writer = side === "client" ? p.client : p.serverSock;
+      const seen = observe(writer);
+      const written = Promise.withResolvers<Error | null | undefined>();
+      fault.set({ syscall: "send", ...rule, fd: fdOf(writer) });
+      writer.write("hello", written.resolve);
+      const WRITE_FAILED = { name: "Error", code, syscall: "write", message: `write ${code}` };
+      expect(await written.promise).toMatchObject(WRITE_FAILED);
+      await seen.closed;
+      // The reads go on until the close, so the FIN that the peer answers with can come first.
+      expect({ events: seen.events.filter(event => event !== "end"), errors: seen.errors }).toEqual({
+        events: ["error", "close(hadError=true)"],
+        errors: [WRITE_FAILED],
+      });
     });
   });
 

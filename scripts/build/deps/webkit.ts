@@ -855,7 +855,6 @@ function icuBuild(wk: WebKitBuild): { libs: string[]; outputs: string[] } {
         cfg.ar,
         ...(cfg.crossTarget !== undefined ? [`--target=${cfg.crossTarget}`] : []),
         ...(cfg.sysroot !== undefined ? [`--sysroot=${cfg.sysroot}`] : []),
-        "-fPIE",
         ...computeCpuTargetFlags(cfg),
         ...computeHardeningFlags(cfg),
       ],

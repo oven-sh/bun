@@ -14,7 +14,7 @@ use crate::load::source_provider::{
     WithoutServices,
 };
 use crate::statistics::LimitId;
-use bstr::BStr;
+use bstr::{BStr, ByteSlice};
 use bun_ast::{Kind, Loader};
 use bun_builtin_sources::Archive;
 use bun_sema::fold::FoldOptions;
@@ -732,6 +732,51 @@ fn package_that_is_left_out_takes_along_what_the_build_does_not_compile() {
         ]);
         expect_success(result, &log);
     }
+}
+
+fn list_evaluated_files_of_package(main: &str, page: &str, index: &str) -> Vec<String> {
+    let manifest = r#"{ "name": "lib", "version": "1.0.0", "type": "module", "main": "index.js", "sideEffects": false }"#;
+    let linked = link_successfully(&[
+        ("main.js", main),
+        ("page.js", page),
+        ("node_modules/lib/package.json", manifest),
+        ("node_modules/lib/index.js", index),
+        ("node_modules/lib/a.js", "console.log(1);\nexport function a() {}\n"),
+        ("node_modules/lib/b.js", "console.log(2);\nexport function b() {}\n"),
+        GLOBALS,
+    ]);
+    let program = &linked.program;
+    let with_body = program.modules.iter().filter(|module| module.body.is_some());
+    let paths = with_body.map(|module| program.strings.get(module.path));
+    let in_package = paths.filter_map(|path| path.split_once_str("node_modules/lib/"));
+    let mut files: Vec<String> = in_package.map(|(_, file)| BStr::new(file).to_string()).collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn file_that_a_call_loads_evaluates_what_it_imports_from() {
+    let by_statement = "import { page } from \"./page.js\";\npage();\n";
+    let by_import_call = "const { page } = await import(\"./page.js\");\npage();\n";
+    let by_require = "const { page } = require(\"./page.js\");\npage();\n";
+    let uses_a = "import { a } from \"lib\";\nexport function page() { a(); }\n";
+    let uses_nothing = "import { a } from \"lib\";\nexport function page() {}\n";
+    let stars = "console.log(0);\nexport * from \"./a.js\";\nexport * from \"./b.js\";\n";
+    assert_eq!(list_evaluated_files_of_package(by_statement, uses_a, stars), ["a.js"]);
+    for by_call in [by_import_call, by_require] {
+        let evaluated = list_evaluated_files_of_package(by_call, uses_a, stars);
+        assert_eq!(evaluated, ["a.js", "b.js", "index.js"], "{by_call}");
+        let evaluated = list_evaluated_files_of_package(by_call, uses_nothing, stars);
+        assert_eq!(evaluated, [""; 0], "{by_call}");
+    }
+}
+
+#[test]
+fn file_that_exports_the_object_of_a_module_under_a_name_is_evaluated() {
+    let main = "import { page } from \"./page.js\";\npage();\n";
+    let page = "import { inner } from \"lib\";\nexport function page() { inner.b(); }\n";
+    let index = "console.log(0);\nexport * as inner from \"./b.js\";\nexport * from \"./a.js\";\n";
+    assert_eq!(list_evaluated_files_of_package(main, page, index), ["b.js", "index.js"]);
 }
 
 #[test]

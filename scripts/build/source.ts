@@ -1234,7 +1234,8 @@ interface EmitDirectInput {
 
 /**
  * bun's PIC policy for a dep's objects, the same its own get in flags.ts.
- * pic → -fPIC, and Android always (PIE-only platform); otherwise on unix undo
+ * pic → -fPIC, and Android always (PIE-only platform); hardened → the -fPIE of
+ * `hardeningFlags` stands; otherwise on unix undo
  * the building clang's PIC/PIE default to match the non-PIE final binary. Not
  * only apple-clang has one: distro clangs (Arch, Fedora, Alpine, Homebrew)
  * default to PIE, which made every dep PIC when built there (.data.rel.ro
@@ -1243,7 +1244,7 @@ interface EmitDirectInput {
  */
 function picFlags(cfg: Config, pic: boolean | undefined): string[] {
   if (pic || cfg.abi === "android") return cfg.windows ? [] : ["-fPIC"];
-  if (cfg.hardened) return ["-fPIE", "-DBUN_HARDENED=1", "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1"];
+  if (cfg.hardened) return [];
   return cfg.unix ? ["-fno-pic", "-fno-pie"] : [];
 }
 

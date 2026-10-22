@@ -199,6 +199,8 @@ fn types_and_code_answers_differ() {
 }
 
 const TYPED_IN_JSDOC: &str = r#"import "./other.js";
+    /** @import { Size } from "./shapes" */
+    /** @param {import("./shapes").Point} point @param {Size} size */
     export function scale(point, size) { return point.x * size.width; }"#;
 const SHAPES: &str = "export interface Point { x: number } export interface Size { width: number }";
 const JAVASCRIPT_DEPENDENCY: (&str, &str) = (

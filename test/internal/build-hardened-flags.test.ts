@@ -3,7 +3,14 @@ import { tempDir } from "harness";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { mimalloc } from "../../scripts/build/deps/mimalloc.ts";
-import { computeDepFlags, computeFlags, computeHardeningFlags, safeStackDependencies, safeStackFlags } from "../../scripts/build/flags.ts";
+import {
+  computeDepFlags,
+  computeFlags,
+  computeHardeningFlags,
+  hardeningFlags,
+  safeStackDependencies,
+  safeStackFlags,
+} from "../../scripts/build/flags.ts";
 import { cargoBuildInvocation } from "../../scripts/build/rust.ts";
 import type { DirectBuild } from "../../scripts/build/source.ts";
 
@@ -44,7 +51,16 @@ function mockToolchain(): Toolchain {
 
 function linuxConfig(partial: PartialConfig, buildDir: string): Config {
   return resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", webkit: "local", buildDir, linuxSysroot: buildDir, ...partial },
+    {
+      os: "linux",
+      arch: "x64",
+      abi: "gnu",
+      buildType: "Release",
+      webkit: "local",
+      buildDir,
+      linuxSysroot: buildDir,
+      ...partial,
+    },
     mockToolchain(),
   );
 }
@@ -59,35 +75,47 @@ function everyFlagOf(cfg: Config) {
     dependencyCxx: dependencies.cxxflags,
     link: own.ldflags,
     rust: cargoBuildInvocation(cfg).env.CARGO_ENCODED_RUSTFLAGS.split("\x1f"),
-    allocator: Object.entries((mimalloc.build(cfg) as DirectBuild).defines ?? {}).map(([name, value]) => name + "=" + value),
+    allocator: Object.entries((mimalloc.build(cfg) as DirectBuild).defines ?? {}).map(
+      ([name, value]) => name + "=" + value,
+    ),
   };
 }
 
 const compilerFlags = [
   "-fstack-protector-strong",
-  "-D_FORTIFY_SOURCE=3",
+  "-D_FORTIFY_SOURCE=2",
   "-fstack-clash-protection",
   "-ftrivial-auto-var-init=zero",
+  "-ftrivial-auto-var-init-max-size=4096",
   "-fno-delete-null-pointer-checks",
   "-fno-strict-overflow",
   "-fno-strict-aliasing",
   "-fsanitize=array-bounds",
   "-fsanitize-trap=array-bounds",
+  "-D_GLIBCXX_ASSERTIONS=1",
+  "-fPIE",
+  "-DBUN_HARDENED=1",
+  "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
-const cxxFlags = ["-D_GLIBCXX_ASSERTIONS=1"];
-const rustFlags = ["-Zstack-protector=strong", "-Coverflow-checks=on", "-Zub-checks=yes"];
-const linkFlags = ["-Wl,-z,noexecstack"];
+const rustFlags = [
+  "-Crelocation-model=pie",
+  "--cfg=bun_hardened",
+  "-Zstack-protector=strong",
+  "-Coverflow-checks=on",
+  "-Zub-checks=yes",
+];
+const linkFlags = ["-pie", "-Wl,-z,now", "-Wl,-z,relro", "-Wl,-z,separate-code", "-Wl,-z,noexecstack"];
 
 test("--hardened=on gives every C and C++ source, every crate and the link its mitigations", () => {
   using dir = tempDir("build-hardened-flags", {});
   const cfg = linuxConfig({ hardened: true }, String(dir));
   const flags = everyFlagOf(cfg);
-  expect(computeHardeningFlags(cfg)).toEqual(expect.arrayContaining([...compilerFlags, ...cxxFlags]));
+  expect(hardeningFlags).toEqual(compilerFlags);
+  expect(computeHardeningFlags(cfg)).toEqual(compilerFlags);
   for (const list of [flags.c, flags.cxx, flags.dependencyC, flags.dependencyCxx]) {
     expect(list).toEqual(expect.arrayContaining(compilerFlags));
-    expect(list).not.toContain("-fno-stack-protector");
+    for (const flag of ["-fno-stack-protector", "-fno-pic", "-fno-pie"]) expect(list).not.toContain(flag);
   }
-  for (const list of [flags.cxx, flags.dependencyCxx]) expect(list).toEqual(expect.arrayContaining(cxxFlags));
   expect(flags.rust).toEqual(expect.arrayContaining(rustFlags));
   expect(flags.link).toEqual(expect.arrayContaining(linkFlags));
   expect(flags.allocator).toContain("MI_SECURE=1");
@@ -100,14 +128,27 @@ test("a build without --hardened has none of them", () => {
   const flags = everyFlagOf(cfg);
   expect(computeHardeningFlags(cfg)).toEqual([]);
   const all = Object.values(flags).flat();
-  for (const flag of [...compilerFlags, ...cxxFlags, ...rustFlags, ...linkFlags, "MI_SECURE=1"]) expect(all).not.toContain(flag);
+  for (const flag of [...compilerFlags, ...rustFlags, ...linkFlags, "MI_SECURE=1"]) expect(all).not.toContain(flag);
   expect(flags.c).toContain("-fno-stack-protector");
 });
 
 test("_FORTIFY_SOURCE is left out where nothing is optimized or ASan checks the same calls", () => {
   using dir = tempDir("build-hardened-flags-fortify", {});
-  expect(everyFlagOf(linuxConfig({ hardened: true, buildType: "Debug" }, String(dir))).c).not.toContain("-D_FORTIFY_SOURCE=3");
-  expect(everyFlagOf(linuxConfig({ hardened: true, asan: true }, String(dir))).c).not.toContain("-D_FORTIFY_SOURCE=3");
+  const others = compilerFlags.filter(flag => flag !== "-D_FORTIFY_SOURCE=2");
+  for (const partial of [{ buildType: "Debug" }, { asan: true }] as PartialConfig[]) {
+    const cfg = linuxConfig({ hardened: true, ...partial }, String(dir));
+    expect(computeHardeningFlags(cfg)).toEqual(others);
+    expect(everyFlagOf(cfg).c).not.toContain("-D_FORTIFY_SOURCE=2");
+  }
+});
+
+test("--hardened=on is refused where nothing can be hardened", () => {
+  using dir = tempDir("build-hardened-flags-refused", {});
+  for (const partial of [
+    { os: "darwin", arch: "aarch64", abi: undefined },
+    { abi: "android", arch: "aarch64" },
+  ] as PartialConfig[])
+    expect(() => linuxConfig({ hardened: true, ...partial }, String(dir))).toThrow("hardened=true requires os=linux");
 });
 
 const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];
@@ -121,7 +162,8 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
   }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"]) expect(safeStackFlags(on, name)).toEqual([]);
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"])
+    expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");
   expect(Object.values(everyFlagOf(off)).flat()).not.toContain("-DBUN_SAFE_STACK=1");

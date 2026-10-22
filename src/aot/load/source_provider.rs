@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[path = "source_provider/tests.rs"]
 mod tests;
 
 use crate::diagnostic_codes::Code;

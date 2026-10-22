@@ -65,7 +65,6 @@ export interface Flag {
    * bun. See computeTargetLinkFlags().
    */
   toolchain?: true;
-  hardening?: true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -102,6 +101,27 @@ export const cpuTargetFlags: Flag[] = [
     when: c => c.x64,
     desc: "x64: Nehalem (2008) — no AVX, broadest compatibility",
   },
+];
+
+/**
+ * `--hardened=on`. The same list as `HARDENING` in oven-sh/WebKit's
+ * .github/scripts/lanes.mjs, which the `-hardened` prebuilts are compiled with.
+ */
+export const hardeningFlags = [
+  "-fstack-protector-strong",
+  "-D_FORTIFY_SOURCE=2",
+  "-fstack-clash-protection",
+  "-ftrivial-auto-var-init=zero",
+  "-ftrivial-auto-var-init-max-size=4096",
+  "-fno-delete-null-pointer-checks",
+  "-fno-strict-overflow",
+  "-fno-strict-aliasing",
+  "-fsanitize=array-bounds",
+  "-fsanitize-trap=array-bounds",
+  "-D_GLIBCXX_ASSERTIONS=1",
+  "-fPIE",
+  "-DBUN_HARDENED=1",
+  "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1",
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -439,47 +459,9 @@ export const globalFlags: Flag[] = [
     desc: "No stack protector (pin the toolchain-independent default)",
   },
   {
-    flag: "-fstack-protector-strong",
+    flag: computeHardeningFlags,
     when: c => c.hardened,
-    desc: "Hardened: a canary in every function with an array, an alloca or a local whose address is taken",
-    hardening: true,
-  },
-  {
-    flag: ["-U_FORTIFY_SOURCE", "-D_FORTIFY_SOURCE=3"],
-    when: c => c.hardened && c.release && !c.asan,
-    desc: "Hardened: glibc checks the length of memcpy, strcpy, sprintf, read and the like against the size of the destination",
-    hardening: true,
-  },
-  {
-    flag: "-fstack-clash-protection",
-    when: c => c.hardened,
-    desc: "Hardened: a frame larger than a page touches every page, so it cannot step over the guard page",
-    hardening: true,
-  },
-  {
-    flag: "-ftrivial-auto-var-init=zero",
-    when: c => c.hardened,
-    desc: "Hardened: locals without an initializer start as zero",
-    hardening: true,
-  },
-  {
-    flag: "-D_GLIBCXX_ASSERTIONS=1",
-    when: c => c.hardened,
-    lang: "cxx",
-    desc: "Hardened: libstdc++ checks indexes and preconditions (WebKit always has it)",
-    hardening: true,
-  },
-  {
-    flag: ["-fno-delete-null-pointer-checks", "-fno-strict-overflow", "-fno-strict-aliasing"],
-    when: c => c.hardened,
-    desc: "Hardened: the optimizer assumes nothing from a null dereference, a signed overflow or a type pun",
-    hardening: true,
-  },
-  {
-    flag: ["-fsanitize=array-bounds", "-fsanitize-trap=array-bounds"],
-    when: c => c.hardened,
-    desc: "Hardened: an index outside an array of fixed size traps",
-    hardening: true,
+    desc: "Stack protector, checked libc calls (in an optimized build without ASan), stack clash protection, zeroed locals up to 4 KB, no assumptions from undefined behavior, traps on an index outside a fixed-size array, libstdc++ assertions, position-independent code",
   },
   {
     // Every clang turns the protector on for a Darwin target (level 1, what
@@ -788,11 +770,6 @@ export const bunOnlyFlags: Flag[] = [
     flag: ["-fno-pic", "-fno-pie"],
     when: c => c.unix && c.abi !== "android" && !c.hardened,
     desc: "No position-independent code (we're a final executable)",
-  },
-  {
-    flag: ["-fPIE", "-DBUN_HARDENED=1", "-DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1"],
-    when: c => c.hardened,
-    desc: "Hardened: position-independent executable",
   },
   {
     flag: "-fPIC",
@@ -2027,12 +2004,8 @@ export function computeTargetLinkFlags(cfg: Config): string[] {
 }
 
 export function computeHardeningFlags(cfg: Config): string[] {
-  const out: string[] = [];
-  for (const f of globalFlags) {
-    if (!f.hardening || (f.when && !f.when(cfg))) continue;
-    out.push(...resolveFlagValue(f.flag, cfg));
-  }
-  return out;
+  if (!cfg.hardened) return [];
+  return hardeningFlags.filter(flag => (cfg.release && !cfg.asan) || !flag.startsWith("-D_FORTIFY_SOURCE"));
 }
 
 /** Just the -march/-mcpu/-mtune flags: rust.ts translates them into rustc's -Ctarget-cpu so Rust code targets the same CPU as the C++. */

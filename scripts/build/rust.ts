@@ -365,6 +365,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
+  // its stack probes are inline on this target with or without this.
   if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
   if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
   if (cfg.hardened) rustflags.push("-Zub-checks=yes");

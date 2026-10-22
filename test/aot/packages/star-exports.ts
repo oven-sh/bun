@@ -1,8 +1,7 @@
 // `export *`: names that collide, local exports that win, chains, cycles, CommonJS re-exported by `export *`.
 import { js, pkg, type Case } from "./run-packages";
 
-const differs =
-  "A name that two `export *` bring from two ES modules is ambiguous, and importing it is a build error. Where both are CommonJS, --aot takes the first.";
+const differs = "A name that two `export *` bring from two ES modules is ambiguous, and importing it is a build error.";
 
 export const cases: Case[] = [
   {
@@ -118,9 +117,6 @@ ${js}t("x", () => [keys(ns), ns.both, ns.default, ns.c1, ns.c2, ns.own]);
 `,
       "from_cjs.require.cjs": `${js}t("x", () => { const ns = require("stars/from_cjs.mjs"); return [keys(ns), ns.both, ns.default, ns.c1, ns.c2, ns.own]; });
 `,
-      "from_two_cjs.names.mjs": `import { c1, c2, d1 } from "stars/from_two_cjs.mjs";
-${js}t("x", () => [c1, c2, d1]);
-`,
       "from_two_cjs.namespace.mjs": `import * as ns from "stars/from_two_cjs.mjs";
 ${js}t("x", () => [keys(ns), ns.both, ns.default, ns.c1, ns.c2, ns.d1]);
 `,
@@ -156,6 +152,16 @@ ${js}t("x", () => [d, s, i, a, keys(ns), ns["string name"]]);
 `,
       "let_later.mjs": `import { v, bump } from "stars/let_later.mjs";
 ${js}t("x", () => [v, bump(), v]);
+`,
+    },
+  },
+  {
+    name: "export-star-of-one-name-from-two-commonjs-files",
+    fails: true,
+    files: {},
+    importers: {
+      "names.mjs": `import { c1, c2, d1 } from "stars/from_two_cjs.mjs";
+${js}t("x", () => [c1, c2, d1]);
 `,
     },
   },

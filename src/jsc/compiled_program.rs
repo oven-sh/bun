@@ -423,6 +423,7 @@ fn sentence_of(verdict: ImageVerdict) -> Option<&'static str> {
         ImageVerdict::MalformedTables => "the file is corrupt (bad tables)",
         ImageVerdict::StampMismatch => "the compiler that built it doesn't match the runtime in this executable. Rebuild it",
         ImageVerdict::IdentityMismatch => "it was built for a different build of Bun than the one in this executable. Rebuild it",
+        ImageVerdict::CodeAtFixedAddress => "its code can't be placed at a random address here, and it doesn't run at a fixed one. The system refuses to map the file as executable memory and to move the loaded code with mremap (Linux 5.13 or later)",
     })
 }
 

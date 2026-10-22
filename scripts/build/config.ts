@@ -156,9 +156,9 @@ export interface Config {
   valgrind: boolean;
   fuzzilli: boolean;
   /**
-   * Linux: everything, JSC and ICU included, is compiled with the flags of `computeHardeningFlags` (flags.ts) and linked into a
-   * position-independent executable with full RELRO, eager binding and code in pages of its own. Defines BUN_HARDENED for
-   * C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
+   * Compile everything with `hardeningFlags` (flags.ts), JSC and ICU included: selects the `-hardened` WebKit prebuilt.
+   * The link makes a position-independent executable with full RELRO, eager binding and code in pages of its own.
+   * Defines BUN_HARDENED for C and C++ and `bun_hardened` for Rust. Costs file size, startup time and private memory.
    */
   hardened: boolean;
   /**
@@ -1113,7 +1113,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
   const valgrind = partial.valgrind ?? false;
-  const hardened = (partial.hardened ?? false) && linux && abi !== "android";
+  const hardened = partial.hardened ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
   // release-asan, off everywhere else. The fuzz tests are most useful when
   // memory errors are detectable, and the disarmed-hot-path cost (one acquire
@@ -1131,13 +1131,18 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   // ─── Validation ───
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
-  assert(!partial.hardened || webkit === "local", "hardened=true requires webkit=local (a prebuilt WebKit is not compiled with the hardened flags)");
   assert(
     !partial.relr || (linux && abi === "gnu"),
     "relr=true requires os=linux and abi=gnu (packed relative relocations are loaded by glibc 2.36 and later; nothing says that this target's C library can)",
   );
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
+  assert(!hardened || (linux && abi !== "android"), "hardened=true requires os=linux and abi=gnu or musl");
+  assert(
+    !hardened || webkit === "local" || (x64 && abi === "gnu" && release && !asan && !assertions && !fuzzilli),
+    "hardened=true requires a Linux x64 glibc release build without asan, assertions or fuzzilli, or webkit=local",
+    { hint: "Those are the -hardened WebKit prebuilts there are (oven-sh/WebKit's .github/scripts/lanes.mjs)" },
+  );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
   // ─── Cross-compilation (Android) ───

@@ -256,18 +256,37 @@ function writeFiles(directory: string, files: ReadonlyMap<string, string>): void
 
 const normalizedTextOf = (text: string): string => text.replaceAll("\r\n", "\n").trim();
 
-function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, string>): void {
+const longestLineShown = 160;
+const shownLineOf = (line: string | undefined): string =>
+  line === undefined ? "nothing" : `\`${line.length > longestLineShown ? `${line.slice(0, longestLineShown)} ..` : line}\``;
+
+function describeFirstDifference(found: string, written: string): string {
+  const foundLines = found.split("\n");
+  const writtenLines = written.split("\n");
+  const different = writtenLines.findIndex((line, index) => line !== foundLines[index]);
+  const index = different === -1 ? writtenLines.length : different;
+  return `line ${index + 1} is ${shownLineOf(foundLines[index])}, and this tree writes ${shownLineOf(writtenLines[index])}`;
+}
+
+const remedyForCheckout = "run src/codegen/builtins/index.ts without --check and check the result in";
+const remedyForPrebuilt =
+  "this WebKit was compiled with another table of built-ins than the one this tree declares, so code compiled with --aot would name the wrong built-ins: " +
+  "build with --webkit=local, or pin a release of WebKit whose aot/builtins/generated was written from this tree";
+
+function checkFilesAreCurrent(directory: string, files: ReadonlyMap<string, string>, remedy: string): void {
   const problems = new Problems();
   for (const [name, text] of files) {
     const file = join(directory, name);
     if (!existsSync(file)) {
       problems.add(null, `${file} is missing`);
-    } else if (normalizedTextOf(readFileSync(file, "utf8")) !== normalizedTextOf(text)) {
-      problems.add(null, `${file} differs from what src/codegen/builtins/index.ts writes`);
+      continue;
     }
+    const found = normalizedTextOf(readFileSync(file, "utf8"));
+    const written = normalizedTextOf(text);
+    if (found !== written) problems.add(null, `${file}: ${describeFirstDifference(found, written)}`);
   }
   if (problems.isEmpty) return;
-  problems.add(null, "run src/codegen/builtins/index.ts without --check and check the result in");
+  problems.add(null, remedy);
   problems.throwIfAny();
 }
 
@@ -319,11 +338,10 @@ function readCommandLine(): CommandLine {
 async function main(): Promise<void> {
   const { options, codegenPath, requiresVerified, isCheck } = readCommandLine();
   const { engine, codegen, dump, undescribedResultsSummary } = await generate(options);
-  if (options.javaScriptCore !== null) {
-    const generatedDirectory = generatedDirectoryOf(options);
-    if (isCheck) checkFilesAreCurrent(generatedDirectory, engine);
-    else writeFiles(generatedDirectory, engine);
-  }
+  const generatedDirectory = generatedDirectoryOf(options);
+  if (options.javaScriptCore === null) checkFilesAreCurrent(generatedDirectory, engine, remedyForPrebuilt);
+  else if (isCheck) checkFilesAreCurrent(generatedDirectory, engine, remedyForCheckout);
+  else writeFiles(generatedDirectory, engine);
   if (!isCheck) writeFiles(codegenPath, codegen);
   console.error(`builtins table: ${undescribedResultsSummary}`);
   reportStaleEntries(dump, verifiedHashesOf(options), requiresVerified);

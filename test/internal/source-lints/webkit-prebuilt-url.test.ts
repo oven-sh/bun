@@ -105,6 +105,27 @@ describe("WebKit prebuilt URL", () => {
     );
   });
 
+  test("--hardened=on takes the hardened prebuilt where one is published", () => {
+    expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-hardened.tar.gz`,
+    );
+    expect(prebuiltUrlOf(resolveLinuxRelease({ hardened: true, lto: true }))).toBe(
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto-hardened.tar.gz`,
+    );
+    const others = [
+      { arch: "aarch64" },
+      { buildType: "Debug" },
+      { asan: true },
+      { assertions: true },
+      { fuzzilli: true },
+    ];
+    for (const other of others as PartialConfig[]) {
+      expect(() => resolveLinuxRelease({ hardened: true, ...other })).toThrow("or webkit=local");
+      expect(resolveLinuxRelease({ hardened: true, webkit: "local", ...other }).hardened).toBe(true);
+    }
+    expect(() => resolveLinuxRelease({ hardened: true, abi: "musl" })).toThrow("or webkit=local");
+  });
+
   test("--webkit-version=<sha> uses the plain autobuild-<sha> tag", () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const cfg = resolveLinuxRelease({ webkitVersion: sha });

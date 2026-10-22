@@ -28,10 +28,11 @@ const libc = dlopen("libc.so.6", {
 const load = 0x20, jumpIfEqual = 0x15, jumpIfAnyBitSet = 0x45, answer = 0x06;
 const allow = 0x7fff0000, permissionDenied = 0x00050000 | 13;
 const systemCall = 0, architecture = 4, protection = 32, flags = 40, executable = 4, denyWrite = 0x800;
-const [thisArchitecture, mmap, mprotect, pkeyMprotect] = process.arch === "arm64" ? [0xc00000b7, 222, 226, 288] : [0xc000003e, 9, 10, 329];
+const [thisArchitecture, mmap, mprotect, pkeyMprotect, mremap] = process.arch === "arm64" ? [0xc00000b7, 222, 226, 288, 216] : [0xc000003e, 9, 10, 329, 25];
 const instructions = [
   [load, 0, 0, architecture], [jumpIfEqual, 1, 0, thisArchitecture], [answer, 0, 0, allow],
   [load, 0, 0, systemCall],
+  ...(process.argv[3] === "refuse-mremap" ? [[jumpIfEqual, 0, 1, mremap], [answer, 0, 0, permissionDenied]] : []),
   [jumpIfEqual, 0, 5, mmap],
   [load, 0, 0, protection], [jumpIfAnyBitSet, 0, 8, executable],
   [load, 0, 0, flags], [jumpIfAnyBitSet, 6, 0, denyWrite], [answer, 0, 0, permissionDenied],
@@ -169,6 +170,14 @@ async function placesOfCode(executable: string, codeOffset: number, cmd: string[
   );
 }
 
+const isLinkedAtFixedAddress = (file: Buffer) => file.readUInt16LE(16) === 2;
+
+async function expectRefusalToRunAtFixedAddress(cmd: string[]) {
+  const { stdout, stderr, exitCode, signalCode } = await run(cmd);
+  expect({ stdout, exitCode, signalCode }).toEqual({ stdout: "", exitCode: 1, signalCode: null });
+  expect(stderr).toContain("its code can't be placed at a random address here, and it doesn't run at a fixed one");
+}
+
 function expectCodeAtAnotherAddressEachTime(places: Awaited<ReturnType<typeof placesOfCode>>) {
   const executablePlaces = places.map(mappings => mappings.filter(mapping => mapping.access.includes("x")));
   expect(executablePlaces.map(mappings => mappings.map(mapping => mapping.access))).toEqual(places.map(() => ["r-xp"]));
@@ -180,8 +189,19 @@ test.skipIf(!isLinux || !isGlibc)("runs from the segment the loader mapped when 
   const executable = await build(String(dir));
   const file = readFileSync(executable);
   const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
-  const places = await placesOfCode(executable, codeOffset, [bunExe(), join(String(dir), "launcher.ts"), executable]);
+  const cmd = [bunExe(), join(String(dir), "launcher.ts"), executable];
+  if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return await expectRefusalToRunAtFixedAddress(cmd);
+  const places = await placesOfCode(executable, codeOffset, cmd);
   if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
+}, 120_000);
+
+test.skipIf(!isLinux || !isGlibc)("refuses to start where its compiled code could only run at a fixed address", async () => {
+  using dir = tempDir("aot-code-mapping-fixed", { "program.ts": program, "launcher.ts": seccompLauncher });
+  const executable = await build(String(dir));
+  const cmd = [bunExe(), join(String(dir), "launcher.ts"), executable, "refuse-mremap"];
+  if (isLinkedAtFixedAddress(readFileSync(executable))) return await expectRefusalToRunAtFixedAddress(cmd);
+  const { stdout, exitCode } = await run(cmd);
+  expect({ firstLine: stdout.split("\n")[0], exitCode }).toEqual({ firstLine: "5", exitCode: 0 });
 }, 120_000);
 
 test.skipIf(!isLinux)("an executable that may be run but not read has its compiled code at another address each time", async () => {
@@ -190,6 +210,7 @@ test.skipIf(!isLinux)("an executable that may be run but not read has its compil
   const file = readFileSync(executable);
   const codeOffset = findImage(file) + Number(file.readBigUInt64LE(findImage(file) + imageHeader.codeOffset));
   chmodSync(executable, 0o111);
+  if (!canMoveFileMappings && isLinkedAtFixedAddress(file)) return await expectRefusalToRunAtFixedAddress([executable]);
   const places = await placesOfCode(executable, codeOffset, [executable]);
   if (canMoveFileMappings) expectCodeAtAnotherAddressEachTime(places);
 }, 120_000);

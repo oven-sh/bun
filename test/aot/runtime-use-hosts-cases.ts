@@ -446,10 +446,16 @@ group("Bun.serve", () => {
     ["a constant that is exported", `export const options = { ${fetch} };\nBun.serve(options);`],
     ["unknown routes", `Bun.serve({ routes: JSON.parse(process.argv[2]), ${fetch} });`],
     ["a route with a directory and a style", `Bun.serve({ routes: { "/*": { dir: ".", style: "nextjs-pages" } } });`],
-    ["the option app", `Bun.serve({ port: 0, app: { framework: "react" } });`],
     ["options that are replaced", `Bun.serve({ ${fetch} }).reload(JSON.parse(process.argv[2]));`],
   ])("its options make no difference: %s", async (_, text) => {
     expect(await serves({ "main.ts": text })).toEqual({ ...closed, named: true, retained: true });
+  });
+
+  test.each([
+    ["written in the literal", `Bun.serve({ port: 0, app: { framework: "react" } });`],
+    ["copied into the literal", `const development = { app: { framework: "react" } };\nBun.serve({ port: 0, ...development });`],
+  ])("the option app starts the development server, which runs code that is not in the executable: %s", async (_, text) => {
+    expect(await serves({ "main.ts": text })).toMatchObject({ whyOpen: expect.arrayContaining([expect.stringMatching(/^runtime-code: /)]), named: true, retained: true });
   });
 
   test("is listed where another file exports it again under another name", async () => {

@@ -195,19 +195,19 @@ impl ArrivalStamp {
 pub enum ImageVerdict {
     #[default] Unsupported = 0, Accepted = 1, CompiledCodeDisabled = 2, NotAnImage = 3, Truncated = 4, Misaligned = 5, AlreadyInUse = 6,
     LowPagesAccessible = 7, NoCode = 8, CannotMapCode = 9, NeedsCellCage = 10, OptionsConflict = 11, MalformedTables = 12, StampMismatch = 13,
-    IdentityMismatch = 14
+    IdentityMismatch = 14, CodeAtFixedAddress = 15
 }
 impl ImageVerdict {
-    pub const COUNT: usize = 15;
-    pub const ALL: [ImageVerdict; 15] = [
+    pub const COUNT: usize = 16;
+    pub const ALL: [ImageVerdict; 16] = [
         ImageVerdict::Unsupported, ImageVerdict::Accepted, ImageVerdict::CompiledCodeDisabled, ImageVerdict::NotAnImage, ImageVerdict::Truncated,
         ImageVerdict::Misaligned, ImageVerdict::AlreadyInUse, ImageVerdict::LowPagesAccessible, ImageVerdict::NoCode, ImageVerdict::CannotMapCode,
         ImageVerdict::NeedsCellCage, ImageVerdict::OptionsConflict, ImageVerdict::MalformedTables, ImageVerdict::StampMismatch,
-        ImageVerdict::IdentityMismatch
+        ImageVerdict::IdentityMismatch, ImageVerdict::CodeAtFixedAddress
     ];
-    pub const NAMES: [&'static str; 15] = [
+    pub const NAMES: [&'static str; 16] = [
         "Unsupported", "Accepted", "CompiledCodeDisabled", "NotAnImage", "Truncated", "Misaligned", "AlreadyInUse", "LowPagesAccessible", "NoCode",
-        "CannotMapCode", "NeedsCellCage", "OptionsConflict", "MalformedTables", "StampMismatch", "IdentityMismatch"
+        "CannotMapCode", "NeedsCellCage", "OptionsConflict", "MalformedTables", "StampMismatch", "IdentityMismatch", "CodeAtFixedAddress"
     ];
     pub const fn name(self) -> &'static str { Self::NAMES[self as usize] }
     pub fn from_name(name: &str) -> Option<ImageVerdict> { Self::ALL.into_iter().find(|member| member.name() == name) }

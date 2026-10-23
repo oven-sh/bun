@@ -3,8 +3,7 @@
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
 use crate::jsc::{
-    JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
-    api::server_config::SSLConfig,
+    JSGlobalObject, JSValue, JsResult, VirtualMachine, api::server_config::SSLConfig,
 };
 use bun_boringssl_sys::OwnedSslCtx;
 use bun_sql::shared::SSLMode;
@@ -95,7 +94,7 @@ impl ConnectionCtorArgs {
             let mut err = uws::create_bun_socket_error_t::none;
             secure = tls_config
                 .as_usockets_for_client_verification()
-                .and_then(|opts| vm.ssl_ctx_cache().get_or_create_opts(&opts, &mut err));
+                .and_then(|opts| vm.ssl_ctx_cache_get_or_create(&opts, &mut err));
             if secure.is_none() {
                 drop(tls_config);
                 return Err(

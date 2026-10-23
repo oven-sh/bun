@@ -293,9 +293,7 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) =
-            SSLContextCache::with(|cache| cache.get_or_create_digest(ctx_opts, d, &mut err))
-        else {
+        let Some(ctx) = SSLContextCache::get_or_create_digest(ctx_opts, d, &mut err) else {
             // `err` is only set for the input-validation paths (bad PEM, missing
             // file, …). When BoringSSL itself fails (e.g. unsupported curve) the
             // enum is still `.none`; surface the library error stack instead of

@@ -1,4 +1,4 @@
-//! Process/VM-scoped weak cache of `SSL_CTX*` keyed by config digest.
+//! Per-VM cache of `SSL_CTX*` keyed by config digest: weak, except for the `KEPT` contexts asked for last.
 //!
 //! The map holds **zero** refs on the cached `SSL_CTX*`. An `SSL_CTX` ex_data
 //! slot stores a back-pointer to the heap `Entry`; BoringSSL's `CRYPTO_EX_free`
@@ -32,9 +32,14 @@ use bun_uws::create_bun_socket_error_t;
 // `jsc.API.ServerConfig.SSLConfig` — re-exported from src/runtime/socket/SSLConfig.rs
 use crate::api::server::server_config::SSLConfig;
 
+/// 16 contexts that each parsed all bundled roots take 2.8 MB.
+const KEPT: usize = 16;
+
 #[derive(Default)]
 pub(crate) struct SSLContextCache {
     map: ArrayHashMap<Digest, *mut Entry, DigestContext>,
+    /// The contexts asked for last, newest first, so that a program that opens one connection at a time doesn't build its context each time.
+    kept: [Option<OwnedSslCtx>; KEPT],
     mutex: Mutex,
     ops_since_compact: u32,
 }
@@ -71,41 +76,60 @@ pub(crate) struct Entry {
 }
 
 impl SSLContextCache {
-    /// Runs `f` on this thread's cache. A callback, because two callers could hold a `&'static mut` at once.
-    pub(crate) fn with<R>(f: impl FnOnce(&mut Self) -> R) -> R {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(
-            !state.is_null(),
-            "runtime_state() before init_runtime_state"
-        );
-        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, and only the JS thread gets here, so this `&mut` is unique while `f` runs.
-        f(unsafe { &mut (*state).ssl_ctx_cache })
-    }
-
-    /// The map itself holds no ref.
+    /// This thread's context for `config`.
     pub(crate) fn get_or_create(
-        &mut self,
         config: &SSLConfig,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
-        let opts = config.as_usockets();
-        self.get_or_create_digest(&opts, opts.digest(), err)
+        Self::get_or_create_opts(&config.as_usockets(), err)
     }
 
     /// Variant for callers that already projected to `BunSocketContextOptions`
     /// (e.g. via `as_usockets_for_client_verification()`).
     pub(crate) fn get_or_create_opts(
-        &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
-        self.get_or_create_digest(opts, opts.digest(), err)
+        Self::get_or_create_digest(opts, opts.digest(), err)
     }
 
     /// Core entry — `d` already computed by caller. `SecureContext.intern()`
     /// threads its WeakGCMap key through here so the SHA-256 runs once total
     /// instead of three times on a miss.
     pub(crate) fn get_or_create_digest(
+        opts: &uws::SocketContext::BunSocketContextOptions,
+        d: Digest,
+        err: &mut create_bun_socket_error_t,
+    ) -> Option<OwnedSslCtx> {
+        let state = crate::jsc_hooks::runtime_state();
+        debug_assert!(
+            !state.is_null(),
+            "runtime_state() before init_runtime_state"
+        );
+        // SAFETY: the per-thread `RuntimeState` boxed in `init_runtime_state` is address-stable until VM teardown, and only the JS thread gets here, so this `&mut` is unique until its last use below.
+        let cache = unsafe { &mut (*state).ssl_ctx_cache };
+        let ctx = cache.find_or_build(opts, d, err)?;
+        let evicted = cache.keep(&ctx);
+        // Freeing it can run `bun_ssl_ctx_cache_on_free`, which reaches the cache through the entry, so the borrow has to be over.
+        drop(evicted);
+        Some(ctx)
+    }
+
+    /// Moves `ctx` to the front of `kept`. Returns the context that fell off the end.
+    fn keep(&mut self, ctx: &OwnedSslCtx) -> Option<OwnedSslCtx> {
+        let is_ctx = |kept: &Option<OwnedSslCtx>| {
+            kept.as_ref()
+                .is_some_and(|kept| kept.as_ptr() == ctx.as_ptr())
+        };
+        if let Some(at) = self.kept.iter().position(is_ctx) {
+            self.kept[..=at].rotate_right(1);
+            return None;
+        }
+        self.kept.rotate_right(1);
+        self.kept[0].replace(ctx.clone())
+    }
+
+    fn find_or_build(
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
         d: Digest,
@@ -255,8 +279,7 @@ pub(crate) extern "C" fn bun_ssl_ctx_cache_on_free(
 impl Drop for SSLContextCache {
     /// VM teardown. Clears each live entry's ex_data so the eventual
     /// `SSL_CTX_free` (from sockets/SecureContexts that outlive RareData) doesn't
-    /// dereference the freed `Entry`/map. Map itself holds no refs, so no
-    /// `SSL_CTX_free` here.
+    /// dereference the freed `Entry`/map. `kept` lets go of its contexts after this.
     fn drop(&mut self) {
         let _guard = self.mutex.lock_guard();
         for &entry in self.map.values() {

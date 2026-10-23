@@ -4420,7 +4420,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
       );
       await closed;
       // Finalizers run on GC, so wait for the condition.
-      for (let i = 0; i < 10 && sslCtxLiveCount() !== before; i++) {
+      for (let i = 0; i < 10 && sslCtxLiveCount() > before + 2; i++) {
         Bun.gc(true);
         await new Promise(resolve => setImmediate(resolve));
       }
@@ -4436,7 +4436,9 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("server names after close() (%s)"
         // SSL holds), and the one the accepted TLSSockets share.
         open: 6,
         served: ["agent1", "agent1", "agent1", "agent1"],
-        left: 0,
+        // The two that came from the cache, which keeps the ones asked for last: the one the accepted
+        // TLSSockets share, and the clients'. The entries and the server's own are nobody else's.
+        left: 2,
       },
     });
     expect(exitCode).toBe(0);

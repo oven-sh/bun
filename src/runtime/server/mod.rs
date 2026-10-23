@@ -3529,9 +3529,7 @@ fn create_ssl_ctx(
     options: &uws_sys::BunSocketContextOptions,
 ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
     let mut err = uws::create_bun_socket_error_t::none;
-    crate::api::SSLContextCache::SSLContextCache::with(|cache| {
-        cache.get_or_create_opts(options, &mut err)
-    })
+    crate::api::SSLContextCache::SSLContextCache::get_or_create_opts(options, &mut err)
 }
 
 /// Drain the BoringSSL error queue; if non-empty, throw the top error on

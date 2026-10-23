@@ -169,7 +169,7 @@ pub use bun_io::KeepAlive;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
-// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLContextCache, SSLConfig parser) and
+// `bun_runtime` owns the per-VM `RuntimeState` (timer heap, SSLConfig parser) and
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
@@ -181,14 +181,6 @@ pub struct SqlRuntimeHooks {
     pub timer_insert: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
     /// `Timer.All.remove`.
     pub timer_remove: unsafe fn(heap: *mut c_void, *mut EventLoopTimer),
-    /// `&mut runtime_state().ssl_ctx_cache` — opaque `SSLContextCache`.
-    pub ssl_ctx_cache: unsafe fn(*mut VirtualMachine) -> *mut c_void,
-    /// `SSLContextCache::getOrCreateOpts` — digest-keyed weak `SSL_CTX*` cache.
-    pub ssl_ctx_get_or_create: unsafe fn(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx>,
     /// Parses a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when it threw.
@@ -238,8 +230,6 @@ pub(crate) trait VirtualMachineSqlExt {
     fn sql_state(&mut self) -> &mut RareData;
     /// vm.timer — the Timer::All heap, owned by RuntimeState.
     fn timer(&mut self) -> &mut TimerHeap;
-    /// RareData.ssl_ctx_cache — owned by RuntimeState.
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// `context`'s per-protocol uws [`bun_uws::SocketGroup`], for a new connection its script opens.
@@ -266,12 +256,6 @@ impl VirtualMachineSqlExt for VirtualMachine {
         // `init_runtime_state`. `TimerHeap` is an opaque newtype over the
         // `*mut c_void` so callers stay typed.
         unsafe { &mut *(hooks().timer_heap)(self).cast::<TimerHeap>() }
-    }
-    #[inline]
-    fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache {
-        // SAFETY: hook returns `&mut runtime_state().ssl_ctx_cache`; non-null
-        // after `init_runtime_state`.
-        unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
@@ -642,23 +626,5 @@ impl JSFunction {
             opts.intrinsic,
             opts.constructor,
         )
-    }
-}
-
-// Opaque handle to `bun_runtime::api::SSLContextCache` (owned by
-// `RuntimeState`). Reached via [`VirtualMachineSqlExt::ssl_ctx_cache`]; backed
-// by [`SqlRuntimeHooks::ssl_ctx_cache`] / `ssl_ctx_get_or_create`.
-use bun_boringssl_sys::OwnedSslCtx;
-
-bun_opaque::opaque_ffi! { pub struct SslCtxCache; }
-impl SslCtxCache {
-    pub(crate) fn get_or_create_opts(
-        &mut self,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<OwnedSslCtx> {
-        // SAFETY: `self` is `&mut runtime_state().ssl_ctx_cache`; `opts`/`err`
-        // are caller stack locals.
-        unsafe { (hooks().ssl_ctx_get_or_create)(self._p.get().cast::<c_void>(), opts, err) }
     }
 }

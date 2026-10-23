@@ -459,7 +459,8 @@ describe("a failed bind() reports the error Node reports", () => {
   test("port in use", async () => {
     const holder = await listening();
     const { port } = holder.address();
-    expect(await bindError(port, "127.0.0.1")).toEqual({
+    const error = await bindError(port, "127.0.0.1").finally(() => holder.close());
+    expect(error).toEqual({
       errno: isLinux ? -98 : uv.UV_EADDRINUSE,
       code: "EADDRINUSE",
       syscall: "bind",
@@ -467,7 +468,6 @@ describe("a failed bind() reports the error Node reports", () => {
       port,
       message: `bind EADDRINUSE 127.0.0.1:${port}`,
     });
-    holder.close();
   });
 
   test("address not local", async () => {
@@ -484,7 +484,8 @@ describe("a failed bind() reports the error Node reports", () => {
   test.skipIf(isWindows)("descriptor of a live socket", async () => {
     const holder = await listening();
     const state = Object.getOwnPropertySymbols(holder).find(symbol => symbol.description === "state symbol")!;
-    expect(await bindError({ fd: holder[state].handle.fd })).toEqual({
+    const error = await bindError({ fd: holder[state].handle.fd }).finally(() => holder.close());
+    expect(error).toEqual({
       errno: isLinux ? -17 : uv.UV_EEXIST,
       code: "EEXIST",
       syscall: "open",
@@ -492,7 +493,6 @@ describe("a failed bind() reports the error Node reports", () => {
       port: undefined,
       message: "open EEXIST",
     });
-    holder.close();
   });
 });
 

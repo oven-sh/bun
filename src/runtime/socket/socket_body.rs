@@ -3581,9 +3581,7 @@ impl UpgradeOptions {
         config: &mut SSLConfig,
     ) -> JsResult<boringssl_sys::OwnedSslCtx> {
         let mut create_err = uws::create_bun_socket_error_t::none;
-        if let Some(ctx) =
-            SSLContextCache::with(|cache| cache.get_or_create(config, &mut create_err))
-        {
+        if let Some(ctx) = SSLContextCache::get_or_create(config, &mut create_err) {
             return Ok(ctx);
         }
         // Only the CA and cipher cases set the error. A bad cert, key or DH leaves the detail on BoringSSL's error queue.

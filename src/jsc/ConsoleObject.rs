@@ -2313,6 +2313,7 @@ pub mod formatter {
             let mut slice = slice_;
             let mut i: u32 = 0;
             let mut len: u32 = slice.len() as u32;
+            let mut no_values_left = false;
             let mut hit_percent = false;
             'outer: while i < len {
                 if hit_percent {
@@ -2331,6 +2332,7 @@ pub mod formatter {
                         // so route `remaining_values` reads/writes through the `RawSlice`
                         // field directly instead of the `&self` helper methods.
                         if self.remaining_values.is_empty() {
+                            no_values_left = true;
                             break;
                         }
 
@@ -2555,9 +2557,15 @@ pub mod formatter {
                                 let str = next_value.json_stringify_fast(global)?;
                                 writer.add_for_new_line(str.length());
                                 writer.print(format_args!("{str}"));
+                                // Empty means JSON.stringify returned undefined.
+                                if str.is_empty() {
+                                    writer.add_for_new_line("undefined".len());
+                                    writer.write_all(b"undefined");
+                                }
                             }
                         }
                         if self.remaining_values.is_empty() {
+                            no_values_left = true;
                             break;
                         }
                     }
@@ -2566,6 +2574,22 @@ pub mod formatter {
                 i += 1;
             }
 
+            // With no value left, only `%%` changes the text.
+            if no_values_left {
+                let mut from = 0;
+                while let Some(at) = strings::index_of_char_pos(slice, b'%', from) {
+                    if slice.get(at + 1) == Some(&b'%') {
+                        writer.write_all(&slice[..=at]);
+                        slice = &slice[at + 2..];
+                        from = 0;
+                    } else if let Some(pair) = strings::index_of(&slice[at + 1..], b"%%") {
+                        // After a `%` that is alone, one pass finds the next pair.
+                        from = at + 1 + pair;
+                    } else {
+                        break;
+                    }
+                }
+            }
             if !slice.is_empty() {
                 writer.write_all(slice);
             }

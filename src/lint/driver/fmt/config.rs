@@ -254,7 +254,7 @@ fn svelte_in(settings: &Settings) -> Option<bool> {
 
 /// Returns true for a plugin that's built in. These sort imports, classes or `package.json` keys, or format Svelte.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
-    let name = package_of(name);
+    let name = &*package_of(name);
     name.ends_with(b"/prettier-plugin-sort-imports")
         || name == b"prettier-plugin-organize-imports"
         || name == TAILWIND_PLUGIN
@@ -336,7 +336,7 @@ const LANGUAGE_PLUGINS: [(&[u8], &[&[u8]]); 21] = [
 fn plugin_endings(name: &[u8]) -> Option<&'static [&'static [u8]]> {
     LANGUAGE_PLUGINS
         .iter()
-        .find(|it| it.0 == package_of(name))
+        .find(|it| package_of(name) == it.0)
         .map(|it| it.1)
 }
 

@@ -1782,7 +1782,10 @@ impl Config {
                 let location = js_locations.iter().find(|it| *it.0 == *prefix);
                 let module = || location?.1.get(b"module")?.as_str().map(paths::package_of);
                 let plugin = js_plugins.iter().find(|it| *it.name == *prefix);
-                plugin.and_then(|it| it.package()).or_else(module)
+                plugin
+                    .and_then(|it| it.package())
+                    .or_else(module)
+                    .as_deref()
                     == Some(b"@typescript-eslint/eslint-plugin")
             };
             let renamed = match (native, js) {

@@ -12,6 +12,7 @@ use bun_paths::resolve_path::{
     platform_to_posix_in_place, posix_to_platform_in_place, slashes_to_posix_in_place,
 };
 use bun_sema::resolve::is_same_path;
+use std::borrow::Cow;
 
 /// The platform whose path rules apply. Windows paths begin with a drive or a share and are case-insensitive.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -325,13 +326,13 @@ pub fn normalize(path: &[u8]) -> Vec<u8> {
 }
 
 /// The package that `name` belongs to. `name` is a package name or a path to a file inside one, because eslint-config-next
-/// writes `require.resolve("eslint-import-resolver-node")`.
-pub fn package_of(name: &[u8]) -> &[u8] {
+/// writes `require.resolve("eslint-import-resolver-node")`. A scope and a name are joined by `/`, whatever the path has.
+pub fn package_of(name: &[u8]) -> Cow<'_, [u8]> {
     const FOLDER: &[u8] = b"node_modules";
     let after =
         bun_core::strings::last_index_of(name, FOLDER).and_then(|at| name.get(at + FOLDER.len()..));
     let Some([b'/' | b'\\', inside @ ..]) = after else {
-        return name;
+        return Cow::Borrowed(name);
     };
     let end_of_part =
         |from: usize| Some(from + bun_core::strings::index_of_any(inside.get(from..)?, b"/\\")?);
@@ -339,7 +340,16 @@ pub fn package_of(name: &[u8]) -> &[u8] {
         (Some(b'@'), Some(scope)) => end_of_part(scope + 1),
         (_, end) => end,
     };
-    &inside[..end.unwrap_or(inside.len())]
+    let package = &inside[..end.unwrap_or(inside.len())];
+    match package.contains(&b'\\') {
+        true => Cow::Owned(
+            package
+                .iter()
+                .map(|it| if *it == b'\\' { b'/' } else { *it })
+                .collect(),
+        ),
+        false => Cow::Borrowed(package),
+    }
 }
 
 /// `directory` and its ancestors, up to the root.

@@ -5926,6 +5926,20 @@ exports.format = async text => "by Prettier";
     expect(await format(files, args, { stdin: ugly })).toMatchObject({ raw: formatted, exitCode: 0 });
   });
 
+  test.each([
+    "C:\\p\\node_modules\\@ianvs\\prettier-plugin-sort-imports\\lib\\index.js",
+    "C:/p/node_modules/@ianvs/prettier-plugin-sort-imports/lib/index.js",
+    "C:\\p\\node_modules/@prettier\\plugin-oxc/index.js",
+    "C:\\p\\node_modules\\a\\node_modules\\@prettier\\plugin-oxc\\index.js",
+    "C:\\p\\node_modules\\prettier-plugin-tailwindcss\\dist\\index.mjs",
+    "@trivago/prettier-plugin-sort-imports",
+  ])("a built-in plugin is recognized by the path of a file in its package: %s", async plugin => {
+    const result = await format({ "a.js": ugly }, ["--plugin", plugin], { reads: ["a.js"] });
+    expect(result.stderr).not.toContain("does not include the plugin");
+    expect(result.files["a.js"]).toBe(formatted);
+    expect(result.exitCode).toBe(0);
+  });
+
   test("an unsupported plugin in an override only skips the files that the override matches", async () => {
     const overrides = [{ files: "legacy/**", options: { plugins: ["prettier-plugin-brace-style"] } }];
     const files = { ".prettierrc": JSON.stringify({ overrides }), "a.js": ugly, "legacy/b.js": ugly };

@@ -1,0 +1,572 @@
+---
+title: Upgrading to Bun 1.4
+sidebarTitle: Upgrading to 1.4
+description: "A guide to the behavior changes in Bun 1.4 and how to migrate a project from Bun 1.3."
+---
+
+Bun 1.4 is largely backward compatible with Bun 1.3, but a number of defaults and validation rules changed. This page covers the changes most likely to require a code or configuration update and what to do about each one.
+
+Most projects will upgrade without any code changes. Run your test suite after upgrading; the sections below are a reference for anything that surfaces.
+
+<Note>
+  Behavior changes in 1.4, including narrow validation fixes not covered here, are tracked at
+  [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792).
+</Note>
+
+```bash terminal icon="terminal"
+bun upgrade
+```
+
+## Summary
+
+| Area                  | Change                                                           | Action                                                                  |
+| --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `bun install`         | New lockfiles are written as `lockfileVersion: 2`                | Upgrade CI and teammates to Bun ≥ 1.4, or keep your existing `bun.lock` |
+| `bun install`         | Nested overrides now apply; their `bun.lock` becomes version 3   | Run `bun install` once and commit `bun.lock` before upgrading CI        |
+| `bun install`         | `--frozen-lockfile` fails on any `overrides` / catalog edit      | Run `bun install` and commit `bun.lock` after editing them              |
+| `bun install`         | Project `bunfig.toml` now takes precedence over `.npmrc`         | Delete whichever duplicate setting you do not want                      |
+| `bun update`          | Also moves transitive dependencies; `<name>` is no longer added  | Use `bun add` to add a dependency; expect larger `bun.lock` diffs       |
+| `bunfig.toml` / TOML  | Strict TOML parsing; unquoted string values are rejected         | Quote string values                                                     |
+| JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"jsx": "react-jsxdev"` for development output                      |
+| TypeScript            | `useDefineForClassFields: false` is now honored                  | Remove the option to keep 1.3 class-field output                        |
+| `.env` files          | Not auto-loaded when Bun is invoked as `node`                    | Pass `--env-file` or invoke `bun` directly                              |
+| `Bun.serve`           | HTML routes do not serve sourcemaps in production                | Set `[serve.static] sourcemap` in `bunfig.toml` to opt in               |
+| `Bun.cron`            | Schedules now use local time instead of UTC                      | Pass `{ tz: "UTC" }` to keep UTC                                        |
+| Bun Shell             | Glob characters in `${interpolated}` values are literal          | Write the pattern inline or use `{ raw: pattern }`                      |
+| CSS imports           | `import styles from "./x.css"` default export is `{}` at runtime | Use `with { type: "file" }` for the asset path                          |
+| XML imports           | `.xml` files now import as parsed objects                        | Use `with { type: "file" }` for the asset path                          |
+| `process.env`         | Assigned values are coerced to strings                           | Use `delete` instead of assigning `undefined`                           |
+| `Temporal`            | Enabled by default                                               | Drop polyfill guards; `BUN_JSC_useTemporal=0` to disable                |
+| Node.js compat        | `process.versions.node` is `26.3.0`                              | Rebuild non-N-API native addons                                         |
+| `node:dns`            | `dns.lookup()` uses the system resolver on Linux                 | Use `dns.resolve*()` if you need `dns.setServers()` to apply            |
+| `trustedDependencies` | `npm:` aliases are matched by the resolved name, not the alias   | List the real package name                                              |
+| `fetch` / `Headers`   | Duplicate response headers are combined with `", "`              | Update code that expected only the last value                           |
+| `Bun.Socket`          | `setKeepAlive()` delay is milliseconds, not seconds              | Pass milliseconds, as in `node:net`                                     |
+| `Bun.SQL` (MySQL)     | `DATETIME` / `TIMESTAMP` columns decode as UTC                   | Remove local-time compensation on values read back                      |
+| `Bun.SQL` (MySQL)     | RSA public key retrieval over plain TCP is refused               | Connect with TLS, or set `allowPublicKeyRetrieval: true`                |
+| `HTMLRewriter`        | `transform()` throws for async handlers on string input          | Wrap the input in a `Response` and read the body asynchronously         |
+| Distribution          | Single x64 build (no separate AVX2 build)                        | None; `-baseline` names still resolve                                   |
+
+---
+
+## Package manager
+
+### `bun.lock` is written as `lockfileVersion: 2`
+
+When Bun 1.4 creates a **new** lockfile (a fresh `bun install`, or a migration from `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb`), it writes `"lockfileVersion": 2`. Bun 1.3 and earlier cannot read version 2 lockfiles and report:
+
+```
+error: Unknown lockfile version
+    at bun.lock:2:22
+```
+
+On Bun 1.3, `bun install --frozen-lockfile` and `bun ci` then exit with `lockfile had changes, but lockfile is frozen`, while a plain `bun install` prints `warn: Ignoring lockfile`, resolves everything again from `package.json`, and overwrites `bun.lock` with a version 1 lockfile, so a teammate still on 1.3 can unintentionally commit a re-resolved lockfile. The same applies to version 3 lockfiles (next section).
+
+Existing `bun.lock` files are **not** upgraded to version 2 in place. A version 1 lockfile stays at version 1 when Bun 1.4 rewrites it (a version 0 lockfile is bumped to version 1, which Bun 1.3 also reads), so committing your existing lockfile keeps the repo installable by older Bun releases. The exception is a project whose `package.json` contains nested or version-scoped `overrides` / `resolutions`: Bun 1.4 applies those rules and rewrites the lockfile as version 3, see the next section.
+
+Bun 1.4 can read all previous lockfile versions.
+
+**What to do:** if every machine that runs `bun install` (CI, Docker images, teammates) is on Bun 1.4 or newer, no action is needed. If you need to support Bun 1.3 for a transition period, keep your existing `bun.lock` checked in and avoid deleting it; a regenerated lockfile will be version 2.
+
+### Nested and version-scoped overrides now apply, and write `lockfileVersion: 3`
+
+Bun 1.3 ignored `overrides` / `resolutions` rules that are scoped to a parent package (npm's nested object form, Yarn's `"parent/child"` path form, pnpm's `"parent>child"` form) or to a version selector (`"semver@<7.5.2"`). The object and path forms produced `warn: Bun currently does not support nested "overrides"` (or `"resolutions"`); the other forms were skipped silently. Bun 1.4 [applies these rules](/pm/overrides#nested-overrides). A project that already has such rules in its `package.json` is affected on upgrade without any change to the project:
+
+- `bun install --frozen-lockfile` (and `bun ci`) fails with `error: lockfile had changes, but lockfile is frozen` followed by `note: overrides in package.json changed since bun.lock was saved`, because the lockfile written by 1.3 does not record the rules.
+- A plain `bun install` applies the rules, which can change the resolved versions of the packages they target, and writes the lockfile as `"lockfileVersion": 3`, which Bun 1.3 rejects with the `Unknown lockfile version` error above. Bun 1.4 only writes version 3 when such rules are present; projects with only top-level overrides keep their current lockfile version.
+
+For example, with a dependency `a` that declares `"c": "^0.6.0"`:
+
+```json package.json icon="file-json"
+{
+  "dependencies": { "a": "1.0.0" },
+  "overrides": {
+    "a": { "c": "0.7.1" }
+  }
+}
+```
+
+```bash terminal icon="terminal"
+# Bun 1.3: the rule is ignored, bun.lock is lockfileVersion 1 and resolves c@0.6.x
+bun install
+
+# Bun 1.4, same project and lockfile:
+bun install --frozen-lockfile   # error: lockfile had changes, but lockfile is frozen
+bun install                     # resolves c@0.7.1, rewrites bun.lock as lockfileVersion 3
+
+# Bun 1.3 again, with the rewritten lockfile:
+bun install --frozen-lockfile   # error: Unknown lockfile version
+```
+
+**What to do:** run `bun install` once on Bun 1.4, review the lockfile diff (the rules take effect for the first time), and commit `bun.lock` before upgrading CI. From then on the project needs Bun 1.4 to install, and tools that parse `bun.lock` themselves (such as `turbo prune`) need a release that understands version 3. If Bun 1.3 has to keep installing from the same lockfile for a while, remove the nested rules from `package.json` instead (they had no effect on 1.3): the 1.3 lockfile then passes `--frozen-lockfile` on 1.4 and keeps its version.
+
+### Some existing lockfiles are rewritten once
+
+Packages that were only kept in `bun.lock` by an **optional peer dependency** slot (for example, a package you removed while another dependency still listed it as an optional peer) are dropped the next time Bun 1.4 saves the lockfile, typically when you next add, remove, or update a dependency; for some projects (for example workspaces whose members have lifecycle scripts) the first plain `bun install` on 1.4 saves it too. `bun install --frozen-lockfile` and `bun ci` still accept a lockfile that contains such entries, so this does not fail CI; it shows up as a `bun.lock` diff. The rewritten lockfile keeps its `lockfileVersion`.
+
+**What to do:** commit the rewritten `bun.lock` when it appears. Lockfiles without such entries are left unchanged.
+
+Separately, a dependency declared as `npm:<target>` inside a package is no longer redirected to a same-named alias declared in your root `package.json` (for example, `"typescript": "npm:@typescript/typescript6"` at the root no longer hijacks a nested `npm:typescript@^6`). Existing lockfile entries are kept as-is; the corrected resolution is picked up the next time that dependency is re-resolved (`bun update`, or adding / removing the dependency).
+
+### `bun update` also moves transitive dependencies
+
+A plain `bun update` now re-resolves transitive dependencies too, moving each one to the newest version its dependents' declared ranges allow; 1.3 only re-resolved your direct dependencies and left the rest of the lockfile as it was. Expect larger lockfile diffs from `bun update` than before.
+
+`bun update <name>` now updates every occurrence of `<name>` that the current workspace reaches in place (transitive dependencies included, each within its declared range; other workspaces' own entries are only updated with `--recursive` or `--filter`). In 1.3, `bun update <name>` for a package that was not one of your direct dependencies added it to `package.json` like `bun add`; 1.4 updates the existing entries instead, and exits 1 with `error: "<name>" is not in bun.lock` when the package is not installed at all. Use `bun add <name>` to add a package.
+
+Three smaller `bun update` differences: `--recursive` / `--filter` now apply (1.3 accepted and ignored them), and a `--filter` that matches no workspace exits 1. `--production` / `--prod` now means "only update `dependencies` and `optionalDependencies`", a group filter like `--dev`; in 1.3 it was the install flag (skip `devDependencies`, implying `--frozen-lockfile`). A plain update leaves dist-tag literals and ranges such as `*`, `1.x`, or `^1 || ^2` in `package.json` as written and only moves `bun.lock`, where 1.3 rewrote most of them to `^x.y.z`; `bun update --latest` still rewrites them.
+
+### `--frozen-lockfile` also checks `overrides` and catalogs
+
+`bun install --frozen-lockfile` (and `bun ci` and `--production`, which imply it) now fails whenever `overrides` / `resolutions`, `catalog`, or `catalogs` in `package.json` differ from what `bun.lock` recorded, even if the edit would not change any resolved version; the error is followed by a note naming the field (`note: overrides in package.json changed since bun.lock was saved`). Bun 1.3 applied the edit during the frozen install and only failed if the resulting tree differed.
+
+`bun install --lockfile-only` combined with `--frozen-lockfile` or `--production` now only verifies the lockfile and writes nothing; 1.3 rewrote `bun.lock` (and created it if it was missing). Check the exit code rather than the file.
+
+**What to do:** after editing overrides or a catalog, run `bun install` and commit `bun.lock` together with `package.json`.
+
+### `bunfig.toml` takes precedence over `.npmrc`
+
+When the same install setting (the default registry, a scoped registry, `exact`, `ignoreScripts`, the cache directory, the linker, and so on) appears both in an `.npmrc` (the project's or `~/.npmrc`) and in the project's `bunfig.toml`, Bun 1.4 uses the `bunfig.toml` value. Bun 1.3 applied `.npmrc` last, so the `.npmrc` value won. The order is now `~/.npmrc`, `./.npmrc`, `bunfig.toml`, environment variables, command-line flags. `_authToken` and other credential lines in `.npmrc` still apply to a registry declared in `bunfig.toml`.
+
+**What to do:** if a setting appears in both files, keep the one you want and delete the other.
+
+Relatedly, `~/.npmrc` is now read when `XDG_CONFIG_HOME` is set but `$XDG_CONFIG_HOME/.npmrc` does not exist. Bun 1.3 only looked in `$XDG_CONFIG_HOME` when the variable was set (GitHub Actions' Ubuntu runners set it), so a `~/.npmrc` that was silently ignored there, for example one written by `npm login`, takes effect after upgrading.
+
+### `trustedDependencies` matches the resolved package name
+
+For packages installed from a registry, [`trustedDependencies`](/pm/lifecycle) and the built-in default trust list are now compared against the name of the package that was actually **resolved**, not the alias it is installed under. This matters for `npm:` aliases:
+
+```jsonc package.json icon="file-json"
+{
+  "dependencies": {
+    "esbuild": "npm:my-esbuild-fork@1.0.0",
+  },
+  "trustedDependencies": ["esbuild"], // [!code --]
+  "trustedDependencies": ["my-esbuild-fork"], // [!code ++]
+}
+```
+
+For an alias this moves the check rather than narrowing it: an entry naming the alias (`"esbuild"` above) allowed the fork's scripts in 1.3 and no longer does, and an entry naming the real package (`"my-esbuild-fork"`), which 1.3 ignored, now allows them. Dependencies that do not come from a registry (`file:`, `link:`, git, tarball URLs) continue to be matched by the alias, that is, the key in `package.json`.
+
+The built-in default list is narrower in two further ways. It no longer applies to a package installed under a default-listed alias (`"esbuild": "npm:my-esbuild-fork@1.0.0"` ran the fork's scripts in 1.3 because the alias is on the list). And it only applies when the package's tarball URL is the standard `<registry>/<name>/-/<unscoped-name>-<version>.tgz` location on the registry configured for that package, so a default-listed package served from a mirror that rewrites tarball URLs, or from a registry other than the configured one, no longer runs its scripts. An explicit `trustedDependencies` entry is not subject to the URL check.
+
+Trust entries that were only stored as a hash in a legacy binary `bun.lockb` no longer match. Re-run `bun install` so the entries are persisted by name in `bun.lock`, or re-run `bun pm trust <name>`.
+
+Packages whose scripts previously ran may now be listed under "blocked scripts" at the end of `bun install` output. Add them to `"trustedDependencies"` under their real package name and reinstall them (for example `bun install --force`) so their scripts run.
+
+---
+
+## `bunfig.toml` and TOML imports
+
+Bun 1.4 ships a new TOML parser that conforms to the TOML specification. A small amount of invalid TOML that the previous parser silently accepted is now a syntax error. This affects `bunfig.toml`, any `.toml` file you `import`, and `Bun.TOML.parse()`.
+
+The most common case is an unquoted string value:
+
+```toml bunfig.toml icon="settings"
+[install]
+linker = isolated   # [!code --]
+linker = "isolated" # [!code ++]
+```
+
+The error points at the location:
+
+```
+error: Strings must be quoted
+    at bunfig.toml:2:10
+```
+
+For `Bun.TOML.parse()` and imported `.toml` files, the offending value is included in the message (`Strings must be quoted: "isolated"`); `bunfig.toml` redacts it because the file can contain registry tokens.
+
+Other newly rejected input includes bare keys containing `@` / `$` / `:`, invalid backslash escapes inside `"…"` strings (notably Windows paths), duplicate keys, leading zeros, and control characters. For Windows paths in `bunfig.toml`, use a literal string or escape the backslashes:
+
+```toml bunfig.toml icon="settings"
+[install]
+cache = "C:\Users\me\.bun-cache"    # [!code --]
+cache = 'C:\Users\me\.bun-cache'    # [!code ++]
+```
+
+A few value types are also parsed differently:
+
+- `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
+- Integers outside `±(2^53 - 1)` throw (`Integer cannot be losslessly represented as a JavaScript number`) instead of silently losing precision. Quote the value to read it as a string.
+- Date and time literals (previously rejected) parse as `Temporal` objects: offset date-times as `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`, local dates as `Temporal.PlainDate`, and local times as `Temporal.PlainTime`. `bun build` emits them as `Temporal.<Type>.from(...)` calls for every target, so a bundle that imports such a file needs a `Temporal` global where it runs. Parsing such a file with `BUN_JSC_useTemporal=0` set throws `Date/time values require Temporal, which is disabled in this process`.
+- `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
+
+See the [TOML docs](/runtime/toml) for the full supported syntax.
+
+---
+
+## JSX: `"react-jsx"` emits the production runtime
+
+Previously, `"jsx": "react-jsx"` in `tsconfig.json` behaved the same as `"react-jsxdev"` and emitted the development runtime (`jsxDEV` from `react/jsx-dev-runtime`). Bun 1.4 matches TypeScript, Babel, and esbuild: `"react-jsx"` emits the production runtime (`jsx` / `jsxs` from `react/jsx-runtime`).
+
+If you relied on development JSX output (component stack traces, extra runtime checks), set `"jsx": "react-jsxdev"` in `tsconfig.json`:
+
+```jsonc tsconfig.json icon="file-json"
+{
+  "compilerOptions": {
+    "jsx": "react-jsxdev", // [!code highlight]
+  },
+}
+```
+
+See [JSX](/runtime/jsx) for the full set of `jsx` values and pragma options.
+
+---
+
+## TypeScript: `useDefineForClassFields: false` is honored
+
+Bun 1.3 ignored `compilerOptions.useDefineForClassFields` and always emitted native class fields. Bun 1.4 reads the option from `tsconfig.json`; when it is `false`, Bun lowers class fields the way `tsc` and esbuild do:
+
+- Declaration-only fields (`foo: string;`) are not emitted, so they no longer shadow an inherited accessor or initialize the property to `undefined`.
+- Field initializers move into the constructor, after parameter-property assignments, and run as assignments (invoking setters) instead of `[[Define]]`.
+
+This matters for projects that carry `"useDefineForClassFields": false` from an older or Angular-style `tsconfig.json`: code that happened to depend on Bun's previous output (for example, a declared-but-uninitialized field shadowing a base-class getter) will now behave as it does under `tsc`.
+
+**What to do:** nothing, if you want `tsc`-compatible behavior. To keep the 1.3 output, remove the option or set it to `true`. Unset and `true` are unchanged.
+
+---
+
+## `.env` files are not loaded when Bun runs as `node`
+
+When Bun is invoked **as** `node` (a `node` symlink pointing at Bun, `bun --bun run <script>` where the script calls `node`, or `bunx --bun`), it no longer loads `.env`, `.env.local`, or `.env.{development,production,test}` automatically. Node.js does not load these files, and tools such as Vite and dotenv treat values already present in `process.env` as overrides, so the 1.3 behavior caused `.env` values to silently take precedence over a tool's own mode-specific files.
+
+`bun <file>` and `bun run <script>` are unchanged and still load `.env` files. An explicit `--env-file` is honored in every mode.
+
+**What to do:** if a script that runs under `--bun` relied on `.env` being loaded, pass `--env-file=.env` to it, or load the file yourself with `process.loadEnvFile()`.
+
+---
+
+## `Bun.serve`
+
+### HTML routes do not serve sourcemaps in production
+
+With `development: false`, HTML-import bundles no longer emit `//# sourceMappingURL` comments and the server no longer registers `.map` files as routes. In 1.3 the maps (including full `sourcesContent`) were served in production. Development mode still serves linked sourcemaps.
+
+To restore sourcemaps in production, or turn them off in development, set the new option in `bunfig.toml`:
+
+```toml bunfig.toml icon="settings"
+[serve.static]
+sourcemap = "linked" # "inline", "external", or false
+```
+
+### `server.stop()` closes idle connections
+
+A graceful `server.stop()` now closes idle keep-alive connections immediately, closes in-flight connections once their response completes, and the returned promise resolves only after every connection (including WebSockets) is closed. In 1.3, idle connections were left open and continued to be served, and the promise resolved as soon as in-flight requests had finished. `server.stop(true)` after a graceful `stop()` now force-closes the remaining connections instead of being a no-op.
+
+If code after `await server.stop()` assumed open WebSockets could still be in progress, close them first or use `stop(true)`. `server.closeIdleConnections()` is now a documented method that returns the number of connections closed.
+
+---
+
+## `Bun.cron` uses local time by default
+
+[`Bun.cron`](/runtime/cron) and `Bun.cron.parse` now interpret cron expressions in the system's local time zone (matching `crontab`, `launchd`, and Windows Task Scheduler). In Bun 1.3 they used UTC.
+
+To keep UTC scheduling, pass the new `tz` option:
+
+```ts
+const job = Bun.cron("0 9 * * *", handler); // [!code --]
+const job = Bun.cron("0 9 * * *", handler, { tz: "UTC" }); // [!code ++]
+```
+
+Any IANA time zone name is accepted.
+
+---
+
+## Bun Shell: interpolated values are not glob patterns
+
+When a template literal passed to [`$`](/runtime/shell) contains both a literal `*` and an interpolated value, glob metacharacters inside the interpolated part (or inside a `$var` / command substitution) are now matched literally instead of being treated as pattern syntax. Only `*`, `**`, and brace expansion typed directly in the template act as glob syntax.
+
+```ts
+import { $ } from "bun";
+
+const dir = "logs/2025-*";
+
+await $`rm ${dir}*.log`; // 1.3: pattern; 1.4: literal "logs/2025-*" prefix
+await $`rm logs/2025-*/*.log`; // unchanged: literal pattern in the template still globs
+await $`rm ${{ raw: dir }}*.log`; // opt back in: inject as raw shell syntax
+```
+
+A purely interpolated argument (no literal `*` in the template) was already literal in Bun 1.3 and is unchanged.
+
+Redirect targets that expand to more than one word now fail with `ambiguous redirect` (matching `bash`) instead of silently creating a file with a concatenated name.
+
+---
+
+## CSS imports at runtime
+
+In `bun run`, the default export of a `.css` import is now an empty object, matching what `bun build` already produced:
+
+```ts
+import styles from "./app.css";
+// Bun 1.3 (runtime): "/abs/path/app.css"
+// Bun 1.4:           {}
+```
+
+If you were importing a CSS file to obtain its path, use the `file` loader:
+
+```ts
+import stylesPath from "./app.css" with { type: "file" };
+```
+
+`bun build` output is unchanged, including the class-name map it generates for [CSS modules](/bundler/css#css-modules) (`.module.css`). At runtime, `.module.css` imports follow the same rule as plain `.css` and now evaluate to `{}`.
+
+---
+
+## XML imports
+
+`.xml` files now have a default loader. `import doc from "./feed.xml"` (and `require`, and `bun build`) returns the result of `Bun.XML.parse()`; in 1.3 it went through the `file` loader and returned the asset path.
+
+If you were importing an `.xml` file for its path, use the `file` loader explicitly:
+
+```ts
+import feedPath from "./feed.xml" with { type: "file" };
+```
+
+or pass `--loader .xml:file` to `bun build`.
+
+---
+
+## Node.js compatibility target is 26
+
+Bun 1.4 reports Node.js `26.3.0`:
+
+- `process.version` → `"v26.3.0"`
+- `process.versions.node` → `"26.3.0"`
+- `process.versions.modules` → `"147"`
+- `napi_get_node_version()` → `26.3.0`
+- `npm_config_user_agent` set by `bun run` contains `node/v26.3.0`
+
+Native addons built against the V8 C++ API (not N-API) must be rebuilt; the module loader rejects a mismatched ABI version. N-API addons are ABI-stable and continue to load.
+
+Bun 1.4 also ships the corresponding Node.js 26 semver-major changes, including:
+
+- `node:http`: `response.writeHeader()` (deprecated alias for `writeHead()`) is removed.
+- `node:stream`: `readable.read()` in paused mode returns one chunk at a time instead of concatenating the internal buffer.
+
+### `process.env` coerces values to strings
+
+`process.env` now behaves like Node's: every assigned value is converted to a string, so `process.env.FOO = undefined` stores the string `"undefined"` and `process.env.PORT = 3000` reads back as `"3000"`. In 1.3, `process.env` was a plain object and stored the raw value.
+
+```ts
+process.env.DEBUG = undefined; // [!code --]
+delete process.env.DEBUG; // [!code ++]
+```
+
+Symbol keys throw on assignment, and `Object.defineProperty(process.env, ...)` only accepts a plain writable / enumerable / configurable data descriptor (`ERR_INVALID_OBJECT_DEFINE_PROPERTY` otherwise).
+
+### Adding a `"warning"` listener no longer silences the default printer
+
+Bun now registers its default `"warning"` printer as a regular listener at startup, as Node does. In 1.3, attaching your own `process.on("warning", ...)` listener suppressed the built-in stderr output; in 1.4 both run. To take over warning output, remove the default listener first, or use `--no-warnings` / `NODE_NO_WARNINGS=1`:
+
+```ts
+process.removeAllListeners("warning");
+process.on("warning", w => myLogger.warn(w));
+```
+
+### `dns.lookup()` uses the system resolver on Linux
+
+`node:dns` `lookup()` and `dns.promises.lookup()` (and therefore hostname resolution in `net.connect()`, `tls.connect()`, and the `node:http` client) now call the platform resolver (`getaddrinfo`) on Linux, matching Node and the rest of the host (NSS, systemd-resolved, split-DNS VPNs). In 1.3 they used c-ares and read `/etc/resolv.conf` directly. macOS and Windows already used the system resolver and are unchanged.
+
+As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on that, switch to `dns.resolve4()` / `dns.resolve()` (which still use c-ares and honor `setServers()`), or call [`Bun.dns.lookup()`](/runtime/networking/dns) with `{ backend: "c-ares" }`. `fetch()` and `Bun.dns.lookup()` defaults are unchanged.
+
+### Other Node.js compatibility changes
+
+- `new URL("not a url")` throws with the message `Invalid URL` and `code: "ERR_INVALID_URL"` (plus `input` / `base` properties), matching Node. 1.3's message was `"..." cannot be parsed as a URL`. Tests matching the old message need updating.
+- Module-not-found errors carry Node's wording in `error.message` (and `.stack`). In 1.3 both `require()` and `import` produced `Cannot find package 'x' from '/path/to/file.js'`. `require()` and `require.resolve()` now produce `Cannot find module 'x'` followed by a `Require stack:` list (plus a `requireStack` property); `import` and `import()` now produce `Cannot find package 'x' imported from /path/to/file.js` (`Cannot find module './x' imported from ...` for a relative specifier). The `code` values are unchanged (`MODULE_NOT_FOUND` for `require()`, `ERR_MODULE_NOT_FOUND` for `import`), as is the line Bun prints for an unhandled resolution error; tests that match `error.message` need updating.
+- The `AbortError` produced by Node APIs that take a `signal` (`timers/promises`, `fs`, `events.once()`, streams, `child_process`, `net`, and `Bun.spawn`) now has the message `The operation was aborted`, without the trailing period Bun 1.3 added. The `DOMException` thrown by `fetch()` and used as `signal.reason` keeps the period.
+- `assert.deepStrictEqual()` and `util.isDeepStrictEqual()` now compare prototypes and own enumerable properties the way Node does. Comparisons that 1.3 incorrectly passed (an `Array` subclass against a plain array, a `Buffer` against a `Uint8Array`, a `Date` carrying extra own properties) now fail. `Bun.deepEquals()` and `bun:test` matchers are unchanged.
+- An exception thrown inside a `node:fs`, `node:dns`, or `crypto.pbkdf2()` callback is reported as `uncaughtException`, not `unhandledRejection`.
+- `node:http`: after an explicit `res.writeHead()`, `res.end(chunk)` sends the body chunked instead of computing a `Content-Length`, as Node does. `http.Server` now enforces `maxConnections` and emits `"drop"`.
+- `node:cluster` and `child_process` IPC: internal `{ cmd: "NODE_..." }` messages are delivered to the `"internalMessage"` event instead of `"message"`.
+- `node:dgram`: `bind()` on a socket that is already bound (or still binding) throws `ERR_SOCKET_ALREADY_BOUND` synchronously instead of emitting `"error"`, and `send()`, `address()`, `bind()` and similar calls after `close()` throw `ERR_SOCKET_DGRAM_NOT_RUNNING` (1.3 threw an error without a `code`).
+- `worker_threads`: `await worker.terminate()` on a running worker resolves with exit code `1`, and the worker's `"exit"` event reports `1`, as in Node (1.3 reported `0`); `postMessage()` to a terminated worker is a no-op instead of throwing. A worker's own `process.exit()` still runs its `"exit"` handlers, but `process.nextTick()` callbacks queued before it may no longer run (promise jobs queued before it still do; Node runs neither), so work that must happen before the worker exits belongs in an `"exit"` handler.
+- Recursive `fs.watch()` on Linux emits an `"error"` event (for example `ENOSPC`) when the tree cannot be fully watched, instead of silently watching part of it. An unhandled `"error"` event throws.
+- `process.title` defaults to the executable name as invoked (`argv[0]`) instead of the fixed string `"bun"`.
+
+---
+
+## `Temporal` is enabled by default
+
+The [`Temporal`](https://tc39.es/proposal-temporal/docs/) global and `Date.prototype.toTemporalInstant()` are now available without a flag, as in Node 26. Code that polyfills conditionally (`globalThis.Temporal ??= polyfill`) now gets the native implementation. `structuredClone()` and `postMessage()` of `Temporal` objects throw `DataCloneError`, the same as in Node.
+
+To disable it, set `BUN_JSC_useTemporal=0` in the environment. TOML files containing date or time values fail to parse while it is disabled (see the TOML section above).
+
+---
+
+## `fetch` and `Headers`
+
+When a server sends the same response header more than once (or a client sends a duplicate request header to `Bun.serve`), the values are now combined with `", "` as the Fetch Standard specifies, instead of the last value silently replacing the earlier ones. A header that arrives once with an empty value now reads back as `""` instead of `null`. `Set-Cookie`, `Headers.set()`, and `Headers.append()` are unchanged.
+
+```ts
+// server sends:  X-Thing: a
+//                X-Thing: b
+const res = await fetch(url);
+res.headers.get("x-thing");
+// Bun 1.3: "b"
+// Bun 1.4: "a, b"
+```
+
+Related `fetch` correctness changes:
+
+- `Request#clone()` and `Response#clone()` throw `TypeError` when the body has already been read or is locked, instead of returning a clone with an empty body.
+- `Response.redirect(url)` parses the URL and serializes it into the `Location` header.
+- A compressed response body that is truncated mid-stream (when the server closes the connection to delimit the body) now rejects instead of resolving with partial data.
+- `fetch()` rejects its returned promise when an option conversion throws, instead of throwing synchronously.
+
+---
+
+## Sockets, SQL, and SQLite
+
+### `Bun.Socket#setKeepAlive` delay is milliseconds
+
+The second argument to `socket.setKeepAlive(enable, initialDelay)` is now interpreted as **milliseconds** (matching `node:net`). Bun 1.3 passed the value to the kernel as seconds, so a millisecond value was either applied as a delay 1000× longer than requested or, on Linux (which caps the idle time at 32767 seconds), rejected: the call returned `false` and the kernel default of 2 hours stayed in effect.
+
+```ts
+socket.setKeepAlive(true, 60_000);
+// 1.3: requests 60,000 seconds (on Linux: rejected, returns false, 2-hour default applies)
+// 1.4: 60 seconds, returns true
+```
+
+`setKeepAlive(true)` with no delay now returns `true` instead of `false`.
+
+### MySQL public key retrieval over plain TCP must be opted into
+
+MySQL 8 accounts use the `caching_sha2_password` plugin by default. The first connection for a given user over an unencrypted connection requires the client to download the server's RSA public key; Bun 1.3 did this automatically. Bun 1.4 refuses by default (the same default as `mysql2` and Connector/J, since a man-in-the-middle could substitute their own key) and the connection fails with `ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED`. This typically shows up against local or containerized MySQL 8 servers without TLS.
+
+**What to do:** connect with TLS, or pass `allowPublicKeyRetrieval: true` in the `SQL` options for networks you trust (see [MySQL](/runtime/sql#mysql)). Connections that use TLS or `mysql_native_password` accounts, and connections for a user whose credentials the server has already cached, are unaffected.
+
+### MySQL `DATETIME` / `TIMESTAMP` decode as UTC
+
+The MySQL driver now decodes `DATETIME` and `TIMESTAMP` columns as UTC to match how it encodes them. In Bun 1.3 these were decoded as local time, so values round-tripped through the driver came back shifted by the local UTC offset. Reading existing rows after upgrading returns the value actually stored in the database.
+
+### MariaDB `json` columns are parsed
+
+Against MariaDB 10.5 or newer, `Bun.SQL` now negotiates MariaDB's extended type information, so `json` columns and JSON function results (`JSON_OBJECT()`, `JSON_EXTRACT()`, ...) come back as parsed values, the same as they always did on MySQL. In 1.3 they were returned as strings. Code that called `JSON.parse()` on these columns should stop doing so. Older MariaDB servers are unchanged.
+
+### Postgres honors `PGSSLMODE`
+
+`Bun.SQL` now reads `PGSSLMODE` (and `PG_SSLMODE`) from the environment as the default TLS mode, as `libpq` does; 1.3 ignored it. A `?sslmode=` query parameter in the connection URL still takes precedence. Two consequences if the variable is set in your environment:
+
+- `PGSSLMODE=require` (or `verify-ca` / `verify-full`) against a server without TLS now fails with `ERR_POSTGRES_TLS_NOT_AVAILABLE` instead of silently connecting in plaintext.
+- An unrecognized value throws `ERR_INVALID_ARG_VALUE`.
+
+To keep the 1.3 behavior for a specific connection, add `?sslmode=disable` (or the mode you want) to its URL.
+
+Relatedly, for both Postgres and MySQL, passing `tls` / `ssl` options now requires an encrypted connection: if the server declines TLS, the connection fails instead of silently continuing in plaintext as it did in 1.3. The `?ssl=` and `?ssl-mode=` URL parameters and string values such as `ssl: "verify-full"` are now honored as well (1.3 only read `?sslmode=`), so a URL carrying `?ssl=true` that used to connect in plaintext to a server without TLS now fails too.
+
+### `bun:sqlite` `close()` finalizes `query()` statements
+
+`db.close()` now finalizes every statement created with `db.query()`, whether or not it is still in the statement cache, and `db.close(true)` finalizes `db.prepare()` statements too. In 1.3 these statements stayed usable until garbage collection, which kept the database file open (and undeletable on Windows) after `close()`, and made `close(true)` throw `database is locked` whenever any of them was still alive: a single live `db.prepare()` statement was enough, as was a `db.query()` statement that had not fit in the cache (more than `MAX_QUERY_CACHE_SIZE` distinct queries).
+
+Using a statement that `close()` finalized now throws `Database has closed`. If you need a statement to outlive a graceful `db.close()`, create it with `db.prepare()`; those keep working after `close()` (not `close(true)`) until they are finalized. The `query()` cache is now an LRU of `Database.MAX_QUERY_CACHE_SIZE` entries rather than "the first 20 distinct strings".
+
+---
+
+## `HTMLRewriter` streams and no longer blocks on async handlers
+
+`HTMLRewriter.transform()` now streams the input through the rewriter and suspends on handlers that return a promise, instead of buffering the whole body and spinning the event loop inside the handler. Two things change for callers:
+
+- `transform()` with a **string or `ArrayBuffer`** input and a handler whose promise needs the event loop to settle throws a `TypeError`. Wrap the input in a `Response` and read the transformed body asynchronously instead.
+- With a `Response` input, errors thrown by handlers always reject the output body (1.3 threw synchronously from `transform()` when the input body was already in memory). In `Bun.serve`, when the input body is itself still streaming (for example a `fetch()` response), a handler that fails before the first byte of output is routed to `error()`, and one that fails after output has started cuts the response off; 1.3 answered with an empty `200` in both cases.
+
+The `Blob` overload of `transform()` was removed from the type definitions.
+
+---
+
+## Distribution: single x64 build
+
+Bun no longer ships a separate AVX2-optimized x64 build. There is one x64 build per platform, targeting SSE4.2 (Nehalem, 2008+). The `-baseline` download names and `@oven/bun-*-x64-baseline` npm packages still resolve as aliases, so existing install scripts and lockfiles keep working.
+
+No action is needed. CPUs that previously required the `-baseline` build now run the default `bun-*-x64` download.
+
+---
+
+## Other changes you may notice
+
+These are mostly correctness fixes that tighten validation or align with a specification, plus a few differences in generated output. They only affect code that was relying on the previous behavior.
+
+**`bun test`**
+
+- `jest.resetAllMocks()` now resets mock implementations (matching Jest). Use `jest.clearAllMocks()` if you only want to clear call data.
+- `expect(array).toContain(value)` now uses `===` instead of `Object.is`. `expect([NaN]).toContain(NaN)` now fails (use `toContainEqual`).
+
+**`Bun.serve` and WebSocket**
+
+- An out-of-range `port` throws `RangeError` instead of being clamped.
+- A `Response` whose status is outside `100..=999` (in practice `Response.error()`, whose status is `0`) is routed through the `error()` handler as a 500 instead of being written as an invalid `HTTP/1.1 0` status line, and such a `Response` used as a static route is rejected when `Bun.serve()` is called.
+- Per-method route objects (`{ GET, POST, ... }`) serve `HEAD` with the `GET` handler.
+- `ServerWebSocket#publish()` and `server.publish()` return `0` / `-1` when a subscriber hits backpressure, instead of always returning the payload length.
+- The client `WebSocket` rejects `close()` with an invalid code (`InvalidAccessError`) or a reason over 123 UTF-8 bytes (`SyntaxError`). Client and server WebSockets reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and the server rejects unmasked client frames per RFC 6455.
+- The client `WebSocket` fires `close` as a queued task, per the WHATWG spec: immediately after `ws.close()` the `readyState` is `CLOSING` and `onclose` runs on a later turn. In 1.3, `onclose` ran synchronously inside `close()`.
+- Requests with a malformed `Transfer-Encoding` (`gzip, chunked`, `chunked, chunked`, or the header split across fields) are rejected with a 400 instead of being served with an undecoded body.
+- `requestCert` / `rejectUnauthorized` set inside a per-hostname `tls` entry (`serverName`) are now enforced; 1.3 only honored them on the top-level `tls` object.
+
+**JavaScript engine**
+
+- `Array.prototype.join()` / `toString()` on an array that contains itself throws `RangeError` (updated JavaScriptCore); 1.3 returned `""` for the cycle.
+- The bundled ICU on Linux and Windows is now version 78 (`process.versions.icu`; 1.3 shipped 75 on Linux and 73 on Windows), which updates the locale data behind `Intl` and `toLocaleString()`. Snapshot tests of locale-formatted output may change. macOS uses the system ICU and is unaffected.
+
+**Bun APIs**
+
+- `Bun.JSONC.parse()` throws `SyntaxError` instead of `BuildMessage`, and `Bun.JSONC.parse("")` throws instead of returning `{}`.
+- `CompressionStream` / `DecompressionStream` deliver the output of one input chunk in pieces of at most 64 KiB (a new `highWaterMark` constructor option changes the size; `Infinity` restores one output chunk per input chunk), and a `write()` settles once its output has been consumed. In 1.3 each input chunk produced exactly one output chunk holding its whole expansion, which code doing one `read()` per `write()` may have relied on.
+- `Bun.SQL` with the SQLite adapter: interpolating a plain object, array, or `Date` as a query value now throws `Binding expected string, TypedArray, boolean, number, bigint or null`. In 1.3 an array or indexed object in that position was silently used as the binding set for the whole statement (overriding the other parameters), and any other object was bound as `NULL`. Use `sql([...])` for `IN` lists and `sql(object)` for inserts, and convert other values (`JSON.stringify()`, `date.toISOString()`) yourself.
+- `Bun.spawn`: passing an already-aborted `AbortSignal` throws immediately instead of spawning; `timeout: NaN`, `killSignal: 0`, and NUL bytes in `argv0` / `cwd` are rejected.
+- `bun:ffi`: validation errors from `viewSource()` and `new JSCallback()` are thrown instead of returned.
+- `structuredClone` / `postMessage`: transfer lists are validated before serialization instead of silently dropping invalid entries.
+- `FileSystemRouter#match()` returns `null` for paths that do not start with `/`.
+- `Bun.mmap()` returns a view starting at the requested `offset` instead of the page-aligned offset.
+- `Bun.color`: `"ansi-16"` output is a real SGR escape sequence (`\x1b[91m` for red; 1.3 emitted a `38;5;` sequence containing a raw control byte), `"ansi-256"` no longer emits an out-of-range palette index for near-black colors, and `"hsl"` / `"lab"` output is valid CSS that `Bun.color` parses back (`hsl(0, 100%, 50%)` instead of `hsl(0, 1, 0.5)`). `"ansi-256"` output for other colors is unchanged.
+- `Bun.Cookie`: `Expires` is serialized as an IMF-fixdate.
+- `Bun.randomUUIDv7()`: timestamps at or above 2⁴⁸, or `NaN`, throw instead of being truncated.
+- `Bun.YAML.parse()` rejects NUL bytes with `SyntaxError` instead of silently truncating.
+- `Bun.udpSocket()` ports and `Bun.password` cost parameters outside their valid range throw instead of wrapping around.
+- `RedisClient#expire()` rejects `NaN` / `undefined` seconds instead of sending `EXPIRE key 0` (which deleted the key).
+- `S3Client#list()` and S3 error messages now decode XML entities, so a key stored as `Tom & Jerry.mp4` is returned as such rather than `Tom &amp; Jerry.mp4`. Code that unescaped these itself should stop. A malformed 200 listing body now rejects with `code: "InvalidResponse"` instead of resolving with a partial listing.
+- `Bun.openInEditor()` throws when no editor can be found instead of silently doing nothing.
+- `fetch()` reuses TLS sessions across connections to the same host by default. Set `BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE=1` to disable.
+
+**Node.js compatibility**
+
+- `tls.Server` with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
+- `process.exit(code)`: if a `process.on("exit")` listener assigns `process.exitCode`, the process (or worker) now exits with that value, as in Node.js; 1.3 exited with `code`.
+
+**Bundler and transpiler**
+
+- `splitting: true` (`--splitting`) combined with `format: "cjs"` or `"iife"` is now a build error, `Code splitting is currently only supported when format is set to "esm"`. In 1.3 the option was silently ignored for a single entry point (and crashed when entry points shared code). Build configs that enable `splitting` globally and emit several formats need to restrict it to the ESM build.
+- `bun build --target browser` honors a package's `"browser"` field entries for Node built-ins (`"crypto": false` or a path to a shim); 1.3 always bundled Bun's own polyfill.
+- Generated output differs in a few places, which shows up in snapshot tests of transpiled or bundled code: a TypeScript `enum` declared inside a block or function is lowered to `let` instead of `var` (as `tsc` does, so it no longer leaks out of its block; top-level enums still use `var`), the keys of bundled `import * as ns` namespace objects and CommonJS-format entry point exports are emitted in ascending order (1.3 emitted them in descending order), and `--minify-identifiers` no longer generates a bare `$` name (so other generated names shift).
+
+**CLI and package manager**
+
+- `bun outdated` (and `bun update --interactive`) exit with code 1 when the manifest of a required dependency cannot be fetched, including a package that does not exist on the configured registry; 1.3 printed an empty table and exited 0.
+- `bun dedupe` and `bun up` (an alias of `bun update`) are new built-in commands, so `package.json` scripts with those names now need `bun run dedupe` / `bun run up`. `bun feedback` was removed.
+- A `workspace:` range inside a package downloaded from a registry (a publishing mistake in that package) is now an unresolvable dependency; 1.3 resolved it against your own workspace.
+- `bun init` templates declare `"typescript": "^7"` in `peerDependencies` (1.3 declared `^5`; the React templates declared no TypeScript dependency).
+- A non-interactive `bun update` now also updates `catalog:` entries within their ranges; 1.3 only did this in `bun update -i`.
+- `bun add` and `bun remove` accept `--filter` / `-F`, and `bun install <pkg> --filter` honors it. 1.3 ignored the flag on these commands, so `bun add y --filter x` added both `y` and a package named `x` to the current `package.json`; 1.4 edits the matching workspaces instead. For these two commands `--filter '*'` does not include the root package; name it explicitly to include it.
+- `bun add <name>` in a workspace whose root `catalog` lists `<name>` writes `"<name>": "catalog:"` and installs the catalog's version; 1.3 wrote the resolved `^x.y.z`. Pass an explicit version (`bun add <name>@2`) to get a concrete range; named catalogs still require `--catalog=<catalog>`.
+
+See [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792) for the tracking list, including narrow protocol and bounds checks not repeated here.
+
+---
+
+## Pinning to Bun 1.3
+
+If you need to stay on Bun 1.3 while migrating, you can install a specific version:
+
+<Tabs>
+  <Tab title="macOS & Linux">
+    ```bash terminal icon="terminal"
+    curl -fsSL https://bun.com/install | bash -s "bun-v1.3.14"
+    ```
+  </Tab>
+  <Tab title="Windows">
+    ```powershell PowerShell icon="windows"
+    iex "& {$(irm https://bun.com/install.ps1)} -Version 1.3.14"
+    ```
+  </Tab>
+</Tabs>
+
+See [Upgrade Bun](/guides/util/upgrade) for other ways to manage versions.

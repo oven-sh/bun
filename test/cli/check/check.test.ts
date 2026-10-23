@@ -24562,6 +24562,33 @@ export {};
         expect(exitCode).toBe(1);
       });
 
+      test("doesn't instantiate the type of an object literal that has no outer type parameters", async () => {
+        // `getObjectTypeInstantiation` returns it as it is, so the nesting doesn't add to the instantiation depth.
+        const nested = (leaf: string) => `declare class A<T, K = 1> { a: T; k: K }
+declare function box<F>(fields: F): A<F>;
+${leaf}
+const v0 = box({ p: leaf });
+${Array.from({ length: 60 }, (_, i) => `const v${i + 1} = box({ p: v${i} });`).join("\n")}
+function pair<U>(u: U) { return { v: v60, u }; }
+export const n: never = pair(1).v.k;
+`;
+        using dir = project({
+          // The first branch's `T` is an outer type parameter of the deferred reference in the second branch.
+          "deferred.ts": nested(`declare class B<T, K = 1> { b: T; k: K }
+type Optional<V> = V extends A<infer T> ? A<T | undefined> : V extends B<infer T> ? B<T | undefined> : never;
+declare const leaf: Optional<B<string>>;`),
+          "mapped.ts": nested(`type M<T> = { [K in keyof T]: T[K] };
+const l1 = { x: 1 }, l2 = { y: 1 };
+declare const leaf: M<typeof l1 | typeof l2>;`),
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toMatchInlineSnapshot(`
+          "deferred.ts(68,14): error TS2322: Type '1' is not assignable to type 'never'.
+          mapped.ts(68,14): error TS2322: Type '1' is not assignable to type 'never'."
+        `);
+        expect(exitCode).toBe(1);
+      });
+
       test("instantiates a mapped and a conditional type with many different type arguments", async () => {
         const numbers = Array.from({ length: 40 }, (_, i) => i + 10);
         using dir = project({

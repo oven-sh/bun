@@ -1079,6 +1079,13 @@ impl<'s> Shape<'s> {
         }
     }
 
+    /// True for a type with the symbol of an object literal that has no outer type parameters.
+    /// `getObjectTypeInstantiation` returns such a type as it is, whatever its members mention.
+    fn is_literal_without_outer_type_params(&self) -> bool {
+        self.mapper == MapperId::IDENTITY
+            && self.symbol_declared_at.is_some_and(|it| it.2.is_some())
+    }
+
     /// True if every field except the four lists still has its `new_in` value. The destructuring lists every field, so
     /// adding a field without updating this function is a compile error.
     fn is_plain(&self) -> bool {
@@ -1312,7 +1319,7 @@ bitflags::bitflags! {
     #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Default)]
     pub struct ObjectFlags: u16 {
         /// It references a type parameter, so instantiation may change it. Exact, except for
-        /// `Shape::has_no_instantiable_symbol`.
+        /// `Shape::has_no_instantiable_symbol` and `Shape::is_literal_without_outer_type_params`.
         const COULD_CONTAIN_TYPE_VARIABLES = 1;
         /// Is or contains `Unresolved`.
         const HAS_UNRESOLVED = 2;
@@ -3579,6 +3586,12 @@ impl<'p, 's> Types<'p, 's> {
                 }
                 if shape.has_no_instantiable_symbol {
                     flags.remove(ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES);
+                }
+                if shape.is_literal_without_outer_type_params() {
+                    flags.remove(
+                        ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES
+                            | ObjectFlags::HAS_OTHER_INSTANTIATION,
+                    );
                 }
                 flags
             }

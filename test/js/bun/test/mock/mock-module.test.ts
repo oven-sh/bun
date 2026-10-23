@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 test("mock.module async", async () => {
   mock.module("i-am-async-and-mocked", async () => {
     await 42;
@@ -869,7 +871,7 @@ describe.concurrent("the original of a mocked module", () => {
   // Long enough for an import() that waits for nothing to settle.
   const turns = `for (let i = 0; i < 3; i++) await new Promise(done => setImmediate(done));`;
 
-  test.each([[[]], [["--isolate"]]])("vi.importActual() neither calls the factory nor waits for it %j", async args => {
+  test.each(isolationFlags)("vi.importActual() neither calls the factory nor waits for it %j", async args => {
     await expectFixturesToPass(
       {
         ...report,
@@ -914,7 +916,7 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
-  test.each([[[]], [["--isolate"]]])("what vi.importActual() loaded before the module was mocked %j", async args => {
+  test.each(isolationFlags)("what vi.importActual() loaded before the module was mocked %j", async args => {
     await expectFixturesToPass(
       {
         ...report,
@@ -1288,7 +1290,7 @@ describe.concurrent("a module mocked without a factory", () => {
     );
   });
 
-  test.each([[[]], [["--isolate"]]])("writing to a module that a preload mocked %j", async args => {
+  test.each(isolationFlags)("writing to a module that a preload mocked %j", async args => {
     await expectFixturesToPass(
       {
         ...written,
@@ -1358,7 +1360,7 @@ describe.concurrent("a module mocked without a factory", () => {
       });
     `;
 
-    test.each([[[]], [["--isolate"]]])("vi.mock() leaves it real for them, as in Vitest %j", async args => {
+    test.each(isolationFlags)("vi.mock() leaves it real for them, as in Vitest %j", async args => {
       await expectFixturesToPass(
         {
           ...packages,
@@ -1556,7 +1558,7 @@ describe.concurrent("unmock", () => {
     },
   );
 
-  test.each([[[]], [["--isolate"]]])("the modules that imported the mock are loaded again %j", async args => {
+  test.each(isolationFlags)("the modules that imported the mock are loaded again %j", async args => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -2105,7 +2107,7 @@ test.concurrent.each(["bun:test", "vitest"])(
 );
 
 describe.concurrent("resetModules", () => {
-  test.each([[[]], [["--isolate"]]])("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
+  test.each(isolationFlags)("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
     const counted = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;
     await expectFixturesToPass(
       {
@@ -2139,17 +2141,15 @@ describe.concurrent("resetModules", () => {
     );
   });
 
-  test.each([[[]], [["--isolate"]]])(
-    "vi.doMock() of a package that is still loaded calls the factory lazily %j",
-    async args => {
-      await expectFixturesToPass(
-        {
-          "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
-          "node_modules/esm-pkg/index.js": `export const who = "real";`,
-          "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
-          "node_modules/cjs-pkg/index.js": `module.exports = { who: "real" };`,
-          "own.js": `export const load = name => import(name).then(exports => exports.who, error => "caught " + error.message);`,
-          "lazy.test.js": `
+  test.each(isolationFlags)("vi.doMock() of a package that is still loaded calls the factory lazily %j", async args => {
+    await expectFixturesToPass(
+      {
+        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-pkg/index.js": `export const who = "real";`,
+        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+        "node_modules/cjs-pkg/index.js": `module.exports = { who: "real" };`,
+        "own.js": `export const load = name => import(name).then(exports => exports.who, error => "caught " + error.message);`,
+        "lazy.test.js": `
           import { beforeEach, describe, expect, test, vi } from "vitest";
           import * as esm from "esm-pkg";
           import cjs from "cjs-pkg";
@@ -2173,14 +2173,13 @@ describe.concurrent("resetModules", () => {
             });
           });
         `,
-        },
-        4,
-        args,
-      );
-    },
-  );
+      },
+      4,
+      args,
+    );
+  });
 
-  test.each([[[]], [["--isolate"]]])("a real package stays one instance while vi.doMock() mocks it %j", async args => {
+  test.each(isolationFlags)("a real package stays one instance while vi.doMock() mocks it %j", async args => {
     await expectFixturesToPass(
       {
         "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
@@ -2644,7 +2643,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
     );
   });
 
-  for (const args of [[], ["--isolate"]]) {
+  for (const [args] of isolationFlags) {
     test(`in files that mock the same module differently ${JSON.stringify(args)}`, async () => {
       const file = (mock: string, expected: string) => `
         import { expect, test, vi } from "bun:test";
@@ -6525,7 +6524,7 @@ describe.concurrent("vi.doMock() of a module that a preload has loaded and the f
 
 // For a few ticks after a plain factory has returned, the module of its mock is still being fetched. It used to count as a module
 // that may wait for the running factory, and with it everything that imports it, so import() gave an empty copy that doesn't wait.
-test.concurrent.each([[[]], [["--isolate"]]])(
+test.concurrent.each(isolationFlags)(
   "a factory imports a partly mocked module whose original imports a mocked one, after any number of ticks %j",
   async args => {
     const files: Record<string, string> = {};
@@ -6603,7 +6602,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
   const partlyMocked = `[0.2, "USD", 12, "12 USD", 1]`;
   const whollyMocked = `[0.5, "USD", 20, "20 USD", 1]`;
 
-  test.each([[[]], [["--isolate"]]])("is evaluated first, so the mock isn't assigned over %j", async args => {
+  test.each(isolationFlags)("is evaluated first, so the mock isn't assigned over %j", async args => {
     await expectFixturesToPass(
       {
         ...linked("importOriginal, import statement", spreadsOriginal + statement, partlyMocked),
@@ -6639,7 +6638,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
   });
 
   // Its body can't run at once then, and would assign over a patch that is made before it.
-  test.each([[[]], [["--isolate"]]])("an import of its own has an async factory from a preload %j", async args => {
+  test.each(isolationFlags)("an import of its own has an async factory from a preload %j", async args => {
     await expectFixturesToPass(
       {
         "bunfig.toml": `[test]\npreload = ["./mocks-region.ts"]`,
@@ -6850,7 +6849,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     await expectFixturesToPass({ ...shared, "shared/first.test.ts": file, "shared/second.test.ts": file }, 2);
   });
 
-  test.each([[[]], [["--isolate"]]])("a package is patched for the modules that have yet to run %j", async args => {
+  test.each(isolationFlags)("a package is patched for the modules that have yet to run %j", async args => {
     const file = `
       import "./mocks-rates";
       import { expect, test, vi } from "bun:test";
@@ -6898,7 +6897,7 @@ describe.concurrent("a module that is linked, but not evaluated yet, when it is 
     );
   });
 
-  test.each([[[]], [["--isolate"]]])(
+  test.each(isolationFlags)(
     "a module that a preload loaded is patched for the modules that have yet to run %j",
     async args => {
       await expectFixturesToPass(

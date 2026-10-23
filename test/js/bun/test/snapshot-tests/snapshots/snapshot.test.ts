@@ -4,6 +4,8 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writ
 import { bunEnv, bunExe, DirectoryTree, isDebug, isWindows, MAX_PATH_BYTES, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 function test1000000(arg1: any, arg218718132: any) {}
 
 test("most types", () => {
@@ -2279,7 +2281,7 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     timeout,
   );
 
-  test.each([[[]], [["--isolate"]]])(
+  test.each(isolationFlags)(
     "lasts until the end of its test file, and for every file when a preload script adds it %j",
     async args => {
       const prints = (expected: string) => `
@@ -2292,13 +2294,16 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
           globalThis.Preloaded = class Preloaded {};
           globalThis.Local = class Local {};
           const { expect } = require("bun:test");
-          expect.addSnapshotSerializer({ test: value => value instanceof Preloaded, serialize: () => "from the preload script" });
+          expect.addSnapshotSerializer({
+            test: value => value instanceof Preloaded,
+            serialize: (value, config) => "from the preload script, one of " + config.plugins.length,
+          });
         `,
-        "a.test.js": prints("\n[\n  from the preload script,\n  Local {},\n]\n"),
+        "a.test.js": prints("\n[\n  from the preload script, one of 1,\n  Local {},\n]\n"),
         "b.test.js":
           `expect.addSnapshotSerializer({ test: value => value instanceof Local, serialize: () => "from b" });` +
-          prints("\n[\n  from the preload script,\n  from b,\n]\n"),
-        "c.test.js": prints("\n[\n  from the preload script,\n  Local {},\n]\n"),
+          prints("\n[\n  from the preload script, one of 2,\n  from b,\n]\n"),
+        "c.test.js": prints("\n[\n  from the preload script, one of 1,\n  Local {},\n]\n"),
       });
       const { stderr, exitCode, pass } = await runTests(
         String(dir),
@@ -2313,8 +2318,8 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
     timeout,
   );
 
-  test.each([[[]], [["--isolate"]]])(
-    "lasts for every file that imports the module that adds it, which is evaluated once, and is there once %j",
+  test.each(isolationFlags)(
+    "every file that imports the module that adds it gets it once %j",
     async args => {
       const prints = (expected: string, before = "") => `
         import { Shared, Local, addAgain } from "./helper.js";

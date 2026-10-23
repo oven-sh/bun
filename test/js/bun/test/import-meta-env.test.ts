@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import { format, inspect, isDeepStrictEqual } from "node:util";
 import { createContext, runInContext, runInNewContext } from "node:vm";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 const viteVariables = ["BASE_URL", "MODE", "DEV", "PROD", "SSR"] as const;
 const env: Record<PropertyKey, any> = import.meta.env;
 
@@ -1125,7 +1127,7 @@ describe.concurrent("import.meta.env", () => {
     expect(await run(String(dir), ["test"], variables)).toEqual({ printed: [expected], failures: [], exitCode: 0 });
   });
 
-  test.each([[[]], [["--isolate"]]])("a spy a file leaves on it doesn't leak into the next file %j", async flags => {
+  test.each(isolationFlags)("a spy a file leaves on it doesn't leak into the next file %j", async flags => {
     using dir = tempDir("import-meta-env", {
       // Copies process.env because the real one can't be spied on on Windows.
       "a.test.ts": `

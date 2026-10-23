@@ -4,6 +4,8 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 // Each fixture pushes what happens to `globalThis.events`, in order, and a final test prints it.
 const modules = {
   "mod.ts": `
@@ -840,7 +842,7 @@ describe.concurrent("modes", () => {
     ]);
   });
 
-  test.each([[[]], [["--isolate"]]])("a file restored from the transpiler cache: %j", async flags => {
+  test.each(isolationFlags)("a file restored from the transpiler cache: %j", async flags => {
     using dir = tempDir("mock-hoist-cache", {
       ...modules,
       "hoist.test.ts": `

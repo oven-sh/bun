@@ -1,6 +1,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 async function runTests(files: Record<string, string>, args: string[] = []) {
   using dir = tempDir("vitest-apis", files);
   await using proc = Bun.spawn({
@@ -1285,7 +1287,7 @@ describe("expect.addEqualityTesters", () => {
     `,
   };
 
-  test.concurrent.each([[[]], [["--isolate"]]])("a tester lasts until the end of its test file %j", async args => {
+  test.concurrent.each(isolationFlags)("a tester lasts until the end of its test file %j", async args => {
     const { results, exitCode } = await runTests(perFile, args);
     expect(results).toEqual([
       "(pass) the file that registers a tester uses it",
@@ -1315,7 +1317,40 @@ describe("expect.addEqualityTesters", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent.each([[[]], [["--isolate"]]])(
+  test.concurrent(
+    "--isolate=modules evaluates the preloads and the imports once per file, not once per --rerun-each run",
+    async () => {
+      const registers = `
+      import { expect } from "bun:test";
+      expect.addEqualityTesters([() => undefined]);
+      expect.addSnapshotSerializer({ test: () => false, serialize: () => "" });
+    `;
+      const file = `
+      import { expect, test } from "bun:test";
+      import "./helper";
+      test("one of each from the preload and from the helper", () => {
+        let testers = -1;
+        expect.extend({ toCountTesters() { testers = this.customTesters.length; return { pass: true, message: () => "" }; } });
+        expect(1).toCountTesters();
+        let serializers = -1;
+        expect.addSnapshotSerializer({
+          test: value => value === "counts",
+          serialize: (value, config) => ((serializers = config.plugins.length - 1), "counted"),
+        });
+        expect("counts").toMatchInlineSnapshot("counted");
+        expect({ testers, serializers }).toEqual({ testers: 2, serializers: 2 });
+      });
+    `;
+      const { results, exitCode } = await runTests(
+        { "setup.ts": registers, "helper.ts": registers, "a.test.ts": file, "b.test.ts": file },
+        ["--preload", "./setup.ts", "--isolate=modules", "--rerun-each=2"],
+      );
+      expect(results).toEqual(Array(4).fill("(pass) one of each from the preload and from the helper"));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.concurrent.each(isolationFlags)(
     "a tester that a module registers applies in every test file that imports the module %j",
     async args => {
       const file = (name: string) => `
@@ -1353,18 +1388,16 @@ describe("expect.addEqualityTesters", () => {
     },
   );
 
-  test.concurrent.each([[[]], [["--isolate"]]])(
-    "a tester from a preload script lasts for every file %j",
-    async args => {
-      const { results, exitCode } = await runTests(
-        {
-          "tester.ts": perFile["tester.ts"],
-          "setup.ts": `
+  test.concurrent.each(isolationFlags)("a tester from a preload script lasts for every file %j", async args => {
+    const { results, exitCode } = await runTests(
+      {
+        "tester.ts": perFile["tester.ts"],
+        "setup.ts": `
           import { expect } from "bun:test";
           import { sameTemperature } from "./tester";
           expect.addEqualityTesters([sameTemperature]);
         `,
-          "a.test.ts": `
+        "a.test.ts": `
           import { expect, test } from "bun:test";
           import { Celsius, Fahrenheit } from "./tester";
           expect.addEqualityTesters([(a, b) => (a === "only in a" ? true : undefined)]);
@@ -1373,7 +1406,7 @@ describe("expect.addEqualityTesters", () => {
             expect("only in a").toEqual("x");
           });
         `,
-          "b.test.ts": `
+        "b.test.ts": `
           import { expect, test } from "bun:test";
           import { Celsius, Fahrenheit } from "./tester";
           test("b: preload tester only", () => {
@@ -1381,25 +1414,28 @@ describe("expect.addEqualityTesters", () => {
             expect("only in a").not.toEqual("x");
           });
         `,
-          "c.test.ts": `
+        "c.test.ts": `
           import { expect, test } from "bun:test";
           import { Celsius, Fahrenheit } from "./tester";
           test("c: preload tester only", () => {
             expect(new Celsius(0)).toEqual(new Fahrenheit(32));
             expect("only in a").not.toEqual("x");
+            let count = -1;
+            expect.extend({ toCountTesters() { count = this.customTesters.length; return { pass: true, message: () => "" }; } });
+            expect(1).toCountTesters();
+            expect(count).toBe(1);
           });
         `,
-        },
-        ["--preload", "./setup.ts", ...args],
-      );
-      expect(results).toEqual([
-        "(pass) a: preload and own tester",
-        "(pass) b: preload tester only",
-        "(pass) c: preload tester only",
-      ]);
-      expect(exitCode).toBe(0);
-    },
-  );
+      },
+      ["--preload", "./setup.ts", ...args],
+    );
+    expect(results).toEqual([
+      "(pass) a: preload and own tester",
+      "(pass) b: preload tester only",
+      "(pass) c: preload tester only",
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("toHaveBeenCalledExactlyOnceWith", () => {

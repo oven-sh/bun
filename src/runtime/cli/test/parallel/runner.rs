@@ -669,6 +669,7 @@ impl<'a> WorkerLoop<'a> {
                     .jest
                     .bun_test_root
                     .reset_hook_scope_for_test_isolation();
+                crate::test_runner::Expect::reset_for_test_isolation(vm.global());
             } else {
                 Global::mimalloc_cleanup(false);
             }

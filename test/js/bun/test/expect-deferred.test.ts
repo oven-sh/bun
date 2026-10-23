@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 const prelude = `
   import { afterAll, afterEach, beforeAll, describe, expect, jest, test } from "bun:test";
   const later = (value, ms = 1) => new Promise(resolve => setTimeout(resolve, ms, value));
@@ -589,7 +591,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  describe.each([[[]], [["--isolate"]]])("outside of a test: bun test %j", flags => {
+  describe.each(isolationFlags)("outside of a test: bun test %j", flags => {
     const sections = (stderr: string) =>
       Object.fromEntries(
         stderr
@@ -1019,7 +1021,7 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 
   test("a matcher left pending by its test never runs and isn't reported in a later file", async () => {
-    for (const args of [[], ["--isolate"]]) {
+    for (const [args] of isolationFlags) {
       const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {
         "a.test.js":
           prelude +

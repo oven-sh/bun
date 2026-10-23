@@ -15,6 +15,8 @@ import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from "vitest";
 import WebSocket from "ws";
 
+const isolationFlags: [string[]][] = [[[]], [["--isolate"]], [["--isolate=modules"]]];
+
 afterEach(() => vi.useRealTimers());
 
 const saved = {
@@ -1800,7 +1802,7 @@ describe.concurrent("the end of a test file", () => {
     });
   `;
 
-  test.each([[[]], [["--isolate"]]])("restores everything the file left faked %j", async flags => {
+  test.each(isolationFlags)("restores everything the file left faked %j", async flags => {
     using dir = tempDir("fake-timers-file-end", {
       "a.test.ts": `
         import { test, vi } from "bun:test";
@@ -1828,7 +1830,7 @@ describe.concurrent("the end of a test file", () => {
   });
 
   // Matches Vitest. If it settled, the code after the await would fail with no test left to report it.
-  test.each([[[]], [["--isolate"]]])("leaves the promise of an in-flight …Async call pending %j", async flags => {
+  test.each(isolationFlags)("leaves the promise of an in-flight …Async call pending %j", async flags => {
     using dir = tempDir("fake-timers-file-end-in-flight", {
       "a.test.ts": `
         import { expect, test, vi } from "bun:test";

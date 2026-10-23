@@ -1900,6 +1900,10 @@ impl NodeHTTPResponse {
 
         // An empty write looks flushed to uWS; WantMore would disarm the drain that is still owed.
         if !IS_END && bytes.is_empty() && self.has_unflushed_write() {
+            // Like uWS write(""), an empty write still commits the header section.
+            if !state.is_http_write_called() {
+                self.writer().unwrap().flush_headers(false);
+            }
             if !callback_value.is_undefined() {
                 js::on_writable_set_cached(
                     js_this,

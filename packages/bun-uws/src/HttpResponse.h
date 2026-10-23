@@ -251,18 +251,8 @@ public:
 
             /* We do not have tryWrite-like functionalities, so ignore optional in this path */
 
-            /* Trailers-only end with no body chunk: write() below would early-return on
-             * empty data, so terminate the header section and enter chunked mode here. */
-            if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED) && data.empty()) [[unlikely]] {
-                writeMark();
-                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER)) {
-                    writeHeader("Transfer-Encoding", "chunked");
-                }
-                Super::write("\r\n", 2);
-                httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
-            }
-
-            /* Write the chunked data if there is any (this will not send zero chunks) */
+            /* Write the chunked data if there is any. An empty write sends no chunk
+             * but still terminates the header section (trailers-only end). */
             const bool terminated = !data.empty() && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_HAS_RESPONSE_TRAILERS);
             this->write(data, nullptr, terminated);
 
@@ -775,12 +765,14 @@ public:
     bool write(std::string_view data, size_t *writtenPtr = nullptr, bool isLast = false) {
         writeStatus(HTTP_200_OK);
 
-        /* Do not allow sending 0 chunks, they mark end of response */
+        /* An empty write commits the header section but sends no chunk: a 0
+         * chunk marks the end of the body. Http2Response::write and
+         * Http3Response::write do the same. */
         if (data.empty()) {
+            flushHeaders();
             if (writtenPtr) {
                 *writtenPtr = 0;
             }
-            /* If you called us, then according to you it was fine to call us so it's fine to still call us */
             return true;
         }
 

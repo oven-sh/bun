@@ -291,6 +291,9 @@ pub enum PropertyIdTag {
     MaskBoxImageOutset,
     MaskBoxImageRepeat,
     ColorScheme,
+    ViewTransitionName,
+    ViewTransitionClass,
+    ViewTransitionGroup,
     All,
     Unparsed,
     Custom,
@@ -603,6 +606,9 @@ impl PropertyIdTag {
             PropertyIdTag::MaskBoxImageOutset => b"mask-box-image-outset",
             PropertyIdTag::MaskBoxImageRepeat => b"mask-box-image-repeat",
             PropertyIdTag::ColorScheme => b"color-scheme",
+            PropertyIdTag::ViewTransitionName => b"view-transition-name",
+            PropertyIdTag::ViewTransitionClass => b"view-transition-class",
+            PropertyIdTag::ViewTransitionGroup => b"view-transition-group",
             PropertyIdTag::All => b"all",
             PropertyIdTag::Unparsed => b"unparsed",
             PropertyIdTag::Custom => b"custom",
@@ -868,6 +874,9 @@ pub enum PropertyId {
     MaskBoxImageOutset(VendorPrefix),
     MaskBoxImageRepeat(VendorPrefix),
     ColorScheme,
+    ViewTransitionName,
+    ViewTransitionClass,
+    ViewTransitionGroup,
     All,
     Unparsed,
     Custom(CustomPropertyName),
@@ -1150,6 +1159,9 @@ impl PropertyId {
             PropertyId::MaskBoxImageOutset(..) => PropertyIdTag::MaskBoxImageOutset,
             PropertyId::MaskBoxImageRepeat(..) => PropertyIdTag::MaskBoxImageRepeat,
             PropertyId::ColorScheme => PropertyIdTag::ColorScheme,
+            PropertyId::ViewTransitionName => PropertyIdTag::ViewTransitionName,
+            PropertyId::ViewTransitionClass => PropertyIdTag::ViewTransitionClass,
+            PropertyId::ViewTransitionGroup => PropertyIdTag::ViewTransitionGroup,
             PropertyId::All => PropertyIdTag::All,
             PropertyId::Unparsed => PropertyIdTag::Unparsed,
             PropertyId::Custom(..) => PropertyIdTag::Custom,
@@ -1529,6 +1541,9 @@ impl PropertyId {
                 b"mask-box-image-outset" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageOutset),
                 b"mask-box-image-repeat" => (VendorPrefix::NONE.union(VendorPrefix::WEBKIT), PropertyId::MaskBoxImageRepeat),
                 b"color-scheme" => (VendorPrefix::NONE, |_| PropertyId::ColorScheme),
+                b"view-transition-name" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionName),
+                b"view-transition-class" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionClass),
+                b"view-transition-group" => (VendorPrefix::NONE, |_| PropertyId::ViewTransitionGroup),
             };
         }
         let &(allowed, make) = KNOWN.get_ascii_case_insensitive(name)?;
@@ -1859,6 +1874,9 @@ pub enum Property {
     ),
     MaskBoxImageRepeat((border_image::BorderImageRepeat, VendorPrefix)),
     ColorScheme(ui::ColorScheme),
+    ViewTransitionName(transition::ViewTransitionName),
+    ViewTransitionClass(css::css_values::ident::NoneOrCustomIdentList),
+    ViewTransitionGroup(transition::ViewTransitionGroup),
     All(CSSWideKeyword),
     Unparsed(UnparsedProperty),
     Custom(CustomProperty),
@@ -2126,6 +2144,9 @@ impl Property {
             Property::MaskBoxImageOutset(v) => PropertyId::MaskBoxImageOutset(v.1),
             Property::MaskBoxImageRepeat(v) => PropertyId::MaskBoxImageRepeat(v.1),
             Property::ColorScheme(..) => PropertyId::ColorScheme,
+            Property::ViewTransitionName(..) => PropertyId::ViewTransitionName,
+            Property::ViewTransitionClass(..) => PropertyId::ViewTransitionClass,
+            Property::ViewTransitionGroup(..) => PropertyId::ViewTransitionGroup,
             Property::All(..) => PropertyId::All,
             Property::Unparsed(u) => u.property_id,
             Property::Custom(c) => PropertyId::Custom(c.name),
@@ -2395,6 +2416,9 @@ impl Property {
             Property::MaskBoxImageOutset(v) => css::generic::to_css(&v.0, dest),
             Property::MaskBoxImageRepeat(v) => css::generic::to_css(&v.0, dest),
             Property::ColorScheme(v) => css::generic::to_css(v, dest),
+            Property::ViewTransitionName(v) => css::generic::to_css(v, dest),
+            Property::ViewTransitionClass(v) => css::generic::to_css(v, dest),
+            Property::ViewTransitionGroup(v) => css::generic::to_css(v, dest),
             Property::All(v) => css::generic::to_css(v, dest),
             Property::Unparsed(u) => u.value.to_css(dest, false),
             Property::Custom(c) => c
@@ -3833,6 +3857,23 @@ impl Property {
                     return Ok(Property::ColorScheme(c));
                 }
             }
+            PropertyId::ViewTransitionName => {
+                if let Some(c) = parse_value::<transition::ViewTransitionName>(input, options) {
+                    return Ok(Property::ViewTransitionName(c));
+                }
+            }
+            PropertyId::ViewTransitionClass => {
+                if let Some(c) =
+                    parse_value::<css::css_values::ident::NoneOrCustomIdentList>(input, options)
+                {
+                    return Ok(Property::ViewTransitionClass(c));
+                }
+            }
+            PropertyId::ViewTransitionGroup => {
+                if let Some(c) = parse_value::<transition::ViewTransitionGroup>(input, options) {
+                    return Ok(Property::ViewTransitionGroup(c));
+                }
+            }
             PropertyId::All => return CSSWideKeyword::parse(input).map(Property::All),
             PropertyId::Custom(name) => {
                 return CustomProperty::parse(name, input, options).map(Property::Custom);
@@ -4428,6 +4469,15 @@ impl Property {
                 Property::MaskBoxImageRepeat((css::generic::deep_clone(&v.0, arena), v.1))
             }
             Property::ColorScheme(v) => Property::ColorScheme(css::generic::deep_clone(v, arena)),
+            Property::ViewTransitionName(v) => {
+                Property::ViewTransitionName(css::generic::deep_clone(v, arena))
+            }
+            Property::ViewTransitionClass(v) => {
+                Property::ViewTransitionClass(css::generic::deep_clone(v, arena))
+            }
+            Property::ViewTransitionGroup(v) => {
+                Property::ViewTransitionGroup(css::generic::deep_clone(v, arena))
+            }
             Property::All(a) => Property::All(*a),
             Property::Unparsed(u) => Property::Unparsed(u.deep_clone(arena)),
             Property::Custom(c) => Property::Custom(c.deep_clone(arena)),
@@ -4952,6 +5002,15 @@ impl Property {
                 css::generic::eql(&a.0, &b.0) && a.1 == b.1
             }
             (Property::ColorScheme(a), Property::ColorScheme(b)) => css::generic::eql(a, b),
+            (Property::ViewTransitionName(a), Property::ViewTransitionName(b)) => {
+                css::generic::eql(a, b)
+            }
+            (Property::ViewTransitionClass(a), Property::ViewTransitionClass(b)) => {
+                css::generic::eql(a, b)
+            }
+            (Property::ViewTransitionGroup(a), Property::ViewTransitionGroup(b)) => {
+                css::generic::eql(a, b)
+            }
             (Property::All(_), Property::All(_)) => true,
             (Property::Unparsed(a), Property::Unparsed(b)) => a.eql(b),
             (Property::Custom(a), Property::Custom(b)) => a.eql(b),

@@ -15,16 +15,25 @@ extern "C" JSC::EncodedJSValue Bun__resolveSyncWithPaths(JSC::JSGlobalObject* gl
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSourceIfExists(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithStrings(JSC::JSGlobalObject* global, BunString* specifier, BunString* from, bool is_esm);
 
+namespace Bun {
+class JSModuleGraph;
+}
+
 namespace Zig {
 
 using namespace JSC;
 using namespace WebCore;
 
-class ImportMetaObject final : public JSC::JSNonFinalObject {
+class ImportMetaObject final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ImportMetaObject*>(cell)->ImportMetaObject::~ImportMetaObject();
+    }
 
     /// Must be called with a valid url string (for `import.meta.url`)
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
@@ -73,8 +82,15 @@ public:
     LazyProperty<JSObject, JSString> fileProperty;
     LazyProperty<JSObject, JSString> pathProperty;
 
+    // The Bun.ModuleGraph the module belongs to: import.meta.main is whether it is the
+    // graph's first import, and import.meta.require requires into the graph. Null otherwise.
+    Bun::JSModuleGraph* moduleGraph() const { return m_moduleGraph.get(); }
+    void setModuleGraph(JSC::VM&, Bun::JSModuleGraph*);
+
 private:
     static ImportMetaObject* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, const WTF::String& url);
+
+    JSC::WriteBarrier<Bun::JSModuleGraph> m_moduleGraph;
 
     ImportMetaObject(JSC::VM& vm, JSC::Structure* structure, const WTF::String& url)
         : Base(vm, structure)

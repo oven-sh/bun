@@ -47,7 +47,6 @@
 /// would force every `write_array<T>` caller to propagate
 /// `T: AssertNoUninitializedPadding`.
 #[inline(always)]
-#[allow(dropping_copy_types, clippy::needless_pass_by_value)]
 pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
     // Body intentionally empty — the per-type `const` layout asserts are the check.
 }
@@ -154,6 +153,6 @@ pub mod layout_asserts {
     pin!(crate::lockfile::package::Scripts, size = 49, align = 1);
 
     // ── .npm manifest cache (PackageManifest.Serializer) ─────────────────
-    pin!(crate::npm::PackageVersion, size = 240, align = 8);
+    pin!(crate::npm::PackageVersion, size = 248, align = 8);
     pin!(crate::npm::NpmPackage, size = 120, align = 8);
 }

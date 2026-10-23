@@ -46,6 +46,7 @@ pub struct InternalLoopData {
     pub closed_udp_head: *mut udp::Socket,
     pub closed_head: *mut us_socket_t,
     pub low_prio_head: *mut us_socket_t,
+    pub low_prio_iterator: *mut us_socket_t,
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
@@ -63,6 +64,9 @@ pub struct InternalLoopData {
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub(crate) num_unresumable_sockets: c_int,
+    /// `us_internal_unresumable_socket_t *`. Only `loop.c` reads or frees this list.
+    pub(crate) unresumable_sockets: *mut c_void,
 }
 
 impl InternalLoopData {

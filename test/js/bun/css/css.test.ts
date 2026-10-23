@@ -7,6 +7,7 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   cssTest,
+  cssTestTodo,
   indoc,
   minify_error_test_with_options,
   minify_test,
@@ -2974,6 +2975,34 @@ describe("css tests", () => {
       ".foo{background:url(img-sprite.png) 100% 100% no-repeat}",
     );
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
+
+    // The shorthand prints <box> twice when origin != clip. A single <box>
+    // token sets both origin and clip, so dropping a border-box clip after a
+    // non-default origin would change the declared clip value.
+    minify_test(".foo { background: red content-box border-box }", ".foo{background:red content-box border-box}");
+    minify_test(".foo { background: red border-box content-box }", ".foo{background:red border-box content-box}");
+    minify_test(".foo { background: red border-box padding-box }", ".foo{background:red border-box padding-box}");
+    minify_test(".foo { background: red padding-box border-box }", ".foo{background:red}");
+    minify_test(".foo { background: red border-box border-box }", ".foo{background:red border-box}");
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: content-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red content-box border-box;
+      }
+    `,
+    );
 
     minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
@@ -6090,6 +6119,7 @@ describe("css tests", () => {
       "view-transition-image-pair",
       "view-transition-new",
       "view-transition-old",
+      "view-transition-group-children",
     ]) {
       minify_test(`:root::${name}(*) {position: fixed}`, `:root::${name}(*){position:fixed}`);
       minify_test(`:root::${name}(foo) {position: fixed}`, `:root::${name}(foo){position:fixed}`);
@@ -6097,6 +6127,18 @@ describe("css tests", () => {
       // Test class selector syntax (.class-name)
       minify_test(`:root::${name}(.slide-out) {position: fixed}`, `:root::${name}(.slide-out){position:fixed}`);
       minify_test(`:root::${name}(.fade-in) {animation-name: fade}`, `:root::${name}(.fade-in){animation-name:fade}`);
+      // <pt-name-and-class-selector>: a name or `*` followed by classes, or classes alone.
+      minify_test(`:root::${name}(*.class) {position: fixed}`, `:root::${name}(*.class){position:fixed}`);
+      minify_test(`:root::${name}(*.class.class) {position: fixed}`, `:root::${name}(*.class.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.class) {position: fixed}`, `:root::${name}(foo.class){position:fixed}`);
+      minify_test(`:root::${name}(foo.bar.baz) {position: fixed}`, `:root::${name}(foo.bar.baz){position:fixed}`);
+      minify_test(
+        `:root::${name}(foo.bar.baz):only-child {position: fixed}`,
+        `:root::${name}(foo.bar.baz):only-child{position:fixed}`,
+      );
+      minify_test(`:root::${name}(.foo.bar) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  .foo.bar  ) {position: fixed}`, `:root::${name}(.foo.bar){position:fixed}`);
+      minify_test(`:root::${name}(  foo.bar  ) {position: fixed}`, `:root::${name}(foo.bar){position:fixed}`);
       error_test(
         `:root::${name}(foo):first-child {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidPseudoClassAfterPseudoElement)",
@@ -6105,6 +6147,23 @@ describe("css tests", () => {
         `:root::${name}(foo)::before {position: fixed}`,
         "ParserError::SelectorError(SelectorError::InvalidState)",
       );
+      // White space is not allowed between the name and a class, or inside the classes.
+      test.each([
+        ["*.*", "Expected identifier after '.' in class selector, found: *"],
+        ["*. cls", "Expected identifier after '.' in class selector"],
+        [". cls", "Expected identifier after '.' in class selector"],
+        ["foo .bar", "Unexpected token: ."],
+        [".foo .bar", "Unexpected token: ."],
+        ["*.cls. c", "Expected identifier after '.' in class selector"],
+        ["*.cls>cls", "Unexpected token: >"],
+        ["*.cls.foo.*", "Expected identifier after '.' in class selector, found: *"],
+        ["foo.bar baz", "Unexpected token: baz"],
+        ["foo.inherit", "Unexpected token: inherit"],
+        ["inherit.foo", "Unexpected token: inherit"],
+        ["", "Unexpected end of input"],
+      ])(`ERROR: :root::${name}(%s) {position: fixed}`, (argument, message) => {
+        expect(() => minify_test_with_options(`:root::${name}(${argument}) {position: fixed}`, "")).toThrow(message);
+      });
     }
 
     minify_test(".foo ::deep .bar {width: 20px}", ".foo ::deep .bar{width:20px}");
@@ -7657,16 +7716,13 @@ describe("css tests", () => {
     // calc() payloads must survive the transform property handler's deep clone.
     minify_test(".foo { translate: calc(50% - 100px + 20px) 0px }", ".foo{translate:calc(50% - 80px)}");
     minify_test(".foo { translate: 1px 2px; rotate: 30deg; scale: 2 }", ".foo{translate:1px 2px;rotate:30deg;scale:2}");
-    // A later `transform` declaration resets buffered individual properties.
+    // `transform` is not a shorthand: it does not reset the individual transform properties.
     minify_test(
       ".foo { translate: calc(50% - 100px + 20px) 0px; transform: translate(2px, 3px) }",
-      ".foo{transform:translate(2px,3px)}",
+      ".foo{transform:translate(2px,3px);translate:calc(50% - 80px)}",
     );
-
-    // TODO: Re-enable with a better solution
-    //       See: https://github.com/parcel-bundler/buncss/issues/288
-    // minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(1.5)}");
-    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3)}");
+    minify_test(".foo { transform: scale(3); scale: 0.5 }", ".foo{transform:scale(3);scale:.5}");
+    minify_test(".foo { scale: 0.5; transform: scale(3); }", ".foo{transform:scale(3);scale:.5}");
 
     prefix_test(
       `
@@ -7718,6 +7774,213 @@ describe("css tests", () => {
         transform: translateX(20px);
       }
       `,
+    );
+  });
+
+  // https://github.com/parcel-bundler/lightningcss/pull/1340
+  describe("individual transforms", () => {
+    for (const [property, value, identity] of [
+      ["translate", "10px", "0"],
+      ["rotate", "30deg", "0deg"],
+      ["scale", "2", "1"],
+    ]) {
+      // `transform` is not a shorthand that resets the individual properties.
+      for (const [transform, individual] of [
+        ["scale(3)", value],
+        ["none", "none"],
+        ["none", identity],
+      ]) {
+        // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+        const check = individual === "0deg" ? cssTestTodo : cssTest;
+        const expected = `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+        `;
+        check(
+          `
+          .box {
+            transform: ${transform};
+            ${property}: ${individual};
+          }
+          `,
+          expected,
+        );
+        check(
+          `
+          .box {
+            ${property}: ${individual};
+            transform: ${transform};
+          }
+          `,
+          expected,
+        );
+      }
+    }
+
+    cssTest(
+      `
+      .box {
+        transform: translateX(5px);
+        scale: 2;
+        rotate: 30deg;
+        translate: 10px;
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+      `
+      .box {
+        transform: scale(3);
+        translate: 20px 30px;
+        rotate: x 40deg;
+        scale: 4 5;
+      }
+      `,
+    );
+
+    // `rotate: 0deg` prints as `rotate: none` until lightningcss #1147 is ported.
+    cssTestTodo(
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+        transform: none;
+      }
+      `,
+      `
+      .base {
+        translate: 10px;
+        rotate: 30deg;
+        scale: 2;
+      }
+
+      .base.reset {
+        transform: none;
+        translate: none;
+        rotate: none;
+        scale: none;
+      }
+
+      .base.identity {
+        transform: none;
+        translate: 0;
+        rotate: 0deg;
+        scale: 1;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: scale(2) !important;
+        translate: 10px;
+        rotate: 30deg !important;
+        scale: 3;
+        translate: 20px !important;
+        transform: none;
+        translate: 30px !important;
+      }
+      `,
+      `
+      .box {
+        transform: none;
+        translate: 10px;
+        scale: 3;
+        transform: scale(2) !important;
+        translate: 30px !important;
+        rotate: 30deg !important;
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+      `
+      .box {
+        transform: rotate(10deg);
+        translate: 10px;
+        translate: var(--shift);
+        rotate: 20deg;
+        transform: var(--motion);
+        scale: 2;
+        scale: var(--zoom);
+        transform: translateX(2px);
+      }
+      `,
+    );
+
+    cssTest(
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        translate: 10px;
+        transform: scale(3);
+        rotate: 30deg;
+      }
+      `,
+    );
+
+    prefix_test(
+      `
+      .box {
+        translate: 10px;
+        transform: scale(2);
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      `
+      .box {
+        -webkit-transform: scale(2);
+        -moz-transform: scale(2);
+        transform: scale(2);
+        translate: 10px;
+        rotate: none;
+        scale: 1;
+      }
+      `,
+      {
+        firefox: Some(6 << 16),
+        safari: Some(6 << 16),
+      },
     );
   });
 
@@ -8418,6 +8681,30 @@ console.log(line.length - line.trimStart().length);`,
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe("300");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a rule nested in :host(&) or ::slotted(&)", async () => {
+    const cases = [
+      [":host(&) { .b { color: red } }", ":host(:scope) .b{color:red}"],
+      ["::slotted(&) { & { color: red } }", "::slotted(:scope){color:red}"],
+      [".a { :host(&) { .c { color: red } } }", ":host(.a) .c{color:red}"],
+      [".a { ::slotted(&) { &:hover { color: red } } }", "::slotted(.a):hover{color:red}"],
+    ];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { minifyTest } = require("bun:internal-for-testing").cssInternals;
+for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console.log(minifyTest(source, "", { chrome: 95 << 16 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
   });
 });

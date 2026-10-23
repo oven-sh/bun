@@ -153,6 +153,7 @@ test("cancelling the readable inside the chunk's toString() rejects the write in
   reader.read();
   (await null, await null, await null); // open the synchronous-transform window (backpressure cleared, write runs the transform inline)
 
+  // @ts-expect-error
   const writePromise = writer.write({
     toString() {
       reader.cancel();
@@ -408,7 +409,10 @@ describe.skipIf(!isASAN)("a failed output buffer allocation errors the stream in
       });
       const results = {};
       for (const name of Object.keys(inputs)) {
-        await fetch(new URL(name, server.url)).then(response => response.arrayBuffer(), () => {});
+        // The failed body closes the connection without a complete response:
+        // fetch() itself or the body read rejects, depending on whether the
+        // headers were already flushed.
+        await fetch(new URL(name, server.url)).then(response => response.arrayBuffer()).catch(() => {});
         results[name] = await cancelReasons[name];
       }
       results.afterwards = Array.from(await (await fetch(new URL("small", server.url))).bytes());

@@ -6,65 +6,44 @@ use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
     api::server_config::SSLConfig,
 };
+use bun_boringssl_sys::OwnedSslCtx;
+use bun_sql::shared::SSLMode;
 use bun_uws as uws;
 
-pub(crate) trait SslModeArg: Copy + PartialEq {
-    /// Wire order of the JS-side enum; index 0 is `Disable`.
-    const MODES: [Self; 5];
-}
+const SSL_MODES: [SSLMode; 5] = [
+    SSLMode::Disable,
+    SSLMode::Prefer,
+    SSLMode::Require,
+    SSLMode::VerifyCa,
+    SSLMode::VerifyFull,
+];
 
-macro_rules! impl_ssl_mode_arg {
-    ($ty:ty) => {
-        impl SslModeArg for $ty {
-            const MODES: [Self; 5] = [
-                Self::Disable,
-                Self::Prefer,
-                Self::Require,
-                Self::VerifyCa,
-                Self::VerifyFull,
-            ];
-        }
-    };
-}
-// Both drivers use the same five postgres-shaped modes: the JS side
-// (`normalizeSSLMode` in src/js/internal/sql/shared.ts) normalizes each
-// driver's accepted ssl-mode spellings to this one wire enum, so MySQL's
-// native ssl-mode vocabulary never crosses this boundary.
-impl_ssl_mode_arg!(bun_sql::mysql::ssl_mode::SSLMode);
-impl_ssl_mode_arg!(bun_sql::postgres::SSLMode);
-
-type GuardState = (Option<*mut uws::SslCtx>, SSLConfig);
-pub(crate) type TlsGuard = scopeguard::ScopeGuard<GuardState, fn(GuardState)>;
-
-/// Errdefer over `(secure, tls_config)`: frees the cached `SSL_CTX*`
-/// reference and drops the config unless disarmed via
-/// `ScopeGuard::into_inner` once ownership transfers into the connection.
-pub(crate) fn guard_tls(secure: Option<*mut uws::SslCtx>, tls_config: SSLConfig) -> TlsGuard {
-    fn free((secure, _tls_config): GuardState) {
-        if let Some(s) = secure {
-            // SAFETY: `secure` holds one `ssl_ctx_cache` reference owned by the caller.
-            unsafe { bun_boringssl_sys::SSL_CTX_free(s) };
-        }
-    }
-    scopeguard::guard((secure, tls_config), free as fn(GuardState))
-}
-
-pub(crate) struct ConnectionCtorArgs<M> {
+pub(crate) struct ConnectionCtorArgs {
     pub hostname_str: bun_core::String,
     pub port: i32,
     pub username_str: bun_core::String,
     pub password_str: bun_core::String,
     pub database_str: bun_core::String,
-    pub ssl_mode: M,
+    pub path_str: bun_core::String,
+    pub ssl_mode: SSLMode,
     pub tls_config: SSLConfig,
-    /// `SSL_CTX*` holding one reference the caller must release on every
-    /// early exit (via [`guard_tls`]) until it transfers into the connection.
-    pub secure: Option<*mut uws::SslCtx>,
+    /// Moves into the connection.
+    pub secure: Option<OwnedSslCtx>,
+    /// Zero disables the timer.
+    pub idle_timeout_ms: u32,
+    pub connection_timeout_ms: u32,
+    pub max_lifetime_ms: u32,
 }
 
-impl<M: SslModeArg> ConnectionCtorArgs<M> {
-    /// Parses `arguments[0..=6]`. Returns `Ok(None)` when a JS exception is
-    /// already pending and the caller should `return Ok(JSValue::ZERO)`.
+fn timeout_ms(global_object: &JSGlobalObject, value: JSValue) -> JsResult<u32> {
+    // `as` maps NaN to zero.
+    Ok(value
+        .to_number(global_object)?
+        .clamp(0.0, f64::from(i32::MAX)) as u32)
+}
+
+impl ConnectionCtorArgs {
+    /// Parses `arguments[0..=6]`, `[8]` and `[11..=13]`. `Ok(None)`: a JS exception is pending.
     pub(crate) fn parse(
         global_object: &JSGlobalObject,
         vm: &mut VirtualMachine,
@@ -75,21 +54,33 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
         let username_str = arguments[2].to_bun_string(global_object)?;
         let password_str = arguments[3].to_bun_string(global_object)?;
         let database_str = arguments[4].to_bun_string(global_object)?;
-        let modes = M::MODES;
-        let ssl_mode = usize::try_from(arguments[5].to_int32())
-            .ok()
-            .and_then(|i| modes.get(i))
-            .copied()
-            .unwrap_or(modes[0]);
+        let path_str = arguments[8].to_bun_string(global_object)?;
+        let idle_timeout_ms = timeout_ms(global_object, arguments[11])?;
+        let connection_timeout_ms = timeout_ms(global_object, arguments[12])?;
+        let max_lifetime_ms = timeout_ms(global_object, arguments[13])?;
+        // A C string from here on: the resolver, SNI and the certificate check would see the name up to the NUL.
+        if bun_core::strings::contains_char(hostname_str.to_utf8().slice(), 0) {
+            return Err(global_object
+                .throw_invalid_arguments(format_args!("hostname must not contain null bytes")));
+        }
+        let Some(ssl_mode) = Some(arguments[5])
+            .filter(|mode| mode.is_any_int())
+            .and_then(|mode| usize::try_from(mode.to_int32()).ok())
+            .and_then(|i| SSL_MODES.get(i).copied())
+        else {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "sslMode must be an integer from 0 (disable) to 4 (verify-full)"
+            )));
+        };
 
         let tls_object = arguments[6];
         let mut tls_config = SSLConfig::default();
-        let mut secure: Option<*mut uws::SslCtx> = None;
-        if ssl_mode != modes[0] {
+        let mut secure: Option<OwnedSslCtx> = None;
+        if ssl_mode != SSLMode::Disable {
             tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
                 SSLConfig::default()
             } else if tls_object.is_object() {
-                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
+                match SSLConfig::from_js(global_object, tls_object) {
                     Ok(opt) => opt.unwrap_or_default(),
                     Err(_) => return Ok(None),
                 }
@@ -128,9 +119,13 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             username_str,
             password_str,
             database_str,
+            path_str,
             ssl_mode,
             tls_config,
             secure,
+            idle_timeout_ms,
+            connection_timeout_ms,
+            max_lifetime_ms,
         }))
     }
 }

@@ -1,6 +1,6 @@
 //! Shell lexer, parser, AST, and JS-bridge utilities for Bun's shell.
 
-#![allow(non_camel_case_types, non_snake_case, clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments)]
 
 use core::fmt;
 use std::io::Write as _;
@@ -23,15 +23,15 @@ use bun_sys::{self as sys, SystemError};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 
-pub use super::interpreter as interpret;
-pub use super::subproc; // declared once in `shell/mod.rs`
+pub(crate) use super::interpreter as interpret;
+pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 
 // ─── lexer / parser / AST (moved down to bun_shell_parser) ──────────────────
 // The encoding-agnostic lex/parse/AST surface lives in the lower-tier
 // `bun_shell_parser` crate so `Interpreter::parse` can compile without the
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
-pub use bun_shell_parser::parse::{
+pub(crate) use bun_shell_parser::parse::{
     IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
     LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
     needs_escape_utf8_ascii_latin1,
@@ -49,7 +49,6 @@ pub(crate) const WINDOWS_DEV_NULL: &ZStr = bun_core::zstr!("NUL");
 pub enum ShellErr {
     Sys(SystemError),
     Custom(Box<[u8]>),
-    Todo(Box<[u8]>),
 }
 
 impl ShellErr {
@@ -73,7 +72,6 @@ impl ShellErr {
             ShellErr::Custom(custom) => {
                 global.throw_value(EncodedSlice::utf8(&custom).to_error_instance(global))
             }
-            ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
     }
 
@@ -93,12 +91,6 @@ impl ShellErr {
                     bstr::BStr::new(&*custom)
                 );
             }
-            ShellErr::Todo(todo) => {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
-                    bstr::BStr::new(&*todo)
-                );
-            }
         }
         bun_core::Global::exit(1)
     }
@@ -109,26 +101,23 @@ impl fmt::Display for ShellErr {
         match self {
             ShellErr::Sys(e) => write!(f, "bun: {}: {}", e.message, e.path),
             ShellErr::Custom(msg) => write!(f, "bun: {}", bstr::BStr::new(msg)),
-            ShellErr::Todo(msg) => write!(f, "bun: TODO: {}", bstr::BStr::new(msg)),
         }
     }
 }
 
 // ───────────────────────────── Test ─────────────────────────────
 
-pub mod test {
+pub(crate) mod test {
     use super::*;
 
-    pub enum TestToken<'a> {
+    pub(crate) enum TestToken<'a> {
         Pipe,
         DoublePipe,
         Ampersand,
         DoubleAmpersand,
         Redirect(ast::RedirectFlags),
-        Dollar,
         Asterisk,
         DoubleAsterisk,
-        Eq,
         Semicolon,
         Newline,
         BraceBegin,
@@ -169,10 +158,8 @@ pub mod test {
                 Token::Ampersand => TestToken::Ampersand,
                 Token::DoubleAmpersand => TestToken::DoubleAmpersand,
                 Token::Redirect(r) => TestToken::Redirect(r),
-                Token::Dollar => TestToken::Dollar,
                 Token::Asterisk => TestToken::Asterisk,
                 Token::DoubleAsterisk => TestToken::DoubleAsterisk,
-                Token::Eq => TestToken::Eq,
                 Token::Semicolon => TestToken::Semicolon,
                 Token::Newline => TestToken::Newline,
                 Token::BraceBegin => TestToken::BraceBegin,
@@ -212,10 +199,8 @@ pub mod test {
                     write_redirect_flags(w, *r)?;
                     w.write_char('}')
                 }
-                T::Dollar => unit!("Dollar"),
                 T::Asterisk => unit!("Asterisk"),
                 T::DoubleAsterisk => unit!("DoubleAsterisk"),
-                T::Eq => unit!("Eq"),
                 T::Semicolon => unit!("Semicolon"),
                 T::Newline => unit!("Newline"),
                 T::BraceBegin => unit!("BraceBegin"),
@@ -281,12 +266,9 @@ pub(crate) fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,
     template_args: &mut JSArrayIterator,
-    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
-    // (a GC root); the heap-backed Vec is index storage only.
-    out_jsobjs: &mut Vec<JSValue>,
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
-    marked_argument_buffer: &mut MarkedArgumentBuffer,
+    out_jsobjs: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     let mut jsobjref_buf = [0u8; 128];
@@ -314,7 +296,6 @@ pub(crate) fn shell_cmd_from_js(
                 out_script,
                 jsstrings,
                 &mut jsobjref_buf[..],
-                marked_argument_buffer,
                 0,
             )?;
             builder = ShellSrcBuilder::init(global, out_script, jsstrings);
@@ -329,21 +310,17 @@ const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
-    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
-    // (a GC root); the heap-backed Vec is index storage only.
-    out_jsobjs: &mut Vec<JSValue>,
+    out_jsobjs: &mut MarkedArgumentBuffer,
     out_script: &mut Vec<u8>,
     jsstrings: &mut Vec<BunString>,
     jsobjref_buf: &mut [u8],
-    marked_argument_buffer: &mut MarkedArgumentBuffer,
     depth: u32,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     if !template_value.is_empty() {
         if let Some(_array_buffer) = template_value.as_array_buffer(global) {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -384,9 +361,8 @@ pub(crate) fn handle_template_value(
                 }
             }
 
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -401,28 +377,15 @@ pub(crate) fn handle_template_value(
             return Ok(());
         }
 
-        if let Some(_rstream) = crate::webcore::ReadableStream::from_js(template_value, global)? {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
-            let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
-            write!(
-                cursor,
-                "{}{}{}",
-                bstr::BStr::new(LEX_JS_OBJREF_PREFIX),
-                idx,
-                LEX_JS_REF_TERMINATOR as char
-            )
-            .map_err(|_| global.throw_out_of_memory())?;
-            let n = cursor.position() as usize;
-            out_script.extend_from_slice(&jsobjref_buf[..n]);
-            return Ok(());
+        if crate::webcore::ReadableStream::from_js(template_value, global)?.is_some() {
+            return Err(global.throw(format_args!(
+                "ReadableStream is not supported as a shell redirect yet. Buffer it first, e.g. `< ${{await new Response(stream).blob()}}`, or use Bun.spawn({{ stdin: stream }})"
+            )));
         }
 
         if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -464,7 +427,6 @@ pub(crate) fn handle_template_value(
                     out_script,
                     jsstrings,
                     jsobjref_buf,
-                    marked_argument_buffer,
                     depth + 1,
                 )?;
                 if i < last {
@@ -533,7 +495,7 @@ pub(crate) fn handle_template_value(
 
 // ───────────────────────────── ShellSrcBuilder ─────────────────────────────
 
-pub struct ShellSrcBuilder<'a> {
+pub(crate) struct ShellSrcBuilder<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) outbuf: &'a mut Vec<u8>,
     pub(crate) jsstrs_to_escape: &'a mut Vec<BunString>,
@@ -694,7 +656,7 @@ impl<'a> ShellSrcBuilder<'a> {
 // ───────────────────────────── TestingAPIs ─────────────────────────────
 
 /// Used in JS tests, see `internal-for-testing.ts` and shell tests.
-pub mod testing_apis {
+pub(crate) mod testing_apis {
     use super::*;
 
     #[bun_jsc::host_fn]
@@ -766,21 +728,18 @@ pub mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
-        let mut jsobjs: Vec<JSValue> = Vec::new();
 
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
-            &mut jsobjs,
             &mut jsstrings,
             &mut script,
             marked_argument_buffer,
         )?;
 
-        let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
+        let jsobjs_len: u32 = u32::try_from(marked_argument_buffer.size()).expect("int cast");
         let lex_result = 'brk: {
             if strings::is_all_ascii(&script[..]) {
                 let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
@@ -844,14 +803,11 @@ pub mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
-        let mut jsobjs: Vec<JSValue> = Vec::new();
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
-            &mut jsobjs,
             &mut jsstrings,
             &mut script,
             marked_argument_buffer,
@@ -863,7 +819,7 @@ pub mod testing_apis {
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
-            &mut jsobjs[..],
+            u32::try_from(marked_argument_buffer.size()).expect("int cast"),
             &jsstrings[..],
             &mut out_parser,
             &mut out_lex_result,
@@ -896,4 +852,4 @@ pub mod testing_apis {
 }
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the codegen splits on capitalisation runs).
-pub use testing_apis as testing_ap_is;
+pub(crate) use testing_apis as testing_ap_is;

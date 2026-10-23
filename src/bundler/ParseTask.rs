@@ -32,7 +32,7 @@ use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
-use crate::html_scanner::HTMLScanner;
+use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
@@ -91,6 +91,8 @@ pub struct ParseTask {
     pub(crate) path: Fs::Path<'static>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'static>>,
     pub(crate) contents_or_fd: ContentsOrFd,
+    /// True if this task opened `contents_or_fd`'s file. False if the resolver's entry cache owns it.
+    pub(crate) opened_own_fd: bool,
     pub(crate) external_free_function: ExternalFreeFunction,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
@@ -105,7 +107,6 @@ pub struct ParseTask {
     // Used for splitting up the work between the io and parse steps.
     pub(crate) stage: ParseTaskStage,
 
-    pub(crate) tree_shaking: bool,
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
     pub(crate) emit_decorator_metadata: bool,
@@ -129,7 +130,7 @@ pub enum ParseTaskStage {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// The information returned to the Bundler thread when a parse finishes.
-pub(crate) struct Result {
+pub struct Result {
     pub(crate) task: EventLoop::Task,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
     pub(crate) value: ResultValue,
@@ -138,6 +139,24 @@ pub(crate) struct Result {
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin.
     pub(crate) external: ExternalFreeFunction,
+}
+impl bun_event_loop::Taskable for Result {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
+    /// The VM that runs the bundle is going: the result goes to nobody.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
+        // `ServerComponentParseTask`) leaked.
+        let mut result = unsafe { bun_core::heap::take(this) };
+        // A native plugin's source buffer: `on_parse_task_complete` would have handed this to
+        // the bundle's finalizers. The source may borrow the buffer, so it goes first.
+        let external = core::mem::take(&mut result.external);
+        drop(result);
+        external.call();
+    }
+    /// A step of the bundle.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 // `Result` lives in a bump arena (no Drop on free); boxing the large arm
 // would leak the heap allocation. The size diff is acceptable.
@@ -161,6 +180,8 @@ impl ResultValue {
 pub(crate) struct WatcherData {
     pub(crate) fd: Fd,
     pub(crate) dir_fd: Fd,
+    /// True if the receiver must close `fd` when the watcher doesn't take it.
+    pub(crate) owns_fd: bool,
 }
 
 impl WatcherData {
@@ -168,6 +189,7 @@ impl WatcherData {
     pub(crate) const NONE: WatcherData = WatcherData {
         fd: Fd::INVALID,
         dir_fd: Fd::INVALID,
+        owns_fd: false,
     };
 }
 
@@ -278,6 +300,7 @@ impl ParseTask {
             known_target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
+            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
@@ -289,7 +312,6 @@ impl ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             is_entry_point: false,
         }
     }
@@ -309,6 +331,7 @@ impl Default for ParseTask {
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
+            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -323,7 +346,6 @@ impl Default for ParseTask {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             known_target: options::Target::default(),
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
@@ -361,7 +383,13 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     // provenance covers the full `ParseTask` and the `&mut` is unique per the
     // CONCURRENCY note above.
     let parse_task = unsafe { &mut *bun_core::from_field_ptr!(ParseTask, io_task, task) };
+    // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
+    // thread, which then owns it.
+    // SAFETY: teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
+    let pool: *const crate::ThreadPool = unsafe { parse_task.ctx() }.graph.pool();
     parse_worker::run_from_thread_pool(parse_task);
+    // SAFETY: `pool` scheduled this task, and this is the last access to the bundle.
+    unsafe { crate::ThreadPool::finish_io_task(pool) };
 }
 
 // CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
@@ -419,6 +447,41 @@ export var __require = /* @__PURE__ */ (x =>
   if (typeof require !== 'undefined') return require.apply(this, arguments)
   throw Error('Dynamic require of \"' + x + '\" is not supported')
 });
+";
+
+// Code splitting, browser (`LinkerContext::module_preload`): an entry chunk
+// registers the chunks it can reach with `__chunks` — `nodes[i]` is chunk
+// `ids[i]`'s path relative to `base`, then indices into `ids` of the chunks it
+// imports — and each split `import()` of chunk `id` first `__preload`s it:
+// a `<link rel=modulepreload>` for every chunk it statically imports, so the
+// whole graph downloads in parallel instead of one module depth per round trip.
+// Globals go through `globalThis` so bundling does not reserve their names.
+const RUNTIME_PRELOAD_BROWSER: &str = "
+var __chunkGraphs, __chunkSeen, __chunkNonce;
+export var __preload = (id, seenOnly) => {
+  for (var [base, graph, ids] of __chunkGraphs || [])
+    for (var stack = [id], g = globalThis, d = g.document, head, j, node, k, link; (j = stack.pop()); )
+      if (!__chunkSeen[j] && (node = graph[j])) {
+        __chunkSeen[j] = 1;
+        for (k = 1; k < node.length; k++) stack.push(ids[node[k]]);
+        if (!seenOnly && j !== id && (head = d && d.head)) {
+          if (__chunkNonce === void 0)
+            __chunkNonce = ((k = d.querySelector('meta[property=csp-nonce]')) && (k.nonce || k.getAttribute('nonce'))) || '';
+          link = d.createElement('link');
+          link.rel = 'modulepreload';
+          link.crossOrigin = '';
+          if (__chunkNonce) link.nonce = __chunkNonce;
+          link.href = new g.URL(node[0], base);
+          head.appendChild(link);
+        }
+      }
+};
+export var __chunks = (base, ids, nodes, entry) => {
+  for (var graph = {}, i = 0; i < ids.length; i++) graph[ids[i]] = nodes[i];
+  (__chunkGraphs ||= []).push([base, graph, ids]);
+  __chunkSeen ||= {};
+  __preload(ids[entry], 1);
+};
 ";
 
 // JavaScriptCore supports `using` / `await using` natively (see
@@ -529,13 +592,17 @@ pub mod parse_worker {
             bun_core::Once::new(),
         ];
         let runtime_code: &'static [u8] = SOURCES[variant as usize].get_or_init(|| {
-            let (require, using): (&str, &str) = match variant {
-                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN),
-                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER),
-                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER),
-                Variant::Other => (RUNTIME_REQUIRE_OTHER, RUNTIME_USING_OTHER),
+            let (require, using, preload): (&str, &str, &str) = match variant {
+                Variant::Bun => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_BUN, ""),
+                Variant::BunMacro => (RUNTIME_REQUIRE_BUN, RUNTIME_USING_OTHER, ""),
+                Variant::Node => (RUNTIME_REQUIRE_NODE, RUNTIME_USING_OTHER, ""),
+                Variant::Other => (
+                    RUNTIME_REQUIRE_OTHER,
+                    RUNTIME_USING_OTHER,
+                    RUNTIME_PRELOAD_BROWSER,
+                ),
             };
-            [include_str!("../runtime.js"), require, using]
+            [include_str!("../runtime.js"), require, using, preload]
                 .concat()
                 .into_bytes()
                 .into_boxed_slice()
@@ -555,6 +622,7 @@ pub mod parse_worker {
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
+            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -565,7 +633,6 @@ pub mod parse_worker {
                 callback: io_task_callback,
             },
             stage: ParseTaskStage::NeedsSourceCode,
-            tree_shaking: false,
             module_type: options::ModuleType::Unknown,
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -1161,13 +1228,7 @@ pub mod parse_worker {
                 ));
             }
             Loader::Html => {
-                // scope the scanner so its `&mut log` / `&source`
-                // borrows release before `new_lazy_export_ast` re-borrows them.
-                let import_records = {
-                    let mut scanner = HTMLScanner::init(log, source);
-                    scanner.scan(&source.contents)?;
-                    scanner.import_records
-                };
+                let import_records = scan_import_records(log, source)?;
 
                 // Reuse existing code for creating the AST
                 // because it handles the various Ref and other structs we
@@ -1235,16 +1296,10 @@ pub mod parse_worker {
                 let enable_css_modules = source.path.pretty.len() > CSS_MODULE_SUFFIX.len()
                     && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
                         == CSS_MODULE_SUFFIX;
-                // `parse_bundler` takes `ParserOptions<'static>` (the
-                // `'a` on `ParserOptions` is PhantomData-only; storage is a raw
-                // `NonNull<Log>`). Construct via `default(None)` to get `'static`,
-                // then poke the logger pointer in directly — `temp_log` outlives
-                // all parsing/minification below.
                 let parser_options = {
-                    let mut parseropts = bun_css::ParserOptions::default(None);
-                    parseropts.logger = Some(core::ptr::NonNull::from(&mut temp_log));
+                    let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
                     if enable_css_modules {
-                        parseropts.filename = bun_paths::basename(source.path.pretty);
+                        parseropts.filename = source.path.pretty;
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
                     }
                     parseropts
@@ -2339,6 +2394,7 @@ pub mod parse_worker {
                 file: entry.fd,
                 dir: Fd::INVALID,
             };
+            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
         }
         *step = Step::Parse;
 
@@ -2349,11 +2405,13 @@ pub mod parse_worker {
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
-        };
+        // A text, JSON or markdown file can start with the same bytes as a directive.
+        let use_directive: UseDirective =
+            if !is_empty && topts.server_components && loader.is_javascript_like() {
+                UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+            } else {
+                UseDirective::None
+            };
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr
@@ -2419,12 +2477,8 @@ pub mod parse_worker {
             if task.known_target == options::Target::ServerComponentsSsr
                 && topts
                     .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
+                    .and_then(|framework| framework.server_components.as_ref())
+                    .is_some_and(|sc| sc.separate_ssr_graph)
             {
                 options::Target::ServerComponentsSsr
             } else {
@@ -2550,6 +2604,22 @@ pub mod parse_worker {
         } else {
             bun_ast::runtime::ServerComponentsMode::None
         };
+        // The steps after the parser do not implement these directives. They abort the process.
+        let unsupported_directive: Option<&'static [u8]> = match use_directive {
+            // Every later step that handles `UseDirective::Server` is a `todo_panic!`.
+            UseDirective::Server => Some(b"\"use server\" is not supported yet"),
+            // Only the dev server implements this mode: https://github.com/oven-sh/bun/issues/14763
+            UseDirective::Client
+                if opts.features.server_components
+                    == bun_ast::runtime::ServerComponentsMode::WrapExportsForClientReference
+                    && !topts.has_dev_server() =>
+            {
+                Some(
+                    b"\"use client\" is not supported yet in a production build unless 'framework.serverComponents.separateSSRGraph' is true",
+                )
+            }
+            UseDirective::Client | UseDirective::None => None,
+        };
 
         // `transpiler.options.framework: Option<&bake_types::Framework>`
         // vs `opts.framework: Option<&js_parser::options::Framework>` — both
@@ -2559,7 +2629,6 @@ pub mod parse_worker {
         opts.framework = topts.framework.map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
-                is_built_in_react: f.is_built_in_react,
                 server_components: f.server_components.as_ref().map(|sc| {
                     js_parser::options::FrameworkServerComponents {
                         separate_ssr_graph: sc.separate_ssr_graph,
@@ -2592,6 +2661,23 @@ pub mod parse_worker {
             }
         });
 
+        // The browser copy of a page of a `clientPages` router drops the exports that its router
+        // says run on the server only.
+        if let Some(server_exports) = topts
+            .framework
+            .filter(|_| target == options::Target::Browser)
+            .and_then(|f| f.client_page_server_exports(task.path.text))
+            .filter(|names| !names.is_empty())
+        {
+            for name in server_exports {
+                bun_core::handle_oom(
+                    opts.features
+                        .replace_exports
+                        .put(name, bun_ast::runtime::ReplaceableExport::Delete),
+                );
+            }
+        }
+
         opts.ignore_dce_annotations =
             topts.ignore_dce_annotations && !task.source_index.is_runtime();
 
@@ -2610,7 +2696,14 @@ pub mod parse_worker {
             topts.tree_shaking
         };
         opts.code_splitting = topts.code_splitting;
+        // A task that bypassed the resolver (plugin result, in-memory source).
+        if task.module_type == options::ModuleType::Unknown {
+            if let Some(from_ext) = _resolver::module_type_from_ext(task.path.name().ext) {
+                task.module_type = from_ext;
+            }
+        }
         opts.module_type = task.module_type;
+        opts.is_entry_point = task.is_entry_point;
 
         task.jsx.parse = loader.is_jsx();
 
@@ -2623,9 +2716,11 @@ pub mod parse_worker {
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
         // raw `*mut Transpiler` and reborrow `(*transpiler).options` mutably.
-        let _ = topts;
         let ast_result: core::result::Result<JSAst, AnyError> =
-            if !is_empty || loader.handles_empty_file() {
+            if let Some(message) = unsupported_directive {
+                log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
+                Err(crate::Error::ParserError)
+            } else if !is_empty || loader.handles_empty_file() {
                 get_ast(
                     log,
                     transpiler,
@@ -2670,6 +2765,7 @@ pub mod parse_worker {
         };
 
         ast.target = target;
+        ast.module_type = task.module_type;
         if ast.parts.len() <= 1
             && ast.css.is_none()
             && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)
@@ -2822,6 +2918,7 @@ pub mod parse_worker {
                 ContentsOrFd::Fd { file, dir } => WatcherData {
                     fd: file,
                     dir_fd: dir,
+                    owns_fd: this.opened_own_fd,
                 },
                 ContentsOrFd::Contents(_) => WatcherData::NONE,
             },
@@ -2846,13 +2943,7 @@ pub mod parse_worker {
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct =
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
-                        // SAFETY: `p` is the `result` Box leaked above; ownership
-                        // transfers to `on_complete`, which deallocates it.
-                        unsafe { on_complete(p) };
-                        Ok(())
-                    });
+                let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker
                     .ctx
                     .js_poster
@@ -2863,7 +2954,7 @@ pub mod parse_worker {
                     // SAFETY: refused ⇒ we own the task box and the leaked result.
                     unsafe {
                         bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        drop(bun_core::heap::take(result));
+                        <Result as bun_event_loop::Taskable>::release_unrun(result);
                     }
                 }
             }
@@ -2918,7 +3009,7 @@ pub mod parse_worker {
     /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
     /// this fn, which deallocates `result` before returning. Must run on the
     /// main/bundler thread (it dereferences `result.ctx` mutably).
-    pub(crate) unsafe fn on_complete(result: *mut Result) {
+    pub unsafe fn on_complete(result: *mut Result) {
         // SAFETY: result allocated via heap::alloc above; uniquely owned here.
         let r = unsafe { &mut *result };
         let ctx = r.ctx;
@@ -2935,4 +3026,4 @@ pub mod parse_worker {
     }
 } // end mod parse_worker
 
-pub(crate) use parse_worker::on_complete;
+pub use parse_worker::on_complete;

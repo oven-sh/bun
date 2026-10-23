@@ -3,7 +3,6 @@ use core::ffi::{c_uint, c_void};
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue};
-use bun_collections::IntegerBitSet;
 #[cfg(debug_assertions)]
 use bun_core::ZStr;
 
@@ -209,11 +208,6 @@ impl<const MAX: usize> Arguments<MAX> {
     }
 
     #[inline]
-    pub fn slice(&self) -> &[JSValue] {
-        &self.ptr[0..self.len]
-    }
-
-    #[inline]
     pub fn mut_(&mut self) -> &mut [JSValue] {
         &mut self.ptr[..]
     }
@@ -225,22 +219,26 @@ pub struct CallerSrcLoc {
     pub column: c_uint,
 }
 
+impl JSGlobalObject {
+    /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
+    pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
+}
+
 /// This is an advanced iterator struct which is used by various APIs. In
 /// Node.fs, `will_be_async` is set to true which allows string/path APIs to
 /// know if they have to do threadsafe clones.
 pub struct ArgumentsSlice<'a> {
-    /// Backing storage for the remaining-args view. Both [`Self::init`] and
-    /// [`Self::init_async`] borrow — `all: &'a [JSValue]` already ties this
-    /// struct's lifetime to the source slice, so a heap-owned dupe
-    /// buys nothing here (it could not outlive `'a`). Kept as
-    /// `Cow` so a future caller that does own its args can pass `Owned`
-    /// without changing the type.
+    /// Backing storage for `remaining()`; `Cow` so an owning caller can pass `Owned`.
     remaining_buf: Cow<'a, [JSValue]>,
     /// Cursor into `remaining_buf`; advances on `eat()`.
     remaining_start: usize,
     pub vm: &'a VirtualMachine,
-    pub all: &'a [JSValue],
-    pub(crate) protected: IntegerBitSet<32>,
     pub will_be_async: bool,
     /// An errno a converter met under `will_be_async`; the binding rejects its promise with it.
     pub deferred_error: Option<Box<bun_sys::SystemError>>,
@@ -253,48 +251,14 @@ impl<'a> ArgumentsSlice<'a> {
         &self.remaining_buf[self.remaining_start..]
     }
 
-    pub(crate) fn unprotect(&mut self) {
-        let mut iter = self.protected.iterator::<true, true>();
-        while let Some(i) = iter.next() {
-            self.all[i].unprotect();
-        }
-        self.protected = IntegerBitSet::<32>::init_empty();
-    }
-
-    pub fn protect_eat(&mut self) {
-        if self.remaining().is_empty() {
-            return;
-        }
-        // `remaining_buf.len() == all.len()` for both init variants, so
-        // `all.len() - remaining().len()` reduces to `remaining_start`.
-        let index = self.all.len() - self.remaining().len();
-        self.protected.set(index);
-        self.all[index].protect();
-        self.eat();
-    }
-
-    pub fn protect_eat_next(&mut self) -> Option<JSValue> {
-        if self.remaining().is_empty() {
-            return None;
-        }
-        self.next_eat()
-    }
-
     pub fn init(vm: &'a VirtualMachine, slice: &'a [JSValue]) -> ArgumentsSlice<'a> {
         ArgumentsSlice {
             remaining_buf: Cow::Borrowed(slice),
             remaining_start: 0,
             vm,
-            all: slice,
-            protected: IntegerBitSet::<32>::init_empty(),
             will_be_async: false,
             deferred_error: None,
         }
-    }
-
-    #[inline]
-    pub fn len(&self) -> u16 {
-        self.remaining().len() as u16
     }
 
     pub fn eat(&mut self) {
@@ -316,12 +280,6 @@ impl<'a> ArgumentsSlice<'a> {
     }
 }
 
-impl<'a> Drop for ArgumentsSlice<'a> {
-    fn drop(&mut self) {
-        self.unprotect();
-    }
-}
-
 // `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
 // `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
 // to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the
@@ -329,6 +287,12 @@ impl<'a> Drop for ArgumentsSlice<'a> {
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,

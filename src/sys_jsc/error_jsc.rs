@@ -43,40 +43,6 @@ impl ErrorJsc for Error {
 pub mod TestingAPIs {
     use super::*;
 
-    /// Exercises Error.name() with from_libuv=true so tests can feed
-    /// negated-UV-code errno values and verify the integer overflow at
-    /// translateUVErrorToE(-code) is fixed. Windows-only.
-    #[bun_jsc::host_fn]
-    pub fn sys_error_name_from_libuv(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = frame.arguments();
-        if arguments.is_empty() || !arguments[0].is_number() {
-            return Err(global.throw(format_args!(
-                "sysErrorNameFromLibuv: expected 1 number argument"
-            )));
-        }
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
-        #[cfg(windows)]
-        {
-            let err = Error {
-                // Checked narrowing into Error.errno's int type.
-                errno: arguments[0]
-                    .to_int32()
-                    .try_into()
-                    .expect("infallible: size matches"),
-                syscall: bun_sys::Tag::open,
-                from_libuv: true,
-                ..Default::default()
-            };
-            return bun_string_jsc::create_utf8_for_js(global, err.name());
-        }
-    }
-
     /// Exposes NTSTATUS -> `bun.sys.E` translation so tests can feed NTSTATUS
     /// values that filter drivers and cloud-sync placeholders return in the
     /// wild (STATUS_CANNOT_DELETE etc.) and verify they map to a sensible
@@ -129,7 +95,6 @@ pub mod TestingAPIs {
         {
             let code: core::ffi::c_int = arguments[0].to_int32();
             let result = bun_sys::windows::translate_uv_error_to_e(code);
-            // @tagName(result) → IntoStaticStr derive on the E enum.
             return bun_string_jsc::create_utf8_for_js(
                 global,
                 <&'static str>::from(result).as_bytes(),

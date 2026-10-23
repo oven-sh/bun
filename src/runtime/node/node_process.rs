@@ -38,8 +38,8 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
-/// `WorkerOptions`; the worker thread gets its own copy (thread-affine
-/// refcounts), and an empty one is spelled as `BunString::EMPTY`.
+/// `WorkerOptions`; the worker thread gets its own copy (the parent may
+/// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
 pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
     // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
     let imp = unsafe { &*wtf };
@@ -167,7 +167,6 @@ mod _impl {
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
-    use bun_paths::PathBuffer;
 
     #[cfg(windows)]
     unsafe extern "C" {
@@ -229,9 +228,27 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    super::worker_option_string(wtf).into_js(global_object)
-                });
+                let array =
+                    JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
+                        super::worker_option_string(wtf).into_js(global_object)
+                    })?;
+                // `=strict` is the process's and no Worker runs without it, so a Worker reads it
+                // here whatever `execArgv` it was given (which cannot contain it: the Worker
+                // constructor throws). Node.js's flag is not added: in Node.js a Worker's
+                // `process.execArgv` is what it was given. Nor is it added in a build that has
+                // the level as a constant: there nobody gave the flag, and a list that names it
+                // cannot be handed on to another Worker.
+                if !bun_core::CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD
+                    && bun_core::code_generation_from_strings()
+                        == bun_core::CodeGenerationFromStrings::Strict
+                {
+                    array.push(
+                        global_object,
+                        BunString::static_("--disallow-code-generation-from-strings=strict")
+                            .into_js(global_object)?,
+                    )?;
+                }
+                return Ok(array);
             }
         }
 
@@ -301,7 +318,10 @@ mod _impl {
                 std::sync::LazyLock::new(|| {
                     let mut set = bun_collections::StringSet::new();
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        if param.takes_value != bun_clap::Values::None {
+                        // An optional value is only ever written `--name=value`.
+                        if param.takes_value != bun_clap::Values::None
+                            && param.takes_value != bun_clap::Values::OneOptional
+                        {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
                                 k.extend_from_slice(b"--");
@@ -379,14 +399,14 @@ mod _impl {
         } else {
             b"/[stdin]"
         };
-        if !vm.main().is_empty()
-            && !strings::ends_with(vm.main(), EVAL_SUFFIX)
-            && !strings::ends_with(vm.main(), STDIN_SUFFIX)
+        if let Some(main) = vm.main()
+            && !strings::ends_with(main, EVAL_SUFFIX)
+            && !strings::ends_with(main, STDIN_SUFFIX)
         {
             if worker.is_some_and(|w| w.eval_mode()) {
                 args_list.push(BunString::static_("[worker eval]"));
             } else {
-                args_list.push(BunString::borrow_utf8(vm.main()));
+                args_list.push(BunString::borrow_utf8(main));
             }
         }
 
@@ -443,7 +463,7 @@ mod _impl {
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // Real syscall (not the resolver's cached top_level_dir): Node's
         // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         match bun_sys::getcwd(&mut buf[..]) {
             bun_sys::Result::Ok(len) => {
                 bun_string_jsc::create_utf8_for_js(global_object, &buf[..len])
@@ -494,7 +514,7 @@ mod _impl {
         // the process-lifetime singleton (centralised single-unsafe deref).
         let fs = vm.transpiler.fs_mut();
 
-        let mut buf = PathBuffer::uninit();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
             return Err(global_object.throw(format_args!("Invalid path")));
         };
@@ -502,7 +522,7 @@ mod _impl {
         // path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the
         // `chdir '<cwd>' -> '<target>'` message format (test-process-chdir-errormessage).
-        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir);
+        let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir());
         match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
                 vm.test_isolation_scope(|state| {
@@ -516,7 +536,7 @@ mod _impl {
                 let without_trailing_slash = strings::without_trailing_slash;
                 bun_string_jsc::create_utf8_for_js(
                     global_object,
-                    without_trailing_slash(fs.top_level_dir),
+                    without_trailing_slash(fs.top_level_dir()),
                 )
             }
             bun_sys::Result::Err(e) => {
@@ -542,7 +562,7 @@ mod _impl {
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
         let len1: usize = if k.is_8bit() {
-            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written as usize
+            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written
         } else {
             buf1[0..k.length()].copy_from_slice(k.utf16());
             k.length()
@@ -556,7 +576,7 @@ mod _impl {
                     break 'str_ EMPTY_W.as_ptr();
                 }
                 let len2: usize = if v.is_8bit() {
-                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written as usize
+                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
                 } else {
                     buf2[0..v.length()].copy_from_slice(v.utf16());
                     v.length()

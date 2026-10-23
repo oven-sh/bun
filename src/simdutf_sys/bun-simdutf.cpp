@@ -120,3 +120,39 @@ SIMDUTFResult simdutf__base64_decode_from_binary_lenient(const char* input, size
     return { .error = res.error, .count = res.count };
 }
 }
+
+// BoringSSL is built with BORINGSSL_PEM_FAST_PUBLIC_BASE64 (scripts/build/deps/boringssl.ts),
+// which routes the base64 of PEM CERTIFICATE / CRL / PUBLIC KEY blocks here instead of through
+// its constant-time codec. Private-key PEM never reaches these. Contract: <openssl/pem.h>.
+extern "C" int OPENSSL_pem_public_base64_decode(uint8_t* out, size_t* out_len, size_t max_out, const uint8_t* in, size_t in_len)
+{
+    size_t written = max_out;
+    auto res = simdutf::base64_to_binary_safe(reinterpret_cast<const char*>(in), in_len, reinterpret_cast<char*>(out), written, simdutf::base64_default);
+    if (res.error != simdutf::error_code::SUCCESS)
+        return 0;
+    // simdutf tolerates missing '=' padding; PEM (like EVP_DecodeUpdate, OpenSSL and Go) does not.
+    size_t padding = 0;
+    for (size_t i = in_len; i > 0; i--) {
+        uint8_t c = in[i - 1];
+        if (c == '=')
+            padding++;
+        else if (c != '\n' && c != '\r' && c != ' ' && c != '\t' && c != '\f' && c != '\v')
+            break;
+    }
+    if (padding != (3 - written % 3) % 3)
+        return 0;
+    *out_len = written;
+    return 1;
+}
+
+extern "C" size_t OPENSSL_pem_public_base64_encode(char* out, size_t max_out, const uint8_t* in, size_t in_len)
+{
+    constexpr size_t lineLength = 64;
+    size_t needed = simdutf::base64_length_from_binary_with_lines(in_len, simdutf::base64_default, lineLength) + 1;
+    if (in_len == 0 || needed > max_out)
+        return 0;
+    size_t written = simdutf::binary_to_base64_with_lines(reinterpret_cast<const char*>(in), in_len, out, lineLength, simdutf::base64_default);
+    // EVP_EncodeFinal terminates the last line too.
+    out[written++] = '\n';
+    return written;
+}

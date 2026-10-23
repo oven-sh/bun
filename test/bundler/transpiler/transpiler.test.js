@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -267,6 +267,85 @@ describe("Bun.Transpiler", () => {
       expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
       expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
     });
+
+    // `B = "a" + "b"` is folded into a rope, and every inlined `A.B` pointed at
+    // that rope. Folding a template literal around it used to append the
+    // template's text onto the rope itself, so the member's declaration and all
+    // of its other uses changed too.
+    describe("template literal around an inlined string enum member", () => {
+      const pre = 'enum A { B = "a" + "b", C = B + "c" }\n';
+      const decl = 'var A;\n((A) => {\n  A.B = "ab";\n  A.C = "abc";\n})(A ||= {});\n';
+
+      it("member as the first part of the literal", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log("ab-x", "ab" /* B */);\n',
+        );
+      });
+      it("member after a part that cannot be folded", () => {
+        expect(ts.parsedMin(pre + "console.log(`${y}${A.B}-x`, A.B);", false)).toBe(
+          decl + 'console.log(`${y}ab-x`, "ab" /* B */);\n',
+        );
+      });
+      it("member derived from another rope member", () => {
+        expect(ts.parsedMin(pre + "console.log(`${A.C}-x`, A.C);", false)).toBe(
+          decl + 'console.log("abc-x", "abc" /* C */);\n',
+        );
+      });
+      it("template inside the enum body, which folds even without minification", () => {
+        expect(ts.parsed('enum A { B = "a" + "b", C = `${B}-c`, D = `${B}` }\nconsole.log(A.B);', false)).toBe(
+          'var A;\n((A) => {\n  A["B"] = "ab";\n  A["C"] = "ab-c";\n  A["D"] = "ab";\n})(A ||= {});\nconsole.log("ab" /* B */);\n',
+        );
+      });
+      it("at runtime, including the same member in several templates", async () => {
+        // Not concurrent: before the fix the second template crashed the
+        // transpiler and the fourth one made it loop forever, and the test
+        // runner only kills a dangling child of a non-concurrent test.
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `enum Routes {
+              Base = "/api" + "/v1",
+              Users = Base + "/users",
+              Health = "/health",
+            }
+            function tail(prefix: string) {
+              return \`\${prefix}\${Routes.Base}/y\`;
+            }
+            console.log(
+              [
+                \`\${Routes.Base}/posts\`,
+                tail("q"),
+                \`\${Routes.Users}!\`,
+                \`\${Routes.Base}\${Routes.Base}\`,
+                Routes.Base,
+                Routes.Users,
+                Routes.Health,
+                JSON.stringify(Routes),
+              ].join("\\n"),
+            );`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: [
+            "/api/v1/posts",
+            "q/api/v1/y",
+            "/api/v1/users!",
+            "/api/v1/api/v1",
+            "/api/v1",
+            "/api/v1/users",
+            "/health",
+            '{"Base":"/api/v1","Users":"/api/v1/users","Health":"/health"}',
+            "",
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
   });
 
   describe("TypeScript", () => {
@@ -286,6 +365,214 @@ describe("Bun.Transpiler", () => {
       err("let x = a ? b;", 'Expected ":" but found ";"');
       err("(a ? b)", 'Expected ":" but found ")"');
       err("x = a ? b c", 'Expected ":" but found "c"');
+    });
+
+    it("arrow function return type between the ? and : of a conditional", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // "(b) : c => d" is only an arrow function with a return type when another
+      // ":" follows its body. Otherwise the ":" pairs with the "?".
+      exp("x = a ? (b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? (b) : c => d : e", "x = a ? (b) => d : e;\n");
+      exp("x = a ? (b) : (c) => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? (b = 1) : c => c + 1", "x = a ? b = 1 : (c) => c + 1;\n");
+      exp("const r = a ? (x = 1) : y => y + 1", "const r = a ? x = 1 : (y) => y + 1;\n");
+      exp("x = a ? (b) : c => { return d }", "x = a ? b : (c) => {\n  return d;\n};\n");
+      exp("x = a ? (b) : c => { return d } : e", "x = a ? (b) => {\n  return d;\n} : e;\n");
+      exp("x = a ? (b) : c => d ? e : f", "x = a ? b : (c) => d ? e : f;\n");
+      exp("x = a ? (b) : c => d ? e : f : g", "x = a ? (b) => d ? e : f : g;\n");
+      exp("x = a ? (b) : c => e : f ? (g) : h => i", "x = a ? (b) => e : f ? g : (h) => i;\n");
+      exp("x = a ? (b) : c => e : f ? (g) : h => i : j", "x = a ? (b) => e : f ? (g) => i : j;\n");
+      exp("x = [a ? (b) : c => d, e]", "x = [a ? b : (c) => d, e];\n");
+      exp("x = f(a ? (b) : c => d, e)", "x = f(a ? b : (c) => d, e);\n");
+      exp("x = a ? (b, c) : d => e : f", "x = a ? (b, c) => e : f;\n");
+      exp("x = a ? ([b], {c}) : d => e : f", "x = a ? ([b], { c }) => e : f;\n");
+      exp("x = a ? (...b) : d => e : f", "x = a ? (...b) => e : f;\n");
+      exp("x = a ? (b?: number) : d => e : f", "x = a ? (b) => e : f;\n");
+      exp("x = a ? (b) : c<d> => e : f", "x = a ? (b) => e : f;\n");
+      exp("x = a ? (b) : c is d => e : f", "x = a ? (b) => e : f;\n");
+      exp("a ? (1 + 2) : (3 + 4)", "a ? 1 + 2 : 3 + 4;\n");
+
+      // The same rule for "async (...)": a call to "async" or an async arrow
+      exp("x = a ? async (b) : c => d", "x = a ? async(b) : (c) => d;\n");
+      exp("x = a ? async (b) : c => d : e", "x = a ? async (b) => d : e;\n");
+      exp("x = a ? async (b) : c => await d : e", "x = a ? async (b) => await d : e;\n");
+      exp("x = a ? async (b) : c => d ? e : f", "x = a ? async(b) : (c) => d ? e : f;\n");
+
+      // https://github.com/evanw/esbuild/issues/4241
+      exp("x = a ? (b = c) : d", "x = a ? b = c : d;\n");
+      exp("x = a ? (b = c) : d => e", "x = a ? b = c : (d) => e;\n");
+      exp("x = a ? (b = c) : T => d : (e = f)", "x = a ? (b = c) => d : e = f;\n");
+      exp("x = a ? (b = c) : T => d : (e = f) : T => g", "x = a ? (b = c) => d : (e = f) => g;\n");
+      exp("x = a ? b ? c : (d = e) : f => g", "x = a ? b ? c : d = e : (f) => g;\n");
+      exp("x = a ? b ? (c = d) => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp("x = a ? b ? (c = d) : T => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp(
+        "x = a ? b ? (c = d) : T => e : (f = g) : (h = i) : T => j",
+        "x = a ? b ? (c = d) => e : f = g : (h = i) => j;\n",
+      );
+      exp("x = a ? (b) : T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? b - (c) : d => e", "x = a ? b - c : (d) => e;\n");
+      exp("x = a ? b = (c) : T => d : e", "x = a ? b = (c) => d : e;\n");
+      err("x = a ? (b = c) : T => d : (e = f) : g", 'Expected ";" but found ":"');
+      err("x = a ? b ? (c = d) : T => e : (f = g)", 'Expected ":" but found end of file');
+      err("x = a ? - (b) : c => d : e", 'Expected ";" but found ":"');
+      err("x = a ? b - (c) : d => e : f", 'Expected ";" but found ":"');
+      err("x = a ? (b) : (c) => d : e", 'Expected ";" but found ":"');
+
+      // Newlines are important (they trigger backtracking)
+      exp("x = (\n  a ? (b = c) : { d: e }\n)", "x = a ? b = c : { d: e };\n");
+
+      // The attempt to parse the arrow body must see the same parser state as
+      // the real parse: private names and the "in" operator.
+      exp(
+        "x = class { #y; y = a ? (b : T) : T => this.#y : c }",
+        "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
+      );
+      exp("for (x = a ? () : T => b in c : d; ; ) ;", "for (x = a ? () => (b in c) : d;; )\n  ;\n");
+
+      // A discarded attempt must leave no scopes, symbols, import records or
+      // enum bookkeeping behind.
+      exp(
+        "x = a ? (b) : c => { function f(q = () => { let z = 1; return z }) { class K { #p; m() { return this.#p } } return new K } return f() }",
+        "x = a ? b : (c) => {\n  function f(q = () => {\n    let z = 1;\n    return z;\n  }) {\n\n    class K {\n      #p;\n      m() {\n        return this.#p;\n      }\n    }\n    return new K;\n  }\n  return f();\n};\n",
+      );
+      exp(
+        "x = a ? (b) : c => { import('d'); return import.meta.url }",
+        'x = a ? b : (c) => {\n  import("d");\n  return import.meta.url;\n};\n',
+      );
+      exp(
+        "x = a ? (b) : c => { import('d'); return import.meta.url } : e",
+        'x = a ? (b) => {\n  import("d");\n  return import.meta.url;\n} : e;\n',
+      );
+      const enumBody = "enum E { A = 1, B = A * 2 } return E.B";
+      const enumOut =
+        '  let E;\n  ((E) => {\n    E[E["A"] = 1] = "A";\n    E[E["B"] = 2] = "B";\n  })(E ||= {});\n  return 2 /* B */;\n';
+      exp(`x = a ? (b) : c => { ${enumBody} }`, `x = a ? b : (c) => {\n${enumOut}};\n`);
+      exp(`x = a ? (b) : c => { ${enumBody} } : e`, `x = a ? (b) => {\n${enumOut}} : e;\n`);
+      exp(
+        "x = a ? (b) : c => { return a ? (b) : c => d : e } : f",
+        "x = a ? (b) => {\n  return a ? (b) => d : e;\n} : f;\n",
+      );
+
+      // A legal comment scanned between "?" and "(" waits in the lexer for the
+      // next statement. The attempt's block body or import() takes it. The real
+      // parse must still get it.
+      exp("x = a ? /*! L */ (b) : T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
+      exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
+      exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
+
+      // The attempt parses the body, so an attempt nested in the body must not
+      // run again when the body is parsed for real: 2^40 parses would hang.
+      let kept = "d";
+      let discarded = "d";
+      let keptOut = "d";
+      let discardedOut = "d";
+      for (let i = 0; i < 40; i++) {
+        kept = `a ? (b) : c => ${kept} : e`;
+        keptOut = `a ? (b) => ${keptOut} : e`;
+        discarded = `a ? (b) : c => ${discarded}`;
+        discardedOut = `a ? b : (c) => ${discardedOut}`;
+      }
+      exp(`x = ${kept}`, `x = ${keptOut};\n`);
+      exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
+    });
+
+    it("emitDecoratorMetadata in an arrow function with a return type in a true branch", async () => {
+      const script = `
+        const tsconfig = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+        const transpiler = new Bun.Transpiler({ loader: "ts", tsconfig });
+        for (const head of ["()", "(b)", "(b: B)"]) {
+          const out = transpiler.transformSync(
+            "x = a ? " + head + ": T => { class A { @d() p: Date; @d() q: Map<K, V>; } return A; } : null;",
+          );
+          console.log(head, ...out.matchAll(/"design:type", typeof (\\w+)/g).map(m => m[1]));
+        }`;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("() Date Map\n(b) Date Map\n(b: B) Date Map\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("type-only import syntax", () => {
+      const exp = ts.expectPrinted_;
+      const errStartsWith = (code, prefix) => {
+        let message;
+        try {
+          ts.parsed(code, false, false);
+        } catch (er) {
+          message = (er instanceof AggregateError ? er.errors[0] : er).message;
+        }
+        expect(message).toStartWith(prefix);
+      };
+
+      exp("import type foo from 'bar'; x", "x;\n");
+      exp("import type foo from 'bar'\nx", "x;\n");
+      exp("import type from from 'bar'; x", "x;\n");
+      exp("import type * as foo from 'bar'; x", "x;\n");
+      exp("import type {foo, bar as baz} from 'bar'; x", "x;\n");
+      exp("import type foo = require('bar'); x", "x;\n");
+      exp("import type foo = bar.baz; x", "x;\n");
+      exp("import type from = require('bar'); x", "x;\n");
+
+      // "type" is a regular binding name here
+      exp("import type = bar; type", "const type = bar;\n");
+      exp("import type = foo.bar; type", "const type = foo.bar;\n");
+      exp("import type = require('type'); type", 'const type = require("type");\n');
+      exp("import type from 'bar'; type", 'import type from "bar";\ntype;\n');
+      exp("import type from `bar`; type", 'import type from "bar";\ntype;\n');
+      exp("import type, { a } from 'mod'; type, a", 'import type, { a } from "mod";\ntype, a;\n');
+      exp("import { type } from 'mod'; type", 'import { type } from "mod";\ntype;\n');
+
+      errStartsWith("import type", 'Expected "from" but found ""');
+      errStartsWith("import type foo, * as foo from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type foo, {foo} from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type from, * as foo from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type from, {foo} from 'bar'", 'Expected "from" but found ","');
+      errStartsWith("import type * as foo = require('bar')", 'Expected "from" but found "="');
+      errStartsWith("import type {foo} = require('bar')", 'Expected "from" but found "="');
+
+      // Where only "import foo = bar" is valid, "import type from 'mod'" is not a default import
+      errStartsWith("export import type from 'mod'", 'Expected "=" but found "from"');
+      errStartsWith("namespace N { import type from 'mod' }", 'Expected "=" but found "from"');
+      exp("export import type from = require('mod'); x", "x;\n");
+      exp("export import type = require('mod'); type", 'export const type = require("mod");\n');
+    });
+
+    it("runs TypeScript that tsc accepts at these parse edges", async () => {
+      using dir = tempDir("ts-parse-edges", {
+        "mod.ts": "export default 'default export';",
+        "index.ts": `
+          import type from from "./mod";
+          import type from = require("./mod");
+          import type { T } from "./mod";
+          type U = number;
+          export type
+          { U };
+          export type
+          * as ns from "./mod";
+          declare const unused: T;
+          const a = true, d = "d";
+          let x: any;
+          x = a ? (d) : c => c;
+          console.log(x);
+          x = a ? (d) : c => d : "e";
+          console.log(x("arg"));
+          const r = a ? (x = 1) : y => y + 1;
+          console.log(r);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("d\narg\n1\n");
+      expect(exitCode).toBe(0);
     });
 
     it("contextual keywords used as plain identifiers keep their statements", () => {
@@ -1005,6 +1292,9 @@ function foo() {}
       exp("type x = {0: number, readonly 1: boolean}\na([])", "a([]);\n");
       exp("type x = {'a': number, readonly 'b': boolean}\na([])", "a([]);\n");
       exp("type\nFoo = {}", "type;\nFoo = {};\n");
+      exp("export type\n{ Foo } \n x", "x;\n");
+      exp("export type\n* from 'foo' \n x", "x;\n");
+      exp("export type\n* as ns from 'foo' \n x", "x;\n");
       err("export type\nFoo = {}", 'Unexpected newline after "type"');
       exp("let x: {x: 'a', y: false, z: null}", "let x;\n");
       exp("let x: {foo(): void}", "let x;\n");
@@ -1391,12 +1681,99 @@ function foo() {}
       //   jsxErrorArrow +
       //     'Unexpected end of file before a closing "const" tag\n<stdin>: NOTE: The opening "const" tag is here:\n',
       // );
-      err("async <const T>() => {}", "Unexpected const");
+      // `async <const T>() => {}` is valid in the `ts` loader. The
+      // "Unexpected const" error for it is TSX-only.
+      exp("x = async <const T>() => {}", "x = async () => {};\n");
+      exp("x = async <const const T>() => {}", "x = async () => {};\n");
       err("async <const const>() => {}", "Unexpected const");
 
       // TODO: why doesn't this one fail?
       // err("async <const const T,>() => {}", "Unexpected const");
       // err("async <const const T extends X>() => {}", "Unexpected const");
+    });
+
+    describe("a signature parameter in a type literal that is not a binding", () => {
+      // [code, message, line, column]
+      const cases = [
+        ["type T = { foo(1): void }", "Unexpected 1", 1, 16],
+        ["let x: { foo(1): void }", "Unexpected 1", 1, 14],
+        ["interface I { foo(1): void }", "Unexpected 1", 1, 19],
+        ['function g() :{ a("/y") }', 'Unexpected "/y"', 1, 19],
+        ["function f(a: { m(1): void }) {}", "Unexpected 1", 1, 19],
+        ["x as { m(1): void }", "Unexpected 1", 1, 10],
+        ["type T = { (1): void }", "Unexpected 1", 1, 13],
+        ["type T = { new (1): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo(...1): void }", "Unexpected 1", 1, 19],
+        ["type T = { foo([1]): void }", "Unexpected 1", 1, 17],
+        ["type T = { foo({ a: 1 }): void }", "Unexpected 1", 1, 21],
+        ["const a = 1;\n\ntype T = { foo(a, true): void };\n", "Unexpected true", 3, 19],
+        ["type T = { foo(", "Unexpected end of file", 1, 15],
+      ];
+
+      it.each(cases)("%j is a located syntax error from every API", async (code, message, line, column) => {
+        const thrown = { name: "BuildMessage", message, line, column };
+        const actual = {};
+        for (const api of ["scan", "scanImports", "transformSync", "transform"]) {
+          try {
+            await transpiler[api](code, "ts");
+            actual[api] = "did not throw";
+          } catch (e) {
+            actual[api] = { name: e.name, message: e.message, line: e.position?.line, column: e.position?.column };
+          }
+        }
+        expect(actual).toEqual({ scan: thrown, scanImports: thrown, transformSync: thrown, transform: thrown });
+      });
+
+      it("logs nothing when the parameter list is a speculative parse", () => {
+        const exp = ts.expectPrinted_;
+        const err = ts.expectParseError;
+
+        // "(" starts arrow function arguments or a parenthesized type. The
+        // failed attempt at the first must not report the token it stopped on.
+        exp("let x: (1 | 2)[] = []", "let x = [];\n");
+        exp('let x: ("a" | "b")[] = []', "let x = [];\n");
+        exp("let x: (typeof y)[] = []", "let x = [];\n");
+        exp("let x: (() => void)[] = []", "let x = [];\n");
+
+        // The type literal is inside a failed attempt at an arrow function
+        // return type or at type arguments. The error comes from the parse
+        // that follows the attempt.
+        err('const f = () :{ a("/y") } => 1', 'Expected "=>" but found ":"');
+        err("f<{ m(1): void }>()", 'Expected identifier but found "1"');
+
+        exp("let x: (a: number, [b]: [number], { c, d: [e] }: T, ...f: any[]) => void = y", "let x = y;\n");
+        exp("type T = { foo(this: Window, a?: number, [b]: [number], { c, d: [e] }: T, ...f: any[]): void }", "");
+      });
+
+      it("bun run and bun build print the located error", async () => {
+        using dir = tempDir("ts-signature-parameter", {
+          "in.ts": "const a = 1;\n\ntype T = { foo(1): void };\nconsole.log(a);\n",
+        });
+        const results = await Promise.all(
+          [
+            ["run", "in.ts"],
+            ["build", "in.ts"],
+          ].map(async args => {
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...args],
+              env: { ...bunEnv, NO_COLOR: "1" },
+              cwd: String(dir),
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            const lines = stderr.split("\n").map(l => l.trim());
+            return {
+              stdout,
+              error: lines.find(l => l.startsWith("error: ")),
+              at: lines.find(l => l.startsWith("at "))?.slice(-"in.ts:3:16".length),
+              exitCode,
+            };
+          }),
+        );
+        const printed = { stdout: "", error: "error: Unexpected 1", at: "in.ts:3:16", exitCode: 1 };
+        expect(results).toEqual([printed, printed]);
+      });
     });
 
     it("non-null assertion with new operator", () => {
@@ -2013,6 +2390,41 @@ export default class {
       expect(output.includes("liveFS")).toBe(true);
     });
 
+    it("drops an import that only an eliminated export used", () => {
+      const code = `
+        import { db } from "./db";
+        export function loader() { return db.query(); }
+        export default function Page() { return 1; }
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({ loader, exports: { eliminate: ["loader"] } });
+        expect(elim.transformSync(code)).not.toContain("./db");
+        expect(elim.scan(code).imports.map(i => i.path)).not.toContain("./db");
+      }
+    });
+
+    it("with trimming off, an eliminated export takes only the imports it used", () => {
+      const code = `
+        import { db } from "./db";
+        import { other } from "./default-only";
+        import unused from "./side-effect";
+        export function loader() { return db.query(); }
+        export default other();
+      `;
+      for (const loader of ["js", "ts"]) {
+        const elim = new Bun.Transpiler({
+          loader,
+          trimUnusedImports: false,
+          treeShaking: false,
+          exports: { eliminate: ["loader", "default"] },
+        });
+        const output = elim.transformSync(code);
+        expect(output).not.toContain("./db");
+        expect(output).not.toContain("./default-only");
+        expect(output).toContain("./side-effect");
+      }
+    });
+
     it.todo("supports replacing exports", () => {
       const output = transpiler.transformSync(`
         import deadFS from 'fs';
@@ -2042,6 +2454,100 @@ export default class {
       expect(output.includes("__N_SSG")).toBe(true);
       expect(output.includes("localVarToReplace")).toBe(true);
       expect(output.includes("localVarToRemove")).toBe(false);
+    });
+
+    it("replaces and eliminates re-exports, exports without an initializer and hoistable exports", async () => {
+      const keep = `export const keep = 1;\n`;
+      const member = `var NS;\n((NS) => {\n  NS.A = 1;\n})(NS ||= {});\n`;
+      // [exports option, source, printed module]
+      const rows = [
+        [
+          { replace: { ReadStream: "x" } },
+          `export { ReadStream, WriteStream } from "node:fs"`,
+          `export var ReadStream = "x";\nexport { WriteStream } from "node:fs";\n`,
+        ],
+        [{ replace: { default: 1 } }, `export { default, b } from "x"`, `export default 1;\nexport { b } from "x";\n`],
+        [{ replace: { a: ["N", true] } }, `export { a, b } from "x"`, `export var N = true;\nexport { b } from "x";\n`],
+        [{ replace: { ns: 1 } }, `export * as ns from "x"`, `export var ns = 1;\n`],
+        [{ eliminate: ["A"] }, `export let A`, ``],
+        [{ eliminate: ["A"] }, `export let A, B = 1`, `export let B = 1;\n`],
+        [{ replace: { A: 1 } }, `export let A`, `export let A = 1;\n`],
+        [{ eliminate: ["A"] }, `namespace NS { export let A = 1 }`, member],
+        [{ eliminate: ["A"] }, `export class A {}\n${keep}`, keep],
+        [{ eliminate: ["default"] }, `export default 42;\n${keep}`, keep],
+        [{ replace: { default: ["N", 1] } }, `export default 42;\n${keep}`, `export var N = 1;\n${keep}`],
+        [{ replace: { default: ["N", 1] } }, `export default class A {}\n${keep}`, `export var N = 1;\n${keep}`],
+      ];
+      const print = rows =>
+        rows.map(([exports, source]) => new Bun.Transpiler({ loader: "ts", exports }).transformSync(source));
+      const result = await bunRun(["-e", `console.log(JSON.stringify((${print})(${JSON.stringify(rows)})))`]);
+      expect(result).toEqual({
+        stdout: JSON.stringify(rows.map(([, , module]) => module)),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it("keeps string replacement values valid after another module is parsed", async () => {
+      using dir = tempDir("transpiler-replace-string-values", {
+        "other.cjs": Array.from({ length: 300 }, (_, i) => `exports.s${i} = "other string ${i}";`).join("\n"),
+        "entry.mjs": `
+          const transpiler = new Bun.Transpiler({ exports: { replace: { foo: "bar", default: "dflt" } } });
+          require("./other.cjs");
+          console.log(
+            JSON.stringify([
+              transpiler.transformSync("export const foo = 1;"),
+              transpiler.transformSync("export default 1;"),
+            ]),
+          );
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(JSON.stringify(['export const foo = "bar";\n', 'export default "dflt";\n']) + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    it("takes a String object whose toString() loads a module as a replacement value", async () => {
+      using dir = tempDir("transpiler-replace-string-object", {
+        "other.cjs": `module.exports = 1;`,
+        "entry.cjs": `
+          const value = new String("ignored");
+          value.toString = () => (require("./other.cjs"), "bar");
+          const transpiler = new Bun.Transpiler({ exports: { replace: { foo: value } } });
+          console.log(transpiler.transformSync("export const foo = 1;"));
+        `,
+      });
+      expect(await bunRun(join(String(dir), "entry.cjs"))).toEqual({
+        stdout: `export const foo = "bar";`,
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    it("prints `export default` for a replacement named default", () => {
+      const transpiler = new Bun.Transpiler({ exports: { replace: { x: ["default", 5] } } });
+      for (const source of [
+        `export let x;`,
+        `export var x;`,
+        `export let x = 1;`,
+        `export const x = 1;`,
+        `export function x() {}`,
+        `export class x {}`,
+      ]) {
+        expect(transpiler.transformSync(source)).toBe(`export default 5;\n`);
+      }
+      expect(transpiler.transformSync(`export let x, y;`)).toBe(`export default 5;\nexport let y;\n`);
+      expect(transpiler.transformSync(`let x;\nexport { x };`)).toBe(`let x;\nexport default 5;\n`);
     });
   });
 
@@ -2195,6 +2701,92 @@ export default <>hi</>
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe('console.log("bar");');
     expect(exitCode).toBe(0);
+  });
+
+  // The automatic JSX runtime passes a lone spread object directly as props.
+  describe("define with an object value", () => {
+    it("prints the full object at every use after JSX spreads it", () => {
+      const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+      const source = [
+        `export const before = OBJ;`,
+        `export const spread = <div {...OBJ} />;`,
+        `export const child = <div {...{ ...OBJ }}>kid</div>;`,
+        `export const after = OBJ;`,
+      ].join("\n");
+      const expected = `export const before = { a: 1 };
+export const spread = jsxDEV_7x81h0kn("div", {
+  a: 1
+}, undefined, false, undefined, this);
+export const child = jsxDEV_7x81h0kn("div", {
+  a: 1,
+  children: "kid"
+}, undefined, false, undefined, this);
+export const after = { a: 1 };
+`;
+      // The transpiler reuses its define table, so transform twice.
+      expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
+    });
+
+    // transform() parses on a pool thread, and every call shares the transpiler's define table.
+    it("prints the full object in every concurrent transform()", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const transpiler = new Bun.Transpiler({ loader: "jsx", define: { OBJ: '{"a":1}' } });
+            const source = Array.from(
+              { length: 200 },
+              (_, i) => "export const c" + i + " = <div {...OBJ}>kid</div>;\\nexport const p" + i + " = OBJ;",
+            ).join("\\n");
+            const outputs = await Promise.all(Array.from({ length: 8 }, () => transpiler.transform(source)));
+            const uses = outputs[0].split("a: 1").length - 1;
+            console.log(JSON.stringify({ distinct: new Set(outputs).size, uses }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: JSON.stringify({ distinct: 1, uses: 400 }),
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  });
+
+  it("define errors after an earlier config error don't corrupt the log", async () => {
+    // An `external` with two `*` logs one error without aborting the constructor.
+    // The four define-key errors that follow make the log's buffer grow.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const define = { "0x": "1", "1x": "1", "2x": "1", "3x": "1" };
+          for (let i = 0; i < 20; i++) {
+            const t = new Bun.Transpiler({ external: ["a*b*c"], define });
+            if (i % 10 === 0) t.transformSync("export const a = 1;");
+            if (i % 10 === 9) Bun.gc(true);
+          }
+          Bun.gc(true);
+          console.log("constructed");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: "constructed\n",
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 
   it("JSX keys", () => {
@@ -2768,6 +3360,45 @@ console.log(<div {...obj} key="after" />);`),
       );
     });
 
+    it("first token of the output", async () => {
+      // The printer tracks "position after the previous operator / number /
+      // regexp" to decide when a space or parentheses are required. Those
+      // positions start out as "none", which must not match the empty output.
+      expectPrintedNoTrim("++x;", "++x;\n");
+      expectPrintedNoTrim("--x;", "--x;\n");
+      expectPrintedNoTrim("+x;", "+x;\n");
+      expectPrintedNoTrim("-x;", "-x;\n");
+      expectPrintedNoTrim("let;", "let;\n");
+      expectPrintedNoTrim("delete x.y;", "delete x.y;\n");
+      expectPrintedNoTrim("/a/.test(x);", "/a/.test(x);\n");
+
+      // The same statements later in the output
+      expectPrintedNoTrim("x;\n++x;", "x;\n++x;\n");
+      expectPrintedNoTrim("x;\nlet;", "x;\nlet;\n");
+
+      // The async form uses the printer's returned byte count to decide whether the output is empty
+      const plain = new Bun.Transpiler({ loader: "js" });
+      expect(await plain.transform("++x;")).toBe("++x;\n");
+      expect(await plain.transform("x;")).toBe("x;\n");
+      expect(await plain.transform("1;")).toBe("");
+
+      // The rules themselves still apply between two tokens
+      const minify = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+      const print = code => minify.transformSync(code);
+      expect(print("++x;")).toBe("++x;");
+      expect(print("+x;")).toBe("+x;");
+      expect(print("x + ++y;")).toBe("x+ ++y;");
+      expect(print("x - --y;")).toBe("x- --y;");
+      expect(print("x + +y;")).toBe("x+ +y;");
+      expect(print("x - -y;")).toBe("x- -y;");
+      expect(print("x < !--y;")).toBe("x<! --y;");
+      expect(print("x-- > y;")).toBe("x-- >y;");
+      expect(print("x instanceof y;")).toBe("x instanceof y;");
+      expect(print("a / /b/;")).toBe("a/ /b/;");
+      expect(print("/a/ in b;")).toBe("/a/ in b;");
+      expect(print("x = 1..toString();")).toBe("x=1 .toString();");
+    });
+
     it("await", () => {
       expectPrinted("await x", "await x");
       expectPrinted("await +x", "await +x");
@@ -2826,6 +3457,22 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`export { z as "" } from "m"`, `export { z as "" } from "m"`);
       expectPrinted_(`export { "" as "" } from "m"`, `export { "" } from "m"`);
       expectPrinted_(`export * as "" from "m"`, `export * as "" from "m"`);
+    });
+
+    it("import clause with more than 65535 names", () => {
+      // "a0000, a0001, ... affff": 65536 distinct names. Byte writes into one
+      // Buffer keep this fast on debug builds, where per-name string concat is slow.
+      const hex = Buffer.from("0123456789abcdef");
+      const names = Buffer.alloc(65536 * 7, "a0000, ");
+      for (let i = 0; i < 65536; i++) {
+        names[i * 7 + 1] = hex[i >> 12];
+        names[i * 7 + 2] = hex[(i >> 8) & 15];
+        names[i * 7 + 3] = hex[(i >> 4) & 15];
+        names[i * 7 + 4] = hex[i & 15];
+      }
+      const list = names.toString("latin1", 0, names.length - 2);
+      const out = new Bun.Transpiler({ loader: "js" }).transformSync("import def, {" + list + '} from "./m.js";');
+      expect(out).toBe("import def, { " + list + ' } from "./m.js";\n');
     });
 
     it("string quote selection", () => {
@@ -4659,6 +5306,14 @@ console.log(foo, array);
     new Bun.Transpiler().scanImports("");
   });
 
+  it("transformSync treats an undefined context as omitted", () => {
+    const transpiler = new Bun.Transpiler();
+    expect(transpiler.transformSync("let a: number = 1;", "ts", undefined)).toBe("let a = 1;\n");
+    expect(() => transpiler.transformSync("let a: number = 1;", "ts", null)).toThrow(
+      "Expected context to be a object or loader for 'transformSync'.",
+    );
+  });
+
   it("preserves exotic directives", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use client";
@@ -4885,6 +5540,70 @@ it("does not crash with --minify-syntax and revisiting dot expressions", () => {
   expect(exitCode).toBe(0);
 });
 
+// The printer aborted the process on these inputs, so they run in subprocesses.
+describe.concurrent("minify.identifiers on an empty source or a data loader", () => {
+  const printed = stdout => ({ stdout, stderr: "", exitCode: 0, signalCode: null });
+  const minified = "var key=1;export{key};export default {key};";
+
+  it.each([
+    [`new Bun.Transpiler({ minify: { identifiers: true } }).transformSync("")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync(" ")`, ""],
+    [`new Bun.Transpiler({ minify: true }).transformSync('{"key":1}', "json")`, minified],
+    [`await new Bun.Transpiler({ minify: true }).transform('{"key":1}', "json")`, minified],
+  ])("%s", async (expression, output) => {
+    const result = await bunRun(["-e", `console.log(JSON.stringify(${expression}))`]);
+    expect(result).toEqual(printed(JSON.stringify(output)));
+  });
+
+  it("the toml, yaml and text loaders", async () => {
+    const result = await bunRun([
+      "-e",
+      `const browser = new Bun.Transpiler({ minify: true });
+      const bun = new Bun.Transpiler({ minify: true, target: "bun" });
+      console.log(JSON.stringify([
+        browser.transformSync("key = 1", "toml"),
+        bun.transformSync("key: 1", "yaml"),
+        browser.transformSync("key", "text"),
+      ]));`,
+    ]);
+    expect(result).toEqual(printed(JSON.stringify([minified, minified, 'export default "key";'])));
+  });
+
+  it.each([
+    ["--minify", "data.json", '{"key":1}\n', minified],
+    ["--minify-identifiers", "empty.js", "", ""],
+  ])("bun build --no-bundle %s %s", async (flag, file, contents, output) => {
+    using dir = tempDir("minify-identifiers-no-char-freq", { [file]: contents });
+    const result = await bunRun(["build", "--no-bundle", flag, join(String(dir), file)]);
+    expect(result).toEqual(printed(output));
+  });
+});
+
+// Runs in a subprocess because a failure here aborts the process.
+it.concurrent('data loaders print only `export default` when the only key is "default"', async () => {
+  const result = await bunRun([
+    "-e",
+    `const transpiler = new Bun.Transpiler({ minify: { whitespace: true } });
+    const output = [];
+    for (const [loader, source] of [
+      ["json", '{"default": 1}'],
+      ["jsonc", '{"default": 1} // comment'],
+      ["json5", "{default: 1}"],
+      ["toml", "default = 1"],
+      ["yaml", "default: 1"],
+      ["xml", "<default>1</default>"],
+    ]) {
+      output.push([loader, transpiler.transformSync(source, loader), await transpiler.transform(source, loader)]);
+    }
+    console.log(JSON.stringify(output));`,
+  ]);
+  const number = "export default {default:1};";
+  const string = 'export default {default:"1"};';
+  const expected = ["json", "jsonc", "json5", "toml", "yaml"].map(loader => [loader, number, number]);
+  expected.push(["xml", string, string]);
+  expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0, signalCode: null });
+});
+
 it("runtime transpiler stack overflows", async () => {
   expect(async () => await import("./fixtures/lots-of-for-loop.js")).toThrow(`Maximum call stack size exceeded`);
 });
@@ -4956,6 +5675,118 @@ it("deeply nested expressions error instead of crashing the process", () => {
   expect(stdout.toString()).toBe("depth-ok\n");
   expect([exitCode, signalCode ?? undefined]).toEqual([0, undefined]);
 }, 60_000);
+
+it("moves import() and require() of a conditional into each branch", () => {
+  const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+  const branches = callee => `x = ${callee}(a ? "b" : c ? (d ? "e" : f) : "g");`;
+  const output = callee => `x = a ? ${callee}("b") : c ? d ? ${callee}("e") : ${callee}(f) : ${callee}("g");\n`;
+  for (const callee of ["import", "require", "require.resolve"]) {
+    expect(transpiler.transformSync(branches(callee))).toBe(output(callee));
+  }
+  expect(transpiler.scan(branches("import")).imports).toEqual([
+    { kind: "dynamic-import", path: "b" },
+    { kind: "dynamic-import", path: "e" },
+    { kind: "dynamic-import", path: "g" },
+  ]);
+});
+
+it.concurrent("doesn't crash on a deeply nested import() or require() of a long conditional chain", async () => {
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js", deadCodeElimination: true });
+    const chain = "(" + Buffer.alloc(40000, "a ? 'b' : ").toString() + "'c')";
+    for (const callee of ["import", "require", "require.resolve"]) {
+      // The depth limit differs between builds, so go deeper until the parser throws.
+      for (let depth = 250; ; depth += 250) {
+        try {
+          transpiler.scan("x = " + "g(".repeat(depth) + callee + chain + ")".repeat(depth));
+        } catch (e) {
+          if (e?.message !== "Maximum call stack size exceeded") throw e;
+          break;
+        }
+      }
+    }
+    console.log("ok");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it.concurrent("matches a define key with many parts without crashing", async () => {
+  const parts = isDebug ? 12_000 : 500_000;
+  const script = `
+    const key = "a" + ".b".repeat(${parts});
+    // a["b"] matches the same define key as a.b.
+    const indexed = "a" + '["b"].b'.repeat(${parts / 2});
+    const transpiler = new Bun.Transpiler({ loader: "js", define: { [key]: "1" } });
+    process.stdout.write(transpiler.transformSync("x = " + key + "; y = " + indexed));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "x = 1;\ny = 1;\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+// After a stack overflow, the visit pass skips every expression it hasn't visited yet.
+it.concurrent("reports only the stack overflow when the visit pass overflows", async () => {
+  const script = `
+    const chain = "a" + ".b".repeat(${isDebug ? 20_000 : 100_000});
+    // A skipped identifier has no symbol. This name's length is larger than the symbol table.
+    const name = Buffer.alloc(2000, "L").toString();
+    const legacyDecorators = { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } };
+    const cases = [
+      ["[" + chain + ", " + name + " = 1] = y;"],
+      ["({ a: " + chain + ", " + name + " = 1 } = y);"],
+      ["x = typeof (false ? " + chain + " : " + name + ");"],
+      ["class A { a = " + chain + "; m() {} }"],
+      ["class A { a = " + chain + "; @dec m(@dec x: number): void {} }", legacyDecorators],
+    ];
+    const messages = cases.map(([source, tsconfig]) => {
+      try {
+        new Bun.Transpiler({ loader: "ts", tsconfig }).transformSync(source);
+        return "no error";
+      } catch (e) {
+        return e.message;
+      }
+    });
+    console.log(JSON.stringify(messages));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: JSON.stringify(Array(5).fill("Maximum call stack size exceeded")) + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
 
 it("deeply nested TypeScript types error instead of crashing the process", () => {
   const script = `
@@ -5407,6 +6238,136 @@ it("transform() result is unaffected by detaching the input ArrayBuffer while th
   expect(exitCode).toBe(0);
 });
 
+it("hexadecimal, octal and binary literals are rounded to the nearest double", () => {
+  const transpiler = new Bun.Transpiler();
+  const wrong = [];
+  for (const [text, exact] of [...integersThatNeedRounding(), ["0777777777777777777777", 0o777777777777777777777n]]) {
+    const printed = transpiler.transformSync(`x = ${text};`).trim();
+    const value = printed === "x = 1 / 0;" ? Infinity : Number(printed.slice("x = ".length, -1));
+    if (!Object.is(value, Number(exact))) wrong.push({ text, printed, nearest: Number(exact) });
+  }
+  expect(wrong).toEqual([]);
+  expect(BigInt(0xb3c8bf81fdf2247) - 0xb3c8bf81fdf2247n).toBe(57n);
+});
+
+it("transformSync, scan and scanImports parse the original code when loader.toString() detaches it", async () => {
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 16;
+    const keep = [];
+    function code() {
+      const bytes = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto('import "original"; export const original = 1;//', bytes);
+      return bytes;
+    }
+    function loader(code) {
+      return Object.assign(new String("js"), {
+        toString() {
+          code.buffer.transfer(0);
+          for (let i = 0; i < 64; i++) keep.push(new Uint8Array(size).fill(0x20));
+          return "js";
+        },
+      });
+    }
+    const results = {};
+    for (const method of ["transformSync", "scan", "scanImports"]) {
+      const input = code();
+      results[method] = transpiler[method](input, loader(input));
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: stdout && JSON.parse(stdout), stderr }).toEqual({
+    results: {
+      transformSync: 'import"original";\nexport const original = 1;\n',
+      scan: { exports: ["original"], imports: [{ path: "original", kind: "import-statement" }] },
+      scanImports: [{ path: "original", kind: "import-statement" }],
+    },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent.each([
+  {
+    macro: "shrinks the resizable input",
+    buffer: "new ArrayBuffer(bytes.length, { maxByteLength: bytes.length })",
+    invalidate: "globalThis.input.resize(0);",
+  },
+  {
+    macro: "overwrites the input and detaches it",
+    buffer: "new ArrayBuffer(bytes.length)",
+    invalidate: "new Uint8Array(globalThis.input).fill(0x20); globalThis.input.transfer(); Bun.gc(true);",
+  },
+])("transformSync and scan parse the original code when a macro $macro", async ({ buffer, invalidate }) => {
+  using dir = tempDir("transpiler-macro-takes-input", {
+    "macro.ts": `
+      export function invalidate() {
+        ${invalidate}
+        return "from the macro";
+      }
+    `,
+    "index.ts": `
+      import { join } from "node:path";
+
+      const macro = join(import.meta.dir, "macro.ts");
+      const source =
+        "import { invalidate } from " + JSON.stringify(macro) + ' with { type: "macro" };\\n' +
+        "export const fromTheMacro = invalidate();\\n" +
+        "export const filler = " + JSON.stringify(Buffer.alloc(100_000, "x").toString()) + ";\\n" +
+        "export const afterTheMacro = 'after the macro';\\n";
+
+      function input() {
+        const bytes = new TextEncoder().encode(source);
+        globalThis.input = ${buffer};
+        const view = new Uint8Array(globalThis.input);
+        view.set(bytes);
+        return view;
+      }
+
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const code = transpiler.transformSync(input());
+      const { exports } = transpiler.scan(input());
+      console.log(
+        JSON.stringify({
+          byteLength: globalThis.input.byteLength,
+          transformSync: [
+            code.includes('fromTheMacro = "from the macro"'),
+            code.includes('afterTheMacro = "after the macro"'),
+          ],
+          exports: exports.sort(),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds log each macro call to stdout first.
+  expect({ result: stdout.trim().split("\n").at(-1), stderr: stderr.trim() }).toEqual({
+    result: JSON.stringify({
+      byteLength: 0,
+      transformSync: [true, true],
+      exports: ["afterTheMacro", "filler", "fromTheMacro"],
+    }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.
@@ -5584,5 +6545,338 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}*`, message);
     expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
     expectParseError(`/*${pad600}🦊`, message);
+  });
+});
+
+// The printer folds `var a = obj.x, b = obj.y` into `var { x: a, y: b } = obj`.
+// A pattern evaluates `obj` once, so a declarator that rebinds `obj` must end
+// the group. A `var` that re-declares a parameter or an earlier `var` gets its
+// own symbol, linked to the existing one. The check has to compare the linked
+// symbols, or `var n = n.next, n = n.next` folds into `{ next: n, next: n } = n`
+// and both members read the original `n`.
+describe("same-target destructuring with a re-declared target", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
+
+  it("keeps a run that rebinds a re-declared parameter", () => {
+    expect(plain.transformSync("function f(n) { var n = n.next, n = n.next; return n; }")).toBe(
+      "function f(n) {\n  var n = n.next, n = n.next;\n  return n;\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var o = o.o, o = o.o, o = o.o; return o; }")).toBe(
+      "function f(o) {\n  var o = o.o, o = o.o, o = o.o;\n  return o;\n}\n",
+    );
+    expect(plain.transformSync("function f() { try {} catch (n) { var n = n.next, n = n.next; } }")).toBe(
+      "function f() {\n  try {} catch (n) {\n    var n = n.next, n = n.next;\n  }\n}\n",
+    );
+  });
+
+  it("keeps a run whose target is re-declared again later in the scope", () => {
+    expect(plain.transformSync("function f(n) { var n = n.next, v = n.v; var n; return v; }")).toBe(
+      "function f(n) {\n  var n = n.next, v = n.v;\n  var n;\n  return v;\n}\n",
+    );
+  });
+
+  it("ends the group at a re-declared parameter that rebinds the target", () => {
+    expect(plain.transformSync("function f(n) { var a = n.next, n = n.next, b = n.v; return [a, n, b]; }")).toBe(
+      "function f(n) {\n  var { next: a, next: n } = n, b = n.v;\n  return [a, n, b];\n}\n",
+    );
+  });
+
+  it("keeps a run that rebinds an earlier var after the statements merge", () => {
+    expect(minifier.transformSync("function f() { var n = L; var n = n.next, n = n.next; return n; }")).toBe(
+      "function f(){var n=L,n=n.next,n=n.next;return n}",
+    );
+    expect(minifier.transformSync("function f() { for (var n = L, n = n.next, n = n.next; ; ) return n; }")).toBe(
+      "function f(){for(var n=L,n=n.next,n=n.next;;)return n}",
+    );
+  });
+
+  it("still folds a run with distinct bindings", () => {
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(){var o=M,{a,b}=o;return[a,b]}",
+    );
+  });
+
+  it("walks a linked list with var re-declarations at runtime", async () => {
+    using dir = tempDir("same-target-redecl", {
+      "walk.js": /* js */ `
+        const L = { v: 0, next: { v: 1, next: { v: 2, next: null } } };
+        const M = { o: { o: { o: "deep" } } };
+        console.log(
+          JSON.stringify({
+            param: (function (n) { var n = n.next, n = n.next; return n.v; })(L),
+            redecl: (function () { var n = L; var n = n.next, n = n.next; return n.v; })(),
+            oneStmt: (function () { var n = L, n = n.next, n = n.next; return n.v; })(),
+            chain3: (function () { var o = M; var o = o.o, o = o.o, o = o.o; return o; })(),
+            arrow: ((n) => { var n = n.next, n = n.next; return n.v; })(L),
+            method: ({ m(n) { var n = n.next, n = n.next; return n.v; } }).m(L),
+            forHead: (function () { for (var n = L, n = n.next, n = n.next; ; ) return n.v; })(),
+            catchParam: (function () { try { throw L; } catch (n) { var n = n.next, n = n.next; return n.v; } })(),
+            laterRedecl: (function (n) { var n = n.next, v = n.v; var n; return v; })(L),
+            mixed: (function (n) { var a = n.next, n = n.next, b = n.v; return [a.v, n.v, b]; })(L),
+            assign: (function () { var n = L; n = n.next, n = n.next; return n.v; })(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "walk.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      param: 2,
+      redecl: 2,
+      oneStmt: 2,
+      chain3: "deep",
+      arrow: 2,
+      method: 2,
+      forHead: 2,
+      catchParam: 2,
+      laterRedecl: 1,
+      mixed: [1, 1, 1],
+      assign: 2,
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// The pattern reads `obj` once where the declarators read it once each. The
+// fold is only valid when both reads are pure reads of the same value: a
+// symbol this file declares and never assigns, outside `with` and direct
+// eval, or a known pure global like `Math`. An unbound global may be an
+// accessor, and a getter on the first property may reassign a captured
+// variable before the second read.
+describe("same-target destructuring with an unstable target", () => {
+  const plain = new Bun.Transpiler({ loader: "js" });
+  const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true, minify: { syntax: true } });
+
+  it("keeps the reads of an unbound global", () => {
+    expect(plain.transformSync("function f() { var h = CFG.host, p = CFG.port; return [h, p]; }")).toBe(
+      "function f() {\n  var h = CFG.host, p = CFG.port;\n  return [h, p];\n}\n",
+    );
+    expect(minifier.transformSync("function f() { var z = 0, h = CFG.host, p = CFG.port; return [z, h, p]; }")).toBe(
+      "function f(){var z=0,h=CFG.host,p=CFG.port;return[z,h,p]}",
+    );
+  });
+
+  it("keeps the reads of a variable that the file assigns", () => {
+    expect(
+      plain.transformSync("function f() { var o = M; var g = () => { o = N; }; var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe(
+      "function f() {\n  var o = M;\n  var g = () => {\n    o = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o = N; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  o = N;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; o++; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  o++;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; [o] = N; return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  [o] = N;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; for (o of N); return [a, b]; }")).toBe(
+      "function f(o) {\n  var a = o.a, b = o.b;\n  for (o of N)\n    ;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; o = N; console.log(a, b);")).toBe(
+      "var o=M,a=o.a,b=o.b;o=N;console.log(a,b);",
+    );
+  });
+
+  it("keeps the reads when a block var hoists onto the variable", () => {
+    // The block `var o` gets its own symbol, linked to the function-level
+    // `o`. The assignment inside the block must count for the variable.
+    expect(
+      plain.transformSync(
+        "function f() { var g; { var o; g = () => { o = N; }; } var o = M; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f() {\n  var g;\n  {\n    var o;\n    g = () => {\n      o = N;\n    };\n  }\n  var o = M;\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+  });
+
+  it("keeps the reads inside a with statement", () => {
+    expect(plain.transformSync("function f(s) { with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
+      "function f(s) {\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(s) { var o = M; with (s) { var a = o.a, b = o.b; } return [a, b]; }")).toBe(
+      "function f(s) {\n  var o = M;\n  with (s) {\n    var a = o.a, b = o.b;\n  }\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(s) { with (s) { var a = Math.cos, b = Math.sin; } return [a, b]; }")).toBe(
+      "function f(s) {\n  with (s) {\n    var a = Math.cos, b = Math.sin;\n  }\n  return [a, b];\n}\n",
+    );
+  });
+
+  it("keeps the reads when a direct eval can reach the variable", () => {
+    expect(
+      plain.transformSync("function f() { var o = M; var g = () => eval(s); var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe("function f() {\n  var o = M;\n  var g = () => eval(s);\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n");
+    // A direct eval anywhere in the file can reach a top-level variable.
+    expect(plain.transformSync("var o = M; var g = () => eval(s); var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o = M;\nvar g = () => eval(s);\nvar a = o.a, b = o.b;\nconsole.log(a, b);\n",
+    );
+    expect(
+      minifier.transformSync("var o = M; function g() { return eval(s); } var a = o.a, b = o.b; console.log(a, b);"),
+    ).toBe("var o=M;function g(){return eval(s)}var a=o.a,b=o.b;console.log(a,b);");
+    expect(plain.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b, Math.cos, Math.sin);")).toBe(
+      "var o = M;\nvar { a, b } = o;\nconsole.log(a, b, Math.cos, Math.sin);\n",
+    );
+    expect(plain.transformSync("var o = M; var a = Math.cos, b = Math.sin; eval(s); console.log(a, b);")).toBe(
+      "var o = M;\nvar { cos: a, sin: b } = Math;\neval(s);\nconsole.log(a, b);\n",
+    );
+  });
+
+  it("keeps the reads of a parameter when a sloppy function uses arguments", () => {
+    expect(
+      plain.transformSync(
+        "function f(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var a = o.a, b = o.b;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync("function f(o) { var n = arguments.length; var a = o.a, b = o.b; return [a, b, n]; }"),
+    ).toBe("function f(o) {\n  var n = arguments.length;\n  var a = o.a, b = o.b;\n  return [a, b, n];\n}\n");
+    // Strict mode (a class body) and non-simple parameter lists do not map
+    // `arguments` onto the parameters. Nested functions have their own
+    // `arguments`.
+    expect(
+      plain.transformSync(
+        "class C { m(o) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; } }",
+      ),
+    ).toBe(
+      "class C {\n  m(o) {\n    var g = () => {\n      arguments[0] = N;\n    };\n    var { a, b } = o;\n    return [a, b];\n  }\n}\n",
+    );
+    expect(
+      plain.transformSync(
+        "function f(o = 1) { var g = () => { arguments[0] = N; }; var a = o.a, b = o.b; return [a, b]; }",
+      ),
+    ).toBe(
+      "function f(o = 1) {\n  var g = () => {\n    arguments[0] = N;\n  };\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(
+      plain.transformSync("function f(o) { function g() { arguments[0] = N; } var a = o.a, b = o.b; return [a, b]; }"),
+    ).toBe("function f(o) {\n  function g() {\n    arguments[0] = N;\n  }\n  var { a, b } = o;\n  return [a, b];\n}\n");
+  });
+
+  it("still folds a stable target", () => {
+    expect(plain.transformSync("function f() { var o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f() {\n  var o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f(o) { var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f(o) {\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f() { const o = M; var a = o.a, b = o.b; return [a, b]; }")).toBe(
+      "function f() {\n  const o = M;\n  var { a, b } = o;\n  return [a, b];\n}\n",
+    );
+    expect(plain.transformSync("function f() { var a = Math.cos, b = Math.sin; return [a, b]; }")).toBe(
+      "function f() {\n  var { cos: a, sin: b } = Math;\n  return [a, b];\n}\n",
+    );
+    expect(minifier.transformSync("var o = M; var a = o.a, b = o.b; console.log(a, b);")).toBe(
+      "var o=M,{a,b}=o;console.log(a,b);",
+    );
+  });
+
+  it("reads an unstable target once per declarator at runtime", async () => {
+    // A `.cjs` file runs in sloppy mode, which `with` and the mapped
+    // `arguments` object need.
+    using dir = tempDir("same-target-unstable", {
+      "unstable.cjs": /* js */ `
+        let reads = 0;
+        Object.defineProperty(globalThis, "CFG", {
+          get() {
+            reads++;
+            return { host: "h", port: 1 };
+          },
+          configurable: true,
+        });
+        function globalHead() {
+          reads = 0;
+          var h = CFG.host, p = CFG.port;
+          return [h, p, reads];
+        }
+        function globalMid() {
+          reads = 0;
+          var z = 0, h = CFG.host, p = CFG.port;
+          return [z, h, p, reads];
+        }
+        function getterReassigns() {
+          var cur = { get a() { cur = nxt; return "a1"; }, b: "b1" }, nxt = { a: "a2", b: "b2" };
+          var x = cur.a, y = cur.b;
+          return x + y;
+        }
+        function withScope() {
+          var has = 0;
+          var scope = new Proxy({ o: { a: "a", b: "b" } }, { has(t, k) { if (k === "o") has++; return k in t; } });
+          with (scope) { var a = o.a, b = o.b; }
+          return [a, b, has];
+        }
+        var hook;
+        function argumentsAlias(o) {
+          hook = () => { arguments[0] = { a: "a2", b: "b2" }; };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function blockHoisted() {
+          var swap;
+          { var o; swap = () => { o = { a: "a2", b: "b2" }; }; }
+          var o = { get a() { swap(); return "a1"; }, b: "b1" };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function directEval() {
+          var o = { get a() { run(); return "a1"; }, b: "b1" };
+          var run = () => eval("o = { a: 'a2', b: 'b2' }");
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        function stable() {
+          var o = { get a() { return "a1"; }, b: "b1" };
+          var a = o.a, b = o.b;
+          return a + b;
+        }
+        console.log(
+          JSON.stringify({
+            globalHead: globalHead(),
+            globalMid: globalMid(),
+            getterReassigns: getterReassigns(),
+            withScope: withScope(),
+            argumentsAlias: argumentsAlias({ get a() { hook(); return "a1"; }, b: "b1" }),
+            blockHoisted: blockHoisted(),
+            directEval: directEval(),
+            stable: stable(),
+          }),
+        );
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "unstable.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      globalHead: ["h", 1, 2],
+      globalMid: [0, "h", 1, 2],
+      getterReassigns: "a1b2",
+      withScope: ["a", "b", 2],
+      argumentsAlias: "a1b2",
+      blockHoisted: "a1b2",
+      directEval: "a1b2",
+      stable: "a1b1",
+    });
+    expect(exitCode).toBe(0);
   });
 });

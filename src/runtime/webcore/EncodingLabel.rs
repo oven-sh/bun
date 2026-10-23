@@ -1,9 +1,13 @@
 use bun_core::strings;
+use bun_jsc::bindgen::{JsHeap, JsLocal};
+use bun_jsc::{CommonString, JSString};
 
 /// Every encoding the Encoding Standard defines, keyed by its canonical name.
 /// https://encoding.spec.whatwg.org/#names-and-labels
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum EncodingLabel {
+#[repr(u8)]
+#[derive(Copy, Clone, Default, Eq, PartialEq, Debug)]
+pub(crate) enum EncodingLabel {
+    #[default]
     Utf8,
     Ibm866,
     Iso8859_2,
@@ -98,6 +102,14 @@ impl EncodingLabel {
             Self::Gbk => b"gbk",
             Self::Gb18030 => b"gb18030",
         }
+    }
+
+    /// The `encoding` getter value of `TextDecoder` and `TextDecoderStream`.
+    pub(crate) fn to_js<'a>(self, heap: &JsHeap<'a>) -> JsLocal<'a, JSString> {
+        if self == EncodingLabel::Utf8 {
+            return heap.common_string(CommonString::Utf8WithDash);
+        }
+        heap.create_latin1_string(self.get_label())
     }
 
     pub(crate) const LATIN1: EncodingLabel = EncodingLabel::Windows1252;

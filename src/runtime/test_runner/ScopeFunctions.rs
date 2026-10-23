@@ -1,9 +1,11 @@
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
+use crate::generated_bindgen::jest::js_ScopeFunctions as js;
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
 use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::jest;
@@ -47,86 +49,73 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// Every JS-exposed method takes `&self`. All three
 // fields are written exactly once in `create_unbound` and never mutated again,
 // so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
-// construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
+// construction. `generic_if`/`generic_extend`/`each`/`call_as_function` all
 // re-enter JS (create_bound → to_js / JSFunction::create / bind), which can
 // form fresh `&ScopeFunctions` to the same wrapper; aliased `&Self` is sound,
 // aliased `&mut Self` would not be.
-#[bun_jsc::JsClass(no_constructor)]
-pub struct ScopeFunctions {
+pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
     /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
-    /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
+    /// WriteBarrier on the JS wrapper (see `internalFields: ["each"]` in jest.bind.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
 }
 
 impl ScopeFunctions {
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
+    pub(crate) fn get_skip(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", "todo")
+    pub(crate) fn get_todo(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", "todo")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
+    pub(crate) fn get_failing(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
+    pub(crate) fn get_concurrent(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
+    pub(crate) fn get_serial(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
     }
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
+    pub(crate) fn get_only(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.generic_extend(cx.global(), BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
+    pub(crate) fn r#if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
+    pub(crate) fn skip_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, "skipIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
+    pub(crate) fn todo_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, "todoIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
+    pub(crate) fn failing_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, "failingIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
+    pub(crate) fn concurrent_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, "concurrentIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
+    pub(crate) fn serial_if(&self, cx: &mut JsScope<'_>, condition: bool) -> JsResult<JSValue> {
+        self.generic_if(cx.global(), condition, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, "serialIf")
     }
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn each(&self, cx: &mut JsScope<'_>, table: JsLocal<'_>) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [array] = frame.arguments_as_array::<1>();
+        let global = cx.global();
+        let array = table.to_js();
         if array.is_undefined_or_null() || !array.is_array() {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
-        if !this.each.is_empty() {
-            return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
+        if !self.each.is_empty() {
+            return Err(global.throw(format_args!("Cannot {} on {}", "each", self)));
         }
-        create_bound(global, this.mode, array, this.cfg, "each")
+        create_bound(global, self.mode, array, self.cfg, "each")
     }
 }
 
@@ -134,15 +123,9 @@ impl ScopeFunctions {
 fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
+    let Some(this) = frame.this().as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
-    // SAFETY: `from_js` returned non-null; the JS wrapper keeps the boxed
-    // ScopeFunctions alive for the duration of this call (we hold `frame.this()`).
-    // R-2: deref as shared (`&*const`) — every field is read-only after
-    // `create_unbound`, and the body re-enters JS (get_length / array_iterator /
-    // bind / enqueue) which can form fresh `&ScopeFunctions` to the same object.
-    let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
@@ -438,7 +421,7 @@ impl ScopeFunctions {
     fn generic_if(
         &self,
         global: &JSGlobalObject,
-        frame: &CallFrame,
+        condition: bool,
         conditional_cfg: BaseScopeCfg,
         name: &[u8],
         invert: bool,
@@ -446,12 +429,7 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        let [condition] = frame.arguments_as_array::<1>();
-        if frame.arguments().len() == 0 {
-            return Err(global.throw(format_args!("Expected condition to be a boolean")));
-        }
-        let cond = condition.to_boolean();
-        if cond != invert {
+        if condition != invert {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
             create_bound(global, self.mode, self.each, self.cfg, fn_name)
@@ -481,7 +459,7 @@ impl ScopeFunctions {
 }
 
 fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
-    if crate::cli::ci_info::is_ci() {
+    if bun_core::ci_info::is_ci() {
         return Err(global.throw(format_args!(
             "{} is disabled in CI environments to prevent accidentally skipping tests. To override, set the environment variable CI=false.",
             bstr::BStr::new(signature)
@@ -490,33 +468,33 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
     Ok(())
 }
 
-pub struct ParseArgumentsResult {
+pub(crate) struct ParseArgumentsResult {
     pub(crate) description: Option<Vec<u8>>,
     pub callback: Option<JSValue>,
     pub(crate) options: ParseArgumentsOptions,
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct ParseArgumentsOptions {
+pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum CallbackMode {
+pub(crate) enum CallbackMode {
     Require,
     Allow,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum FunctionKind {
+pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
 }
 
 #[derive(Copy, Clone)]
-pub struct ParseArgumentsCfg {
+pub(crate) struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
 }
@@ -711,19 +689,6 @@ pub(crate) fn parse_arguments(
     Ok(result)
 }
 
-// Codegen bridge — `#[bun_jsc::JsClass]` derive provides `to_js`/`from_js`/`from_js_direct`.
-// `js::each_set_cached` is the codegen'd setter for the C++ `m_each` WriteBarrier
-// (see jest.classes.ts `values: ["each"]`).
-//
-// Hand-expansion of the cached-value accessors `src/codegen/generate-classes.ts` emits:
-// `eachSetCached` / `eachGetCached` thin-wrap the C++-side
-// `ScopeFunctionsPrototype__each{Set,Get}CachedValue` shims, which write/read the
-// `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
-// the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
-pub mod js {
-    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
-}
-
 impl fmt::Display for ScopeFunctions {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", <&'static str>::from(self.mode))?;
@@ -745,23 +710,19 @@ impl fmt::Display for ScopeFunctions {
     }
 }
 
-impl ScopeFunctions {
-    /// `.classes.ts` `finalize: true` — runs on mutator thread during lazy sweep.
-    pub fn finalize(self: Box<Self>) {
+impl Drop for ScopeFunctions {
+    fn drop(&mut self) {
         let _g = group_log::begin();
-        drop(self);
     }
 }
 
 fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
     let _g = group_log::begin();
 
-    // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
-    // wrapper (m_ctx); freed in `finalize`.
     let value = ScopeFunctions { mode, cfg, each }.to_js(global);
     value.ensure_still_alive();
     // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
-    // lives in unmanaged memory that JSC never scans; without this the array can be
+    // lives in the payload, which JSC never scans; without this the array can be
     // collected between `.each(arr)` and the trailing `("name", cb)` call.
     if !each.is_empty() {
         js::each_set_cached(value, global, each);

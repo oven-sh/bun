@@ -23,12 +23,6 @@ public:
 
     DECLARE_EXPORT_INFO;
 
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(InternalModuleRegistry);
-    }
-
     enum Field : uint8_t {
 #include "InternalModuleRegistry+enum.h"
     };
@@ -59,5 +53,6 @@ private:
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode);
+JSC_DECLARE_HOST_FUNCTION(jsInternalModuleBytecode);
 
 } // namespace Bun

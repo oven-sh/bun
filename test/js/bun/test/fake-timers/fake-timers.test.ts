@@ -1,7 +1,8 @@
 import { RedisClient, SQL } from "bun";
+import { timerInternals } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { setSystemTime } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -194,6 +195,46 @@ describe("getTimerCount", () => {
   test("throws error if fake timers not active", () => {
     expect(() => vi.getTimerCount()).toThrow("Fake timers are not active");
   });
+
+  // Only Linux applies `ulimit -s` to the main thread's stack.
+  test.skipIf(!isLinux)("walks a deep timer heap without overflowing the stack", async () => {
+    // Debug builds need 0.1 ms to create a timer, and their bigger frames overflow sooner.
+    const N = isDebug ? 5_000 : 10_000;
+    const script = `
+      import { jest } from "bun:test";
+      jest.useFakeTimers();
+      // Decreasing deadlines link the timers into a single chain of child nodes.
+      // Bun.sleep() timers fire without calling into JS.
+      const sleeps = [];
+      for (let i = 0; i < ${N}; i++) sleeps.push(Bun.sleep(${N} - i));
+      let pending, left;
+      // At the deepest JS frame, native code has about 128 KB of stack to work with.
+      (function dive() {
+        try {
+          dive();
+        } catch {
+          pending ??= jest.getTimerCount();
+          left ??= jest.runOnlyPendingTimers().getTimerCount();
+        }
+      })();
+      jest.useRealTimers();
+      await Promise.all(sleeps);
+      console.log("pending", pending, "left", left);
+    `;
+    await using proc = Bun.spawn({
+      // JavaScriptCore caps JS frames at 5 MB of stack. With a smaller stack,
+      // the recursion above reaches the real end of the stack.
+      cmd: ["sh", "-c", 'ulimit -s 4096 && exec "$0" -e "$1"', bunExe(), script],
+      // The environment also lives on that stack, and JavaScriptCore doesn't account for it.
+      env: Object.fromEntries(Object.entries(bunEnv).filter(([name]) => /^BUN_|SAN_OPTIONS$/.test(name))),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(`pending ${N} left 0\n`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 describe("clearAllTimers", () => {
   test("clears all pending timers", () => {
@@ -284,6 +325,193 @@ describe("AbortSignal.timeout", () => {
     expect({ aborted: signal.aborted, reasons }).toEqual({ aborted: true, reasons: ["TimeoutError"] });
   });
 });
+// A timer that a fake timer's callback arms with no delay is scheduled 1ms
+// later, as in @sinonjs/fake-timers. At the current instant it is due again
+// within the advanceTimersByTime() / runOnlyPendingTimers() call that runs the
+// callback, and a callback that re-arms itself that way keeps the call from
+// ever returning. setTimeout(fn, 0) is always 1ms; AbortSignal.timeout(0) and
+// Bun.sleep(0) are the timers that can have no delay.
+describe("a zero-delay timer armed by a timer callback", () => {
+  // Ends a chain of re-armed timers, so a drain that keeps firing them at one
+  // instant fails an assertion and does not spin.
+  const GIVE_UP = 50;
+
+  describe("AbortSignal.timeout(0) re-armed by its own abort listener", () => {
+    /** Returns `performance.now()` at each abort. */
+    function rearmOnAbort(): number[] {
+      const abortedAt: number[] = [];
+      const arm = () =>
+        AbortSignal.timeout(0).addEventListener("abort", () => {
+          abortedAt.push(performance.now());
+          if (abortedAt.length < GIVE_UP) arm();
+        });
+      arm();
+      return abortedAt;
+    }
+
+    test("advanceTimersByTime() fires it once per millisecond", () => {
+      vi.useFakeTimers();
+      const abortedAt = rearmOnAbort();
+      vi.advanceTimersByTime(3);
+      expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
+        abortedAt: [0, 1, 2, 3],
+        now: 3,
+        pending: 1,
+      });
+    });
+
+    test("runOnlyPendingTimers() fires the pending one only", () => {
+      vi.useFakeTimers();
+      const abortedAt = rearmOnAbort();
+      vi.runOnlyPendingTimers();
+      expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
+        abortedAt: [0],
+        now: 0,
+        pending: 1,
+      });
+    });
+
+    test("advanceTimersToNextTimer() moves the clock to the re-armed one", () => {
+      vi.useFakeTimers();
+      const abortedAt = rearmOnAbort();
+      vi.advanceTimersToNextTimer();
+      vi.advanceTimersToNextTimer();
+      expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
+        abortedAt: [0, 1],
+        now: 1,
+        pending: 1,
+      });
+    });
+
+    test("a nested advanceTimersToNextTimer() in the listener, before it re-arms", () => {
+      vi.useFakeTimers();
+      const abortedAt: number[] = [];
+      const arm = () => {
+        AbortSignal.timeout(0).addEventListener("abort", () => {
+          abortedAt.push(performance.now());
+          // Fires `other` and returns into this listener, which still runs.
+          vi.advanceTimersToNextTimer();
+          if (abortedAt.length < GIVE_UP) arm();
+        });
+        // `other`: due at the same instant, after the one above.
+        AbortSignal.timeout(0).addEventListener("abort", () => {});
+      };
+      arm();
+      vi.advanceTimersByTime(1);
+      expect({ abortedAt, now: performance.now(), pending: vi.getTimerCount() }).toEqual({
+        abortedAt: [0, 1],
+        now: 1,
+        pending: 2,
+      });
+    });
+  });
+
+  // A jest timer control runs the microtasks of a timer before the next timer
+  // only when no event loop task is on the stack. The first tests of a file run
+  // that way, so the loop gets a test file of its own.
+  test("a `while (..) await Bun.sleep(0)` loop ends when its condition does", async () => {
+    using dir = tempDir("fake-timers-sleep-loop", {
+      "sleep-loop.test.ts": `
+        import { jest, test } from "bun:test";
+        test.each(["advanceTimersByTime", "runOnlyPendingTimers"])("%s", control => {
+          jest.useFakeTimers();
+          let done = false;
+          const polledAt = [];
+          setTimeout(() => (done = true), 3);
+          (async () => {
+            while (!done && polledAt.length < ${GIVE_UP}) {
+              polledAt.push(performance.now());
+              await Bun.sleep(0);
+            }
+          })();
+          if (control === "advanceTimersByTime") jest.advanceTimersByTime(5);
+          else jest.runOnlyPendingTimers();
+          console.log(JSON.stringify({ control, polledAt, done, now: performance.now(), pending: jest.getTimerCount() }));
+          jest.useRealTimers();
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "sleep-loop.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const results = stdout
+      .split("\n")
+      .filter(line => line.startsWith("{"))
+      .map(line => JSON.parse(line));
+    expect({ results, exitCode }, stderr).toEqual({
+      results: [
+        { control: "advanceTimersByTime", polledAt: [0, 0, 1, 2], done: true, now: 5, pending: 0 },
+        { control: "runOnlyPendingTimers", polledAt: [0, 0, 1, 2], done: true, now: 3, pending: 0 },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("AbortSignal.timeout(0) fires 1ms after the callback that armed it", () => {
+    vi.useFakeTimers();
+    let signal!: AbortSignal;
+    setTimeout(() => (signal = AbortSignal.timeout(0)), 5);
+    vi.advanceTimersByTime(5);
+    expect({ aborted: signal.aborted, pending: vi.getTimerCount() }).toEqual({ aborted: false, pending: 1 });
+    vi.advanceTimersByTime(1);
+    expect({ aborted: signal.aborted, pending: vi.getTimerCount() }).toEqual({ aborted: true, pending: 0 });
+  });
+
+  test("Bun.sleep(0) resolves 1ms after the callback that called it", async () => {
+    vi.useFakeTimers();
+    let sleep!: Promise<void>;
+    setTimeout(() => (sleep = Bun.sleep(0)), 5);
+    vi.advanceTimersByTime(5);
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await sleep;
+  });
+
+  test("a timer that was already due 1ms later fires before it", () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    setTimeout(() => order.push("setTimeout(1)"), 1);
+    AbortSignal.timeout(0).addEventListener("abort", () => {
+      AbortSignal.timeout(0).addEventListener("abort", () => order.push("timeout(0)"));
+    });
+    vi.advanceTimersByTime(1);
+    expect(order).toEqual(["setTimeout(1)", "timeout(0)"]);
+  });
+
+  test("armed outside a timer callback, it is due at the current instant", () => {
+    vi.useFakeTimers();
+    vi.advanceTimersByTime(5);
+    const signal = AbortSignal.timeout(0);
+    vi.runOnlyPendingTimers();
+    expect({ aborted: signal.aborted, now: performance.now() }).toEqual({ aborted: true, now: 5 });
+  });
+
+  // Not a zero delay: a nested timer control in the callback stops the clock
+  // on the deadline the interval is then re-armed for.
+  test.each([
+    { period: 5, nested: 5, advance: 20, firedAt: [5, 10, 15, 20] },
+    { period: 1, nested: 0, advance: 4, firedAt: [1, 2, 3, 4] },
+  ])(
+    "setInterval(fn, $period) re-armed onto the current instant keeps its period",
+    ({ period, nested, advance, firedAt }) => {
+      vi.useFakeTimers();
+      const at: number[] = [];
+      const interval = setInterval(() => {
+        at.push(performance.now());
+        if (at.length === 1) vi.advanceTimersByTime(nested);
+      }, period);
+      vi.advanceTimersByTime(advance);
+      clearInterval(interval);
+      expect(at).toEqual(firedAt);
+    },
+  );
+});
 // Only the timers a test schedules itself are faked. Timeouts the runtime arms
 // for its own purposes keep running on the real clock: getTimerCount() does not
 // count them, they fire while fake timers are active, and useRealTimers(), which
@@ -334,7 +562,7 @@ describe("runtime timeouts are not fake timers", () => {
       stdio: "ignore",
       timeout: 50,
       killSignal: "SIGKILL",
-    });
+    }) as { signal: NodeJS.Signals | null; error?: NodeJS.ErrnoException };
     expect({ signal: result.signal, code: result.error?.code }).toEqual({ signal: "SIGKILL", code: "ETIMEDOUT" });
   });
 
@@ -407,6 +635,29 @@ describe("runtime timeouts are not fake timers", () => {
     }
   });
 });
+
+// Deadlines the runtime measures in JS (the connect-retry budget of Bun.SQL) read monotonicNowMs().
+test("monotonicNowMs() is not a mocked clock", () => {
+  const ONE_HOUR = 60 * 60 * 1000;
+  const beforeFakeTimers = timerInternals.monotonicNowMs();
+  vi.useFakeTimers();
+  const atActivation = timerInternals.monotonicNowMs();
+  vi.advanceTimersByTime(ONE_HOUR);
+  const afterAdvance = timerInternals.monotonicNowMs();
+  expect({
+    mockedTimerClock: timerInternals.timerClockMs(),
+    performanceNow: performance.now(),
+    // the mocked clocks restart from 0 on activation
+    restarted: atActivation < beforeFakeTimers,
+    advancedByTheHour: afterAdvance - atActivation >= ONE_HOUR,
+  }).toEqual({
+    mockedTimerClock: ONE_HOUR,
+    performanceNow: ONE_HOUR,
+    restarted: false,
+    advancedByTheHour: false,
+  });
+});
+
 // Bun.cron() is mockable, so a job created under fake timers lives in the fake
 // heap, and useRealTimers() / clearAllTimers() drop it with the rest. Like a
 // dropped setInterval it has to end up stopped, rather than holding the process
@@ -529,6 +780,100 @@ describe("Date.now() mocking", () => {
   });
 });
 
+describe("timer controls called from inside a timer callback", () => {
+  const T0 = 1_000_000;
+
+  test("runOnlyPendingTimers() in a setInterval callback doesn't move the clock backwards", () => {
+    vi.useFakeTimers({ now: T0 });
+    const seen: [string, number, number][] = [];
+    let n = 0;
+    const interval = setInterval(() => {
+      n++;
+      seen.push(["interval " + n, Date.now() - T0, performance.now()]);
+      vi.runOnlyPendingTimers();
+    }, 1);
+    setTimeout(() => seen.push(["timeout", Date.now() - T0, performance.now()]), 10);
+    vi.advanceTimersByTime(10);
+    // Tick 1 fires the 10 ms timeout. Tick 2 was due at 2, so it fires late at 10.
+    expect(seen).toEqual([
+      ["interval 1", 1, 1],
+      ["timeout", 10, 10],
+      ["interval 2", 10, 10],
+    ]);
+    expect(Date.now() - T0).toBe(10);
+    clearInterval(interval);
+    vi.useRealTimers();
+  });
+
+  test("a nested advanceTimersByTime() in a setTimeout callback doesn't move the clock backwards", () => {
+    vi.useFakeTimers({ now: T0 });
+    setTimeout(() => vi.advanceTimersByTime(100), 5);
+    vi.advanceTimersByTime(10);
+    expect(Date.now() - T0).toBe(105);
+    expect(performance.now()).toBe(105);
+    vi.useRealTimers();
+  });
+});
+
+test("useRealTimers() called from a timer callback isn't undone when the advance completes", () => {
+  const realBefore = performance.now();
+  vi.useFakeTimers({ now: 0 });
+  setTimeout(() => vi.useRealTimers(), 10);
+  vi.advanceTimersByTime(100);
+  expect(vi.isFakeTimers()).toBe(false);
+  expect(Date.now()).toBeGreaterThan(1e12);
+  expect(performance.now()).toBeGreaterThanOrEqual(realBefore);
+});
+
+test("workers with fake timers don't share a clock", async () => {
+  // Each worker sets its own system time, runs its pending timers and then checks Date.now().
+  const workerSrc = /* js */ `
+    const { jest } = Bun.jest(__filename);
+    const { parentPort, workerData } = require("worker_threads");
+    const { now, target } = workerData;
+    const mismatches = [];
+    for (let r = 0; r < 400; r++) {
+      jest.useFakeTimers({ now });
+      let n = 0;
+      setTimeout(() => n++, 1000);
+      const iv = setInterval(() => { if (n++ > 3) clearInterval(iv); }, 100);
+      jest.setSystemTime(target);
+      jest.runOnlyPendingTimers();
+      const after = Date.now();
+      if (after !== target + 1000) mismatches.push({ round: r, after, expected: target + 1000 });
+      jest.useRealTimers();
+    }
+    parentPort.postMessage(mismatches);
+  `;
+  const mainSrc = /* js */ `
+    const { Worker } = require("worker_threads");
+    const results = {};
+    const configs = [{ now: 0, target: 1e12 }, { now: 2 ** 40, target: 0 }];
+    let done = 0;
+    for (const workerData of configs) {
+      const w = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData });
+      w.on("error", err => { console.error(err); process.exit(1); });
+      w.on("message", mismatches => {
+        results[workerData.now] = mismatches;
+        if (++done === configs.length) {
+          console.log(JSON.stringify(results));
+          process.exit(0);
+        }
+      });
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", mainSrc],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ "0": [], [2 ** 40]: [] });
+  expect(exitCode).toBe(0);
+});
+
 describe("performance.now() mocking", () => {
   test("performance.now() should be mocked when fake timers are active", () => {
     vi.useFakeTimers();
@@ -641,6 +986,40 @@ describe("performance.now() mocking", () => {
     expect(performance.timeOrigin).toBe(realTimeOrigin);
     setSystemTime();
   });
+
+  // setSystemTime() with no argument, NaN, or an Invalid Date resets Date.now()
+  // to the real clock. The origin goes back to real with it.
+  test.each([undefined, NaN, new Date(NaN)])(
+    "setSystemTime(%p) under fake timers resets performance.timeOrigin too",
+    reset => {
+      const realTimeOrigin = performance.timeOrigin;
+      const realBefore = Date.now();
+      vi.useFakeTimers({ now: 5000 });
+      expect(performance.timeOrigin).toBe(5000);
+
+      setSystemTime(reset);
+      expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+      expect(performance.timeOrigin).toBe(realTimeOrigin);
+      expect(performance.toJSON().timeOrigin).toBe(realTimeOrigin);
+
+      // The next tick of the fake clock overrides Date.now() again, and the origin follows it.
+      vi.advanceTimersByTime(1000);
+      expect(Date.now()).toBe(6000);
+      expect(performance.timeOrigin).toBe(5000);
+      expect(performance.timeOrigin + performance.now()).toBe(Date.now());
+    },
+  );
+
+  test.each([Infinity, -Infinity])("setSystemTime(%p) throws and leaves the clocks alone", ms => {
+    const realBefore = Date.now();
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBeGreaterThanOrEqual(realBefore);
+
+    vi.useFakeTimers({ now: 5000 });
+    expect(() => setSystemTime(ms)).toThrow("setSystemTime() expects a finite number or a Date");
+    expect(Date.now()).toBe(5000);
+    expect(performance.timeOrigin).toBe(5000);
+  });
 });
 
 describe("useFakeTimers with options", () => {
@@ -724,7 +1103,7 @@ describe("useFakeTimers with options", () => {
   });
 
   test.each(["modern", "legacy"] as const)("useFakeTimers(%j) accepts legacy Jest string argument", implementation => {
-    expect(() => vi.useFakeTimers(implementation)).not.toThrow();
+    expect(() => vi.useFakeTimers(implementation as any)).not.toThrow();
     expect(vi.isFakeTimers()).toBe(true);
     vi.useRealTimers();
     expect(vi.isFakeTimers()).toBe(false);

@@ -6,6 +6,7 @@
 //   new-targets a base constructor, a way another new.target reaches it, what it does with `this`, crossed (new-targets.ts)
 //   object-mutations a kind of object, a change of it, when and where the change runs, how the object is looked at, crossed (object-mutations.ts)
 //   typed-object-mutations the same in TypeScript that the checker accepts: the object is looked at through a reference of a declared type (typed-object-mutations.ts)
+//   changing-buffers a typed array, a DataView or a Buffer whose memory is detached, shrinks, grows or moves while something reads or writes through it (changing-buffers.ts)
 //   unsound-types a hole of TypeScript's type system that needs no cast, a type, a value that arrives, a place, a time and uses, drawn at random (unsound-types.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
@@ -97,8 +98,8 @@ const generated =
   (source: string, generate: Generator): Source =>
   (seed, bed) => {
     const random = new Random(seed);
-    if ((source === "typed-object-mutations" || source === "held-across-suspensions") && bed.name !== "product") return;
-    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
+    if ((source === "typed-object-mutations" || source === "held-across-suspensions" || source === "changing-buffers") && bed.name !== "product") return;
+    const typed = source === "typed-object-mutations" || source === "held-across-suspensions" || source === "changing-buffers" || (source === "grammar" && bed.name === "product" && random.chance(0.5));
     const program: Program = { text: generate(random, typed, { library: bed.name === "product" }), extension: typed ? "ts" : "js" };
     return bed.accepts(program) && bed.allows(program.text) ? { source, seed, ...program, notes: typed ? "typed" : "untyped" } : undefined;
   };
@@ -116,6 +117,6 @@ export async function allSources(programsRoot: string, rejected: Set<string>): P
       return { source: "unsound-types", seed, text, extension: "ts", notes: parts.map(each => each.join(", ")).join(" | "), group: hole, alone, isForTypeScript: true };
     };
   }
-  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
+  for (const name of ["grammar", "protocols", "new-targets", "object-mutations", "typed-object-mutations", "held-across-suspensions", "changing-buffers"]) if (existsSync(join(import.meta.dir, name + ".ts"))) sources[name] = generated(name, (await import(`./${name}.ts`)).generate);
   return sources;
 }

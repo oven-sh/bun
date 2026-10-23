@@ -2,7 +2,7 @@
 // executable knows it (/$bunfs/root/..), as the program wrote it, or where it really lies on the machine of the run.
 import { afterAll, expect } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { compileCommand } from "./harness/flags";
 import { built, spawned, withoutDebugInformation } from "./run-programs";
@@ -14,7 +14,7 @@ describe("compile/aot/an executable does not tell where it was built", () => {
   const root = String(tempDir("aot-where-it-was-built", {}));
   const source = join(root, secret);
   const elsewhere = join(root, "elsewhere");
-  const executable = join(elsewhere, "program");
+  const executable = join(elsewhere, isWindows ? "program.exe" : "program");
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   beforeAll(async () => {
@@ -59,7 +59,8 @@ console.log(value, import.meta.url, import.meta.dir, process.argv[1], Bun.main);
       names: false,
       exitCode: 0,
     });
-    expect(run.stdout.split("\n")[0]).toBe(
+    // The root of what is embedded is B:/~BUN/root on Windows.
+    expect(run.stdout.split("\n")[0].replace(/B:[\\/]~BUN[\\/]root[\\/]/, "/$bunfs/root/")).toBe(
       "ERR_MODULE_NOT_FOUND Cannot find module './lib/outside.mjs' imported from /$bunfs/root/main.mjs",
     );
   });

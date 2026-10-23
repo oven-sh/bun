@@ -2,6 +2,9 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import net, { type AddressInfo, type Socket } from "node:net";
 import { RawHttpConnection, get } from "../raw-http-client.ts";
 
+// A stream of bytes waits at 16 KiB on Windows and at 64 KiB elsewhere, as in Node.js. What is recorded is recorded with 64 KiB.
+if (process.platform === "win32") require("node:stream").setDefaultHighWaterMark(false, 64 * 1024);
+
 export type Log = (...parts: unknown[]) => void;
 
 export function formatValue(value: unknown, depth = 0): string {

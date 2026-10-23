@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test } from "./supported-with-counted-calls";
 
 // A member that a `const` symbol names is a field of the layout like a member under a name: of a class that declares it, and of a
 // function that stores it into `this`. Making the object, reading the field and storing into it ask the run time for nothing.

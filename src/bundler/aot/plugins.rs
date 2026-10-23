@@ -193,7 +193,7 @@ impl PluginRequests {
 
         let record = MiniImportRecord {
             kind: request.kind,
-            source_file: self.told_path(request.importer).into(),
+            source_file: (&*self.told_path(request.importer)).into(),
             namespace: FILE_NAMESPACE.into(),
             specifier: request.specifier.into(),
             importer_source_index: u32::MAX,
@@ -234,17 +234,19 @@ impl PluginRequests {
             .insert_ref(specifier.to_vec(), is_matched)
     }
 
-    fn told_path<'p>(&'p self, module: ModuleName<'p>) -> &'p [u8] {
-        if self.written_keys.is_empty() || module.namespace != FILE_NAMESPACE {
-            return module.path;
+    fn told_path<'p>(&'p self, module: ModuleName<'p>) -> Cow<'p, [u8]> {
+        if module.namespace != FILE_NAMESPACE {
+            return Cow::Borrowed(module.path);
         }
-        self.written_keys
-            .get(module.path)
-            .map_or(module.path, |key| &**key)
+        match self.written_keys.get(module.path) {
+            Some(key) => Cow::Borrowed(&**key),
+            None => with_separators_of_host(module.path, cfg!(windows)),
+        }
     }
 
     pub(crate) fn has_load_plugin(&self, module: ModuleName<'_>) -> bool {
-        let path = Fs::Path::init_with_namespace(self.told_path(module), module.namespace);
+        let told_path = self.told_path(module);
+        let path = Fs::Path::init_with_namespace(&told_path, module.namespace);
         if module.namespace != FILE_NAMESPACE {
             return self.plugins().has_any_matches(&path, true);
         }
@@ -326,7 +328,7 @@ impl PluginRequests {
 
     fn post_load(&self, request: &LoadRequest<'_>) -> PendingLoad {
         let path: Box<[u8]> = request.module.path.into();
-        let told_path: Box<[u8]> = self.told_path(request.module).into();
+        let told_path: Box<[u8]> = (&*self.told_path(request.module)).into();
         let namespace: Box<[u8]> = request.module.namespace.into();
         // SAFETY: both boxes go into the `PendingLoad` that owns the task and are freed after it.
         // Moving a box does not move its bytes.
@@ -403,6 +405,15 @@ impl PluginRequests {
         let loaded = loaded_from_value(value, || file, default_loader, log);
         (namespace, path, loaded)
     }
+}
+
+// The compiler writes `C:/a/b.ts`. The bundler tells a plugin `C:\a\b.ts`, and a filter may be written for that.
+fn with_separators_of_host(path: &[u8], is_windows: bool) -> Cow<'_, [u8]> {
+    if !is_windows || !path.contains(&b'/') {
+        return Cow::Borrowed(path);
+    }
+    let to_backslash = |&byte: &u8| if byte == b'/' { b'\\' } else { byte };
+    Cow::Owned(path.iter().map(to_backslash).collect())
 }
 
 fn load_value(answer: Answer) -> LoadValue {
@@ -512,6 +523,15 @@ mod tests {
             Ok(Loaded::Source { contents, loader: Loader::Ts, is_from_plugin: false })
                 if &**contents == b"from file"
         )
+    }
+
+    #[test]
+    fn told_paths_have_the_separators_of_the_host() {
+        assert_eq!(
+            &*with_separators_of_host(b"C:/a/b.ts", true),
+            b"C:\\a\\b.ts"
+        );
+        assert_eq!(&*with_separators_of_host(b"/a/b.ts", false), b"/a/b.ts");
     }
 
     #[test]

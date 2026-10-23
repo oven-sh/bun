@@ -31,6 +31,7 @@
   "Optimize | RemoveUnreadFields": 87,
   "Optimize | RemoveUnusedResults": 392,
   "Optimize | RemoveUnusedParameters": 60,
+  "Optimize | FlattenInnerObjects": 55,
   "Optimize | SkipAnsweredEntryChecks": 46,
   "Optimize | MarkResultsUsedAsKeys": 18,
   "Optimize | EmbedConstantCollections": 47,

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv } from "harness";
+import { bunEnv, isWindows } from "harness";
 import { isBuiltin } from "node:module";
 import { join } from "node:path";
 import { spawned } from "../aot/run-programs";
@@ -105,8 +105,33 @@ const snippets: Record<string, string[]> = {
   "new ShadowRealm": ["new ShadowRealm()", `new ShadowRealm().evaluate("typeof Atomics")`],
 };
 
+// The list is one argument. A command line of Windows holds 32,767 characters, and a quote inside an argument takes two.
+function piecesThatFitACommandLine(list: string[]) {
+  if (!isWindows) return [list];
+  const pieces: string[][] = [[]];
+  let length = 0;
+  for (const snippet of list) {
+    const added = 2 * JSON.stringify(snippet).length + 2;
+    if (length + added > 24_000 && pieces.at(-1)!.length > 0) {
+      pieces.push([]);
+      length = 0;
+    }
+    pieces.at(-1)!.push(snippet);
+    length += added;
+  }
+  return pieces;
+}
+
+type Exit = { snippet: string; exitCode: number | null; signal: string | null; stderr: string };
+
 async function findExits(executable: string, cwd: string, list: string[]) {
-  const exits: { snippet: string; exitCode: number | null; signal: string | null; stderr: string }[] = [];
+  const exits: Exit[] = [];
+  for (const piece of piecesThatFitACommandLine(list)) exits.push(...(await findExitsOfPiece(executable, cwd, piece)));
+  return exits;
+}
+
+async function findExitsOfPiece(executable: string, cwd: string, list: string[]) {
+  const exits: Exit[] = [];
   for (let next = 0; next <= list.length; ) {
     const { stdout, stderr, exitCode, signal } = await spawned([executable, JSON.stringify(list), String(next)], cwd, bunEnv);
     const lines = stdout.trimEnd().split("\n");

@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test } from "./supported-with-counted-calls";
 
 const layouts = 40;
 const names = Array.from({ length: 12 }, (_, index) => "n" + index);

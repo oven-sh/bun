@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use bun_ast::{ImportKind, Log};
 use bun_paths::is_sep_native;
 
+use crate::compiled_program::compare_source_paths;
 use crate::resolver::Resolver;
 
 /// A file or a folder: where it is on the disk of the build, and where in the executable.
@@ -53,6 +54,12 @@ fn find_name_of_package(file: &[u8]) -> Option<Vec<u8>> {
     }
 }
 
+/// What is left of `path` behind `folder`. The compiler writes `C:/a/b.js` where the resolver writes `C:\a\b.js`.
+fn strip_folder<'p>(path: &'p [u8], folder: &[u8]) -> Option<&'p [u8]> {
+    let (start, rest) = path.split_at_checked(folder.len())?;
+    compare_source_paths(start, folder).is_eq().then_some(rest)
+}
+
 /// The folder and those above it for as long as both of its paths go up together.
 fn with_folders_above<'a>(folder: BuildPaths<'a>) -> impl Iterator<Item = BuildPaths<'a>> {
     core::iter::successors(Some(folder), |folder| {
@@ -78,7 +85,7 @@ impl Resolver<'_> {
         let path = found.path_pair.primary.text();
         let position = entry_points
             .iter()
-            .position(|entry_point| entry_point.source_path == path);
+            .position(|entry_point| compare_source_paths(entry_point.source_path, path).is_eq());
         position.map(|index| index as u32)
     }
 
@@ -141,7 +148,7 @@ impl Resolver<'_> {
                 let real_directory = bun_paths::strings::without_trailing_slash(real_directory);
                 let inside = entry_points
                     .iter()
-                    .filter_map(|file| file.source_path.strip_prefix(real_directory));
+                    .filter_map(|file| strip_folder(file.source_path, real_directory));
                 for path in
                     inside.filter(|path| path.first().is_some_and(|&byte| is_sep_native(byte)))
                 {

@@ -34,6 +34,7 @@ const programs: { path: string; builds: number; flags?: string[] }[] = [
   { path: "programs/objects/literal-accessors-with-data-members.ts", builds: 6 },
   { path: "programs/untyped-code/counter-compared-with-length.js", builds: 6 },
   // Steps of the flow analysis ran side by side, and one of them opened a phase of the type table while another held an arena of it: 5 builds of 200 aborted.
+  { path: "programs/relational-summaries/accessors-arrive-on-the-chain-in-every-way.js", builds: 40 },
   // The same race, 9 builds of 300. And it pulls in enough of Bun's library that code is generated on every thread for a while: the body of a function was
   // released when its code was emitted, while the thread that compiled a caller asked whether the function has a body: 3 builds of 200 reported a call of a function without code.
   { path: "programs/native-callbacks/callbacks-net-sockets-and-their-events.ts", builds: 40, flags: ["--target=bun"] },

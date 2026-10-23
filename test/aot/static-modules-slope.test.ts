@@ -27,7 +27,7 @@ import {
   type Request,
 } from "./instruction-counts/count-instructions";
 import { built, slot, withoutDebugInformation } from "./run-programs";
-import { describe, test, unsupported } from "./supported";
+import { describe, test, unsupported } from "./supported-with-counted-calls";
 
 const sizes = [100, 300, 500];
 

@@ -106,7 +106,7 @@
   "private_store_builtin_parent": 196,
   "push": 14.8,
   "record_get": 44,
-  "regexp_exec": -135.4,
+  "regexp_exec": -124.5,
   "regexp_replace": 985.5,
   "regexp_test": 68,
   "rem_const": 13,

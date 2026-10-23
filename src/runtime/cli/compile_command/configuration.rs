@@ -560,3 +560,16 @@ pub(super) fn output_location(
         root_dir,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unnamed_outfile_is_index() {
+        for outfile in [&b""[..], b".", b"..", b"../"] {
+            assert_eq!(compile_outfile(outfile), b"index");
+        }
+        assert_eq!(compile_outfile(b"../app"), b"../app");
+    }
+}

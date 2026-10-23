@@ -178,6 +178,7 @@ extern "C" int64_t Bun__AOT__frameAtReturnAddress(const void* returnAddress)
     result |= frame->hasFrameRecord() ? 1 : 0;
     result |= frame->isEmpty() ? 2 : 0;
     result |= frame->liesBelowSpilledArguments() ? 4 : 0;
+    result |= JSC::AOT::Image::current()->locate(returnAddress).kind == JSC::AOT::CodeKind::Stub ? 8 : 0;
     return result;
 }
 

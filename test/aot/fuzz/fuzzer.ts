@@ -312,7 +312,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
     // The programs that mutants were made from go first, once each, in every mode: a mutant says nothing in a mode in which its base fails already.
     const inMode = (base: { name: string }, mode: Mode) => `${base.name} ${mode.name}`;
-    const bases = [...new Map(drawn.flatMap(generated => (generated.base && !baseIsSame.has(`${generated.base.name} default`) ? [[generated.base.name, generated.base] as const] : []))).values()];
+    const bases = [...new Map(drawn.flatMap(generated => (generated.base && !baseIsSame.has(inMode(generated.base, bed.modes(generated.base)[0])) ? [[generated.base.name, generated.base] as const] : []))).values()];
     const baseModes = new Map<string, { mode: Mode; members: typeof bases }>();
     for (const base of bases) for (const mode of bed.modes(base)) (baseModes.get(mode.name) ?? baseModes.set(mode.name, { mode, members: [] }).get(mode.name)!).members.push(base);
     for (const { mode, members } of baseModes.values()) {
@@ -322,7 +322,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         const { verdict } = judged[index];
         baseIsSame.set(inMode(base, mode), verdict.kind === "same");
         if (verdict.kind === "same") continue;
-        if (mode.name === "default") rejected.add(base.name);
+        if (mode.name === bed.modes(base)[0].name) rejected.add(base.name);
         appendFileSync(join(out, "corpus-failures.tsv"), `${bed.binary}\t${base.name}\t${mode.name}\t${verdict.kind}\t${isFinding(verdict) ? verdict.detail : verdict.kind === "skipped" ? verdict.why : ""}\n`);
         // The tests that run ../programs see a program that fails by itself. They do not see one that fails only beside others.
         if (!isFinding(verdict) || members.length === 1 || knownAs(bed, mode.name, verdict) || (await alone(bed, folder, base, mode.flags)).verdict.kind !== "same") continue;
@@ -332,7 +332,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         await keepTogether(bed, folder, whole[index], whole, mode, verdict);
       }
     }
-    const usable = drawn.filter(generated => !generated.base || baseIsSame.get(`${generated.base.name} default`));
+    const usable = drawn.filter(generated => !generated.base || baseIsSame.get(inMode(generated.base, bed.modes(generated.base)[0])));
     bump(counts.skipped, "base differs", drawn.length - usable.length);
 
     const modes = new Map<string, { mode: Mode; members: Generated[] }>();
@@ -351,7 +351,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       const judged = await bed.judge(folder, members, mode.flags);
       for (const [index, generated] of members.entries()) {
         const { verdict } = judged[index];
-        if (mode.name === "default" && ["internal compiler error", "build crash", "build hang", "build error"].includes(verdict.kind)) stopsTheBuild.add(generated);
+        if (mode.name === bed.modes(generated)[0].name && ["internal compiler error", "build crash", "build hang", "build error"].includes(verdict.kind)) stopsTheBuild.add(generated);
         if (verdict.kind === "skipped") bump(counts.skipped, verdict.why);
         else bump(counts.runs, `${bed.name} ${mode.name}`);
         inGroup(generated, `${mode.name} ${verdict.kind === "skipped" ? `skipped: ${verdict.why}` : verdict.kind}`);

@@ -406,6 +406,148 @@ for (;;) keep.push(build(10, 1));
     });
   }, 120_000);
 
+  // On the main thread such a loop ends the process ("where no error can be thrown it stops and says why"). A Worker's thread can end alone, so it does: the poll of the loop ends it while the last of the memory is used.
+  test("where no error can be thrown in a Worker, the Worker ends alone", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `import { Worker as NodeWorker } from "node:worker_threads";
+type Entry = { id: number };
+function some(): number {
+  const list: Entry[] = [];
+  for (let i = 0; i < 100_000; i++) list.push({ id: i });
+  return list.length;
+}
+for (const way of ["objects in a try", "objects in a finally", "objects in an async function with a try", "a list in a try", "texts in a try", "closures in a try"]) {
+  await new Promise<void>(resolve => {
+    const worker = new NodeWorker("./worker.ts", { workerData: way });
+    worker.on("message", (said: string) => console.log(way + ": the Worker says:", said));
+    worker.on("error", (error: Error) => console.log(way + ": the Worker ends with:", error.name, error.message, error instanceof RangeError));
+    worker.on("exit", (code: number) => (console.log(way + ": exit", code, "and the main thread goes on:", some()), resolve()));
+  });
+}
+await new Promise<void>(resolve => {
+  const worker = new Worker("./worker.ts", { env: { WAY: "objects in a try" } });
+  worker.onmessage = event => console.log("on the web: the Worker says:", event.data);
+  worker.onerror = event => (console.log("on the web: the Worker ends with:", event.message), event.preventDefault());
+  worker.addEventListener("close", event => (console.log("on the web: close", (event as CloseEvent).code, "and the main thread goes on:", some()), resolve()));
+});
+`,
+      "worker.ts": `import { parentPort, workerData } from "node:worker_threads";
+type Entry = { id: number; next: Entry | null };
+const way: string = workerData ?? process.env.WAY;
+process.on("exit", () => parentPort!.postMessage("an exit listener ran"));
+let head: Entry | null = null;
+if (way === "objects in a try") {
+  try {
+    for (let i = 0; ; i++) head = { id: i, next: head };
+  } catch (error) {
+    head = null;
+    parentPort!.postMessage("caught " + error);
+  }
+} else if (way === "objects in a finally") {
+  try {
+    for (let i = 0; ; i++) head = { id: i, next: head };
+  } finally {
+    head = null;
+    parentPort!.postMessage("the finally ran");
+  }
+} else if (way === "objects in an async function with a try") {
+  await (async () => {
+    try {
+      await 0;
+    } catch {}
+    for (let i = 0; ; i++) head = { id: i, next: head };
+  })();
+} else if (way === "a list in a try") {
+  const list: Entry[] = [];
+  try {
+    for (let i = 0; ; i++) list.push({ id: i, next: null });
+  } catch (error) {
+    list.length = 0;
+    parentPort!.postMessage("caught " + (error as Error).name);
+    process.exit(1);
+  }
+} else if (way === "texts in a try") {
+  const list: string[] = [];
+  try {
+    for (let i = 0; ; i++) list.push("s" + i + "t");
+  } catch (error) {
+    list.length = 0;
+    parentPort!.postMessage("caught " + (error as Error).name);
+    process.exit(1);
+  }
+} else {
+  const list: (() => number)[] = [];
+  try {
+    for (let i = 0; ; i++) list.push(() => i);
+  } catch (error) {
+    list.length = 0;
+    parentPort!.postMessage("caught " + (error as Error).name);
+    process.exit(1);
+  }
+}
+`,
+    });
+    const program = await build(String(folder), "worker.ts");
+    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+    expect(stderr).not.toContain("FATAL");
+    // A push may be what finds the memory gone, and it throws: then the Worker catches the error. Either way it is a RangeError, the Worker ends with 1 and nothing else does.
+    const lines = stdout
+      .split("\n")
+      .filter(
+        line =>
+          !line.endsWith("the Worker says: caught RangeError") &&
+          !line.endsWith("the Worker says: an exit listener ran"),
+      );
+    const alone = (way: string) => [
+      `${way}: the Worker ends with: RangeError Out of memory true`,
+      `${way}: exit 1 and the main thread goes on: 100000`,
+    ];
+    const aloneOrCaught = (way: string) => (lines.includes(alone(way)[0]) ? alone(way) : alone(way).slice(1));
+    expect({ lines, exitCode }).toEqual({
+      lines: [
+        ...alone("objects in a try"),
+        ...alone("objects in a finally"),
+        ...alone("objects in an async function with a try"),
+        ...aloneOrCaught("a list in a try"),
+        ...aloneOrCaught("texts in a try"),
+        ...aloneOrCaught("closures in a try"),
+        "on the web: the Worker ends with: RangeError: Out of memory",
+        "on the web: close 1 and the main thread goes on: 100000",
+        "",
+      ],
+      exitCode: 0,
+    });
+  }, 120_000);
+
+  test("a Worker of a Worker that ends so takes neither its parent nor the main thread along", async () => {
+    using folder = tempDir("aot-heap-limit", {
+      "program.ts": `import { Worker } from "node:worker_threads";
+const worker = new Worker("./parent.ts");
+worker.on("message", (said: string) => console.log(said));
+worker.on("error", (error: Error) => console.log("the parent ends with:", error.name));
+worker.on("exit", (code: number) => console.log("the parent: exit", code));
+`,
+      "parent.ts": `import { Worker, parentPort } from "node:worker_threads";
+const worker = new Worker("./child.ts");
+worker.on("error", (error: Error) => parentPort!.postMessage("the child ends with: " + error.name + " " + error.message));
+worker.on("exit", (code: number) => parentPort!.postMessage("the child: exit " + code));
+`,
+      "child.ts": `type Entry = { id: number; next: Entry | null };
+let head: Entry | null = null;
+try {
+  for (let i = 0; ; i++) head = { id: i, next: head };
+} catch {}
+`,
+    });
+    const program = await build(String(folder), "parent.ts", "child.ts");
+    const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+    expect(stderr).not.toContain("FATAL");
+    expect({ stdout, exitCode }).toEqual({
+      stdout: "the child ends with: RangeError Out of memory\nthe child: exit 1\nthe parent: exit 0\n",
+      exitCode: 0,
+    });
+  }, 120_000);
+
   test("the same program runs to its end in the default range", async () => {
     using folder = tempDir("aot-heap-limit", { "program.ts": keepsEverything });
     const { stdout, exitCode } = await run([await build(String(folder))], String(folder));

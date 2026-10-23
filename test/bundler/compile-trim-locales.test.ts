@@ -2,7 +2,7 @@
 // ICU also opens the data of its own default locale, which it takes from the host: the first date format of a process makes a calendar in it. No program sees that locale
 // (Bun's default is en-US on every host), so the language of the host decides nothing: not where it was removed, and not where the host has none (LANG=C is en_US_POSIX to ICU).
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isMacOS, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
@@ -100,8 +100,8 @@ describe.skipIf(!canTrim)("--trim-locales", () => {
           }).toEqual({
             host,
             stdout: "",
-            stderr:
-              "error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.\n",
+            // It is printed through C's stderr.
+            stderr: `error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.${isWindows ? "\r\n" : "\n"}`,
             exitCode: 70,
           });
         }

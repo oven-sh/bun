@@ -14,6 +14,7 @@ import { test } from "./supported";
 const programs = [
   "type-rules/loop-bounds-that-arrive-boxed.ts",
   "structural-types/typed-arrays-are-read-past-their-end-into-an-int32.ts",
+  "typed-objects/null-checks-of-narrow-references.ts",
 ];
 
 function codeOf(executable: Buffer) {

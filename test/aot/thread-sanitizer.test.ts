@@ -36,6 +36,7 @@ const seen = new Set<string>();
 const threads = 16;
 
 const programs: { path: string; flags?: string[] }[] = [
+  { path: "programs/relational-summaries/accessors-arrive-on-the-chain-in-every-way.js" },
   // It pulls in enough of Bun's library to keep every thread busy, and it goes all the way through code generation and the image.
   { path: "programs/native-callbacks/callbacks-net-sockets-and-their-events.ts", flags: ["--target=bun"] },
   { path: "programs/small-benchmarks/tokens-maps-objects.ts" },

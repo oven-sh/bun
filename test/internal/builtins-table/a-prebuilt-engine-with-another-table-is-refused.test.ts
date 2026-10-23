@@ -102,7 +102,11 @@ test.skipIf(generated === undefined)(
     expect(text).toContain(member);
     using changed = tempDir("schema-with-one-more-method", {
       "sourcemap.bind.ts": text
-        .replace("../../codegen/bindgen-lib.ts", join(bunRoot, "src", "codegen", "bindgen-lib.ts"))
+        // It lands in a string literal, where a backslash begins an escape.
+        .replace(
+          "../../codegen/bindgen-lib.ts",
+          join(bunRoot, "src", "codegen", "bindgen-lib.ts").replaceAll("\\", "/"),
+        )
         .replace(member, `    aMethodNobodyHasYet: { ...find, args: { lineOffset: b.any } },\n${member}`),
     });
     const sources = schemas.map(path => (path === schema ? join(String(changed), "sourcemap.bind.ts") : path));

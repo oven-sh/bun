@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, isWindows } from "harness";
 import { join } from "node:path";
 import { run } from "../../../aot/harness/run";
 
@@ -21,7 +21,7 @@ test("every kind of worker is set up once", async () => {
     join(import.meta.dir, "worker-set-up-by-the-first-to-ask-fixture.js"),
   ]);
   expect({ lines: stdout.trimEnd().split("\n"), stderr, exitCode }).toEqual({
-    lines: expected,
+    lines: expected.filter(line => !isWindows || !line.startsWith("dgram-only: ")),
     stderr: "",
     exitCode: 0,
   });

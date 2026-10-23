@@ -1,5 +1,6 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 
 const i32 = 0x7f;
 const i8 = 0x78;
@@ -73,10 +74,14 @@ test("a WebAssembly GC struct is its 8-byte header and its fields", () => {
   expect(estimateShallowMemoryUsageOf(makePair(1, 2))).toBe(16);
 });
 
-test("a WebAssembly GC array of narrow elements is its 12-byte header and its elements", () => {
-  expect(estimateShallowMemoryUsageOf(makeWords(7, 1))).toBe(16);
-  expect(estimateShallowMemoryUsageOf(makeWords(7, 2))).toBe(32);
-  expect(estimateShallowMemoryUsageOf(makeWords(7, 5))).toBe(32);
-  expect(estimateShallowMemoryUsageOf(makeBytes(4))).toBe(16);
-  expect(estimateShallowMemoryUsageOf(makeBytes(5))).toBe(32);
-});
+// A build with assertions keeps one more field in the header.
+test.skipIf(isASAN || isDebug)(
+  "a WebAssembly GC array of narrow elements is its 12-byte header and its elements",
+  () => {
+    expect(estimateShallowMemoryUsageOf(makeWords(7, 1))).toBe(16);
+    expect(estimateShallowMemoryUsageOf(makeWords(7, 2))).toBe(32);
+    expect(estimateShallowMemoryUsageOf(makeWords(7, 5))).toBe(32);
+    expect(estimateShallowMemoryUsageOf(makeBytes(4))).toBe(16);
+    expect(estimateShallowMemoryUsageOf(makeBytes(5))).toBe(32);
+  },
+);

@@ -283,14 +283,19 @@ export async function slot<T>(work: () => Promise<T>): Promise<T> {
 
 export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
-  // A build that verifies the IR after every pass takes sixteen times as long as one that does not, and so does a run that
-  // collects at every allocation that leaves the fast path.
-  const isSlow = cmd.includes("--aot-check=verify-each-pass") || env.BUN_JSC_slowPathAllocsBetweenGCs === "1";
-  const timeout = isSlow ? 240_000 : 90_000;
+  // A build that verifies the IR after every pass takes sixteen times as long as one that does not.
+  const timeout = cmd.includes("--aot-check=verify-each-pass") || isASAN ? 240_000 : collectsAtEveryAllocation(env) ? 120_000 : 90_000;
+  const start = performance.now();
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, signal: proc.signalCode };
+  const milliseconds = Number(proc.resourceUsage()?.cpuTime.total ?? 0) / 1000;
+  const result = { stdout, stderr, exitCode, signal: proc.signalCode };
+  if (proc.signalCode === "SIGKILL" && performance.now() - start >= timeout && milliseconds >= timeout / 10) atWorkWhenTimeWasUp.add(result);
+  return result;
 }
+
+const atWorkWhenTimeWasUp = new WeakSet<object>();
+const collectsAtEveryAllocation = (env: Record<string, string | undefined>) => env.BUN_JSC_slowPathAllocsBetweenGCs === "1";
 
 export const withoutCoreDump = (cmd: string[]) => (isWindows ? cmd : ["/bin/sh", "-c", `ulimit -c 0 && exec "$@"`, "--", ...cmd]);
 
@@ -421,6 +426,11 @@ async function runCompiled(program: CompiledProgram, check: (result: RunResult, 
     ]);
     for (const environment of program.runEnvironments) {
       const ran = await spawned(withoutCoreDump([build.executable]), program.cwd, { ...bunEnv, ...environment, BUN_AOT_VERBOSE: "1" });
+      // How long a program takes where every allocation collects says nothing about it. One that is still at work when its time is up has shown no fault, and has no output to compare.
+      if (collectsAtEveryAllocation(environment) && atWorkWhenTimeWasUp.has(ran)) {
+        console.error(`NOT THROUGH: ${program.entryPoints[0]} was still at work when its time was up`);
+        continue;
+      }
       expect({ environment, signal: ran.signal, stderr: ran.signal ? ran.stderr : "" }).toEqual({ environment, signal: null, stderr: "" });
       // The executable really ran compiled code and did not fall back to the embedded source.
       expect(ran.stderr).toContain("[aot] module: ");

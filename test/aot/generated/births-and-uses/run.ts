@@ -15,19 +15,22 @@ const tsconfig = JSON.stringify({
 
 /** The pairs are what `programs` of ./<from>.ts returns. */
 export function birthsAndUses(title: string, from: string, isTyped?: boolean, part = 1, parts = 1) {
-  const programs: { name: string; file: string; text: string }[] = require(`./${from}`).programs(isTyped);
+  const generator: { programs(isTyped?: boolean): { name: string; file: string; text: string }[]; oneIn?: number } = require(`./${from}`);
+  const programs = generator.programs(isTyped);
   const differs: Record<string, string> = (known as Record<string, Record<string, string>>)[title] ?? {};
   const wasWrong = new Set((onceWrong as Record<string, string[]>)[title]);
   generated(
     "births and uses of " + title,
-    programs.filter(({ name }) => Number(BigInt(Bun.hash(name)) % BigInt(parts)) === part - 1).map(({ name, file, text }) => ({
-      name,
-      isAlwaysRun: wasWrong.has(name) || Number(BigInt(Bun.hash(title + "/" + name)) % 40n) === 0,
+    programs.filter(({ name }) => Number(BigInt(Bun.hash(name)) % BigInt(parts)) === part - 1).map(program => ({
+      name: program.name,
+      // A generator of very many programs says how few of them every run takes.
+      isAlwaysRun: wasWrong.has(program.name) || Number(BigInt(Bun.hash(title + "/" + program.name)) % BigInt(generator.oneIn ?? 40)) === 0,
       isOnlyCompiled: true as const,
       // Some pairs are no program: a use that does not parse behind that birth, or that TypeScript rejects.
       mayBeUnjudgeable: true as const,
-      failsToday: differs[name],
-      make: () => ({ file, text, files: file.endsWith(".ts") ? { "tsconfig.json": tsconfig } : undefined }),
+      failsToday: differs[program.name],
+      // And makes the text of a program when it is asked for.
+      make: () => ({ file: program.file, text: program.text, files: program.file.endsWith(".ts") ? { "tsconfig.json": tsconfig } : undefined }),
     })),
   );
 }

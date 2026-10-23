@@ -764,8 +764,11 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, Messa
         builder.append(')');
         return;
     }
-    if (auto* object = cell->getObject(); object && describesWithoutScript(globalObject))
-        return describeObjectWithoutScript(vm, globalObject, builder, object);
+    if (auto* object = cell->getObject(); object && describesWithoutScript(globalObject)) {
+        describeObjectWithoutScript(vm, globalObject, builder, object);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
     if (cell->isObject()) {
         auto constructor = value.get(globalObject, vm.propertyNames->constructor);
         RETURN_IF_EXCEPTION(scope, void());

@@ -5,7 +5,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawned } from "./run-programs";
-import { beforeAll, describe, test } from "./supported";
+import { beforeAll, describe, test } from "./supported-with-counted-calls";
 
 const groups = 64;
 const namesInGroup = 8;

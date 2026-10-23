@@ -250,3 +250,136 @@ fn write_plain_message(
     out.extend_from_slice(&data.text);
     out.push(b'\n');
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bun_ast::{Data, Kind, Location};
+    use bun_options_types::aot_options::{BuildReportRequest, ReportDetail};
+    use std::borrow::Cow;
+
+    fn located(text: &'static [u8]) -> Data {
+        Data {
+            text: Cow::Borrowed(text),
+            location: Some(Location {
+                file: Cow::Borrowed(b"/project/a.ts"),
+                line: 1,
+                column: 14,
+                ..Default::default()
+            }),
+        }
+    }
+
+    fn plain_message(kind: Kind, data: &Data, indent: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_plain_message(&mut out, kind, data, b"/project", indent);
+        out
+    }
+
+    #[test]
+    fn errors_line_counts_files() {
+        let mut log = bun_ast::Log::init();
+        for text in [&b"TS2322: x"[..], b"TS2322: y"] {
+            log.msgs.push(bun_ast::Msg {
+                kind: Kind::Err,
+                data: Data {
+                    text: Cow::Borrowed(text),
+                    ..located(b"")
+                },
+                ..Default::default()
+            });
+            log.errors += 1;
+        }
+        assert_eq!(
+            errors_line(&log, 3),
+            b"Found 2 errors in 1 file, checked 3 files"
+        );
+        assert_eq!(errors_line(&log, 0), b"Found 2 errors in 1 file");
+    }
+
+    #[test]
+    fn plain_message_with_location() {
+        let data = located(b"TS2322: x");
+        assert_eq!(
+            plain_message(Kind::Err, &data, b""),
+            b"a.ts(1,14): error TS2322: x\n"
+        );
+    }
+
+    #[test]
+    fn plain_warning() {
+        let data = located(b"x");
+        assert_eq!(
+            plain_message(Kind::Warn, &data, b""),
+            b"a.ts(1,14): warning x\n"
+        );
+    }
+
+    #[test]
+    fn plain_note_with_indent() {
+        let data = located(b"x");
+        assert_eq!(
+            plain_message(Kind::Note, &data, b"  "),
+            b"  a.ts(1,14): x\n"
+        );
+    }
+
+    #[test]
+    fn plain_message_without_location() {
+        let data = Data {
+            text: Cow::Borrowed(b"x"),
+            location: None,
+        };
+        assert_eq!(plain_message(Kind::Err, &data, b""), b"error x\n");
+    }
+
+    #[test]
+    fn plain_verbose_message_is_skipped() {
+        assert!(plain_message(Kind::Verbose, &located(b"x"), b"").is_empty());
+    }
+
+    #[test]
+    fn defines_split_at_first_separator() {
+        let written: [&'static [u8]; 2] = [b"process.env.NODE_ENV=\"production\"", b"LIMIT:1=2"];
+        let define = arguments::resolve_defines(&written)
+            .ok()
+            .flatten()
+            .expect("two defines");
+        let owned = |list: [&[u8]; 2]| list.map(Box::<[u8]>::from);
+        assert_eq!(define.keys, owned([b"process.env.NODE_ENV", b"LIMIT"]));
+        assert_eq!(define.values, owned([b"\"production\"", b"1=2"]));
+    }
+
+    #[test]
+    fn no_defines_leave_context_unset() {
+        let define = arguments::resolve_defines(&[]).ok().expect("accepted");
+        assert!(define.is_none());
+    }
+
+    fn build_report_of(options: &Options) -> Option<BuildReportRequest> {
+        let mut aot = AotOptions::default();
+        set_build_report(&mut aot, options);
+        aot.build_report
+    }
+
+    #[test]
+    fn report_flags_set_build_report() {
+        let options = Options {
+            report_path: Some(b"report.json"),
+            report_detail: Some(b"sites"),
+            ..Default::default()
+        };
+        assert_eq!(
+            build_report_of(&options),
+            Some(BuildReportRequest {
+                path: Box::from(&b"report.json"[..]),
+                detail: ReportDetail::Sites,
+            })
+        );
+    }
+
+    #[test]
+    fn no_report_flags_leave_build_report_unset() {
+        assert_eq!(build_report_of(&Options::default()), None);
+    }
+}

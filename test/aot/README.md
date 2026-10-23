@@ -44,7 +44,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Nothing has to be registered.** `scripts/runner.node.ts` runs every file under `test/` whose name contains `.test.` or `spec.`.
   For the same reason no program or helper below this folder may have such a name.
 - **This folder has steps of its own**, `<platform>-test-aot` (`getAotTests()` in `.buildkite/ci.ts`), and the `test-bun` shards leave
-  it out: it costs twice the rest of `test/`. A pull request that touches a path in `aotSources` of `.buildkite/ci.ts` (`src/aot`,
+  it out: it costs twice the rest of `test/`. With it go the tests of `--aot` and `--trim` that lie elsewhere (`aotTests` there:
+  `bundler/bundler_compile_aot`, `bundler/compile-aot*`, `bundler/compile-trim*`, `bundler/trim-runtime-icu`, `cli/aot-*`): on macOS,
+  where `test-bun` has two shards, they took as long as everything else in them. What follows holds for them too. A pull request that touches a path in `aotSources` of `.buildkite/ci.ts` (`src/aot`,
   `src/sema`, `src/builtin_sources`, `src/bundler/aot`, `src/trim`, `src/exe_format`, `src/codegen/aot-schema`, `src/codegen/builtins`,
   `src/options_types/aot_options.rs`, `scripts/build/aot*`, `scripts/build/trim`, `packages/bun-sound`, this folder, the pinned WebKit,
   and the host's files for compiled programs: `src/resolver/compiled_program.rs`, `src/standalone_graph/executable_*`,
@@ -57,7 +59,7 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the commit and the path, so
   every shard makes the same one, each commit takes other files, and in time all are taken.
   `BUILDKITE_COMMIT=<commit> scripts/runner.node.ts --include=aot/ --one-in=<n>` makes it again.
-- **The number of shards follows from the `aot/` lines of `test/expected-durations.json`**, twelve minutes to a shard and at most 24 (13 on arm64, 8 on macOS), and
+- **The number of shards follows from the lines of these tests in `test/expected-durations.json`**, twelve minutes to a shard and at most 27 (16 on arm64, 8 on macOS), and
   the files are dealt out by those lines. A file without a line adds nothing to the number of shards and is dealt out as the median of the
   folder: a new file that takes minutes needs a line. `scripts/update-test-durations.mjs` renews them from builds that ran all of the
   folder.
@@ -66,6 +68,8 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `test.skipIf(!!unsupported)` with `unsupported` of `run-programs.ts` where only some of its tests use it. Never a list of
   platforms: the Bun under test is asked. `test-files-self-skip.test.ts` reads every test file of the repository that is in
   this folder or whose text uses the flag, and is red if one does not ask.
+- **A file whose tests read the lines `operation:` of `BUN_JSC_aotCountsPath`** imports the three names from `./supported-with-counted-calls` instead:
+  the run time counts no calls of its operations on Windows (that file says why), and a count of nothing proves nothing.
 - **A skip says why on stderr**: `console.error("SKIPPED: <file>: <what is missing, what switches it on>")`. Neither reporter prints the
   name of a skipped test, and CI's prints a dot.
 - **A test file is a process in CI, and `bun test test/aot` is one process for all.** What a helper keeps in a variable of its

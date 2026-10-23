@@ -10,7 +10,7 @@
 // program reports a type mismatch: a mutant can type-check and still hand a value to a type it does not fit, through `any` or a cast.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { join } from "path";
 import { freshSeed } from "./fresh-seed";
@@ -117,7 +117,7 @@ async function run(cmd: string[], cwd: string, timeout: number) {
 // "same", "skipped" (does not build, too slow, or a reported type mismatch), or what went wrong.
 async function compare(folder: string, source: string): Promise<string> {
   writeFileSync(join(folder, "main.ts"), source);
-  rmSync(join(folder, "compiled"), { force: true });
+  rmSync(join(folder, isWindows ? "compiled.exe" : "compiled"), { force: true });
   const built = await run(
     [bunExe(), "build", "--compile", "--aot", "./main.ts", "--outfile", "./compiled"],
     folder,
@@ -125,7 +125,7 @@ async function compare(folder: string, source: string): Promise<string> {
   );
   if (built.signal || /\bpanic/.test(built.stdout + built.stderr)) return "the build crashed";
   if (built.timedOut) return "the build hangs";
-  if (!existsSync(join(folder, "compiled"))) return "skipped";
+  if (!existsSync(join(folder, isWindows ? "compiled.exe" : "compiled"))) return "skipped";
   const [compiled, interpreted] = [
     await run(["./compiled"], folder, 30_000),
     await run([bunExe(), "run", "./main.ts"], folder, 30_000),

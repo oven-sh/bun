@@ -317,25 +317,64 @@ RangeError: bad id -1
 
 ## Crashes
 
-When the process crashes, Bun prints its crash report. For a compiled executable, the report ends with the functions of your program that were on the stack.
+When the process crashes, Bun prints its crash report to stderr. For a compiled executable, the report says which of your builds crashed, and it ends with the functions of your program that were on the stack.
 
 ```txt
-panic(main thread): Segmentation fault at address 0x8
+============================================================
+Bun v1.4.4 (24eaedc6) Linux x64
+Build ID: 5f0c2a9e41d7b3860e9d4c17a2f3b658
+Linux Kernel v6.1.170 | glibc v2.34
+Args: "./app"
+Features: jsc standalone_executable aot
+
+panic(main thread): Segmentation fault at address 0x18
 oh no: Bun has crashed. This indicates a bug in Bun, not your code.
 
- https://bun.report/1.4.4/M_24eaedc6E…CmBaot5f0c2a9e41d7b386mh6QCGaot+kmTCGaot+7iT…
+ https://bun.report/1.4.4/l_24eaedc6E…CmBaot5f0c2a9e41d7b386mpuSCGaot6ovUCGaotit3U…
 
 Compiled JavaScript on the stack:
-    at peek (/$bunfs/root/app.ts:6:17)
-    at sum (/$bunfs/root/app.ts:11:47)
-    at /$bunfs/root/app.ts:19:13
+    at lineTotal (/$bunfs/root/app.ts:17:17)
+    at total (/$bunfs/root/app.ts:11:43)
+    at checkout (/$bunfs/root/app.ts:23:23)
 ```
 
-These lines only go to stderr. The link has offsets into your executable and the first 16 digits of its [build ID](#build-id), and none of your names or paths. If all you have is the link, pass it back to the same executable. It prints the lines and exits without running your program.
+### From a crash to a line of your source
 
-```bash terminal icon="terminal"
-BUN_OPTIONS='--aot-decode-crash-report=https://bun.report/1.4.4/M_24eaedc6E…' ./app
-```
+You need what the process wrote to stderr. You don't need a core file, a debugger or a source map.
+
+<Steps>
+  <Step title="Find the report">
+    Search the log for `Bun has crashed`. The report starts at the line of `=` above it and ends after the lines that start with `at`.
+  </Step>
+  <Step title="Find the build">
+    The line `Build ID:` names the build. It's the ID that `bun compile` printed when you built that executable. To ask an executable for its ID, run `BUN_OPTIONS=--aot-build-id ./app`. Check out the sources of that build: the lines and columns below are theirs.
+  </Step>
+  <Step title="Read the function and the line">
+    Under `Compiled JavaScript on the stack:`, the first line is the function that was running, and each line below it is that function's caller. Drop `/$bunfs/root/` from a path to get the path of the file, relative to the directory where you ran the build.
+  </Step>
+  <Step title="If the log only has the link">
+    Pass the link to the executable with that build ID. It prints the same lines and exits without running your program.
+
+    ```bash terminal icon="terminal"
+    BUN_OPTIONS='--aot-decode-crash-report=https://bun.report/1.4.4/l_24eaedc6E…' ./app
+    ```
+
+  </Step>
+  <Step title="Report it">
+    A crash is a bug in Bun. [Open an issue](https://github.com/oven-sh/bun/issues) with the report. The function that the first line names is the place to start when you cut your program down to a small one that still crashes.
+  </Step>
+</Steps>
+
+How to read the lines:
+
+- **Every line but the first is a call.** It has the line and column of the call that hadn't returned yet, as in a stack trace.
+- **The first line is the last call or check that the function reached before the crash.** If the crash happened in a function of Bun that your function called, it's that call. If it happened in the compiled code of your function, the statement that crashed is at that place or soon after it in the same function.
+- **Inlined functions have lines of their own**, as in a stack trace.
+- **An `async` function is on the stack while it runs.** The functions that wait for it with `await` aren't on the stack, so they aren't listed.
+- **The report follows 20 frames** of machine code, the frames of Bun included. A deeper stack is cut off at its outer end.
+- **`Segmentation fault at address`** is followed by the address that the program tried to read or write, not by a place in your program.
+
+The lines with your names and paths only go to stderr. The link has offsets into your executable and the first 16 digits of its [build ID](#build-id), and none of your names or paths.
 
 Only the build that produced a link can read it, so keep each executable that you deploy. Any other build prints the start of both build IDs and exits with code `1`.
 

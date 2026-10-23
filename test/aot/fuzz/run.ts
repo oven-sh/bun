@@ -14,6 +14,14 @@
 //   --sources a,b:8       of mutation, grammar, protocols, new-targets, object-mutations, typed-object-mutations, unsound-types (default: all). A number is a weight: b is drawn eight times as often as a
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
+//   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and five that run only when named here:
+//                         erased-and-hot, nothing-inlined, hot-and-nothing-inlined, no-flow-results, hot-without-flow-results
+//   --collector-stress 1,2,3,5,7,11   the executable runs with a collection at every n-th allocation that leaves the fast path, freed cells overwritten and never reused;
+//                         n and whether the collections are full or young are drawn anew for every batch and stand among the flags of a finding as --in-the-run=<variable>
+//   --workers <n>         n workers run each program at once, each for itself, in place of the main thread; lines are compared in any order
+//   --as-a-user           the compiler's verifiers stay off, as in a user's build: what they would refuse is built and run
+//   --environment "A=1 B=2"      set for every process; --run-environment the same for the run of the executable alone (the collector's options, say)
+//   --run-seconds <n>     the time a plain run may take (default 20); --compiled-run-seconds <n> the executable's (default: the same)
 //   --known <file>        findings that are counted and not kept, in the form of accepted-differences.tsv beside this file, which is always read
 //                         (may be repeated)
 //   --work <folder>       where programs and executables are written (default /dev/shm if it exists)
@@ -27,7 +35,7 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { availableParallelism } from "os";
 import { join } from "path";
-import { EngineBed, ProductBed, type Bed } from "./beds";
+import { changeEnvironment, EngineBed, ProductBed, type Bed } from "./beds";
 import { fuzz } from "./fuzzer";
 import { allSources } from "./sources";
 
@@ -38,16 +46,18 @@ function option(name: string): string | undefined {
 const options = (name: string) => process.argv.flatMap((word, at) => (word === "--" + name ? [process.argv[at + 1]] : []));
 const has = (name: string) => process.argv.includes("--" + name);
 const words = (text: string | undefined) => (text ?? "").split(/\s+/).filter(Boolean);
+const pairs = (text: string | undefined) => Object.fromEntries(words(text).map(word => [word.slice(0, word.indexOf("=")), word.slice(word.indexOf("=") + 1)]));
 
 const work = join(option("work") ?? (existsSync("/dev/shm") ? "/dev/shm" : (process.env.TMPDIR ?? "/tmp")), `aot-fuzz-${process.pid}`);
 const programsRoot = option("programs-root") ?? join(import.meta.dir, "..", "programs");
 const replay = option("replay");
 
+changeEnvironment(pairs(option("environment")), has("as-a-user"));
 const beds: { bed: Bed; jobs: number }[] = [];
 const productJobs = Number(option("jobs") ?? Math.max(1, availableParallelism() >> 2));
 const engineJobs = Number(option("engine-jobs") ?? 0);
 if (replay ? option("bed") !== "engine" : productJobs > 0)
-  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: 20 }) }); // prettier-ignore
+  beds.push({ jobs: productJobs, bed: new ProductBed(option("bun") ?? process.execPath, { baseFlags: words(option("flags")), validate: has("validate"), threads: Number(option("threads") ?? 4), buildSeconds: Number(option("build-seconds") ?? 300), runSeconds: Number(option("run-seconds") ?? 20), compiledRunSeconds: option("compiled-run-seconds") ? Number(option("compiled-run-seconds")) : undefined, runEnvironment: pairs(option("run-environment")), modes: option("modes")?.split(","), workers: Number(option("workers") ?? 0), collectorStress: option("collector-stress")?.split(",").map(Number) }) }); // prettier-ignore
 if (option("engine") && (replay ? option("bed") === "engine" : engineJobs > 0))
   beds.push({ jobs: engineJobs, bed: new EngineBed(option("engine")!, { baseFlags: words(option("engine-flags")), validate: has("validate"), buildSeconds: 60, runSeconds: 10 }) });
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
 import http from "node:http";
 import path from "node:path";
-import { Duplex } from "node:stream";
+import { Duplex, getDefaultHighWaterMark } from "node:stream";
 import { RawHttpConnection, get, post } from "./raw-http-client";
 
 const fixture = path.join(import.meta.dir, "node-http-fast-path-regressions-fixture.ts");
@@ -206,7 +206,12 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
         paths.map(requestPath => get(requestPath)),
       );
       expect({ log, stderr, exitCode }).toEqual({
-        log: paths.map(requestPath => [requestPath, true, Number(requestPath.split("/")[2]), false]),
+        // The default is 16 KiB on Windows and 64 KiB elsewhere.
+        log: paths.map(requestPath => {
+          const size = Number(requestPath.split("/")[2]);
+          const waits = size > getDefaultHighWaterMark(false);
+          return [requestPath, !waits, size, waits];
+        }),
         stderr: "",
         exitCode: 0,
       });

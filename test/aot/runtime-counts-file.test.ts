@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { registry } from "./harness/registry";
 import { built, spawned } from "./run-programs";
-import { beforeAll, describe, test } from "./supported";
+import { beforeAll, describe, test } from "./supported-with-counted-calls";
 
 // `export {}` makes the module strict. In sloppy code eval's JSON shortcut answers "1" and nothing is interpreted.
 const files = {

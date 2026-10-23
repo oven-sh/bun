@@ -141,6 +141,10 @@ for (const [module, [first, use, others], beside] of TABLE) {
       } else {
         filesWritten[name + "." + extension] = text;
       }
+      // Its stored output is the refusal of a loader that the compiler did not see, and what the compiler sees is a result of flow.
+      if (way === "get-builtin-module-under-a-computed-key") {
+        filesWritten[name + ".json"] = '{ "skipInVariant": { "no-flow-results": "without the results of flow the loader answers, as under plain Bun" } }\n';
+      }
     }
   }
 }

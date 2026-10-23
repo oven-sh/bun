@@ -79,7 +79,10 @@ test("the visible surface of the modules of Node.js", () => {
       if (typeof held === "function" || isPlain) describe(held, name, depth - 1);
     }
   };
-  for (const id of modules) describe(require(`node:${id}`), id, 4);
+  // node:path is path.win32 on Windows and path.posix elsewhere, and each holds the other: the walk starts at the same one everywhere.
+  const path = require("node:path");
+  expect(path).toBe(process.platform === "win32" ? path.win32 : path.posix);
+  for (const id of modules) describe(id === "path" ? path.posix : require(`node:${id}`), id, 4);
   expect(lines.join("\n")).toMatchSnapshot();
 });
 

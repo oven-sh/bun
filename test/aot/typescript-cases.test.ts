@@ -13,7 +13,7 @@
 // output is not deterministic.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { dirname, join } from "path";
 import { unsupported, withoutDebugInformation } from "./run-programs";
@@ -144,7 +144,7 @@ async function judge(folder: string, source: string): Promise<string> {
   if (built.signal || /\bpanic/.test(said)) return "the build crashed";
   if (built.timedOut) return "the build hangs";
   const interpreted = await run([bunExe(), "run", "./" + entryPoint], folder, 20_000);
-  if (!existsSync(join(folder, "compiled"))) {
+  if (!existsSync(join(folder, isWindows ? "compiled.exe" : "compiled"))) {
     const refusal = /error: [^\n]*bun compile does not support ([^\n]*)/.exec(said);
     if (refusal) return interpreted.exitCode === 0 ? "unsupported: " + refusal[1].slice(0, 60) : "skipped";
     if (/error: internal/.test(said)) return "internal compiler error";

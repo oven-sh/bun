@@ -193,6 +193,11 @@ extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
     proxy->parentContextWillDestroy();
 }
 
+extern "C" void WebWorker__postOutOfMemoryError(WorkerMessagingProxy* proxy)
+{
+    proxy->postOutOfMemoryErrorToWorkerObject();
+}
+
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report
 // it to the Worker object.
 extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, WorkerMessagingProxy* proxy, BunString message, JSC::EncodedJSValue errorValue)

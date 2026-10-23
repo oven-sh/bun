@@ -1,7 +1,7 @@
 import { afterAll, expect } from "bun:test";
 import { createHash } from "crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { dirname, join } from "path";
 import { describe, test } from "../aot/supported";
 
@@ -100,7 +100,7 @@ const unused = (directory: string, why: string) => [
 async function builtWithout(folder: string, flags?: string[]) {
   const build = await compiled(folder, flags);
   const said = (build.stdout + build.stderr).split("\n").filter(line => /typed version/.test(line));
-  return { said, exitCode: build.exitCode, wroteExecutable: existsSync(join(folder, "app")) };
+  return { said, exitCode: build.exitCode, wroteExecutable: existsSync(join(folder, isWindows ? "app.exe" : "app")) };
 }
 // A typed version is only used if everything matches. Otherwise the build goes on as if it were not there, and says what did not match.
 const warned = (directory: string, why: string, alsoSaid: string[] = []) => ({

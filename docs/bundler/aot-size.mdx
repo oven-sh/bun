@@ -405,12 +405,11 @@ To keep an API, use it somewhere in your code or add it to [`compile.trim.allow`
 Bun.escapeHTML was removed by --trim because your code never uses it. To keep it, use it somewhere in your code.
 ```
 
-| Code in a string, or a native addon                                       | With the feature removed                                   |
-| ------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| `typeof HTMLRewriter`, `"HTMLRewriter" in globalThis`, `Object.keys(Bun)` | The same as before                                         |
-| `new HTMLRewriter()`, `Bun.color("red", "hex")`                           | Throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`  |
-| `import("bun:sqlite")`, `require("bun:sqlite")`                           | Throws an `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"` |
-| `process.getBuiltinModule("node:sqlite")`                                 | `undefined`, like for any module that doesn't exist        |
+| Code in a string, or a native addon                                                        | With the feature removed                                   |
+| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `typeof HTMLRewriter`, `"HTMLRewriter" in globalThis`, `Object.keys(Bun)`                  | The same as before                                         |
+| `new HTMLRewriter()`, `Bun.color("red", "hex")`                                            | Throws an `Error` whose `code` is `"ERR_FEATURE_REMOVED"`  |
+| `import("bun:sqlite")`, `require("bun:sqlite")`, `process.getBuiltinModule("node:sqlite")` | Throws an `Error` whose `code` is `"ERR_MODULE_NOT_FOUND"` |
 
 A check such as `if (Bun.Image)` or `typeof HTMLRewriter === "function"` can't tell that the feature is gone: the code takes the same path as before, and throws where it uses the feature. A `try` block around the call can.
 

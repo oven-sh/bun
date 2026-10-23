@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { built, spawned } from "./run-programs";
-import { test } from "./supported";
+import { test } from "./supported-with-counted-calls";
 
 const files = {
   "main.ts": `

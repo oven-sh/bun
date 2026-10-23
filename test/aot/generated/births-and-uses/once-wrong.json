@@ -3944,5 +3944,25 @@
     "spread-set-records-valuesOfHeld",
     "spread-set-texts-entriesOfHeld",
     "spread-set-texts-valuesOfHeld"
+  ],
+  "two kinds of object at one place": [
+    "changes-literal-bare",
+    "changes-literal-fields",
+    "changes-literal-frozen",
+    "changes-literal-getter",
+    "changes-literal-missing",
+    "changes-literal-nested",
+    "changes-literal-nothing",
+    "changes-literal-otherOrder",
+    "changes-literal-spread",
+    "changes-literal-withMethod",
+    "changes-nothing-assigned",
+    "changes-nothing-computed",
+    "changes-nothing-fields",
+    "changes-nothing-fromEntries",
+    "changes-nothing-more",
+    "changes-nothing-onlyB",
+    "changes-nothing-ring",
+    "changes-nothing-symbolKey"
   ]
 }

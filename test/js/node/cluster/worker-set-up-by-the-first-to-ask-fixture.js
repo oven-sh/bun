@@ -2,7 +2,10 @@ const kind = process.env.WORKER_KIND;
 if (kind === undefined) {
   const cluster = require("node:cluster");
   const lines = [];
-  const kinds = ["requires-cluster", "net-only", "http-only", "net-then-cluster", "never-listens", "dgram-only", "dgram-exclusive", "dgram-not-a-worker"];
+  // A worker cannot share a dgram socket on Windows: ENOTSUP, as in Node.js.
+  const kinds = ["requires-cluster", "net-only", "http-only", "net-then-cluster", "never-listens", "dgram-only", "dgram-exclusive", "dgram-not-a-worker"].filter(
+    k => k !== "dgram-only" || process.platform !== "win32",
+  );
   let left = kinds.length;
   lines.push(`primary ${cluster.isPrimary} ${cluster.isWorker} ${"NODE_UNIQUE_ID" in process.env} ${Object.keys(cluster).sort().join()}`);
   for (const k of kinds) {

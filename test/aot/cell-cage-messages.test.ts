@@ -18,7 +18,8 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  // The engine prints through C's stderr, which ends a line with \r\n on Windows.
+  return { stdout, stderr: stderr.replaceAll("\r\n", "\n"), exitCode, signalCode: proc.signalCode };
 }
 
 const printsProgramOutput = { stdout: "ran\n", stderr: "", exitCode: 0, signalCode: null };

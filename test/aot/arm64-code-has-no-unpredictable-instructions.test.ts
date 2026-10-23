@@ -6,7 +6,7 @@
 // end of a buffer at its start", which is how a text that grows in the frame of its function begins.
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, slot, spawned, unsupported } from "./run-programs";
 
@@ -109,7 +109,7 @@ test.skipIf(!!unsupported || process.arch !== "arm64").each(programs)(
       const program = join(import.meta.dir, "programs", name);
       using dir = tempDir("aot-arm64-unpredictable", {});
       const folder = String(dir);
-      const executable = join(folder, "entry");
+      const executable = join(folder, isWindows ? "entry.exe" : "entry");
       const mapPath = join(folder, "entry.map");
       built(
         await spawned(

@@ -94,7 +94,7 @@ describe("which builds compile WebKit", () => {
     const cfg = linux({ buildDir, cacheDir: join(String(dir), "cache"), buildType: "Release" });
     const source = webkit.source(cfg);
     if (source.kind !== "prebuilt") throw new Error(`a ${source.kind} source`);
-    const objects = (name: string) => join("lib", `lib${name}-objects.a`);
+    const objects = (name: string) => `lib/lib${name}-objects.a`;
 
     expect(webkit.provides(cfg).contentsDecideGraph).toBe(true);
     expect(prebuiltHasProgramObjects(cfg)).toBe(false);

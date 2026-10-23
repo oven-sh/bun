@@ -136,6 +136,9 @@ def run_program(program):
 
     code, output = toolchain.run_image(image, entries[0], env, os.environ.get("RUN_OPTIONS", "").split(), cwd=cwd)
     output = without_times(output)
+    needed = re.search(r"^AOT: the program needs the host's (.*), and this realm has no host$", output, re.M)
+    if needed:
+        return "skipped: it needs the host's " + needed.group(1)
     if code is None or code < 0:
         return f"DIFFERS: {'timed out' if code is None else f'died of signal {-code}'}: " + " | ".join(output.strip().split("\n")[-2:])[:220]
 

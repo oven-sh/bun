@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { withoutCollections } from "./harness/counted-run";
 import { runtimeEnvironment } from "./harness/flags";
 import { built, spawned } from "./run-programs";
-import { beforeAll, describe, test } from "./supported";
+import { beforeAll, describe, test } from "./supported-with-counted-calls";
 
 // What a server does to the object of each request: another prototype, then some properties that its class does not have.
 // Between two requests no such object is alive, and a full collection may come just then.

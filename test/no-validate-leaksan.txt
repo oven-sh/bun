@@ -3,11 +3,18 @@
 # Third-party build tools and packages load native addons; plain Bun leaks in
 # napi_create_threadsafe_function and process.dlopen.
 test/aot/frameworks/angular.test.ts
+test/aot/frameworks/angular-one-file.test.ts
 test/aot/frameworks/astro.test.ts
+test/aot/frameworks/astro-one-file.test.ts
 test/aot/frameworks/next.test.ts
+test/aot/frameworks/next-one-file.test.ts
 test/aot/frameworks/nuxt.test.ts
+test/aot/frameworks/nuxt-one-file.test.ts
 test/aot/frameworks/react-router.test.ts
+test/aot/frameworks/react-router-one-file.test.ts
 test/aot/frameworks/sveltekit.test.ts
+test/aot/frameworks/sveltekit-one-file.test.ts
+test/aot/build-plugins-native.test.ts
 test/aot/backend-packages/programs-2.test.ts
 test/aot/backend-packages/programs-3.test.ts
 test/aot/backend-packages/programs-4.test.ts

@@ -148,6 +148,7 @@ export const generators: Record<string, () => Generator> = {
   "objects-that-are-not-what-their-layout-says": () =>
     require("./generate/objects-that-are-not-what-their-layout-says"),
   "private-class-members": () => require("./generate/private-class-members"),
+  "relations-at-random": () => require("./generate-relations-at-random"),
   "site-records": () => require("./generate/site-records"),
   "soundness": () => require("./generate/soundness"),
   "strings": () => require("./generate/strings"),

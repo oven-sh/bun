@@ -7,7 +7,8 @@
 // no clock, the same at any load. From each the same number of a program that prints one line is taken away: what is left is the program's own.
 //
 //   millionInstructions      what the run executes in user mode, on all threads (perf_event_open; not judged where that may not be used), with a collector
-//                            that works on the thread of the program alone: two runs differ by a thousandth
+//                            that works on the thread of the program alone: two runs differ by a thousandth. Not judged on musl: the budgets are
+//                            measured on glibc, and a program that allocates runs a fifth more there in the C library and the allocator
 //   testsFailed              the tests that the compiler put in front of what it expects, and that took the side it laid out as the less likely one
 //   alwaysFailing            the places whose test ran and failed every time: they cost the test and the slow side and buy nothing
 //   accessesByName           the accesses that looked a property up by its name or by a key instead of loading a slot
@@ -24,7 +25,7 @@
 // Each program prints one line that begins with BUDGET.
 import { afterAll, beforeAll, expect } from "bun:test";
 import { cpSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, tempDir } from "harness";
 import { basename, join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import {
@@ -61,6 +62,8 @@ const skipped =
       ? "a debug or ASAN build counts other instructions"
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/perf/small-benchmarks.test.ts: ${skipped}`);
+else if (isMusl)
+  console.error("SKIPPED: test/aot/perf/small-benchmarks.test.ts: millionInstructions: the budgets are those of glibc");
 
 const allowed = (budget: number, what: (typeof numbers)[number]) =>
   what === "millionInstructions" ? budget * 1.03 + 2 : budget * 1.01 + 2;
@@ -123,7 +126,7 @@ describe.skipIf(!!skipped)("compile/aot/perf/small benchmarks", () => {
     const added = work.tests.filter(each => testsAddedByTheCompiler.has(each.kind));
     return {
       printed: ran.stdout,
-      millionInstructions: instructions === undefined ? NaN : Math.round(instructions / 1e6),
+      millionInstructions: instructions === undefined || isMusl ? NaN : Math.round(instructions / 1e6),
       testsFailed: added.reduce((sum, each) => sum + each.failed, 0),
       alwaysFailing: alwaysFailing(added).length,
       accessesByName: work.accessesByName,

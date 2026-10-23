@@ -307,6 +307,8 @@ void discardBackEndOptionsOfEnvironment();
 }
 
 extern "C" [[noreturn]] void Bun__outOfMemory();
+extern "C" void* Bun__getVM();
+extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
 
 static bool locksBuiltinsWithoutImage;
 
@@ -342,6 +344,7 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
+        JSC::MarkedBlockCage::setLastReserveHandler([](JSC::VM&) { WebWorker__endForExhaustedHeap(Bun__getVM()); });
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             JSC::Options::useWasm() = false;

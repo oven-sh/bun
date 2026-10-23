@@ -1,6 +1,6 @@
 import { spawn, type Subprocess } from "bun";
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 import { beforeAll, describe, test } from "../../aot/supported";
 import { SocketFramer } from "./socket-framer";
@@ -169,9 +169,12 @@ test("a debugger attached to an executable built without --aot gets no notice an
 describe("the inspector on an executable built with --aot --compile-inspector", () => {
   let session: Session;
 
-  beforeAll(async () => {
-    session = await inspected(["--aot", "--compile-inspector"]);
-  }, 60_000);
+  beforeAll(
+    async () => {
+      session = await inspected(["--aot", "--compile-inspector"]);
+    },
+    isASAN ? 180_000 : 60_000,
+  );
   afterAll(() => session.close());
 
   test("a debugger is notified that it cannot pause in compiled code", async () => {

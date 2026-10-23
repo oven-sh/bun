@@ -24,6 +24,12 @@ PLACED = "CheckPlacement"  # PassID: the last pass of the pipeline
 
 os.environ.update(NO_COLOR="1", BUN_ENABLE_CRASH_REPORTING="0", BUN_DEBUG_QUIET_LOGS="1")
 
+# A tool that dies of a signal is a verdict here ("died of signal 11"). Its core file says nothing more, and a runner that looks for core files takes each for a failure of the test file.
+with contextlib.suppress(ImportError):
+    import resource
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, resource.getrlimit(resource.RLIMIT_CORE)[1]))
+
 
 class ToolFailed(Exception):
     """A tool did not produce its output. `code`: its exit code, negative for a signal, None for a timeout. `said`: what it printed."""

@@ -80,6 +80,12 @@ const environment: Record<string, string> = {
   WTF_numberOfProcessorCores: "2",
 };
 
+/** For every process a bed starts from now on. As a user: without the flag that switches the compiler's verifiers on, so what they would refuse is built and run. */
+export function changeEnvironment(more: Record<string, string>, asAUser: boolean) {
+  Object.assign(environment, more);
+  if (asAUser) delete environment.BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING;
+}
+
 const outputLimit = 1 << 20;
 
 // A program that prints without end until its time is over prints gigabytes. What lies behind the limit is read and dropped: a slice of the whole text would keep the whole text alive.
@@ -93,10 +99,10 @@ async function textUpToTheLimit(stream: ReadableStream<Uint8Array>) {
   return Buffer.concat(kept).toString();
 }
 
-export async function spawned(cmd: string[], cwd: string, seconds: number): Promise<Run> {
+export async function spawned(cmd: string[], cwd: string, seconds: number, more?: Record<string, string>): Promise<Run> {
   // No core files, and a limit on processor time and on memory behind the limit on wall time.
   const limited = ["/bin/sh", "-c", `ulimit -c 0; ulimit -t ${Math.ceil(seconds * 4)}; exec "$@"`, "--", ...cmd];
-  await using child = Bun.spawn({ cmd: limited, cwd, env: environment, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
+  await using child = Bun.spawn({ cmd: limited, cwd, env: { ...environment, ...more }, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: seconds * 1000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([textUpToTheLimit(child.stdout), textUpToTheLimit(child.stderr), child.exited]);
   const timedOut = child.signalCode === "SIGKILL" || child.signalCode === "SIGXCPU";
   return { stdout, stderr, exitCode: child.signalCode ? null : exitCode, signal: timedOut || child.signalCode === null ? null : String(child.signalCode), timedOut };
@@ -146,6 +152,9 @@ function unusable(bed: Bed, plain: Run): Verdict | undefined {
   if (bed.name === "engine" && plain.exitCode !== 0) return { kind: "skipped", why: "uncaught exception" };
 }
 
+/** In front of a flag that is no flag of the build: a variable for the run of the executable. */
+const inTheRun = "--in-the-run=";
+
 export class ProductBed implements Bed {
   readonly name = "product";
   readonly binary: string;
@@ -155,7 +164,23 @@ export class ProductBed implements Bed {
 
   constructor(
     readonly bun: string,
-    readonly options: { baseFlags: string[]; validate: boolean; threads: number; buildSeconds: number; runSeconds: number },
+    readonly options: {
+      baseFlags: string[];
+      validate: boolean;
+      threads: number;
+      buildSeconds: number;
+      runSeconds: number;
+      /** The executable's time, where it is not the plain run's: a collection at every few allocations takes long. */
+      compiledRunSeconds?: number;
+      /** For the run of the executable alone. */
+      runEnvironment?: Record<string, string>;
+      /** Only these modes. */
+      modes?: string[];
+      /** The executable runs with a collection at every n-th allocation that leaves the fast path, n drawn from these, full or young; freed cells are overwritten and never reused. */
+      collectorStress?: number[];
+      /** So many workers run the program at once, each for itself, in place of the main thread. */
+      workers?: number;
+    },
   ) {
     this.binary = bun.split("/").pop()!;
   }
@@ -175,7 +200,21 @@ export class ProductBed implements Bed {
     return disabled.length ? [...rest, "--aot-disable=" + [...new Set(disabled)].join(",")] : rest;
   }
 
+  // One interval is blind to what another sees, so each batch gets its own. The draw rides in the flags of the mode: what confirms and reduces a finding runs under the same one, and the finding records it.
+  #drawnStress(): string[] {
+    const intervals = this.options.collectorStress;
+    if (!intervals?.length) return [];
+    const drawn = Math.floor(Math.random() * intervals.length * 2);
+    const set = [`BUN_JSC_slowPathAllocsBetweenGCs=${intervals[drawn >> 1]}`, "BUN_JSC_scribbleFreeCells=1", "BUN_JSC_useZombieMode=1", ...(drawn & 1 ? ["BUN_JSC_useEdenCollectionsAtSlowPathAllocs=1"] : [])];
+    return set.map(each => inTheRun + each);
+  }
+
   modes(program: Program): Mode[] {
+    const stress = this.#drawnStress();
+    return this.#modes(program).map(mode => ({ ...mode, flags: [...mode.flags, ...stress] }));
+  }
+
+  #modes(program: Program): Mode[] {
     const modes: Mode[] = [{ name: "default", flags: [] }];
     if (this.options.validate) modes.push({ name: "validate", flags: ["--aot-validate"] });
     // The product's own code with its proofs asked again at run time: a false proof is a named stop where the default build answers wrongly in silence.
@@ -184,7 +223,14 @@ export class ProductBed implements Bed {
     // How hot a function counts goes by the whole program, and a small program is mostly lukewarm: little is inlined, so the passes behind inlining see little.
     // One fault showed only where three other modules were built beside the program. They did nothing but move its heat.
     modes.push({ name: "every-function-hot", flags: ["--aot-heat=everything-is-hot"] });
-    return modes;
+    if (!this.options.modes) return modes;
+    // Asked for by name only.
+    if (program.extension === "ts") modes.push({ name: "erased-and-hot", flags: ["--aot-erase-types", "--aot-heat=everything-is-hot"] });
+    modes.push({ name: "nothing-inlined", flags: ["--aot-disable=InlineCalls"] });
+    modes.push({ name: "hot-and-nothing-inlined", flags: ["--aot-heat=everything-is-hot", "--aot-disable=InlineCalls"] });
+    modes.push({ name: "no-flow-results", flags: ["--aot-disable=flow-results"] });
+    modes.push({ name: "hot-without-flow-results", flags: ["--aot-heat=everything-is-hot", "--aot-disable=flow-results"] });
+    return modes.filter(mode => this.options.modes!.includes(mode.name));
   }
 
   disabling(names: string[]) {
@@ -214,15 +260,20 @@ export class ProductBed implements Bed {
       writeFileSync(join(folder, "tsconfig.json"), JSON.stringify({ compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true, types: [] } }));
   }
 
+  #run(folder: string, cmd: string[], flags: string[]) {
+    const drawn = flags.filter(flag => flag.startsWith(inTheRun)).map(flag => flag.slice(inTheRun.length).split("="));
+    return spawned(cmd, folder, this.options.compiledRunSeconds ?? this.options.runSeconds, { ...this.options.runEnvironment, ...Object.fromEntries(drawn) });
+  }
+
   #build(folder: string, entry: string, flags: string[]) {
-    const all = this.#merged([...this.options.baseFlags, ...flags]);
+    const all = this.#merged([...this.options.baseFlags, ...flags]).filter(flag => !flag.startsWith(inTheRun));
     return spawned([this.bun, "build", "--compile", "--aot", `--aot-threads=${this.options.threads}`, ...all, entry, "--outfile", join(folder, "executable")], folder, this.options.buildSeconds);
   }
 
   async judge(folder: string, programs: Program[], flags: string[]): Promise<Judged[]> {
     const executable = join(folder, "executable");
     try {
-      if (programs.length !== 1) return await this.#judgeTogether(folder, programs, flags);
+      if (programs.length !== 1 || this.options.workers) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
       const file = "program." + program.extension;
       this.#write(folder, file, program);
@@ -231,7 +282,7 @@ export class ProductBed implements Bed {
       if (early) return [{ plain, verdict: early }];
       rmSync(executable, { force: true });
       const build = await this.#build(folder, file, flags);
-      const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await spawned([executable], folder, this.options.runSeconds) } : { build };
+      const compiled: Compiled = existsSync(executable) && build.exitCode === 0 ? { build, run: await this.#run(folder, [executable], flags) } : { build };
       return [{ plain, compiled, verdict: compare(this, program, plain, compiled) }];
     } finally {
       rmSync(executable, { force: true });
@@ -244,13 +295,33 @@ export class ProductBed implements Bed {
   }
 
   #writeEntryPoint(folder: string, programs: Program[], members: number[]) {
-    writeFileSync(join(folder, "main.js"), `const programs = {\n${members.map(index => `  ${index}: () => import("./p${index}.${programs[index].extension}"),\n`).join("")}};\nawait programs[process.argv[2]]();\n`);
+    const table = `const programs = {\n${members.map(index => `  ${index}: () => import("./p${index}.${programs[index].extension}"),\n`).join("")}};\n`;
+    if (!this.options.workers) return writeFileSync(join(folder, "main.js"), `${table}await programs[process.argv[2]]();\n`);
+    writeFileSync(
+      join(folder, "main.js"),
+      `import { isMainThread, Worker, workerData } from "node:worker_threads";
+${table}if (isMainThread) {
+  const ends = [];
+  for (let i = 0; i < ${this.options.workers}; i++) {
+    const worker = new Worker(import.meta.url, { workerData: process.argv[2] });
+    ends.push(new Promise(resolve => worker.on("error", error => console.log("a worker ended with " + error?.name)).on("exit", resolve)));
+  }
+  console.log("exit codes " + (await Promise.all(ends)).join(" "));
+} else await programs[workerData]();
+`,
+    );
+  }
+
+  // Threads print in whatever order they get to it. Every line has to be there as often as in plain Bun.
+  #inAnyOrder(run: Run): Run {
+    return this.options.workers ? { ...run, stdout: run.stdout.split("\n").sort().join("\n") } : run;
   }
 
   store(folder: string, programs: Program[], flags: string[]) {
     this.#writeModules(folder, programs);
     this.#writeEntryPoint(folder, programs, programs.map((_, index) => index)); // prettier-ignore
-    return `bun run main.js 0\nbun ${["build", "--compile", "--aot", ...this.#merged([...this.options.baseFlags, ...flags]), "main.js", "--outfile", "executable"].join(" ")} && ./executable 0\n`;
+    const [inRun, inBuild] = [true, false].map(wanted => this.#merged([...this.options.baseFlags, ...flags]).filter(flag => flag.startsWith(inTheRun) === wanted));
+    return `bun run main.js 0\nbun ${["build", "--compile", "--aot", ...inBuild, "main.js", "--outfile", "executable"].join(" ")} && ${inRun.map(flag => flag.slice(inTheRun.length) + " ").join("")}./executable 0\n`;
   }
 
   // One build holds every program as a module of its own, and an argument says which one a run imports: Bun's own library is
@@ -262,7 +333,7 @@ export class ProductBed implements Bed {
     const all = programs.map((_, index) => index);
     this.#writeModules(folder, programs);
     entry(all);
-    const plains = await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds));
+    const plains = (await inParallel(all, 4, index => spawned([this.bun, "run", "main.js", String(index)], folder, this.options.runSeconds))).map(run => this.#inAnyOrder(run));
     for (const index of all) {
       const early = unusable(this, plains[index]);
       if (early) results[index] = { plain: plains[index], verdict: early };
@@ -274,7 +345,7 @@ export class ProductBed implements Bed {
       rmSync(executable, { force: true });
       const build = await this.#build(folder, "main.js", flags);
       if (existsSync(executable) && build.exitCode === 0) {
-        const runs = await inParallel(members, 4, index => spawned([executable, String(index)], folder, this.options.runSeconds));
+        const runs = (await inParallel(members, 4, index => this.#run(folder, [executable, String(index)], flags))).map(run => this.#inAnyOrder(run));
         members.forEach((index, at) => {
           const compiled = { build, run: runs[at] };
           results[index] = { plain: plains[index], compiled, verdict: compare(this, programs[index], plains[index], compiled) };

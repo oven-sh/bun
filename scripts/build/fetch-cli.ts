@@ -97,6 +97,17 @@ async function main(): Promise<void> {
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
+      // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
+      // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
+      if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
+        const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
+        try {
+          return await fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, rmPaths);
+        } catch (error) {
+          if (!(error instanceof BuildError)) throw error;
+          console.log(`${generators} could not be fetched, fetching ${url}`);
+        }
+      }
       return fetchPrebuilt(name, url, dest, identity, rmPaths);
     }
 

@@ -227,6 +227,8 @@ pub struct CompiledFrame {
     is_empty: bool,
     /// Between the return address and what the caller had on the stack.
     bytes_above_return_address: usize,
+    /// In code that the compiled functions share. The rest holds at the return addresses in it and nowhere else.
+    is_in_stub: bool,
     size: usize,
 }
 
@@ -241,6 +243,7 @@ impl CompiledFrame {
             has_frame_record: bits & 1 != 0,
             is_empty: bits & 2 != 0,
             bytes_above_return_address: if bits & 4 != 0 { 32 } else { 0 },
+            is_in_stub: bits & 8 != 0,
             size: bits >> 16,
         })
     }
@@ -287,11 +290,50 @@ fn caller_of_compiled_frame(
     Some((caller_pc, caller_sp, caller_fp))
 }
 
+/// The registers of the caller of a stub that faulted, given those at the fault: (pc, sp, fp). No table says how much a stub has
+/// on the stack between two of its calls. Its caller came by a near call into the stubs, and the lowest word on the stack that
+/// returns from such a call is its return address.
+#[cfg(target_arch = "x86_64")]
+fn caller_of_faulting_stub(
+    sp: usize,
+    fp: usize,
+    mut load: impl FnMut(usize) -> Option<usize>,
+) -> Option<(usize, usize, usize)> {
+    const WORD: usize = core::mem::size_of::<usize>();
+    const WORDS_SEARCHED: usize = 64;
+    const OPCODE_OF_NEAR_CALL: u8 = 0xe8;
+    if sp % WORD != 0 {
+        return None;
+    }
+    for place in (0..WORDS_SEARCHED).map(|index| sp.wrapping_add(index * WORD)) {
+        let word = load(place)?;
+        if compiled_frame_at_return_address(word).is_none() {
+            continue;
+        }
+        let [_, _, _, opcode, displacement @ ..] = load(word - WORD)?.to_le_bytes();
+        let target = word.wrapping_add_signed(i32::from_le_bytes(displacement) as isize);
+        if opcode != OPCODE_OF_NEAR_CALL
+            || !compiled_frame_at_return_address(target).is_some_and(|frame| frame.is_in_stub)
+        {
+            continue;
+        }
+        let caller_fp = if fp.checked_add(WORD) == Some(place) {
+            load(fp)?
+        } else {
+            fp
+        };
+        return Some((word, place + WORD, caller_fp));
+    }
+    None
+}
+
 /// Walks the frame-pointer chain, and frames of compiled code by their tables.
 pub struct StackIterator {
     pub fp: usize,
     /// The return address that `next()` gave last and the stack pointer in the frame it runs in.
     returned_to: Option<(usize, usize)>,
+    /// `returned_to` stands for the instruction that faulted.
+    is_at_fault: bool,
     ma: MemoryAccessor,
 }
 
@@ -318,16 +360,33 @@ impl StackIterator {
         StackIterator {
             fp,
             returned_to: None,
+            is_at_fault: false,
             ma: MemoryAccessor::INIT,
         }
     }
 
     pub fn next(&mut self) -> Option<usize> {
         if let Some((pc, sp)) = self.returned_to {
+            let is_at_fault = core::mem::take(&mut self.is_at_fault);
             if let Some(frame) = compiled_frame_at_return_address(pc) {
                 let ma = &mut self.ma;
-                let (caller_pc, caller_sp, caller_fp) =
-                    caller_of_compiled_frame(frame, sp, self.fp, |address| ma.load_usize(address))?;
+                #[cfg(target_arch = "x86_64")]
+                let caller_of_stub = if is_at_fault && frame.is_in_stub {
+                    caller_of_faulting_stub(sp, self.fp, |address| ma.load_usize(address))
+                } else {
+                    None
+                };
+                #[cfg(not(target_arch = "x86_64"))]
+                let caller_of_stub = {
+                    let _ = (is_at_fault, frame.is_in_stub);
+                    None
+                };
+                let (caller_pc, caller_sp, caller_fp) = match caller_of_stub {
+                    Some(caller) => caller,
+                    None => caller_of_compiled_frame(frame, sp, self.fp, |address| {
+                        ma.load_usize(address)
+                    })?,
+                };
                 self.fp = caller_fp;
                 self.returned_to = Some((caller_pc, caller_sp));
                 return Some(caller_pc);
@@ -581,16 +640,46 @@ pub fn capture_from_context(pc: usize, fp: usize, out: &mut [usize]) -> usize {
     }
     #[cfg(not(windows))]
     {
-        let mut it = StackIterator::init(fp);
-        while n < out.len() {
-            match it.next() {
-                Some(addr) => {
-                    out[n] = addr;
-                    n += 1;
-                }
-                None => break,
+        n += walk(StackIterator::init(fp), &mut out[n..]);
+    }
+    n
+}
+
+#[cfg(not(windows))]
+fn walk(mut it: StackIterator, out: &mut [usize]) -> usize {
+    let mut n = 0usize;
+    while n < out.len() {
+        match it.next() {
+            Some(addr) => {
+                out[n] = addr;
+                n += 1;
             }
+            None => break,
         }
     }
     n
+}
+
+/// As `capture_from_context`, with the stack pointer at the fault. On x86-64 many frames of ahead-of-time compiled code have no
+/// frame record: where the fault lies in one, the frame-pointer chain starts at a caller far up the stack, and the callers in
+/// between are found from the stack pointer and the tables. `behind_pc` lies behind the start of the instruction at `pc` and
+/// not behind its end: the tables are asked about return addresses.
+#[cfg(not(windows))]
+pub fn capture_from_fault(
+    pc: usize,
+    behind_pc: usize,
+    fp: usize,
+    sp: usize,
+    out: &mut [usize],
+) -> usize {
+    if out.is_empty() {
+        return 0;
+    }
+    out[0] = pc;
+    let mut it = StackIterator::init(fp);
+    if cfg!(target_arch = "x86_64") {
+        it.returned_to = Some((behind_pc, sp));
+        it.is_at_fault = true;
+    }
+    1 + walk(it, &mut out[1..])
 }

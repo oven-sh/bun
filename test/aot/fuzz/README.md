@@ -1,6 +1,6 @@
 # The fuzzer
 
-`run.ts` draws small programs from eight sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
+`run.ts` draws small programs from nine sources, runs each compiled and in plain Bun, and keeps what differs: confirmed, reduced, and attributed to the pass or the
 result of the flow analysis without which it goes away. `../fuzzer-fixed-seeds.test.ts` runs a small, fixed part of it in CI.
 
 ```sh
@@ -9,13 +9,28 @@ bun test/aot/fuzz/run.ts --rounds --seconds 3600 --jobs 12 --validate --out /tmp
 bun test/aot/fuzz/run.ts --replay grammar:1234                                  # one program again, printed with its verdicts
 ```
 
+Lanes that look elsewhere than the default one. Several at once find more than one of them alone at the same width:
+
+```sh
+stress="--collector-stress 1,2,3,5,7,11 --run-seconds 2 --compiled-run-seconds 60"   # a collection at every n-th allocation that leaves the fast path, full or young, drawn anew for every batch: one interval is blind to what another sees
+.. --as-a-user --no-attribution --modes every-function-hot,erased-and-hot $stress   # what a user builds, everything hot, under collector stress
+.. --as-a-user --no-attribution --modes nothing-inlined $stress
+.. --workers 4 --modes default,every-function-hot        # four workers run each program at once: compiled code and its tables are shared by all threads
+.. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --sources changing-buffers --modes default,every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
+.. --bun <a build with AddressSanitizer> --as-a-user --no-attribution --modes every-function-hot,erased-and-hot --environment "ASAN_OPTIONS=detect_leaks=0:abort_on_error=1 Malloc=1"
+.. --sources typed-object-mutations:4,unsound-types:4,grammar,mutation --validate --modes default,every-function-hot,validate   # typed programs, never erased
+.. --modes no-flow-results,hot-without-flow-results      # the code with every guard and every slow road in it
+.. --modes default,every-function-hot --flags --aot-disable=pass:<name>   # one optional pass off a round, walking `--aot-list=registry`
+.. --threads 16 --jobs 2 --batch 64                      # the compiler's own threads, and what shows only in a shared build
+```
+
 `AOT_FUZZ_TYPESCRIPT=<node_modules/typescript>` lets the source `unsound-types` ask TypeScript's own checker. `--bun <path>` tests another Bun than the one that runs the fuzzer.
 
 | File | What it holds |
 | --- | --- |
 | `run.ts` | the command line; its header lists every option and the files written to `--out` |
 | `fuzzer.ts` | the driver: draw, judge, confirm, reduce, attribute, tell findings apart |
-| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the eight sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, values that reach a place their type excludes without a cast, and mutants of `../programs` |
+| `grammar.ts`, `protocols.ts`, `new-targets.ts`, `object-mutations.ts`, `typed-object-mutations.ts`, `held-across-suspensions.ts`, `changing-buffers.ts`, `unsound-types.ts`, `mutate.ts`, `sources.ts` | the nine sources: programs made from a grammar, objects that answer the language's protocols, constructors that run for another `new.target`, objects that are changed behind the code that uses them, the same behind a reference of a declared type, values that nothing holds but a function that waits at an `await` or a `yield`, typed arrays whose memory is detached, shrinks, grows or moves while they are in use, values that reach a place their type excludes without a cast, and mutants of `../programs` |
 | `type-check.ts` | TypeScript's own checker, for the source whose programs it has to accept |
 | `beds.ts`, `engine-probes.ts` | where a program runs: `bun build --compile --aot`, or the engine's test binaries, which are asked first which built-ins they lack |
 | `reduce.ts` | makes a failing program small |

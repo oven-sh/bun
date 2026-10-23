@@ -600,7 +600,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
     }
 
-    if (!globalObject->scriptExecutionContext()->isMainThread())
+    // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
+    if (!globalObject->scriptExecutionContext()->isMainThread() && !(Bun::hasCompiledModules() && JSC::AOT::entryPointIsCommonJS(globalObject)))
         return JSValue::encode(jsBoolean(false));
     JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
     RETURN_IF_EXCEPTION(scope, {});

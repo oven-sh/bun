@@ -37,6 +37,7 @@ const programFolders: Record<string, number> = {
   "language": 2,
   "method-table": 4,
   "native-callbacks": 0,
+  "relations-at-random": 0,
   "static-modules": 2,
   "strings": 2,
   "structural-types": 32,
@@ -64,6 +65,7 @@ const besideTheProgram = {
   BUN_JSC_scribbleFreeCells: "1",
 };
 const withoutInlining = "--aot-disable=InlineCalls";
+const underCollections = { BUN_JSC_slowPathAllocsBetweenGCs: "3", BUN_JSC_scribbleFreeCells: "1" };
 
 const variant = (label: string, flags: string[], env = {}, parts = 3, behind?: unknown[][]): Row => [
   `aot/variant-${label}`,
@@ -109,6 +111,7 @@ export const rows: Row[] = [
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
   variant("flow-fixpoint", ["--aot-check=flow-fixpoint"]),
   variant("full-collections-beside-the-program", [], { ...besideTheProgram, BUN_JSC_useGenerationalGC: "0" }),
+  variant("inner-objects-flattened-wherever-legal", ["--aot-testing=FlattenUntilHeldWhereverLegal"]),
   variant("no-flow-results", ["--aot-disable=flow-results"]),
   variant("no-inlining", [withoutInlining]),
   variant("program-is-very-large", ["--aot-limit=MaxWarmCodeValues:1"]),
@@ -156,6 +159,12 @@ export const rows: Row[] = [
 
   builtWith("built-ins-asked-in-place", "validated", ["--aot-validate"]),
   builtWith("kept-attacks", "validated", ["--aot-validate"], {}, 4),
+  builtWith("relational-summaries", "collector-verifies", ["--aot-validate"], { BUN_JSC_verifyGC: "1" }),
+  builtWith("relational-summaries", "under-collections", [withoutInlining], underCollections),
+  builtWith("relational-summaries", "validated", ["--aot-validate", withoutInlining]),
+  builtWith("relational-summaries", "without-inlining", [withoutInlining]),
+  builtWith("relations-at-random", "under-collections", [withoutInlining], underCollections),
+  builtWith("relations-at-random", "without-inlining", ["--aot-validate", withoutInlining]),
   builtWith("site-records", "every-function-cold", ["--aot-heat=everything-is-cold"]),
   builtWith("site-records", "every-function-cold-types-erased", ["--aot-heat=everything-is-cold", "--aot-erase-types"]),
 
@@ -175,10 +184,13 @@ export const rows: Row[] = [
   births("stores of two takers of one source", undefined, undefined, 5),
   births("stretches that differ in one thing"),
   births("strings", "strings", false),
+  births("two kinds of object at one place", undefined, false),
+  births("two kinds of object held as the first"),
   births("typed arrays", "arrays", true),
   births("typed objects", "objects", true),
   births("typed promises of natives that reject", "promises-of-natives-that-reject", true),
   births("typed strings", "strings", true),
+  births("typed two kinds of object at one place", "two-kinds-of-object-at-one-place", true),
   births("values handed out by iterators", undefined, undefined, 3),
 
   ["aot/backend-packages/more-programs", 0, "./backend-packages/each-program", "testMorePrograms"],

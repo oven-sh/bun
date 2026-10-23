@@ -476,3 +476,177 @@ fn exit_with(sentence: &str) -> ! {
     bun_core::Output::flush();
     bun_core::Global::exit(1)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::mismatch_log_request as request;
+    use super::*;
+
+    const PATH: &[u8] = b"/tmp/mismatches.jsonl";
+
+    fn stderr(is_json: bool) -> Option<LogRequest<'static>> {
+        Some(LogRequest::StandardError { is_json })
+    }
+
+    fn file(is_json: bool) -> Option<LogRequest<'static>> {
+        let path = PATH;
+        Some(LogRequest::File { path, is_json })
+    }
+
+    const SOURCE_PATH: &[u8] = b"/project/app.ts";
+    const GRAPH_NAME: &[u8] = if cfg!(windows) {
+        b"B:/~BUN/root/app.js"
+    } else {
+        b"/$bunfs/root/app.js"
+    };
+    const MODULE_PATH: &[u8] = if cfg!(windows) {
+        b"B:/~BUN/root/app.ts"
+    } else {
+        b"/$bunfs/root/app.ts"
+    };
+    const UNKNOWN_GRAPH_NAME: &[u8] = if cfg!(windows) {
+        b"B:/~BUN/root/other.js"
+    } else {
+        b"/$bunfs/root/other.js"
+    };
+
+    struct FakeGraph {
+        program: Option<CompiledProgram>,
+    }
+
+    impl StandaloneModuleGraph for FakeGraph {
+        fn find_assume_standalone_path(&self, _name: &[u8]) -> Option<&'static [u8]> {
+            None
+        }
+        fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
+            b""
+        }
+        fn compile_exec_argv(&self) -> &[u8] {
+            b""
+        }
+        fn compiled_program(&self) -> Option<&CompiledProgram> {
+            self.program.as_ref()
+        }
+        fn compiled_entry_point(&self, name: &[u8]) -> Option<&CompiledEntryPoint> {
+            let program = self.program.as_ref()?;
+            (name == GRAPH_NAME || name == MODULE_PATH).then(|| &program.entry_points[0])
+        }
+    }
+
+    fn graph_of(program: Option<CompiledProgram>) -> &'static dyn StandaloneModuleGraph {
+        Box::leak(Box::new(FakeGraph { program }))
+    }
+
+    fn graph_with_entry_point(preserves_source_paths: bool) -> &'static dyn StandaloneModuleGraph {
+        let entry_point = CompiledEntryPoint {
+            file_index: 0,
+            module_id: 7,
+            source_path: SOURCE_PATH,
+            module_path: MODULE_PATH,
+        };
+        graph_of(Some(CompiledProgram::new(
+            b"image",
+            None,
+            Box::new([entry_point]),
+            Box::new([0]),
+            preserves_source_paths,
+        )))
+    }
+
+    #[test]
+    fn module_key_is_module_path() {
+        let graph = graph_with_entry_point(false);
+        assert_eq!(entry_module_key_in(graph, GRAPH_NAME), MODULE_PATH);
+        assert_eq!(entry_module_key_in(graph, MODULE_PATH), MODULE_PATH);
+        assert_eq!(entry_module_key_in(graph, SOURCE_PATH), MODULE_PATH);
+    }
+
+    #[test]
+    fn module_key_in_place_is_source_path() {
+        let graph = graph_with_entry_point(true);
+        assert_eq!(entry_module_key_in(graph, GRAPH_NAME), SOURCE_PATH);
+        assert_eq!(entry_module_key_in(graph, SOURCE_PATH), SOURCE_PATH);
+    }
+
+    #[test]
+    fn unknown_path_is_unchanged() {
+        for graph in [graph_with_entry_point(false), graph_with_entry_point(true)] {
+            assert_eq!(
+                entry_module_key_in(graph, UNKNOWN_GRAPH_NAME),
+                UNKNOWN_GRAPH_NAME
+            );
+            assert_eq!(
+                entry_module_key_in(graph, b"/project/other.ts"),
+                b"/project/other.ts"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_without_compiled_program_changes_nothing() {
+        let graph = graph_of(None);
+        assert_eq!(entry_module_key_in(graph, GRAPH_NAME), GRAPH_NAME);
+        assert_eq!(entry_module_key_in(graph, SOURCE_PATH), SOURCE_PATH);
+    }
+
+    #[test]
+    fn unset_variables_request_nothing() {
+        assert_eq!(request(None, None), None);
+    }
+
+    #[test]
+    fn off_ignores_format() {
+        assert_eq!(request(Some(b"off"), None), Some(LogRequest::Off));
+        assert_eq!(request(Some(b"off"), Some(b"json")), Some(LogRequest::Off));
+    }
+
+    #[test]
+    fn standard_error_defaults_to_text() {
+        assert_eq!(request(Some(b"stderr"), None), stderr(false));
+        assert_eq!(request(Some(b"stderr"), Some(b"text")), stderr(false));
+        assert_eq!(request(Some(b"stderr"), Some(b"json")), stderr(true));
+    }
+
+    #[test]
+    fn format_alone_names_no_destination() {
+        let format_only = |is_json| Some(LogRequest::FormatOnly { is_json });
+        assert_eq!(request(None, Some(b"text")), format_only(false));
+        assert_eq!(request(None, Some(b"json")), format_only(true));
+    }
+
+    #[test]
+    fn file_defaults_to_json() {
+        assert_eq!(request(Some(PATH), None), file(true));
+        assert_eq!(request(Some(PATH), Some(b"json")), file(true));
+        assert_eq!(request(Some(PATH), Some(b"text")), file(false));
+    }
+
+    #[test]
+    fn format_is_case_sensitive() {
+        assert_eq!(request(Some(PATH), Some(b"JSON")), file(false));
+        assert_eq!(request(Some(b"stderr"), Some(b"JSON")), stderr(false));
+    }
+
+    #[test]
+    fn image_summary_has_sizes_and_code_address() {
+        assert_eq!(
+            image_summary(81920, 16384, 0x1234_c000),
+            "[aot] image: 81920 bytes, 16384 of code at 0x1234c000"
+        );
+    }
+
+    #[test]
+    fn rejection_sentences_are_distinct() {
+        let mut sentences = Vec::new();
+        for raw in 0..ImageVerdict::COUNT as u32 {
+            let verdict = ImageVerdict::from_wire(raw).unwrap();
+            let sentence = sentence_of(verdict);
+            assert_eq!(sentence.is_none(), verdict == ImageVerdict::Accepted);
+            sentences.extend(sentence);
+        }
+        assert_eq!(sentences.len(), ImageVerdict::COUNT - 1);
+        sentences.sort_unstable();
+        sentences.dedup();
+        assert_eq!(sentences.len(), ImageVerdict::COUNT - 1);
+    }
+}

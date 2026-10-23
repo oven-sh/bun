@@ -779,6 +779,16 @@ mod draft {
         /// the walk follows the fp chain. Windows: `fp` is the `*const CONTEXT`
         /// from `EXCEPTION_POINTERS` and the walk uses `RtlVirtualUnwind`.
         Fault { pc: usize, fp: usize },
+        /// POSIX: as `Fault`, with the stack pointer, from which the callers of
+        /// compiled code without a frame record are found. `behind_pc`: see
+        /// `capture_from_fault`.
+        #[cfg(unix)]
+        FaultOnStack {
+            pc: usize,
+            behind_pc: usize,
+            fp: usize,
+            sp: usize,
+        },
         /// Walk the current stack and trim the capture machinery above this PC.
         BeginAddr(usize),
         /// Walk the current stack with no trim (the handler's own `return_address()`
@@ -1040,6 +1050,19 @@ mod draft {
                             TraceSeed::Fault { pc, fp } => {
                                 bun_core::debug::capture_from_context(pc, fp, &mut addr_buf)
                             }
+                            #[cfg(unix)]
+                            TraceSeed::FaultOnStack {
+                                pc,
+                                behind_pc,
+                                fp,
+                                sp,
+                            } => bun_core::debug::capture_from_fault(
+                                pc,
+                                behind_pc,
+                                fp,
+                                sp,
+                                &mut addr_buf,
+                            ),
                             TraceSeed::BeginAddr(addr) => {
                                 debug::capture_stack_trace(addr, &mut addr_buf)
                             }
@@ -1507,12 +1530,12 @@ mod draft {
         ARCH_DISPLAY_STRING,
     );
 
-    /// Extract `(pc, fp)` from the `ucontext_t` the kernel hands the signal
+    /// Extract `(pc, fp, sp)` from the `ucontext_t` the kernel hands the signal
     /// handler. Seeds the frame-pointer walk from the faulting frame. Returns
     /// `None` on arch/OS combos we don't have register offsets for (the caller
     /// then falls back to a current-stack capture).
     #[cfg(unix)]
-    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize)> {
+    fn fault_context_from_ucontext(ctx: *mut c_void) -> Option<(usize, usize, usize)> {
         debug_assert!(!ctx.is_null());
         let uc = ctx.cast::<libc::ucontext_t>().cast_const();
         #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
@@ -1521,13 +1544,14 @@ mod draft {
             let mc = &(*uc).uc_mcontext;
             let pc = mc.gregs[libc::REG_RIP as usize] as usize;
             let fp = mc.gregs[libc::REG_RBP as usize] as usize;
-            Some((pc, fp))
+            let sp = mc.gregs[libc::REG_RSP as usize] as usize;
+            Some((pc, fp, sp))
         }
         #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
         unsafe {
             let mc = &(*uc).uc_mcontext;
-            Some((mc.pc as usize, mc.regs[29] as usize))
+            Some((mc.pc as usize, mc.regs[29] as usize, mc.sp as usize))
         }
         #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1536,7 +1560,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__rip as usize, (*mc).__ss.__rbp as usize))
+            Some((
+                (*mc).__ss.__rip as usize,
+                (*mc).__ss.__rbp as usize,
+                (*mc).__ss.__rsp as usize,
+            ))
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         // SAFETY: the kernel passes a valid ucontext_t as the handler's 3rd arg.
@@ -1545,7 +1573,11 @@ mod draft {
             if mc.is_null() {
                 return None;
             }
-            Some(((*mc).__ss.__pc as usize, (*mc).__ss.__fp as usize))
+            Some((
+                (*mc).__ss.__pc as usize,
+                (*mc).__ss.__fp as usize,
+                (*mc).__ss.__sp as usize,
+            ))
         }
         #[cfg(not(any(
             all(target_os = "linux", target_arch = "x86_64"),
@@ -1570,7 +1602,7 @@ mod draft {
             sig,
             libc::SIGSEGV | libc::SIGBUS | libc::SIGILL | libc::SIGTRAP
         ) {
-            let pc = context.map(|(pc, _)| pc);
+            let pc = context.map(|(pc, _, _)| pc);
             let trap = if cfg!(target_arch = "x86_64") && sig == libc::SIGTRAP {
                 pc.map(|pc| pc.wrapping_sub(1))
             } else {
@@ -1598,7 +1630,17 @@ mod draft {
                 _ => unreachable!(),
             },
             match context {
-                Some((pc, fp)) => TraceSeed::Fault { pc, fp },
+                Some((pc, fp, sp)) => TraceSeed::FaultOnStack {
+                    pc,
+                    // A breakpoint instruction of x86-64 has run when its signal arrives.
+                    behind_pc: if cfg!(target_arch = "x86_64") && sig == libc::SIGTRAP {
+                        pc
+                    } else {
+                        pc.wrapping_add(1)
+                    },
+                    fp,
+                    sp,
+                },
                 None => TraceSeed::None,
             },
         );

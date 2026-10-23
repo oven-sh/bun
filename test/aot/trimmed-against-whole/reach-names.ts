@@ -184,7 +184,10 @@ const reachesOutside = /^(fetch|WebSocket|EventSource|connect|listen|udpSocket|s
 
 function probe([root, path, type]: Reflected, context: Context): string {
   const { random, isPlain } = context;
-  const computedAt = !isPlain && random.chance(0.5) ? random.below(path.length + 1) : -1;
+  // docs/bundler/aot-size.mdx: a member of `Bun` counts as used where the code names it on `Bun`. Behind a computed key it is removed, and a call of it throws.
+  const firstThatMayBeComputed = root === "bun" ? 2 : root === "globalThis" && path[0] === "Bun" ? 3 : 0;
+  const drawn = !isPlain && random.chance(0.5) ? random.below(path.length + 1) : -1;
+  const computedAt = drawn < firstThatMayBeComputed ? -1 : drawn;
   let parent: string;
   let rest = path;
   if (root !== "globalThis") parent = moduleObject(root, context, computedAt === 0);

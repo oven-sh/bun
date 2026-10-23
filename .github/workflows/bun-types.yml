@@ -43,5 +43,14 @@ jobs:
         run: |
           bun install
           bun install --cwd test
+      - name: Fetch the engine's code generators
+        # The code generators import TypeScript of the engine. A release of WebKit has it as an asset of its own; an
+        # older one only inside its tarballs.
+        run: |
+          version=$(sed -n 's/^export const WEBKIT_VERSION = "\(.*\)";$/\1/p' scripts/build/deps/webkit.ts)
+          release="https://github.com/oven-sh/WebKit/releases/download/autobuild-${version#autobuild-}"
+          mkdir -p vendor/WebKit
+          { curl -fsSL --retry 3 "$release/bun-webkit-aot-sources.tar.gz" || curl -fsSL --retry 3 "$release/bun-webkit-linux-amd64-lto.tar.gz"; } |
+            tar -xz -C vendor/WebKit --strip-components=1 --exclude=bun-webkit/Source/JavaScriptCore/aot/tests bun-webkit/Source/JavaScriptCore/aot
       - name: Check types
         run: bun test test/integration/bun-types/bun-types.test.ts

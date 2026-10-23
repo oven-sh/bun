@@ -1,0 +1,8 @@
+a blob THROWS EvalError
+a blob of TypeScript THROWS EvalError
+a revoked blob THROWS EvalError
+a data URL THROWS EvalError
+a data URL in base64 THROWS EvalError
+a blob with a syntax error THROWS EvalError
+eval: true THROWS EvalError
+the main thread lives

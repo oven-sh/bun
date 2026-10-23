@@ -1,10 +1,13 @@
 import { expect, test } from "bun:test";
-import { bunExe } from "harness";
+import { bunExe, isWindows } from "harness";
 import { join } from "node:path";
 import { run } from "../../aot/harness/run";
 
 const expected = [
-  "errno Error open ENOENT orig ENOENT -2 open",
+  // -2 is ENOENT on POSIX. libuv has its own number for it on Windows.
+  isWindows
+    ? "errno Error open Unknown system error -2 orig Unknown system error -2 -2 open"
+    : "errno Error open ENOENT orig ENOENT -2 open",
   "keys _errnoException,_extend,callbackify,convertProcessSignalToExitCode,debug,debuglog,deprecate,format,styleText,formatWithOptions,getCallSites,getSystemErrorMap,getSystemErrorName,getSystemErrorMessage,inherits,inspect,isDeepStrictEqual,promisify,setTraceSigInt,stripVTControlCharacters,toUSVString,aborted,types,parseEnv,parseArgs,TextDecoder,TextEncoder,MIMEType,MIMEParams,isArray,isBoolean,isBuffer,isNull,isNullOrUndefined,isNumber,isString,isSymbol,isUndefined,isRegExp,isObject,isDate,isError,isFunction,isPrimitive,log",
   "descriptor true true",
   'format a:1.5:{"b":1} \u001b[33m1\u001b[39m x',
@@ -15,8 +18,8 @@ const expected = [
   "style error ERR_INVALID_ARG_VALUE",
   "set mine true 7",
   "derived [ false, 'number' ]",
-  "globSync [ 'a.txt', 'd/b.txt' ]",
-  "glob [ 'a.txt', 'd/b.txt' ]",
+  isWindows ? "globSync [ 'a.txt', 'd\\\\b.txt' ]" : "globSync [ 'a.txt', 'd/b.txt' ]",
+  isWindows ? "glob [ 'a.txt', 'd\\\\b.txt' ]" : "glob [ 'a.txt', 'd/b.txt' ]",
   "glob promises [ 'a.txtfalse', 'b.txtfalse', 'dtrue' ]",
   "fh function function function",
   "pullSync [ 'a' ]",

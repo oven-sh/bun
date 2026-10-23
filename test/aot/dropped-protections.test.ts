@@ -21,6 +21,7 @@ import { test } from "./supported";
 // Three to nine of them went wrong at run time. Any change to the compiler may decode a reference earlier, and then it needs no pointer: so only the sums are stated, with much room.
 const programs = [
   "collector/narrow-reference-held-across-integer-operations",
+  "flattened-objects/inner-objects-meet-in-one-name",
   "typed-objects/compound-assignments",
   "typed-objects/constructor-first-stores-at-creation",
   "typed-objects/copied-record-is-not-cast-again",

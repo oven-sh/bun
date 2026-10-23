@@ -44,8 +44,10 @@ test("an executable shows no file of the disk as its source", async () => {
   );
 
   const elsewhere = await spawned([executable], join(root, "elsewhere"), env);
-  expect(elsewhere.stdout).toContain("TypeError: at the bottom\n      at deep (/$bunfs/root/src/deep.ts:2:26)");
-  expect(elsewhere.stderr).toContain("RangeError: printed\n      at /$bunfs/root/main.ts:7:19");
+  // The root of what is embedded is B:/~BUN/root on Windows.
+  const rooted = (text: string) => text.replace(/B:[\\/]~BUN[\\/]root[\\/]/g, "/$bunfs/root/");
+  expect(rooted(elsewhere.stdout)).toContain("TypeError: at the bottom\n      at deep (/$bunfs/root/src/deep.ts:2:26)");
+  expect(rooted(elsewhere.stderr)).toContain("RangeError: printed\n      at /$bunfs/root/main.ts:7:19");
   expect(elsewhere.exitCode).toBe(1);
 
   const whereBuilt = await spawned([executable], join(root, "app"), env);

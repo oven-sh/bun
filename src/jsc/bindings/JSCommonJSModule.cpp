@@ -616,11 +616,12 @@ JSC_DEFINE_CUSTOM_GETTER(getterParent, (JSC::JSGlobalObject * globalObject, JSC:
         return JSValue::encode(parent);
     }
 
-    if (auto* parent = Bun::parentOfCompiledModule(thisObject)) {
-        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parent);
-        return JSValue::encode(parent);
-    }
+    auto* parentOfCompiledModule = Bun::parentOfCompiledModule(thisObject);
     RETURN_IF_EXCEPTION(scope, {});
+    if (parentOfCompiledModule) {
+        thisObject->m_parent = JSC::Weak<JSCommonJSModule>(parentOfCompiledModule);
+        return JSValue::encode(parentOfCompiledModule);
+    }
 
     // initialize parent by checking if it is the main module. we do this lazily because most people
     // dont need `module.parent` and creating commonjs module records is done a ton.
@@ -699,16 +700,15 @@ JSC_DEFINE_CUSTOM_GETTER(getterChildren, (JSC::JSGlobalObject * globalObject, JS
         return JSValue::encode(jsUndefined());
     }
 
+    auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (mod->compiledModule != JSCommonJSModule::noCompiledModule) [[unlikely]] {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         bool areShown = Bun::appendNewChildrenOfCompiledModule(globalObject, mod);
-        RETURN_IF_EXCEPTION(scope, {});
+        RETURN_IF_EXCEPTION(throwScope, {});
         if (!areShown)
             return JSValue::encode(jsUndefined());
     }
 
     if (!mod->m_childrenValue) {
-        auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
         MarkedArgumentBuffer children;
         children.ensureCapacity(mod->m_children.size());
 

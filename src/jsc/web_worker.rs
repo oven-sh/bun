@@ -172,6 +172,7 @@ unsafe extern "C" {
         message: BunString,
         err: JSValue,
     );
+    safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -194,6 +195,25 @@ pub fn join_child_workers(parent: &mut VirtualMachine) {
         let messaging_proxy = unsafe { (*child).messaging_proxy };
         WebWorker__parentContextWillDestroy(messaging_proxy);
     }
+}
+
+/// The heap of the thread that `vm` runs on is full, and the RangeError has found
+/// no place where compiled code can be handed it. A worker ends alone, as by an
+/// uncaught error: 'error' on the parent, exit code 1. The main thread goes on.
+/// Called inside an allocation: nothing here touches the JS heap or runs script.
+#[unsafe(no_mangle)]
+extern "C" fn WebWorker__endForExhaustedHeap(vm: *mut VirtualMachine) {
+    // SAFETY: this thread's live VM; `worker` is a read-only field.
+    let Some(worker) = (unsafe { (*vm).worker_ref() }) else {
+        return;
+    };
+    if worker.has_requested_terminate() {
+        return;
+    }
+    // SAFETY: this thread's live VM.
+    unsafe { (*vm).exit_handler.exit_code = 1 };
+    WebWorker__postOutOfMemoryError(worker.messaging_proxy);
+    worker.exit();
 }
 
 /// The messaging proxy of the worker running on `vm`'s thread, or null on the

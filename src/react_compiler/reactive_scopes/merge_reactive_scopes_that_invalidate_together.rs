@@ -31,10 +31,11 @@ use crate::reactive_scopes::visitors::{
 
 /// Merges adjacent reactive scopes that share dependencies (invalidate together).
 /// TS: `mergeReactiveScopesThatInvalidateTogether`
+/// Not in upstream: returns each variable's last use (a read, or a store to a context variable).
 pub(crate) fn merge_reactive_scopes_that_invalidate_together(
     func: &mut ReactiveFunction,
     env: &mut Environment,
-) -> Result<(), CompilerError> {
+) -> Result<IdMap<DeclarationId, EvaluationOrder>, CompilerError> {
     // Pass 1: find last usage of each declaration
     let visitor = FindLastUsageVisitor { env: &*env };
     let mut last_usage: IdMap<DeclarationId, EvaluationOrder> = IdMap::new();
@@ -47,7 +48,8 @@ pub(crate) fn merge_reactive_scopes_that_invalidate_together(
         temporaries: IdMap::new(),
     };
     let mut state: Option<HirVec<ReactiveScopeDependency>> = None;
-    transform_reactive_function(func, &mut transform, &mut state)
+    transform_reactive_function(func, &mut transform, &mut state)?;
+    Ok(transform.last_usage)
 }
 
 // =============================================================================

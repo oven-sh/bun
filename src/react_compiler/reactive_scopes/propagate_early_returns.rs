@@ -10,12 +10,17 @@
 //!
 //! Corresponds to `src/ReactiveScopes/PropagateEarlyReturns.ts`.
 
+use smallvec::SmallVec;
+
+use crate::collections::IdMap;
 use crate::hir::{
-    BlockId, Effect, EvaluationOrder, IdentifierId, InstructionKind, InstructionValue, LValue,
-    NonLocalBinding, NonLocalKind, Place, ReactiveFunction, ReactiveInstruction, ReactiveLabel,
-    ReactiveScopeBlock, ReactiveScopeDeclaration, ReactiveScopeEarlyReturn, ReactiveStatement,
-    ReactiveTerminal, ReactiveTerminalStatement, ReactiveTerminalTargetKind, ReactiveValue,
-    StoreStr, environment::Environment,
+    BlockId, DeclarationId, Effect, EvaluationOrder, IdentifierId, InstructionKind,
+    InstructionValue, LValue, NonLocalBinding, NonLocalKind, Place, ReactiveFunction,
+    ReactiveInstruction, ReactiveLabel, ReactiveScopeBlock, ReactiveScopeDeclaration,
+    ReactiveScopeEarlyReturn, ReactiveStatement, ReactiveTerminal, ReactiveTerminalStatement,
+    ReactiveTerminalTargetKind, ReactiveValue, ScopeId, StoreStr,
+    environment::{Environment, OutputMode},
+    visitors,
 };
 
 use crate::reactive_scopes::visitors::{
@@ -28,14 +33,22 @@ use crate::reactive_scopes::visitors::{
 
 /// Propagate early return semantics through reactive scopes.
 /// TS: `propagateEarlyReturns`
-pub(crate) fn propagate_early_returns(func: &mut ReactiveFunction, env: &mut Environment) {
-    let mut transform = Transform { env };
+/// Not in upstream: `last_usage`, which the merge pass returns, and the error.
+pub(crate) fn propagate_early_returns(
+    func: &mut ReactiveFunction,
+    env: &mut Environment,
+    last_usage: IdMap<DeclarationId, EvaluationOrder>,
+) -> Result<(), crate::diagnostics::CompilerError> {
+    let mut transform = Transform {
+        env,
+        last_usage,
+        memo_blocks: SmallVec::new(),
+    };
     let mut state = State {
         within_reactive_scope: false,
         early_return_value: None,
     };
-    // The TS version doesn't produce errors from this pass, so we ignore the Result.
-    let _ = transform_reactive_function(func, &mut transform, &mut state);
+    transform_reactive_function(func, &mut transform, &mut state)
 }
 
 // =============================================================================
@@ -61,6 +74,62 @@ struct State {
 /// TS: `class Transform extends ReactiveFunctionTransform<State>`
 struct Transform<'a> {
     env: &'a mut Environment,
+    /// Not in upstream: where each variable is last used, from the merge pass.
+    last_usage: IdMap<DeclarationId, EvaluationOrder>,
+    /// Not in upstream: the memo blocks around the visited instruction, for client output only.
+    memo_blocks: SmallVec<[ScopeId; 4]>,
+}
+
+impl Transform<'_> {
+    /// Not in upstream (facebook/react#37540): a memo block declares its locals that are used after it.
+    fn declare_used_after_memo_blocks(
+        &mut self,
+        value: &InstructionValue,
+    ) -> Result<(), crate::diagnostics::CompilerError> {
+        let kind = match value {
+            InstructionValue::DeclareLocal { lvalue, .. }
+            | InstructionValue::DeclareContext { lvalue, .. }
+            | InstructionValue::StoreLocal { lvalue, .. }
+            | InstructionValue::StoreContext { lvalue, .. } => lvalue.kind,
+            InstructionValue::Destructure { lvalue, .. } => lvalue.kind,
+            _ => return Ok(()),
+        };
+        // The store after a hoisted declaration is what declares the variable.
+        if kind == InstructionKind::Reassign || kind.unhoisted().is_some() {
+            return Ok(());
+        }
+        let (scopes, identifiers) = (&mut self.env.scopes, &self.env.identifiers);
+        for place in visitors::value_lvalues(value) {
+            let identifier = place.identifier;
+            let declaration_id = identifiers[identifier.0 as usize].declaration_id;
+            let Some(&last_used_at) = self.last_usage.get(declaration_id) else {
+                continue;
+            };
+            for &scope_id in &self.memo_blocks {
+                let scope = &mut scopes[scope_id.0 as usize];
+                if last_used_at < scope.range.end
+                    || (scope.declarations.iter()).any(|(_, declared)| {
+                        identifiers[declared.identifier.0 as usize].declaration_id == declaration_id
+                    })
+                {
+                    continue;
+                }
+                if kind == InstructionKind::Function {
+                    // As a declaration it would not assign the `let` (facebook/react#37834).
+                    return Err(crate::diagnostics::cold_todo(
+                        "[PropagateEarlyReturns] Declare a function outside its memo block",
+                        place.loc,
+                    ));
+                }
+                let declaration = ReactiveScopeDeclaration {
+                    identifier,
+                    scope: scope_id,
+                };
+                scope.declarations.push((identifier, declaration));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<'a> ReactiveFunctionTransform for Transform<'a> {
@@ -90,7 +159,14 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
             within_reactive_scope: true,
             early_return_value: parent_state.early_return_value.clone(),
         };
+        let is_memo_block = self.env.output_mode == OutputMode::Client;
+        if is_memo_block {
+            self.memo_blocks.push(scope_id);
+        }
         self.traverse_scope(scope_block, &mut inner_state)?;
+        if is_memo_block {
+            self.memo_blocks.pop();
+        }
 
         if let Some(early_return_value) = inner_state.early_return_value {
             if !parent_state.within_reactive_scope {
@@ -103,6 +179,19 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         }
 
         Ok(())
+    }
+
+    fn visit_instruction(
+        &mut self,
+        instruction: &mut ReactiveInstruction,
+        state: &mut State,
+    ) -> Result<(), crate::diagnostics::CompilerError> {
+        if !self.memo_blocks.is_empty()
+            && let ReactiveValue::Instruction(value) = &instruction.value
+        {
+            self.declare_used_after_memo_blocks(value)?;
+        }
+        self.traverse_instruction(instruction, state)
     }
 
     /// TS: `override transformTerminal`

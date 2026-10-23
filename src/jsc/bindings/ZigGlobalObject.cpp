@@ -2881,39 +2881,46 @@ BUN_DEFINE_LAZY_GLOBAL_BUILTIN_GETTER(getInternalRequireBuiltin, commonJSInterna
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    // Mimick the behavior of class Foo {} for a regular JSFunction.
+    // Gives a function in a builtin the `prototype` and `name` that JSC creates for a function declaration outside one.
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto target = callFrame->argument(0).toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
     auto name = callFrame->argument(1);
     JSObject* base = callFrame->argument(2).getObject();
-    JSObject* prototypeBase = nullptr;
+    JSObject* prototype = callFrame->argument(3).getObject();
+    ASSERT(!target->getDirect(vm, vm.propertyNames->prototype));
 
-    if (!base) {
-        base = globalObject->functionPrototype();
-    } else {
-        auto proto = base->getIfPropertyExists(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if (proto) {
-            if (auto protoObject = proto.getObject()) {
-                prototypeBase = protoObject;
+    if (!prototype) {
+        JSObject* prototypeBase = globalObject->objectPrototype();
+        if (base) {
+            auto proto = base->getIfPropertyExists(globalObject, vm.propertyNames->prototype);
+            RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (!proto) {
+                JSC::throwTypeError(globalObject, scope, "Base class must have a prototype property"_s);
+                return encodedJSValue();
             }
-        } else {
-            JSC::throwTypeError(globalObject, scope, "Base class must have a prototype property"_s);
-            return encodedJSValue();
+            if (auto protoObject = proto.getObject())
+                prototypeBase = protoObject;
+        }
+        prototype = JSC::constructEmptyObject(globalObject, prototypeBase);
+        prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
+    }
+
+    // JSC takes a builtin function's `name` from its declaration on the first lookup, over a direct put, and the bundler can rename the declaration.
+    if (auto* function = dynamicDowncast<JSFunction>(target); function && !function->isHostFunction()) {
+        auto nameString = name.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (function->jsExecutable()->ecmaName().string() != nameString) {
+            FunctionRareData* rareData = function->ensureRareData(vm);
+            rareData->setHasReifiedName();
+            rareData->setHasModifiedNameForBoundOrNonHostFunction();
         }
     }
 
-    JSObject* prototype = prototypeBase ? JSC::constructEmptyObject(globalObject, prototypeBase) : JSC::constructEmptyObject(globalObject);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
-    prototype->structure()->setMayBePrototype(true);
-    prototype->putDirect(vm, vm.propertyNames->constructor, target, PropertyAttribute::DontEnum | 0);
-
-    target->setPrototypeDirect(vm, base);
-    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | 0);
-    target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | 0);
+    target->setPrototypeDirect(vm, base ? base : globalObject->functionPrototype());
+    target->putDirect(vm, vm.propertyNames->prototype, prototype, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    target->putDirect(vm, vm.propertyNames->name, name, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);
 
     return JSValue::encode(jsUndefined());
 }

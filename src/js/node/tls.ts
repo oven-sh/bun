@@ -575,7 +575,7 @@ var InternalSecureContext = class SecureContext {
 function SecureContext(options): void {
   return createSecureContext(options) as never;
 }
-SecureContext.prototype = InternalSecureContext.prototype;
+$toClass(SecureContext, "SecureContext", undefined, InternalSecureContext.prototype);
 InternalSecureContext.prototype.constructor = SecureContext;
 
 function createSecureContext(options) {

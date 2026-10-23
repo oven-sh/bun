@@ -425,7 +425,7 @@ class MockTimers {
       },
     });
 
-    MockDate.prototype = NativeDateConstructor.prototype;
+    $toClass(MockDate, "Date", undefined, NativeDateConstructor.prototype);
     MockDate.parse = NativeDateConstructor.parse;
     MockDate.UTC = NativeDateConstructor.UTC;
     MockDate.prototype.toUTCString = NativeDateConstructor.prototype.toUTCString;

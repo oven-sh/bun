@@ -120,16 +120,7 @@ function Assert(options) {
   }
 }
 
-// Functions compiled as builtins have no automatic `.prototype`; assign one
-// explicitly (same pattern as EventEmitter in node/events.ts).
-Assert.prototype = {};
-ObjectDefineProperty(Assert.prototype, "constructor", {
-  __proto__: null,
-  value: Assert,
-  writable: true,
-  enumerable: false,
-  configurable: true,
-});
+$toClass(Assert, "Assert");
 
 // All of the following functions must throw an AssertionError
 // when a corresponding condition is not met, with a message that

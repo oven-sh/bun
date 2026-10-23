@@ -43,3 +43,11 @@ ignorePatterns = [
 # `bun lint` lints src/js.
 config = "oxlint.json"
 ignorePatterns = ["/*", "!/src", "/src/*", "!/src/js"]
+
+[lint.rules]
+# A program can delete the `__proto__` accessor of Object.prototype. Use $getPrototypeOf(value).
+"no-proto" = "error"
+"no-restricted-syntax" = [
+  "error",
+  { selector = "AssignmentExpression[left.type='MemberExpression']:matches([left.property.name='prototype'], [left.property.value='prototype'])", message = "A function in a built-in module has no `prototype` of its own, and an assignment creates an enumerable, configurable one with no `constructor`. Use $toClass(fn, name, base)." },
+]

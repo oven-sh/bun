@@ -259,3 +259,46 @@ test("deeply nested describe() doesn't overflow the native stack", async () => {
   expect(stderr).toInclude("\n 0 fail");
   expect(exitCode).toBe(0);
 });
+
+test("deeply nested describe() doesn't overflow the native stack with --update-snapshots", async () => {
+  // --update-snapshots lists the tests that did not pass, to keep their entries.
+  const depth = 10000;
+  using test_dir = tempDir("describe-deep-update-snapshots", {
+    "describe-deep.test.js": `
+      import { describe, test, expect } from "bun:test";
+
+      let depth = ${depth};
+      function nest() {
+        if (depth-- <= 0) {
+          test("leaf", () => {
+            expect("new").toMatchSnapshot();
+          });
+          return;
+        }
+        describe("d", nest);
+      }
+      nest();
+      test.skip("skipped", () => {
+        expect("kept").toMatchSnapshot();
+      });
+    `,
+    "__snapshots__/describe-deep.test.js.snap": 'exports[`skipped 1`] = `"kept"`;\n\nexports[`gone 1`] = `"gone"`;\n',
+  });
+  const cmd = [bunExe(), "test", "--update-snapshots", "./describe-deep.test.js"];
+  await using proc = Bun.spawn({
+    // Linux sizes the main thread's stack from `ulimit -s`.
+    cmd: isLinux ? ["sh", "-c", `ulimit -s 1024 && exec "$@"`, "sh", ...cmd] : cmd,
+    cwd: String(test_dir),
+    stdout: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toInclude("\n 1 pass");
+  const scopes = Buffer.alloc(depth * 2, "d ").toString();
+  expect(await Bun.file(`${test_dir}/__snapshots__/describe-deep.test.js.snap`).text()).toBe(
+    'exports[`skipped 1`] = `"kept"`;\n\nexports[`' + scopes + 'leaf 1`] = `"new"`;\n',
+  );
+  expect(exitCode).toBe(0);
+});

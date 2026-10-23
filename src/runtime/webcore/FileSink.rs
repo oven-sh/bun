@@ -269,6 +269,28 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
+pub(crate) fn cancel(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let Some(ptr) = JSSink::from_js(frame.argument(0)) else {
+        return Err(global.throw(format_args!("expected a FileSink")));
+    };
+    // SAFETY: the live wrapper owns the sink; hold a ref across writer.close() re-entry.
+    let sink = unsafe { RefPtr::init_ref(core::ptr::addr_of_mut!((*ptr).sink)) };
+    // Acknowledged short writes can still need the graceful close path to flush.
+    if sink.pending.get().state != streams::PendingState::Pending {
+        return Ok(JSValue::FALSE);
+    }
+    sink.done.set(true);
+    sink.pending.with_mut(|pending| {
+        pending.result =
+            streams::Writable::Err(sys::Error::from_code(sys::E::ECANCELED, sys::Tag::write));
+    });
+    sink.run_pending_later();
+    sink.writer.with_mut(|writer| writer.close());
+    // SAFETY: the local ref keeps the sink live while releasing its pending-write ref.
+    unsafe { FileSink::clear_keep_alive_ref(sink.as_ptr()) };
+    Ok(JSValue::TRUE)
+}
+
 impl FileSink {
     /// `bun.spawn`'s subprocess exited while this `FileSink` was its stdin.
     ///

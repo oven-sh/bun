@@ -1,9 +1,6 @@
-//! Owned `z_stream` that Rust reaches only through a raw pointer.
-//!
-//! zlib-ng stores a pointer to the `z_stream` at init and accesses the stream
-//! through it in every later call. A `&mut` to the stream (or to a struct that
-//! holds it inline) held across that call is undefined behaviour (aliasing).
-//! `ZStream` never hands out a reference to the stream.
+//! Owned `z_stream` reached only through a raw pointer: zlib-ng keeps its own
+//! pointer to the stream from init on, so a `&mut` to it across a zlib call
+//! is an aliasing violation (oven-sh/bun#46598).
 
 use core::ffi::{c_char, c_int};
 use core::mem::size_of;

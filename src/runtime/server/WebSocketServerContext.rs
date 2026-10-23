@@ -326,8 +326,9 @@ pub(crate) fn on_create(
             }
             let mut idle_timeout = idle_timeout as u16;
             if idle_timeout > 0 {
-                // uws does not allow idleTimeout to be between (0, 8),
-                // since its timer is not that accurate, therefore round up.
+                // uws splits idleTimeout into an idle arm and a 4 s ping
+                // margin (`idleTimeoutComponentsFor`); below 8 the idle arm
+                // underflows, and App.h terminates on it. Round up.
                 idle_timeout = idle_timeout.max(8);
             }
 

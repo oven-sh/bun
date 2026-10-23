@@ -4853,6 +4853,33 @@ pub(crate) mod testing_apis {
         Ok(JSValue::js_number(count as f64))
     }
 
+    /// `sweepSocketTimers` of `bun:internal-for-testing`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_sweep_socket_timers(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [count] = frame.arguments_as_array::<1>();
+        let count = count.coerce::<i32>(global)?;
+        let loop_ = uws::Loop::get();
+        // A `timeout` handler that calls this is inside the sweep's walk, which must not nest.
+        // SAFETY: `loop_` is this thread's live loop; plain field reads.
+        let sweeping = unsafe {
+            !(*loop_).internal_loop_data.iterator.is_null()
+                || !(*loop_).internal_loop_data.low_prio_iterator.is_null()
+        };
+        if sweeping {
+            return Err(global.throw(format_args!(
+                "sweepSocketTimers() cannot be called from a socket timeout handler"
+            )));
+        }
+        for _ in 0..count {
+            // SAFETY: `loop_` is this thread's live loop and no sweep is running on it.
+            unsafe { bun_uws_sys::loop_::us_internal_timer_sweep(loop_) };
+        }
+        Ok(JSValue::UNDEFINED)
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn js_clear_socket_faults(
         global: &JSGlobalObject,

@@ -553,6 +553,11 @@ declare module "bun" {
      * An integer from `0` to `960`. `0` disables the timeout and the automatic
      * pings from `sendPings`. `1` to `7` round up to `8`.
      *
+     * The timer moves in 4 second steps. A connection is never closed before
+     * `idleTimeout` seconds of inactivity. With `sendPings`, the ping and the
+     * wait for its pong each add up to two steps, so the close can come up to
+     * 16 seconds later.
+     *
      * @default 120
      */
     idleTimeout?: number;
@@ -952,6 +957,10 @@ declare module "bun" {
       /**
        * Sets the number of seconds to wait before timing out a connection
        * due to inactivity.
+       *
+       * The timer moves in 4 second steps. A connection is never closed
+       * before `idleTimeout` seconds of inactivity, and it can stay open for
+       * up to two steps (8 seconds) longer.
        *
        * @default 10
        */

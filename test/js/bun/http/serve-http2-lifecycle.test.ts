@@ -94,6 +94,35 @@ describe("Bun.serve http2 lifecycle", () => {
     busy.close();
   }, 30000);
 
+  test("idleTimeout never cuts a connection that is not idle, even while another connection keeps the sweep running", async () => {
+    // The sweep's phase is set by the first connection, so a fresh connection arms its timer somewhere
+    // inside a sweep period. With idleTimeout 1 that was the next sweep, with no idle time (#46211).
+    await using fx = await startFixture({ tls: false, idleTimeout: 1 });
+    const anchor = await connectH2(fx.port, false);
+    const kept = request(anchor, { ":path": "/keepalive?ms=20000" }).catch(() => undefined);
+    const session = await connectH2(fx.port, false);
+    let closed = false;
+    session.once("close", () => (closed = true));
+    // Back to back for more than one sweep period, so at least one request straddles a sweep.
+    const bodies: string[] = [];
+    for (const until = Date.now() + 5000; Date.now() < until && !closed;) {
+      bodies.push(
+        await request(session, { ":path": "/slow?ms=100" }).then(
+          r => r.body.toString(),
+          e => `error: ${e?.code ?? e}`,
+        ),
+      );
+    }
+    expect({ closed, bodies: new Set(bodies), count: bodies.length > 20 }).toEqual({
+      closed: false,
+      bodies: new Set(["slow"]),
+      count: true,
+    });
+    session.close();
+    anchor.destroy();
+    await kept;
+  }, 30000);
+
   test("graceful stop closes a connection whose last stream ends outside a socket event", async () => {
     await using fx = await startFixture({ tls: false });
     const session = await connectH2(fx.port, false);
@@ -148,9 +177,10 @@ describe("Bun.serve http2 lifecycle", () => {
     session.close();
   }, 40000);
 
-  // usockets ticks timeouts every 4 s and idleTimeout rounds to ticks, so 8 s
-  // (two ticks) with keepalive traffic every 2 s is the smallest setting that
-  // separates "refreshed the timer" from "did not".
+  // usockets ticks timeouts every 4 s and arms one tick past idleTimeout, so
+  // 4 s (two ticks) with keepalive traffic every 2 s is the smallest setting
+  // that separates "refreshed the timer" from "did not". Before #46211 the
+  // refreshed control was cut at the first sweep too.
   for (const [name, keepalive] of [
     ["PING", (raw: RawH2) => raw.write(frame(T.PING, 0, 0, Buffer.from("keepaliv")))],
     // An open POST sending empty non-final DATA frames.
@@ -159,7 +189,7 @@ describe("Bun.serve http2 lifecycle", () => {
     ["padded empty DATA", (raw: RawH2) => raw.write(frame(T.DATA, F.PADDED, 101, Buffer.from([0])))],
   ] as const) {
     test(`${name} frames do not keep a connection alive whose streams are all stalled at a zero window`, async () => {
-      await using fx = await startFixture({ tls: false, idleTimeout: 8 });
+      await using fx = await startFixture({ tls: false, idleTimeout: 4 });
       const stalled = await RawH2.connect(fx.port, false, { settings: Buffer.from([0, 4, 0, 0, 0, 0]) }); // INITIAL_WINDOW_SIZE = 0
       await stalled.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
       for (let i = 0, id = 1; i < 8; i++, id += 2) stalled.headers(id, baseHeaders("/big"));
@@ -192,11 +222,12 @@ describe("Bun.serve http2 lifecycle", () => {
   test("server.timeout(req, n) on h2 is per connection: the most permissive open request wins", async () => {
     await using fx = await startFixture({ tls: false, idleTimeout: 4 });
     const session = await connectH2(fx.port, false);
-    // 30 s is set first, then 1 s; both sleep 6 s. Max-wins keeps the
-    // connection; last-wins, min-wins or a no-op would all close it at the 4 s tick.
-    const a = request(session, { ":path": "/t?s=30&ms=6000" });
+    // 30 s is set first, then 1 s; both sleep 10 s. Max-wins keeps the
+    // connection; last-wins, min-wins or a no-op would all arm two ticks and
+    // close it at the 8 s sweep.
+    const a = request(session, { ":path": "/t?s=30&ms=10000" });
     await new Promise<void>(r => setTimeout(r, 100));
-    const b = request(session, { ":path": "/t?s=1&ms=6000" });
+    const b = request(session, { ":path": "/t?s=1&ms=10000" });
     const [ra, rb] = await Promise.all([a, b]);
     expect([ra.body.toString(), rb.body.toString()]).toEqual(["t30", "t1"]);
     session.close();

@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { sweepSocketTimers } from "bun:internal-for-testing";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
@@ -3862,4 +3863,38 @@ describe.concurrent.each([
     client.socket.end(client.frame(OP.close, closePayload(4001)));
     await client.closed;
   });
+});
+
+// The timer sweep runs every 4 s, at a phase unrelated to when a socket arms its timer, so each arm
+// is due one sweep past ceil(seconds / 4) (#46211). With sendPings, idleTimeout 8 is an idle arm of
+// 4 s (two sweeps) and then a 4 s wait for the pong (two more).
+it("websocket idleTimeout: a silent client is closed one sweep past each arm, never at the sweep before", async () => {
+  const opened = Promise.withResolvers<ServerWebSocket<undefined>>();
+  let closed = false;
+  await using server = serve({
+    port: 0,
+    websocket: {
+      idleTimeout: 8,
+      open(ws) {
+        opened.resolve(ws);
+      },
+      message() {},
+      close() {
+        closed = true;
+      },
+    },
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("no upgrade", { status: 400 });
+    },
+  });
+  const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  await once(client, "open");
+  await opened.promise;
+  // No await between the sweeps, so the loop runs no sweep of its own and the client answers no ping.
+  sweepSocketTimers(3);
+  const afterThree = closed;
+  sweepSocketTimers(1);
+  expect({ afterThree, afterFour: closed }).toEqual({ afterThree: false, afterFour: true });
+  await once(client, "close");
 });

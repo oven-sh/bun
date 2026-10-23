@@ -384,7 +384,7 @@ Bun doesn't call `error` when an `async` handler rejects. That's an unhandled re
 
 ### Timeouts and limits
 
-By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter, an integer number of seconds from `0` to `960`. Values from `1` to `7` round up to `8`.
+By default, Bun closes a WebSocket connection that has been idle for 120 seconds. Configure this with the `idleTimeout` parameter, an integer number of seconds from `0` to `960`. Values from `1` to `7` round up to `8`. The timer moves in 4 second steps: a connection is never closed before `idleTimeout` seconds of inactivity, and with `sendPings` the close can come up to 16 seconds later.
 
 ```ts
 Bun.serve({

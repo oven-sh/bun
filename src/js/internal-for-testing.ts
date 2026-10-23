@@ -772,6 +772,13 @@ export const socketFaultInjection = {
   clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
 };
 
+/** Runs the uSockets timeout sweep of this thread's loop `count` times. The loop runs one every 4 seconds. */
+export const sweepSocketTimers: (count: number) => void = $newRustFunction(
+  "runtime/socket/socket.rs",
+  "TestingAPIs.jsSweepSocketTimers",
+  1,
+);
+
 export const namedPipeInternals = {
   /**
    * Live native contexts behind sockets over Windows named pipes: one per

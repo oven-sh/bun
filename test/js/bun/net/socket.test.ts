@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, setSocketOptions, socketFaultInjection, sweepSocketTimers } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { generateKeyPairSync } from "crypto";
 import { closeSync, fstatSync, readFileSync } from "fs";
@@ -355,6 +355,47 @@ describe.concurrent("socket", () => {
       server!.stop(true);
     }
   }, 60_000);
+
+  // The timer sweep runs every 4 s, at a phase unrelated to when a socket arms its timer. The sweep
+  // right after the arm can come at once, so a timeout is due one sweep past ceil(seconds / 4) (#46211).
+  it("socket.timeout(seconds) is due one sweep past ceil(seconds / 4), never at the sweep before", async () => {
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    const fired: number[] = [];
+    using client = await connect({
+      hostname: "127.0.0.1",
+      port: server.port,
+      socket: { data() {}, open() {}, close() {}, error() {}, timeout: () => void fired.push(sweeps) },
+    });
+    let sweeps = 0;
+    const sweep = (count: number) => {
+      for (let i = 0; i < count; i++) {
+        sweeps++;
+        sweepSocketTimers(1);
+      }
+    };
+    // No await between the arm and the last sweep, so the loop runs no sweep of its own in between.
+    const firedAt = (seconds: number, due: number) => {
+      sweeps = 0;
+      client.timeout(seconds);
+      sweep(due - 1);
+      const early = fired.length;
+      sweep(1);
+      return { early, fired: fired.splice(0) };
+    };
+    expect({ 1: firedAt(1, 2), 4: firedAt(4, 2), 5: firedAt(5, 3), 10: firedAt(10, 4), 240: firedAt(240, 61) }).toEqual(
+      {
+        1: { early: 0, fired: [2] },
+        4: { early: 0, fired: [2] },
+        5: { early: 0, fired: [3] },
+        10: { early: 0, fired: [4] },
+        240: { early: 0, fired: [61] },
+      },
+    );
+  });
 
   it("should allow large amounts of data to be sent and received", async () => {
     const { stderr, exitCode } = await bunRun(fileURLToPath(new URL("./socket-huge-fixture.js", import.meta.url)));
@@ -1882,18 +1923,18 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   late.end();
   endedAt.push(performance.now());
 
-  // Three reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
+  // A few reads of at most 512 KiB ahead of the deadline: progress that does not put it off, and well short of what is left.
   const drip = setInterval(() => {
     peers[DRIPPING].resume();
     // Nor does what a peer sends in place of its close_notify.
     peers[LATE].write("still here");
-  }, 3000);
+  }, 5000);
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
     const waitedFrom = performance.now();
     const closedAfterMs = (await Promise.all(closed)).map((at, i) => Math.round(at - endedAt[i]));
     // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
-    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 16_000) await Bun.sleep(100);
+    while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 20_000) await Bun.sleep(100);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
     const batches = socketFaultInjection.available();
     const missing = (peer: number) => reported[peer] - peers[peer].data.received;
@@ -1909,10 +1950,11 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-        // 10 s on a 4 s tick is 8 to 12 s after the end().
+        // 10 s on a 4 s tick, never early, is 12 to 16 s after the end(). The dripping peer's spill drains at
+        // one of its first two reads, 5 or 10 s in, and the wait for its close_notify starts there.
         atTheDeadline: [SILENT, DRIPPING, LATE].map(peer => {
           const ms = closedAfterMs[peer - 1];
-          return ms > 7_000 && ms < 16_000;
+          return ms > 11_000 && ms < (peer === DRIPPING ? 27_000 : 18_000);
         }),
         missing: missing(UNANSWERING),
       },
@@ -1932,7 +1974,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     probe.terminate();
     for (const peer of peers) peer.terminate();
   }
-}, 30_000);
+}, 40_000);
 
 describe.concurrent("TLS server: write() to the accepted socket from inside its own selection callback", () => {
   // alpnCallback / serverName are the listener hooks node:tls's ALPNCallback /

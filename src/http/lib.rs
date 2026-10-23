@@ -327,7 +327,7 @@ pub static OVERRIDDEN_DEFAULT_USER_AGENT: std::sync::OnceLock<&'static [u8]> =
 /// absolute deadline for the header block to complete (undici `headersTimeout`
 /// semantics). 0 disables the timer (matching `disable_timeout = true`).
 /// Overridable via `BUN_CONFIG_HTTP_IDLE_TIMEOUT`. Default is 5 minutes.
-/// `HTTPThread::on_start` stores it padded for the timer-wheel sweep (see
+/// `HTTPThread::on_start` stores it normalised for the timer wheels (see
 /// [`normalize_idle_timeout_seconds`]).
 pub(crate) static IDLE_TIMEOUT_SECONDS: AtomicU32 = AtomicU32::new(300);
 
@@ -337,29 +337,28 @@ pub(crate) fn idle_timeout_seconds() -> c_uint {
     IDLE_TIMEOUT_SECONDS.load(Ordering::Relaxed)
 }
 
-/// Normalise an idle timeout (seconds) for uSockets' timer wheels. The sweep
-/// phase is unrelated to when a socket arms its timer, so a timer armed for N
-/// ticks can fire up to one period (4s short wheel, 60s long wheel) before
-/// the requested duration (#39952). Pad by one period so it never fires
-/// early, and clamp so the padded value stays at the long wheel's 239 min
-/// maximum. 0 = disabled.
+/// Normalise an idle timeout (seconds) for uSockets' timer wheels. uSockets
+/// itself arms one tick past the requested duration, so a timer never fires
+/// early (`us_socket_timeout` in packages/bun-usockets/src/socket.c). This
+/// only rounds values above the short wheel up to whole minutes and clamps
+/// them so the padded stamp stays below the long wheel's 240 minute wrap.
+/// 0 = disabled.
 #[inline]
 pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
     if raw == 0 {
         return 0;
     }
-    /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h).
-    const SHORT_WHEEL_PERIOD_SECONDS: u64 = 4;
     const LONG_WHEEL_PERIOD_SECONDS: u64 = 60;
     /// `SocketTimeout::set_timeout` routes values above this to the long wheel.
     const SHORT_WHEEL_MAX_SECONDS: u64 = 240;
-    /// The long counter wraps `% 240` minutes; one minute of pad stays below.
+    /// The long counter wraps `% 240` minutes and uSockets adds one minute of
+    /// pad, so 238 is the largest value whose pad does not wrap.
     const MAX_RAW_SECONDS: u64 = 238 * LONG_WHEEL_PERIOD_SECONDS;
     let raw = raw.min(MAX_RAW_SECONDS);
-    (if raw + SHORT_WHEEL_PERIOD_SECONDS > SHORT_WHEEL_MAX_SECONDS {
-        (raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) + 1) * LONG_WHEEL_PERIOD_SECONDS
+    (if raw > SHORT_WHEEL_MAX_SECONDS {
+        raw.div_ceil(LONG_WHEEL_PERIOD_SECONDS) * LONG_WHEEL_PERIOD_SECONDS
     } else {
-        raw + SHORT_WHEEL_PERIOD_SECONDS
+        raw
     }) as c_uint
 }
 

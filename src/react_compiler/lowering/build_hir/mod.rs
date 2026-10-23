@@ -434,6 +434,11 @@ pub(super) fn gather_captured_context<'h>(
         if host.is_module_level(ref_) {
             continue;
         }
+        // Module-level too, but not in `members` (the JSX runtime imports):
+        // `resolve_identifier` loads these as globals.
+        if module_scope.generated.contains(&ref_) {
+            continue;
+        }
         let pos = ref_loc.start;
         let loc = convert_loc(ref_loc);
         captured
@@ -449,6 +454,9 @@ pub(super) fn gather_captured_context<'h>(
 
     // Sort captured entries by source position so context declarations appear
     // in source order, matching the TS compiler's position-ordered traversal.
+    // Nodes that the visit pass generates can share a position (React Fast
+    // Refresh lists hooks at `Loc::EMPTY`: `() => [useA, useB]`), and `captured`
+    // iterates in a random order, so the symbol index makes the order total.
     let mut sorted: Vec<_> = captured.into_iter().collect();
     sorted.sort_unstable_by_key(|(ref_, (pos, _))| (*pos, ref_.inner_index()));
 

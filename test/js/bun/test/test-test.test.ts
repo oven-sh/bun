@@ -722,10 +722,10 @@ describe("a test that completes after its timeout has passed is reported as time
         test.concurrent("finishes within its timeout", async () => {
           await Bun.sleep(1);
           queueMicrotask(markFirstReturned);
-        }, 100);
+        }, 1000);
         test.concurrent("blocks once the first test has returned", async () => {
           await firstReturned;
-          Bun.sleepSync(300);
+          Bun.sleepSync(1500);
         }, 30_000);
       `,
     );
@@ -740,6 +740,81 @@ describe("a test that completes after its timeout has passed is reported as time
        2 pass
        0 fail
       Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("a hook that completes after its timeout", async () => {
+    // The body of the first test must not run: its beforeEach failed.
+    const result = await runFixture(
+      "hooks",
+      /*js*/ `
+        import { afterEach, beforeEach, describe, test } from "bun:test";
+        describe("beforeEach returns a promise", () => {
+          beforeEach(async () => {
+            await Bun.sleep(1);
+            Bun.sleepSync(300);
+          }, 100);
+          test("body is skipped", () => {
+            console.log("body ran");
+          });
+        });
+        describe("afterEach takes done", () => {
+          afterEach(done => {
+            setTimeout(() => {
+              Bun.sleepSync(300);
+              done();
+            }, 1);
+          }, 100);
+          test("body runs", () => {});
+        });
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) beforeEach returns a promise > body is skipped
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) afterEach takes done > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+
+       0 pass
+       2 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("test.failing that throws after its timeout", async () => {
+    // As when the callback returns synchronously: the timeout wins over the expected failure.
+    const result = await runFixture(
+      "failing",
+      /*js*/ `
+        import { test } from "bun:test";
+        test.failing("throws after its timeout has passed", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(300);
+          throw new Error("the expected failure");
+        }, 100);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) throws after its timeout has passed
+        ^ this test timed out after 100ms.
+
+       0 pass
+       1 fail
+      Ran 1 test across 1 file."
       ,
         "stdout": "bun test <version> (<revision>)",
       }

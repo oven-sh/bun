@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
-import { join } from "node:path";
+import { describe, expect } from "bun:test";
+import { isWindows } from "harness";
+import { basename, join } from "node:path";
 import { itBundled } from "../expectBundled";
 
 // Tests ported from:
@@ -1260,8 +1261,124 @@ b {
     minifyWhitespace: true,
     outdir: "/out",
     onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+      api
+        .expectFile("/out/entry.css")
+        .toEqualIgnoringWhitespace(/* css */ `.a{mask:url("./sprites-mrrzcz3w.svg#icon")}`);
     },
+  });
+
+  // The printer only sees a placeholder for a copied asset. The bundler splices
+  // the final path in afterwards, so the placeholder has to stay quoted: an
+  // unquoted url() with a space or a parenthesis is a bad-url token.
+  itBundled("css/FileLoaderURLWithSpecialCharsMinified", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url("./my image.png") }
+        .b { background: url("./a(b).png") }
+        .c { --bg: url("./my image.png") }
+        .d { background: url("./plain.png") }
+        .e { background-image: image-set("./my image.png" 1x, url("./a(b).png") 2x) }
+        @font-face { font-family: I; src: url("./my image.png") }
+      `,
+      "/my image.png": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+      "/a(b).png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(
+        '.a{background:url("./my image-mrrzcz3w.png")}.b{background:url("./a(b)-nkpagkva.png")}.c{--bg:url("./my image-mrrzcz3w.png")}.d{background:url("./plain-w49ecq2a.png")}' +
+          '.e{background-image:-webkit-image-set(url("./my image-mrrzcz3w.png") 1x,url("./a(b)-nkpagkva.png") 2x);background-image:image-set("./my image-mrrzcz3w.png" 1x,"./a(b)-nkpagkva.png" 2x)}' +
+          '@font-face{font-family:I;src:url("./my image-mrrzcz3w.png")}\n',
+      );
+    },
+  });
+
+  // The whole output path is copied over the placeholder, so `[dir]` carries a
+  // space just like a file name does. An ordinary publicPath is left as it is.
+  itBundled("css/FileLoaderURLAssetNamingDirAndPublicPath", {
+    files: {
+      "/entry.css": `@font-face { font-family: I; src: url("./Brand Fonts/inter.woff2") }`,
+      "/Brand Fonts/inter.woff2": Buffer.alloc(128 * 1024 + 1, "W").toString(),
+    },
+    loader: {
+      ".woff2": "file",
+    },
+    assetNaming: "[dir]/[name]-[hash].[ext]",
+    publicPath: "https://cdn.example.com/a/",
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(
+        '@font-face{font-family:I;src:url("https://cdn.example.com/a/Brand Fonts/inter-tny5bcvp.woff2")}\n',
+      );
+    },
+  });
+
+  // The final path replaces the placeholder inside a quoted string, so it is
+  // escaped for one.
+  itBundled("css/FileLoaderURLEscapesPublicPath", {
+    files: {
+      "/entry.css": `.a { background: url("./plain.png") }`,
+      "/plain.png": Buffer.alloc(128 * 1024 + 1, "X").toString(),
+    },
+    loader: {
+      ".png": "file",
+    },
+    publicPath: '");}body{color:red}a{b:url("',
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(
+        String.raw`.a{background:url("\");}body{color:red}a{b:url(\"plain-w49ecq2a.png")}` + "\n",
+      );
+    },
+  });
+
+  // Windows cannot represent `"` or a line break in a file name.
+  describe.skipIf(isWindows)("asset path is escaped for the CSS string it lands in", () => {
+    // The stylesheet only says "icons/logo.png". The package's `exports` picks the file name.
+    const injection = 'x");}body{color:red}a{b:url("y';
+    itBundled("css/FileLoaderURLEscapesFileName", {
+      files: {
+        // `\a ` is a line feed.
+        "/entry.css": String.raw`
+          .a { background: url("./a\a b.png") }
+          .b { background: url("icons/logo.png") }
+          .c { mask-image: image-set("./a\a b.png" 1x, "icons/logo.png" 2x) }
+        `,
+        "/a\nb.png": Buffer.alloc(128 * 1024 + 1, "Y").toString(),
+        "/node_modules/icons/package.json": JSON.stringify({
+          name: "icons",
+          version: "1.0.0",
+          exports: { "./logo.png": `./${injection}.png` },
+        }),
+        [`/node_modules/icons/${injection}.png`]: Buffer.alloc(128 * 1024 + 1, "X").toString(),
+      },
+      loader: {
+        ".png": "file",
+      },
+      minifyWhitespace: true,
+      outdir: "/out",
+      async onAfterBundle(api) {
+        expect(api.readFile("/out/entry.css")).toBe(
+          String.raw`.a{background:url("./a\a b-nkpagkva.png")}.b{background:url("./x\");}body{color:red}a{b:url(\"y-w49ecq2a.png")}` +
+            String.raw`.c{mask-image:image-set("./a\a b-nkpagkva.png" 1x,"./x\");}body{color:red}a{b:url(\"y-w49ecq2a.png" 2x)}` +
+            "\n",
+        );
+        // Every url() in the output has to name a file that was written next to it.
+        const again = await Bun.build({ entrypoints: [api.join("out/entry.css")], outdir: api.join("out2") });
+        const assets = again.outputs.map(o => basename(o.path)).filter(name => name.endsWith(".png"));
+        // The second build copies `<name>-<hash>.png` to `<name>-<hash>-<hash2>.png`. Drop `-<hash2>.png`.
+        expect(assets.map(name => name.replace(/-[a-z0-9]+\.png$/, "")).sort()).toEqual(
+          ["a\nb-nkpagkva", `${injection}-w49ecq2a`].sort(),
+        );
+      },
+    });
   });
 
   itBundled("css/IgnoreURLsInAtRulePrelude", {

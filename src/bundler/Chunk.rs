@@ -510,6 +510,24 @@ fn additional_output_file_index(f: &AdditionalFile) -> usize {
     }
 }
 
+/// How the path that replaces a placeholder is written into the output.
+#[derive(Clone, Copy)]
+enum SpliceEscape {
+    /// Copied as is.
+    Raw,
+    /// The placeholder is the body of a `"..."` CSS string.
+    CssString,
+}
+
+impl SpliceEscape {
+    fn for_chunk(chunk: &Chunk) -> Self {
+        match chunk.content {
+            Content::Css(_) => Self::CssString,
+            Content::Javascript(_) | Content::Html => Self::Raw,
+        }
+    }
+}
+
 impl IntermediateOutput {
     pub(crate) fn allocator_for_size(_size: usize) -> &'static DynAlloc {
         // mimalloc serves large allocations via mmap already, so the global
@@ -571,6 +589,47 @@ impl IntermediateOutput {
         dst
     }
 
+    /// The (prefix, path) pair that replaces a placeholder, shared by the sizing and writing pass.
+    fn spliced_path_parts<'a>(
+        file_path: &[u8],
+        import_prefix: &'a [u8],
+        from_chunk_dir: &[u8],
+        use_outdir_relative_path: bool,
+        file_path_posix: &'a mut Vec<u8>,
+    ) -> [&'a [u8]; 2] {
+        // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
+        file_path_posix.clear();
+        file_path_posix.extend_from_slice(file_path);
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(file_path_posix);
+        let file_path: &'a [u8] = file_path_posix;
+        cheap_prefix_normalizer(
+            import_prefix,
+            if use_outdir_relative_path {
+                file_path
+            } else {
+                bun_paths::resolve_path::relative_platform::<bun_paths::platform::Posix, false>(
+                    from_chunk_dir,
+                    file_path,
+                )
+            },
+        )
+    }
+
+    /// Writes one of the slices from `spliced_path_parts`.
+    fn write_spliced_path<W: bun_io::Write + ?Sized>(
+        writer: &mut W,
+        path: &[u8],
+        escape: SpliceEscape,
+    ) -> bun_io::Result<()> {
+        match escape {
+            SpliceEscape::Raw => writer.write_all(path),
+            // esbuild copies the path as is, so a `"` in it ends the string.
+            SpliceEscape::CssString => {
+                bun_css::css_parser::serializer::serialize_string_contents(path, writer)
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn code<'d>(
         &mut self,
@@ -590,6 +649,7 @@ impl IntermediateOutput {
         shift_tracking: SourceMapShiftTracking,
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk);
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
@@ -601,6 +661,7 @@ impl IntermediateOutput {
                 display_size,
                 reference_path_style,
                 None,
+                escape,
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
@@ -612,8 +673,31 @@ impl IntermediateOutput {
                 display_size,
                 reference_path_style,
                 None,
+                escape,
             ),
         }
+    }
+
+    /// `code()` for the metafile, where `chunk` only supplies the directory paths are relative to.
+    pub(crate) fn code_for_metafile(
+        &mut self,
+        parse_graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunk: &Chunk,
+        chunks: &[Chunk],
+    ) -> Result<CodeResult, AllocError> {
+        self.code_with_source_map_shifts::<false>(
+            None,
+            parse_graph,
+            linker_graph,
+            b"",
+            chunk,
+            chunks,
+            None,
+            ReferencePathStyle::ImporterRelative,
+            None,
+            SpliceEscape::Raw,
+        )
     }
 
     /// Like `code()` but with standalone HTML support.
@@ -638,6 +722,7 @@ impl IntermediateOutput {
         standalone_chunk_contents: &[Option<Box<[u8]>>],
     ) -> Result<CodeResult, AllocError> {
         let display_size: Option<&mut usize> = display_size.into();
+        let escape = SpliceEscape::for_chunk(chunk);
         match shift_tracking {
             SourceMapShiftTracking::Enabled => self.code_with_source_map_shifts::<true>(
                 allocator_to_use,
@@ -649,6 +734,7 @@ impl IntermediateOutput {
                 display_size,
                 reference_path_style,
                 Some(standalone_chunk_contents),
+                escape,
             ),
             SourceMapShiftTracking::Disabled => self.code_with_source_map_shifts::<false>(
                 allocator_to_use,
@@ -660,12 +746,13 @@ impl IntermediateOutput {
                 display_size,
                 reference_path_style,
                 Some(standalone_chunk_contents),
+                escape,
             ),
         }
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
+    fn code_with_source_map_shifts<const ENABLE_SOURCE_MAP_SHIFTS: bool>(
         &mut self,
         allocator_to_use: Option<&DynAlloc>,
         graph: &Graph,
@@ -677,6 +764,7 @@ impl IntermediateOutput {
         display_size: Option<&mut usize>,
         reference_path_style: ReferencePathStyle,
         standalone_chunk_contents: Option<&[Option<Box<[u8]>>]>,
+        escape: SpliceEscape,
     ) -> Result<CodeResult, AllocError> {
         // `Graph.input_files` SoA accessors live in `Graph::InputFileColumns`;
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
@@ -801,27 +889,18 @@ impl IntermediateOutput {
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
                             };
 
-                            // Normalize like the write pass below so the counted length matches.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
-                            count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_posix,
+                            ) {
+                                let mut counter = bun_io::DiscardingWriter::new();
+                                Self::write_spliced_path(&mut counter, part, escape)
+                                    .expect("unreachable");
+                                count += counter.count;
+                            }
                         }
                         QueryKind::None => {}
                     }
@@ -994,43 +1073,24 @@ impl IntermediateOutput {
                                 _ => unreachable!(),
                             };
 
-                            // Normalize Windows paths to '/' in a copy because the source is borrowed immutably.
-                            let file_path: &[u8] = {
-                                file_path_posix.clear();
-                                file_path_posix.extend_from_slice(file_path);
-                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-                                    &mut file_path_posix,
-                                );
-                                &file_path_posix
-                            };
-                            let cheap_normalizer = cheap_prefix_normalizer(
+                            for part in Self::spliced_path_parts(
+                                file_path,
                                 import_prefix,
-                                if use_outdir_relative_path {
-                                    file_path
-                                } else {
-                                    bun_paths::resolve_path::relative_platform::<
-                                        bun_paths::platform::Posix,
-                                        false,
-                                    >(from_chunk_dir, file_path)
-                                },
-                            );
-
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
+                                from_chunk_dir,
+                                use_outdir_relative_path,
+                                &mut file_path_posix,
+                            ) {
+                                let written = {
+                                    let mut stream =
+                                        bun_io::FixedBufferStream::new_mut(&mut *remain);
+                                    Self::write_spliced_path(&mut stream, part, escape)
+                                        .expect("unreachable");
+                                    stream.pos
+                                };
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                                    shift.after.advance(&remain[..written]);
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
-                                }
+                                remain = &mut remain[written..];
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

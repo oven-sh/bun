@@ -44,7 +44,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
+use crate::chunk::Content as ChunkContent;
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -454,19 +454,7 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
     )?;
 
     // Get final output with all chunk references resolved.
-    // `code()` takes the dummy chunk and the full slice as `&`, so pass
-    // `&chunks[0]` directly — overlapping shared borrows are fine.
-    let code_result = intermediate.code(
-        None,
-        parse_graph,
-        &c.graph,
-        b"", // no import prefix for metafile
-        &chunks[0],
-        chunks,
-        None, // no display size
-        ReferencePathStyle::ImporterRelative,
-        SourceMapShiftTracking::Disabled,
-    )?;
+    let code_result = intermediate.code_for_metafile(parse_graph, &c.graph, &chunks[0], chunks)?;
 
     Ok(code_result.buffer)
 }

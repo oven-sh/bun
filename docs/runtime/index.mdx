@@ -162,6 +162,26 @@ executes `<script>` in both `bar` and `baz`, but not in `foo`.
 
 See [`--filter`](/pm/filter#running-scripts-with-filter).
 
+### npm's `--workspace`
+
+`bun run` also takes npm's `-w` / `--workspace <value>` flag. Bun matches the value against the workspace packages as npm does. The value is the name of a package, the path of its folder, or the path of a folder that holds packages:
+
+```bash terminal icon="terminal"
+# the package named "api" and the package in the folder ./api
+bun run --workspace api build
+
+# every workspace package directly inside ./packages
+bun run -w packages build
+```
+
+Put the flag before the script name, like `--filter`. npm's `npm run build -w api` is `bun run -w api build`. Bun passes the words after the script name to the script, so `bun run build -w api` gives `-w api` to the `build` script of the current package.
+
+- A name must match exactly, because the value is not a pattern. A package without a `name` is selected by its path.
+- With several `--workspace` flags, the packages run one after another, in the order of the flags.
+- If a selected package does not have the script, the run fails before a script starts. Pass `--if-present` to skip that package.
+- `--workspace` combines with `--filter` like one more positive pattern. `--workspaces` adds no packages to the ones that `--workspace` selects.
+- Bun finds the workspace root and its packages as it does for `--filter`.
+
 ## `bun run -` to pipe code from stdin
 
 `bun run -` reads JavaScript, TypeScript, TSX, or JSX from stdin and executes it without writing to a temporary file first.

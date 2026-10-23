@@ -861,6 +861,7 @@ pub(crate) fn run_scripts_with_filter(
         &mut this_transpiler.resolver,
         fsinstance.top_level_dir(),
     )?;
+    selected.require_scripts(&*ctx, &[script_name]);
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     for package in &selected.packages {
@@ -1071,6 +1072,10 @@ pub(crate) fn run_scripts_with_filter(
     }
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for handle in state.handles.iter_mut() {
+        // The order of `--workspace` values decides, not the dependencies.
+        if selected.in_given_order {
+            break;
+        }
         let config = handle.config;
         for name in &config.deps {
             // is it a workspace dependency?
@@ -1103,7 +1108,9 @@ pub(crate) fn run_scripts_with_filter(
     // set up dependencies between pre/post scripts
     // this is done after the cycle check because we don't want these to be removed if there is a cycle
     for i in 0..state.handles.len() - 1 {
-        if state.handles[i].config.package_name == state.handles[i + 1].config.package_name {
+        if selected.in_given_order
+            || state.handles[i].config.package_name == state.handles[i + 1].config.package_name
+        {
             let next_ptr: *mut ProcessHandle = &raw mut state.handles[i + 1];
             state.handles[i].dependents.push(next_ptr);
             state.handles[i + 1].remaining_dependencies += 1;

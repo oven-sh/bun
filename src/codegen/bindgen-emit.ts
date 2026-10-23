@@ -454,7 +454,7 @@ function cppMatchSpelling(candidates: readonly (readonly [spelling: string, vari
     (character, at) => [at, Map.groupBy(candidates, ([spelling]) => spelling[at])] as const,
   ).reduce((best, next) => (next[1].size > best[1].size ? next : best));
   return `switch (string[${at}]) {
-${[...groups].map(([character, group]) => `case '${character}':\n${indent(cppMatchSpelling(group), 4)}`).join("\n")}
+${[...groups].map(([character, group]) => `case '${character.replace(/['\\]/, "\\$&")}':\n${indent(cppMatchSpelling(group), 4)}`).join("\n")}
 }
 break;`;
 }

@@ -612,6 +612,39 @@ test.concurrent.each([
   },
 );
 
+// Two texts of such a package keep the end of the root directory's name. Each reader of bun.lock cuts the text of a
+// package at its last `#`, so a ref with a `#` is not saved. The migration of yarn.lock builds the tag of the package
+// from the text in yarn.lock.
+test.concurrent.each([
+  ["a#b", [], "lib"],
+  ["v1", ["--yarn"], "v1"],
+] as const)("a github: tarball without a commit in its root, ref %s, bun install %p", async (ref, flags, saved) => {
+  using dir = tempDir("github-root-without-commit-label", {});
+  const root = String(dir);
+  const tarball = await tarballOf("my-lib", packageFiles(nameOf("a"), "pkg-a"));
+  await using server = Bun.serve({
+    port: 0,
+    fetch: req =>
+      new URL(req.url).pathname.startsWith("/repos/scope/pkg-a/tarball/")
+        ? new Response(tarball)
+        : new Response("not found", { status: 404 }),
+  });
+  const project = writeProject(root, { [nameOf("a")]: `github:scope/pkg-a#${ref}` });
+
+  const installed = await runInstall(project, join(root, "cache"), { GITHUB_API_URL: server.url.origin }, ...flags);
+  expect(diagnostics(installed.stderr)).toEqual([]);
+  const yarnLock = flags.length > 0 ? readFileSync(join(project, "yarn.lock"), "utf8").split("\n") : [];
+  expect({
+    locked: (await lockedPackages(project))[nameOf("a")][0],
+    yarnLock: yarnLock.filter(line => /^  (version|resolved) /.test(line)),
+    exitCode: installed.exitCode,
+  }).toEqual({
+    locked: `${nameOf("a")}@github:scope/pkg-a#${saved}`,
+    yarnLock: flags.length > 0 ? ['  version "github:scope/pkg-a#lib"', '  resolved "github:scope/pkg-a#lib"'] : [],
+    exitCode: 0,
+  });
+});
+
 // If a part of a GitHub dependency couldn't be found in the form that the URL parser returns, it was left empty. An
 // empty committish installed the default branch, and an empty owner requested `/repos//<repo>/`. Now such a dependency
 // fails to resolve.

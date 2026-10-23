@@ -1173,7 +1173,7 @@ test.concurrent("a github dependency whose tarball root names no commit", async 
   await bunOk(dir, env, "install");
   expect((await lockfile()).packages["pkg-to-patch"][0]).toBe(inLockfile);
 
-  await expectPrepared(dir, env, inLockfile, "pkg-to-patch", join("node_modules", "pkg-to-patch"));
+  await expectPrepared(dir, env, inLockfile, "pkg-to-patch", "node_modules/pkg-to-patch");
   await Bun.write(join(dir, "node_modules", "pkg-to-patch", "index.js"), `module.exports = "patched";\n`);
   await bunOk(dir, env, "patch", "--commit", label);
   const { patchedDependencies } = await Bun.file(join(dir, "package.json")).json();

@@ -275,7 +275,7 @@ impl RepositoryExt for Repository {
 
     fn pinned_ref<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
         self.resolved_commit(buf)
-            .unwrap_or(self.committish.slice(buf))
+            .unwrap_or_else(|| self.committish.slice(buf))
     }
 
     fn pinned(&self, buf: &[u8]) -> Repository {

@@ -315,6 +315,67 @@ describe("HTTPParser.prototype.execute", () => {
   });
 });
 
+describe("the callback slots are read at each call", () => {
+  const request = Buffer.from(
+    "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n1\r\nc\r\n0\r\n\r\n",
+  );
+  function parse(prepare: (parser: any, log: string[]) => void) {
+    const parser = new HTTPParser();
+    const log: string[] = [];
+    parser.initialize(HTTPParser.REQUEST, {});
+    parser[HTTPParser.kOnMessageComplete] = () => log.push("complete");
+    prepare(parser, log);
+    const parsed = parser.execute(request);
+    parser.close();
+    return { parsed, log };
+  }
+
+  test("a slot that its own callback replaces", () => {
+    const result = parse((parser, log) => {
+      parser[HTTPParser.kOnBody] = (chunk: Buffer) => {
+        log.push(`first ${chunk}`);
+        parser[HTTPParser.kOnBody] = (chunk: Buffer) => log.push(`second ${chunk}`);
+      };
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["first a", "second b", "second c", "complete"] });
+  });
+
+  test("a slot that its own callback deletes", () => {
+    const result = parse((parser, log) => {
+      parser[HTTPParser.kOnBody] = (chunk: Buffer) => {
+        log.push(`first ${chunk}`);
+        delete parser[HTTPParser.kOnBody];
+      };
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["first a", "complete"] });
+  });
+
+  test("a slot that holds something else than a function", () => {
+    const result = parse(parser => void (parser[HTTPParser.kOnBody] = 1));
+    expect(result).toEqual({ parsed: request.length, log: ["complete"] });
+  });
+
+  test("an accessor", () => {
+    const result = parse((parser, log) => {
+      let reads = 0;
+      Object.defineProperty(parser, HTTPParser.kOnBody, {
+        get: () => (chunk: Buffer) => log.push(`read ${++reads} ${chunk}`),
+      });
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["read 1 a", "read 2 b", "read 3 c", "complete"] });
+  });
+
+  test("a slot on the prototype chain", () => {
+    const result = parse((parser, log) => {
+      Object.setPrototypeOf(parser, {
+        __proto__: HTTPParser.prototype,
+        [HTTPParser.kOnBody]: (chunk: Buffer) => log.push(`inherited ${chunk}`),
+      });
+    });
+    expect(result).toEqual({ parsed: request.length, log: ["inherited a", "inherited b", "inherited c", "complete"] });
+  });
+});
+
 describe("a callback that throws stops the parse", () => {
   const kOnMessageBegin = HTTPParser.kOnMessageBegin;
   const kOnBody = HTTPParser.kOnBody;

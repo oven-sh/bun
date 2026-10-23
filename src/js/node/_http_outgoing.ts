@@ -390,6 +390,8 @@ OutgoingMessage.prototype[kFailHeldWrites] = function (err?) {
   const held = this.outputData;
   if (held.length === 0 && this[kChunkedBuffer].length === 0) return false;
   err ??= $ERR_STREAM_DESTROYED("write");
+  // None of this reached the socket, so a last write among it doesn't complete the message.
+  this[kFinishesWithoutLastWrite] = false;
   failCorkedChunks(this, err);
   this.outputData = [];
   this._onPendingData(-this.outputSize);
@@ -1176,7 +1178,7 @@ OutgoingMessage.prototype.end = function end(chunk, encoding, callback) {
     this.uncork();
   }
 
-  const finish = onFinish.bind(undefined, this);
+  const finish = err => onFinish(this, err);
   // As in Node, a last write to a connection that was gone before end() doesn't complete the message or call the callback.
   const lastWrite = this[kSocket]?.destroyed ? nop : finish;
 

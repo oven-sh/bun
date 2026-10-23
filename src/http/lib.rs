@@ -4258,8 +4258,20 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    /// Returns whether nobody will read the body. What is held of it goes, and the framing has already counted what arrived.
+    fn drop_abandoned_body(&mut self) -> bool {
+        let abandoned = self.signals.is_body_abandoned();
+        if abandoned {
+            self.state.drop_body();
+        }
+        abandoned
+    }
+
     /// Decodes what has arrived under the consumer's budget. Returns whether to report bytes.
     fn process_received_body(&mut self, is_final_chunk: bool) -> crate::Result<bool> {
+        if self.drop_abandoned_body() {
+            return Ok(false);
+        }
         let mut max_output = self.decompress_output_cap();
         if max_output != usize::MAX && self.state.encoding.is_compressed() {
             // Nothing is decoded for a paused consumer (a tunnelled socket keeps reading anyway).
@@ -4663,13 +4675,15 @@ impl<'a> HTTPClient<'a> {
                 self.state.total_body_received
             );
         }
-        if self.state.encoding.is_compressed() {
-            self.state
-                .decompress_bytes(incoming_data, true, usize::MAX)?;
-        } else {
-            self.state
-                .get_body_buffer()
-                .append_slice_exact(incoming_data)?;
+        if !self.drop_abandoned_body() {
+            if self.state.encoding.is_compressed() {
+                self.state
+                    .decompress_bytes(incoming_data, true, usize::MAX)?;
+            } else {
+                self.state
+                    .get_body_buffer()
+                    .append_slice_exact(incoming_data)?;
+            }
         }
 
         self.report_progress(incoming_data.len());

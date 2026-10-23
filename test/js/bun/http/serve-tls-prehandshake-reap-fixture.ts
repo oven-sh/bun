@@ -5,9 +5,9 @@
 // SSL low-priority queue, where timeouts are held back.
 //
 // Prints one JSON line: { opened, held } where held is the count the server
-// had not closed by the deadline.
+// had not closed after the sweeps that bring the idle timeout.
 
-import { sweepSocketTimers } from "bun:internal-for-testing";
+import { getEventLoopStats, sweepSocketTimers } from "bun:internal-for-testing";
 import net from "node:net";
 
 const N = Number(process.env.N || 300);
@@ -19,10 +19,10 @@ const server = Bun.serve({
   tls: { cert: process.env.TLS_CERT!, key: process.env.TLS_KEY! },
   fetch: () => new Response("ok"),
 });
+const holdersBefore = getEventLoopStats().sweepTimerCount;
 
 let opened = 0;
 let settled = 0;
-let reaped = 0;
 const held = new Set<net.Socket>();
 const socks: net.Socket[] = [];
 for (let i = 0; i < N; i++) {
@@ -32,26 +32,29 @@ for (let i = 0; i < N; i++) {
   });
   s.on("error", () => {});
   s.on("close", () => {
-    if (held.delete(s)) reaped++;
+    held.delete(s);
     settled++;
   });
   socks.push(s);
 }
 
-// The idle timeout is 10s, which is due at the third or fourth sweep after the accept, and
-// nothing reports the accept: on Linux the kernel holds the burst back for about a
-// second. So this runs the sweep by hand until the first open connection is closed
-// (one that a full accept backlog turned away doesn't count). A parked connection's
-// timeout is held back for 30 sweeps, so a server that has not reaped the rest a few
-// sweeps later has parked them.
+// Nothing reports an accept, and on Linux the kernel holds the burst back for about a
+// second. Every socket of this loop holds the sweep's timer, so the holders that the
+// clients don't account for are the connections the server has accepted.
+const accepted = () => getEventLoopStats().sweepTimerCount - holdersBefore - (N - settled);
 const deadline = performance.now() + DEADLINE_MS;
-for (let sweepsSinceFirstClose = 0; settled < N && sweepsSinceFirstClose < 8 && performance.now() < deadline; ) {
-  await Bun.sleep(20);
-  sweepSocketTimers(1);
-  if (reaped > 0) sweepsSinceFirstClose++;
-}
+while (accepted() <= 0 && performance.now() < deadline) await Bun.sleep(5);
+// Each turn of the loop takes sockets out of the queue again, so this looks on every
+// turn and runs the sweeps in the turn of the last accept.
+while (accepted() < N - settled && performance.now() < deadline) await new Promise(resolve => setImmediate(resolve));
 
-console.log(JSON.stringify({ opened, held: held.size }));
+// The idle timeout is 10s, which is due at the third or fourth sweep. A parked
+// connection's timeout is held back for 30 more.
+sweepSocketTimers(8);
+const left = accepted();
+while (left <= 0 && settled < N && performance.now() < deadline) await Bun.sleep(5);
+
+console.log(JSON.stringify({ opened, held: Math.max(left, held.size) }));
 
 for (const s of socks) s.destroy();
 server.stop(true);

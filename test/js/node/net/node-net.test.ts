@@ -42,7 +42,7 @@ import {
 import os from "node:os";
 import { join } from "node:path";
 import { Duplex, duplexPair } from "node:stream";
-import { connect as tlsConnect, TLSSocket } from "node:tls";
+import { createServer as createTLSServer, connect as tlsConnect, TLSSocket } from "node:tls";
 import { getSystemErrorMap } from "node:util";
 
 const socket_domain = tmpdirSync();
@@ -3516,6 +3516,170 @@ describe("a write that fails at once", () => {
       corked: [true, true],
       afterUncork: { destroyed: false, errored: code, writable: false, writableLength: 0 },
       events: [`write#1 ${code} write`, `write#2 ${code} write`, `error ${code} write`],
+    });
+  });
+});
+
+describe("writes under cork()", () => {
+  type Chunk = [chunk: string | Uint8Array, encoding?: BufferEncoding];
+  const backing = new Uint8Array(64).map((_, i) => 65 + (i % 26)).buffer;
+  const nonEmpty: Record<string, Chunk> = {
+    utf8: ["h\u00e9llo \u20ac \ud834\udd1e", "utf8"],
+    "no encoding": ["h\u00e9llo \u20ac"],
+    latin1: ["h\u00e9llo\u00ff", "latin1"],
+    "latin1 with a wider character": ["h\u20acllo", "latin1"],
+    ascii: ["h\u00e9llo", "ascii"],
+    hex: ["68656c6c6f", "hex"],
+    "hex of odd length": ["68656c6c6", "hex"],
+    base64: ["aGVsbG8gd29ybGQ=", "base64"],
+    base64url: ["aGVsbG8_d29ybGQ-", "base64url"],
+    ucs2: ["h\u00e9\u20ac", "ucs2"],
+    "a lone surrogate": ["a\ud834b", "utf8"],
+    "a rope": ["abc".repeat(5) + String(Math.PI) + Buffer.alloc(40, "x"), "utf8"],
+    Buffer: [Buffer.from("buffer bytes")],
+    Uint8Array: [new Uint8Array([1, 2, 3, 250, 255])],
+    "a Buffer inside a larger ArrayBuffer": [Buffer.from(backing, 3, 7)],
+    "a Uint8Array inside a larger ArrayBuffer": [new Uint8Array(backing, 11, 9)],
+  };
+  const emptyString: Chunk = ["", "latin1"];
+  const emptyBuffer: Chunk = [Buffer.alloc(0)];
+  const shapes: [string, Chunk[]][] = [
+    ...Object.entries(nonEmpty).flatMap(([name, chunk]): [string, Chunk[]][] => [
+      [`${name} alone`, [chunk]],
+      [`${name}, empty string`, [chunk, emptyString]],
+      [`empty string, ${name}`, [emptyString, chunk]],
+      [`empty Buffer, ${name}, empty string, empty Buffer`, [emptyBuffer, chunk, emptyString, emptyBuffer]],
+      [`${name}, latin1`, [chunk, nonEmpty.latin1]],
+      [`Buffer, empty string, ${name}`, [nonEmpty.Buffer, emptyString, chunk]],
+    ]),
+    ["empty string alone", [emptyString]],
+    ["empty Buffer alone", [emptyBuffer]],
+    ["empty string, empty Buffer, empty string", [emptyString, emptyBuffer, emptyString]],
+  ];
+
+  async function connectedPair(kind: "tcp" | "unix" | "tls") {
+    const server = kind === "tls" ? createTLSServer(tlsCert) : createServer();
+    await once(
+      server.listen(kind === "unix" ? { path: join(socket_domain, "corked.sock") } : { port: 0, host: "127.0.0.1" }),
+      "listening",
+    );
+    const address = server.address() as string | import("node:net").AddressInfo;
+    const accepted = once(server, kind === "tls" ? "secureConnection" : "connection") as Promise<[Socket]>;
+    const writer =
+      typeof address === "string"
+        ? connect(address)
+        : kind === "tls"
+          ? tlsConnect({ port: address.port, host: address.address, ca: tlsCert.cert, servername: "localhost" })
+          : connect(address.port, address.address);
+    const [[peer]] = await Promise.all([accepted, once(writer, kind === "tls" ? "secureConnect" : "connect")]);
+    return {
+      writer,
+      peer,
+      [Symbol.dispose]() {
+        writer.destroy();
+        peer.destroy();
+        server.close();
+      },
+    };
+  }
+
+  it.each(isWindows ? (["tcp", "tls"] as const) : (["tcp", "unix", "tls"] as const))(
+    "reach the peer of a %s socket as Buffer.from() encodes them, and every callback runs once, in order",
+    async kind => {
+      using pair = await connectedPair(kind);
+      const { writer, peer } = pair;
+      let received = Buffer.alloc(0);
+      let wake: (() => void) | undefined;
+      peer.on("data", (chunk: Buffer) => {
+        received = Buffer.concat([received, chunk]);
+        wake?.();
+      });
+      for (const [name, chunks] of shapes) {
+        const expected = Buffer.concat(
+          chunks.map(([chunk, encoding]) => (typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk)),
+        );
+        const bytesWritten = writer.bytesWritten;
+        const callbacks: (number | Error)[] = [];
+        const { promise: written, resolve } = Promise.withResolvers<void>();
+        writer.cork();
+        const returned = chunks.map(([chunk, encoding], i) =>
+          writer.write(chunk as string, encoding, error => {
+            callbacks.push(error ?? i);
+            if (callbacks.length === chunks.length) resolve();
+          }),
+        );
+        writer.uncork();
+        await written;
+        while (received.length < expected.length) await new Promise<void>(resolve => (wake = resolve));
+        expect({
+          name,
+          returned,
+          callbacks,
+          bytesWritten: writer.bytesWritten - bytesWritten,
+          writableLength: writer.writableLength,
+          received: received.toString("hex"),
+        }).toEqual({
+          name,
+          returned: chunks.map(() => true),
+          callbacks: chunks.map((_, i) => i),
+          bytesWritten: expected.length,
+          writableLength: 0,
+          received: expected.toString("hex"),
+        });
+        received = Buffer.alloc(0);
+      }
+    },
+  );
+
+  describe.each([
+    ["behind", (chunk: Buffer): Chunk[] => [[chunk], emptyString]],
+    ["ahead of", (chunk: Buffer): Chunk[] => [emptyString, [chunk]]],
+  ])("a Buffer with an empty chunk %s it can be reused as soon as uncork() has returned", (_, chunksOf) => {
+    async function writeThenReuse(writer: Socket, peer: Promise<Socket> | Socket) {
+      const chunk = Buffer.alloc(1 << 20, "a");
+      const events: string[] = [];
+      writer.on("drain", () => events.push("drain"));
+      writer.cork();
+      const returned = chunksOf(chunk).map(([chunk, encoding], i) =>
+        writer.write(chunk as string, encoding, error => events.push(`callback ${i} ${error?.message ?? "ok"}`)),
+      );
+      writer.uncork();
+      const waiting = writer.writableLength;
+      chunk.fill("Z");
+      let received = Buffer.alloc(0);
+      const { promise: all, resolve } = Promise.withResolvers<void>();
+      const drained = once(writer, "drain");
+      (await peer).on("data", (data: Buffer) => {
+        received = Buffer.concat([received, data]);
+        if (received.length >= chunk.length) resolve();
+      });
+      await Promise.all([all, drained]);
+      expect({ last: returned.at(-1), waiting, events, intact: received.equals(Buffer.alloc(1 << 20, "a")) }).toEqual({
+        last: false,
+        waiting: chunk.length,
+        events: ["drain", "callback 0 ok", "callback 1 ok"],
+        intact: true,
+      });
+    }
+
+    it("with part of it still to send", async () => {
+      using pair = await connectedPair("tcp");
+      require("bun:internal-for-testing").setSocketOptions(pair.writer, 1, 4096);
+      await writeThenReuse(pair.writer, pair.peer);
+    });
+
+    it("on a socket that is still connecting", async () => {
+      const server = createServer();
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const accepted = once(server, "connection").then(([peer]) => peer as Socket);
+      const writer = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
+      try {
+        await writeThenReuse(writer, accepted);
+      } finally {
+        writer.destroy();
+        (await accepted).destroy();
+        server.close();
+      }
     });
   });
 });

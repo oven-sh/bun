@@ -2527,6 +2527,16 @@ Socket.prototype.destroySoon = function destroySoon() {
 //TODO: migrate to native
 // Writable calls this with two chunks or more.
 Socket.prototype._writev = function _writev(data, callback) {
+  // An HTTP message ends with an empty write, whose callback is its 'finish'. A lone string needs no copy, and nobody can change it while part of it waits.
+  let only;
+  let count = 0;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].chunk.length !== 0 && ++count === 1) only = data[i];
+  }
+  if (count === 1) {
+    const { chunk, encoding } = only;
+    if (typeof chunk === "string") return this._write(chunk, encoding, callback);
+  }
   for (let i = 0; i < data.length; i++) {
     const { chunk, encoding } = data[i];
     data[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;

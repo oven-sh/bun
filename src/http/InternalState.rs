@@ -189,6 +189,15 @@ impl<'a> InternalState<'a> {
         };
     }
 
+    /// Lets go of the body as it stands: input that isn't decoded yet, the decoder, and output that isn't reported yet.
+    pub(crate) fn drop_body(&mut self) {
+        self.compressed_body = MutableString::init_empty();
+        self.compressed_body_consumed = 0;
+        self.decompressor = Decompressor::None;
+        self.decoded_body = MutableString::init_empty();
+        self.flags.decompress_output_pending = false;
+    }
+
     /// The buffer response body bytes accumulate into. For compressed
     /// responses this is the intermediate `compressed_body`; otherwise it is
     /// the owned `decoded_body`.

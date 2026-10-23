@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { dlopen } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows, libcPathForDlopen, tempDir } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows, libcPathForDlopen, tempDir } from "harness";
 import path from "path";
 
 // The receiver rejects a JSON line that's longer than the UTF-8 encoding of a max-length string can be.
@@ -456,6 +456,74 @@ it("child with unusable NODE_CHANNEL_FD tears down IPC without crashing", async 
   expect(stderr).toContain("Unable to start IPC");
   expect(stdout).toBe("err ERR_IPC_CHANNEL_CLOSED\nok\n");
   expect(exitCode).toBe(0);
+});
+
+describe("every ipc call, then onDisconnect, then exited and onExit", () => {
+  async function callsOf(env: { LEAVE: string; MESSAGES: number; BUSY: boolean; CHILDREN: number }) {
+    using dir = tempDir("spawn-callback-order", {
+      "parent.js": `
+        const { readFileSync } = require("node:fs");
+        const { LEAVE, MESSAGES, BUSY, CHILDREN } = JSON.parse(process.env.ORDER);
+        for (let i = 0; i < CHILDREN; i++) {
+          const calls = [];
+          let left = 3;
+          const done = () => --left || console.log(calls.join(", "));
+          const child = Bun.spawn({
+            cmd: [process.execPath, "child.js"],
+            stdio: ["ignore", "inherit", "inherit"],
+            ipc(message) {
+              if (message !== "ready") return calls.push("ipc");
+              child.send({ leave: LEAVE, messages: MESSAGES });
+              // A zombie with one thread left: the channel has ended and the exit has been reported.
+              while (BUSY && !/^\\d+ \\(.*\\) Z (?:-?\\d+ ){16}1 /s.test(readFileSync("/proc/" + child.pid + "/stat", "utf8")));
+            },
+            onDisconnect: () => (calls.push("onDisconnect"), done()),
+            onExit: (_, code, signal) => (calls.push("onExit " + (signal ?? code)), done()),
+          });
+          child.exited.then(() => (calls.push("exited"), done()));
+        }`,
+      "child.js": `
+        process.once("message", ({ leave, messages }) => {
+          const go = () => {
+            if (leave === "process.disconnect()") process.disconnect();
+            else if (leave === "process.exit()") process.exit(0);
+            else process.kill(process.pid, "SIGKILL");
+          };
+          if (!messages) return go();
+          for (let i = 1; i <= messages; i++) process.send(i, i === messages ? go : undefined);
+        });
+        process.send("ready");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      cwd: String(dir),
+      env: { ...bunEnv, ORDER: JSON.stringify(env) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const leaves = ["process.disconnect()", "process.exit()", "SIGKILL"];
+  it.skipIf(!isLinux).concurrent.each(leaves.flatMap(leave => [[leave, 2] as const, [leave, 0] as const]))(
+    "when a busy parent finds them all waiting: %s after %d unread messages",
+    async (LEAVE, MESSAGES) => {
+      expect(await callsOf({ LEAVE, MESSAGES, BUSY: true, CHILDREN: 1 })).toEqual({
+        stdout: [`${"ipc, ".repeat(MESSAGES)}onDisconnect, exited, onExit ${LEAVE === "SIGKILL" ? LEAVE : 0}`],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  it.concurrent("when children of an idle parent exit right after their last message", async () => {
+    expect(await callsOf({ LEAVE: "process.exit()", MESSAGES: 1, BUSY: false, CHILDREN: 8 })).toEqual({
+      stdout: Array(8).fill("ipc, onDisconnect, exited, onExit 0"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 it.skipIf(isWindows)("advanced serialization advertises wire format version 2", async () => {

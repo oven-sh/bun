@@ -221,6 +221,283 @@ describe("fork() IPC", () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  describe("every 'message', then 'disconnect', then 'exit', then 'close'", () => {
+    async function eventsOf(env: { LEAVE: string; MESSAGES: number; BUSY: boolean; CHILDREN: number }) {
+      using dir = tempDir("fork-event-order", {
+        "parent.js": `
+          const { readFileSync } = require("node:fs");
+          const { LEAVE, MESSAGES, BUSY, CHILDREN } = JSON.parse(process.env.ORDER);
+          for (let i = 0; i < CHILDREN; i++) {
+            const child = require("node:child_process").fork(__dirname + "/child.js");
+            const events = [];
+            child.on("message", message => {
+              if (message !== "ready") return events.push("message");
+              child.send({ leave: LEAVE, messages: MESSAGES });
+              // A zombie with one thread left: the channel has ended and the exit has been reported.
+              while (BUSY && !/^\\d+ \\(.*\\) Z (?:-?\\d+ ){16}1 /s.test(readFileSync("/proc/" + child.pid + "/stat", "utf8")));
+            });
+            child.on("disconnect", () => events.push("disconnect"));
+            child.on("exit", (code, signal) => events.push("exit " + (signal ?? code)));
+            child.on("close", () => console.log([...events, "close"].join(", ")));
+          }`,
+        "child.js": `
+          process.once("message", ({ leave, messages }) => {
+            const go = () => {
+              if (leave === "process.disconnect()") process.disconnect();
+              else if (leave === "process.exit()") process.exit(0);
+              else process.kill(process.pid, "SIGKILL");
+            };
+            if (!messages) return go();
+            for (let i = 1; i <= messages; i++) process.send(i, i === messages ? go : undefined);
+          });
+          process.send("ready");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, ORDER: JSON.stringify(env) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+    const leaves = ["process.disconnect()", "process.exit()", "SIGKILL"];
+
+    // Node emits 'exit' before 'disconnect' here.
+    it.skipIf(!isLinux).concurrent.each(leaves)(
+      "when a busy parent finds unread messages, the end of the channel and the exit all waiting: %s",
+      async LEAVE => {
+        expect(await eventsOf({ LEAVE, MESSAGES: 2, BUSY: true, CHILDREN: 1 })).toEqual({
+          stdout: [`message, message, disconnect, exit ${LEAVE === "SIGKILL" ? LEAVE : 0}, close`],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    it.skipIf(!isLinux).concurrent.each(leaves)(
+      "when a busy parent finds the end of the channel and the exit both waiting: %s",
+      async LEAVE => {
+        expect(await eventsOf({ LEAVE, MESSAGES: 0, BUSY: true, CHILDREN: 1 })).toEqual({
+          stdout: [`disconnect, exit ${LEAVE === "SIGKILL" ? LEAVE : 0}, close`],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    it.concurrent("when children of an idle parent exit right after their last message", async () => {
+      expect(await eventsOf({ LEAVE: "process.exit()", MESSAGES: 1, BUSY: false, CHILDREN: 8 })).toEqual({
+        stdout: Array(8).fill("message, disconnect, exit 0, close"),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  describe.skipIf(isWindows)("a send() that the other end never took", () => {
+    // Each side logs to stdout. The sender stays busy until the file says that the other end is closed, then sends in the same turn.
+    const shared = `
+      const fs = require("node:fs");
+      const log = line => fs.writeSync(1, line + "\\n");
+      const waitFor = file => { while (!fs.existsSync(file)); };
+      const callback = name => err => log(name + ": " + (err && [err.message, err.code, err.errno, err.syscall].join(", ")));`;
+    const parent = (send: string) => `${shared}
+      const child = require("node:child_process").fork(__dirname + "/child.js");
+      child.on("error", err => log("error: " + err.code));
+      child.on("disconnect", () => log("disconnect"));
+      child.on("exit", code => log("exit " + code));
+      child.once("message", () => {
+        child.send("leave");
+        waitFor("left");
+        ${send}
+        log("sent");
+      });`;
+    const closes = `
+      process.once("disconnect", () => require("node:fs").writeFileSync("left", ""));
+      process.once("message", () => process.disconnect());
+      process.send("ready");`;
+    const EPIPE = "write EPIPE, EPIPE, -32, write";
+
+    async function run(files: Record<string, string>) {
+      using dir = tempDir("send-never-taken", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+    }
+
+    it.concurrent("calls each callback once with EPIPE, in order, before 'disconnect'", async () => {
+      const files = {
+        "parent.js": parent(`for (const name of ["first", "second", "third"]) log(child.send(name, callback(name)));`),
+        "child.js": closes,
+      };
+      expect(await run(files)).toEqual({
+        stdout: [
+          "true",
+          "true",
+          "true",
+          "sent",
+          `first: ${EPIPE}`,
+          `second: ${EPIPE}`,
+          `third: ${EPIPE}`,
+          "disconnect",
+          "exit 0",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    // Node emits 'error' for the send() without a callback.
+    it.concurrent("emits no 'error' for a send() without a callback", async () => {
+      const files = {
+        "parent.js": parent(`child.send("first"); child.send("second", callback("second")); child.send("third");`),
+        "child.js": closes,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", `second: ${EPIPE}`, "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("still answers ERR_IPC_CHANNEL_CLOSED once this side knows that the channel is closed", async () => {
+      const files = {
+        "parent.js": parent(`child.once("disconnect", () => log(child.send("late", callback("late"))));`),
+        "child.js": closes,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", "disconnect", "false", "late: Channel closed, ERR_IPC_CHANNEL_CLOSED, , ", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("calls the callback of a message that was partly written, once", async () => {
+      const files = {
+        "parent.js": parent(`
+          child.send(Buffer.alloc(8 << 20, "x").toString(), callback("large"));
+          child.send("small", callback("small"));
+          fs.writeFileSync("go", "");`),
+        // Reads nothing more, and exits once the large message is stuck in the channel.
+        "child.js": `${shared}
+          process.once("message", () => {
+            fs.writeFileSync("left", "");
+            waitFor("go");
+            process.exit(0);
+          });
+          process.send("ready");`,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", `large: ${EPIPE}`, `small: ${EPIPE}`, "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent.each(["net.Server", "net.Socket", "dgram.Socket"])(
+      "calls the callback of a message that carries a %s, and leaks no descriptor",
+      async kind => {
+        const files = {
+          "parent.js": `
+            const net = require("node:net");
+            const openDescriptors = () => require("node:fs").readdirSync("/dev/fd").length;
+            const before = openDescriptors();
+            const withHandle = {
+              "net.Server": use => {
+                const server = net.createServer().listen(0, "127.0.0.1", () => use(server, () => "listening: " + server.listening, () => server.close()));
+              },
+              "net.Socket": use => {
+                const server = net.createServer(socket => use(socket, () => "handle: " + socket._handle, () => (client.destroy(), server.close())));
+                const client = server.listen(0, "127.0.0.1", () => client.connect(server.address().port, "127.0.0.1")) && new net.Socket();
+              },
+              "dgram.Socket": use => {
+                const socket = require("node:dgram").createSocket("udp4");
+                socket.bind(0, "127.0.0.1", () => use(socket, () => "port: " + typeof socket.address().port, () => socket.close()));
+              },
+            }[${JSON.stringify(kind)}];
+            withHandle((handle, state, close) => {
+              ${parent(`child.send("with a handle", handle, callback("with a handle"));`)}
+              child.on("close", () => {
+                log(state());
+                close();
+                setImmediate(function check() {
+                  if (openDescriptors() > before) return setImmediate(check);
+                  log("descriptors: " + (openDescriptors() - before));
+                });
+              });
+            });`,
+          "child.js": closes,
+        };
+        expect(await run(files)).toEqual({
+          stdout: [
+            "sent",
+            `with a handle: ${EPIPE}`,
+            "disconnect",
+            "exit 0",
+            { "net.Server": "listening: true", "net.Socket": "handle: null", "dgram.Socket": "port: number" }[kind],
+            "descriptors: 0",
+          ],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    it.concurrent("gives no answer for a message that is held back until an earlier handle is acked", async () => {
+      const files = {
+        "parent.js": `
+          const server = require("node:net").createServer().listen(0, "127.0.0.1", () => {
+            ${parent(`
+              child.send("first", callback("first"));
+              child.send("second", server, callback("second"));
+              child.send("third", callback("third"));`)}
+            child.on("close", () => server.close());
+          });`,
+        "child.js": closes,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["sent", `first: ${EPIPE}`, `second: ${EPIPE}`, "disconnect", "exit 0"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.concurrent("calls the callbacks of process.send() when the parent has closed the channel", async () => {
+      const files = {
+        "parent.js": `
+          const child = require("node:child_process").fork(__dirname + "/child.js");
+          child.once("disconnect", () => require("node:fs").writeFileSync("left", ""));
+          child.once("message", () => {
+            child.send("go");
+            child.disconnect();
+          });`,
+        "child.js": `${shared}
+          process.on("error", err => log("error: " + err.code));
+          process.on("disconnect", () => log("disconnect"));
+          process.once("message", () => {
+            waitFor("left");
+            for (const name of ["first", "second"]) log(process.send(name, callback(name)));
+            process.send("third");
+            log("sent");
+          });
+          process.send("ready");`,
+      };
+      expect(await run(files)).toEqual({
+        stdout: ["true", "true", "sent", `first: ${EPIPE}`, `second: ${EPIPE}`, "disconnect"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("spawn()", () => {

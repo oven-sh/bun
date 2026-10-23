@@ -1,9 +1,13 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { tls as tlsCert } from "harness";
+import { once } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServer } from "node:http";
+import { createSecureServer } from "node:http2";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { duplexPair, Writable } from "node:stream";
+import { createServer as createTLSServer, connect as tlsConnect } from "node:tls";
 
 test("aborting a connection settles every queued pipelined response callback once", async () => {
   const queued = Promise.withResolvers<void>();
@@ -185,5 +189,81 @@ test.each(readers.flatMap(([how, read]) => [true, false].map(flowing => [how, fl
       clientSide.destroy();
       server.closeAllConnections();
     }
+  },
+);
+
+describe.each(["emit('connection')", "emit('connection') with a TLS socket", "allowHTTP1", "listen()"] as const)(
+  "over %s",
+  kind => {
+    test.each([false, true])(
+      "a response that never gets its turn emits no 'finish', and its end() callback gets an error (a CONNECT request behind it: %p)",
+      async withConnect => {
+        const events: string[] = [];
+        const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+        const onRequest = (req: IncomingMessage, res: ServerResponse) => {
+          if (req.url === "/0") {
+            req.socket.on("close", () => setImmediate(onClosed));
+            res.writeHead(204).end();
+            return;
+          }
+          for (const event of ["finish", "close"]) res.on(event, () => events.push(`${req.url} ${event}`));
+          if (req.url === "/1") req.socket.end();
+          else
+            res.end("body", (error?: NodeJS.ErrnoException) => events.push(`${req.url} end() ${error?.code ?? "ok"}`));
+        };
+        const server =
+          kind === "allowHTTP1"
+            ? createSecureServer({ ...tlsCert, allowHTTP1: true }, onRequest as any)
+            : createServer(onRequest);
+        server.on("connect", (_req, socket) => {
+          events.push("connect");
+          socket.on("error", () => {});
+        });
+        const front =
+          kind === "emit('connection')"
+            ? createNetServer(socket => server.emit("connection", socket))
+            : kind === "emit('connection') with a TLS socket"
+              ? createTLSServer(tlsCert, socket => server.emit("connection", socket))
+              : server;
+        await once(front.listen(0, "127.0.0.1"), "listening");
+        const { port } = front.address() as AddressInfo;
+        const client =
+          kind === "emit('connection')" || kind === "listen()"
+            ? connect(port, "127.0.0.1")
+            : tlsConnect({
+                port,
+                host: "127.0.0.1",
+                ca: tlsCert.cert,
+                servername: "localhost",
+                ALPNProtocols: ["http/1.1"],
+              });
+        try {
+          client.on("error", () => {}).on("end", () => client.destroy());
+          client
+            .resume()
+            .write(
+              "GET /0 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+                "POST /1 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello" +
+                "POST /2 HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello" +
+                (withConnect ? "CONNECT localhost:1 HTTP/1.1\r\nHost: localhost:1\r\n\r\n" : ""),
+            );
+          await closed;
+          // uWS parses nothing behind the request whose handler ended the socket.
+          if (kind === "listen()") expect(events).toEqual(["/1 close"]);
+          else {
+            expect(events).toEqual([
+              ...(withConnect ? ["connect"] : []),
+              "/1 close",
+              "/2 end() ERR_STREAM_DESTROYED",
+              "/2 close",
+            ]);
+          }
+        } finally {
+          client.destroy();
+          front.close();
+          server.close();
+        }
+      },
+    );
   },
 );

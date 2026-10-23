@@ -2019,6 +2019,113 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each(["cluster.disconnect()", "worker.disconnect() in the primary", "cluster.worker.disconnect()"])(
+  "%s: the worker's channel stays open until its servers and sockets have closed",
+  async HOW => {
+    using dir = tempDir("cluster-disconnect-close", {
+      "main.mjs": `
+import cluster from "node:cluster";
+import dgram from "node:dgram";
+import { once } from "node:events";
+import http from "node:http";
+import net from "node:net";
+
+if (cluster.isPrimary) {
+  const workers = [cluster.fork(), cluster.fork()];
+  const logs = workers.map(worker => {
+    const log = [];
+    worker.on("message", message => log.push(message));
+    worker.on("disconnect", () => log.push("disconnect"));
+    worker.on("error", err => log.push("error " + err.code));
+    return log;
+  });
+  const ended = workers.map(worker => Promise.all([once(worker, "exit"), once(worker, "disconnect")]));
+  await Promise.all(workers.map(worker => once(worker, "message")));
+  for (const log of logs) log.length = 0;
+
+  if (process.env.HOW === "cluster.disconnect()") cluster.disconnect();
+  else if (process.env.HOW === "cluster.worker.disconnect()") for (const worker of workers) worker.send("disconnect");
+  else for (const worker of workers) worker.disconnect();
+
+  for (const [i, end] of ended.entries()) {
+    const [[code, signal]] = await end;
+    // They close in no fixed order.
+    const closed = logs[i].splice(0, logs[i].indexOf("disconnect")).sort();
+    console.log([...closed, ...logs[i], "exit " + (signal ?? code)].join(", "));
+  }
+} else {
+  const report = name => () => process.send(name + " closed, connected: " + process.connected);
+  const handles = [
+    net.createServer().on("close", report("net")).listen(0, "127.0.0.1"),
+    http.createServer().on("close", report("http")).listen(0, "127.0.0.1"),
+  ];
+  // Workers can't share a dgram socket on Windows.
+  if (process.platform !== "win32") handles.push(dgram.createSocket("udp4").on("close", report("dgram")).bind(0, "127.0.0.1"));
+  process.on("message", () => cluster.worker.disconnect());
+  await Promise.all(handles.map(handle => once(handle, "listening")));
+  process.send("ready");
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: { ...bunEnv, HOW },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const worker = [
+      ...(isWindows ? [] : ["dgram closed, connected: true"]),
+      "http closed, connected: true",
+      "net closed, connected: true",
+      "disconnect",
+      "exit 0",
+    ].join(", ");
+    expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({ stdout: [worker, worker], stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.skipIf(isWindows).concurrent("worker.send() gets its callback after the worker has hung up", async () => {
+  using dir = tempDir("cluster-send-after-disconnect", {
+    "main.mjs": `
+import cluster from "node:cluster";
+import { once } from "node:events";
+import { existsSync, writeFileSync } from "node:fs";
+import net from "node:net";
+
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  await once(worker, "listening");
+  worker.disconnect();
+  // The worker has closed its end, and this side hasn't looked yet.
+  while (!existsSync("left"));
+  console.log("connected: " + worker.isConnected());
+  console.log("send(): " + worker.send("late", err => console.log("callback: " + err?.code)));
+  const [code] = await once(worker, "exit");
+  console.log("exit " + code);
+} else {
+  process.once("disconnect", () => writeFileSync("left", ""));
+  net.createServer().listen(0, "127.0.0.1");
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr }).toEqual({
+    stdout: ["connected: true", "send(): true", "callback: EPIPE", "exit 0"],
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // Two workers listen on LISTEN, the primary makes one request, then disconnects both and waits for them to exit.
 const httpWorkersFixture = `
 const cluster = require("node:cluster");

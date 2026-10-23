@@ -1060,7 +1060,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           const waiting = state.outgoing.length;
           let completed = false;
           try {
-            parserOnIncoming(server, socket, state, http_req, http_req[kReqShouldKeepAlive]);
+            parserOnIncoming(server, socket, state, http_req, http_req[kReqShouldKeepAlive], dispatchBits);
             completed = true;
           } finally {
             const res = socket._httpMessage?.req === http_req ? socket._httpMessage : state.outgoing[waiting];
@@ -1188,16 +1188,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         // Node's parserOnIncoming never counts an accepted upgrade or a missing-Host 400 against maxRequestsPerSocket, and routes HTTP/1.1 only.
-        let expectation = kNoExpectation;
-        if (!is_upgrade && !isAncientHTTP) {
-          if (server.requireHostHeader && (dispatchBits & DISPATCH_HAS_HOST) === 0) {
-            expectation = kMissingHost;
-          } else if (isOverRequestsLimit(server, http_res, socket)) {
-            expectation = kOverRequestsLimit;
-          } else if ((dispatchBits & DISPATCH_HAS_EXPECT) !== 0) {
-            expectation = (dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0 ? kExpectContinue : kExpectOther;
-          }
-        }
+        const expectation =
+          is_upgrade || isAncientHTTP ? kNoExpectation : expectationFromBits(server, http_res, socket, dispatchBits);
 
         if (expectation === kOverRequestsLimit) {
           emitRequest(server, socket, http_req, http_res, expectation);
@@ -1732,6 +1724,7 @@ function connectionListenerInternal(server, socket) {
     incoming: [],
     // About how many bytes the responses in `outgoing` hold. Above the high water mark, the socket and the parser pause.
     outgoingData: 0,
+    onPendingData: undefined,
     // Node's parser is an AsyncResource made here, so its callbacks run in this context whatever delivers the bytes.
     frame: AsyncContextFrame.current(),
   };
@@ -1915,7 +1908,8 @@ function onParserExecuteCommon(server, socket, parser, state, ret, d) {
     if (req.complete) {
       socket.removeListener("data", state.onData);
       socket.removeListener("end", state.onEnd);
-      socket.removeListener("close", state.onClose);
+      // The responses that still wait for their turn learn of the close from it.
+      if (state.outgoing.length === 0) socket.removeListener("close", state.onClose);
       socket.removeListener("drain", state.onDrain);
       socket.removeListener("error", socketOnError);
       socket.removeListener("timeout", socketOnTimeout);
@@ -1999,7 +1993,7 @@ function resOnFinish(req, res, socket, state, server) {
       socket.setTimeout(idleTimeout);
       socket[kKeepAliveTimeoutSet] = true;
     }
-  } else if (socket.writable) {
+  } else {
     sendNextResponse(socket, state);
   }
 }
@@ -2043,7 +2037,7 @@ const kConnectionState = Symbol("kConnectionState");
 function connectionState(socket) {
   let state = socket[kConnectionState];
   if (state === undefined) {
-    state = socket[kConnectionState] = { outgoing: [], incoming: [], outgoingData: 0 };
+    state = socket[kConnectionState] = { outgoing: [], incoming: [], outgoingData: 0, onPendingData: undefined };
     socket.on("drain", socketOnDrain.bind(undefined, socket, state));
   }
   return state;
@@ -2063,7 +2057,7 @@ function hasBodyHeaders(headers) {
   return "content-length" in headers || "transfer-encoding" in headers;
 }
 
-function parserOnIncoming(server, socket, state, req, keepAlive) {
+function parserOnIncoming(server, socket, state, req, keepAlive, dispatchBits?) {
   resetSocketTimeout(server, socket);
 
   if (req.upgrade) {
@@ -2093,7 +2087,7 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
   if (req[kHandle] !== undefined) res[kNativeRequest] = req[kHandle];
   res._keepAliveTimeout = server.keepAliveTimeout;
   res._maxRequestsPerSocket = server.maxRequestsPerSocket;
-  res._onPendingData = updateOutgoingData.bind(undefined, socket, state);
+  res._onPendingData = state.onPendingData ??= updateOutgoingData.bind(undefined, socket, state);
 
   res.shouldKeepAlive = keepAlive;
   res[kUniqueHeaders] = server[kUniqueHeaders];
@@ -2112,14 +2106,21 @@ function parserOnIncoming(server, socket, state, req, keepAlive) {
     giveSocket(res, socket);
   }
 
-  res.on("finish", resOnFinish.bind(undefined, req, res, socket, state, server));
+  res.on("finish", () => resOnFinish(req, res, socket, state, server));
 
   let expectation = kNoExpectation;
   if (req.httpVersionMajor === 1 && req.httpVersionMinor === 1) {
-    const { host, expect } = req.headers;
-    if (server.requireHostHeader && host === undefined) expectation = kMissingHost;
-    else if (isOverRequestsLimit(server, res, socket)) expectation = kOverRequestsLimit;
-    else if (expect !== undefined) expectation = continueExpression.test(expect) ? kExpectContinue : kExpectOther;
+    // uWS reported what its request has, so req.headers stays unbuilt until the program reads it.
+    if (dispatchBits === undefined) {
+      const { host, expect } = req.headers;
+      dispatchBits = host === undefined ? 0 : DISPATCH_HAS_HOST;
+      if (expect !== undefined) {
+        dispatchBits |= continueExpression.test(expect)
+          ? DISPATCH_HAS_EXPECT | DISPATCH_EXPECT_CONTINUE
+          : DISPATCH_HAS_EXPECT;
+      }
+    }
+    expectation = expectationFromBits(server, res, socket, dispatchBits);
   }
   emitRequest(server, socket, req, res, expectation);
 
@@ -2131,6 +2132,13 @@ const kMissingHost = 1;
 const kOverRequestsLimit = 2;
 const kExpectContinue = 3;
 const kExpectOther = 4;
+
+function expectationFromBits(server, res, socket, dispatchBits) {
+  if (server.requireHostHeader && (dispatchBits & DISPATCH_HAS_HOST) === 0) return kMissingHost;
+  if (isOverRequestsLimit(server, res, socket)) return kOverRequestsLimit;
+  if ((dispatchBits & DISPATCH_HAS_EXPECT) === 0) return kNoExpectation;
+  return (dispatchBits & DISPATCH_EXPECT_CONTINUE) !== 0 ? kExpectContinue : kExpectOther;
+}
 
 // Counts an HTTP/1.1 request against server.maxRequestsPerSocket.
 function isOverRequestsLimit(server, res, socket) {

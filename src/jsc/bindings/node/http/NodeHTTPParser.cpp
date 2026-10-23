@@ -371,7 +371,7 @@ int HTTPParser::onMessageBegin()
         RETURN_IF_EXCEPTION(scope, stopForPendingException());
     }
 
-    JSValue onMessageBeginCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageBegin));
+    JSValue onMessageBeginCallback = thisParser->get(globalObject, kOnMessageBegin);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (onMessageBeginCallback.isCallable()) {
         CallData callData = getCallData(onMessageBeginCallback);
@@ -517,7 +517,7 @@ int HTTPParser::onHeadersComplete()
         }
     });
 
-    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeadersComplete));
+    JSValue onHeadersCompleteCallback = thisParser->get(globalObject, kOnHeadersComplete);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onHeadersCompleteCallback.isCallable()) {
@@ -580,7 +580,7 @@ int HTTPParser::onBody(const char* at, size_t length)
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, Identifier::from(vm, kOnBody));
+    JSValue onBodyCallback = m_thisParser->get(lexicalGlobalObject, kOnBody);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
     if (!onBodyCallback.isCallable()) {
         return 0;
@@ -629,7 +629,7 @@ int HTTPParser::onMessageComplete()
 
     m_headerPairs = 0;
 
-    JSValue onMessageCompleteCallback = thisParser->get(globalObject, Identifier::from(vm, kOnMessageComplete));
+    JSValue onMessageCompleteCallback = thisParser->get(globalObject, kOnMessageComplete);
     RETURN_IF_EXCEPTION(scope, stopForPendingException());
 
     if (!onMessageCompleteCallback.isCallable()) {
@@ -704,7 +704,7 @@ void HTTPParser::flush()
 
     JSHTTPParser* thisParser = m_thisParser;
 
-    JSValue onHeadersCallback = thisParser->get(globalObject, Identifier::from(vm, kOnHeaders));
+    JSValue onHeadersCallback = thisParser->get(globalObject, kOnHeaders);
     RETURN_IF_EXCEPTION(scope, );
 
     if (!onHeadersCallback.isCallable()) {

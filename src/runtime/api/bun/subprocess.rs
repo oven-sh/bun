@@ -1026,6 +1026,10 @@ impl Subprocess<'_> {
         // The exit is reported to the script that spawned the child.
         let _context = (*jsc_vm).enter_context(self.context);
         if !is_sync {
+            // A channel that ended before this exit was seen reports its end first.
+            if let Some(ipc_data) = self.ipc() {
+                ipc_data.run_pending();
+            }
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.

@@ -59,6 +59,12 @@ fn emit_process_error_event(
     Ok(JSValue::UNDEFINED)
 }
 
+#[bun_jsc::host_fn]
+fn emit_process_disconnect_event(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    Process__emitDisconnectEvent(global_this);
+    Ok(JSValue::UNDEFINED)
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
@@ -470,7 +476,17 @@ impl IPCInstance {
         let event_loop = vm.event_loop_mut();
         crate::jsc_hooks::ipc_child_singleton_deinit();
         event_loop.enter();
-        Process__emitDisconnectEvent(vm.global());
+        // On the next tick, so that it comes after the callbacks of the messages that never went out.
+        let emit = bun_jsc::JSFunction::create(
+            vm.global(),
+            "",
+            __jsc_host_emit_process_disconnect_event,
+            0,
+            Default::default(),
+        );
+        if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
+            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+        }
         event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.

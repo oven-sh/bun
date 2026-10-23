@@ -1599,7 +1599,8 @@ class ChildProcess extends EventEmitter {
       // we don't need to because the native IPC layer calls the send callback on nextTick
       if (callback) {
         callback(err);
-      } else if (err) {
+      } else if (err && err.code !== "EPIPE") {
+        // Unlike node, no 'error' for a message the peer never took: without a listener it would end a program that only lost a message.
         this.emit("error", err);
       }
     });

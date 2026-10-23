@@ -113,6 +113,15 @@ impl Signals {
                 )
             })
     }
+
+    /// `Abandoned`: nobody will read the body.
+    #[inline]
+    pub(crate) fn is_body_abandoned(self) -> bool {
+        self.body_receive_mode
+            .map(bun_ptr::BackRef::from)
+            .is_some_and(|a| a.load(Ordering::Acquire) == BodyReceiveMode::Abandoned as u8)
+    }
+
     /// `Unclaimed -> Paused`: a whole body waits for the consumer, which resumes the transport.
     #[inline]
     pub(crate) fn hold_for_consumer(self) -> bool {

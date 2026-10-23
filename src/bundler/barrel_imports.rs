@@ -10,7 +10,7 @@
 use crate::bundled_ast as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
-use bun_ast::{ImportKind, import_record};
+use bun_ast::{ImportKind, Ref, import_record};
 use bun_collections::{ArrayHashMap, AutoBitSet, StringArrayHashMap};
 
 use crate::Graph::InputFileFlags;
@@ -92,6 +92,7 @@ fn resolve_barrel_export(
 /// 3. It is not an export star target of another barrel.
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
+/// Neither is a record that a statement of the file reads from (`keep_records_read_by_statements`).
 pub(crate) fn apply_barrel_optimization(
     this: &mut BundleV2,
     parse_result: &mut parse_task::Result,
@@ -205,6 +206,20 @@ fn apply_barrel_optimization_impl(
         }
     }
 
+    // Nothing below has an effect unless a record is about to be deferred.
+    let mut first_deferrable = 0;
+    loop {
+        if first_deferrable == ast.named_exports.count() {
+            return Ok(());
+        }
+        if deferrable_record(ast, &needed_records, first_deferrable).is_some() {
+            break;
+        }
+        first_deferrable += 1;
+    }
+
+    keep_records_read_by_statements(ast, &mut needed_records)?;
+
     // When HMR is active, ConvertESMExportsForHmr deduplicates import records
     // by path — two `export { ... } from './utils.js'` blocks get merged into
     // one record. The surviving record might be the one barrel optimization
@@ -245,24 +260,13 @@ fn apply_barrel_optimization_impl(
     // resolution and linking, is_barrel_deferred lets un_defer_record tell them
     // from the records the parser marked is_unused.
     let mut has_deferrals = false;
-    // Borrowck: collect (ref_, import_record_index)
-    // pairs first so we can mutate `ast.import_records` without aliasing
-    // `ast.named_exports`/`ast.named_imports`.
-    for i in 0..ast.named_exports.count() {
-        let entry = ast.named_exports.values()[i];
-        if let Some(imp) = ast.named_imports.get(&entry.ref_) {
-            let iri = imp.import_record_index;
-            if !needed_records.contains(&iri) {
-                if (iri as usize) < ast.import_records.len() {
-                    ast.import_records.as_mut_slice()[iri as usize]
-                        .flags
-                        .insert(
-                            import_record::Flags::IS_UNUSED
-                                | import_record::Flags::IS_BARREL_DEFERRED,
-                        );
-                    has_deferrals = true;
-                }
-            }
+    // Exports before `first_deferrable` are still not deferrable: `needed_records` only grew.
+    for i in first_deferrable..ast.named_exports.count() {
+        if let Some(iri) = deferrable_record(ast, &needed_records, i) {
+            ast.import_records.as_mut_slice()[iri as usize]
+                .flags
+                .insert(import_record::Flags::IS_UNUSED | import_record::Flags::IS_BARREL_DEFERRED);
+            has_deferrals = true;
         }
     }
 
@@ -294,6 +298,70 @@ fn apply_barrel_optimization_impl(
         }
     }
 
+    Ok(())
+}
+
+/// The import record behind named export `export_index`, unless `needed_records` has it.
+#[inline(always)]
+fn deferrable_record(
+    ast: &JSAst::BundledAst<'_>,
+    needed_records: &ArrayHashMap<u32, ()>,
+    export_index: usize,
+) -> Option<u32> {
+    let imp = ast
+        .named_imports
+        .get(&ast.named_exports.values()[export_index].ref_)?;
+    let record = imp.import_record_index;
+    ((record as usize) < ast.import_records.len() && !needed_records.contains(&record))
+        .then_some(record)
+}
+
+/// Keeps each record a statement of the barrel reads from. Dead code counts: tree shaking is later.
+fn keep_records_read_by_statements(
+    ast: &JSAst::BundledAst<'_>,
+    needed_records: &mut ArrayHashMap<u32, ()>,
+) -> Result<(), AllocError> {
+    let symbols = ast.symbols.as_slice();
+    let last_part_uses = ast.parts.as_slice().last().map(|part| &part.symbol_uses);
+    let use_count = |ref_: &Ref| -> u32 {
+        let Some(symbol) = symbols.get(ref_.inner_index() as usize) else {
+            return 0;
+        };
+        if !symbol.has_link() {
+            return symbol.use_count_estimate;
+        }
+        // HMR lowering zeroed this duplicate namespace's count. The last part still has its uses.
+        last_part_uses
+            .and_then(|uses| uses.get(ref_))
+            .map_or(0, |use_| use_.count_estimate())
+    };
+
+    // Every binding has max(uses, 1) >= its export names: an equal total means none is read.
+    let mut total: usize = 0;
+    for ref_ in ast.named_imports.keys() {
+        total += (use_count(ref_) as usize).max(1);
+    }
+    let none_read = total == ast.named_exports.count();
+    if none_read && !cfg!(debug_assertions) {
+        return Ok(());
+    }
+
+    let mut export_names = vec![0u32; ast.named_imports.count()];
+    for entry in ast.named_exports.values() {
+        if let Some(binding) = ast.named_imports.get_index(&entry.ref_) {
+            export_names[binding] += 1;
+        }
+    }
+    for ((ref_, imp), names) in ast.named_imports.iter().zip(export_names) {
+        // `export { x }` is one use of `x` per name (`s_export_clause`). More uses is a read.
+        if use_count(ref_) > names {
+            debug_assert!(
+                !none_read,
+                "the use total hid a binding that a statement reads"
+            );
+            needed_records.put(imp.import_record_index, ())?;
+        }
+    }
     Ok(())
 }
 

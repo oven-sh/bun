@@ -1400,7 +1400,7 @@ For example, `import { Button } from 'antd'` normally parses all ~3000 modules t
 
 This works for **pure barrel files** — files where every named export is a re-export (`export { X } from './x'`). If a barrel file has any local exports (`export const foo = ...`), or if any importer uses `import *`, the bundler loads all submodules.
 
-The bundler always loads `export *` re-exports (it never defers them) to avoid circular resolution issues. It defers only named re-exports (`export { X } from './x'`) that no importer uses.
+The bundler always loads `export *` re-exports (it never defers them) to avoid circular resolution issues. It defers only named re-exports (`export { X } from './x'`) that no importer uses and that no statement of the barrel file itself reads. For example, a barrel that runs `Menu.Item = Item` always loads the modules of `Menu` and `Item`.
 
 **Automatic mode:** Packages with `"sideEffects": false` in their `package.json` get barrel optimization automatically — no `optimizeImports` config needed. Use `optimizeImports` for packages that don't have this field.
 

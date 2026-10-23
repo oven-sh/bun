@@ -1369,6 +1369,11 @@ impl<const SSL: bool> Handler<SSL> {
 
         let active = HTTPContext::<SSL>::get_tagged(ptr);
         if let Some(client) = active.client_mut() {
+            // A reused connection is past its handshake: uSockets reports a fatal error on an
+            // established session as a failed one, then closes the socket, and `on_close` resends.
+            if !handshake_success && client.retries_on_close() {
+                return;
+            }
             // handshake completed but we may have ssl errors
             client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
             if handshake_success {

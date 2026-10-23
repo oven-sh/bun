@@ -9,7 +9,7 @@ use bun_lint::rule::Plugin;
 /// Disallow usage of `javascript:` URLs
 pub struct JsxNoScriptUrl {
     include_from_settings: bool,
-    /// The name of a component, and its props that are URLs. The last of a name counts.
+    /// Each component's name and its props that are URLs. If a name is repeated, the last entry counts.
     components: Vec<(Box<[u8]>, Vec<Box<[u8]>>)>,
 }
 
@@ -22,7 +22,7 @@ const JSX_NO_SCRIPT_URL: Message = Message::new("", "React 19 disallows `javascr
 impl Rule for JsxNoScriptUrl {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-no-script-url", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx]);
-    /// `settings.react.linkComponents`, where oxlint has them.
+    /// `settings.react.linkComponents`, which is where oxlint reads them from.
     type State<'a> = &'a [Json];
 
     /// `[components, options]`, or one of the two.
@@ -51,7 +51,7 @@ impl Rule for JsxNoScriptUrl {
         };
         let is_oxlint = cx.language().is_oxlint;
         let component_name = match jsx.tag().map(Expr::tag) {
-            // oxlint has no name for it.
+            // oxlint has no name for `<this>`.
             Some(ExprTag::This) if !is_oxlint => Some(b"this".as_slice()),
             _ => get_identifier_name(jsx).map(Name::bytes),
         };
@@ -60,21 +60,21 @@ impl Rule for JsxNoScriptUrl {
         };
         let link_props = self.components.iter().rev().find(|it| *it.0 == *component_name).map(|it| &it.1);
         let include_from_settings = self.include_from_settings && link_props.is_none();
-        // oxlint has the components under `settings.react`, and `<a>` whatever is there.
-        let of_oxlint_settings =
+        // oxlint reads the components from `settings.react`, and always checks `<a>`.
+        let oxlint_settings_props =
             || get_component_attrs_by_name(cx.state, component_name).filter(|_| include_from_settings && is_oxlint);
-        let of_settings = if include_from_settings && !is_oxlint {
+        let settings_props = if include_from_settings && !is_oxlint {
             get_link_component(cx.file(), component_name)
         } else {
             None
         };
         let is_a = component_name == b"a" && (is_oxlint || !include_from_settings);
-        if link_props.is_none() && !is_a && of_settings.is_none() && of_oxlint_settings().is_none() {
+        if link_props.is_none() && !is_a && settings_props.is_none() && oxlint_settings_props().is_none() {
             return;
         }
         for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
             let Some(prop_value) = get_prop_value(attribute) else {
-                // oxlint looks at nothing after an attribute without a value.
+                // oxlint stops at the first attribute without a value.
                 if is_oxlint {
                     return;
                 }
@@ -86,23 +86,23 @@ impl Rule for JsxNoScriptUrl {
             let Some(literal) = prop_value.as_string_literal() else {
                 continue;
             };
-            // oxlint reads `&#58;` as it is written.
+            // oxlint keeps `&#58;` as written.
             let decoded = attribute.value().and_then(Expr::as_string).filter(|_| !is_oxlint);
             if !is_script_url(decoded.map_or(literal.value, Name::bytes), is_oxlint) {
                 continue;
             }
             let name = match strings::rsplit_once_char(name, b':') {
-                // For oxlint it is the `b` of `a:b`.
+                // For `a:b` oxlint uses `b`.
                 Some((_, local)) if is_oxlint => local,
                 Some(_) => continue,
                 None => name,
             };
-            let is_link_attribute = match (link_props, &of_settings) {
+            let is_link_attribute = match (link_props, &settings_props) {
                 (Some(link_props), _) => link_props.iter().any(|it| **it == *name),
-                (None, Some(of_settings)) => of_settings.contains(&name),
-                // oxlint means every attribute of `<a>`.
+                (None, Some(settings_props)) => settings_props.contains(&name),
+                // oxlint checks every attribute of `<a>`.
                 (None, None) if is_a => is_oxlint || name == b"href",
-                (None, None) => of_oxlint_settings().is_some_and(|it| it.contains(name)),
+                (None, None) => oxlint_settings_props().is_some_and(|it| it.contains(name)),
             };
             if is_link_attribute {
                 cx.report(attribute, if is_oxlint { JSX_NO_SCRIPT_URL } else { NO_SCRIPT_URL });
@@ -112,7 +112,7 @@ impl Rule for JsxNoScriptUrl {
 }
 
 /// `/^[\u0000-\u001F ]*j[\r\n\t]*a[\r\n\t]*v[\r\n\t]*a[\r\n\t]*s[\r\n\t]*c[\r\n\t]*r[\r\n\t]*i[\r\n\t]*p[\r\n\t]*t[\r\n\t]*:/i`
-/// oxlint's begins at the `j`, which can be anywhere.
+/// oxlint's regex starts at the `j`, which can be anywhere.
 fn is_script_url(value: &[u8], is_oxlint: bool) -> bool {
     let is_after_j = |rest: &[u8]| {
         let mut letters = rest.iter().filter(|it| !matches!(it, b'\r' | b'\n' | b'\t'));

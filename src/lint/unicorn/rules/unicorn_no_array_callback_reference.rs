@@ -59,7 +59,7 @@ impl Rule for NoArrayCallbackReference {
     }
 }
 
-/// What is in parentheses, and the whole of an optional chain, is nothing that oxlint knows here.
+/// oxlint doesn't recognize a parenthesized expression or a whole optional chain here.
 fn should_wrap_callback(expr: Expr) -> bool {
     let mut pending: SmallVec<[Expr; 4]> = smallvec![expr];
     while let Some(e) = pending.pop() {
@@ -84,7 +84,7 @@ fn should_wrap_callback(expr: Expr) -> bool {
             | ExprKind::Binary { .. }
             | ExprKind::Unary { .. }
             | ExprKind::New(_) => return true,
-            // These cannot be callbacks.
+            // These can't be callbacks.
             _ => {}
         }
     }

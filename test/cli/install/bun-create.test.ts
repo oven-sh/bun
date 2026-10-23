@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, githubTarball, isASAN, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { delimiter, join } from "path";
@@ -341,8 +341,6 @@ const gitIdentity = {
 /** `bun create ...args` in `cwd`; local templates are looked up in `<cwd>/bun-create`. */
 async function create(cwd: string, args: string[], extraEnv: Record<string, string | undefined> = {}) {
   const merged = { ...env, BUN_CREATE_DIR: join(cwd, "bun-create"), ...extraEnv };
-  // Windows spells the inherited variable `Path`.
-  if (extraEnv.PATH !== undefined && "Path" in merged) delete merged.Path;
   await using proc = spawn({
     cmd: [bunExe(), "create", ...args],
     cwd,
@@ -454,7 +452,7 @@ describe.concurrent("git", () => {
     const { out, err, exitCode } = await create(String(dir), ["tmpl", "dest"], noIdentity);
 
     expect(err.split("\n").filter(line => /git|fatal|\*\*\*/i.test(line) && !line.includes("bun create"))).toEqual([
-      "note: git has no user.name and user.email, so the files are staged but not committed",
+      "note: git has no user.name and user.email, files staged but not committed",
       expect.stringMatching(/^\[.*\] git$/),
     ]);
     expect(out).toContain("A local git repository was created for you.");
@@ -536,9 +534,7 @@ describe.concurrent("when the nested `bun install` fails", () => {
     });
 
     expect(err).toMatch(new RegExp(`error: bun install failed in "[^"]*dest" \\(code: ${code}\\)`));
-    expect(err).toContain(
-      "note: the template files were written; run bun install in that directory once the error is fixed",
-    );
+    expect(err).toContain("note: template files were written. run bun install there once the error is fixed");
     expect(out).toContain("$ bun install");
     expect(out).not.toContain("installed automatically");
     expect(out).not.toContain("successfully");
@@ -823,7 +819,7 @@ describe.concurrent("template given as a path", () => {
       "--force",
     ]);
 
-    expect(err).toContain("is inside the template");
+    expect(err).toContain("is inside template");
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
   });
@@ -861,7 +857,7 @@ describe.concurrent("template given as a path", () => {
         BUN_CREATE_DIR: undefined,
       });
 
-      expect(err).toBe("error: the template name is too long\n");
+      expect(err).toBe("error: template name too long\n");
       expect(exitCode).toBe(1);
     },
   );
@@ -943,6 +939,23 @@ describe.concurrent("GitHub template", () => {
     expect(err).not.toContain("error:");
     expect(out).toContain("\n# To get started, run:\n\n  bun dev\n\n");
     expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!isASAN)("doesn't leak memory at exit", async () => {
+    using github = await serveGithub(createTest);
+    using dir = tempDir("create-github-leak", {});
+    const { out, err, exitCode } = await create(
+      String(dir),
+      ["dylan-conway/create-test", "dest", "--no-install", "--no-git"],
+      {
+        ...github.env,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+    );
+
+    expect(out).toContain("Success! dylan-conway/create-test loaded into dest");
+    expect(exitCode, err).toBe(0);
   });
 
   it.each(["https://github.com/dylan-conway/create-test", "github.com/dylan-conway/create-test"])(

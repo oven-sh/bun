@@ -2161,7 +2161,7 @@ ${yarnEntry("peer-deps-too", "1.0.0", `  peerDependencies:\n    no-deps "*"\n`)}
 
     expect(exporting.stderr).not.toContain("error:");
     expect(nodeModulesPackages(packageDir)).toBe(installed);
-    // As yarn: an entry is keyed by the name that package.json gives the dependency.
+    // Like Yarn, an entry is keyed by the name that package.json gives the dependency.
     const yarnLock = fs.readFileSync(join(packageDir, "yarn.lock"), "utf8");
     expect(yarnLock.split("\n").filter(line => /^[^#\s].*:$/.test(line))).toEqual([
       `"aliased@npm:a-dep@^1.0.1":`,
@@ -2579,10 +2579,10 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
         name: "mono",
         private: true,
         workspaces: ["packages/*"],
-        // Not in yarn.lock (added to package.json after the last `yarn install`).
+        // It isn't in yarn.lock, because it was added to package.json after the last `yarn install`.
         dependencies: { "is-odd": "^3.0.1" },
         devDependencies: { lodash: "^4.17.21" },
-        // yarn applied this when it wrote yarn.lock; the workspaces' lodash peers bind all the same.
+        // Yarn applied this when it wrote yarn.lock. The workspaces' lodash peers are still bound.
         resolutions: { lodash: "^4.17.21" },
       }),
       "packages/a/package.json": JSON.stringify({
@@ -2611,7 +2611,7 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
       "packages/c/package.json": JSON.stringify({
         name: "@mono/c",
         version: "0.0.1",
-        // Neither peer is satisfied by the first `is-number` / `lodash` yarn.lock has.
+        // The first `is-number` and `lodash` in yarn.lock don't satisfy either peer.
         peerDependencies: { "is-number": "6.0.0", lodash: "^3.0.0" },
       }),
       "yarn.lock": yarnLock(
@@ -2699,7 +2699,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
           name: "mono",
           private: true,
           workspaces: ["packages/*"],
-          // Not in yarn.lock: resolved from the registry, without disturbing the locked versions.
+          // It isn't in yarn.lock, so it's resolved from the registry, without changing the locked versions.
           dependencies: { "a-dep": "1.0.1" },
         }),
         "packages/a/package.json": JSON.stringify({
@@ -2750,7 +2750,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
     expect(nodeModulesPackages(packageDir)).toBe(installed);
   });
 
-  test("a frozen install goes without the project's own peers, which yarn.lock never lists", async () => {
+  test("a frozen install skips the project's own peers, which yarn.lock never lists", async () => {
     const { packageDir } = await verdaccio.createTestDir({
       files: {
         "package.json": JSON.stringify({
@@ -3162,11 +3162,12 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
   const pinnedEntry = (dependencies = "") =>
     `pinned@^2.0.0:\n  version "2.0.0"\n  resolved "${registryTarball("pinned", "2.0.0")}"\n${dependencies}`;
   const brokenEntry = `broken@^1.0.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`;
-  const brokenWarning = 'warn: skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
+  const brokenWarning = 'warn: skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"';
 
+  /** With --verbose, which names the entries that are skipped. */
   async function run(cwd: string, registry: string, ...args: string[]) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
+      cmd: [bunExe(), ...args, "--verbose"],
       cwd,
       env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
       stdout: "pipe",
@@ -3189,7 +3190,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "install", "--lockfile-only");
 
     expect(stderr).toContain(brokenWarning);
-    expect(stderr).toContain('warn: yarn.lock has no entry for "broken@^1.0.0"; bun resolves it');
+    expect(stderr).toContain('warn: yarn.lock missing "broken@^1.0.0", resolving it');
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -3220,31 +3221,31 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
       "version is not semver",
       "^1.0.0",
       brokenEntry,
-      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
     ],
     [
       "version is not semver and there is no resolved field",
       "^1.0.0",
       'broken@^1.0.0:\n  version "not-a-version"\n',
-      'skipped "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0" from yarn.lock: invalid version "not-a-version"',
     ],
     [
       "there is no version field",
       "^1.0.0",
       `broken@^1.0.0:\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
-      'skipped "broken@^1.0.0" from yarn.lock: missing "version" field',
+      'skipping "broken@^1.0.0" from yarn.lock: missing "version" field',
     ],
     [
       "tarball URL spec without a resolved field",
       "https://example.com/broken-1.0.0.tgz",
       '"broken@https://example.com/broken-1.0.0.tgz":\n  version "1.0.0"\n',
-      'skipped "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
+      'skipping "broken@https://example.com/broken-1.0.0.tgz" from yarn.lock: missing "resolved" field',
     ],
     [
       "entry shared by several specs",
       "^1.0.0",
       `broken@^1.0.0, broken@^1.2.0:\n  version "not-a-version"\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
-      'skipped "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
+      'skipping "broken@^1.0.0, broken@^1.2.0" from yarn.lock: invalid version "not-a-version"',
     ],
   ];
 
@@ -3281,7 +3282,7 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
 
     const { stderr, exitCode } = await run(String(dir), registry.url.href, "pm", "migrate", "-f");
 
-    expect(stderr).toContain('warn: skipped "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
+    expect(stderr).toContain('warn: skipping "pinned@^1.0.0" from yarn.lock: invalid version "not-a-version"');
     expect(exitCode).toBe(0);
 
     const bunLock = await Bun.file(join(String(dir), "bun.lock")).text();
@@ -3481,7 +3482,7 @@ test.concurrent("yarn.lock migration records the trustedDependencies of the root
   expect(lock.trustedDependencies.toSorted()).toEqual(["from-both", "from-member", "from-root"]);
 });
 
-test("dependencies with no entry in yarn.lock are reported", async () => {
+test("dependencies with no entry in yarn.lock are reported with --verbose", async () => {
   const lock = (names: string[]) =>
     `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.\n# yarn lockfile v1\n\n\n` +
     names
@@ -3511,25 +3512,21 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
   // yarn.lock is older than package.json: `b` and `c` were added after it was written
   using stale = project({ a: "^1.0.0", b: "^1.0.0", c: "^1.0.0" }, ["a"]);
   const several = await migrate(String(stale));
-  expect(several.stderr).toContain(
-    'warn: yarn.lock has no entry for "b@^1.0.0" and 1 more (--verbose lists them); bun resolves them',
-  );
+  expect(several.stderr).not.toContain("yarn.lock missing");
   expect(several.stderr).toContain("migrated lockfile from yarn.lock");
   expect(several.exitCode).toBe(0);
 
   const verbose = await migrate(String(stale), "--verbose");
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "b@^1.0.0"; bun resolves it');
-  expect(verbose.stderr).toContain('warn: yarn.lock has no entry for "c@^1.0.0"; bun resolves it');
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "b@^1.0.0", resolving it');
+  expect(verbose.stderr).toContain('warn: yarn.lock missing "c@^1.0.0", resolving it');
 
   // a range can be a tarball URL with credentials
   const token = "npm_" + Buffer.alloc(36, "A").toString();
   using url = project({ a: "^1.0.0", direct: `http://carol:s3cret@localhost:1/direct-1.0.0.tgz?token=${token}` }, [
     "a",
   ]);
-  const masked = await migrate(String(url));
-  expect(masked.stderr).toContain(
-    'warn: yarn.lock has no entry for "direct@http://***@localhost:1/direct-1.0.0.tgz?token=***"',
-  );
+  const masked = await migrate(String(url), "--verbose");
+  expect(masked.stderr).toContain('warn: yarn.lock missing "direct@http://***@localhost:1/direct-1.0.0.tgz?token=***"');
   expect(masked.stderr).not.toContain("s3cret");
   expect(masked.stderr).not.toContain(token);
 
@@ -3545,15 +3542,15 @@ test("dependencies with no entry in yarn.lock are reported", async () => {
     "yarn.lock": lock(["a"]),
     "bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
   });
-  const linked = await migrate(String(workspaces));
-  expect(linked.stderr).not.toContain("has no entry");
+  const linked = await migrate(String(workspaces), "--verbose");
+  expect(linked.stderr).not.toContain("yarn.lock missing");
   expect(linked.stderr).toContain("migrated lockfile from yarn.lock");
   expect(linked.exitCode).toBe(0);
 
   // a peer is not a yarn.lock entry
   using complete = project({ a: "^1.0.0" }, ["a"]);
-  const none = await migrate(String(complete));
-  expect(none.stderr).not.toContain("has no entry");
+  const none = await migrate(String(complete), "--verbose");
+  expect(none.stderr).not.toContain("yarn.lock missing");
   expect(none.stderr).toContain("migrated lockfile from yarn.lock");
   expect(none.exitCode).toBe(0);
 });
@@ -3624,7 +3621,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
       .packages;
 
   test.each(["url", "file", "owner/repo"] as const)(
-    "%s: a dependency with the name and version of a registry package stays apart from it",
+    "%s: a dependency with the name and version of a registry package is kept separate from it",
     async kind => {
       const upstream = { name: "b", version: "1.0.0", from: "registry" };
       const user = { name: "p", version: "1.0.0", dependencies: { b: "^1.0.0" } };
@@ -3658,7 +3655,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
   );
 
   test("an owner/repo dependency is the archive that yarn.lock names", async () => {
-    // Somebody else's package of that name.
+    // A different package with that name, published by someone else.
     const other = { name: "g", version: "1.0.0", os: ["sunos"], bin: { tsc: "cli.js" } };
     const mine = await tarball({ name: "g", version: "1.0.0", bin: { g: "cli.js" } }, `r-${commit}`);
     using server = await serve([other], { [`/o/r/tar.gz/${commit}`]: mine });
@@ -3685,7 +3682,7 @@ describe.concurrent("yarn.lock entries of packages that are not the registry's",
     const entry = (name: string, resolved: string) =>
       `${name}@^1.0.0:\n  version "1.0.0"\n  resolved "${resolved}"\n\n`;
     const urls = {
-      // Not the path that a registry gives this name and version.
+      // This isn't the path that a registry uses for this name and version.
       archive: `${mirror.url}o/archive/tar.gz/${commit}`,
       "other-bytes": `${mirror.url}other-bytes/-/other-bytes-1.0.0.tgz`,
       sha1: `${mirror.url}sha1/-/sha1-1.0.0.tgz`,

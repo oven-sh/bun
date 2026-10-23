@@ -15,7 +15,7 @@ const NO_SYNC: Message = Message::new("", "Unexpected sync method: '{{property_n
 impl Rule for NoSync {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-sync", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// That something is in a function.
+    /// Caches whether a node is inside a function.
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(options: &Options) -> Self {
@@ -44,7 +44,7 @@ impl Rule for NoSync {
     }
 }
 
-/// The last name in `a.b.c` that ends in `Sync`.
+/// Returns the last name in `a.b.c` that ends in `Sync`.
 fn get_sync_property_name(callee: Expr<'_>) -> Option<Name<'_>> {
     let is_sync = |name: &Name| name.bytes().ends_with(b"Sync");
     let mut at = get_inner_expression(callee);

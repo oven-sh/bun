@@ -20,12 +20,13 @@ const NO_IMPORT: Message = Message::new(
 /// `Object.keys(Module._extensions)`
 const EXTENSIONS: [&[u8]; 3] = [b".js", b".json", b".node"];
 
-/// `getEntryPoint`: `require.resolve` of the directory of the closest `package.json`. It follows links, this does not.
+/// `getEntryPoint`: `require.resolve` of the closest `package.json`'s directory. Unlike upstream, this doesn't follow
+/// symlinks.
 fn get_entry_point(modules: &dyn Modules, file_name: &[u8]) -> Option<Vec<u8>> {
     let (pkg @ Json::Object(_), pkg_path) = read_pkg_up(modules, file_name)? else {
         return None;
     };
-    // Without extensions a path means itself only if it is a file.
+    // With no extensions to try, a path only resolves to itself, and only if it's a file.
     let (lookup, is_require) = (Lookup::Node(SmallVec::new()), true);
     let try_file = |path: Vec<u8>| {
         modules
@@ -39,7 +40,8 @@ fn get_entry_point(modules: &dyn Modules, file_name: &[u8]) -> Option<Vec<u8>> {
     };
     let try_index = |directory: &[u8]| try_extensions(&paths::join(directory, b"index"));
     let directory = paths::dirname(&pkg_path);
-    // A file of that name comes before the directory, and is not in it.
+    // `require.resolve` prefers a file with the directory's name plus an extension, and that file isn't in the
+    // directory.
     if try_extensions(directory).is_some() {
         return None;
     }
@@ -70,8 +72,8 @@ fn has_cjs_export_reference<'a>(file: &'a File<'a>, identifier: Name<'a>) -> boo
 }
 
 impl NoImportModuleExports {
-    /// Takes note of a `MemberExpression` that starts at `start`, if `object` is a keyword.
-    fn see<'a>(object: Name<'a>, start: u32, cx: &mut Cx<'a, Self>) {
+    /// Records a `MemberExpression` that starts at `start`, if `object` is `module` or `exports`.
+    fn record_member<'a>(object: Name<'a>, start: u32, cx: &mut Cx<'a, Self>) {
         for (keyword, first) in &mut cx.state {
             if *keyword == object {
                 *first = start.min(*first);
@@ -79,13 +81,13 @@ impl NoImportModuleExports {
         }
     }
 
-    /// `implements a.b`, and `extends a.b` of an interface: ESTree has a `MemberExpression` there.
-    fn see_heritage<'a>(ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+    /// `implements a.b`, and an interface's `extends a.b`: ESTree has a `MemberExpression` there.
+    fn record_heritage<'a>(ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if let TypeKind::Ref { name, .. } = ty.kind()
             && name.len() > 1
             && let Some(object) = name.first()
         {
-            Self::see(object.name(), object.start(), cx);
+            Self::record_member(object.name(), object.start(), cx);
         }
     }
 }
@@ -99,7 +101,7 @@ impl Rule for NoImportModuleExports {
         .classes()
         .stmts(&[StmtTag::Interface])
         .finish();
-    /// `module` and `exports`, each with where the first `MemberExpression` of it starts.
+    /// `module` and `exports`, each with the start of the first `MemberExpression` on it.
     type State<'a> = [(Name<'a>, u32); 2];
 
     fn new(options: &Options) -> Self {
@@ -128,21 +130,21 @@ impl Rule for NoImportModuleExports {
             && cx.state.iter().any(|it| it.0 == object)
             && ast_utils::is_member_expression(e)
         {
-            Self::see(object, e.span().start, cx);
+            Self::record_member(object, e.span().start, cx);
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let StmtKind::Interface(interface) = statement.kind() {
             for ty in interface.extends() {
-                Self::see_heritage(ty, cx);
+                Self::record_heritage(ty, cx);
             }
         }
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         for ty in class.implements() {
-            Self::see_heritage(ty, cx);
+            Self::record_heritage(ty, cx);
         }
     }
 
@@ -160,7 +162,7 @@ impl Rule for NoImportModuleExports {
         if is_exception || get_entry_point(modules, &file_name).is_some_and(|it| it == file_name) {
             return;
         }
-        // Those that ESLint has come to before the first such expression. After it nothing is reported.
+        // Upstream reports the imports ESLint has visited before the first such expression, and nothing after it.
         for import_declaration in file
             .stmts_of_kind(StmtTag::Import)
             .filter(|it| it.span().start < first)

@@ -12,8 +12,8 @@ pub enum Awaitable {
     May,
 }
 
-/// `needsToBeAwaited(checker, node, type)`: `Always` for a thenable, `May` for `any`, `unknown` and
-/// a type parameter without a constraint, also for a type that the checker gave up on.
+/// `needsToBeAwaited(checker, node, type)`: `Always` for a thenable. `May` for `any`, `unknown`, a type parameter
+/// without a constraint, and a type the checker gave up on.
 pub fn needs_to_be_awaited<'a>(node: impl Locate<'a>, ty: Type<'a>) -> Awaitable {
     // An unconstrained type parameter is treated as `unknown`.
     let Some(constraint_type) = get_constraint_info(ty).constraint_type else {

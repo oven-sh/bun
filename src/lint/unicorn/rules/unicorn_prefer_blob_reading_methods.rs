@@ -1,7 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Recommends using `Blob#text()` and `Blob#arrayBuffer()` over `FileReader#readAsText()` and `FileReader#readAsArrayBuffer()`.
+/// Recommends using `Blob#text()` and `Blob#arrayBuffer()` over `FileReader#readAsText()` and
+/// `FileReader#readAsArrayBuffer()`.
 pub struct PreferBlobReadingMethods;
 
 const PREFER_BLOB_READING_METHODS: Message =

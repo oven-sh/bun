@@ -17,7 +17,7 @@ const OXLINT: Message =
     Message::new("", "{{component_name}} does not need `shouldComponentUpdate` when extending `React.PureComponent`.");
 
 pub struct State<'a> {
-    /// `None` for oxlint, which knows `React` alone.
+    /// `None` for oxlint, whose only pragma is `React`.
     pragmas: Option<Pragmas<'a>>,
 }
 
@@ -32,7 +32,7 @@ impl Rule for NoRedundantShouldComponentUpdate {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        // upstream takes a private name for its text.
+        // upstream treats a private name like the plain name.
         let has_method =
             file.mentions("shouldComponentUpdate") || (!is_oxlint && file.mentions("#shouldComponentUpdate"));
         if !has_method || !file.mentions("PureComponent") {
@@ -50,19 +50,19 @@ impl Rule for NoRedundantShouldComponentUpdate {
             return;
         }
         let is_oxlint = cx.state.pragmas.is_none();
-        // oxlint knows a key by what it stands for, upstream by its `name`.
-        let is_it = |member: &Member<'a>| {
+        // oxlint uses the key's static value, upstream its `name`.
+        let is_should_component_update = |member: &Member<'a>| {
             if is_oxlint {
                 member.key().and_then(static_name).is_some_and(|name| name.is("shouldComponentUpdate"))
             } else {
                 get_property_name(Node::Member(*member)).is_some_and(|name| name == b"shouldComponentUpdate")
             }
         };
-        let Some(member) = class.members().iter().find(is_it) else {
+        let Some(member) = class.members().iter().find(is_should_component_update) else {
             return;
         };
         let name = class.name().map(Ident::bytes).or_else(|| name_of_parent(class, is_oxlint)).unwrap_or_default();
-        // oxlint points at the key.
+        // oxlint reports the key.
         match member.key().filter(|_| is_oxlint) {
             Some(key) => cx.report(key.inner_span(cx.file()), OXLINT).data("component_name", name),
             None => cx.report(class.estree_span(), NO_SHOULD_COMP_UPDATE).data("component", name),
@@ -70,7 +70,7 @@ impl Rule for NoRedundantShouldComponentUpdate {
     }
 }
 
-/// `node.parent.id.name`, which is `undefined` for what is no identifier. `None`: the parent has no `id`.
+/// `node.parent.id.name`, which is `undefined` if that isn't an identifier. `None` if the parent has no `id`.
 fn name_of_parent(class: Class<'_>, is_oxlint: bool) -> Option<&[u8]> {
     let e = class.owner().as_expr()?;
     let name = match estree_parent(Node::Class(class)) {
@@ -81,6 +81,6 @@ fn name_of_parent(class: Class<'_>, is_oxlint: bool) -> Option<&[u8]> {
         Node::EnumMember(member) => member.key().and_then(name_of_key),
         _ => return None,
     };
-    // oxlint has a node for parentheses, and no name for a pattern.
+    // oxlint's AST has a node for parentheses, and it has no name for a pattern.
     if is_oxlint { name.filter(|_| !e.is_parenthesized()) } else { Some(name.unwrap_or(b"undefined")) }
 }

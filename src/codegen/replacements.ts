@@ -31,9 +31,8 @@ for (let i = 0; i < NodeErrors.length; i++) {
 }
 
 for (let id = 0; id < jsclasses.length; id++) {
-  const name = jsclasses[id][0];
   replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    from: new RegExp(`\\b\\__intrinsic__inherits${jsclasses[id]}\\(`, "g"),
     to: `$inherits(${id}, `,
   });
 }

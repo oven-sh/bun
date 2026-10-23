@@ -65,9 +65,21 @@ bun_core::declare_scope!(cache, visible);
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
 /// Version 35: Long hexadecimal, octal and binary literals are rounded to the nearest double.
-/// Version 36: A block-level function in sloppy code stays a declaration instead of becoming a `let`.
-/// Version 37: A function declaration as the body of a label or `if` in sloppy code makes an ambiguous file CommonJS.
-const EXPECTED_VERSION: u32 = 37;
+/// Version 36: `export`, `require()`, `import()`, a JSX element, an exported async function and
+/// an abstract class are mapped elsewhere.
+/// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
+/// Version 38: `finally` is mapped, and the `{` after it is mapped elsewhere.
+/// Version 39: `emitDecoratorMetadata` names the right type in the body of `a ? (b): T => {...} : c`.
+/// Version 40: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
+/// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
+/// participates in the features hash.
+/// Version 41: `case` and `default` are mapped.
+/// Version 42: The body of a class with lowered class decorators names the class by the
+/// binding that holds what the decorators return.
+/// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
+/// Version 44: A block-level function in sloppy code stays a declaration instead of becoming a `let`.
+/// Version 45: A function declaration as the body of a label or `if` in sloppy code makes an ambiguous file CommonJS.
+const EXPECTED_VERSION: u32 = 45;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -78,6 +90,9 @@ const EXPECTED_VERSION: u32 = 37;
 /// key still incorporates the source byte length (see `input_byte_length` /
 /// `is_stale`), so shrinking this does not weaken staleness detection.
 const MINIMUM_CACHE_SIZE: usize = 4 * 1024;
+
+/// Length of the hex `input_hash` plus the longest suffix `write_cache_filename` appends.
+const CACHE_FILE_NAME_MAX_LEN: usize = size_of::<u64>() * 2 + ".debug.pile".len();
 
 // When making parser changes, it gets extremely confusing.
 #[cfg(bun_debug)]
@@ -519,6 +534,9 @@ impl Entry {
             }
 
             self.sourcemap = sourcemap;
+        } else {
+            // Without a sourcemap, a cache hit would produce unmapped stack traces for this module.
+            return Err(crate::CrateError::InvalidSourceMap);
         }
 
         if self.metadata.esm_record_byte_length > 0 {
@@ -644,16 +662,16 @@ impl RuntimeTranspilerCache {
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
         // underlying joiner with the same `top_level_dir` + `Loose` platform
         // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir;
+        let top = FileSystem::instance().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(
+            return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
                 top,
                 &mut buf[..],
                 parts,
             )
-            .len();
+            .map_or(0, |dir| dir.len());
         }
 
         #[cfg(target_os = "macos")]
@@ -662,23 +680,23 @@ impl RuntimeTranspilerCache {
             // This is different than ~/.bun/install/cache, and not configurable by the user.
             if let Some(home) = env_var::HOME.get() {
                 let parts: &[&[u8]] = &[home, b"Library/", b"Caches/", b"bun", b"@t@"];
-                return path_handler::join_abs_string_buf_z::<platform::Loose>(
+                return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
                     top,
                     &mut buf[..],
                     parts,
                 )
-                .len();
+                .map_or(0, |dir| dir.len());
             }
         }
 
         if let Some(dir) = env_var::HOME.get() {
             let parts: &[&[u8]] = &[dir, b".bun", b"install", b"cache", b"@t@"];
-            return path_handler::join_abs_string_buf_z::<platform::Loose>(
+            return path_handler::join_abs_string_buf_z_checked::<platform::Loose>(
                 top,
                 &mut buf[..],
                 parts,
             )
-            .len();
+            .map_or(0, |dir| dir.len());
         }
 
         0
@@ -706,7 +724,8 @@ impl RuntimeTranspilerCache {
             None => {
                 let len = Self::CACHE_DIR_BUF
                     .with_borrow_mut(|tl_buf| Self::really_get_cache_dir(tl_buf));
-                if len == 0 {
+                // `get_cache_file_path` appends a separator, the file name and a NUL.
+                if len == 0 || len + 1 + CACHE_FILE_NAME_MAX_LEN + 1 > MAX_PATH_BYTES {
                     IS_DISABLED.store(true, Ordering::Relaxed);
                     return Err(crate::CrateError::CacheDisabled);
                 }
@@ -978,6 +997,10 @@ bun_ast::link_impl_TranspilerCacheImpl! {
         put(output_code_bytes, sourcemap, esm_record) => {
             let this = &mut *this;
             if this.input_hash.is_none() || IS_DISABLED.load(Ordering::Relaxed) {
+                return;
+            }
+            // `Entry::load` rejects an entry with no sourcemap.
+            if sourcemap.is_empty() {
                 return;
             }
             debug_assert!(this.entry.is_none());

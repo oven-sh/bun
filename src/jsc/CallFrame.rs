@@ -208,11 +208,6 @@ impl<const MAX: usize> Arguments<MAX> {
     }
 
     #[inline]
-    pub fn slice(&self) -> &[JSValue] {
-        &self.ptr[0..self.len]
-    }
-
-    #[inline]
     pub fn mut_(&mut self) -> &mut [JSValue] {
         &mut self.ptr[..]
     }
@@ -222,6 +217,17 @@ pub struct CallerSrcLoc {
     pub str: bun_core::String,
     pub line: c_uint,
     pub column: c_uint,
+}
+
+impl JSGlobalObject {
+    /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
+    pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
+        CallerSrcLoc { str, line, column }
+    }
 }
 
 /// This is an advanced iterator struct which is used by various APIs. In
@@ -255,11 +261,6 @@ impl<'a> ArgumentsSlice<'a> {
         }
     }
 
-    #[inline]
-    pub fn len(&self) -> u16 {
-        self.remaining().len() as u16
-    }
-
     pub fn eat(&mut self) {
         if self.remaining().is_empty() {
             return;
@@ -286,6 +287,12 @@ impl<'a> ArgumentsSlice<'a> {
 unsafe extern "C" {
     safe fn Bun__CallFrame__getCallerSrcLoc(
         cf: &CallFrame,
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,

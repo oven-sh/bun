@@ -3,7 +3,7 @@ use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::{escape_control_chars, for_terminal};
-use bun_core::{Global, strings};
+use bun_core::strings;
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -19,7 +19,7 @@ use crate::migration::{
 use crate::npm::{self};
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::update_package_json_and_install::save_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::yarn_berry::scalar_text;
@@ -213,7 +213,8 @@ fn read_named_registries(log: &mut bun_ast::Log) -> Result<StringMap, AllocError
     collect_workspace_yaml_strings(log, b"namedRegistries", &mut declared)?;
     let mut registries = StringMap::new();
     for (name, url) in declared.iter() {
-        // Without its credentials: this URL is recorded in bun.lock as the tarball base.
+        // Stored without its credentials, because this URL is recorded in bun.lock as the base of
+        // tarball URLs.
         registries.put(name, crate::bun_schema::api::NpmRegistry::from_url(url).url)?;
     }
     for (name, url) in BUILTIN_NAMED_REGISTRIES {
@@ -397,7 +398,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // Nodes go to `yaml_arena`: later package.json reads reset the thread-local `Store`.
+    // The nodes are allocated in `yaml_arena`, because later package.json reads reset the
+    // thread-local `Store`.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
     let mut yaml_allocator = bun_ast::ASTMemoryAllocator::borrowing(&yaml_arena);
@@ -544,7 +546,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let Some((path, config_key)) = found else {
                 if !silent {
                     bun_core::warn!(
-                        "skipped patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
+                        "skipping patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
                         for_terminal(BStr::new(key_str))
                     );
                 }
@@ -771,7 +773,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             ) else {
                 bail!(
                     log,
-                    "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
+                    "pnpm-lock.yaml dependency '{}' of importer '{}': link path too long",
                     escape_control_chars(dep.name.slice(string_bytes!(lockfile))),
                     escape_control_chars(workspace_path)
                 );
@@ -917,7 +919,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             else {
                 bail!(
                     log,
-                    "pnpm-lock.yaml package '{}' has a directory path that is too long",
+                    "pnpm-lock.yaml package '{}': directory path too long",
                     escape_control_chars(name_str)
                 );
             };
@@ -979,7 +981,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 for_terminal(BStr::new(url))
                             ),
                             None => bun_core::warn!(
-                                "skipped pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
+                                "skipping pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
                                 escape_control_chars(registry_name)
                             ),
                         }
@@ -1198,13 +1200,19 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
+    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
+
+    // Parse the `packageExtensions` that were just copied into package.json. Warnings are dropped
+    // here because the install that follows reports them.
+    if let Some(root) = root_package_json(manager, log) {
+        let extensions = &mut lockfile.package_extensions;
+        extensions.parse(&mut bun_ast::Log::init(), &root.source, &root.root);
+    }
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
         manager, false, // update_os_cpu
         false, // fill_integrity
         None,
     )?;
-
-    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -1214,7 +1222,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     }))
 }
 
-/// `.` for the root, else the workspace resolution's path. Owned: the callers change `lockfile`.
+/// Returns `.` for the root, or else the workspace's path. Owned, because the callers change
+/// `lockfile`.
 fn importer_path(lockfile: &Lockfile, pkg_id: usize) -> Vec<u8> {
     if pkg_id == 0 {
         return b".".to_vec();
@@ -1282,7 +1291,8 @@ impl PeerDecl {
     }
 }
 
-/// `strict` (a `packages:` entry): anything malformed is an error. In a package.json it is skipped.
+/// With `strict` (for a `packages:` entry), anything malformed is an error. In a package.json it's
+/// skipped.
 fn declared_peers(
     obj: &Expr,
     strict: bool,
@@ -1362,7 +1372,7 @@ fn declare_folder_dependencies_relative_to_their_package(
     Ok(())
 }
 
-/// Appends the row `name@spec`; `false` if `spec` does not parse.
+/// Appends the dependency `name@spec`. Returns false if `spec` doesn't parse.
 fn append_dependency(
     lockfile: &mut Lockfile,
     log: Option<&mut bun_ast::Log>,
@@ -1540,6 +1550,7 @@ fn parse_append_importer_dependencies(
 ) -> Result<(), MigratePnpmLockfileError> {
     let manifest_peers = declared_peers(manifest, false)?;
     let silent = manager.options.log_level.is_silent();
+    let verbose = manager.options.log_level.is_verbose();
 
     let off = lockfile.buffers.dependencies.len();
 
@@ -1573,7 +1584,7 @@ fn parse_append_importer_dependencies(
             if version_str.starts_with(b"runtime:") {
                 if !silent {
                     bun_core::warn!(
-                        "skipped \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
+                        "skipping \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
                         escape_control_chars(name_str),
                         escape_control_chars(version_str)
                     );
@@ -1598,7 +1609,8 @@ fn parse_append_importer_dependencies(
 
             let specifier_str = as_str(&specifier_expr).ok_or(InvalidPnpmLockfile)?;
 
-            // The row keeps its `catalog:` reference; only existence is checked.
+            // The dependency keeps its `catalog:` reference. This only checks that the entry
+            // exists.
             if let Some(catalog_name) = specifier_str.strip_prefix(b"catalog:") {
                 let catalog_name = catalog_name.trim_ascii();
                 if lockfile
@@ -1624,9 +1636,9 @@ fn parse_append_importer_dependencies(
 
     for (peer_name, decl) in manifest_peers.iter() {
         let peer_name: &[u8] = peer_name;
-        if !decl.optional && !importer_versions.contains(peer_name) && !silent {
+        if !decl.optional && !importer_versions.contains(peer_name) && verbose {
             bun_core::warn!(
-                "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
+                "skipping peer \"{}\" of {}: not in pnpm-lock.yaml, resolving it",
                 escape_control_chars(peer_name),
                 ImporterName(importer_path)
             );
@@ -1637,7 +1649,7 @@ fn parse_append_importer_dependencies(
         }
     }
 
-    if exclude_links_from_lockfile && !silent {
+    if exclude_links_from_lockfile && verbose {
         for (group_name, _) in DEPENDENCY_GROUPS {
             for (key, value) in props(&manifest.get(group_name).unwrap_or_default()) {
                 if let (Some(name_str), Some(spec)) = (as_str(key), as_str(value))
@@ -1645,7 +1657,7 @@ fn parse_append_importer_dependencies(
                     && !importer_versions.contains(name_str)
                 {
                     bun_core::warn!(
-                        "skipped \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
+                        "skipping \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
                         escape_control_chars(name_str),
                         ImporterName(importer_path)
                     );
@@ -1729,7 +1741,8 @@ fn array_expr(items: js_ast::ExprNodeList) -> Expr {
     )
 }
 
-/// For when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
+/// Used when no pnpm-lock.yaml was migrated. A `workspaces` field in the root means the config was
+/// already migrated.
 pub(crate) fn migrate_pnpm_workspace_config(
     manager: &mut PackageManager,
 ) -> Result<(), AllocError> {
@@ -1746,7 +1759,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
     update_package_json_after_migration(None, manager, log, &StringArrayHashMap::new())
 }
 
-/// Edits the cached root package.json; `write_migrated` writes it if the lockfile is saved.
+/// Edits the cached root package.json. `write_migrated` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
@@ -1770,7 +1783,8 @@ fn update_package_json_after_migration(
     let mut pnpm_only_built_deps = false;
     let mut workspace_only_built_deps = false;
 
-    // Copied, not moved: pnpm keeps reading this block, bun only reads the root-level fields.
+    // Copied instead of moved, because pnpm keeps reading this block and Bun only reads the
+    // root-level fields.
     if let Some(pnpm_obj) = json.get_object(b"pnpm") {
         if let Some(overrides) = pnpm_obj.get(b"overrides").filter(is_non_empty_object) {
             if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
@@ -1813,7 +1827,7 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // Quoted and block scalars are copied into the parse arena: it outlives the print.
+            // Quoted and block scalars are copied into the parse arena, which outlives the print.
             let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let ws_root = match bun_parsers::yaml::YAML::parse(
@@ -1850,7 +1864,7 @@ fn update_package_json_after_migration(
                 let strings = string_entries(contents, &map, field == "catalogs", &mut skipped);
                 if skipped > 0 && !silent {
                     bun_core::warn!(
-                        "\"{}\" in pnpm-workspace.yaml has entries that are not strings ({}); they were not copied to package.json",
+                        "skipping non-string entries of \"{}\" in pnpm-workspace.yaml ({})",
                         field,
                         skipped,
                     );
@@ -1945,11 +1959,7 @@ fn update_package_json_after_migration(
     }
 
     // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
-    print_package_json_into_cache_entry(root_pkg_json, json);
-    if let Err(err) = root_pkg_json.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(root_pkg_json, json, log);
 
     package_json_write_back::record_migrated(manager, WorkspaceTarget::root(), copied);
 
@@ -1960,7 +1970,8 @@ fn empty_object() -> Expr {
     Expr::init(E::Object::default(), bun_ast::Loc::EMPTY)
 }
 
-/// The entries of YAML `map` that package.json can take: scalar keys and values, as written.
+/// Returns the entries of the YAML `map` that package.json can represent: scalar keys and values,
+/// as written.
 fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -> Expr {
     let text_of = |scalar: &Expr| -> Option<Expr> {
         let text =
@@ -1997,7 +2008,8 @@ fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -
     )
 }
 
-/// `string_entries` for `packageExtensions`: rule -> group -> name -> range, and optional peers.
+/// Like `string_entries`, but for `packageExtensions`: rule -> group -> name -> range, plus
+/// optional peers.
 fn extension_entries(
     source: &[u8],
     bump: &bun_alloc::Arena,

@@ -1,7 +1,9 @@
 #pragma once
+#include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 // WebCore's. In quotes it would be this file.
 #include <IDLTypes.h>
+#include <JavaScriptCore/ArgList.h>
 #include <concepts>
 #include <cstddef>
 #include <span>
@@ -19,7 +21,13 @@ struct IDLRawAny : WebCore::IDLType<JSC::JSValue> {
     // Storage in a sequence is explicitly unsupported, as this would create a
     // `Vector<JSValue>`, whose contents are invisible to the GC.
     using SequenceStorageType = void;
+    using NullableType = JSC::JSValue;
+    using NullableInnerParameterType = JSC::JSValue;
+    static JSC::JSValue nullValue() { return {}; }
 };
+
+// An argument and every one after it, read in place from the call frame.
+struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
@@ -28,15 +36,26 @@ struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
 template<typename IDL>
 struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 
-template<std::integral T>
+// Treats undefined, null and "" as null.
+template<typename IDL>
+struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
+
+enum class AllowBigInt : bool {
+    No,
+    Yes,
+};
+
+template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
+// Converts to a numeric first. A BigInt is the double nearest to it.
+struct IDLLooseDoubleOrBigInt : WebCore::IDLUnrestrictedDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
 struct IDLStrictString : WebCore::IDLDOMString {};
 
-// Converts to a number first.
-template<std::integral T>
-struct IDLLooseInteger : IDLStrictInteger<T> {};
+// Converts to a number first, or to a numeric where a BigInt is allowed.
+template<std::integral T, AllowBigInt allowBigInt = AllowBigInt::No>
+struct IDLLooseInteger : IDLStrictInteger<T, allowBigInt> {};
 
 namespace Detail {
 template<typename IDL>
@@ -92,18 +111,35 @@ struct IDLLooseUTF8String : IDLStrictUTF8String {};
 // The values IDLStrictUTF8String takes, as the WTF::String.
 struct IDLStrictStringOrStringObject : WebCore::IDLDOMString {};
 
-// The bytes of a BufferSource that is not shared. Valid while the argument is alive and no JavaScript runs.
-struct IDLBufferSourceBytes : WebCore::IDLType<std::span<const uint8_t>> {
-    using SequenceStorageType = void;
-    using NullableType = std::span<const uint8_t>;
-    using NullableInnerParameterType = std::span<const uint8_t>;
-    static NullableType nullValue() { return {}; }
+// `b.bytes`: which values it takes.
+struct BytesOptions {
+    // Without `ToString`. A string: what IDLStrictUTF8String takes. A buffer: a BufferSource, shared or not.
+    bool fromString { false };
+    bool fromBuffer { false };
+    bool fromBlob { false };
+    // `ToString` of anything else, except what `refuseUndefined` and `refuseNull` say. Without it, anything else is refused.
+    bool toStringOtherwise { false };
+    bool refuseUndefined { false };
+    bool refuseNull { false };
+    // With `fromString`: only a string, as IDLStrictString.
+    bool refuseStringObject { false };
 };
 
-// The same values, as the `JSValue` itself. See IDLRawAny.
-struct IDLRawBufferSource : WebCore::IDLType<JSC::JSValue> {
+// `Sink` is JSBytesView, where a string is its UTF-8, JSBlobOrBufferView, which takes none, or JSBlobOrStringOrBuffer, where it is the WTF::String.
+template<typename Sink, BytesOptions>
+struct IDLBytes : WebCore::IDLType<Sink> {
     using SequenceStorageType = void;
+    using NullableType = Sink;
+    using NullableInnerParameterType = Sink;
+    static Sink nullValue() { return {}; }
 };
+
+// A BufferSource as the `JSValue` itself. See IDLRawAny.
+template<bool allowShared>
+struct IDLRawBufferSource : IDLRawAny {};
+
+// A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
+struct IDLRawCallable : IDLRawAny {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>
@@ -112,6 +148,15 @@ struct IDLRawInterface : WebCore::IDLType<JSClass*> {
     using NullableType = JSClass*;
     using NullableInnerParameterType = JSClass*;
     static JSClass* nullValue() { return nullptr; }
+};
+
+// An instance of a `refCounted` class, as what it wraps. The caller's frame keeps the cell alive.
+template<typename JSClass, auto name>
+struct IDLWrappedInterface : WebCore::IDLType<void*> {
+    using SequenceStorageType = void;
+    using NullableType = void*;
+    using NullableInnerParameterType = void*;
+    static void* nullValue() { return nullptr; }
 };
 
 }

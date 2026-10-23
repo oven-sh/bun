@@ -285,7 +285,7 @@ let NativeSecureContext;
  */
 function processPfxOptions(options) {
   if (options == null || options.pfx == null) return options;
-  NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor");
+  NativeSecureContext ??= $bindgen("SecureContext.bind.ts", "SecureContext");
   const out = { ...options };
   const keys = out.key == null ? [] : Array.isArray(out.key) ? [...out.key] : [out.key];
   const certs = out.cert == null ? [] : Array.isArray(out.cert) ? [...out.cert] : [out.cert];
@@ -363,14 +363,23 @@ function stripTls13CipherNames(ciphers: string): { cipherList: string; tls13Only
 
 // The native `ca` replaces the default store, so the CAs of an archive can only extend a `ca` the caller gave.
 function unsealPfxForNative(tls) {
-  if (tls.pfx == null) return tls;
-  tls = processPfxOptions(tls);
-  const { ca, cert, _pfxExtraCACerts: pfxCAs } = tls;
-  if (!pfxCAs) return tls;
-  if (ca) tls.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
+  // `tls` can be the caller's own object, so a `pfx` that comes from a polluted Object.prototype doesn't count.
+  if (tls.pfx == null || tls.pfx === (Object.prototype as { pfx?: unknown }).pfx) return tls;
+  // processPfxOptions() copies its argument, and a copy of `tls` would only have its own enumerable properties. The
+  // native parser also reads inherited and non-enumerable ones, and losing a `ca` or `checkServerIdentity` would loosen
+  // the verification. So pass what it needs by name, and let the result inherit the rest from `tls`.
+  const {
+    key,
+    cert,
+    _pfxExtraCACerts: pfxCAs,
+  } = processPfxOptions({ pfx: tls.pfx, passphrase: tls.passphrase, key: tls.key, cert: tls.cert });
+  const { ca } = tls;
+  const unsealed = { __proto__: tls, key, cert, ca, pfx: undefined };
+  if (!pfxCAs) return unsealed;
+  if (ca) unsealed.ca = $isArray(ca) ? [...ca, ...pfxCAs] : [ca, ...pfxCAs];
   // No addCACert() follows to complete the chain of a lone identity. Several carry theirs already.
-  if (typeof cert === "string") tls.cert = cert + pfxCAs[0];
-  return tls;
+  if (typeof cert === "string") unsealed.cert = cert + pfxCAs[0];
+  return unsealed;
 }
 
 const nodeClientTlsKeys = [
@@ -463,6 +472,7 @@ function tlsHandshakeError(verifyError) {
 
 export {
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  nodeClientTlsKeys,
   nodeClientTlsToNative,
   normalizePemKeyOption,
   processPfxOptions,

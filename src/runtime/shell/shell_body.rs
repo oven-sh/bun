@@ -266,12 +266,9 @@ pub(crate) fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,
     template_args: &mut JSArrayIterator,
-    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
-    // (a GC root); the heap-backed Vec is index storage only.
-    out_jsobjs: &mut Vec<JSValue>,
     jsstrings: &mut Vec<BunString>,
     out_script: &mut Vec<u8>,
-    marked_argument_buffer: &mut MarkedArgumentBuffer,
+    out_jsobjs: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     let mut jsobjref_buf = [0u8; 128];
@@ -299,7 +296,6 @@ pub(crate) fn shell_cmd_from_js(
                 out_script,
                 jsstrings,
                 &mut jsobjref_buf[..],
-                marked_argument_buffer,
                 0,
             )?;
             builder = ShellSrcBuilder::init(global, out_script, jsstrings);
@@ -314,21 +310,17 @@ const MAX_TEMPLATE_ARRAY_DEPTH: u32 = 100;
 pub(crate) fn handle_template_value(
     global: &JSGlobalObject,
     template_value: JSValue,
-    // SAFETY: every JSValue pushed into out_jsobjs is also appended to marked_argument_buffer
-    // (a GC root); the heap-backed Vec is index storage only.
-    out_jsobjs: &mut Vec<JSValue>,
+    out_jsobjs: &mut MarkedArgumentBuffer,
     out_script: &mut Vec<u8>,
     jsstrings: &mut Vec<BunString>,
     jsobjref_buf: &mut [u8],
-    marked_argument_buffer: &mut MarkedArgumentBuffer,
     depth: u32,
 ) -> JsResult<()> {
     let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
     if !template_value.is_empty() {
         if let Some(_array_buffer) = template_value.as_array_buffer(global) {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -369,9 +361,8 @@ pub(crate) fn handle_template_value(
                 }
             }
 
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -393,9 +384,8 @@ pub(crate) fn handle_template_value(
         }
 
         if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
-            let idx = out_jsobjs.len();
-            marked_argument_buffer.append(template_value);
-            out_jsobjs.push(template_value);
+            let idx = out_jsobjs.size();
+            out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);
             write!(
                 cursor,
@@ -437,7 +427,6 @@ pub(crate) fn handle_template_value(
                     out_script,
                     jsstrings,
                     jsobjref_buf,
-                    marked_argument_buffer,
                     depth + 1,
                 )?;
                 if i < last {
@@ -739,21 +728,18 @@ pub(crate) mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
-        let mut jsobjs: Vec<JSValue> = Vec::new();
 
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
-            &mut jsobjs,
             &mut jsstrings,
             &mut script,
             marked_argument_buffer,
         )?;
 
-        let jsobjs_len: u32 = u32::try_from(jsobjs.len()).expect("int cast");
+        let jsobjs_len: u32 = u32::try_from(marked_argument_buffer.size()).expect("int cast");
         let lex_result = 'brk: {
             if strings::is_all_ascii(&script[..]) {
                 let mut lexer = LexerAscii::new(&arena, &script[..], &jsstrings[..], jsobjs_len);
@@ -817,14 +803,11 @@ pub(crate) mod testing_apis {
         };
         let mut template_args = template_args_js.array_iterator(global)?;
         let mut jsstrings: Vec<BunString> = Vec::with_capacity(4);
-        // SAFETY: every JSValue pushed here is also rooted in marked_argument_buffer.
-        let mut jsobjs: Vec<JSValue> = Vec::new();
         let mut script: Vec<u8> = Vec::new();
         shell_cmd_from_js(
             global,
             string_args,
             &mut template_args,
-            &mut jsobjs,
             &mut jsstrings,
             &mut script,
             marked_argument_buffer,
@@ -836,7 +819,7 @@ pub(crate) mod testing_apis {
         let script_ast = match interpret::Interpreter::parse(
             &arena,
             &script[..],
-            &mut jsobjs[..],
+            u32::try_from(marked_argument_buffer.size()).expect("int cast"),
             &jsstrings[..],
             &mut out_parser,
             &mut out_lex_result,

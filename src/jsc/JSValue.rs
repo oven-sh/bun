@@ -917,7 +917,7 @@ impl JSValue {
     /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
     /// sound because JSC's conservative stack scanner keeps the cell alive
     /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
     /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
     /// for as long as the caller holds `self`.
     ///
@@ -944,7 +944,7 @@ impl JSValue {
     }
 
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// for payloads that are intrusively refcounted: lets the caller
     /// take its own ref (`RefPtr::from_this`) or dispatch into a
     /// `ThisPtr`-taking entry point. Same frame-scoped validity.
     #[inline]

@@ -1,6 +1,8 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { isLinux, isWindows, tempDir } from "harness";
+import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { itBundled } from "../expectBundled";
+import { itBundled, type BundlerTestInput } from "../expectBundled";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_css_test.go
@@ -1261,6 +1263,402 @@ b {
     outdir: "/out",
     onAfterBundle(api) {
       api.expectFile("/out/entry.css").toEqualIgnoringWhitespace(/* css */ `.a{mask:url(./sprites-mrrzcz3w.svg#icon)}`);
+    },
+  });
+
+  // A browser requests `url(./my%20photo.png)` as the file `my photo.png`. A path that is
+  // not a file as written is tried once more with its percent escapes decoded.
+  const percentEncoded: Pick<BundlerTestInput, "files" | "outdir" | "metafile" | "onAfterBundle"> = {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./my%20theme.css";
+        @import url(./more%20themes/dark.css);
+        @import "./my%20grid.css" supports(display: grid);
+        .a { background: url(./my%20photo.png) }
+        .b { mask: url("./my%20photo.png#m") }
+        .c { --icon: url(./caf%C3%A9.png) }
+        .d { background: url(fonts/Geist%5Bwght%5D.woff2) }
+        .e { background: url(pkg/a%20b.png) }
+        .f { background: url(with-exports/a%20b.png) }
+        .g { background: url(./%6Dy%20photo.png) }
+        .h { background: url(./fonts/../my%20photo.png) }
+        .i { background: url(./fonts/%2e%2e/my%20photo.png) }
+        .j { background: url("./a%20b.png") }
+      `,
+      "/my theme.css": `.theme { color: red }`,
+      "/more themes/dark.css": `.dark { color: black }`,
+      "/my grid.css": `.grid { color: green }`,
+      "/my photo.png": "photo",
+      "/café.png": "cafe",
+      "/fonts/Geist[wght].woff2": "font",
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0" }`,
+      "/node_modules/pkg/a b.png": "package",
+      // The target of a package `exports` map is decoded without this retry, as in esbuild.
+      "/node_modules/with-exports/package.json": `{ "name": "with-exports", "version": "1.0.0", "exports": { "./*": "./*" } }`,
+      "/node_modules/with-exports/a b.png": "exports",
+      // The file with the literal name wins.
+      "/a%20b.png": "literal",
+      "/a b.png": "decoded",
+      // `#m` is the fragment of the decoded path, not a part of this name.
+      "/my photo.png#m": "fragment",
+    },
+    outdir: "/out",
+    metafile: true,
+    onAfterBundle(api) {
+      const inlined = (type: string, contents: string) =>
+        `data:${type};base64,${Buffer.from(contents).toString("base64")}`;
+      expect(api.readFile("/out/entry.css")).toBe(`/* my theme.css */
+.theme {
+  color: red;
+}
+
+/* more themes/dark.css */
+.dark {
+  color: #000;
+}
+
+/* my grid.css */
+@supports (display: grid) {
+  .grid {
+    color: green;
+  }
+}
+
+/* entry.css */
+.a {
+  background: url("${inlined("image/png", "photo")}");
+}
+
+.b {
+  mask: url("${inlined("image/png", "photo")}#m");
+}
+
+.c {
+  --icon: url("${inlined("image/png", "cafe")}");
+}
+
+.d {
+  background: url("${inlined("font/woff2", "font")}");
+}
+
+.e {
+  background: url("${inlined("image/png", "package")}");
+}
+
+.f {
+  background: url("${inlined("image/png", "exports")}");
+}
+
+.g {
+  background: url("${inlined("image/png", "photo")}");
+}
+
+.h {
+  background: url("${inlined("image/png", "photo")}");
+}
+
+.i {
+  background: url("${inlined("image/png", "photo")}");
+}
+
+.j {
+  background: url("${inlined("image/png", "literal")}");
+}
+`);
+      // Each file is one input, under the name it has on disk.
+      const inputs = Object.keys(JSON.parse(api.readFile("/metafile.json")).inputs);
+      expect(inputs.map(input => input.replaceAll("\\", "/")).sort()).toEqual([
+        "a%20b.png",
+        "café.png",
+        "entry.css",
+        "fonts/Geist[wght].woff2",
+        "more themes/dark.css",
+        "my grid.css",
+        "my photo.png",
+        "my theme.css",
+        "node_modules/pkg/a b.png",
+        "node_modules/with-exports/a b.png",
+      ]);
+    },
+  };
+  itBundled("css/URLPercentEncoded", { ...percentEncoded, backend: "api" });
+  itBundled("css/URLPercentEncodedCLI", { ...percentEncoded, backend: "cli" });
+  // A record that an onResolve plugin declines is resolved at another call site.
+  itBundled("css/URLPercentEncodedPluginDeclines", {
+    ...percentEncoded,
+    plugins(builder) {
+      builder.onResolve({ filter: /./ }, () => undefined);
+    },
+  });
+  // A copied asset keeps its decoded name, and the `?query#fragment` goes back on.
+  itBundled("css/URLPercentEncodedFileLoader", {
+    files: {
+      "/entry.css": `.a { background: url("./big%20asset.bin?v=2#frag") }`,
+      "/big asset.bin": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".bin": "file",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(`/* entry.css */
+.a {
+  background: url("./big asset-mrrzcz3w.bin?v=2#frag");
+}
+`);
+      api.expectFile("/out/big asset-mrrzcz3w.bin").toBe(Buffer.alloc(128 * 1024 + 1, "Z").toString());
+    },
+  });
+  // Minified output prints a copied asset unquoted, for `url("./big asset.bin")` too.
+  // A browser drops this rule until #41557 quotes it.
+  itBundled("css/URLPercentEncodedFileLoaderMinified", {
+    files: {
+      "/entry.css": `.a { background: url(./big%20asset.bin) }`,
+      "/big asset.bin": Buffer.alloc(128 * 1024 + 1, "Z").toString(),
+    },
+    loader: {
+      ".bin": "file",
+    },
+    minifyWhitespace: true,
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(`.a{background:url(./big asset-mrrzcz3w.bin)}\n`);
+    },
+  });
+
+  // The decoded path is matched against `external` as the raw spelling is. No file is read.
+  const percentEncodedExternal: Pick<BundlerTestInput, "files" | "external" | "outdir" | "onAfterBundle"> = {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./my%20theme.css";
+        .a { background: url(./my%20photo.png) }
+        .b { background: url(./my%20fonts/a.woff2) }
+      `,
+      "/my theme.css": `.theme { color: red }`,
+      "/my photo.png": "photo",
+    },
+    external: ["./my theme.css", "./my photo.png", "./my fonts/*"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(`@import "./my%20theme.css";
+
+/* entry.css */
+.a {
+  background: url("./my%20photo.png");
+}
+
+.b {
+  background: url("./my%20fonts/a.woff2");
+}
+`);
+    },
+  };
+  itBundled("css/URLPercentEncodedExternal", { ...percentEncodedExternal, backend: "api" });
+  itBundled("css/URLPercentEncodedExternalCLI", { ...percentEncodedExternal, backend: "cli" });
+  itBundled("css/URLPercentEncodedExternalPluginDeclines", {
+    ...percentEncodedExternal,
+    plugins(builder) {
+      builder.onResolve({ filter: /./ }, () => undefined);
+    },
+  });
+  // Windows writes an absolute path with a drive letter, and a `:` there is refused.
+  describe.skipIf(isWindows)("an absolute path", () => {
+    itBundled("css/URLPercentEncodedAbsolute", ({ root }) => ({
+      files: {
+        "/entry.css": `@import "${root}/my%20theme.css";\n.a { mask: url(${root}/my%20photo.png#m) }`,
+        "/my theme.css": `.theme { color: red }`,
+        "/my photo.png": "photo",
+      },
+      outdir: "/out",
+      onAfterBundle(api) {
+        expect(api.readFile("/out/entry.css")).toBe(`/* my theme.css */
+.theme {
+  color: red;
+}
+
+/* entry.css */
+.a {
+  mask: url("data:image/png;base64,${Buffer.from("photo").toString("base64")}#m");
+}
+`);
+      },
+    }));
+  });
+
+  // An escape stays as written when its byte is one that `resolve` and a browser cut at or
+  // decode once more (`#`, `?`, `%`), or one that the raw output name cannot carry to a
+  // browser. `%2F` and `%5C` are never a path separator.
+  itBundled("css/URLPercentEncodedRefused", {
+    files: {
+      "/entry.css": /* css */ `
+        @import "./100%25.css";
+        @import "./theme%23dark";
+        @import "with-exports/c%2520d.css";
+        .a { background: url(./dir%2Fslash.png) }
+        .b { background: url(./dir%5Cbackslash.png) }
+        .c { background: url(./hash%23tag.png) }
+        .d { background: url(./100%25.png) }
+        .e { background: url(data%3Ascheme.png) }
+        .f { background: url(./my%20100%.png) }
+        .g { background: url(./nul%00.png) }
+        .h { background: url(/my%20photo.png) }
+      `,
+      "/100%.css": `.percent { color: red }`,
+      "/theme.css": `.theme { color: red }`,
+      "/node_modules/with-exports/package.json": `{ "name": "with-exports", "version": "1.0.0", "exports": { "./*": "./*" } }`,
+      "/node_modules/with-exports/c d.css": `.twice { color: red }`,
+      "/dir/slash.png": "slash",
+      "/dir/backslash.png": "backslash",
+      "/hash#tag.png": "hash",
+      "/100%.png": "percent",
+      "/my 100%.png": "malformed",
+      // A leading `/` is the root of the file system, not of the project.
+      "/my photo.png": "photo",
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/entry.css": [
+        'Could not resolve: "./100%25.css"',
+        'Could not resolve: "./theme%23dark"',
+        'Could not resolve: "with-exports/c%2520d.css"',
+        'Could not resolve: "./dir%2Fslash.png"',
+        'Could not resolve: "./dir%5Cbackslash.png"',
+        'Could not resolve: "./hash%23tag.png"',
+        'Could not resolve: "./100%25.png"',
+        'Could not resolve: "data%3Ascheme.png"',
+        'Could not resolve: "./my%20100%.png"',
+        'Could not resolve: "./nul%00.png"',
+        'Could not resolve: "/my%20photo.png"',
+      ],
+    },
+  });
+  // Windows cannot represent `?`, `"`, a control character or a trailing space in a file name.
+  (isWindows ? itBundled.skip : itBundled)("css/URLPercentEncodedRefusedPosixNames", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url(./question%3Fmark.png) }
+        .b { background: url(./quo%22te.png) }
+        .c { background: url(./line%0Afeed.png) }
+        .d { background: url(./del%7Fete.png) }
+        .e { background: url(./trailing.png%20) }
+      `,
+      "/question?mark.png": "question",
+      '/quo"te.png': "quote",
+      "/line\nfeed.png": "line feed",
+      "/del\x7Fete.png": "delete",
+      "/trailing.png ": "trailing space",
+    },
+    outdir: "/out",
+    bundleErrors: {
+      "/entry.css": [
+        'Could not resolve: "./question%3Fmark.png"',
+        'Could not resolve: "./quo%22te.png"',
+        'Could not resolve: "./line%0Afeed.png"',
+        'Could not resolve: "./del%7Fete.png"',
+        'Could not resolve: "./trailing.png%20"',
+      ],
+    },
+  });
+  // Only Linux file systems accept a name that is not UTF-8.
+  test.skipIf(!isLinux)("css/URLPercentEncodedEveryByte", async () => {
+    using dir = tempDir("css-url-percent-every-byte", { "x/y": "" });
+    const bytes = Array.from({ length: 255 }, (_, i) => i + 1).filter(byte => byte !== 0x2f);
+    const hex = (byte: number) => byte.toString(16).padStart(2, "0");
+    for (const byte of bytes) {
+      writeFileSync(Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([byte]), Buffer.from("n")]), "");
+    }
+    expect(readdirSync(String(dir)).length).toBe(bytes.length + 1);
+    writeFileSync(
+      join(String(dir), "entry.css"),
+      [
+        `.slash { background: url(./x%2Fy), url(./x%2fy) }`,
+        `.scheme { background: url(n%3An) }`,
+        ...bytes.map(
+          byte => `.b${hex(byte)} { background: url(./n%${hex(byte)}n), url(./n%${hex(byte).toUpperCase()}n) }`,
+        ),
+      ].join("\n"),
+    );
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      outdir: join(String(dir), "out"),
+      throw: false,
+    });
+    const refused = new Set(result.logs.map(log => log.message));
+    const accepted = bytes.filter(byte => !refused.has(`Could not resolve: "./n%${hex(byte)}n"`));
+    // Not a control character, `"`, `#`, `%`, `?`, `\` or a byte that is not ASCII.
+    expect(String.fromCharCode(...accepted)).toBe(
+      " !$&'()*+,-.0123456789:;<=>@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~",
+    );
+    expect(bytes.filter(byte => !refused.has(`Could not resolve: "./n%${hex(byte).toUpperCase()}n"`))).toEqual(
+      accepted,
+    );
+    expect([...refused].filter(message => !message.includes("./n%")).sort()).toEqual([
+      'Could not resolve: "./x%2Fy"',
+      'Could not resolve: "./x%2fy"',
+      'Could not resolve: "n%3An". Maybe you need to "bun install"?',
+    ]);
+    // The output is the raw name, so a URL parser has to give each accepted byte back.
+    const lost = accepted.filter(byte => {
+      const name = `n${String.fromCharCode(byte)}n`;
+      const url = new URL(`./${name}`, "http://localhost/dir/");
+      return decodeURIComponent(url.pathname) !== `/dir/${name}` || url.search !== "" || url.hash !== "";
+    });
+    expect(lost).toEqual([]);
+  });
+  // 29 letters of 3 bytes are a name of 261 bytes when written as escapes, too long to be a file.
+  const longName = Buffer.alloc(29 * 3, "漢").toString();
+  (isWindows ? itBundled.skip : itBundled)("css/URLPercentEncodedLongName", {
+    files: {
+      "/entry.css": /* css */ `
+        .a { background: url(./${encodeURIComponent(longName)}.png) }
+        .b { background: url(./${encodeURIComponent(longName)}/a.png) }
+      `,
+      [`/${longName}.png`]: "long name",
+      [`/${longName}/a.png`]: "long directory",
+    },
+    outdir: "/out",
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.css")).toBe(`/* entry.css */
+.a {
+  background: url("data:image/png;base64,${Buffer.from("long name").toString("base64")}");
+}
+
+.b {
+  background: url("data:image/png;base64,${Buffer.from("long directory").toString("base64")}");
+}
+`);
+    },
+  });
+  // `composes .. from` names a module, as an import in JavaScript does.
+  itBundled("css/URLPercentEncodedNotInComposes", {
+    files: {
+      "/entry.module.css": `.x { composes: y from "./my%20mod.module.css"; }`,
+      "/my mod.module.css": `.y { color: red }`,
+    },
+    entryPoints: ["/entry.module.css"],
+    outdir: "/out",
+    bundleErrors: {
+      "/entry.module.css": ['Could not resolve: "./my%20mod.module.css"'],
+    },
+  });
+  // HTML `src` and `href` have the same import kinds as `url()` and `@import`.
+  const percentEncodedHTML: Pick<BundlerTestInput, "files" | "entryPoints" | "outdir" | "bundleErrors"> = {
+    files: {
+      "/index.html": `<!doctype html><html><head><link rel="stylesheet" href="./my%20theme.css"></head><body><img src="./my%20photo.png"></body></html>`,
+      "/my theme.css": `.theme { color: red }`,
+      "/my photo.png": "photo",
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    bundleErrors: {
+      "/index.html": ['Could not resolve: "./my%20theme.css"', 'Could not resolve: "./my%20photo.png"'],
+    },
+  };
+  itBundled("css/URLPercentEncodedNotInHTML", percentEncodedHTML);
+  itBundled("css/URLPercentEncodedNotInHTMLPluginDeclines", {
+    ...percentEncodedHTML,
+    plugins(builder) {
+      builder.onResolve({ filter: /./ }, () => undefined);
     },
   });
 

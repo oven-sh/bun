@@ -63,7 +63,7 @@ pub use crate::properties::{
 pub use crate::rules::{
     self as css_rules, CssRule, CssRuleList, Location, MinifyContext, StyleContext,
     import::{ImportConditions, ImportRule},
-    layer::{LayerBlockRule, LayerName, LayerStatementRule},
+    layer::{LayerBlockRule, LayerName, LayerNames, LayerStatementRule},
     namespace::NamespaceRule,
     style::StyleRule,
     supports::{SupportsCondition, SupportsRule},
@@ -664,13 +664,33 @@ pub trait CustomAtRuleParser {
     fn reset_enclosing_layer(this: &mut Self, len: u32);
     fn bump_anon_layer_count(this: &mut Self, amount: i32);
 
+    /// How many `@layer` names `on_layer_rule` has registered so far.
+    fn layer_name_count(_this: &mut Self) -> u32 {
+        0
+    }
+
+    /// Called after the block of a rule with `condition`. `first_layer_name` is `layer_name_count` from before the block.
+    fn on_conditional_group_end(
+        _this: &mut Self,
+        _first_layer_name: u32,
+        _condition: LayerCondition<'_>,
+    ) {
+    }
+
     /// Move the registered `@layer` names accumulated via `on_layer_rule` out
     /// of the parser. Only `BundlerAtRuleParser` populates
     /// `StyleSheet.layer_names`; this is a trait hook with a
     /// default no-op for parsers that don't track layers.
-    fn take_layer_names(_this: &mut Self) -> Vec<LayerName> {
-        Vec::new()
+    fn take_layer_names(_this: &mut Self) -> LayerNames<Self::AtRule> {
+        LayerNames::default()
     }
+}
+
+/// What decides whether the `@layer` names in the block of a rule join the layer order.
+pub enum LayerCondition<'a> {
+    Media(&'a MediaList),
+    Supports(&'a SupportsCondition),
+    MozDocument,
 }
 
 /// At rules are rules that have the `@` symbol.
@@ -707,10 +727,26 @@ pub struct BundlerAtRuleParser<'a> {
     /// soundly under Stacked Borrows.
     pub(crate) import_records: *mut Vec<ImportRecord>,
     pub(crate) layer_names: Vec<LayerName>,
+    /// The conditional rules with part of `layer_names` in their block, in source order, a rule ahead of the rules inside it.
+    pub(crate) conditional_layers: Vec<ConditionalLayers>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
     pub(crate) anon_layer_count: u32,
     pub(crate) enclosing_layer: LayerName,
+}
+
+/// A `@media`, `@supports` or `@-moz-document` rule with `layer_names[start..end]` in its block.
+pub(crate) struct ConditionalLayers {
+    start: u32,
+    end: u32,
+    condition: OwnedLayerCondition,
+}
+
+/// `LayerCondition`, copied from the rule.
+enum OwnedLayerCondition {
+    Media(MediaList),
+    Supports(SupportsCondition),
+    MozDocument,
 }
 
 impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
@@ -820,8 +856,26 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         this.enclosing_layer.v.append_slice(name.v.slice());
     }
 
-    fn take_layer_names(this: &mut Self) -> Vec<LayerName> {
-        core::mem::take(&mut this.layer_names)
+    fn layer_name_count(this: &mut Self) -> u32 {
+        this.layer_names.len() as u32
+    }
+
+    fn on_conditional_group_end(
+        this: &mut Self,
+        first_layer_name: u32,
+        condition: LayerCondition<'_>,
+    ) {
+        if this.layer_names.len() as u32 != first_layer_name {
+            this.record_conditional_layers(first_layer_name, condition);
+        }
+    }
+
+    fn take_layer_names(this: &mut Self) -> LayerNames<BundlerAtRule> {
+        let names = core::mem::take(&mut this.layer_names);
+        if this.conditional_layers.is_empty() {
+            return LayerNames::Unconditional(names);
+        }
+        conditional_layer_names(names, core::mem::take(&mut this.conditional_layers))
     }
 
     fn reset_enclosing_layer(this: &mut Self, len: u32) {
@@ -838,6 +892,143 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             this.anon_layer_count -= amount.unsigned_abs();
         }
     }
+}
+
+impl BundlerAtRuleParser<'_> {
+    /// `layer_names[start..]` were registered inside a rule with `condition`.
+    #[cold]
+    fn record_conditional_layers(&mut self, start: u32, condition: LayerCondition<'_>) {
+        // The rules inside the block of this one are the last ones in the list.
+        let inside = self
+            .conditional_layers
+            .iter()
+            .rposition(|earlier| earlier.start < start)
+            .map_or(0, |last| last + 1);
+        let condition = match condition {
+            LayerCondition::Media(query) if query.never_matches() => {
+                self.layer_names.truncate(start as usize);
+                self.conditional_layers.truncate(inside);
+                return;
+            }
+            LayerCondition::Media(query) if query.always_matches() => return,
+            LayerCondition::Media(query) => {
+                OwnedLayerCondition::Media(query.deep_clone(self.arena))
+            }
+            LayerCondition::Supports(condition) => {
+                OwnedLayerCondition::Supports(condition.deep_clone(self.arena))
+            }
+            LayerCondition::MozDocument => OwnedLayerCondition::MozDocument,
+        };
+        self.conditional_layers.insert(
+            inside,
+            ConditionalLayers {
+                start,
+                end: self.layer_names.len() as u32,
+                condition,
+            },
+        );
+    }
+}
+
+/// Unlike esbuild, which takes a name inside a rule of `groups` as a layer that the file always declares.
+fn conditional_layer_names(
+    names: Vec<LayerName>,
+    groups: Vec<ConditionalLayers>,
+) -> LayerNames<BundlerAtRule> {
+    // A rule counts only if it names a layer that the file has not declared outside of it by then: any other layer exists whether or not the condition holds.
+    let mut declares_a_layer = vec![false; groups.len()];
+    {
+        // `declared[0]`: the layers declared outside of every rule. `declared[n]`: those declared in the block of `open[n - 1]`.
+        let mut declared: Vec<bun_collections::HashMap<&[&[u8]], ()>> =
+            vec![bun_collections::HashMap::new()];
+        let mut open: Vec<usize> = Vec::new();
+        let mut next_group = 0;
+        for (i, name) in names.iter().enumerate() {
+            while open
+                .last()
+                .is_some_and(|&group| groups[group].end as usize <= i)
+            {
+                open.pop();
+                declared.pop();
+            }
+            while groups
+                .get(next_group)
+                .is_some_and(|group| group.start as usize == i)
+            {
+                open.push(next_group);
+                declared.push(bun_collections::HashMap::new());
+                next_group += 1;
+            }
+            let path = name.v.slice();
+            // A rule of `open` declares this layer if nothing outside the block of that rule has declared it.
+            let known_in = declared
+                .iter()
+                .position(|layers| layers.contains(&path))
+                .unwrap_or(open.len());
+            for &group in &open[..known_in] {
+                declares_a_layer[group] = true;
+            }
+            if let Some(layers) = declared.last_mut() {
+                for len in 1..=path.len() {
+                    layers.insert(&path[..len], ());
+                }
+            }
+        }
+    }
+    if !declares_a_layer.contains(&true) {
+        return LayerNames::Unconditional(names);
+    }
+
+    let mut groups = groups.into_iter().zip(declares_a_layer).peekable();
+    LayerNames::Conditional(layer_rules(&names, &mut groups, 0, names.len()))
+}
+
+/// `@layer` statements for `names[start..end]`. The names inside a rule of `groups` that declares a layer are statements in a copy of that rule.
+fn layer_rules(
+    names: &[LayerName],
+    groups: &mut core::iter::Peekable<impl Iterator<Item = (ConditionalLayers, bool)>>,
+    start: usize,
+    end: usize,
+) -> BundlerCssRuleList {
+    fn statement(rules: &mut Vec<BundlerCssRule>, names: &[LayerName]) {
+        if !names.is_empty() {
+            rules.push(CssRule::LayerStatement(LayerStatementRule {
+                names: names.iter().cloned().collect(),
+                loc: Location::dummy(),
+            }));
+        }
+    }
+    let mut rules: Vec<BundlerCssRule> = Vec::new();
+    let mut next = start;
+    while let Some((group, declares_a_layer)) =
+        groups.next_if(|(group, _)| (group.start as usize) < end)
+    {
+        if !declares_a_layer {
+            continue;
+        }
+        let (group_start, group_end) = (group.start as usize, group.end as usize);
+        statement(&mut rules, &names[next..group_start]);
+        let inside = layer_rules(names, groups, group_start, group_end);
+        let loc = Location::dummy();
+        rules.push(match group.condition {
+            OwnedLayerCondition::Media(query) => CssRule::Media(css_rules::media::MediaRule {
+                query,
+                rules: inside,
+                loc,
+            }),
+            OwnedLayerCondition::Supports(condition) => CssRule::Supports(SupportsRule {
+                condition,
+                rules: inside,
+                loc,
+            }),
+            OwnedLayerCondition::MozDocument => {
+                CssRule::MozDocument(css_rules::document::MozDocumentRule { rules: inside, loc })
+            }
+        });
+        next = group_end;
+    }
+    statement(&mut rules, &names[next..end]);
+    CssRuleList { v: rules }
 }
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
@@ -1513,6 +1704,18 @@ mod rule_parsers {
 
             Ok(rules)
         }
+
+        /// Not for `@container`, `@scope`, `@starting-style` or a style rule: a browser declares a layer named inside those in every case.
+        fn parse_conditional_group_block(
+            &mut self,
+            input: &mut Parser,
+            condition: LayerCondition<'_>,
+        ) -> CssResult<CssRuleList<T::AtRule>> {
+            let first_layer_name = T::layer_name_count(self.at_rule_parser);
+            let rules = self.parse_style_block(input)?;
+            T::on_conditional_group_end(self.at_rule_parser, first_layer_name, condition);
+            Ok(rules)
+        }
     }
 
     impl<'a, T: CustomAtRuleParser> AtRuleParser for NestedRuleParser<'a, T> {
@@ -1703,7 +1906,8 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Media(query) => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules =
+                        this.parse_conditional_group_block(input, LayerCondition::Media(&query))?;
                     this.rules
                         .v
                         .push(CssRule::Media(css_rules::media::MediaRule {
@@ -1714,7 +1918,10 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Supports(condition) => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules = this.parse_conditional_group_block(
+                        input,
+                        LayerCondition::Supports(&condition),
+                    )?;
                     this.rules
                         .v
                         .push(CssRule::Supports(css_rules::supports::SupportsRule {
@@ -1788,7 +1995,8 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::MozDocument => {
-                    let rules = this.parse_style_block(input)?;
+                    let rules =
+                        this.parse_conditional_group_block(input, LayerCondition::MozDocument)?;
                     this.rules
                         .v
                         .push(CssRule::MozDocument(css_rules::document::MozDocumentRule {
@@ -2307,7 +2515,7 @@ pub struct StyleSheet<AtRule> {
     pub css_modules: Option<css_modules::Config>,
     /// [`ParserOptions::flags`] of the parse.
     pub flags: ParserFlags,
-    pub layer_names: Vec<LayerName>,
+    pub layer_names: LayerNames<AtRule>,
 
     /// Used when css modules is enabled. Maps `local name string` -> `Ref`.
     pub local_scope: LocalScope,
@@ -2328,7 +2536,7 @@ impl<AtRule> StyleSheet<AtRule> {
             filename: b"",
             css_modules: None,
             flags: ParserFlags::default(),
-            layer_names: Vec::new(),
+            layer_names: LayerNames::default(),
             local_scope: LocalScope::default(),
             local_properties: LocalPropertyUsage::default(),
             composes: ComposesMap::default(),
@@ -2551,6 +2759,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: false,
                 import_records: core::ptr::null_mut(),
                 layer_names: Vec::new(),
+                conditional_layers: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };
@@ -2763,6 +2972,7 @@ mod stylesheet_impl {
                 track_layers_and_imports: true,
                 import_records: import_records_ptr.as_ptr(),
                 layer_names: Vec::new(),
+                conditional_layers: Vec::new(),
                 anon_layer_count: 0,
                 enclosing_layer: LayerName::default(),
             };

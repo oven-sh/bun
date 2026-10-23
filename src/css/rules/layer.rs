@@ -106,6 +106,20 @@ impl fmt::Display for LayerName {
     }
 }
 
+/// The cascade layers that a style sheet names, in source order.
+pub enum LayerNames<R> {
+    /// The style sheet declares each name wherever it applies.
+    Unconditional(Vec<LayerName>),
+    /// `@layer` statements. One for a layer that exists only under a condition is inside a copy of its `@media`, `@supports` or `@-moz-document` rule.
+    Conditional(CssRuleList<R>),
+}
+
+impl<R> Default for LayerNames<R> {
+    fn default() -> Self {
+        LayerNames::Unconditional(Vec::new())
+    }
+}
+
 /// A [@layer block](https://drafts.csswg.org/css-cascade-5/#layer-block) rule.
 pub struct LayerBlockRule<R> {
     /// PERF: null pointer optimizaiton, nullable

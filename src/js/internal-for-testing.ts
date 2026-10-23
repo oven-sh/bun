@@ -904,6 +904,11 @@ export const fileSinkInternals = {
   liveCount: $bindgen("FileSink.bind.ts", "liveCount"),
 };
 
+// Only in a build with assertions, like `bindgen` above.
+export const blobInternals = $bindgen("blob_test.bind.ts", "storeIsAllAscii") && {
+  storeIsAllAscii: $bindgen("blob_test.bind.ts", "storeIsAllAscii"),
+};
+
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy

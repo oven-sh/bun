@@ -197,14 +197,15 @@ impl<'src> HtmlRenderer<'src> {
                     self.out.write(b" id=\"");
                     self.out.write(slug);
                     self.out.write(b"\">");
-                    if self.autolink_headings {
+                    let autolink = self.autolink_headings && !has_a_start_tag(&self.heading_buf);
+                    if autolink {
                         self.out.write(b"<a href=\"#");
                         self.out.write(slug);
                         self.out.write(b"\">");
                     }
                     // Flush buffered heading content
                     self.out.write(self.heading_buf.as_slice());
-                    if self.autolink_headings {
+                    if autolink {
                         self.out.write(b"</a>");
                     }
                     self.out.write(match data {
@@ -655,6 +656,18 @@ fn is_disallowed_tag(content: &[u8]) -> bool {
     ];
     for tag in DISALLOWED.iter() {
         if match_tag_name_ci(content, after_lt, tag) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether `html` has an `<a>` start tag. The link to a heading goes around none.
+fn has_a_start_tag(html: &[u8]) -> bool {
+    let mut rest = html;
+    while let Some(lt) = strings::index_of_char_usize(rest, b'<') {
+        rest = &rest[lt + 1..];
+        if match_tag_name_ci(rest, 0, b"a") {
             return true;
         }
     }

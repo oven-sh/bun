@@ -1644,6 +1644,8 @@ declare module "bun" {
       /**
        * Configure heading IDs and autolink headings. Pass `true` to enable both
        * heading IDs and autolink headings, or an object to configure individually.
+       * An autolink heading has its content in a link to its own ID. A heading
+       * that has a link gets no autolink, so the autolink is around no other link.
        *
        * @example
        * ```ts

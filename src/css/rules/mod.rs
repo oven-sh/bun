@@ -14,6 +14,7 @@ pub mod counter_style;
 pub mod custom_media;
 pub mod document;
 pub mod font_face;
+pub mod font_feature_values;
 pub mod font_palette_values;
 pub mod import;
 pub mod keyframes;
@@ -22,6 +23,7 @@ pub mod media;
 pub mod namespace;
 pub mod nesting;
 pub mod page;
+pub mod position_try;
 pub mod property;
 pub mod scope;
 pub mod starting_style;
@@ -36,7 +38,7 @@ pub mod viewport;
 // lifetime-free here.
 
 // ─── CssRule variant table ────────────────────────────────────────────────
-// Single source of truth for the 20 typed at-rule payloads. Adding a new
+// Single source of truth for the 22 typed at-rule payloads. Adding a new
 // at-rule = one line here; the enum variant + `to_css` arm + `deep_clone`
 // arm are generated. `Unknown`/`Custom`/`Ignored` stay a fixed tail because
 // their `to_css` arms are special-cased (see the note on `Custom`).
@@ -103,6 +105,8 @@ css_rule_variants! {
     Keyframes(keyframes::KeyframesRule),
     /// A `@font-face` rule.
     FontFace(font_face::FontFaceRule),
+    /// A `@font-feature-values` rule.
+    FontFeatureValues(font_feature_values::FontFeatureValuesRule),
     /// A `@font-palette-values` rule.
     FontPaletteValues(font_palette_values::FontPaletteValuesRule),
     /// A `@page` rule.
@@ -127,6 +131,8 @@ css_rule_variants! {
     LayerBlock(layer::LayerBlockRule<R>),
     /// A `@property` rule.
     Property(property::PropertyRule),
+    /// A `@position-try` rule.
+    PositionTry(position_try::PositionTryRule),
     /// A `@container` rule.
     Container(container::ContainerRule<R>),
     /// A `@scope` rule.

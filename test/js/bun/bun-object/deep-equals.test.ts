@@ -1,4 +1,5 @@
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import EventEmitter from "node:events";
 import vm from "node:vm";
 
 describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
@@ -145,6 +146,110 @@ describe("Bun.deepEquals strict mode", () => {
   // against Object.prototype.
   it.failing("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
+  });
+});
+
+// A non-enumerable property must not satisfy an enumerable one on the other
+// side, in either argument order and on both the structure fast path and the
+// property-name slow path (objects with an accessor).
+describe("Bun.deepEquals with mixed enumerability", () => {
+  function nonEnumerable<T extends object>(object: T, key: PropertyKey, value: unknown): T {
+    Object.defineProperty(object, key, { value, enumerable: false });
+    return object;
+  }
+
+  // An accessor disables the structure fast path.
+  function withGetter<T extends object>(object: T): T {
+    Object.defineProperty(object, "g", { get: () => 1, enumerable: true });
+    return object;
+  }
+
+  const cases: [string, () => object, () => object][] = [
+    ["string key", () => ({ a: 1, h: 2 }), () => nonEnumerable({ a: 1 }, "h", 2)],
+    ["symbol key", () => ({ [Symbol.for("h")]: 2 }), () => nonEnumerable({}, Symbol.for("h"), 2)],
+    ["nested", () => ({ x: { a: 1, h: 2 } }), () => ({ x: nonEnumerable({ a: 1 }, "h", 2) })],
+    ["inside an array", () => [{ a: 1, h: 2 }], () => [nonEnumerable({ a: 1 }, "h", 2)]],
+    [
+      "undefined enumerable next to a non-enumerable value",
+      () => ({ k: 2 }),
+      () => nonEnumerable({ a: undefined }, "k", 2),
+    ],
+    ["slow path", () => withGetter({ a: 1, h: 2 }), () => withGetter(nonEnumerable({ a: 1 }, "h", 2))],
+    [
+      "slow path, undefined enumerable next to a missing key",
+      () => withGetter({ a: 1, b: 1 }),
+      () => withGetter({ a: 1, x: undefined }),
+    ],
+    ["Error", () => Object.assign(new Error("m"), { h: 2 }), () => nonEnumerable(new Error("m"), "h", 2)],
+    [
+      "array symbol key",
+      () => Object.assign([1], { [Symbol.for("h")]: 2 }),
+      () => nonEnumerable([1], Symbol.for("h"), 2),
+    ],
+    ["array symbol key missing on one side", () => Object.assign([1], { [Symbol.for("h")]: 2 }), () => [1]],
+  ];
+
+  it.each(cases)("%s is not equal in either direction", (_, makeA, makeB) => {
+    for (const strict of [false, true]) {
+      expect(Bun.deepEquals(makeA(), makeB(), strict)).toBe(false);
+      expect(Bun.deepEquals(makeB(), makeA(), strict)).toBe(false);
+    }
+  });
+
+  it("toEqual and toContainEqual reject it in either direction", () => {
+    const a = { a: 1, h: 2 };
+    const b = nonEnumerable({ a: 1 }, "h", 2);
+    expect(a).not.toEqual(b);
+    expect(b).not.toEqual(a);
+    expect([a]).not.toContainEqual(b);
+    expect([b]).not.toContainEqual(a);
+  });
+
+  it("ignores an undefined property on the slow path in either direction", () => {
+    const withExtra = () => Object.assign(new Error("boom"), { extra: undefined, code: "E" });
+    const withoutExtra = () => Object.assign(new Error("boom"), { code: "E" });
+    expect(Bun.deepEquals(withExtra(), withoutExtra())).toBe(true);
+    expect(Bun.deepEquals(withoutExtra(), withExtra())).toBe(true);
+    expect(Bun.deepEquals(withExtra(), withoutExtra(), true)).toBe(false);
+    expect(Bun.deepEquals(withoutExtra(), withExtra(), true)).toBe(false);
+
+    const frozen = Object.freeze({ a: 1, b: undefined, nested: { d: 1, e: undefined } });
+    expect(Bun.deepEquals(frozen, Object.freeze({ a: 1, nested: { d: 1 } }))).toBe(true);
+    expect(Bun.deepEquals(Object.freeze({ a: 1, nested: { d: 1 } }), frozen)).toBe(true);
+    expect(Bun.deepEquals(withGetter({ a: 1, x: undefined }), withGetter({ a: 1 }))).toBe(true);
+    expect(Bun.deepEquals(withGetter({ a: 1 }), withGetter({ a: 1, x: undefined }))).toBe(true);
+  });
+
+  // getPropertyNames lists EventEmitter.prototype.constructor (enumerable) for a
+  // subclass instance, although the subclass prototype shadows it with a
+  // non-enumerable constructor. Both sides must treat that name the same way.
+  it("treats a chain name shadowed by a non-enumerable property the same on both sides", () => {
+    class Foo extends EventEmitter {}
+    const a = withGetter(new Foo());
+    const b = withGetter(new Foo());
+    expect(Bun.deepEquals(a, b)).toBe(true);
+    expect(Bun.deepEquals(a, b, true)).toBe(true);
+    const c = Object.create(Object.getPrototypeOf(process));
+    expect(Bun.deepEquals(c, Object.getPrototypeOf(process))).toBe(true);
+
+    // The shadowed name still counts in the name list, so the list lengths
+    // match here although the own keys differ.
+    const far = { s: 1 };
+    const mid = nonEnumerable(Object.create(far), "s", 1);
+    const shadowed = withGetter(Object.assign(Object.create(mid), { a: 1 }));
+    const extra = withGetter({ a: 1, extra: 9 });
+    expect(Bun.deepEquals(shadowed, extra, true)).toBe(false);
+    expect(Bun.deepEquals(extra, shadowed, true)).toBe(false);
+    expect(Bun.deepEquals(shadowed, extra)).toBe(false);
+    expect(Bun.deepEquals(extra, shadowed)).toBe(false);
+  });
+
+  it("still ignores non-enumerable properties present on both sides", () => {
+    const a = nonEnumerable({ a: 1 }, "h", 2);
+    const b = nonEnumerable({ a: 1 }, "h", 3);
+    expect(Bun.deepEquals(a, b)).toBe(true);
+    expect(Bun.deepEquals(a, b, true)).toBe(true);
+    expect(Bun.deepEquals(withGetter(a), withGetter(b))).toBe(true);
   });
 });
 

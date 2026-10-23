@@ -50,6 +50,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "FrameworkRouter.rs": "runtime/bake/router/js.rs",
   "JSBundler.rs": "runtime/api/JSBundler.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
+  "PasswordObject.rs": "runtime/crypto/PasswordObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
   "SemverObject.rs": "semver_jsc/SemverObject.rs",
   "Stat.rs": "runtime/node/Stat.rs",

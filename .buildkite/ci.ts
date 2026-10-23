@@ -87,6 +87,13 @@ function setBuildMetadata(name: string, value: string): void {
   }
 }
 
+/**
+ * How many of a pull request's files the test shards are told about: a
+ * meta-data value holds at most 100 KB. When the list is longer, the files
+ * under test/ are the first to be kept, because a shard uses only those.
+ */
+const maxStoredPullRequestFiles = 500;
+
 /** The fields of GitHub's "get the latest release" response that are read here. */
 interface GithubRelease {
   tag_name: string;
@@ -1914,27 +1921,23 @@ async function main() {
     console.log("Generated options:", options);
   }
 
-  startGroup("Querying GitHub for files...");
+  startGroup("Listing the files of the pull request...");
   if (options && isBuildkite && !isMainBranch()) {
-    let allFiles: string[] = [];
-    let newFiles: string[] = [];
-    try {
-      ({ allFiles, newFiles } = await getPullRequestFiles());
-    } catch (e) {
-      console.error(e);
-    }
+    const { allFiles, newFiles } = getPullRequestFiles();
     if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
       console.log(`- PR is only docs, skipping tests!`);
       return;
     }
     options.changedFiles = allFiles;
-    // Publish the file lists as build meta-data so each test shard can read
-    // them instead of re-querying GitHub. With ~150 shards per build, this
-    // is the difference between 1 API call and 150, and the per-shard calls
-    // were exhausting the token's hourly rate limit under load.
+    // Publish the file lists as build meta-data, where the test shards read
+    // them: a shard has no history to work them out from, and does not ask
+    // GitHub (scripts/runner.node.ts). Only what is stored is cut short: this
+    // step decides on every file.
     if (allFiles.length > 0) {
-      setBuildMetadata("pr-all-files", JSON.stringify(allFiles));
-      setBuildMetadata("pr-new-files", JSON.stringify(newFiles));
+      const testsFirst = [...allFiles].sort((a, b) => Number(b.startsWith("test/")) - Number(a.startsWith("test/")));
+      const stored = new Set(testsFirst.slice(0, maxStoredPullRequestFiles));
+      setBuildMetadata("pr-all-files", JSON.stringify(allFiles.filter(filename => stored.has(filename))));
+      setBuildMetadata("pr-new-files", JSON.stringify(newFiles.filter(filename => stored.has(filename))));
     }
   }
 

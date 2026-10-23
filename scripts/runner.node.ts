@@ -60,11 +60,11 @@ import {
   getBuildUrl,
   getCommit,
   getFileUrl,
-  getPullRequestFiles,
   getSecret,
   isBuildkite,
   isCI,
   isGithubAction,
+  isPullRequest,
   markBuildkiteStepReported,
   parseJunitFileSuites,
   printEnvironment,
@@ -397,14 +397,14 @@ if (options.quiet) {
 
 let allFiles: string[] = [];
 let newFiles: string[] = [];
-if (isBuildkite) {
-  // The pipeline-upload step (.buildkite/ci.ts) already fetched the PR file
-  // list once and stored it as build meta-data. Read it from there so each of
-  // the ~150 test shards doesn't repeat the GitHub API call and burn through
-  // the token's hourly rate limit.
+if (isBuildkite && isPullRequest()) {
+  // The pipeline step (.buildkite/ci.ts) works out the PR file list once per
+  // build and stores it as build meta-data. A shard only reads it. Its clone
+  // has no history to work the list out from, and it does not ask GitHub: every
+  // shard of every build would spend the hourly quota of the same token.
   const cachedAll = getBuildMetadata("pr-all-files");
-  const cachedNew = getBuildMetadata("pr-new-files");
   if (cachedAll) {
+    const cachedNew = getBuildMetadata("pr-new-files");
     try {
       allFiles = JSON.parse(cachedAll) as string[];
       newFiles = cachedNew ? (JSON.parse(cachedNew) as string[]) : [];
@@ -414,13 +414,8 @@ if (isBuildkite) {
       allFiles = [];
       newFiles = [];
     }
-  }
-  if (allFiles.length === 0) {
-    try {
-      ({ allFiles, newFiles } = await getPullRequestFiles());
-    } catch (e) {
-      console.error(e);
-    }
+  } else {
+    console.log("- No PR file list in build meta-data: changed tests do not run first");
   }
 }
 
@@ -3461,22 +3456,8 @@ async function main(): Promise<void> {
     ]);
   }
 
-  let doRunTests = true;
-  if (isCI) {
-    // allFiles can be empty if the GitHub API call failed (bad token, rate
-    // limit, non-PR build). [].every() is vacuously true, which would skip the
-    // entire suite and exit 0 — so require at least one file before treating
-    // the change set as docs-only.
-    if (allFiles.length > 0 && allFiles.every(filename => filename.startsWith("docs/"))) {
-      doRunTests = false;
-    }
-  }
-
-  let ok = true;
-  if (doRunTests) {
-    const results = await runTests();
-    ok = results.every(({ ok }) => ok);
-  }
+  const results = await runTests();
+  const ok = results.every(({ ok }) => ok);
 
   let waitForUser = false;
   while (isCI) {

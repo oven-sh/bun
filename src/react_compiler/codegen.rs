@@ -237,13 +237,23 @@ pub(crate) fn codegen_function(
 
     let mut compiled = codegen_reactive_function(&mut cx, func)?;
 
+    // The body starts with the directives of the function. A directive only counts while it
+    // comes first, so every statement added below goes after them.
+    let directive_count = compiled
+        .body
+        .iter()
+        .take_while(|stmt| matches!(stmt.data, StmtData::SDirective(_)))
+        .count();
+
     // enableEmitHookGuards: wrap entire function body in try/finally with
     // $dispatcherGuard(PushHookGuard=0) / $dispatcherGuard(PopHookGuard=1).
     if let Some(hook_guard_name) = cx.env.hook_guard_name {
         if cx.env.output_mode == crate::hir::environment::OutputMode::Client {
             let guard_ref = cx.cg.ref_for_name(hook_guard_name);
-            let body_stmts = std::mem::take(&mut compiled.body);
-            compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
+            let body_stmts = compiled.body.split_off(directive_count);
+            compiled
+                .body
+                .push(create_function_body_hook_guard(guard_ref, body_stmts, 0, 1));
         }
     }
 
@@ -290,9 +300,9 @@ pub(crate) fn codegen_function(
         // Fast Refresh hash invalidation block — see `fast_refresh_state` above.
         let _ = fast_refresh_state;
 
-        let mut new_body = preface;
-        new_body.append(&mut compiled.body);
-        compiled.body = new_body;
+        compiled
+            .body
+            .splice(directive_count..directive_count, preface);
     }
 
     // Instrument forget: emit instrumentation call at the top of the function body
@@ -353,7 +363,7 @@ pub(crate) fn codegen_function(
                 },
                 Loc::EMPTY,
             );
-            compiled.body.insert(0, instrument_call);
+            compiled.body.insert(directive_count, instrument_call);
         }
     }
 

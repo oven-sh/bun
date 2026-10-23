@@ -149,8 +149,8 @@ pub struct Options<'a> {
     pub ts: bool,
     pub keep_names: bool,
     pub ignore_dce_annotations: bool,
-    /// Keeps every directive in the AST, in its original position and with its original text.
-    /// Otherwise `"use strict"` is only recorded on its scope, and `minify_syntax` drops the rest.
+    /// Keeps the text of every directive as it is written, and keeps `"use asm"`. Otherwise a
+    /// directive has its string value, and an escaped spelling of `"use strict"` is dropped.
     pub keep_directives: bool,
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
@@ -494,6 +494,7 @@ impl<'a> Parser<'a> {
         }
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let stmts = p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)?;
@@ -570,6 +571,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
 
@@ -759,8 +761,59 @@ impl<'a> Parser<'a> {
             exports_kind,
             WrapMode::None,
             b"",
+            &[],
         )?))
     }
+}
+
+/// Takes the directive prologue off the front of a module's statements. The prologue is data on
+/// the AST (`Ast.directives`), and every emitter writes it ahead of the statements it adds.
+/// A legal comment inside the prologue stays with the statements.
+fn split_directive_prologue<'a>(
+    arena: &'a Arena,
+    stmts: &'a mut [Stmt],
+) -> (&'a [Stmt], &'a mut [Stmt]) {
+    let mut prologue_len = 0;
+    let mut directive_count = 0;
+    let mut has_duplicate = false;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            js_ast::StmtData::SDirective(directive) => {
+                has_duplicate |= stmts[..i].iter().any(|earlier| {
+                    matches!(earlier.data, js_ast::StmtData::SDirective(earlier)
+                        if earlier.value.slice() == directive.value.slice())
+                });
+                directive_count += 1;
+                prologue_len = i + 1;
+            }
+            js_ast::StmtData::SComment(_) => {}
+            _ => break,
+        }
+    }
+    if prologue_len == directive_count && !has_duplicate {
+        let (directives, stmts) = stmts.split_at_mut(prologue_len);
+        return (directives, stmts);
+    }
+
+    let mut directives = BumpVec::<Stmt>::with_capacity_in(directive_count, arena);
+    for stmt in &stmts[..prologue_len] {
+        if let js_ast::StmtData::SDirective(directive) = stmt.data
+            && !directives.iter().any(|earlier| {
+                matches!(earlier.data, js_ast::StmtData::SDirective(earlier)
+                    if earlier.value.slice() == directive.value.slice())
+            })
+        {
+            directives.push(*stmt);
+        }
+    }
+    let mut kept_from = prologue_len;
+    for i in (0..prologue_len).rev() {
+        if matches!(stmts[i].data, js_ast::StmtData::SComment(_)) {
+            kept_from -= 1;
+            stmts[kept_from] = stmts[i];
+        }
+    }
+    (directives.into_bump_slice(), &mut stmts[kept_from..])
 }
 
 /// A container queued by `lower_date_time_literals`' worklist.
@@ -956,6 +1009,7 @@ impl<'a> Parser<'a> {
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,
+            allow_directive_prologue: true,
             ..Default::default()
         };
         let mut parse_tracer = bun_core::perf::trace("JSParser::parse");
@@ -995,6 +1049,8 @@ impl<'a> Parser<'a> {
             return Err(crate::Error::SyntaxError);
         }
 
+        let (directives, stmts) = split_directive_prologue(p.arena, stmts);
+
         // A second guard dropped at end of `_parse` restores the previous action.
         let _visit_action_guard =
             bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
@@ -1015,7 +1071,7 @@ impl<'a> Parser<'a> {
                     .then(|| "ssr".to_owned()),
                 ..Default::default()
             };
-            let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
+            let opt_out = bun_react_compiler::has_module_scope_opt_out(directives);
             let import_bindings = bun_react_compiler::collect_import_bindings(
                 stmts,
                 p.import_records.items(),
@@ -2488,7 +2544,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang)?;
+        let ast = p.to_ast(&mut parts, exports_kind, wrap_mode, hashbang, directives)?;
 
         if reject_import_statements {
             // An empty range marks a parser-generated record, like the JSX runtime import.

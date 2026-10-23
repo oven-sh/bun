@@ -362,7 +362,7 @@ pub mod Runtime {
         pub(crate) fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 18] = [
+            let bools: [bool; 19] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -381,6 +381,8 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                // The entry point of `-e`, `-p` and stdin is printed without the CommonJS wrapper.
+                self.remove_cjs_module_wrapper,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
@@ -1507,7 +1509,12 @@ pub struct ParseStatementOptions<'a> {
     pub(crate) is_name_optional: bool,
     pub(crate) is_typescript_declare: bool,
     pub(crate) is_for_loop_init: bool,
+    /// The statement list is a module, function or namespace body, so it can start with a
+    /// directive prologue. `parse_stmts_up_to` reads it and does not pass it on.
+    pub(crate) allow_directive_prologue: bool,
 }
+
+const _: () = assert!(core::mem::size_of::<ParseStatementOptions>() == 32);
 
 impl<'a> ParseStatementOptions<'a> {
     pub(crate) fn has_decorators(&self) -> bool {

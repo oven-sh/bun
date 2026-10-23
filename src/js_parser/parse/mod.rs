@@ -1470,6 +1470,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// A Use Strict Directive is the token `"use strict"` or `'use strict'`. An escape or a line
+    /// continuation gives the same string value but no directive.
+    fn is_use_strict_token(&self, loc: bun_ast::Loc) -> bool {
+        const RAW: &[u8] = b"use strict";
+        let contents = self.source.contents();
+        let start = loc.i() + 1;
+        let end = start + RAW.len();
+        contents.get(start..end) == Some(RAW) && contents.get(end) == contents.get(loc.i())
+    }
+
     pub(crate) fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1481,7 +1491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let mut return_without_semicolon_start: i32 = -1;
         opts.lexical_decl = LexicalDecl::AllowAll;
-        let mut is_directive_prologue = true;
+        let mut is_directive_prologue = core::mem::take(&mut opts.allow_directive_prologue);
 
         loop {
             for comment in p.lexer.comments_to_preserve_before.iter() {
@@ -1508,64 +1518,68 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Parse one or more directives at the beginning
             if is_directive_prologue {
                 is_directive_prologue = false;
-                if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
-                    if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        // With `keep_directives`, `("use strict")` is not a directive, and the text
-                        // is kept as written because an escape makes it a different directive.
-                        let keep = p.options.keep_directives;
-                        if !str_.prefer_template
-                            && (!keep || expr.value.loc.start == stmt.loc.start)
-                        {
-                            is_directive_prologue = true;
-                            let source: &'a bun_ast::Source = p.source;
-                            let as_written = keep.then(|| {
-                                let text = &source.contents()[stmt.loc.start as usize..];
-                                let mut end = 1;
-                                while text.get(end).is_some_and(|c| *c != text[0]) {
-                                    end += 1 + usize::from(text[end] == b'\\');
-                                }
-                                &text[1..end.min(text.len())]
-                            });
+                if let js_ast::stmt::Data::SExpr(expr) = &stmt.data
+                    && let js_ast::expr::Data::EString(str_) = &expr.value.data
+                    // A directive is a string literal token that starts the statement:
+                    // `("use strict")` and a template literal end the prologue.
+                    && !str_.prefer_template
+                    && expr.value.loc.start == stmt.loc.start
+                {
+                    is_directive_prologue = true;
+                    let keep = p.options.keep_directives;
+                    let is_use_strict = p.is_use_strict_token(stmt.loc);
 
-                            if str_.eql_comptime(b"use strict") {
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
-                                }
-                                if let Some(as_written) = as_written {
-                                    stmt = Stmt::alloc(
-                                        S::Directive {
-                                            value: bun_ast::StoreStr::new(as_written),
-                                        },
-                                        stmt.loc,
-                                    );
-                                } else {
-                                    skip = true;
-                                }
-                            } else if str_.eql_comptime(b"use asm")
-                                && !p.options.repl_mode
-                                && as_written.is_none()
-                            {
-                                // In the REPL the directive stays a string
-                                // statement so it evaluates as the result,
-                                // like node ('use asm' prints 'use asm').
-                                skip = true;
-                                stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
-                            } else {
-                                let bytes = match as_written {
-                                    Some(as_written) => as_written,
-                                    None => str_.string(p.arena).expect("OOM"),
-                                };
-                                stmt = Stmt::alloc(
-                                    S::Directive {
-                                        value: bun_ast::StoreStr::new(bytes),
-                                    },
-                                    stmt.loc,
-                                );
-                            }
+                    if is_use_strict {
+                        // Track "use strict" directives
+                        let mut scope = p.current_scope;
+                        scope.strict_mode = StrictModeKind::ExplicitStrictMode;
+                        // The directive of a function body also makes its parameters strict:
+                        // `function f(arguments) { "use strict" }` is a syntax error.
+                        if scope.kind == js_ast::scope::Kind::FunctionBody
+                            && let Some(mut parent) = scope.parent
+                            && parent.kind == js_ast::scope::Kind::FunctionArgs
+                            && parent.strict_mode == StrictModeKind::SloppyMode
+                        {
+                            parent.strict_mode = StrictModeKind::ExplicitStrictMode;
                         }
+                    }
+
+                    if keep {
+                        // The text is kept as written because an escape makes it a different directive.
+                        let source: &'a bun_ast::Source = p.source;
+                        let text = &source.contents()[stmt.loc.start as usize..];
+                        let mut end = 1;
+                        while text.get(end).is_some_and(|c| *c != text[0]) {
+                            end += 1 + usize::from(text[end] == b'\\');
+                        }
+                        stmt = Stmt::alloc(
+                            S::Directive {
+                                value: bun_ast::StoreStr::new(&text[1..end.min(text.len())]),
+                            },
+                            stmt.loc,
+                        );
+                    } else if !is_use_strict && str_.eql_comptime(b"use strict") {
+                        // `"use\x20strict"` has the value of a Use Strict Directive but is not one,
+                        // and the printer writes the value. In the REPL it stays a string
+                        // expression, which is the result of the line.
+                        if !p.options.repl_mode {
+                            skip = true;
+                            stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                        }
+                    } else if str_.eql_comptime(b"use asm") && !p.options.repl_mode {
+                        // In the REPL the directive stays a string
+                        // statement so it evaluates as the result,
+                        // like node ('use asm' prints 'use asm').
+                        skip = true;
+                        stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                    } else {
+                        let bytes = str_.string(p.arena).expect("OOM");
+                        stmt = Stmt::alloc(
+                            S::Directive {
+                                value: bun_ast::StoreStr::new(bytes),
+                            },
+                            stmt.loc,
+                        );
                     }
                 }
             }

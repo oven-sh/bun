@@ -123,6 +123,11 @@ impl SideEffects {
         expr: Expr,
     ) -> Option<Expr> {
         if !p.options.features.dead_code_elimination {
+            // The parser made every directive an `S::Directive`, so this string is not one. It
+            // prints as a template literal: as a string at the head of a body it would be one.
+            if let ExprData::EString(mut string) = expr.data {
+                string.prefer_template = true;
+            }
             return Some(expr);
         }
         if !p.stack_check.is_safe_to_recurse() || p.reported_stack_overflow.get() {

@@ -1395,6 +1395,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     if let Some(mut cf) = constructor_function {
                         let old_body: &[Stmt] = cf.func.body.stmts.slice();
+                        // Without a `super()` call, the assignments go after the directive prologue.
+                        let prologue_len = leading_directive_count(old_body);
                         let super_end = if class.extends.is_some() {
                             old_body
                                 .iter()
@@ -1403,9 +1405,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         if matches!(&se.value.data, ExprData::ECall(c)
                                             if matches!(c.target.data, ExprData::ESuper(_))))
                                 })
-                                .map_or(0, |i| i + 1)
+                                .map_or(prologue_len, |i| i + 1)
                         } else {
-                            0
+                            prologue_len
                         };
                         let mut stmts = BumpVec::<Stmt>::with_capacity_in(
                             old_body.len() + injected.len(),
@@ -1627,6 +1629,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_and_append_stmt(list, stmt)?;
             }
 
+            // How many statements of `visited` stay ahead of `before`.
+            let mut prologue_len = 0;
+
             // Transform block-level function declarations into variable declarations
             if before.len() > 0 {
                 let mut let_decls: ListManaged<'a, G::Decl> = ListManaged::new_in(p.arena);
@@ -1749,6 +1754,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 before.extend_from_slice(&non_fn_stmts);
+
+                // A directive only counts while it comes first, so these statements go after
+                // the prologue. The dead-code pass below keeps directives and comments.
+                prologue_len = leading_directive_count(&visited);
             }
 
             let mut visited_count = visited.len();
@@ -1770,8 +1779,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // filler value.
             stmts.clear();
             stmts.reserve(visited_count + before.len() + after.len());
+            stmts.extend_from_slice(&visited[..prologue_len]);
             stmts.extend_from_slice(&before);
-            stmts.extend_from_slice(&visited[..visited_count]);
+            stmts.extend_from_slice(&visited[prologue_len..visited_count]);
             stmts.extend_from_slice(&after);
 
             // manual restore for the block-level `defer`s
@@ -2028,9 +2038,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
-                StmtData::SDirective(_) if !p.options.keep_directives => continue,
-
                 StmtData::SLocal(local) => {
                     // Merge adjacent local statements
                     if output.len() > 0 {
@@ -2214,6 +2221,20 @@ fn scopes_for_enum_at<'a>(
     map.get(&loc)
         .copied()
         .expect("scopes_in_order_for_enum miss for enum stmt loc")
+}
+
+/// The length of the directive prologue at the head of a body: its directives and the legal
+/// comments between them. A statement that a transform adds to the body goes after it.
+pub(crate) fn leading_directive_count(stmts: &[Stmt]) -> usize {
+    let mut count = 0;
+    for (i, stmt) in stmts.iter().enumerate() {
+        match stmt.data {
+            bun_ast::stmt::Data::SDirective(_) => count = i + 1,
+            bun_ast::stmt::Data::SComment(_) => {}
+            _ => break,
+        }
+    }
+    count
 }
 
 fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {

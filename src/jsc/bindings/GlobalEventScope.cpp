@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include "GlobalEventScope.h"
+#include "BunClientData.h"
 #include "MessagePort.h"
 #include "ScriptExecutionContext.h"
 #include "ZigGlobalObject.h"
@@ -14,6 +15,11 @@ void GlobalEventScope::onDidChangeListenerImpl(EventTarget& self, const AtomStri
 {
     if (eventType == eventNames().messageEvent) {
         auto& global = static_cast<GlobalEventScope&>(self);
+        auto* context = global.scriptExecutionContext();
+        // Only a worker has a parent that can post to its global scope; on the main thread this
+        // listener can never fire, so it must not hold the event loop open.
+        if (!context || !clientData(context->vm())->isWorkerVM())
+            return;
         switch (kind) {
         case Add:
             if (global.m_messageEventCount == 0) {

@@ -276,6 +276,8 @@ impl ExactEntries {
 }
 
 impl FileNames {
+    // Out of line, so that a list without file names keeps the short lookup it had.
+    #[inline(never)]
     fn contains(&self, path: &[u8]) -> bool {
         path.strip_prefix(&*self.directory).is_some_and(|below| {
             let name = bun_paths::basename(below);
@@ -290,7 +292,7 @@ fn is_glob(entry: &[u8]) -> bool {
     strings::contains_any(entry, b"*?[{") || glob::has_extglob_prefix(entry)
 }
 
-fn any_glob_matches(globs: &GlobList, path: &[u8]) -> bool {
+fn any_glob_matches(globs: &[glob::Prepared<Box<[u8]>>], path: &[u8]) -> bool {
     if globs.is_empty() {
         return false;
     }
@@ -305,15 +307,14 @@ fn any_glob_matches(globs: &GlobList, path: &[u8]) -> bool {
 
 impl SideEffects {
     pub(crate) fn has_side_effects(&self, path: &[u8]) -> bool {
-        match self {
-            SideEffects::Unspecified => true,
-            SideEffects::False => false,
-            SideEffects::Map(exact) => exact.contains(path),
-            SideEffects::Glob(globs) => any_glob_matches(globs, path),
-            SideEffects::Mixed(mixed) => {
-                mixed.exact.contains(path) || any_glob_matches(&mixed.globs, path)
-            }
-        }
+        let (exact, globs): (Option<&ExactEntries>, &[glob::Prepared<Box<[u8]>>]) = match self {
+            SideEffects::Unspecified => return true,
+            SideEffects::False => return false,
+            SideEffects::Map(exact) => (Some(exact), &[]),
+            SideEffects::Glob(globs) => (None, globs),
+            SideEffects::Mixed(mixed) => (Some(&mixed.exact), &mixed.globs),
+        };
+        exact.is_some_and(|exact| exact.contains(path)) || any_glob_matches(globs, path)
     }
 
     /// Reads the array that "sideEffects" holds in the package.json in `package_dir`.

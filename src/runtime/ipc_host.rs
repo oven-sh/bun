@@ -567,7 +567,7 @@ pub(crate) fn get_ipc_instance(
             // (heap::alloc) above and is not yet aliased.
             unsafe { IPCInstance::deinit(instance) };
             CHANNEL.set(None);
-            bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
+            bun_core::warn!("Unable to start IPC pipe '{}'", fd);
             return None;
         }
 

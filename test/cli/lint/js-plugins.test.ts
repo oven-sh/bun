@@ -2220,6 +2220,27 @@ declare const either: Shape | Store;
       timeout,
     );
 
+    // Types are found for the kinds of node that rules have wanted the type of before. For a new kind, the rules run again.
+    test.concurrent.each([
+      ["", "services.getTypeAtLocation(node.parent).flags"],
+      [
+        " and catches what's thrown",
+        `(() => { try { return services.getTypeAtLocation(node.parent).flags; } catch { return "caught"; } })()`,
+      ],
+    ])(
+      "a rule gets a type that it only wants once it has seen another one%s",
+      async (_, then) => {
+        const reads = `(services, node) => services.getTypeAtLocation(node).getCallSignatures().length > 0 ? ${then} : "none"`;
+        const files = { ...typed(reads), "a.ts": `declare function it(title: unknown): void;\nit(it);\nit(1);\n` };
+        const { raw, stderr, exitCode } = await lint(files, ["-f", "json", "a.ts"]);
+        // `void`
+        expect(messagesOf(raw)).toEqual(["16", "none"]);
+        expect(stderr).not.toContain(" did not run because");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
     test.concurrent(
       "a rule that hasn't asked for types gets the same as without them",
       async () => {

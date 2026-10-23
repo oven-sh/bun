@@ -2,7 +2,7 @@
 
 use super::engine::{Engine, Vm, Work};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
-use super::types::Types;
+use super::types::{NodeKind, Types};
 use super::wire::{self, ask, call, result};
 use super::{ast, calls, directives, layouts, reports, schema, scopes, tokens};
 use crate::ast::File;
@@ -130,6 +130,18 @@ struct State {
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
     loading: Loading,
     asked_for_types: Vec<AskedForTypes>,
+    /// The kinds of node that rules have wanted the type of. It's sorted.
+    kinds_with_types: Vec<NodeKind>,
+}
+
+impl State {
+    fn want_types_of(&mut self, kinds: &[NodeKind]) {
+        for kind in kinds {
+            if let Err(at) = self.kinds_with_types.binary_search(kind) {
+                self.kinds_with_types.insert(at, *kind);
+            }
+        }
+    }
 }
 
 /// A rule that [has asked for types](Host::has_asked_for_types).
@@ -212,6 +224,13 @@ impl Work for IndexedWork<'_> {
     }
 }
 
+/// Whether rules get the types of all kinds of node.
+#[derive(Copy, Clone)]
+enum AllKinds {
+    No,
+    Yes,
+}
+
 /// The arguments of [`Host::run_on_block`] other than the file.
 #[derive(Copy, Clone)]
 struct RunOptions<'h> {
@@ -220,6 +239,8 @@ struct RunOptions<'h> {
     wants_fixes: bool,
     physical_path_len: Option<usize>,
     types: Option<&'h Types>,
+    /// What [`ask::WANTED_TYPE`] says is added to it.
+    kinds_without_types: &'h Guarded<Vec<NodeKind>>,
 }
 
 const PLUGIN_PROTOCOL_ERROR: &[u8] =
@@ -407,18 +428,31 @@ impl<'e> Host<'e> {
         rules
     }
 
-    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, whether `file` has types, these rules'
+    /// The answer to [`ask::TYPES`]: how many of `enabled` have asked for types, how much there is, these rules'
     /// positions, and what they can learn about the types in `file`. `None` if none of them has asked.
+    ///
+    /// How much there is: 0 if `file` has no types, 1 for the kinds of node that rules have wanted the type of so far, 2
+    /// for `all_kinds`.
     ///
     /// Without types, the rules still get `parserServices` that look as if there were types. That shows, without a type
     /// check, whether a rule reads something that isn't known.
-    fn types_for<'a>(&self, file: &'a File<'a>, enabled: &[&Configured]) -> Option<Types> {
+    fn types_for<'a>(
+        &self,
+        file: &'a File<'a>,
+        enabled: &[&Configured],
+        all_kinds: AllKinds,
+    ) -> Option<Types> {
         if !Self::hands_out_types(file) {
             return None;
         }
         let positions = (0..).zip(enabled);
         let asked = positions.filter(|it| self.has_asked_for_types(&it.1.rule));
-        let mut words = vec![0, u32::from(file.types.is_some())];
+        let extent = match (file.types.is_some(), all_kinds) {
+            (false, _) => 0,
+            (true, AllKinds::No) => 1,
+            (true, AllKinds::Yes) => 2,
+        };
+        let mut words = vec![0, extent];
         words.extend(asked.map(|it| it.0));
         words[0] = words.len() as u32 - 2;
         if words[0] == 0 {
@@ -428,8 +462,9 @@ impl<'e> Host<'e> {
             words,
             ..Types::default()
         };
-        if file.types.is_some() {
-            types.add_nodes(file);
+        if extent != 0 {
+            let kinds = (extent == 1).then(|| self.state.lock().kinds_with_types.clone());
+            types.add_nodes(file, kinds.as_deref());
         }
         Some(types)
     }
@@ -648,24 +683,40 @@ impl<'e> Host<'e> {
         physical_path_len: Option<usize>,
         parse_again: Option<&ParseAgain>,
     ) -> Result<Vec<Report>, Failure> {
-        let types = self.types_for(file, enabled);
-        let run_options = RunOptions {
-            settings,
-            enabled,
-            wants_fixes,
-            physical_path_len,
-            types: types.as_ref(),
+        let kinds_without_types = Guarded::new(Vec::new());
+        let run = |all_kinds: AllKinds| {
+            let types = self.types_for(file, enabled, all_kinds);
+            let run_options = RunOptions {
+                settings,
+                enabled,
+                wants_fixes,
+                physical_path_len,
+                types: types.as_ref(),
+                kinds_without_types: &kinds_without_types,
+            };
+            let size = file.text().len();
+            let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
+            if self.engine.thread_has_realm() {
+                (self.engine).with_vm_here(size, &mut |vm| {
+                    outcome = self.run_in(vm, file, &run_options)
+                })?;
+            } else if let Some(parse_again) = parse_again {
+                self.engine.with_vm(size, &mut |vm| {
+                    parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
+                })?;
+            }
+            outcome
         };
-        let size = file.text().len();
         let mut outcome = Err(Failure::from(PLUGIN_PROTOCOL_ERROR.to_vec()));
-        if self.engine.thread_has_realm() {
-            (self.engine).with_vm_here(size, &mut |vm| {
-                outcome = self.run_in(vm, file, &run_options)
-            })?;
-        } else if let Some(parse_again) = parse_again {
-            self.engine.with_vm(size, &mut |vm| {
-                parse_again(&mut |file| outcome = self.run_in(vm, file, &run_options));
-            })?;
+        // A rule that wants the type of a new kind of node gets a stand-in, and what the rules did doesn't count: they
+        // run again. With all kinds there are no new ones.
+        for all_kinds in [AllKinds::No, AllKinds::No, AllKinds::Yes] {
+            outcome = run(all_kinds);
+            let new = std::mem::take(&mut *kinds_without_types.lock());
+            if new.is_empty() {
+                break;
+            }
+            self.state.lock().want_types_of(&new);
         }
         let (reports, used) = outcome?;
         scopes::mark_used(file, used.into_iter());
@@ -685,6 +736,7 @@ impl<'e> Host<'e> {
             wants_fixes,
             physical_path_len,
             types,
+            kinds_without_types,
         } = *run_options;
         let text = file.text();
         let offsets = Utf16OffsetTable::without_bom(text);
@@ -753,6 +805,21 @@ impl<'e> Host<'e> {
             ask::CONFIG_COMMENTS => directives::write(file, &offsets, out),
             ask::TYPES => wire::words(out, types.map_or(&[][..], |it| &it.words)),
             ask::TYPE_NAMES => out.extend_from_slice(types.map_or(&[][..], |it| &it.names)),
+            ask::WANTED_TYPE => {
+                let mut kind: NodeKind = [0; 2];
+                let mut at = 0;
+                for byte in details {
+                    match byte {
+                        b' ' => at = 1,
+                        digit => {
+                            kind[at] = kind[at]
+                                .wrapping_mul(10)
+                                .wrapping_add(digit.wrapping_sub(b'0'));
+                        }
+                    }
+                }
+                kinds_without_types.lock().push(kind);
+            }
             ask::TOKENS => tokens::write(file, &offsets, out),
             ask::COMMENTS => tokens::write_comments(file, &offsets, out),
             ask::SCOPES => {

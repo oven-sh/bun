@@ -79,6 +79,9 @@ pub(super) mod ask {
     pub(crate) const TYPES: u32 = 19;
     /// The names that the answer to [`TYPES`] refers to, each followed by a NUL.
     pub(crate) const TYPE_NAMES: u32 = 20;
+    /// A notification, not a request. Takes the type of a node and that of its parent, in decimal with a space between:
+    /// a rule wants the type of such a node, and the answer to [`TYPES`] leaves those out.
+    pub(crate) const WANTED_TYPE: u32 = 21;
 }
 
 /// Appends `list` to `lists`, prefixed with its length, and returns its offset. The empty list is at offset 0, so

@@ -1,7 +1,9 @@
 //! What a JavaScript rule can learn from `parserServices.getTypeAtLocation(node)` and `checker.getTypeAtLocation(node)`.
 //!
 //! A rule runs on a thread that has a realm, and the type checker belongs to the thread that checked the file. So the
-//! answers are computed up front, for every node of a file on which a rule runs that has asked for types before.
+//! answers are computed up front, in a file on which a rule runs that has asked for types before. To find the type of a
+//! node takes far longer than anything else here, so that's done for the [kinds](NodeKind) of node that rules have wanted the
+//! type of so far.
 //! `typedServices` in `worker/main.js` makes objects that look like TypeScript's from them. Whatever else a rule reads
 //! from these objects is refused by name: see [`Host::asks_for_types`](super::Host::asks_for_types).
 
@@ -52,6 +54,9 @@ fn in_both_numberings(flags: TypeFlags) -> [u32; 2] {
     set.fold([0, 0], |all, it| [all[0] | it.0.bits(), all[1] | it.1])
 }
 
+/// The [`NodeType`](crate::estree::NodeType) of a node and that of its parent, which for the `Program` is itself.
+pub(super) type NodeKind = [u8; 2];
+
 /// What rules can learn about the types in a file.
 #[derive(Default)]
 pub(super) struct Types {
@@ -65,13 +70,21 @@ impl Types {
     /// Appends eight words for each node of `file` that [has a type](crate::estree::VNode::type_at_location): the start
     /// and the end of its `range`, its [`NodeType`](crate::estree::NodeType), `type.flags` [twice](in_both_numberings),
     /// the lengths of `type.getCallSignatures()` and `type.getConstructSignatures()`, and which of the names
-    /// `type.symbol.name` is, counted from 1, or 0 without a symbol. They're sorted.
-    pub(super) fn add_nodes<'a>(&mut self, file: &'a File<'a>) {
+    /// `type.symbol.name` is, counted from 1, or 0 without a symbol. They're sorted. With `kinds`, which is sorted too,
+    /// only for nodes of these kinds.
+    pub(super) fn add_nodes<'a>(&mut self, file: &'a File<'a>, kinds: Option<&[NodeKind]>) {
         let offsets = Utf16OffsetTable::without_bom(file.text());
         let writer = ast::walk(file, &offsets, &[]);
+        let tree = writer.view();
+        let type_of = |at: u32| tree.types.get(at as usize).copied().unwrap_or_default();
         let mut numbers: FxHashMap<&[u8], u32> = FxHashMap::default();
-        let mut rows: Vec<[u32; 8]> = (writer.view().nodes.iter())
-            .filter_map(|node| {
+        let mut rows: Vec<[u32; 8]> = (0..)
+            .zip(tree.nodes)
+            .zip(tree.parents)
+            .filter(|&((at, _), &parent)| {
+                kinds.is_none_or(|it| it.binary_search(&[type_of(at), type_of(parent)]).is_ok())
+            })
+            .filter_map(|((_, node), _)| {
                 let ty = match node.type_at_location() {
                     TypeAtLocation::Type(ty) => Some(ty),
                     TypeAtLocation::Error => None,

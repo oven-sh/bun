@@ -100,6 +100,7 @@ const SELECTORS = 4;
 const LOADED = 10;
 const TYPES = 19;
 const TYPE_NAMES = 20;
+const WANTED_TYPE = 21;
 
 // What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
 const revive = (_, value) =>
@@ -382,25 +383,26 @@ function typedServices() {
 }
 
 // The major version of the `typescript` with which the parser of the file would make the types: TypeScript 6 has renumbered
-// `ts.TypeFlags`. `null` if there is none. By where it is looked for.
+// `ts.TypeFlags`. `null` if there is none. By the module of the parser, `undefined` for one that only the configuration file has.
 const typescriptMajors = new Map();
 function typescriptMajor() {
-  const here = nodePath.join(cwd, "noop.js");
-  const attempt = get => {
-    try {
-      return get();
-    } catch {
-      return undefined;
-    }
-  };
-  const parser =
-    fileSettings.parser?.module ?? attempt(() => createRequire(here).resolve("@typescript-eslint/parser/package.json"));
-  const from = parser ?? here;
-  if (!typescriptMajors.has(from)) {
-    const versions = [from, here].map(it => attempt(() => createRequire(it)("typescript/package.json").version));
-    typescriptMajors.set(from, parseInt(versions.find(it => it !== undefined)) || null);
+  const known = fileSettings.parser?.module;
+  if (!typescriptMajors.has(known)) {
+    const here = nodePath.join(cwd, "noop.js");
+    const attempt = get => {
+      try {
+        return get();
+      } catch {
+        return undefined;
+      }
+    };
+    const parser = known ?? attempt(() => createRequire(here).resolve("@typescript-eslint/parser/package.json"));
+    const versions = [parser ?? here, here].map(it =>
+      attempt(() => createRequire(it)("typescript/package.json").version),
+    );
+    typescriptMajors.set(known, parseInt(versions.find(it => it !== undefined)) || null);
   }
-  return typescriptMajors.get(from);
+  return typescriptMajors.get(known);
 }
 
 function readTypes() {
@@ -433,20 +435,26 @@ function readTypes() {
   const getTypeAtLocation = node => {
     // The file is linted again, with types.
     if (words[1] === 0) throw new Error("You have used a rule which requires type information.");
-    const at = find(node.range[0], node.range[1], native.typeId(node.type));
-    if (at === -1) refuse(`getTypeAtLocation(${node.type})`);
-    const getFlags = () => words[at + ((typescriptMajor() ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3)];
+    const kind = [node, node.parent ?? node].map(it => native.typeId(it.type));
+    const at = find(node.range[0], node.range[1], kind[0]);
+    if (at === -1) {
+      if (words[1] !== 1 || kind.includes(undefined)) refuse(`getTypeAtLocation(${node.type})`);
+      // The rules run again, with the types of such nodes. Until then this stands in for the type.
+      native.askWords(WANTED_TYPE, kind.join(" "), 0);
+    }
+    const word = offset => (at === -1 ? 0 : words[at + offset]);
+    const getFlags = () => word((typescriptMajor() ?? refuse("Type.flags without typescript")) < 6 ? 4 : 3);
     return lookAlike("Type", {
       get flags() {
         return getFlags();
       },
       getFlags,
-      getCallSignatures: () => signatures(words[at + 5]),
-      getConstructSignatures: () => signatures(words[at + 6]),
+      getCallSignatures: () => signatures(word(5)),
+      getConstructSignatures: () => signatures(word(6)),
       get symbol() {
-        return symbol(words[at + 7]);
+        return symbol(word(7));
       },
-      getSymbol: () => symbol(words[at + 7]),
+      getSymbol: () => symbol(word(7)),
     });
   };
   // A node of TypeScript's tree is only good for asking about it.

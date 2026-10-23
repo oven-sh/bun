@@ -36,6 +36,12 @@ impl<'s> Checker<'_, 's> {
         self.stack_limit = TASK_STACK;
     }
 
+    /// `begin_stack_budget` for a caller that is deep in a recursion of its own.
+    pub fn begin_stack_budget_with_what_is_left(&mut self) {
+        self.stack_base = stack_pointer();
+        self.stack_limit = bun_core::StackCheck::init().remaining().min(TASK_STACK);
+    }
+
     /// Call this before `check_file`. `round` counts from 0, and no other task of the round has `index`. Without this
     /// call the checker shares nothing, and its writes are dropped with it.
     pub fn begin_task(&mut self, round: u32, index: u32) {

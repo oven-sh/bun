@@ -966,9 +966,21 @@ test("lowering many decorated instance fields into a large constructor body stay
 test.concurrent.each([
   {
     base: { target: "es2022", useDefineForClassFields: true },
-    middle: { experimentalDecorators: true },
+    middle: { experimentalDecorators: true, strict: true },
     last: { useDefineForClassFields: false },
     stdout: "Object\nlegacy\n[]\n",
+  },
+  {
+    base: { experimentalDecorators: true },
+    middle: {},
+    last: {},
+    stdout: 'String\nlegacy\n[ "x" ]\n',
+  },
+  {
+    base: { experimentalDecorators: true },
+    middle: { emitDecoratorMetadata: false },
+    last: { experimentalDecorators: false },
+    stdout: 'standard\n[ "x" ]\n',
   },
   {
     base: { target: "es2021", strict: false, experimentalDecorators: true },

@@ -4121,10 +4121,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Truncate the scope order where we started to pretend we never saw this scope
         self.scopes_in_order.truncate(scope_index);
 
-        let children = &parent.children;
-        // Remove the last child from the parent scope
-        let last = children.len_u32() - 1;
-        if children.slice()[last as usize] != to_discard {
+        // The scopes in the decorators of its parameters are later children of the parent.
+        if !parent
+            .children
+            .slice()
+            .iter()
+            .rev()
+            .any(|&child| child == to_discard)
+        {
             self.panic("Internal error", format_args!(""));
         }
 

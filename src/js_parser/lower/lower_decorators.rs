@@ -878,7 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match scope.kind {
                 js_ast::scope::Kind::FunctionArgs => return true,
                 // Set for a field's initializer, not for its key or decorators.
-                js_ast::scope::Kind::ClassBody => return scope.forbid_arguments,
+                js_ast::scope::Kind::ClassBody if scope.forbid_arguments => return true,
                 _ if scope.kind_stops_hoisting() => return false,
                 _ => scope = scope.parent.unwrap(),
             }

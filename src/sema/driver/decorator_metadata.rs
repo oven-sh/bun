@@ -99,7 +99,10 @@ pub fn __bun_check_decorator_metadata(
     let files = Files::load(&session, None, &host, options, &[path.to_vec()], &|_| ());
     let files = session.arena().alloc(files);
     let program = session.arena().alloc(Program::new(&session, files));
-    let references = program.checker().decorator_metadata_references(FileId(0));
+    let mut checker = program.checker();
+    checker.begin_stack_budget_with_what_is_left();
+    let references = checker.decorator_metadata_references(FileId(0));
+    drop(checker);
     program.release();
     let checked = references.into_iter().map(|it| CheckedTypeReference {
         loc: Loc {

@@ -69,9 +69,13 @@ impl<'p, 's> Checker<'p, 's> {
             while !matches!(bound.scopes[location.idx()].kind, ScopeKind::Class(_)) {
                 location = bound.scopes[location.idx()].parent;
             }
+            let kind = self.type_reference_serialization_kind(file, name, location);
             found.push(DecoratorMetadataReference {
                 pos: hir[name.at(0)].pos(),
-                kind: self.type_reference_serialization_kind(file, name, location),
+                kind: match self.take_ran_out_of_stack() {
+                    true => TypeReferenceSerializationKind::Unknown,
+                    false => kind,
+                },
                 marks_alias_as_referenced: self.marks_alias_as_referenced(file, name, scope),
             });
         }

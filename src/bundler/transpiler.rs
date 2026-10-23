@@ -620,8 +620,8 @@ impl<'a> Transpiler<'a> {
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
                     }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
+                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata();
+                    self.options.experimental_decorators = tsconfig.experimental_decorators();
                     self.options.use_define_for_class_fields =
                         tsconfig.use_define_for_class_fields();
                     self.options.strict_null_checks = tsconfig.strict_null_checks();

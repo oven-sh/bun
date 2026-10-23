@@ -1745,7 +1745,7 @@ impl<'a> BundleOptions<'a> {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
-            strict_null_checks: true,
+            strict_null_checks: false,
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,

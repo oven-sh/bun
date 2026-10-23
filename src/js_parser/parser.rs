@@ -307,7 +307,7 @@ pub mod Runtime {
                 commonjs_at_runtime: false,
                 unwrap_commonjs_to_esm: false,
                 emit_decorator_metadata: false,
-                strict_null_checks: true,
+                strict_null_checks: false,
                 standard_decorators: false,
                 remove_cjs_module_wrapper: false,
                 runtime_transpiler_cache: None,

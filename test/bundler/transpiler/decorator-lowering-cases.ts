@@ -643,6 +643,56 @@ const K = class { static own = this.name; [k()] = 1; };
 show(A.name, B.name, f(), g(), o.F.name, G.name, new H().I.name, H.J.name, K.own, (class { [k()] = 1; }).name);`,
   ),
   ...lowering(
+    "names of class expressions, other places",
+    `${keys}let A: any; A ??= class { [k()] = 1; };
+const o = { 1: class { [k()] = 1; }, [k("o")]: class { [k()] = 1; }, [Symbol.iterator]: class { [k()] = 1; }, __proto__: class { [k()] = 1; } } as any;
+for (var B = class { [k()] = 1; }; ; ) break;
+class C { static #w = class { [k()] = 1; }; static w = C.#w.name; }
+namespace N { export const E = class { [k()] = 1; }; }
+show(A.name, o[1].name, o.o1.name, o[Symbol.iterator].name, Object.getPrototypeOf(o).name, B.name, C.w, N.E.name);`,
+  ),
+  ...lowering(
+    "class expressions with a member called name",
+    `${keys}const A = class { static name() { return 1; } [k()] = 1; };
+const B = class { static get name() { return "own"; } [k()] = 1; };
+const f = (C = class { static name() {} [k()] = 1; }) => typeof C.name;
+show(typeof A.name, B.name, f());`,
+  ),
+  ...lowering(
+    "keys that use the private names and the name of their class",
+    `let f: any, g: any;
+class A { #x = 7; [(f = (o: A) => o.#x, "y")] = 1; }
+show(f(new A()));
+class B extends Object { static #x = 8; static [(f = () => B.#x, "y")] = 1; }
+show(f());
+const o = {};
+class C { #x = 1; [String(#x in o)] = 1; }
+show(Object.keys(new C()));
+const D = class E { [(g = () => E, "x")] = 1; };
+show(g() === D);
+let F = class { [(g = () => F, "x")] = 1; };
+const G = F;
+F = null!;
+show(g() === G);`,
+  ),
+  ...lowering(
+    "keys and a heritage clause or a key that has no name",
+    `${keys}class A extends class {} { [k()] = 1; }
+class B extends (function () {} as any) { [k()] = 1; }
+class C { [class { static toString() { return "name:" + this.name; } } as any]() {} [k()] = 1; }
+show(Object.getPrototypeOf(A).name, Object.getPrototypeOf(B).name, Object.getOwnPropertyNames(C.prototype));`,
+  ),
+  ...lowering(
+    "a class in a key of a class where there is no statement",
+    `let n = 0, inner: any;
+function f(C = class { [(inner = class { ["k" + n++] = 1; }, "m")]() {} }) { return inner; }
+const [a, b] = [f(), f()];
+show(Object.keys(new a()), Object.keys(new b()));
+class Outer { field = class { [(inner = class { ["k" + n++] = 1; }, "m")]() {} }; }
+const [c, e] = [(new Outer(), inner), (new Outer(), inner)];
+show(Object.keys(new c()), Object.keys(new e()));`,
+  ),
+  ...lowering(
     "class expressions",
     `${keys}const A = class { [k()] = 1; static [k()] = 2; [k()]() {} [k()]?: number; [k()] = 3; };
 show(Object.keys(new A()), Object.keys(new A()), Object.keys(A), n);
@@ -675,6 +725,14 @@ show(all.map(A => Object.keys(new A())));`,
 ];
 
 const decoratorExpressions: Case[] = [
+  ...lowering(
+    "functions in the decorators of the parameters of a method without a body",
+    `const f = (..._: any[]) => (...a: any[]) => void show(a[2]);
+class B {}
+class A { constructor(@f(() => B) b: B); constructor(@f(() => B) b: any) { log("constructor"); } m(@f(function () {}) x: string): void; m(@f(class {}) x: any) {} }
+abstract class C { abstract m(@f(() => B, { m() {} }) b: B): void; }
+new A(1 as any);`,
+  ),
   ...lowering(
     "private names",
     `class A { static #dec = (target: any, key: string) => void show("decorated", key); static #make() { return A.#dec; } @A.#dec m() {} @A.#make() static n = 1; @A.#dec f = 2; @d plain() {} }
@@ -785,7 +843,9 @@ show(Object.keys(new A(1)));`,
 class A extends Base { a = 1; @d b = 2; static s = 3; constructor(c: boolean) { if (c) super(1); else super(2); } }
 show(Object.entries(new A(true)).join(";"), A.s);
 class B extends Base { a = 1; constructor() { const self: any = super(); log("after"); } }
-show(Object.keys(new B()));`,
+show(Object.keys(new B()));
+class C extends Base { v?: any; a = 1; constructor(c: boolean) { if (c) super(1); else super(2); } }
+show(new C(true).v);`,
     ),
     {
       assign: [
@@ -794,6 +854,7 @@ show(Object.keys(new B()));`,
         `"v,1;a,1;b,2" 3`,
         "after",
         `["v", "a"]`,
+        "1",
       ],
     },
   ),

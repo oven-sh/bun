@@ -1606,6 +1606,13 @@ const importCases: Case[] = [
   program("import/return type", `import { X } from "./dep.js";\nclass C { @d m(): X { return null!; } }`, classDep),
   program("import/constructor", `import { X } from "./dep.js";\n@d class C { constructor(x: X) {} }`, classDep),
   program("import/parameter decorator", `import { X, Y } from "./dep.js";\nclass C { m(@p x: X, y: Y) {} }`, classDep),
+  program(
+    "import/return type, with a parameter decorator only",
+    `import { X } from "./dep.js";\nclass C { m(@p x: string): X { return null!; } }`,
+    classDep,
+  ),
+  program("import/never in parentheses", `import { X } from "./dep.js";\nclass C { @d a: (never) | X; }`, classDep),
+  program("import/null in parentheses", `import { X } from "./dep.js";\nclass C { @d a: (null) | X; }`, classDep),
   program("import/getter", `import { X } from "./dep.js";\nclass C { @d get a(): X { return null!; } }`, classDep),
   program("import/setter", `import { X } from "./dep.js";\nclass C { @d set a(v: X) {} }`, classDep),
   program(

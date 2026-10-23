@@ -159,8 +159,8 @@ pub struct TSConfigJSON {
 
     pub(crate) preserve_imports_not_used_as_values: Option<bool>,
 
-    pub emit_decorator_metadata: bool,
-    pub experimental_decorators: bool,
+    pub(crate) emit_decorator_metadata: Option<bool>,
+    pub(crate) experimental_decorators: Option<bool>,
     pub(crate) use_define_for_class_fields: Option<bool>,
     /// Whether `target` is ES2022 or later. `None` for one that TypeScript doesn't have.
     pub(crate) target_has_class_fields: Option<bool>,
@@ -179,8 +179,8 @@ impl Default for TSConfigJSON {
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
             preserve_imports_not_used_as_values: Some(false),
-            emit_decorator_metadata: false,
-            experimental_decorators: false,
+            emit_decorator_metadata: None,
+            experimental_decorators: None,
             use_define_for_class_fields: None,
             target_has_class_fields: None,
             strict: None,
@@ -226,9 +226,17 @@ impl TSConfigJSON {
             .unwrap_or(true)
     }
 
-    /// Effective `strictNullChecks`. Since TypeScript 6, `strict` is on unless it's set to `false`.
+    /// Effective `strictNullChecks`. `strict` is off unless it's set, which is the default before TypeScript 6.
     pub fn strict_null_checks(&self) -> bool {
-        self.strict_null_checks.or(self.strict).unwrap_or(true)
+        self.strict_null_checks.or(self.strict).unwrap_or(false)
+    }
+
+    pub fn emit_decorator_metadata(&self) -> bool {
+        self.emit_decorator_metadata.unwrap_or(false)
+    }
+
+    pub fn experimental_decorators(&self) -> bool {
+        self.experimental_decorators.unwrap_or(false)
     }
 
     // Logs under `.alloc` then frees.
@@ -460,12 +468,12 @@ impl TSConfigJSON {
 
             // Parse "emitDecoratorMetadata"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = emit_decorator_metadata_v {
-                result.emit_decorator_metadata = val;
+                result.emit_decorator_metadata = Some(val);
             }
 
             // Parse "experimentalDecorators"
             if let Some(&bun_ast::E::JsonValue::Boolean(val)) = experimental_decorators_v {
-                result.experimental_decorators = val;
+                result.experimental_decorators = Some(val);
             }
 
             // Parse "useDefineForClassFields"

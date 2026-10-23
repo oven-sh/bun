@@ -8,7 +8,7 @@ use crate::lower::lower_decorators::{
     has_super_statement, insert_after_super, is_constant_key, is_constructor,
 };
 use crate::p::P;
-use crate::parser::{Ref, TempRef};
+use crate::parser::TempRef;
 use bun_ast::g::PropertyKind;
 use bun_ast::{self as js_ast, E, Expr, ExprNodeList, Flags, G, S, Stmt, StoreRef};
 
@@ -27,6 +27,41 @@ fn constructor_function(prop: &G::Property) -> Option<StoreRef<E::Function>> {
 fn has_evaluated_key(prop: &G::Property) -> bool {
     prop.flags.contains(Flags::Property::IsComputed)
         && !matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
+}
+
+/// True if `key` means the same in a `static {}` of its class: it has no `this`, `await` or function, among others.
+fn is_same_in_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
+    use js_ast::ExprData as Data;
+    let is_same = |expr: &Expr| is_same_in_static_block(expr, symbols);
+    match &key.data {
+        Data::EIdentifier(id) => {
+            symbols[id.ref_.inner_index() as usize]
+                .original_name
+                .slice()
+                != b"arguments"
+        }
+        Data::EImportIdentifier(_)
+        | Data::EPrivateIdentifier(_)
+        | Data::EString(_)
+        | Data::ENumber(_)
+        | Data::EBigInt(_)
+        | Data::EBoolean(_)
+        | Data::ENull(_)
+        | Data::EUndefined(_) => true,
+        Data::EDot(dot) => is_same(&dot.target),
+        Data::EIndex(index) => is_same(&index.target) && is_same(&index.index),
+        Data::ECall(call) => {
+            !call.is_direct_eval && is_same(&call.target) && call.args.slice().iter().all(is_same)
+        }
+        Data::EUnary(unary) => is_same(&unary.value),
+        Data::EBinary(binary) => is_same(&binary.left) && is_same(&binary.right),
+        Data::EIf(it) => is_same(&it.test) && is_same(&it.yes) && is_same(&it.no),
+        Data::ETemplate(template) => {
+            template.tag.as_ref().is_none_or(is_same)
+                && template.parts().iter().all(|part| is_same(&part.value))
+        }
+        _ => false,
+    }
 }
 
 /// True if `experimentalDecorators` assigns to the name of `class` what its decorators return.
@@ -69,8 +104,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// With `useDefineForClassFields: false`, `x = 1` becomes `this.x = 1`. Returns what to evaluate before the class.
-    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class) -> Option<Expr> {
+    /// With `useDefineForClassFields: false`, `x = 1` becomes `this.x = 1`.
+    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class) {
         // Standard decorator lowering wraps field initializers where they are.
         let use_define =
             self.options.use_define_for_class_fields || class.should_lower_standard_decorators;
@@ -80,19 +115,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && prop.value.is_none()
                 && prop.key.is_some()
         };
+        let is_private = |prop: &G::Property| {
+            matches!(
+                prop.key.map(|key| key.data),
+                Some(js_ast::ExprData::EPrivateIdentifier(_))
+            )
+        };
         let is_parameter_property = |arg: &G::Arg| {
             arg.is_typescript_ctor_field && matches!(arg.binding.data, js_ast::b::B::BIdentifier(_))
         };
         let constructor = class.properties.iter().find_map(constructor_function);
         let args = constructor.map_or(bun_ast::StoreSlice::EMPTY, |it| it.func.args);
-        if !args.iter().any(is_parameter_property)
-            && (use_define || !class.properties.iter().any(is_field))
-        {
-            return None;
-        }
-        // Without a `super()` statement to follow, the constructor has no place for them.
-        let keeps_instance_fields = class.extends.is_some()
+        // Without a `super()` statement to follow, the constructor has no place for initializers.
+        let has_no_place = class.extends.is_some()
             && constructor.is_some_and(|it| !has_super_statement(it.func.body.stmts.slice()));
+        let is_assigned = |prop: &G::Property| {
+            is_field(prop)
+                && match prop.flags.contains(Flags::Property::IsStatic) {
+                    true => !is_private(prop),
+                    false => !(has_no_place && prop.initializer.is_some()),
+                }
+        };
+        let hoisted_key = |prop: &G::Property| {
+            let is_computed = prop.flags.contains(Flags::Property::IsComputed);
+            (prop.key).filter(|key| is_assigned(prop) && is_computed && !is_constant_key(key))
+        };
+        // A key is evaluated with the next key that stays, or else in a `static {}`. If that differs, the fields stay.
+        let members = class.properties.slice();
+        let last_key = members
+            .iter()
+            .rposition(|prop| has_evaluated_key(prop) && !is_assigned(prop));
+        let assigns_fields = !use_define
+            && (members[last_key.map_or(0, |last| last + 1)..].iter())
+                .filter_map(hoisted_key)
+                .all(|key| is_same_in_static_block(&key, &self.symbols))
+            && !(members.iter().any(|prop| hoisted_key(prop).is_some())
+                && self.is_param_default_or_field_initializer());
+        if !args.iter().any(is_parameter_property)
+            && !(assigns_fields && members.iter().any(is_assigned))
+        {
+            return;
+        }
 
         let loc = class.body_loc;
         let mut properties = BumpVec::<G::Property>::with_capacity_in(
@@ -143,16 +206,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut prop = core::mem::take(slot);
             let is_static = prop.flags.contains(Flags::Property::IsStatic);
             let is_computed = prop.flags.contains(Flags::Property::IsComputed);
-            let is_private = matches!(
-                prop.key.map(|key| key.data),
-                Some(js_ast::ExprData::EPrivateIdentifier(_))
-            );
-            let stays = if is_static {
-                is_private
-            } else {
-                keeps_instance_fields
-            };
-            if use_define || !is_field(&prop) || stays {
+            let is_private = is_private(&prop);
+            if !assigns_fields || !is_assigned(&prop) {
                 if let Some(key) = prop
                     .key
                     .filter(|_| has_evaluated_key(&prop) && !keys.is_empty())
@@ -200,20 +255,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `this` and `await` in a key are those around the class, so only what the class evaluates there can host it.
-        let mut before_class = None;
         if !keys.is_empty() {
-            let last_key = (properties.iter_mut().rev())
-                .find(|prop| has_evaluated_key(prop))
-                .and_then(|prop| prop.key.as_mut());
-            if let Some(host) = last_key.or(class.extends.as_mut()) {
-                let temp = self.declared_temp(b"_a");
-                keys.insert(0, self.assign_to(temp, *host, host.loc));
-                keys.push(self.use_ref(temp, host.loc));
-                *host = Expr::join_all_with_comma(&keys);
-            } else {
-                before_class = Some(Expr::join_all_with_comma(&keys));
-            }
+            properties.insert(0, self.make_static_block(&keys, loc));
         }
 
         if !in_constructor.is_empty() {
@@ -229,49 +272,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         class.properties = bun_ast::StoreSlice::from_bump(properties);
-        before_class
     }
 
-    /// What replaces the class expression `expr`, for which `lower_class_fields` returned `before_class`.
-    pub(crate) fn lower_class_expr(
-        &mut self,
-        expr: Expr,
-        before_class: Option<Expr>,
-        name_from_context: Option<&'a [u8]>,
-    ) -> Expr {
-        let needs_own_bindings =
-            !self.temp_refs_to_declare.is_empty() && self.is_param_default_or_field_initializer();
-        let mut class = expr.data.e_class().expect("infallible: a class expression");
-        // Only the class expression itself would get the name of what it is assigned to.
-        if let Some(name) = name_from_context
-            && class.class_name.is_none()
-            && (before_class.is_some() || needs_own_bindings)
-        {
-            let this = self.new_expr(E::This {}, expr.loc);
-            let name = self.new_expr(E::EString::init(name), expr.loc);
-            let set_name = self.call_rt(expr.loc, b"__name", &[this, name]);
-            let mut properties =
-                BumpVec::<G::Property>::with_capacity_in(class.properties.len() + 1, self.arena);
-            properties.push(self.make_static_block(&[set_name], expr.loc));
-            properties.extend(class.properties.slice_mut().iter_mut().map(core::mem::take));
-            class.properties = bun_ast::StoreSlice::from_bump(properties);
-        }
-        let value = before_class.map_or(expr, |keys| Expr::join_with_comma(keys, expr));
-
-        if needs_own_bindings {
-            let mut temps = BumpVec::<Ref>::new_in(self.arena);
-            temps.extend(self.temp_refs_to_declare.drain(..).map(|it| it.r#ref));
-            return self.with_own_bindings(value, &temps);
-        }
-        let temps = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, expr.loc);
+    /// Declares the temporaries of a class expression.
+    pub(crate) fn declare_class_expr_temps(&mut self, loc: bun_ast::Loc) {
+        let temps = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, loc);
         if let Some(stmts) = self.nearest_stmt_list_mut() {
             stmts.extend(temps);
         }
-        value
     }
 
-    /// What replaces the class statement `stmt`, for which `lower_class_fields` returned `before_class`.
-    pub(crate) fn lower_class(&mut self, stmt: Stmt, before_class: Option<Expr>) -> &'a mut [Stmt] {
+    /// What replaces the class statement `stmt`.
+    pub(crate) fn lower_class(&mut self, stmt: Stmt) -> &'a mut [Stmt] {
         let mut s_class: StoreRef<S::Class> = stmt.data.s_class().unwrap();
         let mut stmts = BumpVec::<Stmt>::new_in(self.arena);
 
@@ -279,7 +291,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lower_standard_decorators_stmt(stmt, &mut stmts);
             return stmts.into_bump_slice_mut();
         }
-        stmts.extend(before_class.map(|keys| self.expr_stmt(keys, stmt.loc)));
         if !s_class.class.has_decorators {
             stmts.push(stmt);
             if let Some(temps) = self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, stmt.loc) {

@@ -1,9 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, tempDir } from "harness";
-import { endChildren } from "../children";
-import { linesOf, tsc } from "./differential";
+import { bunExe, isASAN, isDebug } from "harness";
+import { endChecks, linesOf, tempDir, tsc } from "./differential";
 
-afterAll(endChildren);
+afterAll(endChecks);
 
 // To create a property of a short union, `bun check` looks the name up in every member. In a union of 8 or more members
 // it caches what it learned about a member for the next lookup. So each program here is checked with unions on both

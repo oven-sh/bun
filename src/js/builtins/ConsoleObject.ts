@@ -174,6 +174,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     return internalGetStringWidth(str, removeControlChars);
   };
 
+  // https://github.com/nodejs/node/blob/b7e6a5d37e7a14ef0f2cc95214b95d66c4081415/lib/internal/cli_table.js
   const tableChars = {
     middleMiddle: "─",
     rowMiddle: "┼",
@@ -195,11 +196,8 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
     for (let i = 0; i < row.length; i++) {
       const cell = row[i];
       const len = getStringWidth(cell);
-      const needed = (columnWidths[i] - len) / 2;
-      // round(needed) + ceil(needed) will always add up to the amount
-      // of spaces we need while also left justifying the output.
-      out +=
-        (StringPrototypeRepeat as any).$call(" ", needed) + cell + StringPrototypeRepeat.$call(" ", Math.ceil(needed));
+      const needed = columnWidths[i] - len;
+      out += cell + StringPrototypeRepeat.$call(" ", needed);
       if (i !== row.length - 1) out += tableChars.middle;
     }
     out += tableChars.right;

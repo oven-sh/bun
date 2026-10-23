@@ -63,6 +63,89 @@ describe("console.Console", () => {
     expect(await outValue()).toBe("hello world!\n");
     expect(await errValue()).toBe("uh oh!\n");
   });
+
+  // Each expected table is the output of node v26.3.0 for the same call, not a capture of Bun's.
+  describe("table pads cells on the right", () => {
+    async function table(data: unknown, properties?: string[]) {
+      const [stream, value] = writable();
+      const c = new Console({ stdout: stream, stderr: stream, colorMode: false });
+      c.table(data, properties);
+      stream.end();
+      return await value();
+    }
+
+    test("array of objects with absent cells", async () => {
+      expect(
+        await table([
+          { aaaaa: 1, b: "x" },
+          { aaaaa: 22222, c: true },
+        ]),
+      ).toMatchInlineSnapshot(`
+        "┌─────────┬───────┬─────┬──────┐
+        │ (index) │ aaaaa │ b   │ c    │
+        ├─────────┼───────┼─────┼──────┤
+        │ 0       │ 1     │ 'x' │      │
+        │ 1       │ 22222 │     │ true │
+        └─────────┴───────┴─────┴──────┘
+        "
+      `);
+    });
+
+    test("object of primitives", async () => {
+      expect(await table({ a: 1, bbbb: "two" })).toMatchInlineSnapshot(`
+        "┌─────────┬────────┐
+        │ (index) │ Values │
+        ├─────────┼────────┤
+        │ a       │ 1      │
+        │ bbbb    │ 'two'  │
+        └─────────┴────────┘
+        "
+      `);
+    });
+
+    test("Map", async () => {
+      expect(await table(new Map([["k", 1]]))).toMatchInlineSnapshot(`
+        "┌───────────────────┬─────┬────────┐
+        │ (iteration index) │ Key │ Values │
+        ├───────────────────┼─────┼────────┤
+        │ 0                 │ 'k' │ 1      │
+        └───────────────────┴─────┴────────┘
+        "
+      `);
+    });
+
+    test("properties filter", async () => {
+      expect(
+        await table(
+          [
+            { a: 1, b: 2 },
+            { a: 3, c: 4 },
+          ],
+          ["a", "c"],
+        ),
+      ).toMatchInlineSnapshot(`
+        "┌─────────┬───┬───┐
+        │ (index) │ a │ c │
+        ├─────────┼───┼───┤
+        │ 0       │ 1 │   │
+        │ 1       │ 3 │ 4 │
+        └─────────┴───┴───┘
+        "
+      `);
+    });
+
+    test("cells wider than their string length", async () => {
+      expect(await table([{ name: "日本語" }, { name: "ab" }])).toMatchInlineSnapshot(`
+        "┌─────────┬──────────┐
+        │ (index) │ name     │
+        ├─────────┼──────────┤
+        │ 0       │ '日本語' │
+        │ 1       │ 'ab'     │
+        └─────────┴──────────┘
+        "
+      `);
+    });
+  });
 });
 
 test("console._stdout", () => {

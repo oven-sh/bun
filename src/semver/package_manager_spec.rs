@@ -1,6 +1,4 @@
-//! The `packageManager` field of package.json, in the grammar Corepack defines:
-//! `<name>@<version>` with an optional `+<hash>` suffix, for example
-//! `bun@1.2.0` or `bun@1.2.0+sha256.abcd`.
+//! The package.json `packageManager` field in Corepack's grammar: `<name>@<version>[+<hash>]`.
 
 use bun_core::strings;
 
@@ -9,9 +7,7 @@ use crate::{SlicedString, Version};
 #[derive(Clone, Copy)]
 pub struct PackageManagerSpec<'a> {
     pub name: &'a [u8],
-    /// The version as written, without the `+<hash>` suffix. Corepack requires
-    /// one exact version here. A range is kept as text so that a caller can
-    /// still report it.
+    /// The version as written, without the `+<hash>` suffix. A range is kept so that a caller can report it.
     pub version_text: &'a [u8],
     /// The bytes after `+`, when the field carries an integrity hash.
     pub hash: Option<&'a [u8]>,
@@ -21,8 +17,7 @@ impl<'a> PackageManagerSpec<'a> {
     /// `None` when the field has no `@`, an empty name, or nothing after the `@`.
     pub fn parse(raw: &'a [u8]) -> Option<Self> {
         let raw = strings::trim(raw, &strings::WHITESPACE_CHARS);
-        // The last `@` separates the name from the version, so a scoped name
-        // such as `@scope/name@1.0.0` keeps its leading `@`.
+        // Split at the last `@` so that a scoped name keeps its leading `@`.
         let at = strings::last_index_of_char(raw, b'@')?;
         let (name, spec) = (&raw[..at], &raw[at + 1..]);
         if name.is_empty() || spec.is_empty() {
@@ -44,9 +39,7 @@ impl<'a> PackageManagerSpec<'a> {
         self.name == b"bun"
     }
 
-    /// The pinned version. `None` for a range, a tag such as `canary`, or a
-    /// version with missing parts. The tag offsets of the result point into
-    /// `version_text`.
+    /// `None` for a range or a tag such as `canary`. The tag offsets of the result point into `version_text`.
     pub fn exact_version(&self) -> Option<Version> {
         Version::parse_exact(SlicedString::init(self.version_text, self.version_text))
     }

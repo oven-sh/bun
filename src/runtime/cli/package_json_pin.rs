@@ -1,5 +1,4 @@
-//! The bun version a project pins in its package.json `packageManager` field,
-//! and how `bun upgrade` brings that pin up to the version it installs.
+//! Moves a stale `packageManager: bun@<version>` pin in package.json to the bun that `bun upgrade` installed.
 
 use bun_alloc::Arena;
 use bun_core::{Output, ZStr, strings};
@@ -20,13 +19,8 @@ pub(crate) enum Write {
     DryRun,
 }
 
-/// Walks up from `start_dir` to the first package.json with a `packageManager`
-/// field, the file Corepack reads. When that field pins a bun version older
-/// than `installed`, prints one line and, in `Write::Save` mode, rewrites the
-/// pin to `bun@<installed>`.
-///
-/// Every failure is a warning. The caller may already have replaced the
-/// running executable, so this never exits the process or returns an error.
+/// Walks up from `start_dir` to the nearest package.json with a `packageManager` field, as Corepack does.
+/// Never exits or returns an error: the caller may already have replaced the running executable.
 pub(crate) fn refresh(start_dir: &[u8], installed: &[u8], write: Write) {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut dir = start_dir;

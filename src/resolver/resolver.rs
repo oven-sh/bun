@@ -4070,7 +4070,7 @@ impl<'a> Resolver<'a> {
             unsafe { &mut *self.fs() },
             file,
             dirname_fd,
-            false,
+            Fs::BomHandling::Convert,
             None,
             None,
         )?;
@@ -4090,7 +4090,7 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
-        // `use_shared_buffer = false` above, so `entry_contents` is
+        // The read above has no arena, so `entry_contents` is
         // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
         // every field, so the source bytes are dead once `parse` returns and
         // can be dropped with the local `Source`.

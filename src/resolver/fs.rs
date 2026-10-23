@@ -23,6 +23,16 @@ bun_core::define_scoped_log!(debug, Fs, hidden);
 // `bun_core::strings`; `bun_resolver::fs_full::BOM` re-exports it.
 pub use bun_core::strings::BOM;
 
+/// What `cache::Fs::read_file_with_allocator` does with a byte order mark at
+/// the start of the file.
+#[derive(Clone, Copy)]
+pub enum BomHandling {
+    /// Text: no UTF-8 mark, and UTF-16LE transcoded to UTF-8.
+    Convert,
+    /// The bytes on disk.
+    Keep,
+}
+
 mod preallocate {
     pub(crate) mod counts {
         pub(crate) const FILES: usize = 4096;
@@ -698,7 +708,7 @@ unsafe impl Sync for Entry {}
 unsafe impl Send for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
-// CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)
+// CANONICAL: read-file-with-handle (stat → grow → pread-loop)
 //
 // One body, two entry points:
 //   • `read_file_with_handle_impl`  — free fn, const-generic, returns
@@ -757,7 +767,7 @@ pub fn read_file_contents_in_arena(
         // `finish_arena_contents` writes the trailing NUL at `[read_count]`.
         let buf = arena_alloc_uninit_bytes(arena, read_count + 1);
         buf[..read_count].copy_from_slice(&initial_buf[..read_count]);
-        return Ok(finish_arena_contents(arena, buf, read_count));
+        return Ok(finish_arena_contents(buf, read_count));
     }
     let initial_len = read_count;
 
@@ -792,7 +802,7 @@ pub fn read_file_contents_in_arena(
     let total = read_count + initial_len;
     debug!("read({}, {}) = {}", file.handle(), size, read_count);
 
-    Ok(finish_arena_contents(arena, buf, total))
+    Ok(finish_arena_contents(buf, total))
 }
 
 /// Allocate `len` bytes from `arena` left **uninitialized** (no zero-fill),
@@ -815,35 +825,9 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
-/// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16), write the
-/// trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
+/// Write the trailing NUL and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
-fn finish_arena_contents(
-    arena: &bun_alloc::Arena,
-    buf: &mut [u8],
-    mut total: usize,
-) -> (core::ptr::NonNull<u8>, usize) {
-    if let Some(bom) = BOM::detect(&buf[..total]) {
-        debug!("Convert {} BOM", bom.tag_name());
-        match bom {
-            BOM::Utf8 => {
-                let n = BOM::UTF8_BYTES.len();
-                buf.copy_within(n..total, 0);
-                total -= n;
-            }
-            other => {
-                // Rare path (UTF-16 source on the concurrent transpiler) —
-                // re-encode via the global-heap helper, then copy into the
-                // arena so the *retained* bytes still land there.
-                let converted = other.remove_and_convert_to_utf8_and_free(buf[..total].to_vec());
-                let dst = arena.alloc_slice_fill_copy::<u8>(converted.len() + 1, 0);
-                dst[..converted.len()].copy_from_slice(&converted);
-                // SAFETY: `dst` is a non-null arena slice of length ≥ 1.
-                let ptr = unsafe { core::ptr::NonNull::new_unchecked(dst.as_mut_ptr()) };
-                return (ptr, converted.len());
-            }
-        }
-    }
+fn finish_arena_contents(buf: &mut [u8], total: usize) -> (core::ptr::NonNull<u8>, usize) {
     debug_assert!(buf.len() > total);
     buf[total] = 0;
     // SAFETY: `buf` is a non-null arena slice (len ≥ 1 on every path that
@@ -947,19 +931,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 *shared_buffer.list.as_mut_ptr().add(file_contents_len) = 0;
             }
         }
-
-        // `file_contents_len == shared_buffer.list.len()` here (set by `truncate` in
-        // the read loop above); borrow the Vec directly so the slice ends before the
-        // `&mut shared_buffer.list` reborrow inside the BOM branch.
-        if let Some(bom) = BOM::detect(&shared_buffer.list[..file_contents_len]) {
-            debug!("Convert {} BOM", bom.tag_name());
-            // We pre-set `list.len` to the un-BOM'd payload length so the helper sees the
-            // correct logical size (the read loop above truncated to `file_contents_len`).
-            shared_buffer.list.truncate(file_contents_len);
-            let converted = bom.remove_and_convert_to_utf8_without_dealloc(&mut shared_buffer.list);
-            file_contents_ptr = converted.as_ptr();
-            file_contents_len = converted.len();
-        }
     } else {
         let mut initial_buf = [0u8; 16384];
 
@@ -979,11 +950,6 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
                 allocation.extend_from_slice(&buf[..read_count]);
                 allocation.push(0);
                 allocation.truncate(read_count);
-
-                if let Some(bom) = BOM::detect(&allocation) {
-                    debug!("Convert {} BOM", bom.tag_name());
-                    allocation = bom.remove_and_convert_to_utf8_and_free(allocation);
-                }
 
                 return Ok(PathContentsPair {
                     contents: Cow::Owned(allocation),
@@ -1032,18 +998,13 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         // `read_all` above.
         unsafe { buf.set_len(total) };
 
-        if let Some(bom) = BOM::detect(&buf) {
-            debug!("Convert {} BOM", bom.tag_name());
-            buf = bom.remove_and_convert_to_utf8_and_free(buf);
-        }
-
         return Ok(PathContentsPair {
             contents: Cow::Owned(buf),
         });
     }
 
     // `file_contents_ptr` always equals `shared_buffer.list.as_ptr()` on every
-    // shared-buffer path above (read loop and BOM rewrite both anchor at index 0), so we
+    // shared-buffer path above (the read loop anchors at index 0), so we
     // re-derive the final slice safely from `shared_buffer` with the real `'buf` lifetime
     // instead of fabricating `'static` via `from_raw_parts`.
     debug_assert!(core::ptr::eq(

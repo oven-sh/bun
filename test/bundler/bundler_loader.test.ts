@@ -1,7 +1,8 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
-import { join } from "path";
+import { basename, join } from "path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
@@ -588,6 +589,283 @@ describe("bundler", async () => {
           const module = require(join(api.outdir, jsFile));
           api.assertFileExists(join("out", module.default));
         },
+      });
+    }
+  });
+
+  // A file read strips a UTF-8 byte order mark and transcodes UTF-16LE to UTF-8, for the parsers.
+  // A loader that emits the file itself gets the bytes on disk.
+  describe("inputs that start with a byte order mark", () => {
+    const utf8Mark = Buffer.from([0xef, 0xbb, 0xbf]);
+    const utf16leMark = Buffer.from([0xff, 0xfe]);
+    const encoders = {
+      utf8: (source: string) => Buffer.concat([utf8Mark, Buffer.from(source)]),
+      utf16le: (source: string) => Buffer.concat([utf16leMark, Buffer.from(source, "utf16le")]),
+    };
+    // More than the 16 KiB that the first read of a file holds.
+    const long = Buffer.alloc(20000, "bun ");
+    const samples = {
+      utf8: Buffer.concat([utf8Mark, Buffer.from("a,b\n")]),
+      // A lone surrogate and an odd length: UTF-16LE to UTF-8 and back cannot restore these.
+      utf16le: Buffer.concat([utf16leMark, Buffer.from([0x41, 0x00, 0xd8, 0xd8, 0x09])]),
+      utf8_long: Buffer.concat([utf8Mark, long]),
+      utf16le_long: Buffer.concat([utf16leMark, long]),
+      utf8_mark_only: utf8Mark,
+      utf16le_one_byte: Buffer.concat([utf16leMark, Buffer.from([0x41])]),
+      utf32le_mark: Buffer.concat([utf16leMark, Buffer.from([0x00, 0x00])]),
+      mark_not_first: Buffer.from([0x01, 0xef, 0xbb, 0xbf, 0xff, 0xfe]),
+    };
+    const summary = (bytes: Uint8Array) => ({
+      length: bytes.length,
+      start: Buffer.from(bytes.subarray(0, 8)).toString("hex"),
+      hash: Bun.hash(bytes).toString(16),
+    });
+
+    // Every loader whose output is the input file.
+    const copyLoaders = [
+      { loader: "file", ext: ".bin", attributes: ' with { type: "file" }' },
+      { loader: "wasm", ext: ".wasm", attributes: "" },
+      { loader: "napi", ext: ".node", attributes: "" },
+      { loader: "sqlite_embedded", ext: ".sqlite", attributes: ' with { type: "sqlite", embed: "true" }' },
+    ];
+    const assets = copyLoaders.flatMap(({ loader, ext, attributes }) =>
+      Object.entries(samples).map(([sample, bytes]) => ({ name: `${loader}_${sample}`, ext, attributes, bytes })),
+    );
+    const assetFiles = Object.fromEntries(assets.map(asset => [`/${asset.name}${asset.ext}`, asset.bytes]));
+    const assetEntry =
+      assets.map(asset => `import ${asset.name} from "./${asset.name}${asset.ext}"${asset.attributes};`).join("\n") +
+      `\nexport { ${assets.map(asset => asset.name).join(", ")} };`;
+    const sourceSummaries = Object.fromEntries(assets.map(asset => [asset.name, [summary(asset.bytes)]]));
+    // Assets are emitted as `[name]-[hash].[ext]`.
+    const emittedNames = (outdir: string) =>
+      Object.fromEntries(
+        assets.map(asset => [
+          asset.name,
+          readdirSync(outdir).filter(output => output.startsWith(`${asset.name}-`) && output.endsWith(asset.ext)),
+        ]),
+      );
+    const emittedSummaries = (outdir: string) =>
+      Object.fromEntries(
+        Object.entries(emittedNames(outdir)).map(([name, outputs]) => [
+          name,
+          outputs.map(output => summary(fs.readFileSync(join(outdir, output)))),
+        ]),
+      );
+
+    for (const backend of ["api", "cli"] as const) {
+      itBundled(`bun/loader-copy-keeps-byte-order-mark-${backend}`, {
+        backend,
+        target: "bun",
+        outdir: "/out",
+        files: { "/entry.ts": assetEntry, ...assetFiles },
+        async onAfterBundle(api) {
+          expect(emittedSummaries(api.outdir)).toEqual(sourceSummaries);
+          if (backend !== "api") return;
+          // `[hash]` covers the bytes on disk: a build that takes the same bytes from memory gives the same names.
+          const fromMemory = await Bun.build({
+            entrypoints: ["/entry.ts"],
+            files: { "/entry.ts": assetEntry, ...assetFiles },
+            target: "bun",
+          });
+          expect(
+            fromMemory.outputs
+              .filter(output => output.kind === "asset")
+              .map(output => basename(output.path))
+              .sort(),
+          ).toEqual(Object.values(emittedNames(api.outdir)).flat().sort());
+        },
+      });
+    }
+
+    const script = (name: string) =>
+      `#!/usr/bin/env bun\nexport default "${name}";\nif (!Bun.isMainThread) postMessage("${name}");\n`;
+
+    // macOS and Windows read files on the IO pool by default.
+    test("a copied asset keeps its byte order mark when the IO pool reads it", async () => {
+      using dir = tempDir("loader-copy-bom-io-pool", {
+        "entry.ts": assetEntry,
+        ...Object.fromEntries(assets.map(asset => [`${asset.name}${asset.ext}`, asset.bytes])),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./entry.ts", "--outdir", "out", "--target", "bun"],
+        env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_IO_POOL: "1" },
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(emittedSummaries(join(String(dir), "out"))).toEqual(sourceSummaries);
+      expect(exitCode).toBe(0);
+    });
+
+    // The executable holds the bytes of an asset. A text import, and an asset that is loaded as a module, are text.
+    itBundled("bun/compile-embeds-byte-order-mark", {
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+          import utf8 from "./utf8.bin" with { type: "file" };
+          import utf16le from "./utf16le.bin" with { type: "file" };
+          import utf8Text from "./utf8.txt";
+          import utf16leText from "./utf16le.txt";
+          import utf8Script from "./utf8-script.js" with { type: "file" };
+          import utf16leScript from "./utf16le-script.js" with { type: "file" };
+          const hex = async (path: string) => Buffer.from(await Bun.file(path).arrayBuffer()).toString("hex");
+          const imported = async (path: string) => (await import(path)).default;
+          const posted = (path: string) =>
+            new Promise(resolve => {
+              const worker = new Worker(path);
+              worker.onmessage = event => {
+                resolve(event.data);
+                worker.terminate();
+              };
+              worker.onerror = event => resolve(event.message);
+            });
+          console.log(
+            JSON.stringify({
+              assets: [await hex(utf8), await hex(utf16le)],
+              text: [utf8Text, utf16leText],
+              imported: [await imported(utf8Script), await imported(utf16leScript)],
+              posted: [await posted(utf8Script), await posted(utf16leScript)],
+            }),
+          );
+        `,
+        "/utf8.bin": samples.utf8,
+        "/utf16le.bin": samples.utf16le,
+        "/utf8.txt": encoders.utf8("h\u00e9llo"),
+        "/utf16le.txt": encoders.utf16le("h\u00e9llo"),
+        // A UTF-8 mark before "#!" is the case that the JavaScript parser does not take.
+        "/utf8-script.js": encoders.utf8(script("utf8")),
+        "/utf16le-script.js": encoders.utf16le(script("utf16le")),
+      },
+      run: {
+        stdout: JSON.stringify({
+          assets: [samples.utf8.toString("hex"), samples.utf16le.toString("hex")],
+          text: ["h\u00e9llo", "h\u00e9llo"],
+          imported: ["utf8", "utf16le"],
+          posted: ["utf8", "utf16le"],
+        }),
+      },
+    });
+
+    itBundled("bun/html-asset-keeps-byte-order-mark", {
+      outdir: "/out",
+      entryPoints: ["/index.html"],
+      files: {
+        "/index.html": `<!DOCTYPE html><html><head><link rel="icon" href="./utf8.svg"></head><body><img src="./utf16le.png"></body></html>`,
+        "/utf8.svg": samples.utf8,
+        "/utf16le.png": samples.utf16le_long,
+      },
+      onAfterBundle(api) {
+        const emitted = (ext: string) =>
+          readdirSync(api.outdir)
+            .filter(output => output.endsWith(ext))
+            .map(output => summary(fs.readFileSync(join(api.outdir, output))));
+        expect({ svg: emitted(".svg"), png: emitted(".png") }).toEqual({
+          svg: [summary(samples.utf8)],
+          png: [summary(samples.utf16le_long)],
+        });
+      },
+    });
+
+    itBundled("bun/css-url-inlines-byte-order-mark", {
+      outdir: "/out",
+      entryPoints: ["/style.css"],
+      files: {
+        "/style.css": `.utf8 { background: url("./utf8.png"); } .utf16le { background: url("./utf16le.png"); }`,
+        "/utf8.png": Buffer.concat([utf8Mark, Buffer.from([1, 2, 3])]),
+        "/utf16le.png": Buffer.concat([utf16leMark, Buffer.from([1, 2, 3, 4])]),
+      },
+      onAfterBundle(api) {
+        const css = api.readFile("/out/style.css");
+        expect(css).toContain(`url("data:image/png;base64,77u/AQID")`);
+        expect(css).toContain(`url("data:image/png;base64,//4BAgME")`);
+      },
+    });
+
+    // Text is still decoded wherever a file is read to be parsed.
+    const longComment = `/* ${long.toString()} */`;
+    const textFiles = (encode: (source: string) => Buffer) => ({
+      "module.js": encode(`export const fromModule = "module";`),
+      "long.js": encode(`${longComment}\nexport const fromLong = "long";`),
+      "data.json": encode(`{ "fromJson": "json" }`),
+      "text.txt": encode("text"),
+      "long.txt": encode(`${longComment}text`),
+      // `main` is read from a package.json with a mark, and `paths` from a tsconfig.json with one.
+      "node_modules/pkg/package.json": encode(`{ "name": "pkg", "main": "./lib/main.js" }`),
+      "node_modules/pkg/lib/main.js": `module.exports = "package";`,
+      "tsconfig.json": encode(`{ "compilerOptions": { "paths": { "@alias/*": ["./aliased/*"] } } }`),
+      "aliased/value.ts": `export const fromAlias = "alias";`,
+      "imports.ts": /* js */ `
+        import { fromModule } from "./module.js";
+        import { fromLong } from "./long.js";
+        import { fromJson } from "./data.json";
+        import fromText from "./text.txt";
+        import fromLongText from "./long.txt";
+        import fromPackage from "pkg";
+        import { fromAlias } from "@alias/value";
+        export default [fromModule, fromLong, fromJson, fromText, fromLongText.length, fromPackage, fromAlias];
+      `,
+    });
+    const textValues = ["module", "long", "json", "text", longComment.length + 4, "package", "alias"];
+    const emptyAfterMark = {
+      "/mark_only.txt": utf8Mark,
+      "/mark_only.js": utf8Mark,
+      "/mark_one_byte.txt": samples.utf16le_one_byte,
+    };
+
+    itBundled("bun/loader-text-converts-byte-order-mark", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import utf8 from "./utf8/imports.ts";
+          import utf16le from "./utf16le/imports.ts";
+          import markOnly from "./mark_only.txt";
+          import "./mark_only.js";
+          import markOneByte from "./mark_one_byte.txt";
+          console.write(JSON.stringify({ utf8, utf16le, markOnly, markOneByte }));
+        `,
+        ...Object.fromEntries(Object.entries(textFiles(encoders.utf8)).map(([name, file]) => [`/utf8/${name}`, file])),
+        ...Object.fromEntries(
+          Object.entries(textFiles(encoders.utf16le)).map(([name, file]) => [`/utf16le/${name}`, file]),
+        ),
+        ...emptyAfterMark,
+      },
+      run: { stdout: JSON.stringify({ utf8: textValues, utf16le: textValues, markOnly: "", markOneByte: "" }) },
+    });
+
+    for (const [encoding, encode] of Object.entries(encoders)) {
+      test.concurrent(`the runtime decodes ${encoding} modules, package.json and tsconfig.json`, async () => {
+        using dir = tempDir(`runtime-bom-${encoding}`, {
+          ...textFiles(encode),
+          "entry.ts": encode(`import values from "./imports.ts";\nconsole.log(JSON.stringify(values));`),
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "entry.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(JSON.stringify(textValues) + "\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test.concurrent(`bun build --no-bundle decodes a ${encoding} CSS entry point`, async () => {
+        using dir = tempDir(`no-bundle-css-bom-${encoding}`, { "style.css": encode(`.mark { color: red; }`) });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "build", "--no-bundle", "./style.css"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout).toBe(".mark {\n  color: red;\n}\n");
+        expect(exitCode).toBe(0);
       });
     }
   });

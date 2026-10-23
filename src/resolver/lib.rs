@@ -1606,7 +1606,7 @@ pub mod fs {
     /// `bun_bundler::cache`) routes through ONE body instead of inlining a
     /// subset of `readFileWithHandleAndAllocator`.
     pub use super::fs_full::{
-        BOM, PathContentsPair, read_file_contents, read_file_contents_in_arena,
+        BOM, BomHandling, PathContentsPair, read_file_contents, read_file_contents_in_arena,
         read_file_with_handle_impl,
     };
 
@@ -2063,6 +2063,65 @@ pub mod cache {
                 },
             }
         }
+
+        /// Strips a UTF-8 byte order mark, or transcodes UTF-16LE to UTF-8,
+        /// in a file that `read_file_with_allocator` read: `Arena` when the
+        /// read was given an arena, `Owned` when not. The bytes on disk stay
+        /// in the arena as they are.
+        #[inline]
+        pub fn convert_bom(self, arena: Option<&bun_alloc::Arena>) -> Contents {
+            match fs_mod::BOM::detect(self.as_slice()) {
+                Some(bom) => self.convert_detected_bom(bom, arena),
+                None => self,
+            }
+        }
+
+        #[cold]
+        fn convert_detected_bom(
+            self,
+            bom: fs_mod::BOM,
+            arena: Option<&bun_alloc::Arena>,
+        ) -> Contents {
+            bun_core::scoped_log!(CacheFs, "Convert {} BOM", bom.tag_name());
+            match (self, arena) {
+                (Contents::Owned(bytes), _) => {
+                    Contents::from(bom.remove_and_convert_to_utf8_and_free(bytes))
+                }
+                (Contents::Arena { ptr, len }, Some(arena)) => {
+                    let mark = bom.length();
+                    match bom {
+                        fs_mod::BOM::Utf8 if len == mark => Contents::Empty,
+                        fs_mod::BOM::Utf8 => Contents::Arena {
+                            // SAFETY: `mark < len`, so `ptr + mark` is inside the
+                            // allocation. The NUL at `ptr[len]` stays right
+                            // after the text.
+                            ptr: unsafe { ptr.add(mark) },
+                            len: len - mark,
+                        },
+                        fs_mod::BOM::Utf16Le => {
+                            // SAFETY: ARENA: `ptr[..len]` is the file that the
+                            // read just put in `arena`.
+                            let file = unsafe { core::slice::from_raw_parts(ptr.as_ptr(), len) };
+                            let text =
+                                bun_core::strings::to_utf8_alloc_from_le_bytes(&file[mark..]);
+                            if text.is_empty() {
+                                return Contents::Empty;
+                            }
+                            let copy = arena.alloc_slice_fill_copy::<u8>(text.len() + 1, 0);
+                            copy[..text.len()].copy_from_slice(&text);
+                            Contents::Arena {
+                                // SAFETY: an arena slice is never null.
+                                ptr: unsafe {
+                                    core::ptr::NonNull::new_unchecked(copy.as_mut_ptr())
+                                },
+                                len: text.len(),
+                            }
+                        }
+                    }
+                }
+                (other, _) => other,
+            }
+        }
     }
 
     impl From<Vec<u8>> for Contents {
@@ -2178,14 +2237,10 @@ pub mod cache {
             }
         }
 
-        /// `use_shared_buffer` is taken at runtime — the live
-        /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
-        /// `Transpiler::parse`) pass a value computed from runtime state, and the
-        /// resolver's earlier forward-decl already pinned this shape.
-        /// PERF: re-monomorphize once both callers stabilize.
+        /// `bom_handling`: `Convert` returns the file as text, `Keep` returns
+        /// the bytes on disk.
         ///
-        /// `arena`: when
-        /// `!use_shared_buffer && arena.is_some()` the file body is read
+        /// `arena`: when `Some`, the file body is read
         /// directly into `arena` (`Contents::Arena`), so the bytes are
         /// bulk-freed by `mi_heap_destroy` when the per-call `MimallocArena`
         /// drops instead of landing in the worker thread's default mimalloc
@@ -2196,7 +2251,7 @@ pub mod cache {
             _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
-            use_shared_buffer: bool,
+            bom_handling: fs_mod::BomHandling,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
@@ -2257,11 +2312,11 @@ pub mod cache {
             // the shared buffer.
             let stream = self.stream;
 
-            let contents = match (use_shared_buffer, arena) {
+            let contents = match arena {
                 // Read straight into the per-call arena so the source bytes
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
                 // segment in the worker thread's default heap.
-                (false, Some(arena)) => {
+                Some(arena) => {
                     match fs_mod::read_file_contents_in_arena(file_handle, path, arena) {
                         Ok((_, 0)) => Contents::Empty,
                         Ok((ptr, len)) => Contents::Arena { ptr, len },
@@ -2277,9 +2332,9 @@ pub mod cache {
                         }
                     }
                 }
-                _ => {
+                None => {
                     let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
+                    match fs_mod::read_file_contents(file_handle, false, shared, stream)
                         .map(Contents::from)
                     {
                         Ok(c) => c,
@@ -2295,6 +2350,10 @@ pub mod cache {
                         }
                     }
                 }
+            };
+            let contents = match bom_handling {
+                fs_mod::BomHandling::Convert => contents.convert_bom(arena),
+                fs_mod::BomHandling::Keep => contents,
             };
 
             let publish_fd = feature_flags::STORE_FILE_DESCRIPTORS && !will_close;

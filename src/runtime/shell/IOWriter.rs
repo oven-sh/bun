@@ -147,7 +147,7 @@ impl Writer {
 type Writers = Vec<Writer>;
 
 /// ~128kb. We shrink `buf` when we reach the last writer, but if that never
-/// happens we shrink when it exceeds this threshold.
+/// happens we shrink once the written prefix exceeds this threshold and is at least half of `buf`.
 const SHRINK_THRESHOLD: usize = 1024 * 128;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -632,7 +632,10 @@ impl IOWriter {
             s.writer_idx = 0;
             s.writers.clear();
             s.total_bytes_written = 0;
-        } else if s.total_bytes_written >= SHRINK_THRESHOLD {
+        } else if s.total_bytes_written >= SHRINK_THRESHOLD
+            // The drain moves every unwritten byte. A queue that grows faster than the fd takes it would pay that per chunk.
+            && s.total_bytes_written >= s.buf.len() / 2
+        {
             s.buf.drain_front(s.total_bytes_written);
             s.total_bytes_written = 0;
             // Drop the *prefix* of the writers queue: Vec::drain(..idx).

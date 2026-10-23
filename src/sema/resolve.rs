@@ -2211,6 +2211,8 @@ pub(crate) fn extra_supported_extensions<'h>(
     (host.extra_file_extensions().iter())
         .filter(move |it| allow_js || !it.1.is_javascript())
         .map(|it| &it.0[..])
+        // Not the `""` of `--loader :ts`: callers match a suffix, and every name ends with it.
+        .filter(|it| !it.is_empty())
         .filter(move |it| !builtins.iter().any(|group| group.contains(it)))
 }
 

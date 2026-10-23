@@ -4338,7 +4338,8 @@ pub(crate) mod args {
                     encoding = Encoding::assert(arg, ctx, encoding)?;
                 } else if arg.is_object() {
                     encoding = get_encoding(arg, ctx, encoding)?;
-                    if let Some(flag_) = arg.get_truthy(ctx, "flag")? {
+                    // Node: `options.flag || default` https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L2343
+                    if let Some(flag_) = arg.get(ctx, "flag")?.filter(|flag| flag.is_truthy()) {
                         flag = FileSystemFlags::from_js(ctx, flag_)?.unwrap_or(flag);
                     }
                     if let Some(mode_) = arg.get_truthy(ctx, "mode")? {

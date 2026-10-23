@@ -150,6 +150,9 @@ pub use hashbrown;
 pub mod string_map;
 pub use string_map::StringMap;
 
+mod strongly_connected_components;
+pub use strongly_connected_components::strongly_connected_components;
+
 // Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
 pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};

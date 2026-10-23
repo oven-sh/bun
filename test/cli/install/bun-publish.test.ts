@@ -3755,10 +3755,107 @@ describe.concurrent("--recursive and --filter", () => {
 
     const { err, exitCode } = await publish(env, String(dir), "-F", "rec-x", "-F", "rec-y", "-F", "rec-after");
     expect(err).toBe("");
-    const puts = registry.asked.filter(request => request.startsWith("PUT "));
-    expect([...puts].sort()).toEqual(["PUT rec-after", "PUT rec-x", "PUT rec-y"]);
-    expect(puts.indexOf("PUT rec-after")).toBeGreaterThan(puts.indexOf("PUT rec-x"));
+    expect(registry.asked.filter(request => request.startsWith("PUT "))).toEqual([
+      "PUT rec-x",
+      "PUT rec-y",
+      "PUT rec-after",
+    ]);
     expect(exitCode).toBe(0);
+  });
+
+  test("a dependency cycle comes after another cycle that it depends on", async () => {
+    using registry = workspaceRegistry();
+    // p <-> q and x <-> y. Only `p` lists `x`.
+    using dir = workspace(registry.mock, {
+      p: { name: "rec-p", version: "1.0.0", dependencies: { "rec-q": "workspace:*", "rec-x": "workspace:*" } },
+      q: { name: "rec-q", version: "1.0.0", dependencies: { "rec-p": "workspace:*" } },
+      x: { name: "rec-x", version: "1.0.0", dependencies: { "rec-y": "workspace:*" } },
+      y: { name: "rec-y", version: "1.0.0", dependencies: { "rec-x": "workspace:*" } },
+    });
+
+    const { err, exitCode } = await publish(
+      env,
+      String(dir),
+      "-F",
+      "rec-p",
+      "-F",
+      "rec-q",
+      "-F",
+      "rec-x",
+      "-F",
+      "rec-y",
+    );
+    expect(err).toBe("");
+    expect(registry.asked.filter(request => request.startsWith("PUT "))).toEqual([
+      "PUT rec-x",
+      "PUT rec-y",
+      "PUT rec-p",
+      "PUT rec-q",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // Each name stands for a package in packages/<name> that is called rec-<name>.
+  const on = (...names: string[]) => Object.fromEntries(names.map(name => [`rec-${name}`, "workspace:*"]));
+  test.each([
+    {
+      title: "devDependencies give way to dependencies",
+      // `a-plugin` is first by name. It depends on `core`, and the tests of `core` use it.
+      members: { "a-plugin": { dependencies: on("core") }, core: { devDependencies: on("a-plugin") } },
+      order: ["core", "a-plugin"],
+    },
+    {
+      title: "peerDependencies give way to dependencies",
+      members: { host: { dependencies: on("plugin") }, plugin: { peerDependencies: on("host") } },
+      order: ["plugin", "host"],
+    },
+    {
+      title: "devDependencies give way before peerDependencies",
+      members: { "a-plugin": { peerDependencies: on("host") }, host: { devDependencies: on("a-plugin") } },
+      order: ["host", "a-plugin"],
+    },
+    {
+      title: "a name that dependencies lists counts as one of those",
+      members: {
+        "a-plugin": { dependencies: on("core"), devDependencies: on("core") },
+        core: { devDependencies: on("a-plugin") },
+      },
+      order: ["core", "a-plugin"],
+    },
+    {
+      title: "three packages and one devDependencies entry",
+      members: {
+        "a-utils": { dependencies: on("core") },
+        core: { devDependencies: on("plugin") },
+        plugin: { dependencies: on("a-utils") },
+      },
+      order: ["core", "a-utils", "plugin"],
+    },
+    {
+      title: "a cycle of dependencies is broken at one package and stays together",
+      members: {
+        after: { dependencies: on("m1") },
+        m1: { dependencies: on("m2") },
+        m2: { dependencies: on("m3") },
+        m3: { dependencies: on("m1") },
+      },
+      order: ["m1", "m3", "m2", "after"],
+    },
+  ])("inside a dependency cycle: $title", async ({ members, order }) => {
+    using registry = workspaceRegistry();
+    const named = Object.entries(members).map(([dir, fields]) => [
+      dir,
+      { name: `rec-${dir}`, version: "1.0.0", ...fields },
+    ]);
+    using dir = workspace(registry.mock, Object.fromEntries(named));
+
+    const filters = Object.keys(members).flatMap(dir => ["-F", `rec-${dir}`]);
+    const { err, exitCode } = await publish(env, String(dir), ...filters);
+    expect({ puts: registry.asked.filter(request => request.startsWith("PUT ")), err, exitCode }).toEqual({
+      puts: order.map(name => `PUT rec-${name}`),
+      err: "",
+      exitCode: 0,
+    });
   });
 
   test("a script that fails while packing publishes nothing", async () => {

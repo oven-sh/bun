@@ -32,14 +32,14 @@ pub(crate) fn to_vlq<'a>(heap: &JsHeap<'a>, blob: &[u8]) -> bindgen::Result<'a, 
 pub(crate) fn find<'a>(
     heap: &JsHeap<'a>,
     blob: &[u8],
-    line: JsLocal<'a>,
-    col: JsLocal<'a>,
+    line: f64,
+    col: f64,
 ) -> bindgen::Result<'a, Option<InternalSourceMapMapping>> {
     if !internal_source_map::is_valid_blob(blob) {
         return Err(heap.error(format_args!("InternalSourceMap.find: invalid blob")));
     }
-    let line = line.to_js().to_int32();
-    let col = col.to_js().to_int32();
+    let line = line as i32;
+    let col = col as i32;
     if line < 0 || col < 0 {
         return Ok(None);
     }

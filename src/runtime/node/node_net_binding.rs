@@ -9,7 +9,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_uws as uws;
 
-use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
+use crate::generated_bindgen::socket_body::SocketHandle;
+use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags};
 
 static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
@@ -88,11 +89,13 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
 
 pub(crate) fn do_connect<'a>(
     cx: &mut JsScope<'a>,
-    prev: JsLocal<'a>,
+    prev: SocketHandle<'a>,
     opts: JsLocal<'a>,
 ) -> JsResult<JSValue> {
-    let prev = prev.to_js();
-    let maybe_tcp = prev.as_::<TCPSocket>();
-    let maybe_tls = prev.as_::<TLSSocket>();
+    let (maybe_tcp, maybe_tls) = match prev {
+        SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
+        SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
+        SocketHandle::Ignored(_) => (None, None),
+    };
     Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, opts.to_js())
 }

@@ -1399,12 +1399,13 @@ impl NodeHTTPResponse {
     }
 }
 
-pub(crate) fn on_resolve(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
+pub(crate) fn on_resolve(
+    cx: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
     scoped_log!(NodeHTTPResponse, "onResolve");
     let global_object = cx.global();
-    // `context` is the JSNodeHTTPResponse cell from the resolve callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = context.to_js().as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1412,7 +1413,7 @@ pub(crate) fn on_resolve(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(context.to_js());
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !this.is_socket_closed_or_closing() {
@@ -1439,11 +1440,12 @@ pub(crate) fn on_resolve(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<
     }
 }
 
-pub(crate) fn on_reject(cx: &mut JsScope<'_>, err: JsLocal<'_>, context: JsLocal<'_>) {
+pub(crate) fn on_reject(
+    cx: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    (this, wrapper): (&NodeHTTPResponse, JsLocal<'_>),
+) {
     let global_object = cx.global();
-    // `context` is the JSNodeHTTPResponse cell from the reject callback.
-    // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = context.to_js().as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1451,7 +1453,7 @@ pub(crate) fn on_reject(cx: &mut JsScope<'_>, err: JsLocal<'_>, context: JsLocal
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(context.to_js());
+    this.maybe_stop_reading_body(wrapper.to_js());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED)

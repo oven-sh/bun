@@ -54,7 +54,7 @@ pub fn add<'a>(heap: &JsHeap<'a>, a: i32, b: i32) -> bindgen::Result<'a, i32> {
 `b.module` says where the file's functions are; an export named
 `requiredAndOptionalArg` is `required_and_optional_arg` there. A `rustPath` key on
 a function gives its full path instead. The arguments after the last that is not written
-`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull` or `.default()` are the ones
+`.optional`, `.nullable`, `.falsyAsNull`, `.emptyStringAsNull`, `.ifPassed` or `.default()` are the ones
 TypeScript lets a caller leave out. The function's `.length` is the number of the others,
 unless `length` sets it.
 
@@ -82,7 +82,7 @@ To reach the function:
   `crate::generated_bindgen::cron::Bun__CronJob__onPromiseResolve`, for `JSFunction::create` and `JSValue::then`.
 
 `passThis: true` adds `this_value: JsLocal<'a>` after the capability, and `passCallee: true` adds `callee: JsLocal<'a>`, the
-function that was called, after it. Neither they nor `export` go with overloads.
+function that was called, after it.
 
 `b.value({ returns: b.i32 })` is for what `src/js` reads once: `$bindgen` calls the Rust function and gives what it returns,
 and no JS function is made.
@@ -112,6 +112,8 @@ first read. `$bindgen("SemverObject.bind.ts", "semver")` makes one for `src/js`.
 A namespace that can itself be called, like `Bun.hash`, names the function that a call runs:
 `b.namespace({ wyhash: { .. }, crc32: { .. } }, { call: "wyhash" })`. The object is then a
 function named after the namespace.
+
+An array in place of a function is its [overloads](#overloads).
 
 ### What a function may do: `capability`
 
@@ -162,6 +164,12 @@ type that implements `bindgen::IntoError` (`bun_sys::Error`,
 `cx`. Such a function can return `JsResult<T>`, and a plain `JSValue` under
 `returns: b.any`.
 
+### Promises: `rejects`
+
+A function that returns a promise reports an error by rejecting one. With `rejects: true`, what the body
+throws and what the conversion of an argument throws become the reason of a rejected promise
+(`JSPromise::rejectedPromiseWithCaughtException`), so the body returns `Err` like any other.
+
 ### Overloads
 
 `b.overloads(a, b, ..)` is one JS function with several signatures. Each names its
@@ -174,6 +182,8 @@ export const read = b.overloads(
 );
 ```
 
+`passThis`, `passCallee`, `export` and `rejects` are of the function, so every signature writes the same.
+
 Use it when the type of one argument says what the others are. A union for each
 argument would accept combinations that mean nothing, and leave the body to sort them out.
 
@@ -185,10 +195,10 @@ arguments from left to right:
 2. An argument that was not passed is `undefined`. So `f(x)` and `f(x, undefined)` are the
    same call. It keeps the candidates where the argument can be left out, or if there are none,
    those whose type takes every kind.
-3. A candidate with no argument at that position stays.
+3. A candidate with no argument at that position takes only `undefined`.
 4. If no candidate takes the argument, all of them stay, and the next argument decides.
 5. When the arguments run out, the candidate written first wins. Its conversion reports
-   whatever is wrong. So of two signatures that start the same, the longer one goes first.
+   whatever is wrong.
 
 Choosing converts nothing and runs no JavaScript. A signature that no call can reach is
 an error when the schema is loaded.
@@ -200,7 +210,7 @@ that is an integer in range, and nothing else. A failed strict or
 `.validateInteger` conversion, or a `.loose` one of an integer, throws
 `ERR_INVALID_ARG_TYPE` or `ERR_OUT_OF_RANGE` naming the argument or the dictionary
 member; `.wrap`, `.enforceRange` and the other `.loose` conversions throw what WebIDL does. An argument that was not passed is `undefined` and is converted like
-any other: nothing looks at how many there are, except a body that takes `b.any.variadic`.
+any other: nothing looks at how many there are, except `.ifPassed` and a body that takes `b.any.variadic`.
 
 | Schema                                           | Rust, as an argument             | Takes                                                         |
 | ------------------------------------------------ | -------------------------------- | ------------------------------------------------------------- |
@@ -208,6 +218,7 @@ any other: nothing looks at how many there are, except a body that takes `b.any.
 | `b.u8` `b.u16` `b.u32` `b.u64` `b.usize` `b.i32` | the same                         | a number that is an integer in range; see below               |
 | `b.f64`                                          | `f64`                            | a number; `.loose` is `ToNumber`; see below                   |
 | `b.string`                                       | `&bun_core::String`              | a string; `.loose` is `ToString`                              |
+| `b.string.owned`                                 | `bun_core::String`               | as `b.string`                                                 |
 | `b.string.utf8`                                  | `&'a [u8]`                       | the same, and a `String` object                               |
 | `b.string.utf8.owned`                            | `bun_core::Utf8Bytes<'static>`   | as `b.string.utf8`                                            |
 | `b.bufferSource`                                 | `JsLocal<'a, BufferSource>`      | a typed array, `DataView` or `ArrayBuffer` that is not shared |
@@ -215,9 +226,14 @@ any other: nothing looks at how many there are, except a body that takes `b.any.
 | `b.bytes(options)`                               | `&'a [u8]`, and others           | see [Bytes](#bytes)                                           |
 | `b.blob`                                         | `ExternalShared<Blob>`           | a `Blob`                                                      |
 | `b.callable`                                     | `JsLocal<'a, Callable>`          | a function, or a proxy of one                                 |
+| `b.object`                                       | `JsLocal<'a, JSObject>`          | an object                                                     |
+| `b.jsArray`                                      | `JsLocal<'a, JSArray>`           | an array, as itself                                           |
 | `b.any`                                          | `JsLocal<'a>`                    | anything                                                      |
 | `b.any.variadic`                                 | `&'a [JsLocal<'a>]`              | this argument and every one after it; only the last argument  |
 | `b.null`                                         | `()`                             | `null` or `undefined`; only in a union                        |
+| `b.undefined`                                    | `()`                             | `undefined`; only in a union                                  |
+| `b.promisePtr("crate::T")`                       | `*mut T`                         | the context of a promise reaction; see below                  |
+| `b.nativePromiseContext("crate::T")`             | `Option<NonNull<T>>`             | the same, when it is a `NativePromiseContext` cell            |
 | `b.array(T)`                                     | `Vec<T>`                         | an array; `T` holds no JS value, which the GC would not see   |
 | `b.enumeration(values)`                          | a generated `enum`               | one of the strings                                            |
 | `b.dictionary(members)`                          | `&` a generated `struct`         | an object that is not an array                                |
@@ -229,19 +245,28 @@ types: each is called what it is exported as, and has to be exported. It is used
 schemas of the crate it is generated into. A member or an alternative also names a C++
 field, so one that is a C++ keyword is refused: a member takes a `rustName`.
 
+Only the promise calls a reaction, with the context it was given, so nothing tests that argument.
+`b.promisePtr` is the `*mut T` that `JSValue::then` was given. `b.nativePromiseContext` is what `take` of the cell
+returns: `None` if the pointer was taken back before the promise settled. A generic `T` is written as its
+instantiation.
+
 These come last, in this order (`b.any` already takes `undefined` and `null`, so only `.emptyStringAsNull` applies to it):
 
 - `.optional`: `undefined` means absent; `Option<T>`.
 - `.nullable`: `null` or `undefined` means absent; `Option<T>`.
 - `.falsyAsNull`: every falsy value means absent; `Option<T>`.
 - `.emptyStringAsNull`: `undefined`, `null` or `""` means absent, as for `JSValue::get_truthy`; `Option<T>`.
+- `.ifPassed`: absent only if the call has no such argument, and `undefined` is converted like any other value; `Option<T>`. It is for a function where `f()` and `f(undefined)` both work and differ, like `alert`. It goes on every type, and only on an argument.
 - `.default(value)`: what to use when absent; `T`. `.nullable.default(value)` also applies to `null`.
+
+`.withValue` on an argument also gives the body the argument itself, `(T, JsLocal<'a>)`: for one that reads the
+internal fields of an instance, or returns the argument when there is nothing to change.
 
 As results, `b.string.utf8` is anything that is `AsRef<[u8]>` and `b.array(T)` anything that
 is `IntoIterator`. `b.bufferSource` as a result is what
 `heap.create_uninitialized_uint8_array(length)`, `heap.create_uint8_array(bytes)`,
 `heap.create_buffer(bytes)`, `heap.create_uint8_array_from_box(bytes)` or
-`heap.create_buffer_from_box(bytes)` made. The last two take over the allocation, and the two
+`heap.create_buffer_from_box(bytes)` made, and `b.jsArray` what `heap.create_array(items, to_js::u8)` made. The last two take over the allocation, and the two
 before them copy.
 
 These are results only:
@@ -261,7 +286,7 @@ object is `heap.create_empty_object()`.
 
 A BigInt is refused unless the schema says `.allowBigInt`, which is for an argument whose
 type is `number | bigint`. `b.f64.loose.allowBigInt` is `ToNumeric`, and a BigInt becomes the
-double nearest to it. On an integer:
+double nearest to it. `b.f64.allowDate` also takes a `Date`, as its time value, which is NaN for an invalid one. On an integer:
 
 - `.allowBigInt`: a BigInt in the same range too. It is how a `b.u64` above 2<sup>53</sup> gets in. It goes with the strict conversion and with `.loose`; the others refuse a BigInt.
 - `.loose`: `ToNumber` first, or `ToNumeric` with `.allowBigInt`, then as strict as the default.
@@ -283,8 +308,8 @@ its `toString` runs.
 `bun_core::Utf8Bytes<'static>`, which shares the JS string's buffer when it is 8-bit
 and ASCII and is a transcoded copy otherwise.
 
-`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`, which a
-body that keeps it clones. Inside `.optional`, a union or an array, and as the value of a setter,
+`b.string` shares the JS string's storage. As an argument it is a `&bun_core::String`. A
+body that keeps it takes `b.string.owned`, which comes after `.loose` or `.allowStringObject`. Inside `.optional`, a union or an array, and as the value of a setter,
 it is held by value. The string belongs to the
 JS thread: see "Cross-thread string hazards" in `src/CLAUDE.md` before sending
 one anywhere. `b.string.allowStringObject` also takes a `String` object, as `.utf8` does.
@@ -304,7 +329,8 @@ export const BracesOptions = b.dictionary({
 
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
-`{ type, rustName, altNames }` to rename its field or to accept other spellings.
+`{ type, rustName, altNames, expected }` to rename its field, to accept other spellings, or to report a wrong type as
+a function's `expected` does.
 A dictionary whose members can all be absent implements `Default`. As an argument, with
 `.default()` or without, the struct stays in the frame of the thunk and the body borrows it:
 `options: &BracesOptions`. Inside `.optional`, a union or an array it is held by value.
@@ -325,6 +351,7 @@ The second argument of `b.dictionary` takes:
 | `allowArray`       | an array is read like any other object, not refused                                                                                                                                                               |
 | `nonObjectAsEmpty` | a value that is not an object gives every member its default; with `"typeof"` so does a function, as in Node's `if (typeof options !== "object") options = null`; every member must be optional or have a default |
 | `fromJS`           | also generates `Name::from_js(global, value)`, for a body that has a `JSValue`; one that holds JS values is lent to a closure, `Name::from_js(global, value, \|converted\| ..)`                                   |
+| `reportedAs`       | what an error calls the dictionary, which defaults to the name of the type: `"options"` makes a member `options.level`, and `""` makes it `level`, as Node's validators are given it                              |
 | `nullPrototype`    | as a result, the object has no prototype, and the inline room of `Object.create(null)`                                                                                                                            |
 
 ### Enumerations
@@ -333,9 +360,12 @@ The second argument of `b.dictionary` takes:
 export const Formatter = b.enumeration(["highlight-javascript", "highlight-javascript-redacted", "escape-powershell"]);
 ```
 
-generates `enum Formatter { HighlightJavascript, .. }`. An entry can be a list of
+generates `enum Formatter { HighlightJavascript, .. }`; capitals in a row are a word, so `"ECONNRESET"` is `Econnreset`. An entry can be a list of
 spellings; the first is the one returned to JavaScript. It also takes a `String` object,
 except in a union. Returning an enumeration allocates nothing after the first time.
+
+Values that make no identifier, or the same one, are written as a record, whose keys are the variants:
+`b.enumeration({ Rgb: "rgb", RgbArray: "[rgb]" })`.
 
 ### Unions and kinds
 
@@ -347,7 +377,8 @@ in play apart:
 | ---------------------------------- | -------------------------------------------------------------------------------- |
 | the bits of the value              | `undefined`, `null`, boolean, number                                             |
 | the type byte in the cell's header | string, BigInt, array, `ArrayBuffer`, typed array or `DataView`, `String` object |
-| the cell's `ClassInfo`             | an instance of a class                                                           |
+| the cell's type info               | what can be called                                                               |
+| the cell's `ClassInfo`             | an instance of a class, a `Date`                                                 |
 
 A strict type takes the kinds its row under [Types](#types) says. A type that coerces or
 reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
@@ -357,7 +388,8 @@ reports its own error takes every kind: `.loose`, `.wrap`, `.enforceRange`,
 alternative then converts it, and reports what is wrong with it: `1.5` given to
 `b.union({ integer: b.i32, text: b.string })` "must be an integer", not "must be of type integer or string".
 The buffer types refuse some values of their kinds (a shared buffer); those go on to the next alternative that takes
-the kind and does not refuse the same. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
+the kind and does not refuse the same. So does a value that is not an object from a dictionary or `b.object`, unless the dictionary is the last
+to take it, which then reports it. A value no alternative takes throws `ERR_INVALID_ARG_TYPE` listing them all.
 
 So the order only matters between alternatives that overlap, and one that takes every
 kind goes last. An alternative that can never be chosen is an error when the schema is

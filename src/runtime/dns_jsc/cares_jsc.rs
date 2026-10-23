@@ -850,12 +850,12 @@ pub(crate) fn not_a_hostname_error(global_this: &JSGlobalObject, hostname: &[u8]
         .to_error_instance(global_this)
 }
 
-pub(crate) fn canonicalize_ip<'a>(cx: &mut JsScope<'a>, address: JsLocal<'a>) -> JsResult<JSValue> {
+pub(crate) fn canonicalize_ip<'a>(
+    cx: &mut JsScope<'a>,
+    (addr_str, address): (&[u8], JsLocal<'a>),
+) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     let global_this = cx.global();
-
-    let addr_arg = address.to_js().to_utf8(global_this)?;
-    let addr_str = addr_arg.slice();
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
     let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {

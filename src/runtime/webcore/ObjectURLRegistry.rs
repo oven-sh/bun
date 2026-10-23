@@ -2,11 +2,12 @@ use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
-use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{self, JsHeap, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, UUID};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, UUID};
 use bun_threading::Guarded;
 
+use crate::generated_bindgen::blob::BlobOrBuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
@@ -112,35 +113,22 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
     UUID::parse(pathname).ok()
 }
 
-pub(crate) fn create_object_url<'a>(
-    heap: &JsHeap<'a>,
-    blob: JsLocal<'a>,
-) -> bindgen::Result<'a, bun_core::String> {
-    let Some(blob) = blob.to_js().as_class_ref::<Blob>() else {
-        return Err(heap.invalid_arguments(format_args!("createObjectURL expects a Blob object")));
-    };
+pub(crate) fn create_object_url(blob: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get().as_mut(), blob);
-    Ok(bun_core::String::create_format(format_args!(
-        "blob:{}",
-        uuid
-    )))
+    let uuid = registry.register(VirtualMachine::get().as_mut(), blob.blob());
+    bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 
-pub(crate) fn revoke_object_url(cx: &mut JsScope<'_>, url: &[JsLocal<'_>]) -> JsResult<()> {
-    let global = cx.global();
-    let Some(url) = url.first() else {
-        return Err(global.throw_not_enough_arguments("revokeObjectURL", 1, 0));
+pub(crate) fn revoke_object_url<'a>(
+    heap: &JsHeap<'a>,
+    url: Option<bun_core::String>,
+) -> bindgen::Result<'a, ()> {
+    let Some(str) = url else {
+        return Err(heap.error_with_code(
+            ErrorCode::MISSING_ARGS,
+            format_args!("Not enough arguments to 'revokeObjectURL'. Expected 1, got 0."),
+        ));
     };
-    let url = url.to_js();
-    if !url.is_string() {
-        return Err(
-            global.throw_invalid_arguments(format_args!("revokeObjectURL expects a string"))
-        );
-    }
-    // `is_string()` is `is_string_like()` and admits `StringObject`, so
-    // `to_bun_string` can still observe a user `toString` that throws.
-    let str = url.to_bun_string(global)?;
     if !str.starts_with_ascii(b"blob:") {
         return Ok(());
     }
@@ -154,20 +142,19 @@ pub(crate) fn revoke_object_url(cx: &mut JsScope<'_>, url: &[JsLocal<'_>]) -> Js
     Ok(())
 }
 
-pub(crate) fn resolve_object_url(cx: &mut JsScope<'_>, str: &bun_core::String) -> JSValue {
+pub(crate) fn resolve_object_url(cx: &mut JsScope<'_>, url: &bun_core::String) -> Option<JSValue> {
     // Errors are ignored.
     // Not thrown.
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
-    if !str.starts_with_ascii(b"blob:") || str.length() < SPECIFIER_LEN {
-        return JSValue::UNDEFINED;
+    if !url.starts_with_ascii(b"blob:") || url.length() < SPECIFIER_LEN {
+        return None;
     }
 
-    let slice = str.to_utf8();
+    let slice = url.to_utf8();
     let sliced = slice.slice();
 
     let registry = ObjectURLRegistry::singleton();
-    let blob = registry.resolve_and_dupe_to_js(&sliced[b"blob:".len()..], cx.global());
-    blob.unwrap_or(JSValue::UNDEFINED)
+    registry.resolve_and_dupe_to_js(&sliced[b"blob:".len()..], cx.global())
 }
 
 const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;

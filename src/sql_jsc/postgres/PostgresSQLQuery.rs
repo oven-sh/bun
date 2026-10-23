@@ -2,10 +2,10 @@ use core::cell::Cell;
 
 use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::shared::query_ctor_args;
 use bun_core::String as BunString;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -376,27 +376,15 @@ impl PostgresSQLQuery {
 
     pub(crate) fn create_query<'a>(
         cx: &mut JsScope<'a>,
-        query: JsLocal<'a>,
-        values: JsLocal<'a>,
-        pending_value: JsLocal<'a>,
-        bigint: JsLocal<'a>,
-        simple: JsLocal<'a>,
+        query: bun_core::String,
+        values: JsLocal<'a, JSArray>,
+        pending_value: JsLocal<'a, JSArray>,
+        bigint: bool,
+        simple: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let QueryCtorArgs {
-            query,
-            values,
-            pending_value,
-            bigint,
-            simple,
-        } = QueryCtorArgs::parse(
-            global_this,
-            query.to_js(),
-            values.to_js(),
-            pending_value.to_js(),
-            bigint.to_js(),
-            simple.to_js(),
-        )?;
+        let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -405,7 +393,7 @@ impl PostgresSQLQuery {
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
         unsafe {
-            (*ptr).query = query.to_bun_string(global_this)?;
+            (*ptr).query = query;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
                 bigint,

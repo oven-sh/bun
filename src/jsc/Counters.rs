@@ -1,5 +1,5 @@
 use crate::bindgen::JsHeap;
-use crate::{JSGlobalObject, JSValue, JsResult};
+use crate::generated_bindgen::counters::CountersObject;
 
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
@@ -16,27 +16,15 @@ impl Counters {
         };
         *slot = slot.saturating_add(1);
     }
-
-    pub fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"spawnSync_blocking",
-            JSValue::js_number_from_int32(self.spawn_sync_blocking),
-        );
-        obj.put(
-            global,
-            b"spawn_memfd",
-            JSValue::js_number_from_int32(self.spawn_memfd),
-        );
-        Ok(obj)
-    }
 }
 
-pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> JsResult<JSValue> {
-    // SAFETY: the object is new and plain, and its properties are defined and not set.
-    let global = unsafe { heap.global() };
-    global.bun_vm().counters.to_js(global)
+pub(crate) fn create_counters_object(heap: &JsHeap<'_>) -> CountersObject {
+    // SAFETY: only the VM is taken from it.
+    let counters = unsafe { heap.global() }.bun_vm().counters;
+    CountersObject {
+        spawn_sync_blocking: counters.spawn_sync_blocking,
+        spawn_memfd: counters.spawn_memfd,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]

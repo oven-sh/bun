@@ -23,7 +23,7 @@ use bun_uws::{us_bun_verify_error_t, uws_callback};
 use super::DuplexUpgradeContext;
 use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
-use crate::generated_bindgen::upgraded_duplex as listeners;
+use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
@@ -793,34 +793,36 @@ impl Drop for UpgradedDuplex {
 // installed by `get_js_handlers`; `teardown` clears it before the storage is
 // freed, so a non-null data pointer is live for the call.
 
-pub(crate) fn on_received_data<'a>(cx: &mut JsScope<'a>, callee: JsLocal<'a>, data: JsLocal<'a>) {
+pub(crate) fn on_received_data<'a>(
+    cx: &mut JsScope<'a>,
+    callee: JsLocal<'a>,
+    data: DuplexChunk<'a>,
+) {
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
-
-    let global = cx.global();
-    let data_arg = data.to_js();
 
     if let Some(self_ptr) = host_fn::get_function_data(callee.to_js()) {
         // SAFETY: see the note above.
         let this = unsafe { &*self_ptr.cast::<UpgradedDuplex>() };
         let _keep_alive = this.keep_alive();
         if !this.origin.get().is_empty() {
-            if data_arg.is_empty_or_undefined_or_null() {
-                return;
-            }
-            if let Some(array_buffer) = data_arg.as_array_buffer(global) {
-                // yay we can read the data
-                let payload = array_buffer.slice();
-                this.on_internal_receive_data(payload);
-            } else {
-                // node.js errors in this case with the same error, lets keep it consistent
-                let error_value = global
-                    .err(
-                        bun_jsc::ErrorCode::STREAM_WRAP,
-                        format_args!("Stream has StringDecoder set or is in objectMode"),
-                    )
-                    .to_js();
-                error_value.ensure_still_alive();
-                (this.handlers.on_error)(this.handlers.ctx, error_value);
+            match data {
+                DuplexChunk::Nothing => {}
+                // The bytes are copied before a handler of the socket runs.
+                DuplexChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |payload| {
+                    this.on_internal_receive_data(payload);
+                }),
+                DuplexChunk::Other(_) => {
+                    // node.js errors in this case with the same error, lets keep it consistent
+                    let error_value = cx
+                        .global()
+                        .err(
+                            bun_jsc::ErrorCode::STREAM_WRAP,
+                            format_args!("Stream has StringDecoder set or is in objectMode"),
+                        )
+                        .to_js();
+                    error_value.ensure_still_alive();
+                    (this.handlers.on_error)(this.handlers.ctx, error_value);
+                }
             }
         }
     }

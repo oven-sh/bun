@@ -1,8 +1,7 @@
 use core::ffi::c_void;
 
-use crate::bindgen::{JsLocal, JsScope};
 use crate::{
-    JSGlobalObject, JSPromise, JSValue, JsResult, Strong, Task, VirtualMachineRef as VirtualMachine,
+    JSGlobalObject, JSPromise, JSValue, Strong, Task, VirtualMachineRef as VirtualMachine,
 };
 use bun_core::String as BunString;
 use bun_sourcemap::SourceProviderMap;
@@ -293,24 +292,11 @@ pub fn remove_source_provider_source_map(
         .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
-pub(crate) fn set_synthetic_allocation_limit_for_testing<'a>(
-    cx: &mut JsScope<'a>,
-    limit: JsLocal<'a>,
-) -> JsResult<usize> {
-    let global = cx.global();
-    let arg = limit.to_js();
-
-    if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "setSyntheticAllocationLimitForTesting expects a number"
-        )));
-    }
-
-    let limit: usize =
-        usize::try_from(arg.coerce_to_int64(global)?.max(1024 * 1024)).expect("int cast");
+pub(crate) fn set_synthetic_allocation_limit_for_testing(limit: f64) -> usize {
+    let limit: usize = usize::try_from((limit as i64).max(1024 * 1024)).expect("int cast");
     let prev = crate::virtual_machine::SYNTHETIC_ALLOCATION_LIMIT
         .swap(limit, core::sync::atomic::Ordering::Relaxed);
     crate::virtual_machine::STRING_ALLOCATION_LIMIT
         .store(limit, core::sync::atomic::Ordering::Relaxed);
-    Ok(prev)
+    prev
 }

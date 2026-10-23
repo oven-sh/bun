@@ -1,6 +1,7 @@
 //! `bun bake`: the plugins of `bake.config.ts`. `internal/bake.ts` checks them, then hands them over
 //! here before it starts the server.
 
+use bun_core::Utf8Bytes;
 use bun_jsc::JsResult;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
@@ -9,23 +10,17 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 pub(crate) fn set_config_plugins<'a>(
     cx: &mut JsScope<'a>,
     plugins: JsLocal<'a>,
-    names: JsLocal<'a>,
-) -> JsResult<()> {
+    names: Vec<Utf8Bytes<'static>>,
+) {
     let global = cx.global();
-    let mut list: Vec<Box<[u8]>> = Vec::new();
-    let mut iter = names.to_js().array_iterator(global)?;
-    while let Some(name) = iter.next()? {
-        list.push(Box::from(&*name.to_utf8(global)?));
-    }
     let vm = global.bun_vm().as_mut();
     // With none, the server sets up no plugins, unless bunfig.toml has some.
-    if list.is_empty() {
+    if names.is_empty() {
         vm.bake_config_plugins.deinit();
     } else {
         vm.bake_config_plugins.set(global, plugins.to_js());
     }
-    vm.bake_config_plugin_names = list.into_boxed_slice();
-    Ok(())
+    vm.bake_config_plugin_names = names.into_iter().map(|name| Box::from(&*name)).collect();
 }
 
 /// Set in the environment by the first start of `bun bake --check`, so that the process that a

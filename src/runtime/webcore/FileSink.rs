@@ -78,7 +78,7 @@ pub struct FileSink {
 
 // `bun.ptr.RefCount(FileSink, "ref_count", deinit, .{})` — intrusive single-thread
 // refcount derived via #[derive(CellRefCounted)] above. `*FileSink` crosses FFI
-// (JSSink wrapper, `@fieldParentPtr`, `asPromisePtr`), so this stays intrusive
+// (JSSink wrapper, `@fieldParentPtr`, `b.promisePtr`), so this stays intrusive
 // rather than `Rc<T>`.
 
 /// Count of live native FileSink instances. Incremented at allocation,
@@ -1738,31 +1738,29 @@ impl FileSink {
     }
 }
 
-pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
+pub(crate) fn on_resolve_stream(cx: &mut JsScope<'_>, _: JsLocal<'_>, context: *mut FileSink) {
     bun_core::scoped_log!(FileSink, "onResolveStream");
-    let this: *mut FileSink = context.to_js().as_promise_ptr::<FileSink>();
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { RefPtr::from_raw(this) };
-    // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
+    // SAFETY: `context` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { RefPtr::from_raw(context) };
+    // SAFETY: `context` is the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
-        (*this).pump_promise_ref.set(false);
-        (*this).handle_resolve_stream(cx.global());
+        (*context).pump_promise_ref.set(false);
+        (*context).handle_resolve_stream(cx.global());
     }
 }
 
 pub(crate) fn on_reject_stream(
     cx: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    context: JsLocal<'_>,
+    context: *mut FileSink,
 ) -> JsResult<()> {
     bun_core::scoped_log!(FileSink, "onRejectStream");
-    let this: *mut FileSink = context.to_js().as_promise_ptr::<FileSink>();
-    // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
-    let _guard = unsafe { RefPtr::from_raw(this) };
-    // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
+    // SAFETY: `context` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
+    let _guard = unsafe { RefPtr::from_raw(context) };
+    // SAFETY: `context` is the `*mut FileSink` stashed by `assign_to_stream`.
     unsafe {
-        (*this).pump_promise_ref.set(false);
-        (*this).handle_reject_stream(cx.global(), err.to_js())
+        (*context).pump_promise_ref.set(false);
+        (*context).handle_reject_stream(cx.global(), err.to_js())
     }
 }
 

@@ -5,18 +5,23 @@ export default b.module({ rustPath: "crate::test_runner::timers::fake_timers" })
 /** Returns `this`, which is `jest` or `vi`. */
 const chainable = { passThis: true, returns: b.any, capability: "js", throws: true } as const;
 
+export const FakeTimersOptions = b.dictionary({ now: b.f64.allowDate.optional }, { allowArray: true });
+/** Jest 26 took `"modern"` or `"legacy"`. */
+export const FakeTimersArgument = b.union({ implementation: b.string.utf8, options: FakeTimersOptions });
+
 export const useFakeTimers = b.fn({
   ...chainable,
   export: "Bun__FakeTimers__useFakeTimers",
-  args: { options: b.any },
-  length: 0,
+  args: { options: FakeTimersArgument.optional },
+  expected: { options: "useFakeTimers() expects an options object" },
 });
 export const useRealTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__useRealTimers" });
 export const advanceTimersToNextTimer = b.fn({ ...chainable, export: "Bun__FakeTimers__advanceTimersToNextTimer" });
 export const advanceTimersByTime = b.fn({
   ...chainable,
   export: "Bun__FakeTimers__advanceTimersByTime",
-  args: { milliseconds: b.any },
+  args: { milliseconds: b.f64 },
+  expected: { milliseconds: "advanceTimersByTime() expects a number of milliseconds" },
 });
 export const runOnlyPendingTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__runOnlyPendingTimers" });
 export const runAllTimers = b.fn({ ...chainable, export: "Bun__FakeTimers__runAllTimers" });

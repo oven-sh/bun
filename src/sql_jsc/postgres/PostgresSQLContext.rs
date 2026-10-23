@@ -3,7 +3,7 @@
 //! into `RareData.postgres_group`/`postgres_tls_group` instead.
 
 use crate::jsc::{StrongOptional, VirtualMachineSqlExt as _};
-use bun_jsc::bindgen::{JsHeap, JsLocal};
+use bun_jsc::bindgen::{Callable, JsHeap, JsLocal};
 
 #[repr(C)]
 #[derive(Default)]
@@ -16,9 +16,9 @@ pub struct PostgresSQLContext {
 impl PostgresSQLContext {
     pub(crate) fn init<'a>(
         heap: &JsHeap<'a>,
-        on_resolve_query: JsLocal<'a>,
-        on_reject_query: JsLocal<'a>,
-        array_literal: JsLocal<'a>,
+        on_resolve_query: JsLocal<'a, Callable>,
+        on_reject_query: JsLocal<'a, Callable>,
+        array_literal: JsLocal<'a, Callable>,
     ) {
         // SAFETY: setting a `Strong` runs no JavaScript.
         let global = unsafe { heap.global() };

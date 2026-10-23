@@ -22,6 +22,10 @@ template<typename IDL>
 struct IDLHumanReadableName<Bindgen::IDLEmptyStringAsNull<IDL>>
     : IDLHumanReadableName<WebCore::IDLNullable<IDL>> {};
 
+template<typename IDL>
+struct IDLHumanReadableName<Bindgen::IDLNotPassedAsNull<IDL>>
+    : IDLHumanReadableName<IDL> {};
+
 template<HasIDLHumanReadableName IDL>
 struct IDLHumanReadableName<Bindgen::IDLArray<IDL>> : BaseIDLHumanReadableName {
     static constexpr bool hasPreposition = true;
@@ -52,6 +56,18 @@ template<bool allowShared> struct IDLHumanReadableName<Bindgen::IDLRawBufferSour
 
 template<> struct IDLHumanReadableName<Bindgen::IDLRawCallable> : BaseIDLHumanReadableName {
     static constexpr auto humanReadableName = std::to_array("function");
+};
+
+template<> struct IDLHumanReadableName<Bindgen::IDLRawObject> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("object");
+};
+
+template<> struct IDLHumanReadableName<Bindgen::IDLRawArray> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("array");
+};
+
+template<> struct IDLHumanReadableName<Bindgen::IDLStrictUndefined> : BaseIDLHumanReadableName {
+    static constexpr auto humanReadableName = std::to_array("undefined");
 };
 
 template<typename JSClass, auto name> struct IDLHumanReadableName<Bindgen::IDLWrappedInterface<JSClass, name>> : BaseIDLHumanReadableName {
@@ -236,6 +252,38 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawCallable> : Bun::Defaul
     }
 };
 
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawObject> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawObject> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!value.isObject())
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotObject(globalObject, scope);
+    }
+};
+
+template<> struct WebCore::Converter<Bun::Bindgen::IDLRawArray> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawArray> {
+    template<Bun::IDLConversionContext Ctx>
+    static std::optional<JSC::JSValue> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
+    {
+        if (!JSC::isJSArray(value))
+            return std::nullopt;
+        return value;
+    }
+
+    template<Bun::IDLConversionContext Ctx>
+    static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
+    {
+        ctx.throwNotArray(globalObject, scope);
+    }
+};
+
 template<typename JSClass>
 struct WebCore::Converter<Bun::Bindgen::IDLRawInterface<JSClass>> : Bun::DefaultTryConverter<Bun::Bindgen::IDLRawInterface<JSClass>> {
     template<Bun::IDLConversionContext Ctx>
@@ -277,6 +325,14 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLRawAny> : WebCore::Default
     }
 };
 
+// No type test: only the promise calls a reaction, with the context it was given.
+template<> struct WebCore::Converter<Bun::Bindgen::IDLPromisePtr> : WebCore::DefaultConverter<Bun::Bindgen::IDLPromisePtr> {
+    static void* convert(JSC::JSGlobalObject&, JSC::JSValue value)
+    {
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(value.asDouble()));
+    }
+};
+
 template<typename IDL>
 struct WebCore::Converter<Bun::Bindgen::IDLFalsyAsNull<IDL>>
     : Bun::DefaultContextConverter<Bun::Bindgen::IDLFalsyAsNull<IDL>> {
@@ -309,6 +365,21 @@ struct WebCore::Converter<Bun::Bindgen::IDLEmptyStringAsNull<IDL>>
     static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
     {
         if (Bun::Bindgen::isUndefinedOrNullOrEmptyString(value))
+            return IDL::nullValue();
+        return Bun::convertIDL<IDL>(globalObject, value, ctx);
+    }
+};
+
+template<typename IDL>
+struct WebCore::Converter<Bun::Bindgen::IDLNotPassedAsNull<IDL>>
+    : Bun::DefaultContextConverter<Bun::Bindgen::IDLNotPassedAsNull<IDL>> {
+
+    using ReturnType = WebCore::Converter<WebCore::IDLNullable<IDL>>::ReturnType;
+
+    template<Bun::IDLConversionContext Ctx>
+    static ReturnType convert(JSC::JSGlobalObject& globalObject, JSC::JSValue value, Ctx& ctx)
+    {
+        if (value.isEmpty())
             return IDL::nullValue();
         return Bun::convertIDL<IDL>(globalObject, value, ctx);
     }

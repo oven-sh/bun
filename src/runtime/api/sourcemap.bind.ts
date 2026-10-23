@@ -23,4 +23,10 @@ export const SourceMap = b.class({
   },
 });
 
-export const findSourceMap = b.fn({ args: { path: b.any }, returns: b.any, capability: "js", throws: true });
+/** Returns before it looks at `path`: source maps are not enabled. */
+export const findSourceMap = b.fn({
+  args: { path: b.any },
+  returns: SourceMap.optional,
+  capability: "js",
+  throws: true,
+});

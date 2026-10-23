@@ -14,7 +14,6 @@
 //! `bun_jsc`.
 
 use bun_collections::linear_fifo::{LinearFifo, StaticBuffer};
-use bun_jsc::bindgen::JsLocal;
 
 /// A 16-slot static buffer matches the real `weak_refs` FIFO in the dev
 /// server's source-map store and makes `POWERS_OF_TWO` true.
@@ -30,9 +29,7 @@ type ProbeFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
 ///       write 12, read 12, write 8 → head=12 count=8, remove offset 5.
 ///
 /// Any other scenario value returns an empty array.
-pub(crate) fn ordered_remove_probe(scenario: JsLocal<'_>) -> impl Iterator<Item = i32> {
-    let scenario = scenario.to_js().to_int32();
-
+pub(crate) fn ordered_remove_probe(scenario: i32) -> impl Iterator<Item = i32> {
     let mut fifo = ProbeFifo::init();
     match scenario {
         0 => {

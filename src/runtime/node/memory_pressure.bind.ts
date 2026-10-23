@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::node::memory_pressure" });
 
 export const psiTrigger = b.fn({ returns: b.bufferSource.nullable, capability: "heap", throws: true });
 export const psiFilter = b.fn({
-  args: { armed: b.any, polls: b.any.variadic },
+  args: { armed: b.string.loose.utf8, polls: b.any.variadic },
   returns: b.any,
   capability: "js",
   throws: true,

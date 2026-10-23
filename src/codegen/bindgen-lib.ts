@@ -14,6 +14,7 @@ import {
   DictionaryType,
   DoubleType,
   EnumerationType,
+  type EnumerationValues,
   FunctionDefinition,
   type FunctionOptions,
   integers,
@@ -21,6 +22,8 @@ import {
   ModuleDefinition,
   NamespaceDefinition,
   type NamespaceOptions,
+  NativePromiseContextType,
+  PromisePtrType,
   RecordResultType,
   RefType,
   type SignatureOptions,
@@ -32,7 +35,7 @@ import {
 } from "./bindgen-lib-internal.ts";
 
 export type { Capability, Type } from "./bindgen-lib-internal.ts";
-export { null_ as null };
+export { null_ as null, undefined_ as undefined };
 
 /** Strict: only a boolean. `.loose` for `ToBoolean`. */
 export const bool = new BoolType();
@@ -52,6 +55,12 @@ export const any = new AnyType();
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
 export const callable = new CallableType();
 
+/** An object, as a `JsLocal<'a, JSObject>`. */
+export { objectType as object } from "./bindgen-lib-internal.ts";
+
+/** An array, as a `JsLocal<'a, JSArray>`: `b.array(T)` converts its elements. */
+export { jsArrayType as jsArray } from "./bindgen-lib-internal.ts";
+
 /** A typed array, `DataView` or `ArrayBuffer` that is not shared, as a `JsLocal<'a, BufferSource>`. `.arrayBuffer`. */
 export const bufferSource = new BufferSourceType();
 
@@ -68,7 +77,16 @@ export const blob = new RefType(
   null,
 );
 
+/** The context of a promise reaction that `JSValue::then` was given: a `*mut` of the type at `rustPath`. */
+export const promisePtr = (rustPath: string) => new PromisePtrType(rustPath);
+
+/** The context of a promise reaction that is a `NativePromiseContext` cell: what `take` hands back, an `Option<NonNull<..>>` of the type at `rustPath`. */
+export const nativePromiseContext = (rustPath: string) => new NativePromiseContextType(rustPath);
+
+/** `null` or `undefined`, as an alternative of a union. */
 const null_ = new UnitType("null");
+/** `undefined`, as an alternative of a union. */
+const undefined_ = new UnitType("undefined");
 
 export const array = (element: Type) => new ArrayType(element);
 
@@ -77,8 +95,8 @@ export const record = (value: Type) => new RecordResultType(value);
 
 // A named type is called what it is exported as: `export const Formatter = b.enumeration([..])`.
 
-/** An array in place of a value lists several spellings of it; the first is the one given back to JS. */
-export const enumeration = (values: readonly (string | readonly string[])[]) => new EnumerationType(values);
+/** An array in place of a value lists several spellings of it; the first is the one given back to JS. `{ RgbArray: "[rgb]" }` names the variants. */
+export const enumeration = (values: EnumerationValues) => new EnumerationType(values);
 
 export const dictionary = (members: Record<string, Type | MemberOptions>, options?: DictionaryOptions) =>
   new DictionaryType(members, options);
@@ -99,11 +117,13 @@ export const fn = (options: FunctionOptions) => new FunctionDefinition([options]
 export const value = (options: ValueOptions) => new FunctionDefinition([options], {}, true);
 
 /** One JS function, several signatures, told apart by the kinds of their arguments. */
-export const overloads = (...signatures: SignatureOptions[]) => new FunctionDefinition(signatures);
+export const overloads = (...signatures: FunctionOptions[]) => new FunctionDefinition(signatures, signatures[0]);
 
-/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. */
-export const namespace = (functions: Record<string, SignatureOptions>, options?: NamespaceOptions) =>
-  new NamespaceDefinition(functions, options);
+/** `export const semver = b.namespace({ satisfies: { args, returns }, .. })`: an object that holds those functions, or with `{ call: "satisfies" }` a function that does what that one does. An array is the overloads of one function. */
+export const namespace = (
+  functions: Record<string, SignatureOptions | readonly SignatureOptions[]>,
+  options?: NamespaceOptions,
+) => new NamespaceDefinition(functions, options);
 
 /** `export default b.module({ rustPath: "crate::node::os" })`: where the file's Rust functions are. */
 export const module = (options: { rustPath: string }) => new ModuleDefinition(options);

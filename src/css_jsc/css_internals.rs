@@ -1,12 +1,13 @@
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
-use bun_core::String as BunString;
+use bun_css::ParserFlags;
 use bun_css::targets::{Browsers, Targets};
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::bun_string_jsc;
-use bun_jsc::{JSGlobalObject, JSValue};
 
 use crate::JsResult;
+use crate::generated_bindgen::css_internals::{
+    BrowserTargets, CssParserFlag, CssParserOptions, CssTestOutput,
+};
 
 // `adt_const_params` is unstable, so the test kind is passed as a runtime
 // value (the bodies branch on it anyway; no codegen difference for this fn).
@@ -17,126 +18,94 @@ pub(crate) enum TestKind {
     Prefix,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub(crate) enum TestCategory {
-    /// arg is browsers
-    Normal,
-    /// arg is parser options
-    ParserOptions,
-}
-
 pub(crate) fn minify_error_test_with_options<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
-    testing_impl(
-        cx.global(),
-        source,
-        options.to_js(),
-        TestKind::Minify,
-        TestCategory::ParserOptions,
-    )
+    source: &[u8],
+    _: &[u8],
+    options: Option<CssParserOptions>,
+) -> JsResult<CssTestOutput<'a>> {
+    testing_impl(cx, source, None, parser_flags(options), TestKind::Minify)
 }
 
 pub(crate) fn minify_test_with_options<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
-    testing_impl(
-        cx.global(),
-        source,
-        options.to_js(),
-        TestKind::Minify,
-        TestCategory::ParserOptions,
-    )
+    source: &[u8],
+    _: &[u8],
+    options: Option<CssParserOptions>,
+) -> JsResult<CssTestOutput<'a>> {
+    testing_impl(cx, source, None, parser_flags(options), TestKind::Minify)
 }
 
 pub(crate) fn prefix_test_with_options<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
-    testing_impl(
-        cx.global(),
-        source,
-        options.to_js(),
-        TestKind::Prefix,
-        TestCategory::ParserOptions,
-    )
+    source: &[u8],
+    _: &[u8],
+    options: Option<CssParserOptions>,
+) -> JsResult<CssTestOutput<'a>> {
+    testing_impl(cx, source, None, parser_flags(options), TestKind::Prefix)
 }
 
 pub(crate) fn test_with_options<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
-    testing_impl(
-        cx.global(),
-        source,
-        options.to_js(),
-        TestKind::Normal,
-        TestCategory::ParserOptions,
-    )
+    source: &[u8],
+    _: &[u8],
+    options: Option<CssParserOptions>,
+) -> JsResult<CssTestOutput<'a>> {
+    testing_impl(cx, source, None, parser_flags(options), TestKind::Normal)
 }
 
 pub(crate) fn minify_test<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
+    source: &[u8],
+    _: &[u8],
+    options: Option<BrowserTargets>,
+) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
-        cx.global(),
+        cx,
         source,
-        options.to_js(),
+        options,
+        ParserFlags::default(),
         TestKind::Minify,
-        TestCategory::Normal,
     )
 }
 
 pub(crate) fn prefix_test<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
+    source: &[u8],
+    _: &[u8],
+    options: Option<BrowserTargets>,
+) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
-        cx.global(),
+        cx,
         source,
-        options.to_js(),
+        options,
+        ParserFlags::default(),
         TestKind::Prefix,
-        TestCategory::Normal,
     )
 }
 
 pub(crate) fn test<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    options: JsLocal<'a>,
-) -> JsResult<JSValue> {
+    source: &[u8],
+    _: &[u8],
+    options: Option<BrowserTargets>,
+) -> JsResult<CssTestOutput<'a>> {
     testing_impl(
-        cx.global(),
+        cx,
         source,
-        options.to_js(),
+        options,
+        ParserFlags::default(),
         TestKind::Normal,
-        TestCategory::Normal,
     )
 }
 
-fn testing_impl(
-    global: &JSGlobalObject,
-    source: &BunString,
-    options: JSValue,
+fn testing_impl<'a>(
+    cx: &mut JsScope<'a>,
+    source: &[u8],
+    targets: Option<BrowserTargets>,
+    flags: ParserFlags,
     test_kind: TestKind,
-    test_category: TestCategory,
-) -> JsResult<JSValue> {
+) -> JsResult<CssTestOutput<'a>> {
     use bun_ast::ImportRecord;
     use bun_css::{
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
@@ -153,35 +122,17 @@ fn testing_impl(
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
-    let source = source.to_utf8();
-
+    let global = cx.global();
+    let browsers = targets.map(Browsers::from);
     let mut log = Log::init();
 
-    let mut browsers: Option<Browsers> = None;
-    let parser_options = {
-        let mut opts = ParserOptions::default(Some(&mut log));
-        // if (test_kind == .prefix) break :parser_options opts;
-
-        match test_category {
-            TestCategory::Normal => {
-                if options.is_object() {
-                    browsers = Some(targets_from_js(global, options)?);
-                }
-            }
-            TestCategory::ParserOptions => {
-                if options.is_object() {
-                    parser_options_from_js(global, &arena, &mut opts, options)?;
-                }
-            }
-        }
-
-        opts
-    };
+    let mut parser_options = ParserOptions::default(Some(&mut log));
+    parser_options.flags |= flags;
 
     let mut import_records = Vec::<ImportRecord>::default();
     match StyleSheet::<DefaultAtRule>::parse(
         alloc,
-        source.slice(),
+        source,
         parser_options,
         Some(&mut import_records),
         bun_ast::Index::INVALID,
@@ -227,82 +178,54 @@ fn testing_impl(
                 }
             };
 
-            bun_string_jsc::create_utf8_for_js(global, &result.code)
+            Ok(CssTestOutput::Code(result.code))
         }
         Err(err) => {
             if log.has_errors() {
-                return log.to_js(global, format_args!("parsing failed:"));
+                let errors = log.to_js(global, format_args!("parsing failed:"))?;
+                return Ok(CssTestOutput::Failure(JsLocal::new(&cx.heap, errors)));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }
     }
 }
 
-fn parser_options_from_js(
-    global: &JSGlobalObject,
-    _arena: &Arena,
-    opts: &mut bun_css::ParserOptions,
-    jsobj: JSValue,
-) -> JsResult<()> {
-    if let Some(val) = jsobj.get_truthy(global, b"flags")? {
-        if val.is_array() {
-            let mut iter = val.array_iterator(global)?;
-            while let Some(item) = iter.next()? {
-                let bunstr = item.to_bun_string(global)?;
-                let str = bunstr.to_utf8();
-                if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
-                    opts.flags |= bun_css::ParserFlags::DEEP_SELECTOR_COMBINATOR;
-                } else {
-                    return Err(global.throw(format_args!(
-                        "invalid flag: {}",
-                        bstr::BStr::new(str.slice())
-                    )));
-                }
-            }
-        } else {
-            return Err(global.throw(format_args!("flags must be an array")));
+fn parser_flags(options: Option<CssParserOptions>) -> ParserFlags {
+    let mut flags = ParserFlags::default();
+    for flag in options
+        .and_then(|options| options.flags)
+        .unwrap_or_default()
+    {
+        match flag {
+            CssParserFlag::DeepSelectorCombinator => flags |= ParserFlags::DEEP_SELECTOR_COMBINATOR,
         }
     }
-
-    Ok(())
+    flags
 }
 
-fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
-    let mut targets = Browsers::default();
-
-    // Table-driven loop. Key order matters: it determines JS getter/exception
-    // ordering.
-    for (key, slot) in [
-        ("android", &mut targets.android),
-        ("chrome", &mut targets.chrome),
-        ("edge", &mut targets.edge),
-        ("firefox", &mut targets.firefox),
-        ("ie", &mut targets.ie),
-        ("ios_saf", &mut targets.ios_saf),
-        ("opera", &mut targets.opera),
-        ("safari", &mut targets.safari),
-        ("samsung", &mut targets.samsung),
-    ] {
-        if let Some(val) = jsobj.get_truthy(global, key)? {
-            if val.is_int32() {
-                if let Some(value) = val.get_number() {
-                    // `as` saturates on overflow/NaN
-                    *slot = Some(value as u32);
-                }
-            }
+impl From<BrowserTargets> for Browsers {
+    fn from(targets: BrowserTargets) -> Self {
+        Browsers {
+            android: targets.android,
+            chrome: targets.chrome,
+            edge: targets.edge,
+            firefox: targets.firefox,
+            ie: targets.ie,
+            ios_saf: targets.ios_saf,
+            opera: targets.opera,
+            safari: targets.safari,
+            samsung: targets.samsung,
         }
     }
-
-    Ok(targets)
 }
 
 pub(crate) fn attr_test<'a>(
     cx: &mut JsScope<'a>,
-    source: &BunString,
-    _: &BunString,
-    minify: JsLocal<'a>,
-    targets: JsLocal<'a>,
-) -> JsResult<JSValue> {
+    source: &[u8],
+    _: &[u8],
+    minify: bool,
+    targets: Option<BrowserTargets>,
+) -> JsResult<CssTestOutput<'a>> {
     use bun_ast::ImportRecord;
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
@@ -320,16 +243,10 @@ pub(crate) fn attr_test<'a>(
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
     let global = cx.global();
-    let source = source.to_utf8();
-
-    let minify_arg = minify.to_js();
-    let minify = minify_arg.is_boolean() && minify_arg.to_boolean();
-
-    let targets_arg = targets.to_js();
-    let mut targets = Targets::default();
-    if targets_arg.is_object() {
-        targets.browsers = Some(targets_from_js(global, targets_arg)?);
-    }
+    let targets = Targets {
+        browsers: targets.map(Browsers::from),
+        ..Default::default()
+    };
 
     let mut log = Log::init();
 
@@ -338,7 +255,7 @@ pub(crate) fn attr_test<'a>(
     let mut import_records = Vec::<ImportRecord>::default();
     match StyleAttribute::parse(
         alloc,
-        source.slice(),
+        source,
         &parser_options,
         &mut import_records,
         bun_ast::Index::INVALID,
@@ -365,15 +282,16 @@ pub(crate) fn attr_test<'a>(
                 Ok(r) => r,
                 Err(_e) => {
                     // The error is intentionally swallowed here.
-                    return Ok(JSValue::UNDEFINED);
+                    return Ok(CssTestOutput::Failure(JsLocal::UNDEFINED));
                 }
             };
 
-            bun_string_jsc::create_utf8_for_js(global, &result.code)
+            Ok(CssTestOutput::Code(result.code))
         }
         Err(err) => {
             if log.has_any() {
-                return log.to_js(global, format_args!("parsing failed:"));
+                let errors = log.to_js(global, format_args!("parsing failed:"))?;
+                return Ok(CssTestOutput::Failure(JsLocal::new(&cx.heap, errors)));
             }
             Err(global.throw(format_args!("parsing failed: {}", err.kind)))
         }

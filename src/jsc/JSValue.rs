@@ -76,8 +76,8 @@ impl JSValue {
     }
 
     /// `JSValue.fromPtrAddress` — encode an arbitrary native pointer as a JS
-    /// number (round-trips via `as_promise_ptr`). Used to smuggle a `*mut T`
-    /// context through `Promise.then` reaction arguments.
+    /// number. Used to smuggle a `*mut T` context through `Promise.then`
+    /// reaction arguments, which a reaction takes as `b.promisePtr`.
     #[inline]
     pub fn from_ptr_address(addr: usize) -> JSValue {
         // Always double-encoded via `jsDoubleNumber` (never the int32 fast
@@ -90,13 +90,6 @@ impl JSValue {
     #[inline]
     pub fn as_ptr_address(self) -> usize {
         self.as_number() as usize
-    }
-
-    /// `JSValue.asPromisePtr` — decode a `*mut T` smuggled
-    /// through [`from_ptr_address`] as the trailing `.then` reaction argument.
-    #[inline]
-    pub fn as_promise_ptr<T>(self) -> *mut T {
-        self.as_ptr_address() as *mut T
     }
 
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as

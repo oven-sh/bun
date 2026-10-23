@@ -7,7 +7,8 @@ export const binding = b.value({ returns: b.any, capability: "js", throws: true 
 
 export const setCallbacks = b.fn({
   export: "Bun__NodeQuicBinding__setCallbacks",
-  args: { callbacks: b.any },
+  args: { callbacks: b.object },
+  expected: { callbacks: ["object"] },
   capability: "js",
   throws: true,
 });

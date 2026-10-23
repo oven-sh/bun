@@ -2,7 +2,7 @@
 //! `internalBinding('quic')` (reference: node/src/quic/*, v26.3.0).
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_jsc::{self as jsc, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{self as jsc, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult, StringJsc};
 
 use super::quic::{callbacks, endpoint, session, stream};
 
@@ -33,7 +33,10 @@ const QUIC_CALLBACK_NAMES: &[&str] = &[
     "StreamTrailers",
 ];
 
-pub(crate) fn set_callbacks<'a>(cx: &mut JsScope<'a>, callbacks: JsLocal<'a>) -> JsResult<()> {
+pub(crate) fn set_callbacks<'a>(
+    cx: &mut JsScope<'a>,
+    callbacks: JsLocal<'a, JSObject>,
+) -> JsResult<()> {
     let global = cx.global();
     // Only the first call takes effect; subsequent calls are ignored
     // (node/src/quic/bindingdata.cc `BindingData::SetCallbacks`).
@@ -48,14 +51,6 @@ pub(crate) fn set_callbacks<'a>(cx: &mut JsScope<'a>, callbacks: JsLocal<'a>) ->
         return Ok(());
     }
     let callbacks_obj = callbacks.to_js();
-    if !callbacks_obj.is_object() {
-        return Err(global
-            .err(
-                jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("The \"callbacks\" argument must be of type object"),
-            )
-            .throw());
-    }
     let mut name = String::with_capacity(32);
     for key in QUIC_CALLBACK_NAMES {
         name.clear();

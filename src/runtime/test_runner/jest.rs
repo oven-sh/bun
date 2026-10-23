@@ -5,7 +5,7 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -19,7 +19,7 @@ use crate::generated_bindgen::bun_test::{
     Bun__BunTest__beforeEach, Bun__BunTest__onTestFinished,
 };
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
-use crate::generated_bindgen::jest::Bun__Jest__setDefaultTimeout;
+use crate::generated_bindgen::jest::{Bun__Jest__setDefaultTimeout, TestFilePath};
 use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
 use super::timers::fake_timers;
@@ -473,25 +473,21 @@ pub(crate) mod Jest {
 }
 
 /// `Bun.jest(path)`
-pub(crate) fn jest(cx: &mut JsScope<'_>, path: JsLocal<'_>) -> JsResult<JSValue> {
+pub(crate) fn jest(cx: &mut JsScope<'_>, path: TestFilePath<'_>) -> JsResult<JSValue> {
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
     if vm.is_in_preload || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
-        let path = path.to_js();
-
-        if !path.is_string() {
+        let TestFilePath::Path(path) = path else {
             return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
-        }
-        let str = path.to_utf8(global_object)?;
-        let slice = str.slice();
+        };
 
-        if !bun_paths::is_absolute(slice) {
+        if !bun_paths::is_absolute(path) {
             return Err(global_object.throw(format_args!(
                 "Bun.jest() expects an absolute file path, got '{}'",
-                bstr::BStr::new(slice)
+                bstr::BStr::new(path)
             )));
         }
     }
@@ -502,23 +498,12 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: JsLocal<'_>) -> JsResult<JSValue>
 }
 
 /// `setDefaultTimeout(milliseconds)` and `jest.setTimeout(milliseconds)`
-pub(crate) fn set_default_timeout(heap: &JsHeap<'_>, milliseconds: JsLocal<'_>) -> JsResult<()> {
-    // SAFETY: `ToInt32` of a number runs no JavaScript.
-    let global_object = unsafe { heap.global() };
-    let milliseconds = milliseconds.to_js();
-    if !milliseconds.is_number() {
-        return Err(
-            global_object.throw(format_args!("setTimeout() expects a number (milliseconds)"))
-        );
-    }
-
-    let timeout_ms: u32 = u32::try_from(milliseconds.coerce::<i32>(global_object)?.max(0)).unwrap();
+pub(crate) fn set_default_timeout(milliseconds: f64) {
+    let timeout_ms: u32 = u32::try_from((milliseconds as i32).max(0)).unwrap();
 
     if let Some(test_runner) = Jest::runner() {
         test_runner.default_timeout_override = timeout_ms;
     }
-
-    Ok(())
 }
 
 /// Reached only from `node:test`, through `$bindgen` rather than the

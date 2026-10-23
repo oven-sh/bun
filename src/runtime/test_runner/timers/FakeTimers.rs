@@ -6,7 +6,7 @@ use crate::generated_bindgen::fake_timers::{
     Bun__FakeTimers__advanceTimersByTime, Bun__FakeTimers__advanceTimersToNextTimer,
     Bun__FakeTimers__clearAllTimers, Bun__FakeTimers__getTimerCount, Bun__FakeTimers__isFakeTimers,
     Bun__FakeTimers__runAllTimers, Bun__FakeTimers__runOnlyPendingTimers,
-    Bun__FakeTimers__useFakeTimers, Bun__FakeTimers__useRealTimers,
+    Bun__FakeTimers__useFakeTimers, Bun__FakeTimers__useRealTimers, FakeTimersArgument,
 };
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::timer::{
@@ -341,38 +341,23 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) -> JsResult<()>
 pub(crate) fn use_fake_timers(
     cx: &mut JsScope<'_>,
     this_value: JsLocal<'_>,
-    options: JsLocal<'_>,
+    options: Option<FakeTimersArgument<'_>>,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
 
-    // Check if options object was provided
-    let options_value = options.to_js();
-    if !options_value.is_undefined() {
-        if options_value.is_string() {
-            // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
-        } else if !options_value.is_object() {
+    // Jest 26 compat: useFakeTimers("modern" | "legacy") is a no-op.
+    if let Some(FakeTimersArgument::Options(options)) = options
+        && let Some(now) = options.now
+    {
+        // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
+        if !now.is_finite() {
             return Err(global.throw_invalid_arguments(format_args!(
-                "useFakeTimers() expects an options object"
+                "'now' must be a finite number or a valid Date"
             )));
-        } else if let Some(now) = options_value.get(global, "now")? {
-            if now.is_number() {
-                js_now = now.as_number();
-            } else if now.is_date() {
-                js_now = now.get_unix_timestamp();
-            } else {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a number or Date"
-                )));
-            }
-            // NaN is `JSGlobalObject::overridenDateNow`'s "no override" sentinel.
-            if !js_now.is_finite() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'now' must be a finite number or a valid Date"
-                )));
-            }
         }
+        js_now = now;
     }
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
@@ -422,35 +407,28 @@ pub(crate) fn advance_timers_to_next_timer(
 pub(crate) fn advance_timers_by_time(
     cx: &mut JsScope<'_>,
     this_value: JsLocal<'_>,
-    milliseconds: JsLocal<'_>,
+    milliseconds: f64,
 ) -> JsResult<JSValue> {
     let global = cx.global();
     error_unless_fake_timers(global)?;
 
-    let arg = milliseconds.to_js();
-    if !arg.is_number() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "advanceTimersByTime() expects a number of milliseconds"
-        )));
-    }
     // SAFETY: per-thread `timer::All`, live for the VM lifetime.
     let Some(current) = (unsafe { (*timer_all()).fake_timers.now }) else {
         return Err(global.throw_invalid_arguments(format_args!(
             "Fake timers not initialized. Initialize with useFakeTimers() first."
         )));
     };
-    let arg_number = arg.as_number();
     let max_advance = u32::MAX;
-    if arg_number.is_nan() || arg_number < 0.0 || arg_number > max_advance as f64 {
+    if milliseconds.is_nan() || milliseconds < 0.0 || milliseconds > max_advance as f64 {
         return Err(global.throw_invalid_arguments(format_args!(
             "advanceTimersByTime() ms is out of range. It must be >= 0 and <= {}. Received {:.0}",
-            max_advance, arg_number
+            max_advance, milliseconds
         )));
     }
     // When advanceTimersByTime(0) is called, advance by 1ms to fire setTimeout(fn, 0) timers.
     // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
     // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
-    let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
+    let effective_advance = if milliseconds == 0.0 { 1.0 } else { milliseconds };
     let target = current.add_ms_float(effective_advance);
 
     let advanced = FakeTimers::execute_until(global, target);

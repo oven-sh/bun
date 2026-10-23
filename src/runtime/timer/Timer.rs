@@ -9,7 +9,7 @@
 
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{self, JsHeap};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
@@ -581,17 +581,29 @@ pub(crate) mod internal_bindings {
     }
 
     /// Implements `timerInternals.setNextTimerId(id)`. The id can only increase, so ids never repeat.
-    pub(crate) fn set_next_timer_id<'a>(cx: &mut JsScope<'a>, id: JsLocal<'a>) -> JsResult<()> {
+    pub(crate) fn set_next_timer_id<'a>(
+        heap: &JsHeap<'a>,
+        id: Option<u64>,
+    ) -> bindgen::Result<'a, ()> {
+        let Some(id) = id else { return Ok(()) };
         let current = timer_all_mut().last_id;
-        let id = cx.global().validate_integer_range::<u64>(
-            id.to_js(),
-            current,
-            bun_jsc::IntegerRange {
-                min: i128::from(current),
-                max: i128::from(All::MAX_ID),
-                field_name: b"id",
-            },
-        )?;
+        if id < current {
+            return Err(heap.error_with_code(
+                bun_jsc::ErrorCode::OUT_OF_RANGE,
+                format_args!(
+                    "{}",
+                    bun_core::fmt::out_of_range(
+                        id as i64,
+                        bun_core::fmt::OutOfRangeOptions {
+                            field_name: b"id",
+                            min: current as i64,
+                            max: All::MAX_ID as i64,
+                            ..Default::default()
+                        },
+                    )
+                ),
+            ));
+        }
         timer_all_mut().last_id = id;
         Ok(())
     }

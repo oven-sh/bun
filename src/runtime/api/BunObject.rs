@@ -67,8 +67,8 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, ConsoleObject, ErrorCode, JSFunction, JSGlobalObject, JSObject,
-    JSPromise, JSString, JSValue, JsResult,
+    self as jsc, ArrayBuffer, ConsoleObject, ErrorCode, JSArray, JSFunction, JSGlobalObject,
+    JSObject, JSPromise, JSString, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
@@ -86,7 +86,8 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, MMapOptions,
+    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectDepth,
+    InspectOptions, InspectOptionsOrDepth, InspectOptionsOrIgnored, MMapOptions, TabularData,
     WhichOptions, ZlibCompressionOptions, ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
@@ -335,32 +336,56 @@ pub(crate) fn which<'a>(
         .transpose()
 }
 
-/// `Bun.inspect.table`
-pub(crate) fn table(
+fn apply_inspect_options(
+    format_options: &mut ConsoleObject::FormatOptions,
+    global_this: &JSGlobalObject,
+    options: &InspectOptions<'_>,
+) -> JsResult<()> {
+    if let InspectDepth::Number(depth) = options.depth {
+        format_options.set_depth(global_this, depth)?;
+    }
+    if let Some(colors) = options.colors {
+        format_options.enable_colors = colors;
+    }
+    if let Some(sorted) = options.sorted {
+        format_options.ordered_properties = sorted;
+    }
+    if let Some(compact) = options.compact {
+        format_options.single_line = compact;
+    }
+    Ok(())
+}
+
+/// `Bun.inspect.table(tabularData, options)`
+pub(crate) fn table<'a>(
+    cx: &mut JsScope<'a>,
+    tabular_data: TabularData<'a>,
+    options: InspectOptionsOrIgnored<'a>,
+) -> JsResult<Vec<u8>> {
+    print_table(cx, tabular_data, JSValue::UNDEFINED, options)
+}
+
+/// `Bun.inspect.table(tabularData, properties, options)`
+pub(crate) fn table_with_properties<'a>(
+    cx: &mut JsScope<'a>,
+    tabular_data: TabularData<'a>,
+    properties: JsLocal<'a, JSArray>,
+    options: InspectOptionsOrIgnored<'a>,
+) -> JsResult<Vec<u8>> {
+    print_table(cx, tabular_data, properties.to_js(), options)
+}
+
+fn print_table(
     cx: &mut JsScope<'_>,
-    tabular_data: JsLocal<'_>,
-    properties: JsLocal<'_>,
-    options: JsLocal<'_>,
+    tabular_data: TabularData<'_>,
+    properties: JSValue,
+    options: InspectOptionsOrIgnored<'_>,
 ) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let mut all_arguments = [tabular_data.to_js(), properties.to_js(), options.to_js()];
-    if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
+    let TabularData::Object(value) = tabular_data else {
         return Ok(Vec::new());
-    }
-
-    // NOTE: protect/unprotect over a copied [JSValue; 3]; the borrow of
-    // `all_arguments` cannot escape into a guard closure, so copy out into an
-    // array of RAII guards.
-    let _prot: [bun_jsc::ProtectedJSValue; 3] =
-        core::array::from_fn(|i| all_arguments[i].protected());
-
-    let arguments = &mut all_arguments[..];
-    let value = arguments[0];
-
-    if !arguments[1].is_array() {
-        arguments[2] = arguments[1];
-        arguments[1] = JSValue::UNDEFINED;
-    }
+    };
+    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -372,18 +397,13 @@ pub(crate) fn table(
         single_line: true,
         ..Default::default()
     };
-    if arguments[2].is_object() {
-        format_options.from_js(global_this, &arguments[2..])?;
+    if let InspectOptionsOrIgnored::Options(options) = options {
+        apply_inspect_options(&mut format_options, global_this, &options)?;
     }
 
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
-    let properties: JSValue = if arguments[1].js_type().is_array() {
-        arguments[1]
-    } else {
-        JSValue::UNDEFINED
-    };
     let mut table_printer = ConsoleObject::TablePrinter::init(
         global_this,
         ConsoleObject::MessageLevel::Log,
@@ -409,32 +429,17 @@ pub(crate) fn table(
     Ok(array)
 }
 
-pub(crate) fn inspect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<Vec<u8>> {
+pub(crate) fn inspect<'a>(
+    cx: &mut JsScope<'a>,
+    value: Option<JsLocal<'a>>,
+    options: InspectOptionsOrDepth<'a>,
+    colors: Option<bool>,
+) -> JsResult<Vec<u8>> {
     let global_this = cx.global();
-    let arguments = JsLocal::to_js_slice(args);
-    if arguments.is_empty() {
+    let Some(value) = value else {
         return Ok(Vec::new());
-    }
-
-    for arg in arguments {
-        arg.protect();
-    }
-    // Each arg is unprotected on scope exit.
-    // `arguments()` borrows the call-frame slot array; wrap the borrowed slice
-    // in the guard instead of heap-allocating a `Vec` per call.
-    //
-    // NOTE: this is *not* the fix for error-gc-test.test.js timing out under
-    // debug+ASAN — that test does 100k `Bun.inspect(new Error)` and the cost
-    // is spread across ASAN-instrumented memcpy/memset, mimalloc zero-checks
-    // and the source-file re-read in `remap_zig_exception`, none of which a
-    // 32-byte alloc elision can recover. The test is classified `[TIMEOUT]`
-    // for ASAN in test/expectations.txt instead.
-    let args_buf = scopeguard::guard(arguments, |buf| {
-        for arg in buf {
-            arg.unprotect();
-        }
-    });
-    let arguments = *args_buf;
+    };
+    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -445,8 +450,15 @@ pub(crate) fn inspect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<Ve
         ordered_properties: false,
         ..Default::default()
     };
-    if arguments.len() > 1 {
-        format_options.from_js(global_this, &arguments[1..])?;
+    match options {
+        InspectOptionsOrDepth::Options(options) => {
+            apply_inspect_options(&mut format_options, global_this, &options)?;
+        }
+        InspectOptionsOrDepth::Depth(depth) => {
+            format_options.set_depth(global_this, depth)?;
+            format_options.enable_colors = colors.unwrap_or(false);
+        }
+        InspectOptionsOrDepth::Ignored(_) => format_options.enable_colors = colors.unwrap_or(false),
     }
 
     // very stable memory address
@@ -456,7 +468,7 @@ pub(crate) fn inspect(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<Ve
     ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        &arguments[..1],
+        core::slice::from_ref(&value),
         &mut array,
         format_options,
     )?;
@@ -798,40 +810,8 @@ pub(crate) fn shrink(cx: &mut JsScope<'_>) {
     cx.global().vm().shrink_footprint();
 }
 
-fn do_resolve(
-    global_this: &JSGlobalObject,
-    specifier: JSValue,
-    from: JSValue,
-    esm: JSValue,
-) -> JsResult<JSValue> {
-    if specifier.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
-    }
-
-    if from.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
-    }
-
-    let mut mode = ResolveMode::Esm;
-    if !esm.is_undefined() {
-        if esm.is_boolean() {
-            mode = if esm.to_boolean() {
-                ResolveMode::Esm
-            } else {
-                ResolveMode::Require
-            };
-        } else {
-            return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
-        }
-    }
-
-    let specifier_str = specifier.to_bun_string(global_this)?;
-    let from_str = from.to_bun_string(global_this)?;
-    do_resolve_with_args::<false>(global_this, &specifier_str, &from_str, mode)
-}
-
 enum Resolved {
-    Found(JSValue),
+    Found(BunString),
     /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
     NotFound(JSValue),
 }
@@ -841,7 +821,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     specifier: &BunString,
     from: &BunString,
     mode: ResolveMode,
-) -> JsResult<JSValue> {
+) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
@@ -884,39 +864,45 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(
-            ctx, &arraylist,
-        )?));
+        return Ok(Resolved::Found(BunString::clone_utf8(&arraylist)));
     }
 
-    Ok(Resolved::Found(result_value.into_js(ctx)?))
+    Ok(Resolved::Found(result_value))
 }
 
 pub(crate) fn resolve_sync(
     cx: &mut JsScope<'_>,
-    specifier: JsLocal<'_>,
-    from: JsLocal<'_>,
-    esm: JsLocal<'_>,
-) -> JsResult<JSValue> {
-    do_resolve(cx.global(), specifier.to_js(), from.to_js(), esm.to_js())
+    specifier: Option<BunString>,
+    from: Option<BunString>,
+    esm: bool,
+) -> JsResult<BunString> {
+    let global_this = cx.global();
+    let Some(specifier) = specifier else {
+        return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
+    };
+    let Some(from) = from else {
+        return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
+    };
+    let mode = if esm {
+        ResolveMode::Esm
+    } else {
+        ResolveMode::Require
+    };
+    do_resolve_with_args::<false>(global_this, &specifier, &from, mode)
 }
 
 pub(crate) fn resolve(
     cx: &mut JsScope<'_>,
-    specifier: JsLocal<'_>,
-    from: JsLocal<'_>,
-    esm: JsLocal<'_>,
+    specifier: Option<BunString>,
+    from: Option<BunString>,
+    esm: bool,
 ) -> JsResult<JSValue> {
+    let resolved = resolve_sync(cx, specifier, from, esm)?;
     let global_object = cx.global();
-    let value = match do_resolve(global_object, specifier.to_js(), from.to_js(), esm.to_js()) {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(
-                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
-            );
-        }
-    };
-    Ok(JSPromise::resolved_promise_value(global_object, value))
+    Ok(JSPromise::resolved_promise_value(
+        global_object,
+        resolved.into_js(global_object)?,
+    ))
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)
@@ -951,7 +937,8 @@ pub(crate) fn bun_resolve_sync(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1014,7 +1001,8 @@ pub(crate) fn bun_resolve_sync_with_paths(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1039,7 +1027,8 @@ pub(crate) fn bun_resolve_sync_with_strings(
             specifier,
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1058,16 +1047,15 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
-        resolve_with_args::<true>(
+        match resolve_with_args::<true>(
             global,
             &specifier_str,
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
-        )
-        .map(|r| match r {
-            Resolved::Found(value) => value,
-            Resolved::NotFound(_) => JSValue::UNDEFINED,
-        })
+        )? {
+            Resolved::Found(value) => value.into_js(global),
+            Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),
+        }
     })
 }
 

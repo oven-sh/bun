@@ -12,7 +12,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_ptr::RefPtr;
 
-use crate::api::bun::subprocess::Subprocess;
+use crate::generated_bindgen::ipc_host::{MessageTarget, ReceivedMessage};
 use crate::socket::Listener;
 
 bun_core::define_scoped_log!(log, IPC, visible);
@@ -296,50 +296,50 @@ pub(crate) fn do_send(
 
 pub(crate) fn emit_handle_ipc_message<'a>(
     cx: &mut JsScope<'a>,
-    target: JsLocal<'a>,
-    message: JsLocal<'a>,
+    target: MessageTarget<'a>,
+    message: ReceivedMessage<'a>,
     handle: JsLocal<'a>,
 ) -> JsResult<()> {
     let global_this = cx.global();
-    let [target, message, handle] = [target.to_js(), message.to_js(), handle.to_js()];
-    if target.is_null() {
-        // Cluster-internal replies that carried a descriptor (shared dgram
-        // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
-        // the cluster's internal-message dispatcher instead of emitting a
-        // process 'message' event, mirroring Node's NODE_-prefix routing.
-        if message.is_object() {
-            if let Some(cmd) = message.get(global_this, "cmd")? {
-                if cmd.is_string() {
-                    let cmd_str = cmd.to_bun_string(global_this)?;
-                    if cmd_str.eq_ascii(b"NODE_CLUSTER") {
-                        crate::node::node_cluster_binding::handle_internal_message_child(
-                            global_this,
-                            message,
-                            handle,
-                        )?;
-                        return Ok(());
+    let handle = handle.to_js();
+    let (message, is_object) = match message {
+        ReceivedMessage::Object(object) => (object.to_js(), true),
+        ReceivedMessage::Primitive(primitive) => (primitive.to_js(), false),
+    };
+    match target {
+        MessageTarget::Subprocess(subprocess) => {
+            subprocess.handle_ipc_message(&DecodedIPCMessage::Data(message), handle)?;
+        }
+        MessageTarget::Absent | MessageTarget::Ignored(_) => {}
+        MessageTarget::ThisProcess => {
+            // Cluster-internal replies that carried a descriptor (shared dgram
+            // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
+            // the cluster's internal-message dispatcher instead of emitting a
+            // process 'message' event, mirroring Node's NODE_-prefix routing.
+            if is_object {
+                if let Some(cmd) = message.get(global_this, "cmd")? {
+                    if cmd.is_string() {
+                        let cmd_str = cmd.to_bun_string(global_this)?;
+                        if cmd_str.eq_ascii(b"NODE_CLUSTER") {
+                            crate::node::node_cluster_binding::handle_internal_message_child(
+                                global_this,
+                                message,
+                                handle,
+                            )?;
+                            return Ok(());
+                        }
                     }
                 }
             }
+            let vm = global_this.bun_vm().as_mut();
+            let Some(ipc) = get_ipc_instance(vm) else {
+                // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
+                Process__emitMessageEvent(global_this, message, handle);
+                return Ok(());
+            };
+            // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
+            unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
         }
-        let vm = global_this.bun_vm().as_mut();
-        let Some(ipc) = get_ipc_instance(vm) else {
-            // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
-            Process__emitMessageEvent(global_this, message, handle);
-            return Ok(());
-        };
-        // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
-    } else {
-        if !target.is_cell() {
-            return Ok(());
-        }
-        let Some(subprocess) = Subprocess::from_js_direct(target) else {
-            return Ok(());
-        };
-        // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
-        // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) }?;
     }
     Ok(())
 }

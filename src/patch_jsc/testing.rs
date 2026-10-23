@@ -1,7 +1,7 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
-use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, SysErrorJsc};
+use bun_jsc::bindgen::{JsHeap, JsScope};
+use bun_jsc::{JsResult, SysErrorJsc};
 use bun_patch::{ApplyError, ParseErr, ParseErrAt, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
@@ -27,18 +27,35 @@ pub(crate) fn make_diff(
     })
 }
 
-pub(crate) fn apply<'a>(
-    cx: &mut JsScope<'a>,
-    patchfile: JsLocal<'a>,
-    dir: JsLocal<'a>,
-) -> JsResult<bool> {
+pub(crate) fn apply(cx: &mut JsScope<'_>, patchfile: &[u8], dir: Option<&[u8]>) -> JsResult<bool> {
     let global = cx.global();
-    let args = parse_apply_args(global, patchfile.to_js(), dir.to_js())?;
+    let dir = match dir {
+        Some(path) => {
+            let path = bun_jsc::String::borrow_utf8(path).to_owned_slice_z();
 
-    let patchfile: PatchFile<'_> =
-        parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
+            match bun_sys::open(
+                path.as_zstr(),
+                bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
+                0,
+            ) {
+                Err(e) => {
+                    let js_err = SysErrorJsc::to_js(&e.with_path(path.as_bytes()), global);
+                    return Err(global.throw_value(js_err));
+                }
+                Ok(fd) => ApplyDir(fd),
+            }
+        }
+        None => ApplyDir(Fd::cwd()),
+    };
 
-    match patchfile.apply(args.dirfd) {
+    let patchfile: PatchFile<'_> = match parse_patch_file(patchfile) {
+        Ok(patchfile) => patchfile,
+        Err(ParseErrAt { err: e, .. }) => {
+            return Err(global.throw_error(bun_patch::Error::from(e), "failed to parse patchfile"));
+        }
+    };
+
+    match patchfile.apply(dir.0) {
         Ok(()) => {}
         Err(ApplyError::Sys(err)) => {
             return Err(global.throw_value(SysErrorJsc::to_js(&err, global)));
@@ -76,73 +93,13 @@ pub(crate) fn parse(heap: &JsHeap<'_>, patchfile_src: &[u8]) -> JsResult<Vec<u8>
     Ok(str)
 }
 
-pub(crate) fn parse_apply_args(
-    global: &JSGlobalObject,
-    patchfile_js: JSValue,
-    dir_js: JSValue,
-) -> JsResult<ApplyArgs> {
-    let dir_fd = if !dir_js.is_undefined() {
-        let bunstr = dir_js.to_bun_string(global)?;
-        let path = bunstr.to_owned_slice_z();
+struct ApplyDir(Fd);
 
-        match bun_sys::open(
-            path.as_zstr(),
-            bun_sys::O::DIRECTORY | bun_sys::O::RDONLY,
-            0,
-        ) {
-            Err(e) => {
-                let js_err = SysErrorJsc::to_js(&e.with_path(path.as_bytes()), global);
-                return Err(global.throw_value(js_err));
-            }
-            Ok(fd) => fd,
-        }
-    } else {
-        Fd::cwd()
-    };
-
-    let patchfile_bunstr = match patchfile_js.to_bun_string(global) {
-        Ok(bunstr) => bunstr,
-        Err(e) => {
-            if Fd::cwd() != dir_fd {
-                dir_fd.close();
-            }
-            return Err(e);
-        }
-    };
-    let patchfile_src = patchfile_bunstr.to_utf8();
-
-    // Validate the patch parses; on failure, clean up `dir_fd` and throw.
-    // The parsed `PatchFile<'_>` borrows `patchfile_src`, so it cannot be
-    // returned alongside its source without a self-referential struct
-    // (forbidden by PORTING.md). We discard it here; `apply()` reparses
-    // from the owned bytes below.
-    if let Err(ParseErrAt { err: e, .. }) = parse_patch_file(patchfile_src.slice()) {
-        // TODO: HAVE @zackradisic REVIEW THIS DIFF
-        if Fd::cwd() != dir_fd {
-            dir_fd.close();
-        }
-
-        drop(patchfile_src);
-        return Err(global.throw_error(bun_patch::Error::from(e), "failed to parse patchfile"));
-    }
-
-    Ok(ApplyArgs {
-        dirfd: dir_fd,
-        patchfile_txt: patchfile_src.into_vec(),
-    })
-}
-
-pub(crate) struct ApplyArgs {
-    patchfile_txt: Vec<u8>,
-    dirfd: Fd,
-}
-
-impl Drop for ApplyArgs {
+impl Drop for ApplyDir {
     fn drop(&mut self) {
-        // patchfile_txt freed by its own Drop impl.
         // TODO: HAVE @zackradisic REVIEW THIS DIFF
-        if Fd::cwd() != self.dirfd {
-            self.dirfd.close();
+        if Fd::cwd() != self.0 {
+            self.0.close();
         }
     }
 }

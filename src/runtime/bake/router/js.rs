@@ -10,6 +10,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional};
 use bun_paths as paths;
 
 use super::*;
+use crate::generated_bindgen::framework_router::{RoutePattern, RoutePatternKind};
 
 /// This binding is currently only intended for testing FrameworkRouter, and not
 /// production usage. It uses a slower but easier to use pattern for object
@@ -221,22 +222,16 @@ impl JSFrameworkRouter {
     pub(crate) fn parse_route_pattern<'a>(
         cx: &mut JsScope<'a>,
         style: JsLocal<'a>,
-        filepath: JsLocal<'a>,
-    ) -> JsResult<JSValue> {
+        filepath: &[u8],
+    ) -> JsResult<Option<RoutePattern>> {
         let global = cx.global();
         let arena = Arena::new();
 
-        let filepath = filepath.to_js().to_utf8(global)?;
         let style = Style::from_js(style.to_js(), global)?;
 
         let mut log = TinyLog::empty();
-        let parsed = match style.parse(
-            filepath.slice(),
-            paths::extension(filepath.slice()),
-            &mut log,
-            true,
-            &arena,
-        ) {
+        let parsed = match style.parse(filepath, paths::extension(filepath), &mut log, true, &arena)
+        {
             Err(crate::Error::InvalidRoutePattern) => {
                 return Err(global.throw(format_args!(
                     "{} ({}:{})",
@@ -246,25 +241,24 @@ impl JSFrameworkRouter {
                 )));
             }
             Err(e) => return Err(e.into()),
-            Ok(None) => return Ok(JSValue::NULL),
+            Ok(None) => return Ok(None),
             Ok(Some(p)) => p,
         };
 
-        let mut rendered: Vec<u8> = Vec::with_capacity(filepath.slice().len());
+        let mut rendered: Vec<u8> = Vec::with_capacity(filepath.len());
         for part in parsed.parts {
             part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
                 .expect("ByteFmtWriter is infallible");
         }
 
-        let out = bun_core::String::clone_utf8(&rendered);
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"kind",
-            bun_core::String::static_(<&'static str>::from(parsed.kind)).to_js(global)?,
-        );
-        obj.put(global, b"pattern", out.into_js(global)?);
-        Ok(obj)
+        Ok(Some(RoutePattern {
+            kind: match parsed.kind {
+                ParsedPatternKind::Page => RoutePatternKind::Page,
+                ParsedPatternKind::Layout => RoutePatternKind::Layout,
+                ParsedPatternKind::Extra => RoutePatternKind::Extra,
+            },
+            pattern: rendered,
+        }))
     }
 
     fn part_to_js(global: &JSGlobalObject, part: &Part<'_>) -> JsResult<JSValue> {

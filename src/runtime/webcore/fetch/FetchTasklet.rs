@@ -2712,35 +2712,37 @@ impl FetchTasklet {
     }
 }
 
-pub(crate) fn on_resolve_request_stream(_: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
-    let this: *mut FetchTasklet = context.to_js().as_promise_ptr::<FetchTasklet>();
-    // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
+pub(crate) fn on_resolve_request_stream(
+    _: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: *mut FetchTasklet,
+) {
+    // SAFETY: `context` is the `*mut FetchTasklet` stashed by
     // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
     // `write_end_request` below. Clear `sink.task` first so the sink's
     // `finalize()` fallback does not release a second time.
     unsafe {
-        if let Some(sink) = (*this).sink_mut() {
+        if let Some(sink) = (*context).sink_mut() {
             sink.task = None;
         }
-        (*this).write_end_request(None);
+        (*context).write_end_request(None);
     }
 }
 
 pub(crate) fn on_reject_request_stream(
     _: &mut JsScope<'_>,
     err: JsLocal<'_>,
-    context: JsLocal<'_>,
+    context: *mut FetchTasklet,
 ) {
-    let this: *mut FetchTasklet = context.to_js().as_promise_ptr::<FetchTasklet>();
-    // SAFETY: `as_promise_ptr` recovers the `*mut FetchTasklet` stashed by
+    // SAFETY: `context` is the `*mut FetchTasklet` stashed by
     // `start_request_stream`; the `ref_()` there keeps it alive, balanced by
     // `write_end_request` below. Clear `sink.task` first so the sink's
     // `finalize()` fallback does not release a second time.
     unsafe {
-        if let Some(sink) = (*this).sink_mut() {
+        if let Some(sink) = (*context).sink_mut() {
             sink.task = None;
         }
-        (*this).write_end_request(Some(err.to_js()));
+        (*context).write_end_request(Some(err.to_js()));
     }
 }
 

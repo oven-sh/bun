@@ -2,9 +2,17 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::api::crash_handler_jsc" });
 
+export const FeatureData = b.dictionary({
+  features: b.array(b.string),
+  version: b.string,
+  is_canary: b.bool,
+  revision: b.string,
+  generated_at: b.u64,
+});
+
 export const crashHandler = b.namespace({
   getMachOImageZeroOffset: { returns: b.f64.optional, length: 1 },
-  getFeatureData: { returns: b.any, capability: "js", throws: true, length: 1 },
+  getFeatureData: { returns: FeatureData, length: 1 },
   segfault: { length: 1 },
   segfaultInDll: { length: 1 },
   panic: { length: 1 },

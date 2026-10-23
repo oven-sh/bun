@@ -539,14 +539,13 @@ pub(crate) fn psi_trigger<'a>(
 /// `memoryPressurePsiFilter(armed, ...polls)`: one `bool` per poll, `null` off Linux.
 pub(crate) fn psi_filter<'a>(
     cx: &mut JsScope<'a>,
-    armed: JsLocal<'a>,
+    armed: &[u8],
     polls: &'a [JsLocal<'a>],
 ) -> JsResult<JSValue> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let global = cx.global();
-        let mut last_total =
-            posix::parse_psi_some_total(&armed.to_js().to_utf8(global)?).unwrap_or(0);
+        let mut last_total = posix::parse_psi_some_total(armed).unwrap_or(0);
         JSValue::create_array_from_iter(global, polls.iter(), |contents| {
             let contents = contents.to_js().to_utf8(global)?;
             Ok(JSValue::js_boolean(posix::psi_growth_reached_threshold(

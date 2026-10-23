@@ -18,24 +18,50 @@ export const CronJob = b.class({
   },
 });
 
-const reaction = { args: { value: b.any, context: b.any }, capability: "js" } as const;
+const reaction = {
+  args: { value: b.any, context: b.nativePromiseContext("crate::api::cron::CronJob") },
+  capability: "js",
+} as const;
 
 /** The reactions to the promise a job's callback returned. */
 export const onPromiseResolve = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseResolve" });
 export const onPromiseReject = b.fn({ ...reaction, export: "Bun__CronJob__onPromiseReject" });
 
-/** `Bun.cron(schedule, handler, options?)` or `Bun.cron(path, schedule, title)`. */
-export const cron = b.fn({
-  export: "Bun__Cron__cron",
-  args: { pathOrSchedule: b.any, scheduleOrHandler: b.any, titleOrOptions: b.any },
-  returns: b.any,
-  capability: "js",
-  throws: true,
-});
+export const CronOptions = b.dictionary({ tz: b.string.utf8.nullable }, { allowArray: true });
+
+const signature = { export: "Bun__Cron__cron", capability: "js", throws: true } as const;
+
+export const cron = b.overloads(
+  /** An OS-level job. */
+  {
+    ...signature,
+    args: { path: b.string.utf8, schedule: b.string.utf8, title: b.string.utf8 },
+    expected: {
+      path: "Bun.cron() expects a string path as the first argument",
+      schedule: "Bun.cron() expects a string schedule as the second argument",
+      title: "Bun.cron() expects a string title as the third argument",
+    },
+    returns: b.any,
+    length: 3,
+    rustPath: "crate::api::cron::register_os_job",
+  },
+  /** An in-process job, whose `cron` is the `schedule` it was given. */
+  {
+    ...signature,
+    args: { schedule: b.string.utf8.withValue, handler: b.callable, options: CronOptions.nullable },
+    expected: {
+      schedule: "Bun.cron() expects a string cron expression",
+      handler: "Bun.cron(schedule, handler) expects a function handler as the second argument",
+      options: "Bun.cron: options must be an object",
+    },
+    returns: CronJob,
+    rustPath: "crate::api::cron::CronJob::register",
+  },
+);
 
 export const remove = b.fn({
   export: "Bun__Cron__remove",
-  args: { title: b.string.allowStringObject },
+  args: { title: b.string.utf8 },
   expected: { title: "Bun.cron.remove() expects a string title" },
   returns: b.any,
   capability: "js",
@@ -44,8 +70,12 @@ export const remove = b.fn({
 
 export const parse = b.fn({
   export: "Bun__Cron__parse",
-  args: { expression: b.string.allowStringObject, from: b.any, options: b.any },
-  expected: { expression: "Bun.cron.parse() expects a string cron expression as the first argument" },
+  args: { expression: b.string.utf8, from: b.f64.allowDate.nullable, options: CronOptions.nullable },
+  expected: {
+    expression: "Bun.cron.parse() expects a string cron expression as the first argument",
+    from: "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)",
+    options: "Bun.cron: options must be an object",
+  },
   returns: b.f64.asDate.nullable,
   capability: "js",
   throws: true,

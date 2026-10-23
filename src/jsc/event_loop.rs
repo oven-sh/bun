@@ -1380,49 +1380,12 @@ impl EventLoop {
 }
 
 /// Testing API to expose event loop state
-pub(crate) fn get_active_tasks(heap: &crate::bindgen::JsHeap<'_>) -> JSValue {
-    // SAFETY: the object is new and plain, and its properties are defined and not set.
-    let global_object = unsafe { heap.global() };
-    let vm_ref = global_object.bun_vm();
+pub(crate) fn get_active_tasks(
+    heap: &crate::bindgen::JsHeap<'_>,
+) -> crate::generated_bindgen::event_loop::ActiveTasks {
+    // SAFETY: only the VM is taken from it.
+    let vm_ref = unsafe { heap.global() }.bun_vm();
     let event_loop = vm_ref.event_loop_shared();
-    let result = JSValue::create_empty_object(global_object, 9);
-    result.put(
-        global_object,
-        b"activeTasks",
-        JSValue::js_number(vm_ref.active_tasks as f64),
-    );
-    result.put(
-        global_object,
-        b"tasks",
-        JSValue::js_number(event_loop.tasks.readable_length() as f64),
-    );
-    result.put(
-        global_object,
-        b"immediateTasks",
-        JSValue::js_number(
-            (event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len()) as f64,
-        ),
-    );
-    result.put(
-        global_object,
-        b"concurrentTasksEmpty",
-        JSValue::from(event_loop.concurrent_tasks.is_empty()),
-    );
-    result.put(
-        global_object,
-        b"loopActive",
-        JSValue::from(vm_ref.platform_loop_opt().is_some_and(|h| h.is_active())),
-    );
-    result.put(
-        global_object,
-        b"eventLoopAlive",
-        JSValue::from(vm_ref.is_event_loop_alive()),
-    );
-    result.put(
-        global_object,
-        b"concurrentRef",
-        JSValue::js_number(event_loop.concurrent_ref.load(Ordering::SeqCst) as f64),
-    );
     #[cfg(windows)]
     // SAFETY: `Loop::get()` returns the live process-global `uv_loop_t`.
     let num_polls: i32 =
@@ -1431,18 +1394,18 @@ pub(crate) fn get_active_tasks(heap: &crate::bindgen::JsHeap<'_>) -> JSValue {
     #[cfg(not(windows))]
     // SAFETY: uws::Loop::get() returns a live process-global loop.
     let num_polls: i32 = unsafe { (*uws::Loop::get()).num_polls };
-    result.put(
-        global_object,
-        b"numPolls",
-        JSValue::js_number(num_polls as f64),
-    );
-    result.put(
-        global_object,
-        b"iteration",
+    crate::generated_bindgen::event_loop::ActiveTasks {
+        active_tasks: vm_ref.active_tasks,
+        tasks: event_loop.tasks.readable_length(),
+        immediate_tasks: event_loop.immediate_tasks.len() + event_loop.next_immediate_tasks.len(),
+        concurrent_tasks_empty: event_loop.concurrent_tasks.is_empty(),
+        loop_active: vm_ref.platform_loop_opt().is_some_and(|h| h.is_active()),
+        event_loop_alive: vm_ref.is_event_loop_alive(),
+        concurrent_ref: event_loop.concurrent_ref.load(Ordering::SeqCst),
+        num_polls,
         // SAFETY: usockets_loop() returns the live process-global loop.
-        JSValue::js_number(unsafe { (*event_loop.usockets_loop()).iteration_number() } as f64),
-    );
-    result
+        iteration: unsafe { (*event_loop.usockets_loop()).iteration_number() },
+    }
 }
 
 #[cfg(windows)]

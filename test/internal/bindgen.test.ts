@@ -116,9 +116,9 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.union({ bytes: stringOrBuffer })).toThrow("the bytes of a buffer are only for an argument");
   for (const held of ["handle", "copied", "pinned"] as const) {
     const bytes = b.bytes({ from: ["string", "buffer"], held });
-    expect(() => b.array(bytes)).toThrow("b.bytes is only for an argument");
-    expect(() => b.dictionary({ bytes })).toThrow("bytes: b.bytes is only for an argument");
-    expect(() => b.union({ bytes })).toThrow("bytes: b.bytes is only for an argument");
+    expect(() => b.array(bytes)).toThrow("b.bytes and .withValue are only for an argument");
+    expect(() => b.dictionary({ bytes })).toThrow("bytes: b.bytes and .withValue are only for an argument");
+    expect(() => b.union({ bytes })).toThrow("bytes: b.bytes and .withValue are only for an argument");
   }
   for (const held of ["handle", "copied", "pinned"] as const) {
     expect(() => b.bytes({ from: ["string", "buffer"], held }).optional).toThrow(
@@ -712,18 +712,149 @@ describe("functions", () => {
     expect(() => b.fn({ export: "not a name" })).toThrow("export: not a name is not a C identifier");
   });
 
+  it("promisePtr and nativePromiseContext give the pointer in the context of a promise reaction", () => {
+    expect(bindgen.readPromisePtr(bindgen.promisePtrContext)).toBe(42);
+    const cell = bindgen.makeNativePromiseContext();
+    expect(bindgen.readNativePromiseContext(cell)).toBe(42);
+    expect(bindgen.readNativePromiseContext(cell)).toBeNull();
+  });
+
   it("$bindgen gives what a b.value returns", () => {
     expect(bindgen.primes).toEqual([2, 3, 5]);
   });
 
   it("$bindgen gives a namespace as an object", () => {
-    expect(Object.keys(bindgen.testNamespace)).toEqual(["increment", "decrement"]);
+    expect(Object.keys(bindgen.testNamespace)).toEqual(["increment", "decrement", "negate"]);
     expect(bindgen.testNamespace.increment(1)).toBe(2);
     expect(bindgen.testNamespace.decrement(1)).toBe(0);
+  });
+
+  it("a function of a namespace has overloads", () => {
+    expect(bindgen.testNamespace.negate(2)).toBe(-2);
+    expect(bindgen.testNamespace.negate(true)).toBe(false);
+  });
+
+  it("overloads have passThis and export, and tell a function from a number", () => {
+    const { callbackOrDelay } = bindgen;
+    expect(callbackOrDelay.call(undefined, () => {})).toBe("callback, this is undefined: true");
+    expect(callbackOrDelay.call(undefined, new Proxy(() => {}, {}))).toBe("callback, this is undefined: true");
+    expect(callbackOrDelay.call({}, class {})).toBe("callback, this is undefined: false");
+    expect(callbackOrDelay.call({}, 5)).toBe("delay 5, this is undefined: false");
+    expect(() => callbackOrDelay({})).toThrow(TypeError);
+  });
+
+  it(".ifPassed is absent only without the argument", () => {
+    expect(bindgen.textIfPassed()).toBe("none");
+    expect(bindgen.textIfPassed(undefined)).toBe("undefined");
+    expect(bindgen.textIfPassed(null)).toBe("null");
+    expect(bindgen.textIfPassed("a")).toBe("a");
+    expect(bindgen.textIfPassed.length).toBe(0);
+    expect(bindgen.isPassed()).toBe(false);
+    expect(bindgen.isPassed(1)).toBe(false);
+    expect(bindgen.isPassed(1, undefined)).toBe(true);
+  });
+
+  it(".withValue also gives the argument", () => {
+    const text = { toString: () => "four" };
+    expect(bindgen.lengthWithValue(text)).toEqual([4, text]);
+    expect(bindgen.lengthWithValue(text)[1]).toBe(text);
+    const counter = new bindgen.TestCounter(1);
+    expect(bindgen.counterWithValue(counter)).toBe(counter);
+    expect(counter.count).toBe(2);
+    expect(() => bindgen.counterWithValue({})).toThrow(TypeError);
+  });
+
+  it("b.string.owned is the string", () => {
+    expect(bindgen.keptString("kept")).toBe("kept");
+    expect(bindgen.keptString("")).toBe("");
+    expect(() => bindgen.keptString(1)).toThrow(TypeError);
+  });
+
+  it(".allowDate takes a Date as its time value", () => {
+    expect(bindgen.timeValue(5)).toBe(5);
+    expect(bindgen.timeValue(new Date(7))).toBe(7);
+    expect(bindgen.timeValue(new (class extends Date {})(9))).toBe(9);
+    expect(bindgen.timeValue(new Date(NaN))).toBeNaN();
+    expect(() => bindgen.timeValue("5")).toThrow("time must be a number or Date");
+    expect(() => bindgen.timeValue({ valueOf: () => 5 })).toThrow(TypeError);
+  });
+
+  it("rejects: what the body or a conversion throws rejects the promise", async () => {
+    expect(await bindgen.finiteLater(1)).toBe(1);
+    const [thrown, refused] = [bindgen.finiteLater(Infinity), bindgen.finiteLater("1")];
+    expect(thrown).toBeInstanceOf(Promise);
+    expect(refused).toBeInstanceOf(Promise);
+    expect(thrown).rejects.toThrow("value must be finite");
+    expect(refused).rejects.toThrow("value must be a number");
+  });
+});
+
+describe("a dictionary of a node:* function", () => {
+  it(".validateInteger can be absent", () => {
+    expect(bindgen.nodeOptionsSize({})).toBe(undefined);
+    expect(bindgen.nodeOptionsSize({ size: undefined })).toBe(undefined);
+    expect(bindgen.nodeOptionsSize({ size: 3 })).toBe(3);
+  });
+
+  it("reportedAs names the members, and expected says what Node expects of one", () => {
+    expect(() => bindgen.nodeOptionsSize({ size: "3" })).toThrow(
+      `The "options.size" property must be of type number. Received type string ('3')`,
+    );
+    expect(() => bindgen.nodeOptionsSize({ size: 11 })).toThrow(
+      `The value of "options.size" is out of range. It must be >= 1 && <= 10. Received 11`,
+    );
+    expect(() => bindgen.nodeOptionsSize({ flag: 1 })).toThrow(
+      `The "options.flag" property must be of type boolean. Received type number (1)`,
+    );
+    expect(() => bindgen.nodeOptionsSize(1)).toThrow("options must be an object");
+    expect(() => bindgen.bareOptionsSize({ size: null })).toThrow(
+      `The "size" argument must be of type number. Received null`,
+    );
+  });
+});
+
+describe("values as themselves", () => {
+  it("a union tells a function, an array and an object apart, and what is not an object passes a dictionary", () => {
+    expect(bindgen.describeHandle(undefined)).toBe("missing");
+    expect(bindgen.describeHandle()).toBe("missing");
+    expect(bindgen.describeHandle(null)).toBe("nothing");
+    expect(bindgen.describeHandle(() => {})).toBe("callback");
+    expect(bindgen.describeHandle([1])).toBe("list");
+    expect(bindgen.describeHandle(new (class extends Array {})())).toBe("list");
+    expect(bindgen.describeHandle({ x: 2 })).toBe("point 2");
+    expect(bindgen.describeHandle(true)).toBe("text true");
+    expect(bindgen.describeHandle(3)).toBe("text 3");
+    expect(bindgen.describeHandle(4n)).toBe("text 4");
+    expect(bindgen.describeHandle("s")).toBe("text s");
+    expect(() => bindgen.describeHandle({})).toThrow("x");
+    expect(() => bindgen.describeHandle(Symbol())).toThrow(TypeError);
+  });
+
+  it("b.object takes every object", () => {
+    for (const value of [{}, [], () => {}, new Date(0), new String("s"), new Proxy({}, {})]) {
+      expect(bindgen.isObject(value)).toBe(true);
+      expect(bindgen.objectEcho(value)).toBe(value);
+    }
+    for (const value of [undefined, null, 1, "s", true, 1n, Symbol()]) {
+      expect(bindgen.isObject(value)).toBe(false);
+      expect(() => bindgen.objectEcho(value)).toThrow("value must be an object");
+    }
+  });
+
+  it("b.undefined and b.null are two alternatives, taken and returned", () => {
+    expect(bindgen.absenceEcho(undefined)).toBe(undefined);
+    expect(bindgen.absenceEcho(null)).toBe(null);
+    expect(bindgen.absenceEcho(1)).toBe(1);
   });
 });
 
 describe("enumerations", () => {
+  it("a record names the variants", () => {
+    for (const value of ["rgb", "[rgb]", "{rgb}"]) expect(bindgen.bracketEcho(value)).toBe(value);
+    expect(bindgen.bracketEcho("{RGB}")).toBe("{rgb}");
+    expect(() => bindgen.bracketEcho("(rgb)")).toThrow(TypeError);
+  });
+
   it("parses and returns the canonical spelling", () => {
     expect(bindgen.nextColor("red")).toBe("green");
     expect(bindgen.nextColor("green")).toBe("blue");
@@ -1202,8 +1333,12 @@ describe("overloads", () => {
     expect(bindgen.overloaded.length).toBe(1);
   });
 
-  it("a signature ignores the arguments it does not have", () => {
-    expect(bindgen.overloaded(1, "x")).toBe("number 1");
+  it("past its last argument a signature takes only undefined", () => {
+    expect(bindgen.overloaded(1, undefined)).toBe("number 1");
+    expect(() => bindgen.overloaded(1, "x")).toThrow("b must be a number");
+  });
+
+  it("the only signature left ignores the arguments it does not have", () => {
     expect(bindgen.overloaded([1], 5)).toBe("list [1.0]");
   });
 
@@ -1225,10 +1360,7 @@ describe("overloads", () => {
     expect(() => b.overloads({ args: { a: b.i32, b: b.bool } }, { args: { a: b.f64, b: b.bool } })).toThrow(
       "overload 2 is never chosen",
     );
-    // The shorter one ignores a second argument, so written first it takes every call.
-    expect(() => b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } })).toThrow(
-      "overload 2 is never chosen",
-    );
+    b.overloads({ args: { a: b.string } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.string, b: b.bool } }, { args: { a: b.string } });
     b.overloads({ args: { a: b.string, b: b.f64 } }, { args: { a: b.string, b: b.bool } });
     b.overloads({ args: { a: b.bool } }, { args: { a: b.any } });

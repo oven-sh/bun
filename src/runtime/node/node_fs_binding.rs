@@ -6,6 +6,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, SysErrorJsc as _};
 use bun_sys_jsc::SystemErrorJsc as _;
 
+use crate::generated_bindgen::node_fs_binding::{MemfdSize, RmOptions};
 use crate::node::ThreadIsolated;
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
@@ -387,25 +388,17 @@ pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
 pub(crate) fn rm_options_for_testing(
     cx: &mut JsScope<'_>,
     args: &[JsLocal<'_>],
-) -> JsResult<JSValue> {
+) -> JsResult<RmOptions> {
     let global = cx.global();
     let vm: &VirtualMachine = global.bun_vm();
     let mut slice = ArgumentsSlice::init(vm, JsLocal::to_js_slice(args));
     let parsed = args::Rm::from_js(global, &mut slice)?;
-    let obj = JSValue::create_empty_object(global, 4);
-    obj.put(
-        global,
-        b"retryDelay",
-        JSValue::js_number(parsed.retry_delay as f64),
-    );
-    obj.put(
-        global,
-        b"maxRetries",
-        JSValue::js_number(parsed.max_retries as f64),
-    );
-    obj.put(global, b"recursive", JSValue::js_boolean(parsed.recursive));
-    obj.put(global, b"force", JSValue::js_boolean(parsed.force));
-    Ok(obj)
+    Ok(RmOptions {
+        retry_delay: parsed.retry_delay,
+        max_retries: parsed.max_retries,
+        recursive: parsed.recursive,
+        force: parsed.force,
+    })
 }
 
 /// Test-only (`bun:internal-for-testing`): run a flags value through the same
@@ -429,16 +422,16 @@ pub(crate) fn string_to_flags_for_testing(
 
 pub(crate) fn create_memfd_for_testing(
     cx: &mut JsScope<'_>,
-    size: &[JsLocal<'_>],
+    size: Option<MemfdSize>,
 ) -> JsResult<Option<i32>> {
     let global = cx.global();
-    let Some(size_arg) = size.first() else {
+    let Some(size) = size else {
         return Ok(None);
     };
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = size_arg;
+        let _ = size;
         return Err(global.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
@@ -446,7 +439,10 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = size_arg.to_js().to_int64();
+        let size = match size {
+            MemfdSize::Bytes(bytes) => bytes as i64,
+            MemfdSize::Empty => 0,
+        };
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);

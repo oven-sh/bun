@@ -21,11 +21,22 @@ export const randomUUIDv5 = b.fn({
   rustPath: "crate::webcore::crypto::random_uuid_v5",
 });
 
+/** `clock` is the time now. */
+export const UUIDTimestamp = b.union({ clock: b.undefined, time: b.f64.allowDate });
+
+/** Alone, what is not a string is the timestamp. Before a timestamp it is as in `UUIDEncoding`. */
+export const UUIDEncodingOrTimestamp = b.union({
+  label: b.string.utf8,
+  clock: b.undefined,
+  time: b.f64.allowDate,
+  ignored: b.any,
+});
+
 /** `randomUUIDv7(timestamp)` takes the timestamp. `randomUUIDv7(timestamp, undefined)` takes the clock's. */
 export const randomUUIDv7 = b.fn({
-  args: { args: b.any.variadic },
-  returns: b.any,
-  capability: "js",
+  args: { encoding: UUIDEncodingOrTimestamp, timestamp: UUIDTimestamp.ifPassed },
+  returns: EncodedUUID,
+  capability: "heap",
   throws: true,
   length: 2,
   rustPath: "crate::webcore::crypto::random_uuid_v7",

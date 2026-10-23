@@ -5,8 +5,8 @@ use bun_analytics as analytics;
 use bun_core::String as BunString;
 use bun_core::{Environment, Global};
 use bun_crash_handler as crash_handler;
-use bun_jsc::bindgen::JsScope;
-use bun_jsc::{JSValue, JsResult, StringJsc};
+
+use crate::generated_bindgen::crash_handler_jsc::FeatureData;
 
 pub(crate) fn get_mach_o_image_zero_offset() -> Option<f64> {
     #[cfg(not(target_os = "macos"))]
@@ -174,38 +174,18 @@ pub(crate) fn raise_ignoring_panic_handler() {
     Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
 }
 
-pub(crate) fn get_feature_data(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-    let global = cx.global();
-    let obj = JSValue::create_empty_object(global, 5);
-    let list = analytics::PACKED_FEATURES_LIST;
-    // Not `static_`: a feature can be named like a common string ("s3").
-    let array = JSValue::create_array_from_iter(global, list.iter(), |feature| {
-        BunString::clone_latin1(feature.as_ref()).into_js(global)
-    })?;
-    obj.put(global, "features", array);
-    obj.put(
-        global,
-        "version",
-        BunString::static_(Global::package_json_version).to_js(global)?,
-    );
-    obj.put(
-        global,
-        "is_canary",
-        JSValue::js_boolean(Environment::IS_CANARY),
-    );
-
-    // This is the source of truth for the git sha.
-    // Not the github ref or the git tag.
-    obj.put(
-        global,
-        "revision",
-        BunString::static_(Environment::GIT_SHA).to_js(global)?,
-    );
-
-    obj.put(
-        global,
-        "generated_at",
-        JSValue::js_number_from_int64(bun_core::time::milli_timestamp().max(0)),
-    );
-    Ok(obj)
+pub(crate) fn get_feature_data() -> FeatureData {
+    FeatureData {
+        // Not `static_`: a feature can be named like a common string ("s3").
+        features: analytics::PACKED_FEATURES_LIST
+            .iter()
+            .map(|feature| BunString::clone_latin1(feature.as_ref()))
+            .collect(),
+        version: BunString::static_(Global::package_json_version),
+        is_canary: Environment::IS_CANARY,
+        // This is the source of truth for the git sha.
+        // Not the github ref or the git tag.
+        revision: BunString::static_(Environment::GIT_SHA),
+        generated_at: bun_core::time::milli_timestamp().max(0) as u64,
+    }
 }

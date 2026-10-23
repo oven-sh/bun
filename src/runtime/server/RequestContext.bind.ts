@@ -4,16 +4,18 @@ import * as b from "../../codegen/bindgen-lib.ts";
 function reactions(debug: boolean, mux: boolean, ssl: boolean) {
   const context = `HTTPRequestContext${debug ? "Debug" : ""}${mux ? "Mux" : ""}${ssl ? "TLS" : ""}`;
   const server = `crate::server::${debug ? "Debug" : ""}HTTP${ssl ? "S" : ""}Server`;
-  const reaction = (name: string, rustName: string) =>
+  const rustPath = `crate::server::request_context::RequestContext::<${server}, ${ssl}, ${debug}, ${mux}>`;
+  const reaction = (name: string, rustName: string, contextType: b.Type = b.nativePromiseContext(rustPath)) =>
     b.fn({
       export: `Bun__${context}__${name}`,
-      args: { value: b.any, context: b.any },
+      args: { value: b.any, context: contextType },
       capability: "js",
-      rustPath: `crate::server::request_context::RequestContext::<${server}, ${ssl}, ${debug}, ${mux}>::${rustName}`,
+      rustPath: `${rustPath}::${rustName}`,
     });
   return [
     reaction("onResolve", "on_resolve"),
-    reaction("onReject", "on_reject"),
+    // With no claim left to take, it takes what the cell holds.
+    reaction("onReject", "on_reject", b.nativePromiseContext(rustPath).withValue),
     reaction("onResolveStream", "on_resolve_stream"),
     reaction("onRejectStream", "on_reject_stream"),
   ];

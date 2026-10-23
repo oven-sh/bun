@@ -76,17 +76,24 @@ export const NodeJSFS = b.class({
 export const binding = b.value({ returns: NodeJSFS, capability: "js" });
 
 /** `(path, options)`, parsed as `fs.rm` parses them. */
+export const RmOptions = b.dictionary({
+  retryDelay: b.u32,
+  maxRetries: b.u32,
+  recursive: b.bool,
+  force: b.bool,
+});
 export const rmOptionsForTesting = b.fn({
   args: { args: b.any.variadic },
-  returns: b.any,
+  returns: RmOptions,
   capability: "js",
   throws: true,
   length: 2,
 });
 export const stringToFlagsForTesting = b.fn({ args: { flags: b.any }, returns: b.i32, capability: "js", throws: true });
+export const MemfdSize = b.union({ bytes: b.f64, empty: b.undefined });
 /** Without `size` it makes nothing. */
 export const createMemfdForTesting = b.fn({
-  args: { size: b.any.variadic },
+  args: { size: MemfdSize.ifPassed },
   returns: b.i32.optional,
   capability: "js",
   throws: true,

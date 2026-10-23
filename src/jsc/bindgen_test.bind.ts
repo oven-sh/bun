@@ -392,10 +392,85 @@ export const thisAndCallee = b.fn({
 export const doubled = b.fn({ export: "Bun__BindgenTest__doubled", args: { value: b.i32 }, returns: b.i32 });
 /** A new function, made in Rust, that runs `doubled`. */
 export const makeDoubled = b.fn({ returns: b.any, capability: "js" });
+/** What `JSValue::then` gives a reaction as its context, for a static that holds 42. */
+export const promisePtrContext = b.value({ returns: b.any, capability: "heap" });
+export const readPromisePtr = b.fn({
+  args: { context: b.promisePtr("core::sync::atomic::AtomicI32") },
+  returns: b.i32,
+});
+/** A new `NativePromiseContext` cell with a pointer to the same static. */
+export const makeNativePromiseContext = b.fn({ returns: b.any, capability: "js" });
+export const readNativePromiseContext = b.fn({
+  args: { context: b.nativePromiseContext("core::sync::atomic::AtomicI32") },
+  returns: b.i32.nullable,
+});
 export const primes = b.value({ returns: b.array(b.u32) });
 export const testNamespace = b.namespace({
   increment: { args: { value: b.i32 }, returns: b.i32 },
   decrement: { args: { value: b.i32 }, returns: b.i32 },
+  negate: [
+    { args: { value: b.f64 }, returns: b.f64, rustPath: "crate::bindgen_test::negate_number" },
+    { args: { value: b.bool }, returns: b.bool, rustPath: "crate::bindgen_test::negate_flag" },
+  ],
+});
+
+/** Reports its members as Node does. */
+export const TestNodeOptions = b.dictionary(
+  { size: b.u32.validateInteger(1, 10).optional, flag: { type: b.bool.default(false), expected: ["boolean"] } },
+  { reportedAs: "options" },
+);
+export const TestBareOptions = b.dictionary({ size: b.u32.validateInteger(1, 10).optional }, { reportedAs: "" });
+export const nodeOptionsSize = b.fn({ args: { options: TestNodeOptions }, returns: b.u32.optional });
+export const bareOptionsSize = b.fn({ args: { options: TestBareOptions }, returns: b.u32.optional });
+
+export const timeValue = b.fn({ args: { time: b.f64.allowDate }, returns: b.f64 });
+/** "none" without the argument. `undefined` is converted, to "undefined". */
+export const textIfPassed = b.fn({ args: { text: b.string.loose.utf8.ifPassed }, returns: b.string.utf8 });
+export const isPassed = b.fn({ args: { first: b.any, second: b.any.ifPassed }, returns: b.bool });
+/** `[the text's length, the argument]`. */
+export const lengthWithValue = b.fn({
+  args: { text: b.string.loose.utf8.withValue },
+  returns: b.any,
+  capability: "heap",
+  throws: true,
+});
+export const counterWithValue = b.fn({ args: { counter: TestCounter.withValue }, returns: b.any, capability: "heap" });
+export const keptString = b.fn({ args: { text: b.string.owned }, returns: b.string });
+
+export const TestBracket = b.enumeration({ Plain: "rgb", Square: "[rgb]", Curly: ["{rgb}", "{RGB}"] });
+export const bracketEcho = b.fn({ args: { bracket: TestBracket }, returns: TestBracket });
+
+export const TestPoint = b.dictionary({ x: b.f64 });
+/** `point` gets objects only, so `text` gets every other value that no alternative before it takes. */
+export const TestHandle = b.union({
+  missing: b.undefined,
+  nothing: b.null,
+  callback: b.callable,
+  list: b.jsArray,
+  point: TestPoint,
+  text: b.string.loose.utf8,
+});
+export const describeHandle = b.fn({ args: { value: TestHandle }, returns: b.string.utf8 });
+export const TestObjectOrRest = b.union({ object: b.object, rest: b.any });
+export const isObject = b.fn({ args: { value: TestObjectOrRest }, returns: b.bool });
+export const objectEcho = b.fn({ args: { value: b.object }, returns: b.object, capability: "heap" });
+export const TestAbsence = b.union({ missing: b.undefined, nothing: b.null, number: b.f64 });
+export const absenceEcho = b.fn({ args: { value: TestAbsence }, returns: TestAbsence });
+
+const withThis = { passThis: true, export: "Bun__BindgenTest__callbackOrDelay", returns: b.string.utf8 };
+/** Told apart by whether the first argument can be called. */
+export const callbackOrDelay = b.overloads(
+  { ...withThis, args: { callback: b.callable }, rustPath: "crate::bindgen_test::callback_or_delay_callback" },
+  { ...withThis, args: { delay: b.f64 }, rustPath: "crate::bindgen_test::callback_or_delay_delay" },
+);
+
+/** A promise for the number. One that is not finite, and an argument that is not a number, reject it. */
+export const finiteLater = b.fn({
+  args: { value: b.f64 },
+  returns: b.any,
+  capability: "js",
+  throws: true,
+  rejects: true,
 });
 
 export const integerOrBigInt = b.fn({ args: { value: b.u32.allowBigInt }, returns: b.u32 });

@@ -22,8 +22,10 @@ import {
   NamedType,
   type NamespaceDefinition,
   OptionalType,
+  isIfPassed,
   type Origin,
   type OverloadDispatch,
+  OwnedStringType,
   OwnedUtf8Type,
   rustIdent,
   type RustScope,
@@ -162,6 +164,7 @@ const kindTests: Record<Exclude<ValueKind, JSClass>, { ofValue?: (value: string)
   array: { ofCell: "JSC::isJSArray(cell)" },
   arrayBuffer: { ofCell: "cell->inherits<JSC::JSArrayBuffer>()" },
   arrayBufferView: { ofCell: "cell->inherits<JSC::JSArrayBufferView>()" },
+  callable: { ofCell: "cell->isCallable()" },
 };
 
 /**
@@ -232,7 +235,15 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     .map(i => {
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
-      if (alternative.refuses)
+      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "");
+      if (alternative instanceof DictionaryType && i !== candidates.at(-1))
+        return `if (value.isObject()) {
+    result.tag = ${i};
+    scope.release();
+${indent(cppEmplace(member, convert), 4)}
+    return;
+}`;
+      if (alternative.refuses && !(alternative instanceof DictionaryType))
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
     ${member} = WTF::move(*converted);
     result.tag = ${i};
@@ -240,7 +251,6 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
 }
 RETURN_IF_EXCEPTION(scope, void());`;
       if (alternative instanceof UnitType) return `result.tag = ${i};\nreturn;`;
-      const convert = (target: string) => alternative.cppConvertInto(target, "value", "ctx", "", "");
       return `result.tag = ${i};
 scope.release();
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
@@ -258,7 +268,9 @@ function cppHeaderForUnion(type: UnionType): string {
     .join(", ");
   const { outcomes, code } = cppChooseByKind("value", type.alternativesByKind);
   const mayMatchNone = (candidates: readonly number[]) =>
-    candidates.length === 0 || !!alternatives[candidates.at(-1)!].type.refuses;
+    candidates.length === 0 ||
+    (!!alternatives[candidates.at(-1)!].type.refuses &&
+      !(alternatives[candidates.at(-1)!].type instanceof DictionaryType));
   const cases = outcomes.flatMap((candidates, index) =>
     candidates.length === 0
       ? []
@@ -478,6 +490,31 @@ template<> std::optional<${type.cpp}> WebCore::parseEnumeration<${type.cpp}>(JSC
 const cppStaticContext = (variable: string, context: string) =>
   `[[maybe_unused]] static constexpr auto ${variable} = Bun::Bindgen::${context};`;
 
+/** Declares in `lines` what reports the `i`th argument or member, `value`, and returns the C++ expression for it. */
+function cppContext(
+  lines: string[],
+  i: number,
+  name: string,
+  expected: readonly string[] | string | undefined,
+  value: string,
+): string {
+  if (typeof expected === "string") {
+    lines.push(
+      cppStaticContext(`ctx${i}`, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`),
+    );
+  } else if (expected) {
+    lines.push(
+      `static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
+      cppStaticContext(`nodeArgument${i}`, `NodeArgument { ${asciiLiteral(name)}, expected${i} }`),
+    );
+    // It holds the value, so it is made where a conversion takes it.
+    return `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { nodeArgument${i}, ${value} })`;
+  } else {
+    lines.push(cppStaticContext(`ctx${i}`, `LiteralConversionContext { ${asciiLiteral(name)} }`));
+  }
+  return `ctx${i}`;
+}
+
 function cppSourceForDictionary(type: DictionaryType): string {
   if (!type.accepted) return "";
   let nameIndex = 0;
@@ -485,22 +522,23 @@ function cppSourceForDictionary(type: DictionaryType): string {
     const [first, ...others] = member.names.map(
       () => `members.get(${nameIndex++});\nRETURN_IF_EXCEPTION(scope, void());`,
     );
-    const qualified = `${type.name}.${member.name}`;
-    const lines = [
-      cppStaticContext(`ctx${i}`, `LiteralConversionContext { ${asciiLiteral(qualified)} }`),
+    const qualified = type.reportedAs ? `${type.reportedAs}.${member.name}` : member.name;
+    const lines: string[] = [];
+    const ctx = cppContext(lines, i, qualified, member.expected, `value${i}`);
+    lines.push(
       `JSC::JSValue value${i} = ${first}`,
       ...others.map(read => `if (value${i}.isUndefined()) {\n${indent(`value${i} = ${read}`, 4)}\n}`),
-    ];
+    );
     if (!member.type.takesUndefined)
       lines.push(`if (value${i}.isUndefined()) [[unlikely]] {
-    ctx${i}.throwRequired(*globalObject, scope);
+    ${ctx}.throwRequired(*globalObject, scope);
     return;
 }`);
     lines.push(
       member.type.cppConvertInto(
         `result.${member.fieldName}`,
         `value${i}`,
-        `ctx${i}`,
+        ctx,
         qualified,
         "RETURN_IF_EXCEPTION(scope, void());",
       ),
@@ -514,7 +552,7 @@ template<> void Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalOb
     auto* globalObject = &lexicalGlobalObject;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(type.name)} }`)}
+    ${cppStaticContext("ctx", `LiteralConversionContext { ${asciiLiteral(type.reportedAs || type.name)} }`)}
     auto* object = value.getObject();
 ${
   type.nonObjectAsEmpty
@@ -617,20 +655,12 @@ function cppCallBody(
       return;
     }
     const { holder, value } = cppHeldValue(type, `argument${i}`);
-    lines.push(`${holder} argument${i} = callFrame->argument(${i});`);
-    let ctx = `ctx${i}`;
-    if (typeof expected === "string") {
-      lines.push(cppStaticContext(ctx, `ArgumentMessageContext { ${asciiLiteral(name)}, ${asciiLiteral(expected)} }`));
-    } else if (expected) {
-      lines.push(
-        `static constexpr WTF::ASCIILiteral expected${i}[] = { ${expected.map(asciiLiteral).join(", ")} };`,
-        cppStaticContext(`nodeArgument${i}`, `NodeArgument { ${asciiLiteral(name)}, expected${i} }`),
-      );
-      // It holds the argument, so it is made where a conversion takes it.
-      ctx = `Bun::Bindgen::asLvalue(Bun::Bindgen::NodeArgumentContext { nodeArgument${i}, ${value} })`;
-    } else {
-      lines.push(cppStaticContext(ctx, `LiteralConversionContext { ${asciiLiteral(name)} }`));
-    }
+    lines.push(
+      isIfPassed(type)
+        ? `${holder} argument${i} = callFrame->argumentCount() > ${i} ? callFrame->uncheckedArgument(${i}) : JSC::JSValue();`
+        : `${holder} argument${i} = callFrame->argument(${i});`,
+    );
+    const ctx = cppContext(lines, i, name, expected, value);
     readLast.push(...type.cppReadLast(`converted${i}`, value));
     lines.push(...cppDeclareConverted(type, `converted${i}`, value, ctx, name, "RETURN_IF_EXCEPTION(scope, {});"));
   });
@@ -1172,16 +1202,42 @@ function cppHostFunction(
   symbol: (signature: Signature) => string,
   takeThis = "",
 ): string {
+  const defineHostFunction = `${fn.exportName ? "BUN" : "JSC"}_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))`;
+  if (fn.signatures[0].rejects) {
+    const throwing = `${name}OrThrow`;
+    return `${cppHostFunctionBody(`static JSC::EncodedJSValue ${throwing}(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)`, throwing, fn, symbol, takeThis)}
+${defineHostFunction}
+{
+${cppPrologue}
+    auto result = ${throwing}(globalObject, callFrame);
+    if (scope.exception()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+    return result;
+}`;
+  }
+  return cppHostFunctionBody(defineHostFunction, name, fn, symbol, takeThis);
+}
+
+/** `define`, then the braces. Its overloads are named after `name`. */
+function cppHostFunctionBody(
+  define: string,
+  name: string,
+  fn: FunctionDefinition,
+  symbol: (signature: Signature) => string,
+  takeThis: string,
+): string {
   const leading = takeThis ? ["thisObject"] : cppLeadingOfFunction(fn);
   if (fn.signatures.length === 1) {
-    return `${fn.exportName ? "BUN" : "JSC"}_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+    return `${define}
 {
 ${cppPrologue}
 ${takeThis}${cppCallBody(fn.signatures[0], symbol(fn.signatures[0]), leading)}
 }`;
   }
+  // An overload reads `this` and the callee from the frame.
+  const passed = takeThis ? leading : [];
   const overloads = fn.signatures.map(
-    signature => `static JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...leading.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
+    signature => `static JSC::EncodedJSValue ${name}${overloadSuffix(fn, signature)}(${["JSC::JSGlobalObject* globalObject", "JSC::CallFrame* callFrame", ...passed.map(argument => `JSC::JSCell* ${argument}`)].join(", ")})
 {
 ${cppPrologue}
 ${cppCallBody(signature, symbol(signature), leading)}
@@ -1189,7 +1245,7 @@ ${cppCallBody(signature, symbol(signature), leading)}
   );
   const cppDispatch = (dispatch: OverloadDispatch): string => {
     if (dispatch instanceof Signature)
-      return `RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, dispatch)}(${["globalObject", "callFrame", ...leading].join(", ")}));`;
+      return `RELEASE_AND_RETURN(scope, ${name}${overloadSuffix(fn, dispatch)}(${["globalObject", "callFrame", ...passed].join(", ")}));`;
     const argument = `argument${dispatch.argument}`;
     const choice = `choice${dispatch.argument}`;
     const { outcomes, code, condition } = cppChooseByKind(argument, dispatch.byKind, choice);
@@ -1205,7 +1261,7 @@ ${[...cases.slice(1), cases[0]].join("\n")}
 }`;
   };
   return `${overloads.join("\n")}
-JSC_DEFINE_HOST_FUNCTION(${name}, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+${define}
 {
 ${cppPrologue}
 ${takeThis}${indent(cppDispatch(fn.dispatch), 4)}
@@ -1251,6 +1307,7 @@ export function cppSource(file: SchemaFile): string {
   const accepted = file.types.filter(type => type instanceof DictionaryType && type.accepted) as DictionaryType[];
   if (accepted.length > 0) headers.add("Bindgen/DictionaryMemberReader.h");
   const systemHeaders = ["JavaScriptCore/JSFunction.h"];
+  if (file.functions.some(fn => fn.signatures[0].rejects)) systemHeaders.push("JavaScriptCore/JSPromise.h");
   if (file.types.some(type => type instanceof ClassType)) systemHeaders.unshift("JavaScriptCore/HeapAnalyzer.h");
   if (accepted.some(type => !type.allowArray)) systemHeaders.unshift("JavaScriptCore/ArrayConstructor.h");
   if (file.namespaces.length > 0) systemHeaders.push("JavaScriptCore/ObjectConstructor.h");
@@ -1343,7 +1400,8 @@ function rustArgumentName(arg: { name: string }): string {
 /** A dictionary or a string stays in the frame of the thunk, and the body borrows it. */
 function rustBorrow(type: Type) {
   const inner = type instanceof DefaultType ? type.inner : type;
-  const isString = inner instanceof StringType && !(inner instanceof OwnedUtf8Type);
+  const isString =
+    inner instanceof StringType && !(inner instanceof OwnedUtf8Type) && !(inner instanceof OwnedStringType);
   return inner instanceof DictionaryType || isString ? "&" : "";
 }
 const rustExternParameters = (signature: Signature, scope: RustScope) =>
@@ -1467,7 +1525,7 @@ ${type.alternatives
 ${type.alternatives
   .map(a =>
     a.type instanceof UnitType
-      ? `            Self::${a.variant} => Ok(bindgen::JsLocal::NULL),`
+      ? `            Self::${a.variant} => Ok(bindgen::JsLocal::${a.type.unit === "null" ? "NULL" : "UNDEFINED"}),`
       : `            Self::${a.variant}(value) => ${a.type.rustToJS("value", scope)},`,
   )
   .join("\n")}

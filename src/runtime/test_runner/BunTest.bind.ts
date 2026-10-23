@@ -1,15 +1,21 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { CallbackOrOptions, DescriptionOrCallback } from "./ScopeFunctions.bind.ts";
 
 // Not `bun_test.bind.ts`: a release build leaves out a `*_test.bind.ts`.
 export default b.module({ rustPath: "crate::test_runner::bun_test::js_fns::generic_hook" });
 
 const js = { capability: "js", throws: true } as const;
 
-/** The arguments come in any of the orders that `parse_arguments` takes. */
+/** Takes what `callAsFunction` does. */
 const hook = (name: string) =>
   b.fn({
     export: `Bun__BunTest__${name}`,
-    args: { description: b.any, callback: b.any, options: b.any },
+    args: { first: DescriptionOrCallback, second: CallbackOrOptions, third: CallbackOrOptions },
+    expected: {
+      first: "The first argument must be a named class, named function, number, or string",
+      second: "The second argument must be a function, number, or object",
+      third: "The third argument must be a function, number, or object",
+    },
     length: 1,
     ...js,
   });
@@ -19,8 +25,11 @@ export const afterEach = hook("afterEach");
 export const afterAll = hook("afterAll");
 export const onTestFinished = hook("onTestFinished");
 
-/** The reactions to the promise that a test or a hook returns. `context` is its `RefData`. */
-const reaction = { args: { value: b.any, context: b.any }, ...js } as const;
+/** The reactions to the promise that a test or a hook returns. */
+const reaction = {
+  args: { value: b.any, context: b.promisePtr("crate::test_runner::bun_test::RefData") },
+  ...js,
+} as const;
 export const bunTestThen = b.fn({
   ...reaction,
   export: "Bun__TestScope__Describe2__bunTestThen",

@@ -651,12 +651,16 @@ where
         ));
     }
 
-    pub(crate) fn on_resolve(cx: &mut JsScope<'_>, result: JsLocal<'_>, cell: JsLocal<'_>) {
+    pub(crate) fn on_resolve(
+        cx: &mut JsScope<'_>,
+        result: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         ctx_log!("onResolve");
 
         let global = cx.global();
         let result = result.to_js();
-        let Some(ctx) = NativePromiseContext::take::<Self>(cell.to_js()) else {
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
             Self::discard_response_body(global, result);
@@ -1054,7 +1058,11 @@ where
         report_unhandled_error(vm, global, unhandled);
     }
 
-    pub(crate) fn on_reject(cx: &mut JsScope<'_>, reason: JsLocal<'_>, cell: JsLocal<'_>) {
+    pub(crate) fn on_reject(
+        cx: &mut JsScope<'_>,
+        reason: JsLocal<'_>,
+        (context, cell): (Option<NonNull<Self>>, JsLocal<'_>),
+    ) {
         ctx_log!("onReject");
 
         // Pass the rejection reason through verbatim (including `null` and
@@ -1065,7 +1073,7 @@ where
         } else {
             reason.to_js()
         };
-        let Some(ctx) = NativePromiseContext::take::<Self>(cell.to_js()) else {
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone. Only an upgrade leaves
             // the server wrapper in the cell to report the error through.
@@ -2937,9 +2945,13 @@ where
         self.end_stream(self.should_close_connection());
     }
 
-    pub(crate) fn on_resolve_stream(_: &mut JsScope<'_>, _: JsLocal<'_>, cell: JsLocal<'_>) {
+    pub(crate) fn on_resolve_stream(
+        _: &mut JsScope<'_>,
+        _: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onResolveStream");
-        let Some(req) = NativePromiseContext::take::<Self>(cell.to_js()) else {
+        let Some(req) = context else {
             return;
         };
         let req = RequestContextRef::adopt(req.as_ptr());
@@ -2947,9 +2959,13 @@ where
         req.ctx().handle_resolve_stream();
     }
 
-    pub(crate) fn on_reject_stream(cx: &mut JsScope<'_>, err: JsLocal<'_>, cell: JsLocal<'_>) {
+    pub(crate) fn on_reject_stream(
+        cx: &mut JsScope<'_>,
+        err: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onRejectStream");
-        let Some(req) = NativePromiseContext::take::<Self>(cell.to_js()) else {
+        let Some(req) = context else {
             return;
         };
         let req = RequestContextRef::adopt(req.as_ptr());

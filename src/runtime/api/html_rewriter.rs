@@ -1994,11 +1994,10 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
 pub(crate) fn on_handler_resolve(
     cx: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    context: JsLocal<'_>,
+    context: Option<NonNull<RewriterPipe>>,
 ) -> JsResult<()> {
-    // `take` nulls the context so its destructor is a no-op; `None` means the
-    // suspension was already abandoned.
-    let Some(pipe) = native_promise_context::take::<RewriterPipe>(context.to_js()) else {
+    // `None` means the suspension was already abandoned.
+    let Some(pipe) = context else {
         return Ok(());
     };
     let pipe = BackRef::from(pipe);
@@ -2018,10 +2017,10 @@ pub(crate) fn on_handler_resolve(
 pub(crate) fn on_handler_reject(
     cx: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: JsLocal<'_>,
+    context: Option<NonNull<RewriterPipe>>,
 ) -> JsResult<()> {
     let global = cx.global();
-    let Some(pipe) = native_promise_context::take::<RewriterPipe>(context.to_js()) else {
+    let Some(pipe) = context else {
         return Ok(());
     };
     let pipe = BackRef::from(pipe);
@@ -3235,28 +3234,18 @@ impl WrapperLike for Element {
 // `RewriterPipe::wire_input`'s `.then_with_value()`; the cell (and thus the
 // pipe) stays alive as long as the pump promise's reaction is rooted.
 
-pub(crate) fn on_resolve_input_stream(_: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
-    let Some(this) = js_HTMLRewriterTransform::from_js(context.to_js()) else {
-        return;
-    };
-    let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
-    this.end_from_stream(None);
+pub(crate) fn on_resolve_input_stream(_: &mut JsScope<'_>, _: JsLocal<'_>, context: &RewriterPipe) {
+    context.js_pump_reaction_pending.set(false);
+    context.end_from_stream(None);
 }
 
 pub(crate) fn on_reject_input_stream(
     cx: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: JsLocal<'_>,
+    context: &RewriterPipe,
 ) {
-    let Some(this) = js_HTMLRewriterTransform::from_js(context.to_js()) else {
-        return;
-    };
-    let this = BackRef::from(this);
-    let this = &*this;
-    this.js_pump_reaction_pending.set(false);
-    this.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
+    context.js_pump_reaction_pending.set(false);
+    context.end_from_stream(Some(crate::webcore::streams::StreamError::JSValue(
         jsc::strong::Optional::create(reason.to_js(), cx.global()),
     )));
 }

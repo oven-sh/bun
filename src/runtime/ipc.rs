@@ -5,6 +5,7 @@ use core::mem::size_of;
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 
+use crate::generated_bindgen::ipc::SentHandle;
 use crate::json_line_buffer::JSONLineBuffer;
 use bun_collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
@@ -12,7 +13,7 @@ use bun_core::{String as BunString, strings};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc as jsc;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::js_value::Protected;
 #[cfg(windows)]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -829,10 +830,10 @@ impl SendHandle {
     }
 }
 
-pub(crate) fn close_sent_handle<'a>(cx: &mut JsScope<'a>, handle: JsLocal<'a>) -> JsResult<()> {
+pub(crate) fn close_sent_handle<'a>(cx: &mut JsScope<'a>, handle: SentHandle<'a>) -> JsResult<()> {
     let global = cx.global();
-    let js = handle.to_js();
-    if js.is_object() {
+    if let SentHandle::Object(handle) = handle {
+        let js = handle.to_js();
         if let Some(f) = js.get(global, "close")? {
             if f.is_callable() {
                 f.call(global, js, &[])?;

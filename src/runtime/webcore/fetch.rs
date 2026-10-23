@@ -208,10 +208,10 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
 // fetch.preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: JsLocal<'_>) -> JsResult<()> {
+pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> {
     let global_object = cx.global();
 
-    let url_str = jsc::URL::href_from_js(url.to_js(), global_object)?;
+    let url_str = bun_url::href_from_string(url);
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -313,11 +313,7 @@ pub(crate) fn fetch(
     input: JsLocal<'_>,
     init: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    let ctx = cx.global();
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, input.to_js(), init.to_js(), None),
-    )
+    fetch_impl::<false>(cx.global(), input.to_js(), init.to_js(), None)
 }
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
@@ -327,43 +323,12 @@ pub(crate) fn session_fetch(
     input: JsLocal<'_>,
     init: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    let ctx = cx.global();
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, input.to_js(), init.to_js(), Some(this_value.to_js())),
+    fetch_impl::<false>(
+        cx.global(),
+        input.to_js(),
+        init.to_js(),
+        Some(this_value.to_js()),
     )
-}
-
-/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
-/// rejects the returned promise; `fetch()` never throws synchronously.
-fn reject_on_exception(
-    global_this: &JSGlobalObject,
-    result: JsResult<JSValue>,
-) -> JsResult<JSValue> {
-    let err = match result {
-        Ok(v) => return Ok(v),
-        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-        // A terminated worker gets no rejected promise: its termination keeps unwinding.
-        Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
-            if global_this.has_pending_termination_exception() =>
-        {
-            return Err(jsc::JsError::Thrown);
-        }
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
-        Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) => exc.to_error().unwrap_or(exc),
-            None => {
-                // `fetch_impl` only returns Err(Thrown) with an exception
-                // pending; reaching here means it was cleared, which is a bug.
-                debug_assert!(
-                    false,
-                    "fetch_impl signaled a thrown exception but none is pending"
-                );
-                global_this.create_error_instance(format_args!("fetch() failed"))
-            }
-        },
-    };
-    Ok(JSPromise::rejected_promise(global_this, err).to_js())
 }
 
 // ──────────────────────────────────────────────────────────────────────────

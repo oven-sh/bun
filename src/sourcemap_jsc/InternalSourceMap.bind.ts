@@ -25,7 +25,7 @@ export const InternalSourceMapMapping = b.dictionary({
 });
 
 export const find = b.fn({
-  args: { blob: b.bytes({ from: ["buffer"] }), line: b.any, col: b.any },
+  args: { blob: b.bytes({ from: ["buffer"] }), line: b.f64, col: b.f64 },
   returns: InternalSourceMapMapping.nullable,
   capability: "heap",
   throws: true,

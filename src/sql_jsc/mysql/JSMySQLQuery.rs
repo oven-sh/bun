@@ -7,9 +7,9 @@ use crate::jsc::{
     VirtualMachineSqlExt as _, bun_string_jsc,
 };
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
-use bun_jsc::JsCell;
+use crate::shared::query_ctor_args;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -54,37 +54,21 @@ impl JSMySQLQuery {
 
     pub(crate) fn create_query<'a>(
         cx: &mut JsScope<'a>,
-        query: JsLocal<'a>,
-        values: JsLocal<'a>,
-        pending_value: JsLocal<'a>,
-        bigint: JsLocal<'a>,
-        simple: JsLocal<'a>,
+        query: bun_core::String,
+        values: JsLocal<'a, JSArray>,
+        pending_value: JsLocal<'a, JSArray>,
+        bigint: bool,
+        simple: bool,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let QueryCtorArgs {
-            query,
-            values,
-            pending_value,
-            bigint,
-            simple,
-        } = QueryCtorArgs::parse(
-            global_this,
-            query.to_js(),
-            values.to_js(),
-            pending_value.to_js(),
-            bigint.to_js(),
-            simple.to_js(),
-        )?;
+        let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
             global_object: BackRef::new(global_this),
-            query: JsCell::new(MySQLQuery::init(
-                query.to_bun_string(global_this)?,
-                bigint,
-                simple,
-            )),
+            query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
             undescribed: JsCell::new(Undescribed::default()),
         }));
         let this = ParentRef::from(NonNull::new(this_ptr).expect("heap::into_raw non-null"));

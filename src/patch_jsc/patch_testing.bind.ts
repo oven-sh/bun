@@ -9,12 +9,12 @@ export const parse = b.fn({
   throws: true,
 });
 
-/** `dir` is converted before `patchfile`. */
 export const apply = b.fn({
-  args: { patchfile: b.any, dir: b.any },
+  args: { patchfile: b.string.loose.utf8, dir: b.string.loose.utf8.optional },
   returns: b.bool,
   capability: "js",
   throws: true,
+  length: 2,
 });
 
 export const makeDiff = b.fn({

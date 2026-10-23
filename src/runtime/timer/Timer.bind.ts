@@ -4,7 +4,7 @@ export default b.module({ rustPath: "crate::timer::timer::internal_bindings" });
 
 export const timerClockMs = b.fn({ returns: b.f64 });
 export const monotonicNowMs = b.fn({ returns: b.f64 });
-export const setNextTimerId = b.fn({ args: { id: b.any }, capability: "js", throws: true });
+export const setNextTimerId = b.fn({ args: { id: b.u64.optional }, length: 1, capability: "heap", throws: true });
 
 const chainable = { returns: b.self, passThis: true, invalidThis: "undefined" } as const;
 const ref = { ...chainable, rustName: "do_ref" } as const;

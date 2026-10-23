@@ -8,17 +8,12 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-pub(crate) fn alert(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<()> {
-    let global = cx.global();
-    let arguments = JsLocal::to_js_slice(args);
+pub(crate) fn alert(message: Option<&[u8]>) {
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
 
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
-    if has_message {
-        let message = arguments[0].to_utf8(global)?;
-
-        if !message.slice().is_empty() {
+    if let Some(message) = message {
+        if !message.is_empty() {
             // 3. Set message to the result of normalizing newlines given message.
             // *  We skip step 3 because they are already done in most terminals by default.
 
@@ -26,15 +21,15 @@ pub(crate) fn alert(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<()> 
             // *  We just don't do this because it's not necessary.
 
             // 5. Show message to the user, treating U+000A LF as a line break.
-            if output.write_all(message.slice()).is_err() {
+            if output.write_all(message).is_err() {
                 // 1. If we cannot show simple dialogs for this, then return.
-                return Ok(());
+                return;
             }
         }
     }
 
     if output
-        .write_all(if has_message {
+        .write_all(if message.is_some() {
             b" [Enter] " as &[u8]
         } else {
             b"Alert [Enter] "
@@ -42,7 +37,7 @@ pub(crate) fn alert(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<()> 
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return.
-        return Ok(());
+        return;
     }
 
     // 6. Invoke WebDriver BiDi user prompt opened with this, "alert", and message.
@@ -60,27 +55,20 @@ pub(crate) fn alert(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<()> 
 
     // 8. Invoke WebDriver BiDi user prompt closed with this and true.
     // *  Again, not necessary in a server context.
-
-    Ok(())
 }
 
-pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bool> {
-    let global = cx.global();
-    let arguments = JsLocal::to_js_slice(args);
+pub(crate) fn confirm(message: Option<&[u8]>) -> bool {
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
 
-    if has_message {
+    if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_utf8(global)?;
-
-        if output.write_all(message.slice()).is_err() {
+        if output.write_all(message).is_err() {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return Ok(false);
+            return false;
         }
     }
 
@@ -88,7 +76,7 @@ pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bo
     //    and ask the user to respond with a positive or negative
     //    response.
     if output
-        .write_all(if has_message {
+        .write_all(if message.is_some() {
             b" [y/N] " as &[u8]
         } else {
             b"Confirm [y/N] "
@@ -96,7 +84,7 @@ pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bo
         .is_err()
     {
         // 1. If we cannot show simple dialogs for this, then return false.
-        return Ok(false);
+        return false;
     }
 
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
@@ -107,7 +95,7 @@ pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bo
     let mut reader = Output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
-        return Ok(false);
+        return false;
     };
 
     // 7. Invoke WebDriver BiDi user prompt closed with this, and true if
@@ -115,34 +103,34 @@ pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bo
     // *  Not relevant in a server context.
 
     match first_byte {
-        b'\n' => return Ok(false),
+        b'\n' => return false,
         b'\r' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
-                return Ok(false);
+                return false;
             };
             if next_byte == b'\n' {
-                return Ok(false);
+                return false;
             }
         }
         b'y' | b'Y' => {
             let Ok(next_byte) = reader.take_byte() else {
                 // They may have said yes, but the stdin is invalid.
 
-                return Ok(false);
+                return false;
             };
 
             if next_byte == b'\n' {
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
-                return Ok(true);
+                return true;
             } else if next_byte == b'\r' {
                 // Check Windows style
                 let Ok(second_byte) = reader.take_byte() else {
-                    return Ok(false);
+                    return false;
                 };
                 if second_byte == b'\n' {
-                    return Ok(true);
+                    return true;
                 }
             }
         }
@@ -157,7 +145,7 @@ pub(crate) fn confirm(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<bo
 
     // 8. If the user responded positively, return true; otherwise, the user
     //    responded negatively: return false.
-    Ok(false)
+    false
 }
 
 /// Error set for the read-until-delimiter helpers below.
@@ -226,29 +214,24 @@ fn read_until_delimiter_array_list_infinity<R: ReadByte>(
 }
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-prompt
-pub(crate) fn prompt(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
+pub(crate) fn prompt<'a>(
+    cx: &mut JsScope<'a>,
+    message: Option<&[u8]>,
+    default_value: Option<JsLocal<'a>>,
+) -> JsResult<JSValue> {
     let global = cx.global();
-    let arguments = JsLocal::to_js_slice(args);
     let output = Output::writer();
-    let has_message = !arguments.is_empty();
-    let has_default = arguments.len() >= 2;
     // 4. Set default to the result of optionally truncating default.
     // *  We don't really need to do this.
-    let default = if has_default {
-        arguments[1]
-    } else {
-        JSValue::NULL
-    };
+    let default = default_value.map(JsLocal::to_js);
 
-    if has_message {
+    if let Some(message) = message {
         // 2. Set message to the result of normalizing newlines given message.
         // *  Not pertinent to a server runtime so we will just let the terminal handle this.
 
         // 3. Set message to the result of optionally truncating message.
         // *  Not necessary so we won't do it.
-        let message = arguments[0].to_utf8(global)?;
-
-        if output.write_all(message.slice()).is_err() {
+        if output.write_all(message).is_err() {
             // 1. If we cannot show simple dialogs for this, then return null.
             return Ok(JSValue::NULL);
         }
@@ -261,7 +244,7 @@ pub(crate) fn prompt(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSV
     //    abort. The response must be defaulted to the value given by
     //    default.
     if output
-        .write_all(if has_message {
+        .write_all(if message.is_some() {
             b" " as &[u8]
         } else {
             b"Prompt "
@@ -272,8 +255,8 @@ pub(crate) fn prompt(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSV
         return Ok(JSValue::FALSE);
     }
 
-    if has_default {
-        let default_string = arguments[1].to_utf8(global)?;
+    if let Some(default) = default {
+        let default_string = default.to_utf8(global)?;
 
         if output
             .print(format_args!(
@@ -316,14 +299,14 @@ pub(crate) fn prompt(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSV
     if first_byte == b'\n' {
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
-        return Ok(default);
+        return Ok(default.unwrap_or(JSValue::NULL));
     } else if first_byte == b'\r' {
         let Ok(second) = reader.read_byte() else {
             return Ok(JSValue::NULL);
         };
         second_byte = Some(second);
         if second == b'\n' {
-            return Ok(default);
+            return Ok(default.unwrap_or(JSValue::NULL));
         }
     }
 

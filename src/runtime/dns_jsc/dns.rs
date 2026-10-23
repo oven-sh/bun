@@ -37,7 +37,7 @@ use bun_wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
-use crate::generated_bindgen::dns_internals::RecordTypeArgument;
+use crate::generated_bindgen::dns_internals::{RecordTypeArgument, ResolverOptions};
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -2815,6 +2815,8 @@ pub(crate) mod internal {
         }
     }
 
+    const MAX_ADDRESSES_FOR_TESTING: usize = 64;
+
     /// The `addresses: string[]` argument of the testing hooks below, as sockaddrs.
     fn addresses_for_testing(
         global: &JSGlobalObject,
@@ -2826,7 +2828,7 @@ pub(crate) mod internal {
             );
         }
         let len = addresses.get_length(global)? as usize;
-        if len > 64 {
+        if len > MAX_ADDRESSES_FOR_TESTING {
             return Err(global
                 .throw_invalid_arguments(format_args!("addresses must have at most 64 entries")));
         }
@@ -2844,8 +2846,8 @@ pub(crate) mod internal {
     }
 
     /// `bun:internal-for-testing`: [`is_localhost_name`] for one hostname.
-    pub(crate) fn is_localhost_name_for_testing(hostname: &bun::String) -> bool {
-        is_localhost_name(hostname.to_utf8().slice())
+    pub(crate) fn is_localhost_name_for_testing(hostname: &[u8]) -> bool {
+        is_localhost_name(hostname)
     }
 
     /// `bun:internal-for-testing`: [`is_all_loopback_of_one_family`] over `addresses` laid out as a getaddrinfo() answer.
@@ -2864,12 +2866,11 @@ pub(crate) mod internal {
     /// storing the result, so a real `fetch()` / `Bun.connect()` consumes it.
     pub(crate) fn seed_cache_for_testing<'a>(
         cx: &mut JsScope<'a>,
-        hostname: &bun::String,
+        hostname: &[u8],
         addresses: JsLocal<'a>,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<core::iter::Take<core::array::IntoIter<i32, MAX_ADDRESSES_FOR_TESTING>>> {
         let global = cx.global();
-        let hostname_slice = hostname.to_utf8();
-        let hostname_z = bun::ZBox::from_bytes(hostname_slice.slice());
+        let hostname_z = bun::ZBox::from_bytes(hostname);
         let mut addrs = addresses_for_testing(global, addresses.to_js())?;
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
@@ -2877,15 +2878,15 @@ pub(crate) mod internal {
         let mut chain = addrinfo_chain(&mut addrs);
         let results = process_results(chain.as_mut_ptr());
 
-        let out = JSValue::create_empty_array(global, results.len())?;
-        for (i, entry) in (0u32..).zip(results.iter()) {
-            let fam: i32 = if entry.info.ai_family == netc::AF_INET6 {
+        let mut families = [0i32; MAX_ADDRESSES_FOR_TESTING];
+        for (family, entry) in families.iter_mut().zip(results.iter()) {
+            *family = if entry.info.ai_family == netc::AF_INET6 {
                 6
             } else {
                 4
             };
-            out.put_index(global, i, JSValue::js_number_from_int32(fam))?;
         }
+        let families = families.into_iter().take(results.len());
 
         let key = RequestKey::init(Some(hostname_z.as_zstr()), 0);
         let req = Request::new(key.to_owned(), 0, GlobalCache::get_cache_timestamp());
@@ -2907,23 +2908,21 @@ pub(crate) mod internal {
         }
         DNS_CACHE_SIZE.store(guard.len, Ordering::Relaxed);
         drop(guard);
-        Ok(out)
+        Ok(families)
     }
 
     /// `bun:internal-for-testing`: the error a lookup of `hostname` reports
     /// when getaddrinfo(3) returns the `EAI_*` status named `code`.
     pub(crate) fn getaddrinfo_error_for_testing(
         cx: &mut JsScope<'_>,
-        code: &bun::String,
-        hostname: &bun::String,
+        code: &[u8],
+        hostname: &[u8],
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let code = code.to_utf8();
-        let hostname = hostname.to_utf8();
-        let Some(rc) = c_ares::Error::eai_raw_by_name(code.slice()) else {
+        let Some(rc) = c_ares::Error::eai_raw_by_name(code) else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "unknown getaddrinfo status name: {}",
-                bstr::BStr::new(code.slice())
+                bstr::BStr::new(code)
             )));
         };
         match c_ares::Error::init_eai(rc) {
@@ -2931,7 +2930,7 @@ pub(crate) mod internal {
                 err,
                 global,
                 b"getaddrinfo",
-                hostname.slice(),
+                hostname,
             ),
             None => Ok(JSValue::UNDEFINED),
         }
@@ -5738,10 +5737,7 @@ impl Resolver {
         )
     }
 
-    pub(crate) fn new_resolver<'a>(
-        cx: &mut JsScope<'a>,
-        options: JsLocal<'a>,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
         let global_this = cx.global();
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
@@ -5749,24 +5745,17 @@ impl Resolver {
             Some(global_this.bun_vm().context_of_caller_no_frame().id()),
         );
 
-        let options = options.to_js();
-        if options.is_object() {
-            // SAFETY: `resolver` is the heap allocation from `init`; not yet
-            // wrapped in JS so exclusively owned here.
-            let opts_cell = unsafe { &(*resolver).options };
-            let mut opts = opts_cell.get();
-            if let Some(timeout) = options.get_truthy(global_this, "timeout")? {
-                opts.timeout = Some(timeout.coerce_to_i32(global_this)?);
-            }
-            if let Some(tries) = options.get_truthy(global_this, "tries")? {
-                opts.tries = Some(tries.coerce_to_i32(global_this)?);
-            }
-            opts_cell.set(opts);
-        }
+        // SAFETY: `resolver` is the heap allocation from `init`; not yet
+        // wrapped in JS so exclusively owned here.
+        let opts_cell = unsafe { &(*resolver).options };
+        let mut opts = opts_cell.get();
+        opts.timeout = Some(options.timeout);
+        opts.tries = Some(options.tries);
+        opts_cell.set(opts);
 
         // SAFETY: `resolver` was `heap::alloc`'d in `Resolver::init`; ownership
         // transfers to the JS wrapper, which holds one ref.
-        Ok(unsafe { Resolver::to_js_ptr(resolver, global_this) })
+        unsafe { Resolver::to_js_ptr(resolver, global_this) }
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {

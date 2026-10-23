@@ -23,7 +23,7 @@ use bun_jsc::{
 use bun_paths as path;
 use bun_resolver::fs as Fs;
 
-use crate::generated_bindgen::ffi::js_FFI as js;
+use crate::generated_bindgen::ffi::{FunctionName, js_FFI as js};
 
 // ─── Local shims for upstream surfaces not yet wired (Phase D) ───────────────
 
@@ -1240,12 +1240,12 @@ impl FFI {
 
     pub(crate) fn callback<'a>(
         cx: &mut JsScope<'a>,
-        interface: JsLocal<'a>,
-        js_callback: JsLocal<'a>,
+        options: JsLocal<'a>,
+        callback: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        let interface = interface.to_js();
-        let js_callback = js_callback.to_js();
+        let interface = options.to_js();
+        let js_callback = callback.to_js();
         jsc::mark_binding();
         if !interface.is_object() {
             return Ok(global_this.to_invalid_arguments(format_args!("Expected object")));
@@ -1359,11 +1359,11 @@ impl FFI {
 
     pub(crate) fn view_source<'a>(
         cx: &mut JsScope<'a>,
-        object: JsLocal<'a>,
+        symbols: JsLocal<'a>,
         is_callback: bool,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let object = object.to_js();
+        let object = symbols.to_js();
         if is_callback {
             return Self::print_callback(global, object);
         }
@@ -1412,19 +1412,16 @@ fn invalid_options_arg(global: &JSGlobalObject) -> JSValue {
 impl FFI {
     pub(crate) fn dlopen<'a>(
         cx: &mut JsScope<'a>,
-        name: JsLocal<'a>,
-        object_value: JsLocal<'a>,
+        name: Option<&[u8]>,
+        symbols: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let name = name.to_js();
-        if name.is_undefined_or_null() {
+        let Some(name_slice) = name else {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
-        }
-        let name_str = name.to_js_string(global)?.view(global)?;
-        let object_value = object_value.to_js();
+        };
+        let object_value = symbols.to_js();
         jsc::mark_binding();
         let vm = jsc::VirtualMachineRef::get();
-        let name_slice = name_str.to_utf8();
 
         if object_value.is_empty_or_undefined_or_null() {
             return Ok(invalid_options_arg(global));
@@ -1454,7 +1451,7 @@ impl FFI {
             // `crate::jsc_hooks` — same crate, so a direct call.
             let _ = vm;
             if let Some(len) = crate::jsc_hooks::resolve_embedded_file_to_buf(
-                name_slice.slice(),
+                name_slice,
                 ext,
                 &mut filepath_buf[..],
             ) {
@@ -1466,7 +1463,7 @@ impl FFI {
                 break 'brk &filepath_buf[0..len];
             }
 
-            break 'brk name_slice.slice();
+            break 'brk name_slice;
         };
 
         if name.is_empty() {
@@ -1592,10 +1589,10 @@ impl FFI {
 
     pub(crate) fn link_symbols<'a>(
         cx: &mut JsScope<'a>,
-        object_value: JsLocal<'a>,
+        symbols: JsLocal<'a>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        let object_value = object_value.to_js();
+        let object_value = symbols.to_js();
         jsc::mark_binding();
 
         if object_value.is_empty_or_undefined_or_null() {
@@ -1674,11 +1671,10 @@ impl FFI {
     pub(crate) fn cfunction<'a>(
         cx: &mut JsScope<'a>,
         options: JsLocal<'a>,
-        name_value: JsLocal<'a>,
+        name: FunctionName<'a>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let options = options.to_js();
-        let name_value = name_value.to_js();
         jsc::mark_binding();
 
         if options.is_empty_or_undefined_or_null() || !options.is_object() {
@@ -1696,10 +1692,9 @@ impl FFI {
             )));
         };
 
-        let name = if name_value.is_string() {
-            name_value.to_bun_string(global)?
-        } else {
-            bun_core::String::static_("CFunction")
+        let name = match name {
+            FunctionName::Name(name) => name,
+            FunctionName::Ignored(_) => bun_core::String::static_("CFunction"),
         };
         if let Some(err) = function.reject_napi_types_error(global) {
             return Ok(err);

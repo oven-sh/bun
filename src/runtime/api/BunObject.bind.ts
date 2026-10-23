@@ -93,10 +93,27 @@ export const indexOfLine = b.fn({
 
 export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
 
-/** `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is `"undefined"`. */
+/** What is not a number is ignored. */
+export const InspectDepth = b.union({ number: b.f64, ignored: b.any });
+export const InspectOptions = b.dictionary(
+  {
+    depth: InspectDepth,
+    colors: b.bool.loose.optional,
+    sorted: b.bool.loose.optional,
+    compact: b.bool.loose.optional,
+  },
+  { allowArray: true },
+);
+export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.any });
+export const InspectOptionsOrIgnored = b.union({ options: InspectOptions, ignored: b.any });
+
+/**
+ * `(value, options)` or `(value, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
+ * `"undefined"`.
+ */
 export const inspect = b.fn({
   export: "Bun__BunObject__inspect",
-  args: { args: b.any.variadic },
+  args: { value: b.any.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
   returns: b.string.utf8,
   capability: "js",
   throws: true,
@@ -142,15 +159,15 @@ export const openInEditor = b.fn({
   length: 1,
 });
 
+/** Without a `specifier` or a `from`, `resolveSync` throws and `resolve` rejects. */
 const resolver = {
-  args: { specifier: b.any, from: b.any, esm: b.any },
-  returns: b.any,
+  args: { specifier: b.string.loose.nullable, from: b.string.loose.nullable, esm: b.bool.default(true) },
   capability: "js",
   throws: true,
   length: 1,
 } as const;
-export const resolve = b.fn(resolver);
-export const resolveSync = b.fn(resolver);
+export const resolve = b.fn({ ...resolver, returns: b.any, rejects: true });
+export const resolveSync = b.fn({ ...resolver, returns: b.string });
 
 export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
 
@@ -169,14 +186,23 @@ export const sleepSync = b.fn({
   throws: true,
 });
 
+/** The table of what is not an object is `""`. */
+export const TabularData = b.union({ object: b.object, ignored: b.any });
+const printer = { export: "Bun__BunObject__table", returns: b.string.utf8, capability: "js", throws: true } as const;
 /** `Bun.inspect.table` */
-export const table = b.fn({
-  export: "Bun__BunObject__table",
-  args: { tabularData: b.any, properties: b.any, options: b.any },
-  returns: b.string.utf8,
-  capability: "js",
-  throws: true,
-});
+export const table = b.overloads(
+  {
+    ...printer,
+    args: { tabularData: TabularData, properties: b.jsArray, options: InspectOptionsOrIgnored },
+    length: 3,
+    rustPath: "crate::api::bun_object::table_with_properties",
+  },
+  {
+    ...printer,
+    args: { tabularData: TabularData, options: InspectOptionsOrIgnored },
+    rustPath: "crate::api::bun_object::table",
+  },
+);
 
 export const WhichOptions = b.dictionary(
   {

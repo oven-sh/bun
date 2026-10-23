@@ -621,24 +621,27 @@ fn get_cptr(value: JSValue) -> Option<usize> {
 
 pub(crate) fn to_array_buffer<'a>(
     cx: &mut JsScope<'a>,
-    value: JsLocal<'a>,
-    rest: &'a [JsLocal<'a>],
+    ptr: JsLocal<'a>,
+    byte_offset: Option<JsLocal<'a>>,
+    byte_length: Option<JsLocal<'a>>,
+    deallocator_context: Option<JsLocal<'a>>,
+    deallocator: Option<JsLocal<'a>>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let mut rest = JsLocal::to_js_slice(rest).iter().copied();
-    let byte_offset = rest.next();
-    let value_length = rest.next();
-    let finalization_ctx_or_ptr = rest.next();
-    let finalization_callback = rest.next();
-    let (ptr, len) = get_ptr_slice(global_this, value.to_js(), byte_offset, value_length)?;
+    let (ptr, len) = get_ptr_slice(
+        global_this,
+        ptr.to_js(),
+        byte_offset.map(JsLocal::to_js),
+        byte_length.map(JsLocal::to_js),
+    )?;
     let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
     let mut ctx: Option<*mut c_void> = None;
-    if let Some(callback_value) = finalization_callback {
+    if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-            if let Some(ctx_value) = finalization_ctx_or_ptr {
+            if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
                 if let Some(ctx_ptr) = get_cptr(ctx_value) {
                     ctx = Some(ctx_ptr as *mut c_void);
                 } else if !ctx_value.is_undefined_or_null() {
@@ -652,7 +655,7 @@ pub(crate) fn to_array_buffer<'a>(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
         }
-    } else if let Some(callback_value) = finalization_ctx_or_ptr {
+    } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };
@@ -680,24 +683,27 @@ pub(crate) fn to_array_buffer<'a>(
 
 pub(crate) fn to_buffer<'a>(
     cx: &mut JsScope<'a>,
-    value: JsLocal<'a>,
-    rest: &'a [JsLocal<'a>],
+    ptr: JsLocal<'a>,
+    byte_offset: Option<JsLocal<'a>>,
+    byte_length: Option<JsLocal<'a>>,
+    deallocator_context: Option<JsLocal<'a>>,
+    deallocator: Option<JsLocal<'a>>,
 ) -> JsResult<JSValue> {
     let global_this = cx.global();
-    let mut rest = JsLocal::to_js_slice(rest).iter().copied();
-    let byte_offset = rest.next();
-    let value_length = rest.next();
-    let finalization_ctx_or_ptr = rest.next();
-    let finalization_callback = rest.next();
-    let (ptr, len) = get_ptr_slice(global_this, value.to_js(), byte_offset, value_length)?;
+    let (ptr, len) = get_ptr_slice(
+        global_this,
+        ptr.to_js(),
+        byte_offset.map(JsLocal::to_js),
+        byte_length.map(JsLocal::to_js),
+    )?;
     let mut callback: jsc::JSTypedArrayBytesDeallocator = None;
     let mut ctx: Option<*mut c_void> = None;
-    if let Some(callback_value) = finalization_callback {
+    if let Some(callback_value) = deallocator.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };
 
-            if let Some(ctx_value) = finalization_ctx_or_ptr {
+            if let Some(ctx_value) = deallocator_context.map(JsLocal::to_js) {
                 if let Some(ctx_ptr) = get_cptr(ctx_value) {
                     ctx = Some(ctx_ptr as *mut c_void);
                 } else if !ctx_value.is_empty_or_undefined_or_null() {
@@ -711,7 +717,7 @@ pub(crate) fn to_buffer<'a>(
                 "Expected callback to be a C pointer (number or BigInt)"
             )));
         }
-    } else if let Some(callback_value) = finalization_ctx_or_ptr {
+    } else if let Some(callback_value) = deallocator_context.map(JsLocal::to_js) {
         if let Some(callback_ptr) = get_cptr(callback_value) {
             // SAFETY: user-supplied raw fn pointer address.
             callback = unsafe { deallocator_from_addr(callback_ptr) };

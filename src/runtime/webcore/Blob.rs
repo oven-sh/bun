@@ -116,6 +116,9 @@ pub(crate) use bun_jsc::webcore_types::{Blob, BlobContentType, ClosingState, MAX
 const SERIALIZATION_VERSION: u8 = 4;
 
 pub(crate) use crate::generated_bindgen::blob::js_Blob as js;
+use crate::generated_bindgen::blob::{
+    BlobOrBuildArtifact, BlobType, BunFileOptions, BunWriteOptions,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -5018,55 +5021,35 @@ pub(crate) fn write(
 
     let mut path_or_blob = write_destination_from_js(global_this, &mut args)?;
 
-    let mut mkdirp_if_not_exists: Option<bool> = None;
-    let mut mode: Option<bun_sys::Mode> = None;
     let options = (!options.is_undefined()).then(|| options.to_js());
-    if let Some(options_object) = options {
-        if options_object.is_object() {
-            if let Some(create_directory) = options_object.get_truthy(global_this, "createPath")? {
-                if !create_directory.is_boolean() {
-                    return Err(global_this.throw_invalid_argument_type(
-                        "write",
-                        "options.createPath",
-                        "boolean",
-                    ));
-                }
-                mkdirp_if_not_exists = Some(create_directory.to_boolean());
+    let own_options = match options {
+        Some(options) if !options.is_null() => BunWriteOptions::from_js(global_this, options)?,
+        _ => BunWriteOptions::default(),
+    };
+    let mode = match own_options.mode {
+        Some(mode) => {
+            let mode_int = mode as i64;
+            if mode_int < 0 || mode_int > 0o777 {
+                return Err(global_this.throw_range_error(
+                    mode_int,
+                    jsc::RangeErrorOptions {
+                        field_name: b"mode",
+                        min: 0,
+                        max: 0o777,
+                        msg: b"",
+                    },
+                ));
             }
-            if let Some(mode_value) = options_object.get(global_this, "mode")? {
-                if !mode_value.is_empty_or_undefined_or_null() {
-                    if !mode_value.is_number() {
-                        return Err(global_this.throw_invalid_argument_type(
-                            "write",
-                            "options.mode",
-                            "number",
-                        ));
-                    }
-                    let mode_int = mode_value.to_int64();
-                    if mode_int < 0 || mode_int > 0o777 {
-                        return Err(global_this.throw_range_error(
-                            mode_int,
-                            jsc::RangeErrorOptions {
-                                field_name: b"mode",
-                                min: 0,
-                                max: 0o777,
-                                msg: b"",
-                            },
-                        ));
-                    }
-                    mode = Some(mode_int as bun_sys::Mode);
-                }
-            }
-        } else if !options_object.is_empty_or_undefined_or_null() {
-            return Err(global_this.throw_invalid_argument_type("write", "options", "object"));
+            Some(mode_int as bun_sys::Mode)
         }
-    }
+        None => None,
+    };
     write_file_internal(
         &cx,
         &mut path_or_blob,
         data.to_js(),
         WriteFileOptions {
-            mkdirp_if_not_exists,
+            mkdirp_if_not_exists: own_options.create_path,
             extra_options: options,
             mode,
         },
@@ -5331,6 +5314,15 @@ pub(crate) fn jsdom_file_construct(
 // `calculate_estimated_byte_size` / `estimated_size`: canonical impls live
 // later in this file (near `dupe`/`to_js`). Duplicates removed here.
 
+impl<'a> BlobOrBuildArtifact<'a> {
+    pub(crate) fn blob(self) -> &'a Blob {
+        match self {
+            Self::Blob(blob) => blob,
+            Self::BuildArtifact(artifact) => &artifact.blob,
+        }
+    }
+}
+
 pub(crate) fn file(
     cx: &mut JsScope<'_>,
     path: JsLocal<'_>,
@@ -5358,31 +5350,30 @@ pub(crate) fn file(
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
 
-    if let Some(opts) = options {
-        if opts.is_object() {
-            if let Some(file_type) = opts.get_truthy(global_object, "type")? {
-                'inner: {
-                    if file_type.is_string() {
-                        let str = file_type.to_utf8(global_object)?;
-                        let slice = str.slice();
-                        if !is_valid_blob_type(slice) {
-                            break 'inner;
-                        }
-                        blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_object.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
-                    }
+    if let Some(options) = options {
+        BunFileOptions::from_js(global_object, options, |options| {
+            let file_type = match options.r#type {
+                BlobType::Text(text) => Some(text).filter(|text| !text.is_empty()),
+                BlobType::StringObject(text) => Some(text),
+                BlobType::Ignored(_) => None,
+            };
+            if let Some(file_type) = file_type {
+                let str = file_type.to_utf8();
+                let slice = str.slice();
+                if is_valid_blob_type(slice) {
+                    blob.content_type_was_set.set(true);
+                    blob.content_type
+                        .set(match global_object.bun_vm().as_mut().mime_type(slice) {
+                            Some(mime) => BlobContentType::from(mime),
+                            None => BlobContentType::from_lowercased(slice),
+                        });
                 }
             }
-            if let Some(last_modified) = opts.get(global_object, "lastModified")? {
-                let n = last_modified.to_number(global_object)?;
+            if let Some(n) = options.last_modified {
                 blob.last_modified.set(if n.is_nan() { 0.0 } else { n });
             }
-        }
+            Ok(())
+        })?;
     }
 
     let ptr = Blob::new(blob);

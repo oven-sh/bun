@@ -3,10 +3,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::sync::Arc;
 
-use crate::bindgen::{JsHeap, JsLocal, JsScope};
+use crate::JSGlobalObject;
+use crate::bindgen::JsHeap;
 use crate::strong::Optional as Strong;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSGlobalObject, JsResult};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
@@ -1078,24 +1078,16 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 // TLS default ciphers JS bindings
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn set_tls_default_ciphers<'a>(
-    cx: &mut JsScope<'a>,
-    ciphers: JsLocal<'a>,
-) -> JsResult<()> {
-    let global_this = cx.global();
-    let ciphers = ciphers.to_js();
-    if !ciphers.is_string() {
-        return Err(global_this.throw_invalid_argument_type_value(b"ciphers", b"string", ciphers));
-    }
-    let utf8 = ciphers.to_utf8(global_this)?;
+pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
+    // SAFETY: only the VM is taken from it.
+    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
     global_this
         .bun_vm()
         .as_mut()
         .rare_data()
-        .set_tls_default_ciphers(utf8.slice());
-    Ok(())
+        .set_tls_default_ciphers(ciphers);
 }
 
 pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {

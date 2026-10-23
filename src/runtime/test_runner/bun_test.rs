@@ -66,6 +66,7 @@ pub(crate) use super::done_callback::DoneCallback;
 
 pub(crate) mod js_fns {
     use super::*;
+    use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
 
     #[derive(Clone, Copy)]
     pub(crate) enum Signature<'a> {
@@ -159,10 +160,12 @@ pub(crate) mod js_fns {
         }
     }
 
-    pub(crate) fn generic_hook_impl(
+    pub(crate) fn generic_hook_impl<'a>(
         tag: GenericHookTag,
         global_this: &JSGlobalObject,
-        arguments: [JSValue; 3],
+        first: DescriptionOrCallback<'a>,
+        second: CallbackOrOptions<'a>,
+        third: CallbackOrOptions<'a>,
     ) -> JsResult<()> {
         let _g = group_begin!();
         // Run the body in a closure so every error exit funnels through the
@@ -174,7 +177,9 @@ pub(crate) mod js_fns {
 
             let args = ScopeFunctions::parse_arguments(
                 global_this,
-                arguments,
+                first,
+                second,
+                third,
                 Signature::Str(sig_bytes),
                 ScopeFunctions::ParseArgumentsCfg { callback: ScopeFunctions::CallbackMode::Require, kind: ScopeFunctions::FunctionKind::Hook },
             )?;
@@ -328,17 +333,13 @@ pub(crate) mod js_fns {
         use super::*;
         macro_rules! hook {
             ($name:ident, $tag:ident) => {
-                pub(crate) fn $name(
-                    cx: &mut JsScope<'_>,
-                    description: JsLocal<'_>,
-                    callback: JsLocal<'_>,
-                    options: JsLocal<'_>,
+                pub(crate) fn $name<'a>(
+                    cx: &mut JsScope<'a>,
+                    first: DescriptionOrCallback<'a>,
+                    second: CallbackOrOptions<'a>,
+                    third: CallbackOrOptions<'a>,
                 ) -> JsResult<()> {
-                    super::generic_hook_impl(
-                        GenericHookTag::$tag,
-                        cx.global(),
-                        [description.to_js(), callback.to_js(), options.to_js()],
-                    )
+                    super::generic_hook_impl(GenericHookTag::$tag, cx.global(), first, second, third)
                 }
             };
         }
@@ -742,18 +743,13 @@ impl BunTest {
     fn bun_test_then_or_catch(
         global_this: &JSGlobalObject,
         result: JSValue,
-        this_ptr: JSValue,
+        raw_ref: *mut RefData,
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
 
-        if this_ptr.is_empty_or_undefined_or_null() {
-            return Ok(());
-        }
-
-        let raw_ref: *mut RefData = this_ptr.as_promise_ptr::<RefData>();
-        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`
-        // and round-tripped via `as_promise_ptr`; we adopt the +1 it carried.
+        // SAFETY: `raw_ref` was produced by `RefPtr::into_raw` in `run_test_callback`;
+        // we adopt the +1 it carried.
         let refdata = unsafe { RefPtr::from_raw(raw_ref) };
         // Remove the pending_then_refs entry first so it never holds a freed `RefData`.
         if let Some(runner) = Jest::runner() {
@@ -788,17 +784,17 @@ impl BunTest {
     pub(crate) fn bun_test_then(
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
-        context: JsLocal<'_>,
+        context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context.to_js(), false)
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, false)
     }
 
     pub(crate) fn bun_test_catch(
         cx: &mut JsScope<'_>,
         value: JsLocal<'_>,
-        context: JsLocal<'_>,
+        context: *mut RefData,
     ) -> JsResult<()> {
-        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context.to_js(), true)
+        Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
     pub(crate) fn bun_test_done_callback(

@@ -1,5 +1,5 @@
 use crate::jsc::{StrongOptional, VirtualMachineSqlExt as _};
-use bun_jsc::bindgen::{JsHeap, JsLocal};
+use bun_jsc::bindgen::{Callable, JsHeap, JsLocal};
 
 #[repr(C)]
 #[derive(Default)]
@@ -10,8 +10,8 @@ pub struct MySQLContext {
 
 pub(crate) fn init<'a>(
     heap: &JsHeap<'a>,
-    on_resolve_query: JsLocal<'a>,
-    on_reject_query: JsLocal<'a>,
+    on_resolve_query: JsLocal<'a, Callable>,
+    on_reject_query: JsLocal<'a, Callable>,
 ) {
     // SAFETY: setting a `Strong` runs no JavaScript.
     let global = unsafe { heap.global() };

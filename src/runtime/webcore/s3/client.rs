@@ -739,21 +739,25 @@ impl S3UploadStreamWrapper {
     }
 }
 
-pub(crate) fn on_resolve_upload_stream(_: &mut JsScope<'_>, _: JsLocal<'_>, context: JsLocal<'_>) {
+pub(crate) fn on_resolve_upload_stream(
+    _: &mut JsScope<'_>,
+    _: JsLocal<'_>,
+    context: Option<NonNull<S3UploadStreamWrapper>>,
+) {
     // The cell hands back the ref `upload_stream` gave it, which `handle_resolve_stream` balances.
-    if let Some(this) =
-        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(context.to_js())
-    {
+    if let Some(this) = context {
         // SAFETY: that ref keeps the wrapper alive.
         unsafe { (*this.as_ptr()).handle_resolve_stream() };
     }
 }
 
-pub(crate) fn on_reject_upload_stream(_: &mut JsScope<'_>, err: JsLocal<'_>, context: JsLocal<'_>) {
+pub(crate) fn on_reject_upload_stream(
+    _: &mut JsScope<'_>,
+    err: JsLocal<'_>,
+    context: Option<NonNull<S3UploadStreamWrapper>>,
+) {
     // As `on_resolve_upload_stream`; `handle_reject_stream` balances the ref.
-    if let Some(this) =
-        crate::api::native_promise_context::take::<S3UploadStreamWrapper>(context.to_js())
-    {
+    if let Some(this) = context {
         // SAFETY: that ref keeps the wrapper alive.
         unsafe { (*this.as_ptr()).handle_reject_stream(err.to_js()) };
     }

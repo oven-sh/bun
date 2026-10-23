@@ -1173,31 +1173,29 @@ impl Drop for ServePlugins {
 pub(crate) fn on_resolve_plugins(
     _: &mut JsScope<'_>,
     plugins_result: JsLocal<'_>,
-    plugins_js: JsLocal<'_>,
+    context: *mut ServePlugins,
 ) {
     ctx_log!("onResolve");
 
-    let plugins = plugins_js.to_js().as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(plugins) };
+    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(context) };
     plugins_result.to_js().ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_resolve();
+    unsafe { &mut *context }.handle_on_resolve();
 }
 
 pub(crate) fn on_reject_plugins(
     cx: &mut JsScope<'_>,
     error_js: JsLocal<'_>,
-    plugin_js: JsLocal<'_>,
+    context: *mut ServePlugins,
 ) {
     ctx_log!("onReject");
 
-    let plugins = plugin_js.to_js().as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(plugins) };
+    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    let _guard = unsafe { RefPtr::from_raw(context) };
     // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *plugins }.handle_on_reject(cx.global(), error_js.to_js());
+    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.

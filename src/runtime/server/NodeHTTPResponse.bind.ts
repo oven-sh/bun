@@ -73,7 +73,7 @@ export const NodeHTTPResponse = b.class({
   },
 });
 
-/** The reactions to the promise that the `node:http` request handler returned. `context` is the `NodeHTTPResponse`. */
-const reaction = { args: { value: b.any, context: b.any }, capability: "js" } as const;
+/** The reactions to the promise that the `node:http` request handler returned. */
+const reaction = { args: { value: b.any, context: NodeHTTPResponse.withValue }, capability: "js" } as const;
 export const onResolve = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onResolve" });
 export const onReject = b.fn({ ...reaction, export: "Bun__NodeHTTPRequest__onReject" });

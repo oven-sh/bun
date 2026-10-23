@@ -835,7 +835,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// Whether `chunk` is one that bytecode (and, in an executable, module info) is made for. The output file list
-    /// counts those files with this before they are made (`OutputFileList::calculate_output_file_list_capacity`).
+    /// counts those files with this before they are made (`OutputFileList::init`).
     pub(crate) fn chunk_gets_bytecode(&self, chunk: &Chunk) -> bool {
         // The CSS chunk of a JavaScript entry point has that entry point's loader.
         let loader = if chunk.entry_point.is_entry_point() {

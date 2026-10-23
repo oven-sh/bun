@@ -1597,7 +1597,8 @@ pub(crate) fn to_bytes(
             continue;
         }
 
-        // Same `[name]` and `[hash]` means the same bytes: keep the first copy.
+        // Two files at one path have the same bytes (the linker's `OutputFileList::init` refuses
+        // any other pair): keep the first copy.
         if seen_paths
             .get_or_put(module_dest_path(output_file))?
             .found_existing

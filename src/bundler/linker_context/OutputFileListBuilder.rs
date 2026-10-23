@@ -99,14 +99,17 @@ struct Claims<'a> {
 }
 
 impl<'a> Claims<'a> {
-    /// Two spellings of one file have one key. An executable stores a file under its path less a leading `./`
+    /// Two spellings of one file have one key. An executable stores a file under its path less one leading `./`
     /// (`StandaloneModuleGraph::module_dest_path`) and resolves nothing else: `a/../x` and `x` are two files there.
     /// Every other path is joined to the output directory, where `a/../x`, `./x` and `.//x` are one file.
-    fn key(mode: CompileMode, path: &[u8]) -> Cow<'_, [u8]> {
-        let path = strings::remove_leading_dot_slash(path);
-        if mode.is_executable()
-            || strings::split(path, b"/").all(|segment| !matches!(segment, b"" | b"." | b".."))
-        {
+    fn key(mode: CompileMode, mut path: &[u8]) -> Cow<'_, [u8]> {
+        if mode.is_executable() {
+            return Cow::Borrowed(strings::remove_leading_dot_slash(path));
+        }
+        while let Some(rest) = path.strip_prefix(b"./") {
+            path = rest;
+        }
+        if strings::split(path, b"/").all(|segment| !matches!(segment, b"" | b"." | b"..")) {
             return Cow::Borrowed(path);
         }
         let mut buf = vec![0u8; path.len() + 1];
@@ -204,6 +207,7 @@ impl OutputFileList {
                 mode,
                 chunks,
                 assets: &c.parse_graph().additional_output_files[..asset_count],
+                // One entry for each output file, and for the two metafiles.
                 by_path: HashMap::with_capacity_and_hasher(length + 2, Default::default()),
                 repeated_assets: Vec::new(),
                 duplicates: StringArrayHashMap::default(),

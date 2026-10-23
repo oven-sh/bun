@@ -365,7 +365,7 @@ pub mod dir_entry {
     }
 }
 
-/// Per-entry hook invoked by `add_entry`/`readdir`.
+/// Called under `entries_mutex` for each entry a read returns, from disk or (sorted) from the cache.
 pub trait DirEntryIterator {
     const IS_VOID: bool = false;
     fn next(&self, entry: &mut Entry, fd: Fd);
@@ -631,6 +631,18 @@ impl DirEntry {
             entry: result_ptr,
             _marker: core::marker::PhantomData,
         })
+    }
+
+    /// Every entry, sorted by lowercased base name (`data` iterates in hash order).
+    pub(crate) fn sorted_entries(&self) -> Vec<*mut Entry> {
+        Self::debug_assert_entries_mutex_held();
+        let mut entries: Vec<*mut Entry> = self.data.values().copied().collect();
+        bun_collections::index_sort::sort_slice_by(&mut entries, |a, b| {
+            // SAFETY: every value is a slot in the process-lifetime `EntryStore`.
+            let (a, b) = unsafe { (&**a, &**b) };
+            a.base_lowercase().cmp(b.base_lowercase())
+        });
+        entries
     }
 
     /// True if a cached entry exists for the given already-lowercase name.

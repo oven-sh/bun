@@ -2061,6 +2061,135 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // The resolver lists the cwd and its parents before the scanner runs, and it
+  // keeps the listing of every directory an earlier path argument walked. The
+  // scanner has to find the tests in those directories too.
+  const ranTest = (name: string) =>
+    `import { test } from "bun:test"; test("${name}", () => { console.log("RAN ${name}"); });`;
+  const monorepo = {
+    "top.test.ts": ranTest("top"),
+    "sibling/sibling.test.ts": ranTest("sibling"),
+    "pkg/pkg.test.ts": ranTest("pkg"),
+    "pkg/lib/lib.test.ts": ranTest("lib"),
+    "pkg/app/app.test.ts": ranTest("app"),
+    "pkg/app/deeper/deeper.test.ts": ranTest("deeper"),
+  };
+  const everyTest = ["RAN app", "RAN deeper", "RAN lib", "RAN pkg", "RAN sibling", "RAN top"];
+  async function discover(cwd: string, args: readonly string[], { inRunOrder = false } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // With --parallel the stdout of a worker arrives on stderr.
+    const ran = `${stdout}\n${stderr}`.split(/\r?\n/).filter(line => line.startsWith("RAN "));
+    return {
+      ran: inRunOrder ? ran : ran.sort(),
+      summary: stderr.match(/^Ran \d+ tests? across \d+ files?\./m)?.[0] ?? stderr,
+      exitCode,
+    };
+  }
+
+  test.each(["./nested ./", "./ ./nested"])('path arguments "%s" run every test below both, once', async order => {
+    using dir = tempDir("scanner-two-paths", {
+      "root_only.test.ts": ranTest("root"),
+      "nested/inner.test.ts": ranTest("inner"),
+      "nested/deeper/most.test.ts": ranTest("most"),
+      "other/other.test.ts": ranTest("other"),
+    });
+
+    expect(await discover(String(dir), order.split(" "))).toEqual({
+      ran: ["RAN inner", "RAN most", "RAN other", "RAN root"],
+      summary: "Ran 4 tests across 4 files.",
+      exitCode: 0,
+    });
+  });
+
+  describe.each([
+    { how: "a path argument", args: ["../../"], bunfig: {} },
+    { how: "the bunfig test root", args: [], bunfig: { "pkg/app/bunfig.toml": `[test]\nroot = "../../"\n` } },
+  ])("$how that is a parent of the cwd", ({ args, bunfig }) => {
+    test("runs the tests in every directory", async () => {
+      using dir = tempDir("scanner-parent-of-cwd", { ...bunfig, ...monorepo });
+
+      expect(await discover(join(String(dir), "pkg", "app"), args)).toEqual({
+        ran: everyTest,
+        summary: "Ran 6 tests across 6 files.",
+        exitCode: 0,
+      });
+    });
+
+    // A scanner that skips the cwd finds no test file here and exits 1.
+    test("finds a test that is only below the cwd", async () => {
+      using dir = tempDir("scanner-parent-of-cwd-only", {
+        ...bunfig,
+        "pkg/app/app.test.ts": ranTest("app"),
+      });
+
+      expect(await discover(join(String(dir), "pkg", "app"), args)).toEqual({
+        ran: ["RAN app"],
+        summary: "Ran 1 test across 1 file.",
+        exitCode: 0,
+      });
+    });
+  });
+
+  const belowPkg = ["RAN app", "RAN deeper", "RAN lib", "RAN pkg"];
+  test.each([
+    { cmd: "../..", cwd: "pkg/app", args: () => ["../.."], ran: everyTest },
+    { cmd: "<root>", cwd: "pkg/app", args: (root: string) => [root], ran: everyTest },
+    { cmd: "<root>/pkg", cwd: "pkg/app", args: (root: string) => [join(root, "pkg")], ran: belowPkg },
+    { cmd: "../../ ./", cwd: "pkg/app", args: () => ["../../", "./"], ran: everyTest },
+    { cmd: "--parallel=2 ../../", cwd: "pkg/app", args: () => ["--parallel=2", "../../"], ran: everyTest },
+    {
+      cmd: "--cwd=<root>/pkg/app ../../",
+      cwd: ".",
+      args: (root: string) => [`--cwd=${join(root, "pkg", "app")}`, "../../"],
+      ran: everyTest,
+    },
+    { cmd: "./pkg/app ./pkg/lib ./", cwd: ".", args: () => ["./pkg/app", "./pkg/lib", "./"], ran: everyTest },
+  ])('"bun test $cmd" in $cwd runs every test below its path arguments, once', async ({ cwd, args, ran }) => {
+    using dir = tempDir("scanner-cached-dirs", monorepo);
+    const root = String(dir);
+
+    expect(await discover(join(root, cwd), args(root))).toEqual({
+      ran,
+      summary: `Ran ${ran.length} tests across ${ran.length} files.`,
+      exitCode: 0,
+    });
+  });
+
+  // `pkg` is on the path to the cwd, so its listing comes from the resolver's cache.
+  test("a directory the resolver already listed is scanned in name order", async () => {
+    const names = ["B", "a", "D", "c", "F", "e", "H", "g"];
+    using dir = tempDir("scanner-cached-order", {
+      ...Object.fromEntries(names.map(name => [`pkg/${name}.test.ts`, ranTest(name)])),
+      "pkg/app/notes.txt": "",
+    });
+
+    expect(await discover(join(String(dir), "pkg", "app"), ["../../"], { inRunOrder: true })).toEqual({
+      ran: ["RAN a", "RAN B", "RAN c", "RAN D", "RAN e", "RAN F", "RAN g", "RAN H"],
+      summary: "Ran 8 tests across 8 files.",
+      exitCode: 0,
+    });
+  });
+
+  test("a failing test below the cwd fails a run whose root is a parent of the cwd", async () => {
+    using dir = tempDir("scanner-parent-of-cwd-fails", {
+      ...monorepo,
+      "pkg/app/app.test.ts": `import { expect, test } from "bun:test"; test("app", () => { console.log("RAN app"); expect(1).toBe(2); });`,
+    });
+
+    expect(await discover(join(String(dir), "pkg", "app"), ["../../"])).toEqual({
+      ran: everyTest,
+      summary: "Ran 6 tests across 6 files.",
+      exitCode: 1,
+    });
+  });
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so

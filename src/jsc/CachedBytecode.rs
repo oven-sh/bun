@@ -220,9 +220,12 @@ impl CachedBytecode {
     // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
+    //
+    // JSC accepts the bytecode only for a source string equal to `source`, so `source` has to be the string the
+    // module loader builds for this text.
     pub(crate) fn generate(
         format: Format,
-        input: &[u8],
+        source: &BunString,
         source_provider_url: &BunString,
         depth: u32,
         optimize: bool,
@@ -233,13 +236,6 @@ impl CachedBytecode {
             Format::Cjs => generateCachedCommonJSProgramByteCodeFromSourceCode,
             _ => return None,
         };
-        // An executable stores the chunk as `encode_text_module` writes it (Latin-1, or UTF-16 when non-ASCII) and
-        // aliases it at runtime; a `.jsc` next to a bundle is keyed on the file's bytes read as Latin-1.
-        let source = match external_strings.and_then(|_| bun_core::strings::first_non_ascii(input))
-        {
-            Some(first_non_ascii) => utf16_source(input, first_non_ascii as usize),
-            None => BunString::clone_latin1(input),
-        };
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut out_size: usize = 0;
         let mut out_ptr: Option<NonNull<u8>> = None;
@@ -247,7 +243,7 @@ impl CachedBytecode {
         let ok = unsafe {
             f(
                 source_provider_url,
-                &source,
+                source,
                 depth,
                 optimize,
                 &raw mut out_ptr,
@@ -294,6 +290,47 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     external_strings: Option<NonNull<EncoderStringTable>>,
 ) -> Option<Box<[u8]>> {
     crate::initialize(crate::InitializeOptions::default());
+    // `source` is bundler output, which is UTF-8.
+    let source = match bun_core::strings::first_non_ascii(source) {
+        None => BunString::clone_latin1(source),
+        // An executable stores the chunk as `encode_text_module` writes it (UTF-16 when non-ASCII) and aliases it
+        // at runtime.
+        Some(first_non_ascii) if external_strings.is_some() => {
+            utf16_source(source, first_non_ascii as usize)
+        }
+        // A `.jsc` next to a bundle: the module loader decodes the file with `clone_utf8`.
+        Some(_) => BunString::clone_utf8(source),
+    };
+    generate_owned(
+        format,
+        &source,
+        source_provider_url,
+        depth,
+        optimize,
+        external_strings,
+    )
+}
+
+/// [`__bun_jsc_generate_cached_bytecode`] for a caller that has the source string the module loader builds.
+pub(crate) fn generate_cached_bytecode_for_string(
+    format: Format,
+    source: &BunString,
+    source_provider_url: &BunString,
+    depth: u32,
+    optimize: bool,
+) -> Option<Box<[u8]>> {
+    crate::initialize(crate::InitializeOptions::default());
+    generate_owned(format, source, source_provider_url, depth, optimize, None)
+}
+
+fn generate_owned(
+    format: Format,
+    source: &BunString,
+    source_provider_url: &BunString,
+    depth: u32,
+    optimize: bool,
+    external_strings: Option<NonNull<EncoderStringTable>>,
+) -> Option<Box<[u8]>> {
     let (bytes, handle) = CachedBytecode::generate(
         format,
         source,

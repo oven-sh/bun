@@ -48,7 +48,7 @@ async function createStreamOfResponse(): Promise<ReadableStream> {
 // It stays in the handshake with a listener that says nothing.
 const openPostgresConnection: Open = realm => {
   const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: noop, open: noop, close: noop, error: noop } });
-  const { createConnection } = bindingOf(realm, "native:Rust:postgres.rs:createBinding");
+  const { createConnection } = bindingOf(realm, "native:Bindgen:postgres.bind.ts:binding");
   const connection = createConnection("127.0.0.1", listener.port, "user", "password", "database", 0, null, "", "", noop, noop, 0, 0, 0, false, false, undefined, false, 0, undefined, "");
   return {
     value: connection,

@@ -189,11 +189,9 @@ function traceServerRequestEnd() {
   traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
 }
 
-const getBunServerAllClosedPromise: (server: $Node.NativeHTTPServer) => Promise<void> = $newRustFunction(
-  "node_http_binding.rs",
-  "getBunServerAllClosedPromise",
-  1,
-);
+const getBunServerAllClosedPromise = $bindgen("node_http_binding.bind.ts", "getBunServerAllClosedPromise") as (
+  server: $Node.NativeHTTPServer,
+) => Promise<void>;
 const getBunServerOpenCount = $bindgen("node_http_binding.bind.ts", "getBunServerOpenCount") as (
   server: $Node.NativeHTTPServer,
 ) => number;

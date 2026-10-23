@@ -106,3 +106,10 @@ export const Response = b.class({
     redirect: factory,
   },
 });
+
+/** `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`). */
+export const constructJSONFromText = b.fn({
+  ...factory,
+  export: "Response__constructJSONFromText",
+  rustPath: "crate::webcore::response::construct_json_from_text",
+});

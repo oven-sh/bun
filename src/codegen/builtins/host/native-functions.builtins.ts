@@ -1,17 +1,13 @@
-// The native functions that Bun's own modules make with $newCppFunction and $newRustFunction, each from the code of the function.
+// The native functions that Bun's own modules make with $newCppFunction, each from the code of the function.
 import * as b from "bun-builtins-table";
-import { allClosedPromiseOfServerCell, framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
-import { handedOver } from "./native-code.ts";
+import { framesOfModuleGraphsCell, moduleGraphsCell } from "./native-cells.ts";
 
 const cpp = (file: string, symbol: string): b.BuiltinPath => `native:NewCppFunction:${file}:${symbol}`;
-const rust = (file: string, symbol: string): b.BuiltinPath => `native:NewRustFunction:${file}:${symbol}`;
 
 const externalState = ["ExternalState"];
 const operandCodeOnly = { capability: "js", throws: true, runsOnlyOperandCode: true } as const;
 const newArrayOf = (elements: b.TableType) => b.instance("Array").holding({ element: elements }).fresh;
 const converted = [b.runs("ToPrimitive")];
-// The message of an error about a refused value reads its constructor.name, or prints it the way console.log does.
-const formattedInErrorMessage = [b.printedByFormatter("constructor")];
 
 // It compares the type of a cell.
 const testsKindOfCell = {
@@ -120,7 +116,6 @@ export default b.declarations(
       }),
     ),
   functionsWithUndeclaredMembers.flatMap(path => b.extend(path, { hasUndeclaredMembers: true })),
-  b.layout("ClusterBoundSocket", { fd: b.f64, port: b.f64 }),
 
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testsKindOfCell),
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testsKindOfCell),
@@ -188,21 +183,6 @@ export default b.declarations(
     uses: { filename: b.inspected },
     implementation: b.hostCall,
   }),
-  // An operand whose text is canonical already is answered as it is.
-  b.static(cpp("NodeTLS.cpp", "Bun__canonicalizeIP"), {
-    ...operandCodeOnly,
-    args: { address: b.any.optional },
-    returns: b.union(b.operand("address"), b.string, b.undefined),
-    uses: { address: [...converted, b.returned] },
-    implementation: b.hostCall,
-  }),
-  b.static(cpp("NodeTLS.cpp", "getDefaultCiphers"), {
-    returns: b.string,
-    capability: "heap",
-    throws: true,
-    reads: externalState,
-    implementation: b.hostCall,
-  }),
   b.static(cpp("NodeTLS.cpp", "getBundledRootCertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getExtraCACertificates"), listsCertificates),
   b.static(cpp("NodeTLS.cpp", "getSystemCACertificates"), listsCertificates),
@@ -224,48 +204,4 @@ export default b.declarations(
       implementation: b.hostCall,
     },
   ]),
-
-  // The listeners for messages get the message and the handle.
-  b.static(rust("ipc.rs", "emitHandleIPCMessage"), {
-    args: { target: b.any.optional, message: b.any.optional, handle: b.any.optional },
-    returns: b.undefined,
-    capability: "js",
-    throws: true,
-    uses: { target: handedOver, message: handedOver, handle: handedOver },
-    implementation: b.hostCall,
-  }),
-  // A negative error number, or the descriptor and the port it is bound to.
-  b.static(rust("node_cluster_binding.rs", "clusterRawBind"), {
-    ...operandCodeOnly,
-    args: { addressType: b.any.optional, address: b.any.optional, port: b.any.optional, flags: b.any.optional },
-    returns: b.union(b.ordinaryObjectOf("ClusterBoundSocket"), b.f64).fresh,
-    uses: { addressType: converted, address: formattedInErrorMessage, port: converted, flags: converted },
-    reads: externalState,
-    writes: externalState,
-    implementation: b.hostCall,
-  }),
-  // The server makes the promise at the first call and keeps it until all its connections are closed. A closed server answers a new one.
-  b.static(rust("node_http_binding.rs", "getBunServerAllClosedPromise"), {
-    ...operandCodeOnly,
-    args: { server: b.any.optional },
-    returns: b.instance("Promise"),
-    uses: {
-      server: [
-        ...formattedInErrorMessage,
-        b.createdIn(
-          b.instance("Promise").holding({ value: b.undefined, reason: b.never }).fresh,
-          b.nativeCell(allClosedPromiseOfServerCell),
-        ),
-        b.returnedFrom(allClosedPromiseOfServerCell),
-      ],
-    },
-    implementation: b.hostCall,
-  }),
-  b.static(rust("runtime/dns_jsc/dns.rs", "Resolver.newResolver"), {
-    ...operandCodeOnly,
-    args: { options: b.any.optional },
-    returns: b.instance("DNSResolver").fresh,
-    uses: { options: b.hostOptionBag(["timeout", "tries"]) },
-    implementation: b.hostCall,
-  }),
 );

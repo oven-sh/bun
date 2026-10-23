@@ -74,7 +74,7 @@ const nativeViewSource = ffi.viewSource;
 const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
 const nativeCallback = ffi.callback!;
-const closeCallback: (callback: JSCallback) => void = $newRustFunction("ffi.rs", "closeCallback", 1);
+const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
 const nativeCFunction = ffi.cfunction!;
 delete ffi.callback;
 delete ffi.closeCallback;
@@ -172,7 +172,7 @@ const native = {
   },
 };
 
-const ccFn: (options: object) => $Node.FFILibrary | Error = $newRustFunction("ffi.rs", "Bun__FFI__cc", 1);
+const ccFn: (options: object) => $Node.FFILibrary | Error = $bindgen("ffi.bind.ts", "cc");
 
 function normalizePath(path: string | URL | Bun.BunFile | undefined) {
   if (typeof path === "string" && path?.startsWith?.("file:")) {

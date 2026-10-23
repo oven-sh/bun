@@ -69,9 +69,10 @@ pub(crate) mod removed_feature;
 pub(crate) mod run_main;
 pub(crate) mod timer;
 
+// In the crate graph for the functions generated C++ calls.
+use {bun_css_jsc as _, bun_install_jsc as _, bun_patch_jsc as _, bun_semver_jsc as _};
 pub(crate) mod generated_bindgen; // include!()s ${BUN_CODEGEN_DIR}/generated_bindgen_bun_runtime.rs
 pub(crate) mod generated_host_exports; // include!()s ${BUN_CODEGEN_DIR}/generated_host_exports.rs
-pub(crate) mod generated_js2native; // include!()s ${BUN_CODEGEN_DIR}/generated_js2native.rs
 pub(crate) mod generated_jssink; // include!()s ${BUN_CODEGEN_DIR}/generated_jssink.rs
 
 pub(crate) mod dns_jsc;

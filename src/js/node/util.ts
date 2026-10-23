@@ -87,7 +87,7 @@ function isFunction(value) {
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
-const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
+const parseArgs = $bindgen("parse_args.bind.ts", "parseArgs");
 
 var debugs: Record<string, (...args: unknown[]) => void> = {};
 var debugEnvRegex = /^$/;

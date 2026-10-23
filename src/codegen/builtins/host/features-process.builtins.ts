@@ -55,11 +55,7 @@ export default b.declarations(
     ["ProcessBinding", "HttpParser", "NodeSmallModules", "Buffer", "Float64Array", "BigInt64Array"],
     "process.binding",
   ),
-  extendAll(
-    ["ProcessExecArgv"],
-    "process.execArgv",
-    ...nativeBindings("NewRustFunction", "parse_args.rs", "parseArgs"),
-  ),
+  extendAll(["ProcessExecArgv"], "process.execArgv", ...nativeBindings("Bindgen", "parse_args.bind.ts", "parseArgs")),
   extendAll(
     ["ProcessUsage"],
     "process.availableMemory",
@@ -73,8 +69,8 @@ export default b.declarations(
 
   extendAll(
     ["Ipc"],
-    ...nativeBindings("NewRustFunction", "ipc.rs", "emitHandleIPCMessage"),
-    ...nativeBindings("NewRustFunction", "node_cluster_binding.rs", "sendHelperPrimary"),
+    ...nativeBindings("Bindgen", "ipc_host.bind.ts", "emitHandleIPCMessage"),
+    ...nativeBindings("Bindgen", "node_cluster_binding.bind.ts", "sendHelperPrimary"),
     ...nativeBindings(
       "Bindgen",
       "node_cluster_binding.bind.ts",

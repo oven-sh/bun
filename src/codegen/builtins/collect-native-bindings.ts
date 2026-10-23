@@ -12,9 +12,7 @@ interface NativeMacro {
 
 const nativeMacros: Readonly<Record<NativeCall["macro"], NativeMacro>> = {
   cpp: { kind: "Cpp", createsFunction: false, answersFunction: false },
-  rust: { kind: "Rust", createsFunction: false, answersFunction: false },
   newCppFunction: { kind: "NewCppFunction", createsFunction: true, answersFunction: true },
-  newRustFunction: { kind: "NewRustFunction", createsFunction: true, answersFunction: true },
   bindgen: { kind: "Bindgen", createsFunction: false, answersFunction: true },
 };
 
@@ -52,7 +50,7 @@ function collectCreatedFunctions(): SourcedDeclaration[] {
     declaration: {
       declares: "Extension",
       path: pathOfNativeBinding(kind, file, symbol),
-      columns: { functionObjectCode: { symbol: hostFunction, header: header ?? undefined }, length },
+      columns: { functionObjectCode: { symbol: hostFunction, header }, length },
     },
     source: callSites,
   }));
@@ -61,7 +59,7 @@ function collectCreatedFunctions(): SourcedDeclaration[] {
 export function collectNativeBindings(
   calls: readonly NativeCall[],
   isLeftOutOfTable: (schemaFileName: string) => boolean,
-  constructorBindings: ReadonlySet<BuiltinPath>,
+  bindingsOfOtherValues: ReadonlySet<BuiltinPath>,
   problems: Problems,
 ): SourcedDeclaration[] {
   const distinct = findDistinctCalls(calls);
@@ -75,7 +73,7 @@ export function collectNativeBindings(
       hostNumber: macro === "bindgen" && isLeftOutOfTable(file) ? null : id,
       answersFunction:
         nativeMacros[macro].answersFunction &&
-        !constructorBindings.has(pathOfNativeBinding(nativeMacros[macro].kind, file, symbol)),
+        !bindingsOfOtherValues.has(pathOfNativeBinding(nativeMacros[macro].kind, file, symbol)),
     },
     source: callSites,
   }));

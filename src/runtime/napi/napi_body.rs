@@ -14,8 +14,8 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
-    JsResult, StrongOptional, Task,
+    self as jsc, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
+    StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -366,7 +366,7 @@ impl Drop for NapiHandleScopeGuard<'_> {
 
 type napi_handle_scope = *mut NapiHandleScope;
 type napi_escapable_handle_scope = *mut NapiHandleScope;
-pub(super) type napi_callback_info = *mut CallFrame;
+pub(super) type napi_callback_info = *mut c_void;
 /// What `napi_create_promise` hands the addon.
 pub(crate) struct Deferred {
     promise: JSPromiseStrong,
@@ -2680,14 +2680,8 @@ static THREADSAFE_FUNCTION_LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 /// Exposed via `bun:internal-for-testing` so tests can assert a threadsafe
 /// function orphaned by a dead worker is freed rather than leaked.
-#[bun_jsc::host_fn]
-pub(crate) fn js_threadsafe_function_live_count(
-    _global: &JSGlobalObject,
-    _callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number(
-        THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst) as f64,
-    ))
+pub(crate) fn threadsafe_function_live_count() -> usize {
+    THREADSAFE_FUNCTION_LIVE_COUNT.load(Ordering::SeqCst)
 }
 
 impl Drop for ThreadSafeFunction {

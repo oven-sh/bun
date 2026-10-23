@@ -56,6 +56,14 @@ export const UDPSocket = b.class({
   },
 });
 
+/** `options` is what `UDPSocketConfig` takes. Returns a promise of the socket. */
+export const udpSocket = b.fn({
+  ...js,
+  args: { options: b.any },
+  returns: b.any,
+  rustPath: "crate::socket::udp_socket::UDPSocket::udp_socket",
+});
+
 export const connect = b.fn({
   args: { socket: UDPSocket, host: b.string.loose, port: b.i32 },
   capability: "js",

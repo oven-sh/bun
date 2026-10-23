@@ -44,7 +44,6 @@ const methodTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
 const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
   "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": b.undefined,
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": b.instance("Array").holding({ element: b.string }).fresh,
-  "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers": b.undefined,
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": b.bool,
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual": b.bool,
   "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": b.union(b.string, b.undefined),
@@ -239,25 +238,11 @@ export default b.declarations(
       implementation: b.generic,
     }),
   ),
-  // randomFill and randomFillSync.
-  binding("native:Rust:node_crypto_binding.rs:createNodeCryptoBindingZig", filledWithBytes),
   // getWindowSize stores the columns and the rows into the array it is handed.
   bindingAnswering(
     "native:Cpp:ProcessBindingTTYWrap.cpp:createBunTTYFunctions",
     b.builtin(ttyFunctions),
     filledWithBytes,
-  ),
-  // Whether the message went out at once, or null where it cannot go out at all.
-  binding(
-    "native:NewRustFunction:node_cluster_binding.rs:sendHelperPrimary",
-    [...handedOver, b.storedByKey(b.keysNamed("seq", "$hasHandle"), b.union(b.f64, b.bool))],
-    b.union(b.bool, b.strictNull),
-  ),
-  // A callback that is closed has no address any more.
-  binding(
-    "native:NewRustFunction:ffi.rs:closeCallback",
-    [...handedOver, b.definesName(["ptr"], b.strictNull)],
-    b.undefined,
   ),
   // markAsUncloneable and markAsUntransferable put a mark on the object under a private name.
   binding("native:Cpp:Worker.cpp:createNodeWorkerThreadsBinding", [...handedOver, b.definesName(b.anyKey, b.bool)]),
@@ -290,7 +275,7 @@ export default b.declarations(
     ...Object.keys(accessors).flatMap(name => getter(`${holder}.prototype.${name}`, true)),
   ]),
   // The methods of %NodeJSFS%, of which the reading ones fill the views they are handed.
-  bindingAnswering("native:Rust:node_fs_binding.rs:createBinding", b.instance("NodeJSFS").fresh, filledWithBytes),
+  bindingAnswering("native:Bindgen:node_fs_binding.bind.ts:binding", b.instance("NodeJSFS").fresh, filledWithBytes),
 
   // `data` of the options is `data` of the new socket.
   ...["TCPSocket", "TLSSocket"].map(className =>
@@ -303,14 +288,6 @@ export default b.declarations(
       implementation: b.hostCall,
     }),
   ),
-  b.static("native:NewRustFunction:runtime/socket/socket.rs:jsUpgradeDuplexToTLS", {
-    args: { duplex: b.any.optional, options: b.any.optional, others: b.any.rest },
-    returns: b.any,
-    capability: "js",
-    throws: true,
-    uses: { duplex: [b.everything], options: [b.everything, keepsDataOfSocket], others: [b.everything] },
-    implementation: b.hostCall,
-  }),
   responseHandler("ondata", { args: [b.union(b.instance("Buffer").fresh, b.undefined), b.bool, b.i32] }),
   responseHandler("onabort", { this: b.operand("this"), args: [b.i32] }),
   // node_zlib_binding.rs emit_error: the message, the number of the error and its code. Only a function is kept.

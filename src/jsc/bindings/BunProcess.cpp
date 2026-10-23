@@ -68,6 +68,7 @@
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "GeneratedIpcHost.h"
 
 #include "napi_handle_scope.h"
 #include "napi_external.h"
@@ -195,7 +196,6 @@ extern "C" void Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 extern "C" const char* Bun__sqlite3_version();
 extern "C" const char* Bun__typescript_version();
-BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
 extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
@@ -3369,7 +3369,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
-        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun__Process__send>(), ImplementationVisibility::Public);
+        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), JSC::removableFunction<Bun::Feature::ProcessIpc, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::IpcHost::jsSend>(), ImplementationVisibility::Public);
     } else {
         return jsUndefined();
     }

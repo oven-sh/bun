@@ -1,13 +1,20 @@
 #include "root.h"
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
+
+EncodedJSValue createFunction(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
+{
+    return JSValue::encode(JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public));
+}
 
 static NEVER_INLINE Structure* createReturnedDictionaryStructure(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Structure>& cached, unsigned firstMemberNameIndex, unsigned count)
 {

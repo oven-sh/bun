@@ -87,9 +87,8 @@
 #include "BunCompiledModules.h"
 
 #include "ErrorCode.h"
+#include "GeneratedJest.h"
 #include "WebCoreJSBuiltins.h"
-
-BUN_DECLARE_HOST_FUNCTION(BunObject_callback_jest);
 
 namespace Bun {
 using namespace JSC;
@@ -1517,7 +1516,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireTestModule, (JSGlobalObject * globalOb
     static constexpr auto specifier = "bun:test"_s;
     if (Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(Bun::Feature::Test), specifier.characters(), specifier.length(), ErrorCode::MODULE_NOT_FOUND)) [[unlikely]]
         return {};
-    return JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, BunObject_callback_jest>(globalObject, callFrame);
+    return JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::Bindgen::Generated::Jest::jsJest>(globalObject, callFrame);
 }
 
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)

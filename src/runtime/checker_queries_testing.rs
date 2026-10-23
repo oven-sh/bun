@@ -3,8 +3,8 @@ use std::num::NonZeroUsize;
 use bun_aot::builtins::unlinked_named_values;
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_core::strings;
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{JSGlobalObject, JsError, JsResult};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::dirname;
 use bun_sema::atom::Interner;
@@ -82,20 +82,18 @@ fn throw_load_failure(global: &JSGlobalObject, failure: &LoadFailure) -> JsError
 }
 
 pub(crate) fn describe_checker_queries(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    entry_point: &[u8],
+    threads: Option<i32>,
+) -> JsResult<Option<Vec<u8>>> {
     if !bun_aot::engine::has_compiler() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
+    let global = cx.global();
     let session = Session::new();
-    let entry_argument = frame.argument(0).to_utf8(global)?;
-    let requested_threads = match frame.argument(1) {
-        value if value.is_undefined() => 0,
-        value => usize::try_from(value.to_int32()).unwrap_or(0),
-    };
+    let requested_threads = usize::try_from(threads.unwrap_or(0)).unwrap_or(0);
 
-    let entry_points = [from_native(&entry_argument)];
+    let entry_points = [from_native(entry_point)];
     let directory = strings::without_trailing_slash(dirname::<Posix>(&entry_points[0]));
     let host = DiskWithBuiltinModules::new(requested_threads, directory);
     let threads = NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN);
@@ -162,5 +160,5 @@ pub(crate) fn describe_checker_queries(
     for reported in diagnostics {
         write_diagnostic(reported, files, &root, &mut description);
     }
-    create_utf8_for_js(global, &description)
+    Ok(Some(description))
 }

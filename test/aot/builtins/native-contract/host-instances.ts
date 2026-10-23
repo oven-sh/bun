@@ -139,11 +139,11 @@ const openImmediate: Open = () => {
   return { value: immediate, close: () => clearImmediate(immediate) };
 };
 
-const openFileSystem: Open = realm => ({ value: bindingOf(realm, "native:Rust:node_fs_binding.rs:createBinding"), close: noop });
+const openFileSystem: Open = realm => ({ value: bindingOf(realm, "native:Bindgen:node_fs_binding.bind.ts:binding"), close: noop });
 
 function openWatcher(method: "watch" | "watchFile"): Open {
   return realm => {
-    const binding = bindingOf(realm, "native:Rust:node_fs_binding.rs:createBinding");
+    const binding = bindingOf(realm, "native:Bindgen:node_fs_binding.bind.ts:binding");
     const watcher = method === "watch" ? binding.watch(".", { persistent: false }, noop) : binding.watchFile("native-contract-scratch.txt", { persistent: false, interval: 1000 }, noop);
     return { value: watcher, close: () => watcher.close() };
   };
@@ -164,7 +164,7 @@ const openFrameParser: Open = realm => {
 };
 
 const openResolver: Open = realm => {
-  const resolver = bindingOf(realm, "native:NewRustFunction:runtime/dns_jsc/dns.rs:Resolver.newResolver")({});
+  const resolver = bindingOf(realm, "native:Bindgen:dns_internals.bind.ts:newResolver")({});
   resolver.setServers([[4, "127.0.0.1", 1]]);
   return { value: resolver, close: () => resolver.cancel() };
 };

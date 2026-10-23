@@ -52,6 +52,11 @@ export async function loadSchemaFile(source: string): Promise<SchemaFile> {
       throw new TypeError(`${stem}.bind.ts: export ${name} is not a type, a function, a namespace or b.module()`);
     }
   }
+  const names = new Set<string>();
+  for (const { name } of [...result.functions, ...result.namespaces]) {
+    assert(!names.has(name), `${stem}.bind.ts: two of its functions and namespaces are named ${name}`);
+    names.add(name);
+  }
   return result;
 }
 

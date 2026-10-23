@@ -157,15 +157,15 @@ const getExtraCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "g
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts: () => void = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates: () => string[] = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
-const canonicalizeIP: (ip: string) => string | undefined = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+const canonicalizeIP: (ip: string) => string | undefined = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates: (certs: CACertInput[]) => string[] = $newCppFunction(
   "NodeTLS.cpp",
   "parseCACertificates",
   1,
 );
 
-const getTLSDefaultCiphers: () => string = $newCppFunction("NodeTLS.cpp", "getDefaultCiphers", 0);
-const setTLSDefaultCiphers: (ciphers: string) => void = $newCppFunction("NodeTLS.cpp", "setDefaultCiphers", 1);
+const getTLSDefaultCiphers: () => string = $bindgen("rare_data.bind.ts", "getTLSDefaultCiphers");
+const setTLSDefaultCiphers: (ciphers: string) => void = $bindgen("rare_data.bind.ts", "setTLSDefaultCiphers");
 const selectServerName: (
   contexts: Map<string, $Node.SecureContext>,
   servername: string,

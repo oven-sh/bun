@@ -41,6 +41,14 @@ for (const file of files) {
     assert(!owners.has(name), `${owners.get(name)}.bind.ts and ${file.origin.stem}.bind.ts both export a type ${name}`);
     owners.set(name, file.origin.stem);
   }
+  for (const { exportName } of file.functions) {
+    if (!exportName) continue;
+    assert(
+      !owners.has(exportName),
+      `export: ${exportName} is in ${owners.get(exportName)}.bind.ts and ${file.origin.stem}.bind.ts`,
+    );
+    owners.set(exportName, file.origin.stem);
+  }
 }
 const tables = analyze(files);
 

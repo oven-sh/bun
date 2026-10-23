@@ -19,7 +19,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { nativeCalls, specifierOf, typesOnlySchemas } from "./builtins-manifest-model";
 import { Guards } from "./builtins/guards.ts";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
+import { getJS2NativeCPP } from "./generate-js2native";
 import { checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry, idToEnumName } from "./internal-module-registry-scanner";
 import { encodeLazyFunctionTable, findLazyFunctions } from "./lazy-function-table";
@@ -808,9 +808,6 @@ writeIfNotChanged(
 );
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP(guards));
-
-// Rust sibling: include!()'d by src/runtime/generated_js2native.rs
-writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
 
 const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(

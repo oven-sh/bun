@@ -127,13 +127,16 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
   checkNativeCalls(bunRoot, [...nativeModuleLoadSites, ...nativeCallSites], written, problems);
   // collectBindgen() asks which bindings src/js names, which this registers.
   const calls = nativeCalls(typesOnly);
-  const schemas = await collectBindgen(bunRoot, sources, findPlacements(staticTableMembers), problems);
+  const writtenMembers = new Set(
+    written.flatMap(({ declaration }) => (declaration.declares === "Member" ? [declaration.path] : [])),
+  );
+  const schemas = await collectBindgen(bunRoot, sources, findPlacements(staticTableMembers), writtenMembers, problems);
   return [
     ...written,
     ...staticTableMembers,
     ...collectModules(bunRoot, written, problems),
     ...collectOwnProperties(bunRoot, ownPropertiesFile, problems),
-    ...collectNativeBindings(calls, isLeftOut, schemas.constructorBindings, problems),
+    ...collectNativeBindings(calls, isLeftOut, schemas.bindingsOfOtherValues, problems),
     ...collectBufferAccessors(bunRoot, problems),
     ...collectNativeLoads(bunRoot, nativeModuleLoadSites, problems),
     ...schemas.declarations,

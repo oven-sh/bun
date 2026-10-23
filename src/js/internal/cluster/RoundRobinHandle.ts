@@ -5,7 +5,7 @@ const { kHandle } = require("internal/shared");
 
 let net: $BunModules["node:net"] | undefined;
 
-const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const sendHelper = $bindgen("node_cluster_binding.bind.ts", "sendHelperPrimary");
 const uvTranslateSysError: (errno: number) => number = $bindgen("node_util_binding.bind.ts", "uvTranslateSysError");
 const { UV_EINVAL } = process.binding("uv");
 

@@ -31,6 +31,7 @@ struct IDLVariadicArguments : WebCore::IDLType<JSC::ArgList> {};
 
 // For use in unions, to represent a nullable union.
 struct IDLStrictNull : WebCore::IDLType<std::nullptr_t> {};
+struct IDLStrictUndefined : WebCore::IDLType<std::nullptr_t> {};
 
 // Treats all falsy values as null.
 template<typename IDL>
@@ -40,6 +41,14 @@ struct IDLFalsyAsNull : WebCore::IDLNullable<IDL> {};
 template<typename IDL>
 struct IDLEmptyStringAsNull : WebCore::IDLNullable<IDL> {};
 
+// Treats every value that IDL does not take as null.
+template<typename IDL>
+struct IDLOtherAsNull : WebCore::IDLNullable<IDL> {};
+
+// Treats the empty value, which stands for an argument the call does not have, as null.
+template<typename IDL>
+struct IDLIfPassed : WebCore::IDLNullable<IDL> {};
+
 enum class AllowBigInt : bool {
     No,
     Yes,
@@ -48,6 +57,8 @@ enum class AllowBigInt : bool {
 template<std::integral T, AllowBigInt = AllowBigInt::No>
 struct IDLStrictInteger : WebCore::IDLInteger<T> {};
 struct IDLStrictDouble : WebCore::IDLUnrestrictedDouble {};
+// A Date is its time value.
+struct IDLStrictDoubleOrDate : WebCore::IDLUnrestrictedDouble {};
 // Converts to a numeric first. A BigInt is the double nearest to it.
 struct IDLLooseDoubleOrBigInt : WebCore::IDLUnrestrictedDouble {};
 struct IDLStrictBoolean : WebCore::IDLBoolean {};
@@ -86,6 +97,12 @@ struct IDLArrayBufferRef : IDLRef<JSC::ArrayBuffer> {};
 
 // Defined in IDLConvertBlob.h
 struct IDLBlobRef;
+
+// The pointer that `JSValue::then` in Rust gave a promise reaction as its context: `JSValue::from_ptr_address`, a double.
+struct IDLPromisePtr : WebCore::IDLType<void*> {};
+
+// The NativePromiseContext cell that a promise reaction was given as its context, as what `take()` returns.
+struct IDLNativePromiseContext : WebCore::IDLType<void*> {};
 
 // A dictionary that holds a raw `JSValue` or a `JSStringUTF8View`. Its struct is WTF_FORBID_HEAP_ALLOCATION.
 template<typename T>
@@ -148,6 +165,12 @@ struct IDLRawString : WebCore::IDLType<JSC::JSString*> {
     using NullableInnerParameterType = JSC::JSString*;
     static JSC::JSString* nullValue() { return nullptr; }
 };
+
+// An object as the `JSValue` itself. See IDLRawAny.
+struct IDLRawObject : IDLRawAny {};
+
+// An array as the `JSValue` itself. See IDLRawAny.
+struct IDLRawArray : IDLRawAny {};
 
 // An instance of a generated class, as the cell itself. The caller's frame keeps it alive.
 template<typename JSClass>

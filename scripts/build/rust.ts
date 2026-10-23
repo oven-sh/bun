@@ -256,7 +256,10 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_ast: ["runtime.out.js"],
   bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
   bun_core: ["build_options.rs"],
+  bun_css_jsc: ["generated_bindgen_bun_css_jsc.rs"],
+  bun_http_jsc: ["generated_bindgen_bun_http_jsc.rs"],
   bun_install: ["bun-shim-impl.exe"],
+  bun_install_jsc: ["generated_bindgen_bun_install_jsc.rs"],
   bun_jsc: [
     "ErrorCode.generated.rs",
     "cpp.rs",
@@ -267,12 +270,15 @@ const generatedFilesReadBy: Record<string, string[] | "all"> = {
   bun_lint: ["compressed/lint/", "compressed/src/lint/"],
   bun_lint_driver: ["compressed/lint/", "compressed/codegen/lint-rule-pages.txt.zst"],
   bun_parsers: ["json_byte_class.rs", "xml_byte_class.rs"],
+  bun_patch_jsc: ["generated_bindgen_bun_patch_jsc.rs"],
   bun_removable_features: ["removable_features.rs", "removable_features_initial_removal.s"],
   bun_resolver: ["node-fallbacks/"],
   bun_runtime: "all",
   bun_sema: ["compressed/src/sema/"],
   bun_semver_jsc: ["generated_bindgen_bun_semver_jsc.rs"],
+  bun_sourcemap_jsc: ["generated_bindgen_bun_sourcemap_jsc.rs"],
   bun_sql_jsc: ["generated_bindgen_bun_sql_jsc.rs"],
+  bun_sys_jsc: ["generated_bindgen_bun_sys_jsc.rs"],
 };
 
 function generatedFilesOf(packageName: string): string[] | "all" {

@@ -216,7 +216,7 @@ mod _impl {
 
     // The C++ caller
     // (headers.h) declares `EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*)`,
-    // not a `JSHostFunctionType`. Hand-roll the shim instead of `#[bun_jsc::host_fn]`.
+    // not a `JSHostFunctionType`.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Process__createExecArgv(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
@@ -464,8 +464,7 @@ mod _impl {
     // ───────────────────────────── cwd ─────────────────────────────
 
     // C++ (headers.h) declares
-    // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`. Hand-roll the
-    // shim instead of `#[bun_jsc::host_fn]` (caller is not a JSHostFunction).
+    // `EncodedJSValue Bun__Process__getCwd(JSGlobalObject*)`, not a `JSHostFunctionType`.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__Process__getCwd(global_object: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_fn_result(global_object, get_cwd(global_object))

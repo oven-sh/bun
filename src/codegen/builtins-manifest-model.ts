@@ -62,7 +62,7 @@ export interface EngineFunctions {
 export interface NativeCall {
   /** null: a `$bindgen` of a schema this build only takes types from. js2native does not number it. */
   id: number | null;
-  macro: "cpp" | "rust" | "newCppFunction" | "newRustFunction" | "bindgen";
+  macro: "cpp" | "newCppFunction" | "bindgen";
   file: string;
   symbol: string;
 }
@@ -78,15 +78,13 @@ export function typesOnlySchemas(argv: readonly string[]): ReadonlySet<string> {
   );
 }
 
-const nativeMacros: Record<NativeCall["macro"], { kind: "cpp" | "rust" | "bind"; takesLength: boolean }> = {
+const nativeMacros: Record<NativeCall["macro"], { kind: "cpp" | "bind"; takesLength: boolean }> = {
   cpp: { kind: "cpp", takesLength: false },
-  rust: { kind: "rust", takesLength: false },
   newCppFunction: { kind: "cpp", takesLength: true },
-  newRustFunction: { kind: "rust", takesLength: true },
   bindgen: { kind: "bind", takesLength: false },
 };
 const nativeCall =
-  /\$(cpp|rust|newCppFunction|newRustFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
+  /\$(cpp|newCppFunction|bindgen)\(\s*(["'])([^"'\n]+)\2\s*,\s*(["'])([^"'\n]+)\4\s*(?:,\s*(\d+)\s*)?,?\s*\)/g;
 const keyOf = (match: RegExpMatchArray) => `${match[1]}\t${match[3]}\t${match[5]}`;
 
 /** generate-js2native.ts keeps one numbering per process: only a process's first call returns the ids of a build. */

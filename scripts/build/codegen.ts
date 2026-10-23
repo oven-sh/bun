@@ -829,13 +829,10 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
     resolve(cfg.codegenDir, "SyntheticModuleType.h"),
     resolve(cfg.codegenDir, "BuiltinModuleKeys.h"),
     resolve(cfg.codegenDir, "GeneratedJS2Native.h"),
-    // Rust sibling: include!()'d by src/runtime/generated_js2native.rs. Must be
-    // a declared output: bun_runtime's dep-info names it, and ninja can only
-    // rebuild that crate in the same build as this step if it knows the file.
-    resolve(cfg.codegenDir, "generated_js2native.rs"),
     // Specifier → module-ID tag table: include!()'d by the
-    // `resolved_source_tag` module in src/jsc/lib.rs. Declared for the same
-    // reason as generated_js2native.rs.
+    // `resolved_source_tag` module in src/jsc/lib.rs. Must be a declared
+    // output: bun_jsc's dep-info names it, and ninja can only rebuild that
+    // crate in the same build as this step if it knows the file.
     resolve(cfg.codegenDir, "generated_resolved_source_tag.rs"),
     // Canonical builtin key -> BuiltinModuleKeys.h index: include!()'d by `builtin_module_key_index` in src/jsc/lib.rs.
     resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),

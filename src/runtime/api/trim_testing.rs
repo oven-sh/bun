@@ -3,8 +3,8 @@ use bun_core::slice_to_nul;
 use bun_exe_format::builtins::Image;
 use bun_exe_format::image::{ExecutableFormat, read_bytes_at};
 use bun_exe_format::macho::MachoFile;
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use bun_jsc::bindgen::JsScope;
+use bun_jsc::{JSGlobalObject, JsError, JsResult};
 use bun_options_types::trim::TrimRequest;
 use bun_sys::{Fd, File, O};
 use bun_trim::table::{
@@ -15,12 +15,15 @@ use bun_trim::{
     apply, plan,
 };
 
-pub(crate) fn trim_executable(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let path = frame.argument(0).to_utf8(global)?;
-    let out = frame.argument(1).to_utf8(global)?;
-    let feature_names = frame.argument(2).to_utf8(global)?;
-    let features = parse_feature_names(global, feature_names.slice())?;
-    let mut bytes = read_executable(global, path.slice())?;
+pub(crate) fn trim_executable(
+    cx: &mut JsScope<'_>,
+    path: &[u8],
+    out: &[u8],
+    feature_names: &[u8],
+) -> JsResult<Vec<u8>> {
+    let global = cx.global();
+    let features = parse_feature_names(global, feature_names)?;
+    let mut bytes = read_executable(global, path)?;
 
     let request = TrimRequest {
         remove_internal: features,
@@ -32,21 +35,21 @@ pub(crate) fn trim_executable(global: &JSGlobalObject, frame: &CallFrame) -> JsR
         bytes =
             sign_macho(&bytes).map_err(|error| global.throw(format_args!("{}", error.name())))?;
     }
-    write_executable(out.slice(), &bytes).map_err(|error| global.throw(format_args!("{error}")))?;
+    write_executable(out, &bytes).map_err(|error| global.throw(format_args!("{error}")))?;
 
-    create_utf8_for_js(global, &describe_summary(&summary))
+    Ok(describe_summary(&summary))
 }
 
-pub(crate) fn read_trim_table(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let path = frame.argument(0).to_utf8(global)?;
-    let bytes = read_executable(global, path.slice())?;
+pub(crate) fn read_trim_table(cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<Vec<u8>> {
+    let global = cx.global();
+    let bytes = read_executable(global, path)?;
     let trim_table = table::read_trim_table(&mut Image {
         len: bytes.len(),
         read: &mut image_over(&bytes),
     })
     .map_err(|error| throw_trim_error(global, &error))?;
 
-    create_utf8_for_js(global, &describe_table(&trim_table))
+    Ok(describe_table(&trim_table))
 }
 
 fn trim_in_memory(

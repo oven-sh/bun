@@ -7,6 +7,7 @@ use bun_sys::FdExt as _;
 use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
@@ -274,7 +275,6 @@ mod NativePromiseContext {
     pub(super) use npc::take_held;
 }
 use crate::node::types::PathLikeExt as _;
-use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body};
@@ -478,16 +478,7 @@ bun_core::declare_scope!(ReadableStream, visible);
 macro_rules! ctx_log { ($($t:tt)*) => { bun_core::scoped_log!(RequestContext, $($t)*) }; }
 macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream, $($t)*) }; }
 
-/// Per-monomorphization C-ABI shim table for the four promise-reaction host
-/// fns. The value passed to `then_with_value` must be identical to the
-/// `Bun__HTTPRequestContext*__on*` symbol that C++'s
-/// `GlobalObject::promiseHandlerID` compares against.
-///
-/// The `#[no_mangle]` exports cannot live on a generic fn, so they are
-/// emitted as concrete wrappers by `request_ctx_exports!` below. The trait
-/// impls — also emitted by that macro — point at those *exported* wrappers
-/// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
-/// on the function-pointer identity and `promiseHandlerID` resolves.
+/// One instantiation's `Bun__HTTPRequestContext*__on*`, which C++'s `promiseHandlerID` knows by address.
 ///
 /// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
@@ -498,83 +489,11 @@ pub(crate) trait RequestContextHostFns {
     const ON_REJECT_STREAM: bun_jsc::JSHostFn;
 }
 
-// Plain safe Rust helpers — only ever called Rust→Rust by the `#[no_mangle]`
-// ABI wrappers in `request_ctx_exports!`, so they need no `extern` ABI and
-// have no caller preconditions (bodies use safe `opaque_deref`). The wrappers
-// carry `#[bun_jsc::host_call]` for the C++-visible symbol.
-fn host_on_resolve<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_resolve(g, f),
-    )
-}
-fn host_on_reject<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_reject(g, f),
-    )
-}
-fn host_on_resolve_stream<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_resolve_stream(g, f),
-    )
-}
-fn host_on_reject_stream<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
-    g: *mut JSGlobalObject,
-    f: *mut CallFrame,
-) -> JSValue
-where
-    ThisServer: ServerLike + 'static,
-{
-    // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-    // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-    let (g, f) = (bun_opaque::opaque_deref(g), bun_opaque::opaque_deref(f));
-    bun_jsc::to_js_host_fn_result(
-        g,
-        RequestContext::<ThisServer, SSL, DBG, MUX>::on_reject_stream(g, f),
-    )
-}
-
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> RequestContextHostFns
     for RequestContext<ThisServer, SSL, DBG, MUX>
 where
     ThisServer: ServerLike + 'static,
 {
-    // These consts must resolve to the *exported* `#[no_mangle]` symbols
-    // (`Bun__HTTPRequestContext*__on*`), not the inner generic
-    // `host_on_*::<..>` shims: the function-pointer value is what C++'s
-    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
-    // and the exported wrapper has a different address from the generic it
-    // forwards to. We route through a const-fn lookup keyed on the
-    // (SSL, DEBUG, MUX) tuple so the blanket impl can name concrete exports.
     const ON_RESOLVE: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).0;
     const ON_REJECT: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).1;
     const ON_RESOLVE_STREAM: bun_jsc::JSHostFn = exported_host_fns(SSL, DBG, MUX).2;
@@ -732,24 +651,27 @@ where
         ));
     }
 
-    pub(crate) fn on_resolve(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_resolve(
+        cx: &mut JsScope<'_>,
+        result: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         ctx_log!("onResolve");
 
-        let arguments = callframe.arguments_as_array::<2>();
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
+        let global = cx.global();
+        let result = result.to_js();
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone.
-            Self::discard_response_body(global, arguments[0]);
-            return Ok(JSValue::UNDEFINED);
+            Self::discard_response_body(global, result);
+            return;
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
-        let result = arguments[0];
         result.ensure_still_alive();
 
         ctx.ctx().handle_resolve(global, result);
-        Ok(JSValue::UNDEFINED)
     }
 
     /// Cancel the body stream of a Response the server will not transmit, unless a consumer reads it.
@@ -1136,33 +1058,35 @@ where
         report_unhandled_error(vm, global, unhandled);
     }
 
-    pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_reject(
+        cx: &mut JsScope<'_>,
+        reason: JsLocal<'_>,
+        (context, cell): (Option<NonNull<Self>>, JsLocal<'_>),
+    ) {
         ctx_log!("onReject");
 
-        let arguments = callframe.arguments_as_array::<2>();
         // Pass the rejection reason through verbatim (including `null` and
         // `undefined`) so `error()` sees the same value the already-settled
         // path delivers. Only an empty JSValue is normalized.
-        let err = if arguments[0].is_empty() {
+        let err = if reason.to_js().is_empty() {
             JSValue::UNDEFINED
         } else {
-            arguments[0]
+            reason.to_js()
         };
-        let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
+        let Some(ctx) = context else {
             // A termination path (abort, end, upgrade) reclaimed the cell's
             // claim; the context may already be gone. Only an upgrade leaves
             // the server wrapper in the cell to report the error through.
-            let server_js = NativePromiseContext::take_held(arguments[1]);
+            let server_js = NativePromiseContext::take_held(cell.to_js());
             if !server_js.is_empty() {
-                Self::report_error_after_upgrade(global, server_js, err);
+                Self::report_error_after_upgrade(cx.global(), server_js, err);
             }
-            return Ok(JSValue::UNDEFINED);
+            return;
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
         ctx.ctx().handle_reject(err);
-        Ok(JSValue::UNDEFINED)
     }
 
     fn handle_reject(&self, value: JSValue) {
@@ -3022,35 +2946,32 @@ where
     }
 
     pub(crate) fn on_resolve_stream(
-        _global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        _: &mut JsScope<'_>,
+        _: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onResolveStream");
-        let args = callframe.arguments();
-        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(req) = context else {
+            return;
         };
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().promise_cell.set(JSValue::ZERO);
         req.ctx().handle_resolve_stream();
-        Ok(JSValue::UNDEFINED)
     }
 
     pub(crate) fn on_reject_stream(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        cx: &mut JsScope<'_>,
+        err: JsLocal<'_>,
+        context: Option<NonNull<Self>>,
+    ) {
         stream_log!("onRejectStream");
-        let args = callframe.arguments();
-        let Some(req) = NativePromiseContext::take::<Self>(args[args.len() - 1]) else {
-            return Ok(JSValue::UNDEFINED);
+        let Some(req) = context else {
+            return;
         };
-        let err = args[0];
         let req = RequestContextRef::adopt(req.as_ptr());
         req.ctx().promise_cell.set(JSValue::ZERO);
 
-        req.ctx().handle_reject_stream(global_this, err);
-        Ok(JSValue::UNDEFINED)
+        req.ctx().handle_reject_stream(cx.global(), err.to_js());
     }
 
     pub(crate) fn handle_reject_stream(&self, global_this: &JSGlobalObject, err: JSValue) {
@@ -4613,113 +4534,68 @@ const MUX_REQUEST_BODY_PREALLOCATE_LENGTH: usize = 64 * 1024;
 /// Pause socket reads at this many unconsumed request-body bytes (two 512 KB uWS recv buffers).
 const REQUEST_BODY_HIGH_WATER_MARK: usize = 1024 * 1024;
 
-// ─── per-monomorphization C-ABI exports ──────────────────────────────────────
-// The exported symbol name is "Bun__HTTPRequestContext" + (debug ? "Debug" : "")
-// + (mux ? "Mux" : "") + (ssl ? "TLS" : "") + "__on*".
-// Rust generics cannot own `#[no_mangle]` symbols, so each of the 8 concrete
-// instantiations × 4 callbacks is spelled out via `request_ctx_exports!`. The
-// generic body lives on the `impl<ThisServer, ..> RequestContext` block above
-// (`on_resolve` / `on_reject` / `on_resolve_stream` / `on_reject_stream`); each
-// shim is the result-mapping (`JsResult<JSValue>` → raw `JSValue`,
-// `.zero` on error) over the monomorphic associated fn.
-macro_rules! request_ctx_exports {
-    ($(
-        ($srv:ty, $ssl:literal, $dbg:literal, $mux:literal) =>
-        $on_resolve:ident, $on_reject:ident, $on_resolve_stream:ident, $on_reject_stream:ident
-    );* $(;)?) => {$(
-        // Named C-ABI symbols for the C++ side. The bodies forward to the
-        // generic `host_on_*` shims monomorphized at this tuple — `#[no_mangle]`
-        // pins the link name.
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_resolve(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_resolve::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_reject(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_reject::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_resolve_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_resolve_stream::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-        #[unsafe(no_mangle)]
-        #[bun_jsc::host_call]
-        pub(crate) fn $on_reject_stream(g: *mut JSGlobalObject, f: *mut CallFrame) -> JSValue {
-            host_on_reject_stream::<$srv, $ssl, $dbg, $mux>(g, f)
-        }
-    )*
-
-    /// Map the `(SSL, DEBUG, MUX)` const-generic tuple to the concrete
-    /// `#[no_mangle]` promise-reaction exports above. Used by the blanket
-    /// `RequestContextHostFns` impl so `Self::ON_*` resolves to the *same*
-    /// address C++'s `GlobalObject::promiseHandlerID` compares against.
-    const fn exported_host_fns(
-        ssl: bool,
-        debug: bool,
-        mux: bool,
-    ) -> (
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-        bun_jsc::JSHostFn,
-    ) {
-        match (ssl, debug, mux) {
-            $(
-                ($ssl, $dbg, $mux) => (
-                    $on_resolve,
-                    $on_reject,
-                    $on_resolve_stream,
-                    $on_reject_stream,
-                ),
-            )*
-        }
+/// `RequestContext.bind.ts` has one set of reactions for each instantiation.
+const fn exported_host_fns(
+    ssl: bool,
+    debug: bool,
+    mux: bool,
+) -> (
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+    bun_jsc::JSHostFn,
+) {
+    use crate::generated_bindgen::request_context::*;
+    match (ssl, debug, mux) {
+        (false, false, false) => (
+            Bun__HTTPRequestContext__onResolve,
+            Bun__HTTPRequestContext__onReject,
+            Bun__HTTPRequestContext__onResolveStream,
+            Bun__HTTPRequestContext__onRejectStream,
+        ),
+        (true, false, false) => (
+            Bun__HTTPRequestContextTLS__onResolve,
+            Bun__HTTPRequestContextTLS__onReject,
+            Bun__HTTPRequestContextTLS__onResolveStream,
+            Bun__HTTPRequestContextTLS__onRejectStream,
+        ),
+        (false, true, false) => (
+            Bun__HTTPRequestContextDebug__onResolve,
+            Bun__HTTPRequestContextDebug__onReject,
+            Bun__HTTPRequestContextDebug__onResolveStream,
+            Bun__HTTPRequestContextDebug__onRejectStream,
+        ),
+        (true, true, false) => (
+            Bun__HTTPRequestContextDebugTLS__onResolve,
+            Bun__HTTPRequestContextDebugTLS__onReject,
+            Bun__HTTPRequestContextDebugTLS__onResolveStream,
+            Bun__HTTPRequestContextDebugTLS__onRejectStream,
+        ),
+        (false, false, true) => (
+            Bun__HTTPRequestContextMux__onResolve,
+            Bun__HTTPRequestContextMux__onReject,
+            Bun__HTTPRequestContextMux__onResolveStream,
+            Bun__HTTPRequestContextMux__onRejectStream,
+        ),
+        (true, false, true) => (
+            Bun__HTTPRequestContextMuxTLS__onResolve,
+            Bun__HTTPRequestContextMuxTLS__onReject,
+            Bun__HTTPRequestContextMuxTLS__onResolveStream,
+            Bun__HTTPRequestContextMuxTLS__onRejectStream,
+        ),
+        (false, true, true) => (
+            Bun__HTTPRequestContextDebugMux__onResolve,
+            Bun__HTTPRequestContextDebugMux__onReject,
+            Bun__HTTPRequestContextDebugMux__onResolveStream,
+            Bun__HTTPRequestContextDebugMux__onRejectStream,
+        ),
+        (true, true, true) => (
+            Bun__HTTPRequestContextDebugMuxTLS__onResolve,
+            Bun__HTTPRequestContextDebugMuxTLS__onReject,
+            Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
+            Bun__HTTPRequestContextDebugMuxTLS__onRejectStream,
+        ),
     }
-    };
-}
-request_ctx_exports! {
-    (crate::server::HTTPServer,       false, false, false) =>
-        Bun__HTTPRequestContext__onResolve,
-        Bun__HTTPRequestContext__onReject,
-        Bun__HTTPRequestContext__onResolveStream,
-        Bun__HTTPRequestContext__onRejectStream;
-    (crate::server::HTTPSServer,      true,  false, false) =>
-        Bun__HTTPRequestContextTLS__onResolve,
-        Bun__HTTPRequestContextTLS__onReject,
-        Bun__HTTPRequestContextTLS__onResolveStream,
-        Bun__HTTPRequestContextTLS__onRejectStream;
-    (crate::server::DebugHTTPServer,  false, true,  false) =>
-        Bun__HTTPRequestContextDebug__onResolve,
-        Bun__HTTPRequestContextDebug__onReject,
-        Bun__HTTPRequestContextDebug__onResolveStream,
-        Bun__HTTPRequestContextDebug__onRejectStream;
-    (crate::server::DebugHTTPSServer, true,  true,  false) =>
-        Bun__HTTPRequestContextDebugTLS__onResolve,
-        Bun__HTTPRequestContextDebugTLS__onReject,
-        Bun__HTTPRequestContextDebugTLS__onResolveStream,
-        Bun__HTTPRequestContextDebugTLS__onRejectStream;
-    (crate::server::HTTPServer,       false, false, true)  =>
-        Bun__HTTPRequestContextMux__onResolve,
-        Bun__HTTPRequestContextMux__onReject,
-        Bun__HTTPRequestContextMux__onResolveStream,
-        Bun__HTTPRequestContextMux__onRejectStream;
-    (crate::server::HTTPSServer,      true,  false, true)  =>
-        Bun__HTTPRequestContextMuxTLS__onResolve,
-        Bun__HTTPRequestContextMuxTLS__onReject,
-        Bun__HTTPRequestContextMuxTLS__onResolveStream,
-        Bun__HTTPRequestContextMuxTLS__onRejectStream;
-    (crate::server::DebugHTTPServer,  false, true,  true)  =>
-        Bun__HTTPRequestContextDebugMux__onResolve,
-        Bun__HTTPRequestContextDebugMux__onReject,
-        Bun__HTTPRequestContextDebugMux__onResolveStream,
-        Bun__HTTPRequestContextDebugMux__onRejectStream;
-    (crate::server::DebugHTTPSServer, true,  true,  true)  =>
-        Bun__HTTPRequestContextDebugMuxTLS__onResolve,
-        Bun__HTTPRequestContextDebugMuxTLS__onReject,
-        Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
-        Bun__HTTPRequestContextDebugMuxTLS__onRejectStream;
 }
 
 struct StreamPair<'a, ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> {

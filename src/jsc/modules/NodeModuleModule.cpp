@@ -28,15 +28,13 @@
 #include "BunString.h"
 
 #include "GeneratedNodeModuleModule.h"
+#include "GeneratedResolverJsc.h"
 #include "GeneratedSourcemap.h"
 
 namespace Bun {
 
 using namespace JSC;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__JSSourceMap__find);
-
-BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionFindPath);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionIsBuiltinModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire);
@@ -998,7 +996,7 @@ _extensions             getModuleExtensionsObject         PropertyCallback
 _findPath                jsFunctionFindPath               Function 3
 _initPaths              JSBuiltin                         Function|Builtin 0
 _load                   jsFunctionLoad                    Function 1
-_nodeModulePaths        Resolver__nodeModulePathsForJS    Function 1
+_nodeModulePaths        &Bun::Bindgen::Generated::ResolverJsc::jsNodeModulePaths Function 1
 _pathCache              getPathCacheObject                PropertyCallback
 _preloadModules         jsFunctionPreloadModules          Function 0
 _resolveFilename        nodeModuleResolveFilename         CustomAccessor
@@ -1008,7 +1006,7 @@ builtinModules          getBuiltinModulesObject           PropertyCallback
 constants               getConstantsObject                PropertyCallback
 createRequire           jsFunctionNodeModuleCreateRequire Function 1
 enableCompileCache      jsFunctionEnableCompileCache      Function 1
-findSourceMap           Bun__JSSourceMap__find           Function 1
+findSourceMap           Bun::Bindgen::Generated::Sourcemap::jsFindSourceMap Function 1
 flushCompileCache       jsFunctionFlushCompileCache       Function 0
 getCompileCacheDir      jsFunctionGetCompileCacheDir      Function 0
 globalPaths             getGlobalPathsObject              PropertyCallback

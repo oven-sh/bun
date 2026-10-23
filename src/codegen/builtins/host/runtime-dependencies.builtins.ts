@@ -545,7 +545,7 @@ const nativeCalls = [
       {
         file: "src/runtime/node/node_crypto_binding.rs",
         caller: "random_int",
-        onBehalfOf: ["native:Rust:node_crypto_binding.rs:createNodeCryptoBindingZig"],
+        onBehalfOf: ["native:Bindgen:node_crypto_binding.bind.ts:crypto"],
       },
       {
         file: "src/runtime/node/node_fs_binding.rs",

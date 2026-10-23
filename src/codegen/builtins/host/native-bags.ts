@@ -1,4 +1,4 @@
-// What the files that describe the objects behind `$cpp(file, symbol)` and `$rust(file, symbol)` share.
+// What the files that describe the objects behind `$cpp(file, symbol)` share.
 import * as b from "bun-builtins-table";
 
 // An ordinary object that the host makes for the module that asks, with native functions of its own. It has the listed members and no others.

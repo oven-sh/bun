@@ -1,5 +1,8 @@
 import * as b from "../../codegen/bindgen-lib.ts";
 import * as table from "../../codegen/builtins/lib.ts";
+import { BuildArtifact } from "../api/JSBundler.bind.ts";
+
+export default b.module({ rustPath: "crate::webcore::blob" });
 
 const js = { capability: "js", throws: true } as const;
 const method = { returns: b.any.returning("Promise"), ...js } as const;
@@ -43,3 +46,24 @@ export const Blob = b.class({
     writer: { ...js, args: { options: b.any }, returns: b.any.returning("object") },
   },
 });
+
+/** A `Blob`, or an output of `Bun.build()`, which holds one. */
+export const BlobOrBuildArtifact = b.union({ blob: Blob, buildArtifact: BuildArtifact });
+
+/** Anything but a string is ignored, and so is `""`. `new String("")` sets the type to `""`. */
+export const BlobType = b.union({ text: b.string, stringObject: b.string.allowStringObject, ignored: b.any });
+/** What `Bun.file` reads of its options, unless the path is `s3://`. */
+export const BunFileOptions = b.dictionary(
+  { type: BlobType, lastModified: b.f64.loose.optional },
+  { allowArray: true, nonObjectAsEmpty: true, fromJS: true },
+);
+/** `options` is also what an S3 file takes. */
+export const file = b.fn({ ...js, args: { path: b.any, options: b.any }, returns: Blob });
+
+/** What `Bun.write` itself reads of its options. */
+export const BunWriteOptions = b.dictionary(
+  { createPath: b.bool.emptyStringAsNull, mode: b.f64.nullable },
+  { allowArray: true, fromJS: true, reportedAs: "options" },
+);
+/** `options` is also what a write to S3 takes. */
+export const write = b.fn({ ...method, args: { destination: b.any, data: b.any, options: b.any } });

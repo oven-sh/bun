@@ -7,8 +7,8 @@ use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
 use crate::webcore::jsc::{
-    BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
-    JsResult, StringJsc as _,
+    BuiltinName, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult,
+    StringJsc as _,
 };
 use bun_core::Output;
 use bun_core::{String as BunString, Utf8Bytes};
@@ -1210,12 +1210,12 @@ enum JsonArgument {
 }
 
 /// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
-#[bun_jsc::host_fn(export = "Response__constructJSONFromText")]
-fn construct_json_from_text(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
+pub(crate) fn construct_json_from_text(
+    cx: &mut JsScope<'_>,
+    args: &[JsLocal<'_>],
 ) -> JsResult<JSValue> {
-    Response::construct_json_response(global_this, callframe.arguments(), JsonArgument::Text)
+    let args = JsLocal::to_js_slice(args);
+    Response::construct_json_response(cx.global(), args, JsonArgument::Text)
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update

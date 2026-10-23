@@ -105,7 +105,7 @@ const {
     associatedData: BufferSource,
     type: number,
   ): Buffer;
-} = $rust("node_crypto_binding.rs", "createNodeCryptoBindingZig");
+} = $bindgen("node_crypto_binding.bind.ts", "crypto") as any;
 
 const normalizeEncoding: (encoding: string) => string | undefined = $bindgen(
   "node_util_binding.bind.ts",

@@ -34,7 +34,7 @@ function f1 name="library" role=Library results=[{type=anything}] {
     v7 = Call v4, -, v6
     v8 = PropGet v7 key="method"
     v9 = Call v8, v7
-    v10 = NativeBinding builtin=NativeNewRustFunctionIpcRsEmitHandleIPCMessage
+    v10 = NativeBinding builtin=NativeBindgenIpc_hostBindTsEmitHandleIPCMessage
     v11 = NewClosure function=f4
     v12 = Call v10, -, v11
     Return

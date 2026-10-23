@@ -183,13 +183,6 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [0],
     refused: [],
   },
-  "native:NewCppFunction:NodeTLS.cpp:setDefaultCiphers": {
-    functions: 1,
-    sets: 324,
-    returned: 75,
-    taken: [0],
-    refused: [],
-  },
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": {
     functions: 1,
     sets: 1065,
@@ -216,27 +209,6 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     sets: 342,
     returned: 340,
     taken: [0, 1],
-    refused: [],
-  },
-  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExp": {
-    functions: 1,
-    sets: 258,
-    returned: 75,
-    taken: [0],
-    refused: [],
-  },
-  "native:NewRustFunction:escapeRegExp.rs:jsEscapeRegExpForPackageNameMatching": {
-    functions: 1,
-    sets: 258,
-    returned: 75,
-    taken: [0],
-    refused: [],
-  },
-  "native:NewRustFunction:runtime/socket/socket.rs:jsCreateSocketPair": {
-    functions: 1,
-    sets: 192,
-    returned: 192,
-    taken: [],
     refused: [],
   },
 };

@@ -13,8 +13,8 @@
 //! let cell = native_promise_context::create(global, ctx);
 //! promise.then_with_value(global, cell, on_resolve, on_reject)?;
 //!
-//! // In on_resolve/on_reject:
-//! let Some(ctx) = native_promise_context::take::<RequestContext>(arguments[1]) else { return; };
+//! // In on_resolve/on_reject, with `context: b.nativePromiseContext("crate::..::RequestContext")` in the schema:
+//! let Some(ctx) = context else { return; };
 //! // ... process ...
 //! ctx.deref_();
 //! ```

@@ -6,7 +6,7 @@
 //! shims from a proc-macro instead.
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
     FnArg, Ident, ItemFn, LitStr, Token,
@@ -14,117 +14,6 @@ use syn::{
     parse_macro_input,
     spanned::Spanned,
 };
-
-// ──────────────────────────────────────────────────────────────────────────
-// #[bun_jsc::host_fn] / #[bun_jsc::host_fn(export = "Name")] / #[bun_jsc::host_fn(feature = Name)]
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Default)]
-struct HostFnArgs {
-    export: Option<LitStr>,
-    /// The `bun_removable_features::Feature` that `bun build --compile --trim` removes this function with.
-    feature: Option<Ident>,
-}
-
-impl Parse for HostFnArgs {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut out = HostFnArgs::default();
-        while !input.is_empty() {
-            let ident: Ident = input.parse()?;
-            match ident.to_string().as_str() {
-                "export" => {
-                    input.parse::<Token![=]>()?;
-                    out.export = Some(input.parse()?);
-                }
-                "feature" => {
-                    input.parse::<Token![=]>()?;
-                    out.feature = Some(input.parse()?);
-                }
-                other => {
-                    return Err(syn::Error::new(
-                        ident.span(),
-                        format!("unknown #[host_fn] argument `{other}`"),
-                    ));
-                }
-            }
-            if input.peek(Token![,]) {
-                input.parse::<Token![,]>()?;
-            }
-        }
-        Ok(out)
-    }
-}
-
-/// Emit an extern shim with the JSC calling convention.
-/// The body is duplicated under two `#[cfg]` arms because Rust does not accept
-/// a macro/const in ABI-string position.
-///
-/// `export_name = None` means no `#[export_name]` is emitted (Rust mangling
-/// applies).
-fn jsc_extern_fn(
-    export_name: Option<&str>,
-    sig_args: &TokenStream2,
-    ret: &TokenStream2,
-    body: &TokenStream2,
-) -> TokenStream2 {
-    let export_attr = export_name.map(|n| {
-        let lit = LitStr::new(n, Span::call_site());
-        quote! { #[unsafe(export_name = #lit)] }
-    });
-    quote! {
-        #[cfg(all(windows, target_arch = "x86_64"))]
-        #export_attr
-        #[doc(hidden)]
-        pub unsafe extern "sysv64" fn #sig_args -> #ret { #body }
-
-        #[cfg(not(all(windows, target_arch = "x86_64")))]
-        #export_attr
-        #[doc(hidden)]
-        pub unsafe extern "C" fn #sig_args -> #ret { #body }
-    }
-}
-
-/// Applies to a `fn(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>`.
-#[proc_macro_attribute]
-pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr as HostFnArgs);
-    let func = parse_macro_input!(item as ItemFn);
-    expand_host_fn(&args, &func).into()
-}
-
-fn expand_host_fn(args: &HostFnArgs, func: &ItemFn) -> TokenStream2 {
-    let fn_name = &func.sig.ident;
-
-    // No default export name: the bare ident of a common name (`parse`, `crc32`) collides at link time.
-    let export: Option<String> = args.export.as_ref().map(|l| l.value());
-    let shim_ident = format_ident!("__jsc_host_{}", fn_name);
-    let removable_definition = args.feature.as_ref().map(|feature| {
-        quote! { ::bun_removable_features::removable_host_function_definition!(#feature, #shim_ident); }
-    });
-
-    let shim = jsc_extern_fn(
-        export.as_deref(),
-        &quote! {
-            #shim_ident(
-                __global: *mut ::bun_jsc::JSGlobalObject,
-                __frame: *mut ::bun_jsc::CallFrame,
-            )
-        },
-        &quote! { ::bun_jsc::JSValue },
-        &quote! {
-            #removable_definition
-            // SAFETY: JSC guarantees both pointers are live for the call.
-            let __g = unsafe { &*__global };
-            let __f = unsafe { &*__frame };
-            ::bun_jsc::host_fn::host_fn_result(__g, || #fn_name(__g, __f))
-        },
-    );
-
-    quote! {
-        #func
-        #shim
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // #[bun_jsc::host_call] — bare ABI rewrite for non-JSHostFn signatures

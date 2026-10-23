@@ -82,6 +82,8 @@ interface Receiver {
 
 interface Joins {
   placements: ReadonlyMap<string, BuiltinPath>;
+  /** What the files of the table declare themselves. */
+  writtenMembers: ReadonlySet<BuiltinPath>;
   nativeBindings: ReadonlySet<BuiltinPath>;
 }
 
@@ -167,6 +169,7 @@ export function cppSymbolOf(fn: FunctionDefinition): string {
 
 function getKindType(kind: Kind): b.TableType {
   if (kind instanceof Type) return createStrictType(kind.parameterType.accepted);
+  if (typeof kind === "object" && kind.cpp === "JSC::DateInstance") return b.instance("Date");
   if (typeof kind === "object") throw new GeneratorError(`the class of ${kind.cpp} is unknown: the kind is not a type`);
   switch (kind) {
     case "undefined":
@@ -189,6 +192,8 @@ function getKindType(kind: Kind): b.TableType {
       return b.union(b.instance("ArrayBuffer"), b.instance("SharedArrayBuffer"));
     case "arrayBufferView":
       return b.union(b.instance("TypedArray"), b.instance("DataView"));
+    case "callable":
+      return createStrictType({ type: "Function" });
     case "other":
       return b.any;
   }
@@ -325,7 +330,8 @@ function computeReceiverUses(signature: Signature, className: string | null): re
     return mayAnswerReceiver ? [...b.handedOver, b.returned] : b.handedOver;
   }
   if (signature.capability === "js") return [b.everything];
-  if (signature instanceof Method && signature.passThis) return usesWithoutJavaScript;
+  // A function that is no member of a class has a receiver only if its body is handed `this`.
+  if (!(signature instanceof Method) || signature.passThis) return usesWithoutJavaScript;
   return [b.readsContents(), b.writesContents()];
 }
 
@@ -407,7 +413,7 @@ function createField(
       result,
       args.map(({ type }) => type.parameterType.converted),
     ),
-    throws: signature.throws || args.some(({ type }) => type.canRefuse),
+    throws: signature.throws || signature.requiredArguments > 0 || args.some(({ type }) => type.canRefuse),
     uses,
     reads: columns.reads ?? (isOfClass && capability === "js" ? undefined : externalState),
     writes: columns.writes ?? (isOfClass && capability === "js" ? undefined : externalState),
@@ -541,7 +547,8 @@ function collectFunction(
     createFields(
       createField(signature, createReceiver(signature, receiver, className), resultOf(signature)),
       signature,
-      thunkOf(signature),
+      // The host function counts the arguments and turns what is thrown into a rejected promise. The thunk does neither.
+      signature.requiredArguments > 0 || signature.rejects ? null : thunkOf(signature),
     ),
   );
   const fields = overloads.flatMap(overload => overload.fields);
@@ -574,7 +581,11 @@ function collectFunction(
 }
 
 export function declareFunction(fn: FunctionDefinition, path: BuiltinPath): Declaration[] {
-  return collectFunction(fn, path, null, signature => thunkSymbol(fn, signature));
+  // The thunk of a function that is handed `this` or itself takes those in front of the arguments, so nothing but the host function enters it.
+  const takesArgumentsAlone = !fn.passThis && !fn.passCallee;
+  return collectFunction(fn, path, fn.passThis ? b.any.parameter : null, signature =>
+    takesArgumentsAlone ? thunkSymbol(fn, signature) : null,
+  );
 }
 
 function computeCachedResult(spec: TypeSpec): TypeSpec {
@@ -881,6 +892,45 @@ function collectNamespace(namespace: NamespaceDefinition, path: BuiltinPath): De
   ];
 }
 
+/** The object that `$bindgen` of a namespace makes for the module that asks. It has the functions of the namespace and no other members. */
+const pathOfBoundNamespace = (namespace: NamespaceDefinition, { namespace: cppNamespace }: SchemaFile["origin"]) =>
+  `%${cppNamespace}${namespace.name[0].toUpperCase()}${namespace.name.slice(1)}%`;
+
+function collectBoundNamespace(
+  namespace: NamespaceDefinition,
+  path: BuiltinPath,
+  binding: BuiltinPath,
+  header: string,
+): Declaration[] {
+  return [
+    ...b.namespace(path, {}, { scope: "Module", listsAllMembers: true, ...namespace.columns }),
+    ...(namespace.call === undefined ? b.inherits(path, "Object.prototype") : declareFunction(namespace.call, path)),
+    ...namespace.functions.flatMap(fn => [
+      ...declareFunction(fn, joinPath([path, fn.name])),
+      ...b.extend(joinPath([path, fn.name]), { functionObjectCode: { symbol: cppSymbolOf(fn), header } }),
+    ]),
+    ...b.static(binding, {
+      getter: b.builtin(path),
+      capability: "heap",
+      implementation: b.generic,
+      runsUnseenCode: false,
+    }),
+  ];
+}
+
+/** `$bindgen` of a `b.value` is what the Rust function returns. */
+function collectValue(fn: FunctionDefinition, binding: BuiltinPath): Declaration[] {
+  const [signature] = fn.signatures;
+  return b.static(binding, {
+    runsUnseenCode: false,
+    ...signature.columns,
+    getter: createStrictType(resultTypeOf(signature, fn)),
+    capability: signature.capability === "none" ? "heap" : signature.capability,
+    throws: signature.throws,
+    implementation: b.generic,
+  });
+}
+
 function findFunctionPath(fn: FunctionDefinition, schemaFileName: string, joins: Joins): BuiltinPath | null {
   const placedPath = joins.placements.get(cppSymbolOf(fn));
   if (placedPath !== undefined) return placedPath;
@@ -904,15 +954,26 @@ function collectSchema(schema: SchemaFile, joins: Joins, report: (message: strin
   const declarations: Declaration[] = [];
   for (const namespace of schema.namespaces) {
     const path = joins.placements.get(cppNamespaceSymbol(namespace));
-    if (path === undefined) continue;
+    const binding = pathOfNativeBinding("Bindgen", `${stem}.bind.ts`, namespace.name);
+    const isBound = joins.nativeBindings.has(binding);
     for (const fn of namespace.functions) placedFunctions.add(fn);
+    if (path === undefined && !isBound) continue;
     declaredFunctions.push(...namespace.functions);
-    declarations.push(...tryCollect(() => collectNamespace(namespace, path)));
+    if (path !== undefined) declarations.push(...tryCollect(() => collectNamespace(namespace, path)));
+    if (!isBound) continue;
+    const boundPath = pathOfBoundNamespace(namespace, schema.origin);
+    const header = `Generated${cppNamespace}.h`;
+    declarations.push(...tryCollect(() => collectBoundNamespace(namespace, boundPath, binding, header)));
   }
   for (const fn of schema.functions) {
     if (placedFunctions.has(fn)) continue;
     const path = findFunctionPath(fn, `${stem}.bind.ts`, joins);
     if (path === null) continue;
+    if (fn.isValue) {
+      // A file of the table that says what the value is says more than its type does.
+      if (!joins.writtenMembers.has(path)) declarations.push(...tryCollect(() => collectValue(fn, path)));
+      continue;
+    }
     declaredFunctions.push(fn);
     declarations.push(...tryCollect(() => declareFunction(fn, path)));
     if (!joins.nativeBindings.has(path)) continue;
@@ -938,17 +999,18 @@ function findNativeBindings(): Set<BuiltinPath> {
 
 export interface CollectedSchemas {
   declarations: SourcedDeclaration[];
-  /** What `$bindgen` answers a constructor for, and no function of its own. */
-  constructorBindings: ReadonlySet<BuiltinPath>;
+  /** What `$bindgen` answers a constructor, a namespace or a value for, and no function of its own. */
+  bindingsOfOtherValues: ReadonlySet<BuiltinPath>;
 }
 
 export async function collectBindgen(
   bunRoot: string,
   sources: readonly string[],
   placements: ReadonlyMap<string, BuiltinPath>,
+  writtenMembers: ReadonlySet<BuiltinPath>,
   problems: Problems,
 ): Promise<CollectedSchemas> {
-  const joins: Joins = { placements, nativeBindings: findNativeBindings() };
+  const joins: Joins = { placements, writtenMembers, nativeBindings: findNativeBindings() };
   // A type is named by the file that exports it, and another file may use it.
   const loaded: { file: string; schema: SchemaFile }[] = [];
   for (const source of [...sources].sort(compareBytes)) {
@@ -967,5 +1029,15 @@ export async function collectBindgen(
     return createSourcedDeclarations(file, collectSchema(schema, joins, report));
   });
   const classes = loaded.flatMap(({ schema }) => schema.types.filter(type => type instanceof ClassType));
-  return { declarations, constructorBindings: new Set(classes.map(pathOfConstructorBinding)) };
+  const bindingsOfFile = ({ origin, namespaces, functions }: SchemaFile) =>
+    [...namespaces, ...functions.filter(fn => fn.isValue)].map(({ name }) =>
+      pathOfNativeBinding("Bindgen", `${origin.stem}.bind.ts`, name),
+    );
+  return {
+    declarations,
+    bindingsOfOtherValues: new Set([
+      ...classes.map(pathOfConstructorBinding),
+      ...loaded.flatMap(({ schema }) => bindingsOfFile(schema)),
+    ]),
+  };
 }

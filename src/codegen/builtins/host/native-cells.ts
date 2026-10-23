@@ -24,7 +24,6 @@ export const standardErrorCell = "Process.stderr";
 export const argumentsCell = "Process.argv";
 export const runtimeArgumentsCell = "Process.execArgv";
 export const closedPromiseOfStreamCell = "WebStream.closedPromise";
-export const allClosedPromiseOfServerCell = "Server.allClosedPromise";
 export const moduleGraphsCell = "ModuleGraph.graphs";
 export const framesOfModuleGraphsCell = "ModuleGraph.frames";
 export const asyncContextCell = "GlobalObject.asyncContext";

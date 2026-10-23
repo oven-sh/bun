@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use bun_aot::statistics::{LimitId, LimitValues};
 use bun_core::strings;
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
+use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JsResult};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, posix_to_platform_in_place};
 use bun_resolve_builtins::Alias;
@@ -326,10 +326,10 @@ fn kind_json(kind: CodeImportKind) -> Json {
     Json::String(name.to_vec())
 }
 
-fn json_to_js(global: &JSGlobalObject, json: &Json) -> JsResult<JSValue> {
+fn json_text(json: &Json) -> Vec<u8> {
     let mut text = Vec::new();
     json.stringify(&mut text);
-    create_utf8_for_js(global, &text)
+    text
 }
 
 struct CompareOptions<'a> {
@@ -643,30 +643,30 @@ fn vm_code_options(vm: &VirtualMachine, root: &[u8], options: &CompareOptions<'_
 }
 
 pub(crate) fn compare_code_resolution(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    root_argument: &[u8],
+    conditions_argument: &[u8],
+    preserve_symlinks: Option<bool>,
+    lists_every_site: bool,
+) -> JsResult<Option<Vec<u8>>> {
     if !bun_aot::engine::has_compiler() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
-    let root_argument = frame.argument(0).to_utf8(global)?;
-    let conditions_argument = frame.argument(1).to_utf8(global)?;
+    let global = cx.global();
     let vm = global.bun_vm();
     let options = CompareOptions {
-        conditions: strings::tokenize(&conditions_argument, b"\n").collect(),
-        preserves_symlinks: match frame.argument(2) {
-            value if value.is_undefined() => vm.transpiler.resolver.opts.preserve_symlinks,
-            value => value.to_boolean(),
-        },
-        lists_every_site: frame.argument(3).to_boolean(),
+        conditions: strings::tokenize(conditions_argument, b"\n").collect(),
+        preserves_symlinks: preserve_symlinks
+            .unwrap_or(vm.transpiler.resolver.opts.preserve_symlinks),
+        lists_every_site,
     };
 
     use_dedicated_pool("Bun Compile");
-    let requested_root = from_native(&root_argument);
+    let requested_root = from_native(root_argument);
     let host = DiskWithBuiltinModules::new(0, &requested_root);
     let root = host.realpath(&requested_root);
     if !host.is_dir(&root) {
-        let root = bstr::BStr::new(&root_argument);
+        let root = bstr::BStr::new(root_argument);
         return Err(global.throw(format_args!("{root} is not a directory")));
     }
 
@@ -678,7 +678,7 @@ pub(crate) fn compare_code_resolution(
     let sites = resolve_sites(&host, &resolver, &importers);
     let is_case_sensitive = host.is_case_sensitive();
     let comparison = compare_with_bun_run(global, &options, is_case_sensitive, &importers, &sites);
-    json_to_js(global, &comparison)
+    Ok(Some(json_text(&comparison)))
 }
 
 fn computed_resolution_json(
@@ -699,17 +699,17 @@ fn computed_resolution_json(
 }
 
 pub(crate) fn resolve_computed_specifier(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
+    cx: &mut JsScope<'_>,
+    importer_argument: &[u8],
+    prefix_argument: &[u8],
+    suffix_argument: &[u8],
+    kind_argument: &[u8],
+) -> JsResult<Option<Vec<u8>>> {
     if !bun_aot::engine::has_compiler() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
-    let importer_argument = frame.argument(0).to_utf8(global)?;
-    let prefix_argument = frame.argument(1).to_utf8(global)?;
-    let suffix_argument = frame.argument(2).to_utf8(global)?;
-    let kind_argument = frame.argument(3).to_utf8(global)?;
-    let kind = match kind_argument.slice() {
+    let global = cx.global();
+    let kind = match kind_argument {
         b"import" => CodeImportKind::Import,
         b"require" => CodeImportKind::Require,
         other => {
@@ -724,12 +724,12 @@ pub(crate) fn resolve_computed_specifier(
         lists_every_site: false,
     };
 
-    let requested_importer = from_native(&importer_argument);
+    let requested_importer = from_native(importer_argument);
     let requested_directory = dirname::<Posix>(&requested_importer);
     let host = DiskWithBuiltinModules::new(0, requested_directory);
     let directory = host.realpath(requested_directory);
     if !host.is_dir(&directory) {
-        let importer = bstr::BStr::new(&importer_argument);
+        let importer = bstr::BStr::new(importer_argument);
         return Err(global.throw(format_args!("{importer} is not in a directory")));
     }
 
@@ -738,14 +738,16 @@ pub(crate) fn resolve_computed_specifier(
     let type_options = Options::default();
     let resolver = Resolver::for_compile(&session, &host, &type_options, &code);
     let resolution = resolver.resolve_computed_code(&ComputedCodeRequest {
-        prefix: &prefix_argument,
-        suffix: &suffix_argument,
+        prefix: prefix_argument,
+        suffix: suffix_argument,
         importer: &inside(&directory, strings::basename_posix(&requested_importer)),
         directory: &directory,
         kind,
         form: CodeImportForm::Static,
     });
-    json_to_js(global, &computed_resolution_json(&host, resolution))
+    Ok(Some(json_text(&computed_resolution_json(
+        &host, resolution,
+    ))))
 }
 
 fn parse_define<'s>(line: &[u8], atoms: &Interner<'s>, arena: &'s Arena) -> Define<'s> {
@@ -936,36 +938,39 @@ fn describe_failure(failure: &LoadFailure) -> GraphDescription {
     }
 }
 
-pub(crate) fn describe_code_graph(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn describe_code_graph(
+    cx: &mut JsScope<'_>,
+    entry_points_argument: &[u8],
+    conditions_argument: &[u8],
+    threads: i32,
+    defines_argument: &[u8],
+    features_argument: &[u8],
+    working_directory_argument: &[u8],
+) -> JsResult<Option<Vec<u8>>> {
     if !bun_aot::engine::has_compiler() {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(None);
     }
     let session = Session::new();
-    let entry_points_argument = frame.argument(0).to_utf8(global)?;
-    let conditions_argument = frame.argument(1).to_utf8(global)?;
-    let threads = usize::try_from(frame.argument(2).to_int32()).unwrap_or(0);
-    let defines_argument = frame.argument(3).to_utf8(global)?;
-    let features_argument = frame.argument(4).to_utf8(global)?;
-    let working_directory_argument = frame.argument(5).to_utf8(global)?;
+    let threads = usize::try_from(threads).unwrap_or(0);
     let working_directory = from_native(match working_directory_argument.is_empty() {
-        true => global.bun_vm().top_level_dir(),
-        false => working_directory_argument.slice(),
+        true => cx.global().bun_vm().top_level_dir(),
+        false => working_directory_argument,
     });
 
     let host = DiskWithBuiltinModules::new(threads, &working_directory);
     let limits = LimitValues::for_host();
     let mut code = code_options_with_limits(&working_directory, &limits);
     code.typed_condition = Some(b"bun-aot".to_vec());
-    for condition in strings::tokenize(&conditions_argument, b"\n") {
+    for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
     }
 
     let arena = session.arena();
     let atoms = Interner::new_in(&session);
-    let defines: Vec<Define<'_>> = strings::tokenize(&defines_argument, b"\n")
+    let defines: Vec<Define<'_>> = strings::tokenize(defines_argument, b"\n")
         .map(|line| parse_define(line, &atoms, arena))
         .collect();
-    let features: Vec<Atom> = strings::tokenize(&features_argument, b"\n")
+    let features: Vec<Atom> = strings::tokenize(features_argument, b"\n")
         .map(|feature| atoms.intern(feature))
         .collect();
     let fold_options = FoldOptions {
@@ -974,7 +979,7 @@ pub(crate) fn describe_code_graph(global: &JSGlobalObject, frame: &CallFrame) ->
         ..fold_options_with_limits(&limits)
     };
     let fold = FoldInputs::new(fold_options, arena);
-    let entry_points: Vec<Vec<u8>> = strings::tokenize(&entry_points_argument, b"\n")
+    let entry_points: Vec<Vec<u8>> = strings::tokenize(entry_points_argument, b"\n")
         .map(<[u8]>::to_vec)
         .collect();
     let request = CompileRequest {
@@ -998,5 +1003,5 @@ pub(crate) fn describe_code_graph(global: &JSGlobalObject, frame: &CallFrame) ->
         }
         Err(failure) => describe_failure(&failure),
     };
-    json_to_js(global, &description.into_json())
+    Ok(Some(json_text(&description.into_json())))
 }

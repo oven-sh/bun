@@ -587,10 +587,9 @@ function lazyBlockList(): $Node.BlockListConstructor {
   return (BlockList ??= $bindgen("BlockList.bind.ts", "BlockList") as $Node.BlockListConstructor);
 }
 const newDetachedSocket: (isSSL: boolean) => SocketHandle = $bindgen("node_net_binding.bind.ts", "newDetachedSocket");
-const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) => Promise<unknown> = $newRustFunction(
-  "node_net_binding.rs",
+const doConnect: (handle: SocketHandle | null, options: NativeConnectOptions) => Promise<unknown> = $bindgen(
+  "node_net_binding.bind.ts",
   "doConnect",
-  2,
 );
 
 const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
@@ -602,8 +601,10 @@ const addServerName = $bindgen("Listener.bind.ts", "addServerName") as (
 const upgradeDuplexToTLS: (
   duplex: $Node.Duplex,
   options: $Node.TLSUpgradeOptions<$Node.Socket | ConnectData>,
-) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] =
-  $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+) => [handle: SocketHandle, events: [(chunk: Uint8Array) => void, () => void, () => void, () => void]] = $bindgen(
+  "socket_body.bind.ts",
+  "upgradeDuplexToTLS",
+);
 // tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
 const upgradeTLSDeferred = $bindgen("socket_body.bind.ts", "upgradeTLSDeferred") as unknown as (
   socket: SocketHandle,

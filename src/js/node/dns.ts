@@ -103,7 +103,7 @@ const getRuntimeDefaultResultOrderOption: () => string = $bindgen(
 
 function newResolver(options: { timeout: number; tries: number }) {
   if (!newResolver.native) {
-    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1) as NewNativeResolver;
+    newResolver.native = $bindgen("dns_internals.bind.ts", "newResolver") as NewNativeResolver;
   }
   return newResolver.native(options);
 }

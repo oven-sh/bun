@@ -12,7 +12,7 @@ const clusterRawBind: (
   address: unknown,
   port: number,
   flags: number,
-) => RawHandle | number = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
+) => RawHandle | number = $bindgen("node_cluster_binding.bind.ts", "clusterRawBind");
 const closeRawHandle: (fd: number) => void = $bindgen("node_cluster_binding.bind.ts", "clusterCloseHandle");
 const validateFd: (fd: number, wantDgram: boolean) => number = $bindgen(
   "node_cluster_binding.bind.ts",

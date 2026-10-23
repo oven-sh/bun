@@ -10,7 +10,7 @@ const nativeBindings = (kind: b.NativeCallKind, file: string, ...symbols: readon
 export default b.declarations(
   extendAll(
     ["NodeQuic", "TlsSockets", "X509", "Tls", "NetAddresses", "Buffer"],
-    ...nativeBindings("Rust", "node_quic_binding.rs", "createNodeQuicBinding"),
+    ...nativeBindings("Bindgen", "node_quic_binding.bind.ts", "binding"),
   ),
   extendAll(["NodeQuic"], "node:quic", "%QuicEndpoint%", "%QuicSession%", "%QuicStream%"),
 
@@ -60,16 +60,13 @@ export default b.declarations(
   ),
 
   extendAll(["NodeV8"], ...nativeBindings("Cpp", "NodeV8.cpp", "Bun::createNodeV8Binding")),
-  extendAll(["ParseArgs"], ...nativeBindings("NewRustFunction", "parse_args.rs", "parseArgs")),
+  extendAll(["ParseArgs"], ...nativeBindings("Bindgen", "parse_args.bind.ts", "parseArgs")),
 
   extendAll(
     ["NodeCrypto", "X509", "Buffer"],
     ...nativeBindings("Cpp", "node_crypto_binding.cpp", "createNodeCryptoBinding"),
   ),
-  extendAll(
-    ["NodeCrypto", "Buffer"],
-    ...nativeBindings("Rust", "node_crypto_binding.rs", "createNodeCryptoBindingZig"),
-  ),
+  extendAll(["NodeCrypto", "Buffer"], ...nativeBindings("Bindgen", "node_crypto_binding.bind.ts", "crypto")),
   extendAll(["NodeCrypto"], "node:crypto"),
 
   extendAll(
@@ -97,7 +94,7 @@ export default b.declarations(
   extendAll(
     ["NodeFs", "FsStats", "Buffer"],
     "%NodeJSFS%",
-    ...nativeBindings("Rust", "node_fs_binding.rs", "createBinding"),
+    ...nativeBindings("Bindgen", "node_fs_binding.bind.ts", "binding"),
   ),
   extendAll(["NodeFs", "FsStats"], "%StatWatcher%"),
   extendAll(["NodeFs"], "%FSWatcher%"),
@@ -124,7 +121,7 @@ export default b.declarations(
       "onInternalMessagePrimary",
       "setRef",
     ),
-    ...nativeBindings("NewRustFunction", "node_cluster_binding.rs", "clusterRawBind", "sendHelperPrimary"),
+    ...nativeBindings("Bindgen", "node_cluster_binding.bind.ts", "clusterRawBind", "sendHelperPrimary"),
   ),
 
   extendAll(["NodeUrl"], ...nativeBindings("Cpp", "NodeURL.cpp", "Bun::createNodeURLBinding")),
@@ -137,13 +134,13 @@ export default b.declarations(
       "Bindgen",
       "node_http_binding.bind.ts",
       "getBunServerOpenCount",
-      "getInsecureHTTPParser",
+      "insecureHTTPParser",
       "getMaxHTTPHeaderSize",
       "sendWebSocketFrame",
       "setMaxHTTPHeaderSize",
       "upgradeNodeHTTPResponseToWebSocket",
     ),
-    ...nativeBindings("NewRustFunction", "node_http_binding.rs", "getBunServerAllClosedPromise"),
+    ...nativeBindings("Bindgen", "node_http_binding.bind.ts", "getBunServerAllClosedPromise"),
   ),
 
   extendAll(

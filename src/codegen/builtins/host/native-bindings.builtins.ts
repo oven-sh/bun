@@ -1,4 +1,4 @@
-// The objects that the host answers for `$cpp(file, symbol)` and `$rust(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
+// The objects that the host answers for `$cpp(file, symbol)`, each from the code of the function of that name. operand-changes.builtins.ts says which binding answers which of the objects whose functions change an operand.
 import * as b from "bun-builtins-table";
 import { handedOver } from "./native-code.ts";
 

@@ -3,9 +3,9 @@
 # RUN: print
 
 module m0 path="main.js" displayPath="main.js"
-function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)}] results=[{type=undefined}] {
-  b0(v0: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
-    v1 = TypeTest v0 testedType=builtin(NativeRustNode_fs_bindingRsCreateBinding)
+function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)):
+    v1 = TypeTest v0 testedType=builtin(NativeBindgenNode_fs_bindingBindTsBinding)
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
     Return
@@ -13,10 +13,10 @@ function f0 name="amongObjects" parameters=[{type=builtin(GlobalThis)|builtin(Na
     Return
 }
 # CHECK-LABEL: name="amongObjects"
-# CHECK: b1(v2: builtin(NativeRustNode_fs_bindingRsCreateBinding)):
-# CHECK: b2(v3: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
-function f1 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)}] results=[{type=undefined}] {
-  b0(v0: builtin(GlobalThis)|builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+# CHECK: b1(v2: builtin(NativeBindgenNode_fs_bindingBindTsBinding)):
+# CHECK: b2(v3: builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)):
+function f1 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)}] results=[{type=undefined}] {
+  b0(v0: builtin(GlobalThis)|builtin(NativeBindgenNode_fs_bindingBindTsBinding)):
     v1 = TypeTest v0 testedType=builtin(GlobalThis)
     Branch v1 -> taken b1(| 0), notTaken b2(| 0)
   b1(v2):
@@ -26,4 +26,4 @@ function f1 name="ofRealm" parameters=[{type=builtin(GlobalThis)|builtin(NativeR
 }
 # CHECK-LABEL: name="ofRealm"
 # CHECK: b1(v2: builtin(GlobalThis)):
-# CHECK: b2(v3: builtin(NativeRustNode_fs_bindingRsCreateBinding)):
+# CHECK: b2(v3: builtin(NativeBindgenNode_fs_bindingBindTsBinding)):

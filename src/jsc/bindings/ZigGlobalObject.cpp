@@ -75,6 +75,7 @@
 #include "GeneratedBunObject.h"
 #include "GeneratedCrypto.h"
 #include "GeneratedHtmlRewriter.h"
+#include "GeneratedPrompt.h"
 #include "GeneratedResolveMessage.h"
 #include "GeneratedResponse.h"
 #include "GeneratedTextDecoder.h"
@@ -245,8 +246,6 @@
 #include <wtf/NumberOfCores.h>
 
 using namespace Bun;
-
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -3376,10 +3375,6 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
     return WebCore::subspaceForImpl<GlobalObject, WebCore::UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForWorkerGlobalScope, m_subspaceForWorkerGlobalScope),
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
-
-BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
-BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
-BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
 
 JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {

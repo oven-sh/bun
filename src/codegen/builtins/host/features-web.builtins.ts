@@ -192,18 +192,9 @@ export default b.declarations(
 
   extendAll(
     ["HttpClient"],
-    ...nativeBindings("NewRustFunction", "http/H2Client.rs", "TestingAPIs.liveCounts"),
-    ...nativeBindings("NewRustFunction", "http/H3Client.rs", "TestingAPIs.quicLiveCounts"),
-    ...nativeBindings(
-      "NewRustFunction",
-      "runtime/webcore/fetch.rs",
-      "TestingAPIs.noProxyMatches",
-      "TestingAPIs.parseURL",
-      "TestingAPIs.proxyFor",
-    ),
+    ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h2LiveCounts"),
+    ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h3LiveCounts"),
+    ...nativeBindings("Bindgen", "proxy_testing.bind.ts", "noProxyMatches", "parseURL", "proxyFor"),
   ),
-  extendAll(
-    ["WebStreams"],
-    ...nativeBindings("NewRustFunction", "runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain"),
-  ),
+  extendAll(["WebStreams"], ...nativeBindings("Bindgen", "ByteStream.bind.ts", "cancelOnDrain")),
 );

@@ -375,18 +375,15 @@ pub(crate) struct ParsedPattern<'a> {
     pub kind: ParsedPatternKind,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub enum ParsedPatternKind {
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) enum ParsedPatternKind {
     /// Can be navigated to. Pages can have children, which allows having
     /// nested routes exactly how Remix allows them.
-    #[strum(serialize = "page")]
     Page,
     /// Is not considered when resolving navigations, but is still a valid
     /// node in the route tree.
-    #[strum(serialize = "layout")]
     Layout,
     /// Another file related to a route
-    #[strum(serialize = "extra")]
     Extra,
 }
 

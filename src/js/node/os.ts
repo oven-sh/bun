@@ -213,7 +213,7 @@ function bound(binding: Binding) {
 }
 
 const out = bound({
-  hostCpuCount: ($bindgen("node_os.bind.ts", "hostCpuCount") as () => number)(),
+  hostCpuCount: $bindgen("node_os.bind.ts", "hostCpuCount") as number,
   cpus: $bindgen("node_os.bind.ts", "cpus"),
   freemem: $bindgen("node_os.bind.ts", "freemem"),
   getPriority: $bindgen("node_os.bind.ts", "getPriority"),

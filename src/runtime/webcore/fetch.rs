@@ -36,23 +36,22 @@ pub(crate) mod compress_body;
 pub(crate) mod fetch_session;
 pub(crate) use self::fetch_session::FetchSession;
 
-/// `proxyInternals` of `bun:internal-for-testing`. `generated_js2native.rs`
-/// snake-cases `TestingAPIs` as `testing_ap_is`.
 #[path = "fetch/proxy_testing.rs"]
-pub(crate) mod testing_ap_is;
+pub(crate) mod proxy_testing;
 
 // ──────────────────────────────────────────────────────────────────────────
 // fetch() implementation
 // ──────────────────────────────────────────────────────────────────────────
 
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
 use bun_core::{String as BunString, Tag as BunStringTag};
 use bun_http::http_request_body::StreamFraming;
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
 use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
@@ -218,25 +217,13 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetchPreconnect
+// fetch.preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-#[bun_jsc::host_fn(export = "Bun__fetchPreconnect")]
-fn bun_fetch_preconnect(
-    global_object: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
+pub(crate) fn preconnect(cx: &mut JsScope<'_>, url: &BunString) -> JsResult<()> {
+    let global_object = cx.global();
 
-    if arguments.len() < 1 {
-        return Err(global_object.throw_not_enough_arguments(
-            "fetch.preconnect",
-            1,
-            arguments.len(),
-        ));
-    }
-
-    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
+    let url_str = bun_url::href_from_string(url);
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -302,10 +289,10 @@ fn bun_fetch_preconnect(
     let vm = VirtualMachine::get();
     if vm.env_loader().get_http_proxy_for(&url).is_some() || vm.tls_default_ciphers().is_some() {
         reclaim_href!();
-        return Ok(JSValue::UNDEFINED);
+        return Ok(());
     }
     http::async_http::preconnect(url, true);
-    Ok(JSValue::UNDEFINED)
+    Ok(())
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -329,54 +316,31 @@ impl StringOrURL {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Bun__fetch entry point
+// fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
-#[bun_jsc::host_fn(export = "Bun__fetch")]
-fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe, None))
+pub(crate) fn fetch(
+    cx: &mut JsScope<'_>,
+    input: JsLocal<'_>,
+    init: JsLocal<'_>,
+) -> JsResult<JSValue> {
+    fetch_impl::<false>(cx.global(), input.to_js(), init.to_js(), None)
 }
 
 /// What `session.fetch` is bound from: `fetch()` with `this` as its session.
-#[bun_jsc::host_fn]
-pub(crate) fn session_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(
-        ctx,
-        fetch_impl::<false>(ctx, callframe, Some(callframe.this())),
-    )
-}
-
-/// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
-/// rejects the returned promise; `fetch()` never throws synchronously.
-fn reject_on_exception(
-    global_this: &JSGlobalObject,
-    result: JsResult<JSValue>,
+pub(crate) fn session_fetch(
+    cx: &mut JsScope<'_>,
+    this_value: JsLocal<'_>,
+    input: JsLocal<'_>,
+    init: JsLocal<'_>,
 ) -> JsResult<JSValue> {
-    let err = match result {
-        Ok(v) => return Ok(v),
-        Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-        // A terminated worker gets no rejected promise: its termination keeps unwinding.
-        Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
-            if global_this.has_pending_termination_exception() =>
-        {
-            return Err(jsc::JsError::Thrown);
-        }
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
-        Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) => exc.to_error().unwrap_or(exc),
-            None => {
-                // `fetch_impl` only returns Err(Thrown) with an exception
-                // pending; reaching here means it was cleared, which is a bug.
-                debug_assert!(
-                    false,
-                    "fetch_impl signaled a thrown exception but none is pending"
-                );
-                global_this.create_error_instance(format_args!("fetch() failed"))
-            }
-        },
-    };
-    Ok(JSPromise::rejected_promise(global_this, err).to_js())
+    fetch_impl::<false>(
+        cx.global(),
+        input.to_js(),
+        init.to_js(),
+        Some(this_value.to_js()),
+    )
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -412,11 +376,12 @@ fn reject_before_send(
 /// Shared implementation of fetch
 fn fetch_impl<const ALLOW_GET_BODY: bool>(
     ctx: &JSGlobalObject,
-    callframe: &CallFrame,
+    first_arg: JSValue,
+    options: JSValue,
     // `session.fetch()`: the session, which a `session` in the init does not replace.
     bound_session: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    let context = ctx.bun_vm().context_of_caller(callframe);
+    let context = ctx.bun_vm().context_of_caller_no_frame();
     // What script of a disposed `Bun.ModuleGraph` starts does not start, and reports nothing: no
     // connection goes out, and the promise stays pending.
     if context.is_stopped() {
@@ -432,23 +397,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
 
-    if callframe.arguments_count() == 0 {
-        let err = ctx.to_type_error(
-            jsc::ErrorCode::MISSING_ARGS,
-            format_args!("fetch() expects a string but received no arguments."),
-        );
-        return Ok(JSPromise::rejected_promise(global_this, err).to_js());
-    }
-
     let mut headers: Option<Headers> = None;
 
-    // hoist the one `&mut vm` accessor before `args` takes an
-    // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
-
-    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
-
-    let first_arg = args.next_eat().unwrap();
 
     let mut disable_timeout = false;
     let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
@@ -497,11 +448,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // ssl_config are all owning types whose Drop runs on early return.
 
     let options_object: Option<JSValue> = 'brk: {
-        if let Some(options) = args.next_eat() {
-            let options: JSValue = options;
-            if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
-                break 'brk Some(options);
-            }
+        if options.is_object() || options.js_type() == jsc::JSType::DOMWrapper {
+            break 'brk Some(options);
         }
         break 'brk None;
     };
